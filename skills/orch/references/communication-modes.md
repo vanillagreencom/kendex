@@ -207,7 +207,7 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 
 ## Handoff
 
-Every hold in the handoff, the report's Next row or lane state names its items and an open owner ask id or a blocking pull request or tracker item. At each start, read the named ask from `lane-mail pending --item overseer --to owner` and the named blocker from GitHub or the live tracker. Drop a hold with no id, a resolved or absent ask, a merged or closed pull request, or a Done or Canceled tracker item. Count its items as ready, then apply `oversee.md` § 2 Select Work.
+Every hold in the handoff, the report's Next row or lane state names its items and an open owner ask id or a blocking pull request or tracker item. At each start, read the named ask from `lane-mail pending --item overseer --to owner` and the named blocker from GitHub or the live tracker. Drop a hold with no id, a resolved or absent ask, or a blocker whose live state is terminal. Count its items as ready, then apply `oversee.md` § 2 Select Work.
 
 ```text
 Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
