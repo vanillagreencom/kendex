@@ -1039,15 +1039,22 @@ target_cmd() {
   esac
 }
 
-# A target with a command is available when its executable (the command's
-# first word) resolves — the first word is what actually gets exec'd, and an
-# env override may point it away from the target's own name.
+# A target with a command is available when its program word resolves: the
+# first word past a leading exec, and past a leading env and its VAR=value
+# assignments, so `env VAR=value copilot ...` is judged on copilot, not env. An
+# env override may point it away from the target's own name. A command with no
+# program word after its assignments has nothing to run.
 target_available() {
-  local cmd
+  local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*='
   cmd="$(target_cmd "$1")"
   # shellcheck disable=SC2086
   set -- $cmd
-  command -v "$1" >/dev/null 2>&1
+  [[ "${1:-}" != exec ]] || shift
+  if [[ "${1:-}" == env ]]; then
+    shift
+    while [[ "${1:-}" =~ $assignment ]]; do shift; done
+  fi
+  [[ $# -gt 0 ]] && command -v "$1" >/dev/null 2>&1
 }
 
 # Whether the account a target spends has room, by its

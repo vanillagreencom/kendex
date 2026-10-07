@@ -149,6 +149,11 @@ word() {
     # a target's command: cmd:<name>=<lane stub | missing>
     cmd:*=missing) W_ENV+=("$(so_var "${1#cmd:}" CMD)=$ROW/no-such-cli") ;;
     cmd:*) W_ENV+=("$(so_var "${1#cmd:}" CMD)=$ROW/bin/lane-${1##*=}") ;;
+    # the same behind an env prefix: cmd-env:<name>=<lane stub | missing | none>,
+    # none being the prefix with no program word after it
+    cmd-env:*=missing) W_ENV+=("$(so_var "${1#cmd-env:}" CMD)=env SO_TEST_PREFIX=1 $ROW/no-such-cli") ;;
+    cmd-env:*=none) W_ENV+=("$(so_var "${1#cmd-env:}" CMD)=env SO_TEST_PREFIX=1") ;;
+    cmd-env:*) W_ENV+=("$(so_var "${1#cmd-env:}" CMD)=env SO_TEST_PREFIX=1 $ROW/bin/lane-${1##*=}") ;;
     # a target's declared identity: model:<name>=<id>
     model:*) W_ENV+=("$(so_var "${1#model:}" MODEL)=$(unpad "${1##*=}")") ;;
     # a target's room check: room:<name>=<kind> runs a stub judging its

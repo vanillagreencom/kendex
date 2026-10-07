@@ -1,0 +1,1 @@
+- An entry whose `SECOND_OPINION_<NAME>_CMD` starts with `env VAR=value` is judged available on its program word, not on `env`, so a missing CLI is skipped for the next entry instead of failing with exit 127.
