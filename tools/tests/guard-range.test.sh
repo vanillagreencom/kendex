@@ -664,7 +664,7 @@ for row in \
   'hooks/README.md|subset' \
   'hooks/settings.example|all' \
   'docs/guide.md|all' \
-  'skills/demo/scripts/demo.sh|all' \
+  'skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh|all' \
   'skills/mapped/tests/tool.sh hooks/settings.example|all' \
   'skills/mapped/settings.example hooks/README.md|all'; do
   IFS='|' read -r path selection <<<"$row"
@@ -677,7 +677,7 @@ for row in \
   'skills/mapped/tests/tool.sh|subset|s/^            \[ "\$suite_selection" = all \] || suite_selection=subset$/            [ "$suite_selection" = all ] || suite_selection=all/' \
   'skills/mapped/settings.example|all|s/^          suite_selection=all$/          suite_selection=subset/' \
   'docs/guide.md|all|s/^suite_selection=""$/suite_selection=subset/' \
-  'skills/demo/scripts/demo.sh|all|s/^          if \[ "\$selected_count" -lt "\$total_count" \]; then$/          if true; then/'; do
+  'skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh|all|s/^          if \[ "\$selected_count" -lt "\$total_count" \]; then$/          if true; then/'; do
   IFS='|' read -r path selection expr <<<"$row"
   if mutant_guard "$expr"; then
     map_row append "$path" none "$MUTANT_TOOLS/guard"
@@ -758,7 +758,7 @@ for row in "${MAP_CONTROLS[@]}"; do
   fi
 done
 # The narrowed run's note is the reader's one sign that the set was cut.
-if mutant_guard '/note suites "\$(count_lines/d'; then
+if mutant_guard '/^          note suites "\$selected_count\/\$total_count reason=mapped tree=\$d"$/d'; then
   map_row append skills/mapped/tests/tool.sh "$(mapped_note 1/$MAPPED_N skills/mapped)" "$MUTANT_TOOLS/guard"
   [[ "$VERDICT" == *" started=tool note=missing" ]] \
     && ok "control: without the narrowed-run note the one-suite run says nothing of the cut" \

@@ -700,6 +700,7 @@ for row in "${narrow_controls[@]}"; do
   fi
 done
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_guard
 narrow_row_holds all && [[ "$OUT" == *"guard-note: suites=1/1 reason=mapped tree=skills/demo"* ]] \
   && ok "a whole mapped tree beside smaller mapped trees reports all in full validation" \
