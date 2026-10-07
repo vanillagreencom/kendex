@@ -40,6 +40,7 @@ printf 'claude-model-classes: version=%s\n' "$version"
 
 copy_plugin() { # NAME
   cp -R -- "$PLUGIN" "$TMP_ROOT/$1" || { echo "claude-model-classes: copy=failed name=$1" >&2; exit 1; }
+  cp -R -- "$ROOT/skills/orch/tests/claude-model-classes" "$TMP_ROOT/$1/tests" || { echo "claude-model-classes: copy-tests=failed name=$1" >&2; exit 1; }
 }
 
 # edit FILE OLD NEW: OLD must occur exactly once.

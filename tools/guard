@@ -116,6 +116,10 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "a managed skill render is missing the instructions block configured for its source; the render paths follow." ;;
     missing-render)
       echo "a render source changed without its tracked render — land the render in the same change; the pairs follow." ;;
+    nested-skill-tests)
+      local skill="${2#skills/}"
+      skill="${skill%%/*}"
+      printf 'move this test or evaluation file to skills/%s/tests or skills/%s/evals; a nested suite enters consumer renders.\n' "$skill" "$skill" ;;
     commit-changes)
       echo "product changes could not be classified, so no compile lane could be scheduled." ;;
     tauri-dependency)
@@ -441,6 +445,19 @@ rendered_in_skill() { # REL: a path inside a skill, carried by its render
     [ "${1%%/*}" != "$name" ] || return 1
   done
 }
+
+# Plugin callback suites below scripts/ entered consumer test discovery.
+# GitHub cannot enforce catalog directory placement, so this guard holds it.
+# Top-level test trees do not render; examples carry their own test content.
+while IFS= read -r f; do
+  case "$f" in skills/*/*) ;; *) continue ;; esac
+  [ -f "$f" ] || continue
+  rel="${f#skills/}"
+  rel="${rel#*/}"
+  rendered_in_skill "$rel" || continue
+  case "/$rel" in */examples/*) continue ;; esac
+  case "/$rel" in */tests/* | */evals/*) say nested-skill-tests "$f" ;; esac
+done <<<"$files"
 
 # A catalog package installs into a repository that holds none of kendex's
 # decision records, where of the other packages only those it requires are

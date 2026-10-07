@@ -14,6 +14,48 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/commit-guards/scripts/changelog-entries"
 RATCHET="$REPO/.agents/skills/doc-limits/scripts/doc-limits"
 
+echo "=== skill test trees stay outside consumer renders ==="
+before=$((PASS + FAIL))
+while IFS='|' read -r expected path; do
+  mkdir -p "$(dirname "$R/$path")"
+  printf '// fixture\n' >"$R/$path"
+  rel="${path#skills/*/}"
+  case "$rel" in
+    tests/* | evals/*) ;;
+    *)
+      render=".agents/$path"
+      mkdir -p "$(dirname "$R/$render")"
+      cp "$R/$path" "$R/$render" ;;
+  esac
+  git -C "$R" add -A
+  run_guard
+  if [ "$expected" = refuse ] && [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: nested-skill-tests=$path"* ]]; then
+    ok "nested suite refused: $path"
+    if mutant_guard 's/say nested-skill-tests "\$f"/:/'; then
+      run_mutant
+      [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: nested-skill-tests="* ]] \
+        && ok "control: without the placement refusal the nested suite passes" \
+        || bad "control: without the placement refusal the nested suite passes" "rc=$RC out=$OUT"
+    else
+      bad "control: the placement refusal did not change in the guard copy"
+    fi
+  elif [ "$expected" = pass ] && [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: nested-skill-tests="* ]]; then
+    ok "intentional test content passes: $path"
+  else
+    bad "suite placement: $path" "rc=$RC out=$OUT"
+  fi
+  reset_world
+done <<'ROWS'
+refuse|skills/demo/scripts/plugin/tests/x.test.ts
+refuse|skills/demo/scripts/plugin/evals/x.ts
+refuse|skills/demo/references/plugin/tests/x.test.ts
+pass|skills/demo/tests/x.sh
+pass|skills/demo/evals/x.ts
+pass|skills/demo/tests/plugin/tests/x.test.ts
+pass|skills/iced-rs/examples/todos/tests/carl_sagan.ice
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: skill suite placement" >&2; exit 2; }
+
 echo "=== new temporary fixtures derive their canonical root at creation ==="
 mkdir -p "$R/crates/core/tests"
 temp_case() { # pass|refuse LABEL SOURCE-LINE...
