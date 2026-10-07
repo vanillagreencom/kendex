@@ -18,8 +18,11 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$REPO_ROOT/tmp"
+TMP_ROOT="$(mktemp -d "$REPO_ROOT/tmp/dev-round-write-wiring.XXXXXX")" || { echo "dev-round-write-wiring: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev-round-write-wiring: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev-round-write-wiring: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -124,6 +127,8 @@ git -C "$WT" init -q -b main
 git -C "$WT" config user.email test@example.com
 git -C "$WT" config user.name Test
 git -C "$WT" config commit.gpgsign false
+git -C "$WT" config gc.auto 0
+git -C "$WT" config maintenance.auto false
 git -C "$WT" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$WT" issue-826 seed 1000000 >/dev/null
 mkdir -p "$WT/.cache/tracker-fixture"
@@ -149,23 +154,36 @@ run_workflow_round_command() { # WORKFLOW ROUND [PR_OPEN]
   env ORCH_STATE_DIR="$WT/tmp" bash -c "$line"
 }
 # The executable commands bind the PR state independently of the source.
-rid=40
-for row in dev-fix:pr-review review-pr-comments:pr-comments; do
+rid=60
+for row in dev-fix:pr-review:true dev-fix:pr-review:false \
+  review-pr-comments:pr-comments:true review-pr-comments:pr-comments:false; do
   workflow="${row%%:*}"
+  source_state="${row#*:}"
+  source="${source_state%%:*}"
+  pr_open="${source_state#*:}"
   printf '%s' '[{"n":1,"text":"workflow item","reach":"tools/guard on a staged render"}]' > "$WT/tmp/dev-round-items-$rid-$rid.json"
-  run_workflow_round_command "$REPO_ROOT/skills/orch/workflows/$workflow.md" "$rid-$rid" >/dev/null
+  run_workflow_round_command "$REPO_ROOT/skills/orch/workflows/$workflow.md" "$rid-$rid" "$pr_open" >/dev/null
   assert_eq "$(jq -c '.adds' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" '["tools/future-helper.sh","skills/x/scripts/future-check"]' \
     "$workflow: the live command executes and binds its Adds path list"
-  assert_eq "$(jq -r '.source' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "${row#*:}" \
+  assert_eq "$(jq -r '.source' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "$source" \
     "$workflow: the live command records the round's source"
-  assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "true" \
-    "$workflow: the live command records the open PR"
+  assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "$pr_open" \
+    "$workflow: the live command records pr_open=$pr_open"
   rid=$((rid + 1))
 done
-printf '%s' '[{"n":1,"text":"pre-PR review","reach":"tools/guard on a staged render"}]' > "$WT/tmp/dev-round-items-43-43.json"
-run_workflow_round_command "$REPO_ROOT/skills/orch/workflows/dev-fix.md" 43-43 false >/dev/null
-assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-43-43.json")" "false" \
-  "the live command records a review with no open PR"
+STATE_MUTANT="$TMP_ROOT/hard-coded-pr-open-workflow.md"
+cp "$REPO_ROOT/skills/orch/workflows/review-pr-comments.md" "$STATE_MUTANT"
+mutate_file "$STATE_MUTANT" '--pr-open [PR_OPEN]' '--pr-open true'
+printf '%s' '[{"n":1,"text":"PR state control","reach":"tools/guard on a staged render"}]' > "$WT/tmp/dev-round-items-44-44.json"
+run_workflow_round_command "$STATE_MUTANT" 44-44 false >/dev/null
+state_check_rc=0
+(
+  FAIL=0
+  assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-44-44.json")" false \
+    "the live command records pr_open=false"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/state-control.log" 2>&1 || state_check_rc=$?
+assert_eq "$state_check_rc" 1 "control: the false-state assertion rejects hard-coded true"
 INERT="$TMP_ROOT/inert-workflow.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$INERT"
 sed -i.bak '/dev-round-write --worktree/ s|^[[:space:]]*\.agents|true # .agents|' "$INERT"
