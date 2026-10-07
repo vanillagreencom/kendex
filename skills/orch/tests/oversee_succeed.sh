@@ -2597,15 +2597,22 @@ cat > "$BIN/4claude" <<STUB
 # exec below changes what a reader can see.
 if [ -f "$TMP_ROOT/selects-late" ]; then
   other="\$(cat "$TMP_ROOT/selects-late")"
-  # \$TMP_ROOT/late-secs is how long it stands on the picked account first, so a
-  # row places the handover where it needs it in the caller's budget.
-  late_secs=3
-  [ ! -f "$TMP_ROOT/late-secs" ] || late_secs="\$(cat "$TMP_ROOT/late-secs")"
-  CLAUDE_CONFIG_DIR="$H/.4claude" sh -c "sleep \$late_secs"
+  # \$TMP_ROOT/late-gate holds it on the picked account until the row releases
+  # it, so a row places the handover at an event in the caller's run rather
+  # than at a time; this wrapper writes its pid and pane there for the release.
+  if [ -f "$TMP_ROOT/late-gate" ]; then
+    printf '%s %s\n' "\$\$" "\$TMUX_PANE" > "$TMP_ROOT/late-gate"
+    CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'until [ -f "\$1" ]; do "$STUB_REAL_SLEEP" 0.05; done' _ "$TMP_ROOT/late-release"
+  else
+    CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'sleep 3'
+  fi
   CLAUDE_CONFIG_DIR="\$other"
   export CLAUDE_CONFIG_DIR
   echo 'esc to interrupt'
-  exec sleep 100000
+  # The real sleep, here and in the gate: a virtual-clock run hands the pane its
+  # PATH, whose stub sleep finds no real one in the pane's environment and
+  # fails at once, ending the process that carries the handed-over account.
+  exec "$STUB_REAL_SLEEP" 100000
 fi
 if [ -f "$TMP_ROOT/selects-nothing" ]; then
   unset CLAUDE_CONFIG_DIR
@@ -2784,7 +2791,7 @@ assert_eq "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_op
 # The run waits on the virtual clock, so the figure is how far that clock moved
 # across the whole call: every wait the script made, and none of the work it
 # did besides waiting, which costs whole seconds more on the macOS runner than
-# on Linux. The ceiling is the promise succ_budget_bound's floor states,
+# on Linux. The ceiling is the promise ol_budget_bound's floor states,
 # --wait-secs plus at most one settle; two deadlines push past it by the read's
 # half of the budget. BOUND_CLOCK is the second the clock's real-epoch seed can
 # sit past the reading taken before the call.
@@ -2819,22 +2826,59 @@ rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 # A handover whose running turn lands with the budget already spent. At
 # --wait-secs 1 the early read's floored share is the whole of it, so the
 # running-turn wait starts with nothing left and the deciding read has only
-# succ_budget_bound's floor to look in. It still looks, because the caller's
+# ol_budget_bound's floor to look in. It still looks, because the caller's
 # window closes on that read and a read that could not look is not an answer to
 # close a window on.
-if observed_row "a deciding read with the budget already spent still looks, and catches the handover"; then
+#
+# The virtual clock makes the early read's settle spend the whole budget, and
+# the handover is placed by event: the running-turn wait's single probe, a
+# capture of the successor's pane, releases it through a tmux shim that returns
+# once the exec has landed and the pane shows the running turn, or after 200
+# looks, which fails the row. So the early read sees the picked account and
+# the deciding read the other, on any runner's pace.
+#
+# lastsecond_run ROW [SUCCEED_BIN] — that run, the shim on PATH for it alone.
+lastsecond_run() {
   new_caller "$MARK"
-  printf '%s
-' "$H/.claude" > "$TMP_ROOT/selects-late"
-  printf '0.2
-' > "$TMP_ROOT/late-secs"
-  succeed_shim lastsecond 'claude:fable:high' --wait-secs 1
+  printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects-late"
+  : > "$TMP_ROOT/late-gate"
+  cat > "$BIN/tmux" <<SHIM
+#!/bin/sh
+gate="\$(cat "$TMP_ROOT/late-gate" 2>/dev/null)"
+case " \$* " in
+  *" capture-pane "*" \${gate#* } "*)
+    if [ -n "\$gate" ] && [ ! -f "$TMP_ROOT/late-release" ]; then
+      : > "$TMP_ROOT/late-release"
+      n=0
+      until [ "\$(cat "/proc/\${gate%% *}/comm" 2>/dev/null)" = sleep ] &&
+        "$REAL_TMUX" "\$@" | grep -q 'esc to interrupt'; do
+        n=\$((n + 1)); [ "\$n" -lt 200 ] || break
+        sleep 0.05
+      done
+    fi ;;
+esac
+exec "$REAL_TMUX" "\$@"
+SHIM
+  chmod +x "$BIN/tmux"
+  VIRTUAL_CLOCK=1 SUCCEED_BIN="${2:-$SUCCEED}" succeed_shim "$1" 'claude:fable:high' --wait-secs 1
+  rm -f -- "${BIN:?}/tmux" "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-gate" "${TMP_ROOT:?}/late-release"
+}
+if observed_row "a deciding read with the budget already spent still looks, and catches the handover"; then
+  lastsecond_run lastsecond
   assert_eq "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
     "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0" \
     "a deciding read with the budget already spent still looks, and catches the handover"
+  # The control: the deciding read handed the raw budget instead of its floor
+  # cannot look, so the row above reaches that read with the budget spent.
+  NOFLOOR="$(mutant_scripts nofloor lib/overseer-launch.sh)" || exit 1
+  mutate_file "$NOFLOOR/lib/overseer-launch.sh" \
+    '"$form" "$(ol_budget_bound)" final' \
+    '"$form" "$(ol_budget_raw)" final'
+  lastsecond_run nofloor "$NOFLOOR/oversee-succeed"
+  assert_eq "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)" \
+    "0|oversee-succeed: successor-lane-unobserved reason=no-settle-budget" \
+    "control: a deciding read handed the raw budget cannot look, and the handover stands"
 fi
-
-rm -f -- "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-secs"
 
 echo "=== an overseer whose ACCOUNT is spent, which reaches none of the marks either ==="
 # A walled overseer is not dead: its harness is still its pane's foreground
