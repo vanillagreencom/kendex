@@ -21,6 +21,7 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 | Repeated lines | The last line starting with `validate:` owns the result |
 | Missing or malformed last line | `selection=unreported`, with no `lanes` field; does not change the run verdict |
 | `validate-mode` | Remains `full`, `range` or `ci`; names the invocation, not the lane selection |
+| Finding line | A line starting with the base name of the command's first word, a colon and a space, as `tools/guard` prints `guard: suite=…`. A run the bound ended whose log holds none refuted nothing: `--last-pass` passes over it, and a later run over no fewer paths does not run past the bound again (`dev-validate-run --help`) |
 
 ## Round-closure mechanics
 

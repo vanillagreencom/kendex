@@ -1,0 +1,1 @@
+- The implement round's validation route now covers a `dev-validate-run` start that ends with no verdict because an earlier run already hit the bound over the same paths: it takes the same scoped-suite route as a run the bound cut off.

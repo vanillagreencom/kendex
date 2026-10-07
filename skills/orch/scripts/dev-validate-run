@@ -106,7 +106,9 @@
 #       validated, read-only. restack-skip compares a restacked head with
 #       that tree. A ci run ran nothing and is never one. Exit 1 where the
 #       worktree has none, or where a later full or range run did not pass,
-#       an unfinished one included: that run is named as red.
+#       an unfinished one included: that run is named as red. A later run the
+#       bound ended whose log holds no finding line is neither: it refuted
+#       nothing, so the pass before it still stands.
 #   dev-validate-run --live --worktree PATH
 #       Print the run still going in that worktree, read-only and starting
 #       nothing: the run a start there would refuse as run-live, judged the
@@ -178,6 +180,28 @@
 #                                since harness-ci may stand CI's checks down
 #                                for it
 #
+# A start reads the worktree's earlier runs before it runs anything. A full or
+# range run the bound ended, whose log holds no finding line, whose bound was
+# at least this one's and every one of whose changed paths this run reads too,
+# says this run would end at the bound as well: the project's command chooses
+# its own suites, and a run over no fewer paths chooses no fewer. The start
+# records that run as the bound-run= line of start, then:
+#   range  takes the ci route, as a ci request does, and passes at once where
+#          that route holds, recording validate-mode=ci. Where it does not, the
+#          request runs as range, with the ci-fallback= line naming why.
+#   full   or a range request that still runs, ends at once with no verdict
+#          where its mode is full or the earlier run's was range, a full run's
+#          bound being no proof for the lighter range command: the sentinel
+#          carries the earlier run's guard-exit and verdict=no-verdict, the
+#          log names that run, and the wall time is zero. The caller takes the
+#          route a no-verdict run takes, the scoped suites. A full request
+#          never takes the ci route, since an implement round's receipt takes
+#          no ci run.
+# A finding line is the one ../references/artifact-checks.md § Validation
+# command output names: a line of the log, past its runner line, that starts
+# with the base name of the command's first word, a colon and a space. A log
+# that cannot be read holds one.
+#
 # Every mode records the worktree's HEAD when the run started as the head= line
 # of start, empty where the worktree has no commit, beside the start= epoch
 # second. dev-return-write binds those fields to the delegated round, per
@@ -224,7 +248,8 @@
 #
 # The sentinel file holds exactly one line, `guard-exit=N at=TIME`, with
 # ` verdict=no-verdict` after it for a run the bound ended, written by the
-# detached child, or for a ci run by the start path. A harness that kills the
+# detached child, or for a ci run, or a run an earlier run's bound ended, by
+# the start path. A harness that kills the
 # launching shell or drops its completion notice changes neither the verdict
 # nor where it is recorded.
 #
@@ -367,6 +392,52 @@ write_verdict() { # STARTED-AT ENDED-AT SECONDS SENTINEL-LINE
   mv "$run_dir/timing.part" "$run_dir/timing"
   printf '%s\n' "$4" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
+}
+
+# 0 where the run's log holds a finding line of its command, --help's: a line
+# past the runner line starting with the base name of the command's first
+# word, a colon and a space. A cmd or log that cannot be read holds one.
+run_has_finding() { # RUN_DIR
+  local cmd prog rc=0
+  cmd="$(cat "$1/cmd" 2>/dev/null)" || return 0
+  read -r prog _ <<<"$cmd"
+  prog="${prog##*/}"
+  [[ -n "$prog" ]] || return 0
+  LC_ALL=C awk -v p="$prog: " 'NR > 1 && index($0, p) == 1 { found = 1; exit } END { exit !found }' \
+    "$1/log" 2>/dev/null || rc=$?
+  (( rc != 1 ))
+}
+
+# The newest earlier full or range run of the worktree that says a run over
+# PATHS_FILE under TIMEOUT_SECS would end at the bound, as --help states it,
+# in BOUND_RUN_DIR, its mode in BOUND_RUN_MODE and its sentinel's exit in
+# BOUND_RUN_EXIT; all empty where there is none.
+BOUND_RUN_DIR=""
+BOUND_RUN_MODE=""
+BOUND_RUN_EXIT=""
+find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE
+  local start_file dir mode secs line rc guard_exit
+  BOUND_RUN_DIR="" BOUND_RUN_MODE="" BOUND_RUN_EXIT=""
+  for start_file in "$1"/tmp/dev-validate-*/start; do
+    [[ -f "$start_file" ]] || continue
+    dir="${start_file%/start}"
+    mode="$(start_field "$start_file" validate-mode)"
+    case "$mode" in
+      full|range) ;;
+      *) continue ;;
+    esac
+    line="$(cat "$dir/exit" 2>/dev/null)" || continue
+    [[ "$line" =~ ^guard-exit=([0-9]+)\ at=[^\ ]+\ verdict=no-verdict$ ]] || continue
+    guard_exit="${BASH_REMATCH[1]}"
+    secs="$(start_field "$start_file" timeout-secs)"
+    [[ "$secs" =~ ^[0-9]+$ ]] && (( 10#$secs >= 10#$2 )) || continue
+    [[ -s "$dir/paths" ]] || continue
+    rc=0
+    grep -Fxvq -f "$3" -- "$dir/paths" 2>/dev/null || rc=$?
+    (( rc == 1 )) || continue
+    ! run_has_finding "$dir" || continue
+    BOUND_RUN_DIR="$dir" BOUND_RUN_MODE="$mode" BOUND_RUN_EXIT="$guard_exit"
+  done
 }
 
 # The worktree's diff against the base branch, or against the round's base
@@ -621,9 +692,26 @@ if [[ "$mode" == start ]]; then
   # the whole branch, as the pull request CI judges it. start records that
   # base as class-base=, so submit takes such a full pass for the branch's
   # only where its command reports the whole battery.
+  # Read against an empty default, never 3600: orch-env replaces a non-numeric
+  # effective value with a numeric default of its own, so a setting of 90m would
+  # arrive here as 3600 and the refusal below could never fire. The default is
+  # applied here instead, leaving check_seconds to judge what was actually set.
+  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS "")"; then
+    die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
+  fi
+  [[ -n "$timeout_secs" ]] || timeout_secs=3600
+  check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
   class_base=""
   [[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base="$base_sha"
   classify "$class_base"
+  # An earlier run that the bound ended over no more paths than this one reads
+  # sends a range request down the ci route and ends any other at once; --help
+  # states which run counts and what each mode does with it.
+  bound_ended=false
+  if [[ "$validate_mode" != ci && -z "$class_fallback" ]]; then
+    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths"
+    [[ -z "$BOUND_RUN_DIR" || "$validate_mode" != range ]] || validate_mode=ci
+  fi
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
   if [[ "$validate_mode" == ci ]]; then
@@ -647,21 +735,16 @@ if [[ "$mode" == start ]]; then
         || die orphaned-base-unresolved "base=$orphaned_sha"
     fi
   fi
+  if [[ -n "$BOUND_RUN_DIR" && "$validate_mode" != ci ]] \
+    && [[ "$validate_mode" == full || "$BOUND_RUN_MODE" == range ]]; then
+    bound_ended=true
+  fi
   if [[ "$validate_mode" == full ]]; then
     if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")"; then
       die unreadable-setting setting=DEV_VALIDATE_CMD
     fi
     [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
   fi
-  # Read against an empty default, never 3600: orch-env replaces a non-numeric
-  # effective value with a numeric default of its own, so a setting of 90m would
-  # arrive here as 3600 and the refusal below could never fire. The default is
-  # applied here instead, leaving check_seconds to judge what was actually set.
-  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS "")"; then
-    die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
-  fi
-  [[ -n "$timeout_secs" ]] || timeout_secs=3600
-  check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
 
   # Without a timeout command the run carries no bound, which is the unbounded
   # wait this script exists to end. Refuse rather than run it unbounded.
@@ -707,6 +790,7 @@ if [[ "$mode" == start ]]; then
     [[ -z "$orphaned_sha" ]] || printf 'validate-base-orphaned=%s\n' "$orphaned_sha"
     [[ "$validate_mode" == ci || -z "$ci_fallback" ]] || printf 'ci-fallback=%s\n' "$ci_fallback"
     [[ -z "$class_base" ]] || printf 'class-base=%s\n' "$class_base"
+    [[ -z "$BOUND_RUN_DIR" ]] || printf 'bound-run=%s\n' "$BOUND_RUN_DIR"
     printf 'head=%s\n' "$head_sha"
     [[ -z "$snapshot_tree" ]] || printf 'tree=%s\n' "$snapshot_tree"
   } > "$run_dir/start"
@@ -723,6 +807,13 @@ if [[ "$mode" == start ]]; then
     ci_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'runner=none class=%s: the pull request CI on the pushed head validates this change\n' "$class" > "$run_dir/log"
     write_verdict "$ci_at" "$ci_at" 0 "guard-exit=0 at=$ci_at"
+  elif [[ "$bound_ended" == true ]]; then
+    # An earlier run already reached the bound over every path this one
+    # reads, so this one starts nothing and records no verdict.
+    bound_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'runner=none bound-run=%s: that run reached the %ss bound over every path this run reads\n' \
+      "$BOUND_RUN_DIR" "$timeout_secs" > "$run_dir/log"
+    write_verdict "$bound_at" "$bound_at" 0 "guard-exit=$BOUND_RUN_EXIT at=$bound_at verdict=no-verdict"
   elif [[ "$attached" == true ]]; then
     # Printed first, since the call below returns only once the run has ended:
     # a harness that cuts the call off has already been told the directory.
@@ -741,7 +832,7 @@ if [[ "$mode" == start ]]; then
     4) die launch-failed "$JOB_UNIT_ERROR" ;;
     *) die launch-failed "status=$launch_rc" ;;
   esac
-  [[ "$attached" == true && "$validate_mode" != ci ]] || started_line
+  [[ "$attached" == true && "$validate_mode" != ci && "$bound_ended" == false ]] || started_line
   # Blocking form: the same poll --wait runs, with no per-call budget, so a
   # foreground caller returns only with the verdict.
   mode=wait
@@ -879,7 +970,8 @@ fi
 # Run directories are named for the UTC second they started, so the last match
 # in name order is the newest. A full or range run after that pass that did
 # not pass, one unfinished or whose sentinel cannot be read included, is red:
-# the newest pass no longer speaks for the worktree.
+# the newest pass no longer speaks for the worktree. A no-verdict run whose
+# log holds no finding line is passed over.
 if [[ "$mode" == last-pass ]]; then
   worktree="$(cd "$worktree" && pwd)"
   found=""
@@ -894,6 +986,10 @@ if [[ "$mode" == last-pass ]]; then
     verdict=unfinished
     if [[ -s "$run_dir/exit" ]]; then
       verdict="$(read_sentinel 2>/dev/null; printf '%s' "$SENTINEL_VERDICT")" || verdict=unreadable
+    fi
+    # A run the bound ended with no finding refuted nothing.
+    if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then
+      continue
     fi
     if [[ "$verdict" != pass ]]; then
       red="$run_dir"

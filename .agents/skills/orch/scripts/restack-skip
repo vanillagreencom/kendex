@@ -51,7 +51,9 @@
 # Causes:
 #   no-passing-run    the worktree holds no passing run with a recorded tree
 #   newer-red         a run newer than the last pass did not pass; run-dir=
-#                     names it
+#                     names it. A run the bound ended whose log holds no
+#                     finding line is not one: it refuted nothing, as
+#                     `dev-validate-run --help` states under --last-pass
 #   base-unreadable   REF names no commit
 #   head-unreadable   the worktree has no HEAD commit
 #   object-missing    the validated tree or the HEAD it started at is gone
