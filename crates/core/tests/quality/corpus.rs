@@ -230,7 +230,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
 /// a test feeds the gate; and the harness-ci workflow library defines a
 /// function named `gh_eval`. None of them is the package disguising or
 /// running anything, so none is a finding, and the rows kendex's own table
-/// accepts in review-gate and harness-ci cost the score nothing.
+/// accepts in review-gate cost the score nothing.
 #[test]
 fn a_quoted_letter_a_corpus_and_a_function_named_for_eval_are_not_findings() {
     for name in ["iced-rs", "review-gate", "harness-ci"] {

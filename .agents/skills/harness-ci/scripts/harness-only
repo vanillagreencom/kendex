@@ -6,13 +6,15 @@
 # rendered files in .kendex-generated.json. Carrier packages and in-place
 # sources stay outside that inventory and always run product checks.
 # `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
+# `--mode render-candidate` permits new head-owned paths only to decide whether
+# to install render-proof prerequisites. It never authorizes a CI skip.
 #
 # Usage:
-#   harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
+#   harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
 #                [--repo DIR] [--output FILE] [--paths-output FILE]
 #                [--outside-output FILE]
 #
-#   --mode    harness (default) | docs.
+#   --mode    harness (default) | docs | render-candidate.
 #   --event   pull_request | merge_group | push. Any other event answers false.
 #   --base    the base endpoint: the PR base sha, the merge group's base sha,
 #             or a push's `before` sha.
@@ -30,7 +32,7 @@
 #             write a file.
 #
 # stdout carries the selected verdict line and nothing else:
-# harness_only=true|false or docs_only=true|false.
+# harness_only=true|false, docs_only=true|false, or render_candidate=true|false.
 # A stderr refusal starts with `wiring-error: cause=...`. A false-verdict
 # notice starts with `fallback: cause=...`. The English explanation follows
 # that stable key/value line in the job log.
@@ -79,12 +81,14 @@ tool_name="harness-only"
 
 usage() {
   cat <<'USAGE'
-Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
+Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
                     [--repo DIR] [--output FILE] [--paths-output FILE]
                     [--outside-output FILE]
 
   --mode    harness (default): accept generated harness files.
             docs: accept docs/, changelog.d/, and root .md or .markdown files.
+            render-candidate: permit new head-owned paths for prerequisites
+            only. No CI skip is authorized; change-class must prove render.
   --event   pull_request | merge_group | push. Any other event answers false.
   --base    the base endpoint: the PR base sha, the merge group's base sha,
             or a push's `before` sha.
@@ -96,7 +100,7 @@ Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF
   --outside-output  docs mode: overwrite this file with the changed paths
             outside the docs set, one path per line.
 
-Prints harness_only=true|false, or docs_only=true|false in docs mode.
+Prints harness_only=true|false, docs_only=true|false, or render_candidate=true|false.
 Exit 2 on a wiring error.
 USAGE
 }
@@ -159,6 +163,11 @@ while [ "$#" -gt 0 ]; do
           classification="docs"
           verdict_key="docs_only"
           tool_name="docs-only"
+          ;;
+        render-candidate)
+          classification="render-candidate"
+          verdict_key="render_candidate"
+          tool_name="render-candidate"
           ;;
         *) die "cause=unknown-mode mode=$(stable_value "$2")" \
           "unknown classification mode '$2'" ;;
@@ -410,10 +419,14 @@ names_only_change() { # -> prints `names-only added=N removed=M roots=R,...`, or
 if grep -qxF .kendex-generated.json <<<"$changed"; then
   inventory_change="$(names_only_change)" || inventory_change=""
 fi
-printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
-  .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
-' >/dev/null 2>&1 || verdict false "cause=generated-ownership-gain" \
-  "generated ownership gains paths and requires product checks"
+# Candidate ownership grants installation only. The normal harness verdict
+# still refuses gains; change-class must prove every new path from real renders.
+if [ "$classification" != render-candidate ]; then
+  printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
+    .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
+  ' >/dev/null 2>&1 || verdict false "cause=generated-ownership-gain" \
+    "generated ownership gains paths and requires product checks"
+fi
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   seen=false

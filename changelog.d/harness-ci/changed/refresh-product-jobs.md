@@ -1,0 +1,1 @@
+- Consumer refresh CI publishes the measured change class and skips product jobs after render proof. New generated files reach that proof through a prerequisite-only candidate. CI installs the latest released engine instead of a fixed older build.

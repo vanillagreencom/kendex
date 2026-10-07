@@ -17,8 +17,8 @@
 #      verdict leaves `lanes` deciding, both events read the answers the
 #      same way, a dead classifier
 #      runs every lane, the declaration is read from the default branch's
-#      checkout and never the judged one, and no line of the template reads
-#      the change class.
+#      checkout and never the judged one. The template forwards the change
+#      class output but spells no class rule.
 #   3. the aggregate: the waiver and the `--skippable` and `--lane`
 #      arguments the template passes, fed to aggregate-needs with the needs
 #      the template's own outputs make, accept a skipped lane only where the
@@ -218,9 +218,11 @@ assert_eq "the lane declaration is read from the default branch's checkout" "def
 # The lanes rule is the action's. A template line reading the class would be
 # a second spelling of it, in every repository's copy.
 class_reads() { # TEMPLATE — the non-comment lines reading a change class
-  grep -vE '^[[:space:]]*#' "$1" | grep -F 'change_class' || true
+  grep -vE '^[[:space:]]*(#|change_class:)' "$1" | grep -F 'change_class' || true
 }
-assert_eq "no line of the template reads the change class" "" "$(class_reads "$TEMPLATE")"
+assert_eq "no condition of the template spells a class rule" "" "$(class_reads "$TEMPLATE")"
+assert_eq "the class output forwards the action's proof" render \
+  "$(job_outputs "$TEMPLATE" false lane_test=false render | jq -r .change_class)"
 
 # --- 3. The aggregate -------------------------------------------------------
 
@@ -308,10 +310,11 @@ assert_eq "the template's steps name the shipped script paths" \
   ".agents/skills/commit-guards/scripts/install-gitleaks
 .agents/skills/commit-guards/scripts/secrets
 .agents/skills/harness-ci/scripts/aggregate-needs
-.agents/skills/harness-ci/scripts/harness-only" \
+.agents/skills/harness-ci/scripts/harness-only
+.agents/skills/review-gate/scripts/install-latest.sh" \
   "$(grep -vE '^[[:space:]]*#' "$TEMPLATE" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' | LC_ALL=C sort -u)"
-assert_eq "those paths are shipped scripts" "yes yes yes yes" \
-  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no)"
+assert_eq "those paths are shipped scripts" "yes yes yes yes yes" \
+  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
 
 # The CI job scans every pull request, with its installer in the same step.
 secrets_contract() { # TEMPLATE
@@ -501,6 +504,85 @@ mirror|yes
 classify|no
 ROWS
 require_rows step "$step_rows"
+
+# The prerequisite answer only gates network work. Evaluate the actual
+# conditions and read the installed dependency from the workflow itself.
+for id in kendex mirror; do
+  condition="$(step_key "$TEMPLATE" "$id" if)"
+  assert_eq "$id runs for new head ownership candidates" true \
+    "$(gh_eval value '{"steps":{"render-reach":{"outputs":{"render_candidate":"true","harness_only":"false"}}}}' "$condition")"
+  assert_eq "$id stays down without a candidate" false \
+    "$(gh_eval value '{"steps":{"render-reach":{"outputs":{"render_candidate":"false","harness_only":"true"}}}}' "$condition")"
+  awk -v id="$id" '
+    /^      - / { step = ($0 == "      - id: " id) }
+    step && /steps.render-reach.outputs.render_candidate/ {
+      sub(/steps.render-reach.outputs.render_candidate/, "steps.render-reach.outputs.harness_only"); n++
+    }
+    { print }
+    END { if (n != 1) exit 2 }
+  ' "$TEMPLATE" >"$SANDBOX/old-reach-$id.yml" || exit 1
+  assert_eq "must-fail: $id using the old harness answer misses new renders" false \
+    "$(gh_eval value '{"steps":{"render-reach":{"outputs":{"render_candidate":"true","harness_only":"false"}}}}' "$(step_key "$SANDBOX/old-reach-$id.yml" "$id" if)")"
+done
+
+assert_eq "the candidate step requests the prerequisite-only mode" yes \
+  "$(grep -qF -- '--mode render-candidate --repo subject' "$TEMPLATE" && echo yes || echo no)"
+assert_eq "the installer uses the trusted release selector" \
+  'classifier/.agents/skills/review-gate/scripts/install-latest.sh' "$(step_key "$TEMPLATE" kendex run)"
+assert_eq "the installer reads with the workflow token" 'github.token' "$(step_key "$TEMPLATE" kendex GITHUB_TOKEN)"
+plant "$TEMPLATE" 'run: classifier/.agents/skills/review-gate/scripts/install-latest.sh' \
+  'run: sh old-installer --version main-build-250' "$SANDBOX/old-pin.yml"
+assert_eq "must-fail: a fixed old installer loses release selection" \
+  'sh old-installer --version main-build-250' "$(step_key "$SANDBOX/old-pin.yml" kendex run)"
+
+# Execute the template's command with the real release-selection helper.
+# Only its external HTTP dependency is replaced. Each release response must
+# reach the installer's arguments, so a fixed old pin fails this assertion.
+install_root="$SANDBOX/release-selection"
+mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/review-gate/scripts" "$install_root/home"
+cp "$TEST_DIR/../../review-gate/scripts/install-latest.sh" "$install_root/classifier/.agents/skills/review-gate/scripts/"
+cat >"$install_root/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+url=""; output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  */releases/latest) jq -n --arg tag "$RELEASE_TAG" '{tag_name:$tag}' ;;
+  */commits/"$RELEASE_TAG") printf '{"sha":"0123456789abcdef0123456789abcdef01234567"}\n' ;;
+  */0123456789abcdef0123456789abcdef01234567/install.sh)
+    [ -n "$output" ] || exit 2
+    printf 'printf "%%s\\n" "$*" >"$INSTALL_RECORD"\n' >"$output" ;;
+  *) exit 2 ;;
+esac
+CURL
+chmod +x "$install_root/bin/curl"
+for release_tag in v7.8.9 v7.8.10; do
+  rm -f "$install_root/record"
+  install_body="$(step_key "$TEMPLATE" kendex run)"
+  (cd -- "$install_root" && env -i PATH="$install_root/bin:$PATH" HOME="$install_root/home" \
+    RELEASE_TAG="$release_tag" INSTALL_RECORD="$install_root/record" \
+    bash -e -o pipefail -c "$install_body") >"$install_root/log" 2>&1
+  assert_eq "the template installs the selected release $release_tag" "--version $release_tag --cli-only" \
+    "$(cat "$install_root/record")"
+done
+
+# Plant the defect in the helper: this models the old fixed-version
+# installer while preserving the production command's dependency execution.
+sed 's/--version "$version"/--version main-build-250/' \
+  "$TEST_DIR/../../review-gate/scripts/install-latest.sh" >"$install_root/classifier/.agents/skills/review-gate/scripts/install-latest.sh"
+install_body="$(step_key "$TEMPLATE" kendex run)"
+(cd -- "$install_root" && env -i PATH="$install_root/bin:$PATH" HOME="$install_root/home" \
+  RELEASE_TAG=v7.8.10 INSTALL_RECORD="$install_root/record" \
+  bash -e -o pipefail -c "$install_body") >"$install_root/log" 2>&1
+assert_eq "must-fail: a fixed old pin fails the selected-release argument assertion" \
+  '--version main-build-250 --cli-only' "$(cat "$install_root/record")"
 
 # --- Must-fail controls -----------------------------------------------------
 

@@ -22,9 +22,9 @@ use kendex_core::source::browse::{Catalog, package_safety};
 /// The kendex package with one accepted finding whose only required
 /// companion is one package, so a stub of that companion completes the
 /// closure the plan installs.
-const PACKAGE: &str = "harness-ci";
-const COMPANION: &str = "orch";
-const ACCEPTED_AT: &str = "references/wiring.md";
+const PACKAGE: &str = "review-gate";
+const COMPANION: &str = "harness-ci";
+const ACCEPTED_AT: &str = "templates/review-gate-writer.yml";
 
 const KENDEX: &str = kendex_core::manifest::DEFAULT_SOURCE_REPO;
 const FORK: &str = "someone/kendex";

@@ -41,6 +41,7 @@ jobs:
       contents: read
       actions: read
     outputs:
+      change_class: ${{ steps.classify.outputs.change_class }}
       # Whether the lanes run at all, as the action answered it: what every
       # lane condition and CI's waiver read. The classify step's `lanes:`
       # log line says why.
@@ -53,13 +54,6 @@ jobs:
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
-      # The kendex the render proof re-renders with: a published main build,
-      # whose installer is read at the same sha. Move both together, to a
-      # build whose `kendex verify --json` prints a version 1 document and
-      # whose `kendex verify` takes `--at-record`, which the classifier always
-      # passes; a build without that flag answers standard on every diff.
-      KENDEX_BUILD_SHA: 9dab3e4c2f7b95e2ff7a03915e708bd8d1629782
-      KENDEX_VERSION: main-build-250-1-9dab3e4c2f7b95e2ff7a03915e708bd8d1629782
     steps:
       - name: the classifier, from the default branch
         uses: actions/checkout@v4
@@ -73,47 +67,45 @@ jobs:
           fetch-depth: 0
           path: subject
           persist-credentials: false
-      # change-class reads kendex and the source mirror only where
-      # harness-only answers harness_only=true, so the two network steps run
-      # only there. It reads the default branch's harness-only, which the
-      # adoption pull request and its merge group do not have yet: a failure
-      # here leaves harness_only empty and both network steps skip, so the
-      # `render` class is out of reach and every other class is judged as
-      # usual, rather than failing the classifier on the one pull request
-      # that could add it.
+      # The candidate reads endpoint ownership and permits new head paths.
+      # It gates installation only; change-class must prove render to skip CI.
+      # A missing default-branch script leaves the candidate empty and runs
+      # product checks, including on the adoption pull request.
       - id: render-reach
         continue-on-error: true
         run: >-
           classifier/.agents/skills/harness-ci/scripts/harness-only
-          --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
+          --mode render-candidate --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
       # Neither network step fails this job: without them the render proof is
       # unavailable, the class falls to `standard`, and the action answers
       # `lanes` from the docs verdict alone.
       # The warning step annotates the run when either did not succeed.
       - id: kendex
         name: kendex, for the render class
-        if: steps.render-reach.outputs.harness_only == 'true'
+        if: steps.render-reach.outputs.render_candidate == 'true'
         continue-on-error: true
         timeout-minutes: 3
         shell: bash
-        run: >-
-          curl -fsSL
-          "https://raw.githubusercontent.com/vanillagreencom/kendex/$KENDEX_BUILD_SHA/install.sh"
-          | sh -s -- --version "$KENDEX_VERSION"
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ${{ github.token }}
+        # Use the latest released engine, not a build older than the refresh.
+        # The trusted helper selects a release and its exact installer commit.
+        run: classifier/.agents/skills/review-gate/scripts/install-latest.sh
       - id: mirror
         name: the source mirror the render proof re-renders from
-        if: steps.render-reach.outputs.harness_only == 'true'
+        if: steps.render-reach.outputs.render_candidate == 'true'
         continue-on-error: true
         timeout-minutes: 5
         working-directory: subject
         run: kendex source refresh
       - name: warn when the render proof lost a prerequisite
-        if: steps.render-reach.outputs.harness_only == 'true' && (steps.kendex.outcome != 'success' || steps.mirror.outcome != 'success')
+        if: steps.render-reach.outputs.render_candidate == 'true' && (steps.kendex.outcome != 'success' || steps.mirror.outcome != 'success')
         env:
           KENDEX_OUTCOME: ${{ steps.kendex.outcome }}
           MIRROR_OUTCOME: ${{ steps.mirror.outcome }}
         run: >-
-          echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME (KENDEX_VERSION=$KENDEX_VERSION)"
+          echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME"
       - id: classify
         uses: vanillagreencom/kendex/.github/actions/change-class@main
         env:

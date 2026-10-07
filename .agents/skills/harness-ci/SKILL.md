@@ -4,7 +4,7 @@ description: "Load to wire, tune, or debug a repo's changed-file CI skip."
 summary: "Classifies a CI diff as harness-only or docs-only, names its change class, and validates classifier-authorized skipped jobs in required-context aggregators."
 license: MIT
 dependencies:
-  required: [orch, commit-guards]
+  required: [orch, commit-guards, review-gate]
 user-invocable: true
 metadata:
   author: vanillagreen
@@ -32,6 +32,8 @@ Run the classifier to decide whether CI can skip product checks. Commit `.kendex
 ```
 
 Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.md). Workflow shapes to copy: [references/wiring.md](references/wiring.md).
+
+Use `--mode render-candidate` only to gate the engine installation and mirror refresh. It prints `render_candidate=true|false`, permits new head-owned paths, and grants no CI skip. `change-class` must prove render before CI skips product checks.
 
 Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
 

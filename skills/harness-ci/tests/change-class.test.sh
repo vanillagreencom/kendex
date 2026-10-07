@@ -1719,6 +1719,8 @@ else
   }
   fixture_repo() { # DIR
     git -C "$1" init -q -b main
+    git -C "$1" config gc.auto 0
+    git -C "$1" config maintenance.auto false
     git -C "$1" config user.email harness-ci@example.invalid
     git -C "$1" config user.name "harness-ci tests"
   }
@@ -1757,7 +1759,7 @@ schema = 6
 repo = "file://$catalog"
 
 [install]
-harnesses = ["claude"]
+harnesses = ["claude", "codex"]
 method = "copy"
 
 [skills.demo]
@@ -1787,7 +1789,7 @@ TOML
   rendered="$consumer/.claude/skills/demo/SKILL.md"
   assert_eq "the consumer's render is not the catalog's bytes" "differs" \
     "$(cmp -s "$rendered" "$catalog/skills/demo/SKILL.md" && echo same || echo differs)"
-  assert_eq "the install record holds both skills" "2" \
+  assert_eq "the install record holds both skills for both harnesses" "4" \
     "$(jq -r '[.entries | keys[] | select(startswith("skill:"))] | length' \
       "$consumer/.kendex-lock.json")"
   assert_eq "the render carries no tests/ and the inventory lists none" "absent 0" \
@@ -1820,11 +1822,53 @@ TOML
   assert_eq "the refresh gains the package file in its inventory" true \
     "$(git -C "$consumer" show "$consumer_base:.kendex-generated.json" | jq --slurpfile head "$consumer/.kendex-generated.json" \
       'index(".claude/skills/demo/added.md") == null and ($head[0] | index(".claude/skills/demo/added.md") != null)')"
+  assert_eq "a refresh adding an .agents render installs prerequisites" render_candidate=true \
+    "$(classify --mode render-candidate --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD)"
+  assert_eq "the new .agents render is a real rendered file in the inventory" true \
+    "$(jq 'index(".agents/skills/demo/added.md") != null' "$consumer/.kendex-generated.json")"
+  assert_verdict "default ownership gain remains fail-closed on a real refresh" false \
+    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
   assert_eq "and a record the catalog has not moved past trails nothing" "" \
     "$(printf '%s\n' "$refresh_err" | sed -n '/^render-stale: /p')"
+
+  # Optional real released executables prove the compatibility boundary.
+  # The fixture above is made by the newer engine on PATH, not by either
+  # verifier. Missing binaries never print a passing compatibility row.
+  if [ -n "${HARNESS_CI_RELEASED_KENDEX:-}" ] && [ -n "${HARNESS_CI_OLD_KENDEX:-}" ]; then
+    [ -x "$HARNESS_CI_RELEASED_KENDEX" ] && [ -x "$HARNESS_CI_OLD_KENDEX" ] || exit 1
+    release_err="$(PATH="${HARNESS_CI_RELEASED_KENDEX%/*}:$PATH" classify_stderr \
+      --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD)"
+    assert_eq "the latest release proves a newer-engine head lock and render" \
+      "class=render measured=true cause=renders-match-their-sources" \
+      "$(printf '%s\n' "$release_err" | sed -n 's/^class: //p')"
+    old_err="$(PATH="${HARNESS_CI_OLD_KENDEX%/*}:$PATH" classify_stderr \
+      --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD)"
+    assert_eq "must-fail: the fixed old build refuses that newer head lock" \
+      "class=standard measured=false cause=verify-refused verifier=path" \
+      "$(printf '%s\n' "$old_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
+  fi
+
+  # A head inventory can claim a new product file. This buys prerequisites
+  # only; the real verifier rejects the forged inventory and grants no skip.
+  git -C "$consumer" checkout -q -B claimed-product refreshed
+  mkdir -p "$consumer/runtime"
+  printf 'product configuration\n' >"$consumer/runtime/new.conf"
+  jq '. + ["runtime/new.conf"] | sort' "$consumer/.kendex-generated.json" >"$SANDBOX/claimed-inventory"
+  mv "$SANDBOX/claimed-inventory" "$consumer/.kendex-generated.json"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "claim product as generated"
+  assert_eq "a planted product claim gets prerequisites only" render_candidate=true \
+    "$(classify --mode render-candidate --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD)"
+  assert_verdict "must-fail: a planted product claim grants no direct harness waiver" false \
+    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
+  product_err="$(classify_stderr --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD)"
+  assert_eq "must-fail: the real verifier refuses the planted product claim" \
+    "class=standard measured=false cause=verify-refused verifier=path" \
+    "$(printf '%s\n' "$product_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
+  git -C "$consumer" checkout -q refreshed
 
   # The refresh that drops a package's tests/ from a consumer that a kendex
   # rendering them had written: the base carries the suite in the skill's

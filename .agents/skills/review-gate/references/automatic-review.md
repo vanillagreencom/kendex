@@ -4,6 +4,14 @@ Which pull requests draw GitHub's automatic Copilot review, and what to do when 
 
 ## What arms the reviewer
 
+For the organization refresh exception, require `.github/workflows/request-copilot-review.yml` from `vanillagreencom/kendex` through a `workflows` rule. Pin `sha` to the merged commit that holds the reviewed workflow, with `ref: refs/heads/main` and kendex's repository ID. Replace the `copilot_code_review` rule only after that commit exists. Preserve every other rule, condition and the empty bypass list. The organization owner reads and updates the ruleset with their own credential. This package changes no ruleset.
+
+Review-gate owns that central workflow in kendex's own `.github/workflows/`, beside `refresh-consumer.yml`. Consumers copy and render none of it. It requests `copilot-pull-request-reviewer[bot]` through GitHub's REST review-request endpoint for every pull request except the exact `kendex/refresh` head authored by `vanillagreen-fleet-lanes[bot]`. A failed request emits a warning and passes. GitHub's approval, stale-approval dismissal and thread-resolution rules still enforce review. The workflow also runs on merge groups without requesting another review.
+
+GitHub supports a public ruleset workflow in any repository in the organization, including private consumers. Ruleset workflows support `pull_request_target` and `merge_group`. The central workflow uses the base repository's token and executes no pull-request content. See [ruleset workflow visibility](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#using-a-workflow-file), [supported events](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules#supported-ruleset-workflow-events), [Copilot REST requests](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/copilot-code-review) and [workflows rule fields](https://docs.github.com/en/rest/orgs/rules#update-an-organization-repository-ruleset).
+
+Until the owner replaces the automatic rule, the native mechanism below still applies. Orch's waiter reads that native mechanism only; after replacement, its manual request route handles a base without a native automatic rule. Refresh approval follows orch's references/copilot-head-notices.md § Consumer refresh approval instead.
+
 | Fact | Value |
 |---|---|
 | Arming mechanism | an active branch ruleset carrying a rule of type `copilot_code_review` |

@@ -36,6 +36,8 @@ new_repo() { # NAME -> prints the repo path
   local repo="$SANDBOX/$1"
   mkdir -p "$repo" || return
   git -C "$repo" init -q -b main || return
+  git -C "$repo" config gc.auto 0 || return
+  git -C "$repo" config maintenance.auto false || return
   git -C "$repo" config user.email harness-ci@example.invalid || return
   git -C "$repo" config user.name "harness-ci tests" || return
   write_inventory "$repo" || return

@@ -1,0 +1,1 @@
+- Consumer refresh adoption requires render-based CI skips. A central workflow requests Copilot for other pull requests and warns when a request fails.

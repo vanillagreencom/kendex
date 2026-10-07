@@ -23,18 +23,6 @@ message = "`--dangerously-skip-permissions` turns off permission prompts"
 
 [[package]]
 kind = "skill"
-name = "harness-ci"
-
-[[package.file]]
-path = "references/wiring.md"
-
-[[package.file.finding]]
-rule = "rce"
-line-hash = "b2646f7c3e1017f7ad14dc8102adeee12172a7183278d46b780eba666dae2458"
-message = "this line pipes a download straight into a shell with `https://kendex.ai/install.sh`, so whatever the far end serves is what runs"
-
-[[package]]
-kind = "skill"
 name = "review-gate"
 
 [[package.file]]

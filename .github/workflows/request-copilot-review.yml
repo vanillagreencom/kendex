@@ -1,0 +1,45 @@
+# review-gate owns this central workflow. No consumer copies or renders it.
+# The organization workflows rule pins this file from vanillagreencom/kendex.
+# D078 in fleet keeps CI and GitHub's native review requirements as the gates.
+# A failed review request warns and passes: a second review-status writer can
+# leave a pull request waiting forever after its writer disappears.
+name: Request Copilot review
+
+"on":
+  pull_request_target: {}
+  merge_group: {}
+
+permissions:
+  pull-requests: write
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # pull_request_target supplies the base repository's token for forks.
+      # This workflow checks out and executes no pull-request content.
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            if (context.eventName === 'merge_group') {
+              core.info('copilot-request: skipped=merge-group');
+              return;
+            }
+            try {
+              const pr = context.payload.pull_request;
+              if (pr.head.ref === 'kendex/refresh' &&
+                  pr.user.login === 'vanillagreen-fleet-lanes[bot]' &&
+                  pr.user.type === 'Bot') {
+                core.info('copilot-request: skipped=consumer-refresh');
+                return;
+              }
+              await github.rest.pulls.requestReviewers({
+                ...context.repo,
+                pull_number: pr.number,
+                reviewers: ['copilot-pull-request-reviewer[bot]']
+              });
+              core.info(`copilot-request: requested=${pr.number}`);
+            } catch (error) {
+              core.warning(`copilot-request: unavailable status=${error.status ?? 'unknown'}: ${error.message}`);
+            }

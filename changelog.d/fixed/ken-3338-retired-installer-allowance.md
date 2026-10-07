@@ -1,0 +1,1 @@
+- Remove the safety allowance for the installer command retired from harness-ci.

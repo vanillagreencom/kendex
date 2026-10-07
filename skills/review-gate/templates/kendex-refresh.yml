@@ -6,6 +6,9 @@
 # Opening a pull request needs that repository's app token.
 # Auto-merge depends on the published head becoming visible in GitHub.
 # review-gate SKILL.md defines the arm outcomes and merge requirements.
+# Every consumer publishes change_class and waives product jobs on render.
+# The classifier's render proof remains required. Wire consumer CI through
+# harness-ci references/wiring.md, Consumer refresh CI, before adoption.
 # The instant repository_dispatch signal needs the organization's lanes app
 # and the catalog's dispatch workflow; it is organization wiring.
 name: Refresh kendex

@@ -1,0 +1,1 @@
+- The overseer approves lanes-app refresh pull requests after their render proof and CI pass, without another agent review or Copilot wait.

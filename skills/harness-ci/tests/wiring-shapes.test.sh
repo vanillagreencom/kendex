@@ -31,9 +31,10 @@ cited="$(printf '%s\n' "$blocks" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' |
 assert_eq "the shapes name the shipped script paths" \
   ".agents/skills/harness-ci/scripts/aggregate-needs
 .agents/skills/harness-ci/scripts/change-class
-.agents/skills/harness-ci/scripts/harness-only" "$cited"
-assert_eq "those paths are the scripts this package ships" "yes yes yes" \
-  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/change-class" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
+.agents/skills/harness-ci/scripts/harness-only
+.agents/skills/review-gate/scripts/install-latest.sh" "$cited"
+assert_eq "those paths are shipped by this package and its dependency" "yes yes yes yes" \
+  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/change-class" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
 
 # Pass each extracted option to the real parser. A documented unknown option
 # must produce the wiring-error status instead of being accepted by a copy of
@@ -53,18 +54,31 @@ extract_options() { # COMMAND
 }
 
 harness_parser_rejections=""
-harness_option_row_count=0
-for flag in $(extract_options scripts/harness-only); do
-  harness_option_row_count=$((harness_option_row_count + 1))
+harness_flag_probe() { # FLAG VALUE
   if "$HARNESS_ONLY" --repo "$parser_repo" --event push \
-    --base "$parser_base" --head "$parser_head" "$flag" "$probe_value" \
+    --base "$parser_base" --head "$parser_head" "$1" "$2" \
     >/dev/null 2>&1; then
     parser_status=0
   else
     parser_status=$?
   fi
   if [ "$parser_status" != 0 ]; then
-    harness_parser_rejections="$harness_parser_rejections $flag:$parser_status"
+    harness_parser_rejections="$harness_parser_rejections $1:$parser_status"
+  fi
+}
+harness_option_row_count=0
+for flag in $(extract_options scripts/harness-only); do
+  harness_option_row_count=$((harness_option_row_count + 1))
+  if [ "$flag" = --mode ]; then
+    mode_rows=0
+    while IFS= read -r mode; do
+      [ -n "$mode" ] || continue
+      mode_rows=$((mode_rows + 1))
+      harness_flag_probe "$flag" "$mode"
+    done < <(printf '%s\n' "$blocks" | awk '{ for (i=1; i<NF; i++) if ($i == "--mode") print $(i+1) }' | sort -u)
+    require_rows documented-harness-mode "$mode_rows"
+  else
+    harness_flag_probe "$flag" "$probe_value"
   fi
 done
 require_rows documented-harness-option "$harness_option_row_count"
@@ -92,8 +106,13 @@ assert_eq "the shapes pass only aggregate-needs flags its parser accepts" "" \
 # stop at the row floor. The copy omits this control to avoid nesting.
 # empty-documented-options-control:start
 if [ -z "${WIRING_SHAPES_CONTROL:-}" ]; then
-control_root="$SANDBOX/empty-documented-options"
+control_parent="$SANDBOX/empty-documented-options"
+control_root="$control_parent/harness-ci"
+mkdir -p "$control_parent"
 cp -R "$TEST_DIR/.." "$control_root"
+for sibling in orch commit-guards review-gate; do
+  cp -R "$TEST_DIR/../../$sibling" "$control_parent/$sibling"
+done
 control_script="$control_root/tests/wiring-shapes-empty-options.test.sh"
 if ! awk '
   BEGIN { in_control = 0; option_loops = 0 }

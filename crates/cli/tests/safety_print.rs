@@ -237,7 +237,7 @@ fn commit_all(upstream: &Path, message: &str) {
 }
 
 /// kendex's own repository under the fake git base at `home/git`, holding
-/// this repository's copy of `harness-ci` and a stub of `orch`, the one
+/// this repository's copy of `review-gate` and a stub of `harness-ci`, the one
 /// companion it requires; and a project under `home` declaring it.
 #[allow(clippy::unwrap_used)]
 fn kendexs_own_repository(home: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -246,13 +246,13 @@ fn kendexs_own_repository(home: &Path) -> (std::path::PathBuf, std::path::PathBu
         .join("git")
         .join(kendex_core::manifest::DEFAULT_SOURCE_REPO);
     copy_tree(
-        &repo.join("skills/harness-ci"),
-        &upstream.join("skills/harness-ci"),
+        &repo.join("skills/review-gate"),
+        &upstream.join("skills/review-gate"),
     );
-    fs::create_dir_all(upstream.join("skills/orch")).unwrap();
+    fs::create_dir_all(upstream.join("skills/harness-ci")).unwrap();
     fs::write(
-        upstream.join("skills/orch/SKILL.md"),
-        "---\nname: orch\ndescription: stands in for orch\n---\n\nA stub.\n",
+        upstream.join("skills/harness-ci/SKILL.md"),
+        "---\nname: harness-ci\ndescription: stands in for harness-ci\n---\n\nA stub.\n",
     )
     .unwrap();
     fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
@@ -263,7 +263,7 @@ fn kendexs_own_repository(home: &Path) -> (std::path::PathBuf, std::path::PathBu
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.harness-ci]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\nrepo = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.review-gate]\nsource = \"cat\"\n",
             kendex_core::manifest::DEFAULT_SOURCE_REPO
         ),
     )
@@ -312,8 +312,8 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
     let package = kendex_core::quality::Allowance::builtin()
         .packages
         .iter()
-        .find(|package| package.name == "harness-ci")
-        .unwrap_or_else(|| panic!("the compiled-in table accepts nothing in skills/harness-ci; pick another package for this case"))
+        .find(|package| package.name == "review-gate")
+        .unwrap_or_else(|| panic!("the compiled-in table accepts nothing in skills/review-gate; pick another package for this case"))
         .clone();
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
@@ -342,7 +342,7 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
 
     let printed = refresh_from_base(home, &project, true);
     assert!(
-        printed.contains("  skill harness-ci for Claude Code scores "),
+        printed.contains("  skill review-gate for Claude Code scores "),
         "{printed}"
     );
     let accepted: Vec<&str> = printed
@@ -354,7 +354,8 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
     let line_of = |file: &kendex_core::quality::AcceptedFile,
                    row: &kendex_core::quality::Accepted|
      -> usize {
-        let text = fs::read_to_string(upstream.join("skills/harness-ci").join(&file.path)).unwrap();
+        let text =
+            fs::read_to_string(upstream.join("skills/review-gate").join(&file.path)).unwrap();
         let index = text
             .lines()
             .position(|line| kendex_core::hash::hash_bytes(line.as_bytes()) == row.line_hash)
@@ -367,7 +368,7 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
         .flat_map(|file| {
             file.accepted.iter().map(move |row| {
                 format!(
-                    "    accepted in kendex's own package: {} (skills/harness-ci/{}:{})",
+                    "    accepted in kendex's own package: {} (skills/review-gate/{}:{})",
                     row.message,
                     file.path,
                     line_of(file, row)
@@ -382,7 +383,7 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
     // back.
     let edited = &package.files[0];
     let index = line_of(edited, &edited.accepted[0]) - 1;
-    let path = upstream.join("skills/harness-ci").join(&edited.path);
+    let path = upstream.join("skills/review-gate").join(&edited.path);
     let text = fs::read_to_string(&path).unwrap();
     let lines: Vec<String> = text
         .lines()
