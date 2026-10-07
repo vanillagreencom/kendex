@@ -15,10 +15,12 @@ use std::fs;
 
 use kendex_core::attest::{Document, State};
 use kendex_core::drift::report::Remedy;
+use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
 use super::verify_records::{
-    INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, world, write,
+    INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, verify_scope,
+    world, write,
 };
 
 /// One `--at-record` run of the project scope, with the document it
@@ -77,6 +79,26 @@ fn append(world: &World, path: &str, text: &str) {
     write(&path, &format!("{before}{text}"));
 }
 
+/// The same source-backed packages installed globally, with a separate
+/// record and renders from the project's copies.
+fn install_global(world: &World) -> Env {
+    let env = Env::host_rooted(&world.home);
+    write(
+        &env.global_manifest_file(),
+        &format!(
+            "schema = 6\n[sources.cat]\nrepo = \"file://{}\"\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.second]\nsource = \"cat\"\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            world.catalog.display(),
+        ),
+    );
+    let output = kendex(
+        &world.home,
+        &world.project,
+        &["apply", "-y", "--leave", "--scope", "global"],
+    );
+    assert!(output.status.success(), "{}", said(&output));
+    env
+}
+
 /// A catalog that moved on past the install, a skill and a Pi extension
 /// both changed, stales the plain verify, while the same record weighed
 /// at its own commits is clean and lists every source commit it trails.
@@ -88,6 +110,7 @@ fn append(world: &World, path: &str, text: &str) {
 #[allow(clippy::unwrap_used)]
 fn at_record_weighs_a_record_the_source_moved_past_on_its_own_commits() {
     let world = world();
+    install_global(&world);
     let (current, document) = at_record(&world, None);
     assert!(current.status.success(), "{}", said(&current));
     assert_eq!(trails(&document), Vec::new(), "{document:?}");
@@ -115,10 +138,15 @@ fn at_record_weighs_a_record_the_source_moved_past_on_its_own_commits() {
 
     let (plain, plain_document) = verify(&world, None);
     assert!(!plain.status.success(), "{}", said(&plain));
-    assert_eq!(plain_document.version, 2);
+    assert_eq!(plain_document.version, 1);
     let stale = row(&plain_document, "skill", "second", Some(HarnessId::Claude)).unwrap();
     assert_eq!(stale.state, State::Failed);
     assert_eq!(stale.remedy, Some(Remedy::Refresh { global: false }));
+    let (global, global_document) = verify_scope(&world, "global", None);
+    assert!(!global.status.success(), "{}", said(&global));
+    let stale = row(&global_document, "skill", "second", Some(HarnessId::Claude)).unwrap();
+    assert_eq!(stale.state, State::Failed);
+    assert_eq!(stale.remedy, Some(Remedy::Refresh { global: true }));
     let (held, document) = at_record(&world, None);
     assert!(held.status.success(), "{}", said(&held));
     assert_eq!(
@@ -292,27 +320,78 @@ fn at_record_refuses_a_record_older_than_the_base_record() {
 #[allow(clippy::unwrap_used)]
 fn head_record_failures_carry_a_scoped_refresh_remedy() {
     let world = world();
-    for path in [
-        vec!["entries", "skill:second:claude", "sourceCommit"],
-        vec!["sources", "cat", "commit"],
-        vec!["bundles", "starter", "commit"],
-        vec!["entries", "skill:second:claude", "sourceHash"],
-        vec!["entries", "skill:second:claude", "renderedHash"],
+    let env = install_global(&world);
+    for (scope, record_path, global) in [
+        ("project", world.project.join(RECORD), false),
+        ("global", env.global_lock_file(), true),
     ] {
-        git(&world.project, &["checkout", "-q", "--", RECORD]);
-        edit_json(&world.project.join(RECORD), |lock| {
-            let value = path.iter().fold(lock, |value, key| &mut value[*key]);
-            *value = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
-        });
-        let (output, document) = verify(&world, None);
-        assert!(!output.status.success(), "{}", said(&output));
-        let record = row(&document, "record", RECORD, None).unwrap();
-        assert_eq!(record.state, State::Failed, "{path:?}");
-        assert_eq!(
-            record.remedy,
-            Some(Remedy::Refresh { global: false }),
-            "{path:?}"
-        );
+        let original = fs::read_to_string(&record_path).unwrap();
+        for path in [
+            vec!["entries", "skill:second:claude", "sourceCommit"],
+            vec!["sources", "cat", "commit"],
+            vec!["bundles", "starter", "commit"],
+            vec!["entries", "skill:second:claude", "sourceHash"],
+            vec!["entries", "skill:second:claude", "renderedHash"],
+        ] {
+            write(&record_path, &original);
+            edit_json(&record_path, |lock| {
+                let value = path.iter().fold(lock, |value, key| &mut value[*key]);
+                *value = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+            });
+            let (output, document) = verify_scope(&world, scope, None);
+            assert!(!output.status.success(), "{}", said(&output));
+            let record = document
+                .rows
+                .iter()
+                .find(|row| row.kind == "record")
+                .unwrap();
+            assert_eq!(record.state, State::Failed, "{path:?}");
+            assert_eq!(
+                record.remedy,
+                Some(Remedy::Refresh { global }),
+                "{scope}: {path:?}"
+            );
+        }
+        write(&record_path, &original);
+    }
+}
+
+/// A removed declaration permits refresh to remove an unchanged copy.
+/// A person-edited copy stays in place and carries no refresh action.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removed_packages_carry_refresh_only_for_unedited_copies() {
+    let world = world();
+    let env = install_global(&world);
+    let declaration = "[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
+    for (scope, manifest, installed, global) in [
+        (
+            "project",
+            world.project.join("kendex.toml"),
+            world.project.join(".claude/agents/review.md"),
+            false,
+        ),
+        (
+            "global",
+            env.global_manifest_file(),
+            world.home.join(".claude/agents/review.md"),
+            true,
+        ),
+    ] {
+        let before = fs::read_to_string(&manifest).unwrap();
+        assert_eq!(before.matches(declaration).count(), 1);
+        write(&manifest, &before.replace(declaration, ""));
+        let original = fs::read_to_string(&installed).unwrap();
+        for (edited, expected) in [(false, Some(Remedy::Refresh { global })), (true, None)] {
+            if edited {
+                write(&installed, &format!("{original}\nPersonal edit.\n"));
+            }
+            let (output, document) = verify_scope(&world, scope, None);
+            assert!(!output.status.success(), "{}", said(&output));
+            let removed = row(&document, "agent", "review", Some(HarnessId::Claude)).unwrap();
+            assert_eq!(removed.state, State::Failed, "{scope}: edited={edited}");
+            assert_eq!(removed.remedy, expected, "{scope}: edited={edited}");
+        }
     }
 }
 
