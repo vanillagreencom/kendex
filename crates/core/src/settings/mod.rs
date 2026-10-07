@@ -440,26 +440,44 @@ pub(crate) mod tests {
     /// here opens its own lock fd — distinct file descriptions conflict
     /// under the OS lock exactly the way two processes do, so this is the
     /// cross-process interleaving, not just the thread-pool one.
+    /// `SettingsBusy` is the lock's refusal of a wait past `LOCK_WAIT`, which
+    /// a loaded runner can reach without any update being lost, so a refused
+    /// writer tries again; the claim is only that no entry goes missing.
     #[test]
     fn overlapping_mutates_all_survive() {
+        const WRITERS: usize = 8;
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
-        let writers: Vec<_> = (0..8)
+        let start = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
+        let writers: Vec<_> = (0..WRITERS)
             .map(|n| {
                 let env = env.clone();
+                let start = start.clone();
                 std::thread::spawn(move || {
-                    mutate(&env, |settings| {
-                        settings.projects.push(PathBuf::from(format!("/p{n}")));
-                        Ok(())
-                    })
-                    .unwrap();
+                    start.wait();
+                    loop {
+                        match mutate(&env, |settings| {
+                            settings.projects.push(PathBuf::from(format!("/p{n}")));
+                            Ok(())
+                        }) {
+                            Ok(_) => break,
+                            Err(CoreError::SettingsBusy { .. }) => continue,
+                            Err(error) => panic!("mutate failed: {error}"),
+                        }
+                    }
                 })
             })
             .collect();
         for writer in writers {
             writer.join().unwrap();
         }
-        assert_eq!(load(&env).unwrap().projects.len(), 8);
+        let projects = load(&env).unwrap().projects;
+        for n in 0..WRITERS {
+            assert!(
+                projects.contains(&PathBuf::from(format!("/p{n}"))),
+                "/p{n} lost"
+            );
+        }
     }
 
     /// A holder that never lets go turns into a loud refusal, not a hang.
