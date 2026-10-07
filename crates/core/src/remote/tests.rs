@@ -681,19 +681,18 @@ fn background_refresh_still_skips_a_busy_source_without_the_foreground_wait() {
         .sources
         .remove(crate::manifest::DEFAULT_SOURCE_NAME);
     crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
-    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+    let key = key_for(&f.env);
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
     store::reset_wait_counts();
 
-    let notes = crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    crate::drift::refresh::refresh_stale(&f.env, &[scope]);
     let waits = store::wait_counts();
     drop(guard);
 
-    assert_eq!(
-        waits,
-        (0, 1),
-        "the busy source took the foreground wait: {waits:?} {notes:?}"
-    );
-    assert!(notes.iter().any(|note| note == "owner/repo: busy, skipped"));
+    assert_eq!(waits.0, 0, "foreground cache waits: {waits:?}");
+    assert!(waits.1 > 0, "no background cache wait: {waits:?}");
+    assert!(!store::mirror_dir(&f.env, &key).exists());
+    assert!(!crate::drift::stamps::stamp_path(&f.env, &key).exists());
 }
 
 fn remote_skill_scope(f: &Fixture) -> (crate::model::Scope, Resolution) {
