@@ -46,6 +46,69 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
 # deletes it.
 hosted_refresh() { local f="$RUN/remote/srv/clone/.git/worktrees/lane/lane-refresh"; [[ -f "$f" ]] && printf '[%s]' "$(cat "$f")" || printf none; }
 assert_eq "refresh=$(hosted_refresh)" "refresh=[]" "a hosted launch without --lane-refresh empties the refresh record"
+
+# A cloud session pushes its branch without making a fleet sandbox. The
+# provider models that first landing sandbox with a real origin-only branch;
+# only the relaunch authority permits it to adopt the pushed work.
+LANDING_ORIGIN="$TMP_ROOT/landing-origin"
+git init -q --bare "$LANDING_ORIGIN" || exit 1
+git -C "$LANDING_ORIGIN" config gc.auto 0 || exit 1
+git -C "$LANDING_ORIGIN" config maintenance.auto false || exit 1
+git init -q "$TMP_ROOT/cloud-source" || exit 1
+git -C "$TMP_ROOT/cloud-source" config gc.auto 0 || exit 1
+git -C "$TMP_ROOT/cloud-source" config maintenance.auto false || exit 1
+git -C "$TMP_ROOT/cloud-source" -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m base || exit 1
+git -C "$TMP_ROOT/cloud-source" branch -M main || exit 1
+git -C "$TMP_ROOT/cloud-source" remote add origin "$LANDING_ORIGIN" || exit 1
+git -C "$TMP_ROOT/cloud-source" push -q origin main || exit 1
+git -C "$TMP_ROOT/cloud-source" checkout -q -b ken-3276 || exit 1
+git -C "$TMP_ROOT/cloud-source" -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m cloud-work || exit 1
+git -C "$TMP_ROOT/cloud-source" push -q origin ken-3276 || exit 1
+LANDING_HEAD="$(git -C "$TMP_ROOT/cloud-source" rev-parse HEAD)" || exit 1
+LANDING_PROVIDER="$TMP_ROOT/landing-provider"
+cat > "$LANDING_PROVIDER" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == create ]]; then
+  clone="$LANE_HOST_STUB_DIR/landing-clone"
+  tree="$LANE_HOST_STUB_DIR/landing-tree"
+  [[ ! -e "$clone" && ! -e "$tree" ]] || exit 1
+  git clone -q --single-branch --branch main "$LANDING_ORIGIN" "$clone"
+  git -C "$clone" config gc.auto 0
+  git -C "$clone" config maintenance.auto false
+  local_rc=0
+  git -C "$clone" show-ref --verify --quiet refs/heads/ken-3276 || local_rc=$?
+  [[ "$local_rc" -eq 1 ]] || exit 1
+  remote="$(git -C "$clone" ls-remote --heads origin refs/heads/ken-3276)"
+  [[ -n "$remote" ]] || exit 1
+  [[ " $* " == *' --relaunch '* ]] || exit 75
+  git -C "$clone" fetch -q origin refs/heads/ken-3276:refs/remotes/origin/ken-3276
+  git -C "$clone" worktree add -q -b ken-3276 "$tree" origin/ken-3276
+fi
+exec "$LANDING_STUB" "$@"
+STUB
+chmod +x "$LANDING_PROVIDER" || exit 1
+printf '/orch merge-pr 4296\n' > "$TMP_ROOT/landing-brief"
+LANDING_ENV="ORCH_LANE_ALIASES=eclaude=work;LANDING_ORIGIN=$LANDING_ORIGIN;LANDING_STUB=$HOST_STUB;cmd=true --model opus --effort high {brief}"
+run_ot "$LANDING_ENV" --host "$LANDING_PROVIDER" --harness claude --lane work --repo o/r --relaunch --brief-file "$TMP_ROOT/landing-brief" KEN-3276
+assert_eq "$(observe 'rc=0 creates=nolog launched=1')" "rc=0 creates=nolog launched=1" \
+  "a hosted landing relaunch admits an origin-only branch without an earlier sandbox"
+LANDING_BRANCH="$(git -C "$RUN/remote/landing-tree" branch --show-current)" || exit 1
+LANDED_HEAD="$(git -C "$RUN/remote/landing-tree" rev-parse HEAD)" || exit 1
+assert_eq "$LANDING_BRANCH $LANDED_HEAD" "ken-3276 $LANDING_HEAD" \
+  "the hosted provider adopts the cloud session's pushed branch and head"
+assert_contains "$(host_call)" 'create,--item,KEN-3276,--repo,o/r,--harness,claude,--account,eclaude,--relaunch' \
+  "the landing provider receives the relaunch authority for the same item"
+LANDING_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-landing-authority/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-landing-authority/orch"
+mutate_file "$OPEN_TERMINAL" '[[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)' '[[ "$RELAUNCH" != true ]] || :'
+run_ot "$LANDING_ENV" --host "$LANDING_PROVIDER" --harness claude --lane work --repo o/r --relaunch --brief-file "$TMP_ROOT/landing-brief" KEN-3276
+assert_eq "$(observe 'rc=75 creates=nolog launched=nolog') tree=$([[ -e "$RUN/remote/landing-tree" ]] && echo present || echo absent)" \
+  "rc=75 creates=nolog launched=nolog tree=absent" \
+  "control: removing hosted relaunch authority refuses the origin-only landing before a window opens"
+OPEN_TERMINAL="$LANDING_SHIPPED"
+
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r --lane-refresh KEN-40
 assert_eq "rc=$RC refresh=$(hosted_refresh)" "rc=0 refresh=[/srv/lane]" "a hosted --lane-refresh launch puts the lane's root in the refresh record"
 # Q is how single_quote renders one quote of the continuation line inside the

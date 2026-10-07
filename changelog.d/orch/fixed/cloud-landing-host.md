@@ -1,0 +1,1 @@
+- Cloud sessions launch their landing lanes on the fleet host, keeping merge work off the control host.
