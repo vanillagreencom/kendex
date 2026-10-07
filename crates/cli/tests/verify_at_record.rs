@@ -19,22 +19,18 @@ use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
 use super::verify_records::{
-    INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, verify_scope,
-    world, write,
+    INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, verify_output,
+    verify_scope, world, write,
 };
 
 /// One `--at-record` run of the project scope, with the document it
 /// printed.
-#[allow(clippy::unwrap_used)]
 fn at_record(world: &World, base: Option<&str>) -> (std::process::Output, Document) {
     let mut args = vec!["verify", "--scope", "project", "--json", "--at-record"];
     if let Some(base) = base {
         args.extend(["--base", base]);
     }
-    let output = kendex(&world.home, &world.project, &args);
-    let document: Document = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("the document does not parse: {error}\n{}", said(&output)));
-    (output, document)
+    verify_output(kendex(&world.home, &world.project, &args))
 }
 
 /// One edit to the record's JSON.

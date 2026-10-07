@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use kendex_core::attest::{Document, Foreign, Row, State};
+use kendex_core::drift::report::Remedy;
 use kendex_core::engine::Owns;
 use kendex_core::env::Env;
 use kendex_core::lock::LOCK_VERSION;
@@ -262,15 +263,38 @@ pub(crate) fn verify_scope(world: &World, scope: &str, base: Option<&str>) -> (O
 }
 
 /// One verify run of `scope` from `cwd`, with the document it printed.
-#[allow(clippy::unwrap_used)]
 fn verify_from(home: &Path, cwd: &Path, scope: &str, base: Option<&str>) -> (Output, Document) {
     let mut args = vec!["verify", "--scope", scope, "--json"];
     if let Some(base) = base {
         args.extend(["--base", base]);
     }
-    let output = kendex(home, cwd, &args);
+    verify_output(kendex(home, cwd, &args))
+}
+
+/// The CLI's plain remedy data must carry every action in its document,
+/// including duplicates, and no action for rows without a remedy.
+#[allow(clippy::unwrap_used)]
+pub(crate) fn verify_output(output: Output) -> (Output, Document) {
     let document: Document = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("the document does not parse: {error}\n{}", said(&output)));
+    let stderr = std::str::from_utf8(&output.stderr).unwrap();
+    let remedies: Vec<Remedy> = stderr
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("remedy: "))
+        .map(|data| {
+            serde_json::from_str(data)
+                .unwrap_or_else(|error| panic!("the remedy data does not parse: {error}"))
+        })
+        .collect();
+    let expected: Vec<Remedy> = document
+        .rows
+        .iter()
+        .filter_map(|row| row.remedy.clone())
+        .collect();
+    assert_eq!(
+        remedies, expected,
+        "human action data differs from the document"
+    );
     (output, document)
 }
 
