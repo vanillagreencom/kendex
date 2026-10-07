@@ -511,10 +511,10 @@ Options:
                     The model also gates the lane, which is judged on that
                     model's own window rather than the account's binding one.
                     Every codex command built here, fresh launch, relaunch
-                    and wake alike, also carries -c
-                    check_for_update_on_startup=false ahead of these flags,
-                    so Codex never opens its startup update prompt, where a
-                    pasted line would install the update and end the session.
+                    and wake alike, carries its launch-only settings from
+                    lib/lane-launch.sh ahead of these flags: no startup update
+                    prompt, no shared background server warning, and enabled
+                    hooks run without a persisted trust entry.
                     Every copilot command built here carries --autopilot
                     --max-autopilot-continues 3 ahead of these flags, so a
                     turn that stops short is continued with nobody at the

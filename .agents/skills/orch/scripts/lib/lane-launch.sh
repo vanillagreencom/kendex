@@ -154,7 +154,14 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 # one exists; the first paste a lane receives then answers that prompt, installs
 # the update and exits the session. `check_for_update_on_startup=false` is the
 # key the Codex config reference names for centrally managed installs, passed
-# per launch so no installed config is edited. The ninth is the words that take
+# per launch so no installed config is edited. `features.daemon_auto_start=false`
+# keeps these embedded launches from warning about the shared background server;
+# `-c` also accepts an unknown feature on older Codex builds.
+# `--dangerously-bypass-hook-trust`, documented at
+# https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks, replaces the
+# per-hook `trusted_hash` entries the local route cannot keep current.
+# These settings ride local and hosted commands and overseer successions.
+# The ninth is the words that take
 # the harness question tool away, written as they stand, and `-` where this
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
@@ -241,7 +248,7 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 #             clarifying question the CLI otherwise asks at the pane.
 LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false;-c features.daemon_auto_start=false;--dangerously-bypass-hook-trust|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
   'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3;--context long_context;--no-auto-update|--no-ask-user|-'

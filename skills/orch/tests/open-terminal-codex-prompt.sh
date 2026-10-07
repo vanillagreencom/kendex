@@ -25,7 +25,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # The words every codex command leads with, quoted per token as start_cmd
 # quotes each flag: the launch-only setting that keeps Codex off its startup
 # update prompt, then the feature switch that keeps its question tool away.
-CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false'"
+CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false'"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"

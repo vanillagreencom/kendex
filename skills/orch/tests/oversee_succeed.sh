@@ -545,7 +545,7 @@ CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 CODEX_LAUNCH_HOME="$(lane_codex_home_path "$H/.codex" "$CALLER_CWD")"
 run_succeed walled 'claude:fable:high,codex:gpt-6-astra:high' -- --dangerously-skip-permissions
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
-  "0|0 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted" \
+  "0|0 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;-c;features.daemon_auto_start=false;--dangerously-bypass-hook-trust;$CODEX_COMPACT;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted" \
   "walled claude entry: codex entry picked, under a home that trusts the caller directory"
 # The account and the private home that launch ran under are two fields: the
 # account is what a judgement measures, the home what the account variable
@@ -593,7 +593,7 @@ for row in \
   # shellcheck disable=SC2086  # a row's words are its own, split on purpose.
   QUESTION_TOOL="$row_value" run_succeed "stripflags$row_value" 'codex:gpt-6-astra:high' -- --model fable --effort high --dangerously-skip-permissions $row_words
   assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-    "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT$row_tail;$BRIEF;" \
+    "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;-c;features.daemon_auto_start=false;--dangerously-bypass-hook-trust;$CODEX_COMPACT$row_tail;$BRIEF;" \
     "$row_what"
 done
 
@@ -614,7 +614,7 @@ new_caller "$CODEX_SCREEN" 'Context 48% left'
 codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-to-claude 'claude:fable:high' -- \
-  -c check_for_update_on_startup=false -m caller-model -c model_reasoning_effort=high \
+  -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -m caller-model -c model_reasoning_effort=high \
   --dangerously-bypass-approvals-and-sandbox --verbose
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
@@ -630,7 +630,7 @@ ALT_HOME="$(lane_codex_home_path "$H/.codex" "$ALT_CWD")"
 CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude" run_succeed alternate-bypass 'codex:gpt-6-astra:high' -- \
   --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;$BRIEF;" \
+  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;-c;features.daemon_auto_start=false;--dangerously-bypass-hook-trust;$CODEX_COMPACT;$BRIEF;" \
   "an alternate claude full-bypass spelling transfers to codex, and no other caller word does"
 
 # Permission modes without exact full-bypass equivalence skip the cross-harness
@@ -1975,7 +1975,7 @@ PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
   "control: a print that skips the preparation records the bare account, not the prepared home"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
@@ -1989,7 +1989,7 @@ for row in \
   IFS='|' read -r row_lane row_what <<<"$row"
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
-  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
+  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
     "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
 done
 # A codex caller launched by this script already runs with the startup update
@@ -1997,8 +1997,8 @@ done
 # the setting once, where the successor build writes it.
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
-  --verbose -c check_for_update_on_startup=false
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
+  --verbose -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
   "a codex caller entry carrying the update setting keeps it exactly once"
 
 # A codex caller is judged on the window its own rollout names, like any other.
@@ -2031,7 +2031,7 @@ for row in \
   "claude|overseer||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|overseer keeps the claude question tool" \
   "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|overseer drops the caller's own question-tool words" \
   "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
-  "codex|off||0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|on||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=on|on is not a value: refused before a line is built" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=sometimes|a value that is neither off nor overseer refuses" \
   ; do

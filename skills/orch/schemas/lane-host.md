@@ -68,6 +68,8 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 
 ## Codex hook approval
 
+Every Codex command the launcher builds carries `--dangerously-bypass-hook-trust` from `scripts/lib/lane-launch.sh`, so enabled hooks need no persisted approval for that invocation on either route; a provider may still place its account's `hooks.state` entries as below.
+
 A provider that places Codex hook approval writes one `hooks.state` entry in the account's `config.toml` per `command` handler and per `mcp_tool` handler outside `session_end`; `prompt` and `agent` handlers, and `mcp_tool` handlers on `session_end`, get no entry. An entry whose `trusted_hash` differs from the value Codex computes leaves the hook unapproved.
 
 | Item | Value |

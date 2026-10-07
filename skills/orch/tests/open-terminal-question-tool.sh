@@ -86,6 +86,7 @@ OT="$REPO/scripts/open-terminal"
 launch() {
   local item="$1" cap="$TMP_ROOT/cap-$1"
   shift
+  [[ ! -e "$cap" ]] || rm -- "$cap"
   RC=0
   env "${LAUNCH_ENV[@]}" OT_CAPTURE="$cap" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" \
     "$OT" --ghostty "$@" "$item" >/dev/null 2>"$TMP_ROOT/err-$item" || RC=$?
@@ -117,7 +118,7 @@ for row in \
   "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-5-5' '/orch start CC-8 $UNATTENDED_TEXT'|a claude alias is written as its model id, whose window turns its compaction off" \
   "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=claude-sonnet-5-5' '/orch start CC-10 $UNATTENDED_TEXT'|the attached form of a claude alias is written as its model id too" \
   "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7 $UNATTENDED_TEXT'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
-  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2. $UNATTENDED_TEXT'|codex disables the request_user_input feature after its update and compaction settings" \
+  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2. $UNATTENDED_TEXT'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
   "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
   "opencode|-|CC-4|opencode --prompt '/orch start CC-4 $UNATTENDED_TEXT'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
@@ -132,6 +133,12 @@ for row in \
   fi
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
+  case "$harness:$item" in
+    codex:CC-2) CODEX_WANT="$want" ;;
+    claude:CC-1) CLAUDE_WANT="$want" ;;
+    pi:CC-3) PI_WANT="$want" ;;
+    opencode:CC-4) OPENCODE_WANT="$want" ;;
+  esac
 done
 
 echo "=== a --cmd launch that leaves the question tool on is refused ==="
@@ -197,12 +204,44 @@ lead_control() { # OLD NEW...
   cp "$SCRIPTS_DIR/lib/lane-launch.sh" "$REPO/scripts/lib/lane-launch.sh"
   while (( $# )); do
     assert_eq "$(grep -c -F -e "$1" "$REPO/scripts/lib/lane-launch.sh")" 1 "control finds its one site"
+    [[ "$(grep -c -F -e "$1" "$REPO/scripts/lib/lane-launch.sh")" -eq 1 && "$1" != "$2" ]] || exit 1
     perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/' "$1" "$2" "$REPO/scripts/lib/lane-launch.sh"
     shift 2
   done
 }
 SETTINGS="'--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' "
 QUESTION="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
+# The same command assertion above must reject each missing Codex setting and
+# a Codex-only hook flag in another harness. Mutations keep the row intact.
+CODEX_ROW="$(sed -n "/^  'codex|/p" "$SCRIPTS_DIR/lib/lane-launch.sh")"
+for word in '-c features.daemon_auto_start=false;' ';--dangerously-bypass-hook-trust'; do
+  lead_control "$CODEX_ROW" "${CODEX_ROW/"$word"/}"
+  launch CC-2 --harness codex
+  assert_eq "$RC" 0 "control: the Codex launch reaches command construction"
+  missing="${word//;/}"
+  assert_not_contains "$CMD" "${missing#-c }" "control: the setting was removed from the Codex command"
+  if (FAIL=0; assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$CODEX_WANT" 'render control'; [[ "$FAIL" -eq 0 ]]) >"$TMP_ROOT/launch-control.out"; then
+    fail "control: removing $word must fail the Codex command assertion"
+  else
+    pass "control: removing $word fails the Codex command assertion"
+  fi
+done
+for row in "claude|CC-1|$CLAUDE_WANT" "pi|CC-3|$PI_WANT" "opencode|CC-4|$OPENCODE_WANT"; do
+  IFS='|' read -r harness item want <<<"$row"
+  source_row="$(sed -n "/^  '$harness|/p" "$SCRIPTS_DIR/lib/lane-launch.sh")"
+  IFS='|' read -r name model effort separator carrier permissions bypass settings question compaction <<<"$source_row"
+  settings='--dangerously-bypass-hook-trust'
+  mutated="$name|$model|$effort|$separator|$carrier|$permissions|$bypass|$settings|$question|$compaction"
+  lead_control "$source_row" "$mutated"
+  launch "$item" --harness "$harness"
+  assert_eq "$RC" 0 "control: the $harness launch reaches command construction"
+  assert_contains "$CMD" '--dangerously-bypass-hook-trust' "control: the hook flag reaches the $harness command"
+  if (FAIL=0; assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" 'render control'; [[ "$FAIL" -eq 0 ]]) >"$TMP_ROOT/launch-control.out"; then
+    fail "control: the hook flag in $harness must fail the command assertion"
+  else
+    pass "control: the hook flag in $harness fails the command assertion"
+  fi
+done
 # No rewrite at all: the id is judged and the bare alias written.
 lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
 launch CC-9 --harness claude --launch-flags '--model sonnet'

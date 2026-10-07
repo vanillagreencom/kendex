@@ -412,9 +412,10 @@
 #                    preparation of step 4, because the pane that replays it is
 #                    as unattended as the one a live succession opens, and the
 #                    home that trust was made in is part of the line. It also
-#                    carries -c check_for_update_on_startup=false once, ahead of
-#                    the flags after --, so the replayed pane never opens on the
-#                    Codex update prompt.
+#                    carries the launch-only settings from lib/lane-launch.sh
+#                    once, ahead of the flags after --: no Codex update prompt,
+#                    no shared background server warning, and enabled hooks run
+#                    without a persisted trust entry.
 #                    Exit 0 with the line on stdout
 #   --dead-pane PANE The tmux pane of an overseer that has already died, in
 #                    place of the caller's own: no mark is judged, no lane is

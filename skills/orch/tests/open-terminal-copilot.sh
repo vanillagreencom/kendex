@@ -151,8 +151,23 @@ launch linear --harness copilot --launch-flags "$FLAGS" cc-737
 assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737. $UNATTENDED'" \
   "linear:copilot emits the prose kickoff after its launch settings, question-off word and flags, under its launch environment and the pane's own account"
 assert_not_contains "$CMD" '$' "the linear:copilot command contains no \$"
+assert_not_contains "$CMD" '--dangerously-bypass-hook-trust' "a Copilot launch carries no Codex hook flag"
 assert_eq "$(grep -c '^open-terminal: launch-trusted .*route=allow-all-env' <<<"$OUT" || true)" "1" \
   "an allow-all launch reports its folder trusted through COPILOT_ALLOW_ALL"
+
+COPILOT_ROW="$(sed -n "/^  'copilot|/p" "$REPO/scripts/lib/lane-launch.sh")"
+COPILOT_MUTATED="${COPILOT_ROW/;--no-auto-update/;--no-auto-update;--dangerously-bypass-hook-trust}"
+assert_eq "$(grep -c -F -e "$COPILOT_ROW" "$REPO/scripts/lib/lane-launch.sh")" 1 "control finds the Copilot row once"
+[[ "$COPILOT_ROW" != "$COPILOT_MUTATED" ]] || { echo 'copilot control made no change' >&2; exit 1; }
+perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/' "$COPILOT_ROW" "$COPILOT_MUTATED" "$REPO/scripts/lib/lane-launch.sh"
+launch hook-control --harness copilot --launch-flags "$FLAGS" cc-737
+assert_contains "$CMD" '--dangerously-bypass-hook-trust' "control: the hook flag reaches the Copilot command"
+if (FAIL=0; assert_not_contains "$CMD" '--dangerously-bypass-hook-trust' 'Copilot hook flag control'; [[ "$FAIL" -eq 0 ]]) >"$TMP_ROOT/hook-control.out"; then
+  fail "control: the hook flag in Copilot must fail the command assertion"
+else
+  pass "control: the hook flag in Copilot fails the command assertion"
+fi
+cp "$SCRIPTS_DIR/lib/lane-launch.sh" "$REPO/scripts/lib/lane-launch.sh"
 launch github --tracker github --repo acme/widgets --harness copilot --launch-flags "$FLAGS" 42
 assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42. $UNATTENDED'" \
   "github:copilot emits the same kickoff carrying repo#item"
