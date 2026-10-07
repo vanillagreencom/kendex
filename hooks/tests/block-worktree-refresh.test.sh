@@ -531,6 +531,10 @@ an expansion that may be --project-path proves no target in a worktree that owns
 and for updates --apply|payload|own|2|block-worktree-refresh: unproven=updates|kendex updates --apply \$ARGS
 and for a target cut out of the words|payload|own|2|block-worktree-refresh: unproven=refresh|kendex refresh \$(printf %s --project-path) $MAIN
 a verb with no --project-path form is not unsure of its target|payload|own|0|-|kendex add \$NAME
+a literal double quote inside a single-quoted target is part of the path, so the target is unproven|payload|own|2|block-worktree-refresh: unproven=apply|kendex apply --project-path '$MAIN"x'
+and in the equals form|payload|own|2|block-worktree-refresh: unproven=apply|kendex apply '--project-path=$MAIN"x'
+an apostrophe inside a double-quoted target is the same|payload|own|2|block-worktree-refresh: unproven=updates|kendex updates --apply --project-path "$MAIN'x"
+and in the equals form|payload|own|2|block-worktree-refresh: unproven=updates|kendex updates --apply "--project-path=$MAIN'x"
 a relative target is resolved from the working directory|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path ../main
 an absolute target after a cd is still read from the words|payload|own|2|block-worktree-refresh: shared=refresh|cd $OWN && kendex refresh --project-path $MAIN
 a relative target after a cd resolves against a directory the words do not establish|payload|own|2|block-worktree-refresh: unproven=refresh|cd $OWN && kendex refresh --project-path .

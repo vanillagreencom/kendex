@@ -455,7 +455,7 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
 # unsure word anywhere in the segment withdraws it, since that word may be
 # the `--` that turns a later `--help` into a positional.
 read_options() { # TAIL SEGMENT -> ARG_SCOPE, ARG_TARGET, ARG_PATH, ARG_UNSURE, ARG_APPLY, ARG_READ
-  local rest=$1 word next head value="" operand="" unsure=""
+  local rest=$1 word next head value="" operand="" unsure="" mixed
   ARG_SCOPE=unnamed
   ARG_TARGET=""
   ARG_PATH=""
@@ -520,11 +520,19 @@ read_options() { # TAIL SEGMENT -> ARG_SCOPE, ARG_TARGET, ARG_PATH, ARG_UNSURE, 
         continue
         ;;
     esac
+    # Taking every quote off is the shell's removal only where one kind
+    # quotes the word: inside the other kind a quote is a literal, so a
+    # word holding both spells a path this reading would alter, and it
+    # proves no target.
+    mixed=""
+    case "$word" in
+      *\"*\'* | *\'*\"*) mixed=1 ;;
+    esac
     word=${word//[\"\']/}
     case "$value:$word" in
       scope:global) [ "$ARG_SCOPE" = project ] || ARG_SCOPE=global ;;
       scope:*) ARG_SCOPE=project ;;
-      target:*) ARG_PATH=$word ;;
+      target:*) [ -n "$mixed" ] || ARG_PATH=$word ;;
       :--) break ;;
       :-g | :--global) [ "$ARG_SCOPE" = project ] || ARG_SCOPE=global ;;
       :--scope) value=scope; continue ;;
@@ -539,7 +547,7 @@ read_options() { # TAIL SEGMENT -> ARG_SCOPE, ARG_TARGET, ARG_PATH, ARG_UNSURE, 
       :--project-path=*)
         # A quoted word reaches here only once its quotes are off.
         [ -n "$unsure" ] || ARG_TARGET=1
-        ARG_PATH=${word#--project-path=}
+        [ -n "$mixed" ] || ARG_PATH=${word#--project-path=}
         ;;
       :--apply) ARG_APPLY=1 ;;
       :--help | :-h | :--plan) ARG_READ=1 ;;
