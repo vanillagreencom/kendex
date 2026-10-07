@@ -406,7 +406,7 @@ diverged() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose branch diverged
 DIVERGED=""
 diverged DIVERGED diverged
 assert_eq "a force push that would grow the destination's own file is refused" \
-  "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: grew=big.md:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
+  "rc=1 pre-push: step=against:<oid>;byte-ceiling: grew=big.md:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
   "$(push_ref "$DIVERGED" topic --force-with-lease)"
 
 # The must-fail control: the same push judged from the ancestor the two share
@@ -417,7 +417,7 @@ THREEDOT="$TMP/.threedot/commit-guards"
 mkdir -p "$(dirname "$THREEDOT")"
 cp -R "$SKILL_TEMPLATE" "$THREEDOT"
 THREEDOT_BEFORE="$(cat -- "$THREEDOT/scripts/pre-push")"
-sed -i.bak 's#"against:$remote_oid#"base:$remote_oid#; s#--against "$remote_oid"#--base "$remote_oid"#' \
+sed -i.bak 's#judge "against:$remote_oid" "$ref" --against "$remote_oid"#judge "base:$remote_oid" "$ref" --base "$remote_oid"#' \
   "$THREEDOT/scripts/pre-push"
 rm -f -- "$THREEDOT/scripts/pre-push.bak"
 assert_eq "the three-dot edit took" "rewritten" \
@@ -426,7 +426,7 @@ assert_eq "the three-dot edit took" "rewritten" \
 THREEDOTTED=""
 diverged THREEDOTTED threedotted "$THREEDOT"
 assert_eq "must-fail: judged from the shared ancestor, that growth reads as a shrink and pushes" \
-  "rc=0 pre-push: step=base:<oid>:history:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$THREEDOTTED" topic --force-with-lease)"
 
 # ------------------------------------------------------- the restack
@@ -520,7 +520,7 @@ cp -R "$SKILL_TEMPLATE" "$RANGES"
 RANGES_LANE="$RANGES/scripts/pre-push"
 RANGES_KEPT="$TMP/pre-push.ranges.kept"
 cp -- "$RANGES_LANE" "$RANGES_KEPT"
-sed -i.bak 's#^  pushed="$(git merge-base "$2" HEAD 2>/dev/null)" || return 1$#  return 1#' "$RANGES_LANE"
+sed -i.bak 's#^  default="$(git symbolic-ref --quiet .*$#  return 1#' "$RANGES_LANE"
 rm -f -- "$RANGES_LANE.bak"
 assert_eq "the boundary edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
 UNBOUNDED=""
@@ -551,35 +551,52 @@ assert_eq "must-fail: always from the fork point, the follow-up is refused for t
   "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
   "$(push_ref "$FORK_POINT" topic)"
 
-# A clone that never recorded the remote's default branch, as a fresh or
-# single-branch one: the tracking refs still hold the base's commits, so the
-# newest of them is the baseline, the restack passes, and the branch's own
-# major is still refused.
-NO_DEFAULT=""
-restacked NO_DEFAULT no-default 0
-q git -C "$NO_DEFAULT" remote set-head origin -d
-assert_eq "with no recorded default branch, a restack is not refused for a base commit already on the remote" \
-  "$RESTACK_PASS" "$(push_ref "$NO_DEFAULT" topic --force-with-lease)"
-NO_DEFAULT_OWN=""
-restacked NO_DEFAULT_OWN no-default-own 1
-q git -C "$NO_DEFAULT_OWN" remote set-head origin -d
-assert_eq "with no recorded default branch, the branch's own major is still refused" \
-  "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
-  "$(push_ref "$NO_DEFAULT_OWN" topic --force-with-lease)"
+# With no recorded default branch the remote head stays the baseline: another
+# tracking ref names no base. A topic restacked onto a side branch that
+# carries a major, while the destination still holds the old version, lands
+# that major there, and it is refused.
+side_stacked() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose topic sits on a side branch's major
+  local __v="$1" side_repo=""
+  new_repo side_repo "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling changelog-entries"\nCOMMIT_GUARDS_BYTE_CEILING_KB = "1"\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "app.json"\n' \
+    >"$side_repo/kendex.settings.toml"
+  printf '{"version":"1.0.0"}\n' >"$side_repo/app.json"
+  q git -C "$side_repo" add kendex.settings.toml app.json
+  q git -C "$side_repo" commit -q -m "feat: seed"
+  q git -C "$side_repo" push -q origin main
+  q git -C "$side_repo" checkout -q -b topic
+  mkdir -p "$side_repo/changelog.d/fixed"
+  printf -- '- A fix.\n' >"$side_repo/changelog.d/fixed/topic.md"
+  q git -C "$side_repo" add changelog.d/fixed/topic.md
+  q git -C "$side_repo" commit -q -m "fix: the branch's own change"
+  q git -C "$side_repo" -c core.hooksPath=/dev/null push -q origin topic
+  q git -C "$side_repo" checkout -q -b side main
+  printf '{"version":"2.0.0"}\n' >"$side_repo/app.json"
+  q git -C "$side_repo" add app.json
+  q git -C "$side_repo" -c core.hooksPath=/dev/null commit -q -m "feat: the side branch's major"
+  q git -C "$side_repo" -c core.hooksPath=/dev/null push -q origin side
+  q git -C "$side_repo" checkout -q topic
+  q git -C "$side_repo" rebase -q side
+  eval "$__v=\$side_repo"
+}
+SIDE_LINE="rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1"
+SIDE=""
+side_stacked SIDE side
+assert_eq "with no recorded default branch, a topic stacked on a side branch's major is refused" \
+  "$SIDE_LINE" "$(push_ref "$SIDE" topic --force-with-lease)"
 
-# The must-fail control: a copy that takes no baseline without the default
-# branch judges from the remote head and refuses the restack for the base's
-# major.
+# The must-fail control: a copy that falls back to the newest commit any
+# tracking ref holds takes the side branch's tip as the baseline and lets the
+# major onto the destination unjudged.
 cp -- "$RANGES_KEPT" "$RANGES_LANE"
-sed -i.bak 's#^    local_boundary base HEAD || return 1$#    return 1#' "$RANGES_LANE"
+sed -i.bak 's#^  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1$#  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || { local_boundary pushed HEAD \&\& eval "$__v=\\$pushed"; return; }#' "$RANGES_LANE"
 rm -f -- "$RANGES_LANE.bak"
-assert_eq "the no-default edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
-DEFAULTLESS=""
-restacked DEFAULTLESS defaultless 0 "$RANGES"
-q git -C "$DEFAULTLESS" remote set-head origin -d
-assert_eq "must-fail: with no fallback for a missing default branch, the restack is refused for the base's major" \
-  "rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
-  "$(push_ref "$DEFAULTLESS" topic --force-with-lease)"
+assert_eq "the any-ref edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
+ANY_REF=""
+side_stacked ANY_REF any-ref "$RANGES"
+assert_eq "must-fail: a baseline from any tracking ref lets the side branch's major through" \
+  "rc=0 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: checked=1;pre-push: result=0" \
+  "$(push_ref "$ANY_REF" topic --force-with-lease)"
 
 # The same restack pushed through a pushurl the tracking refs were not fetched
 # from: refs/remotes/origin/HEAD describes another spelling, so it sets no
@@ -823,7 +840,7 @@ reverting() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push wou
 REVERTING=""
 reverting REVERTING reverting
 assert_eq "a force push that would land a malformed document over the destination's fix is refused" \
-  "rc=1 pre-push: step=against:<oid>:history:<oid>;md-format: summary=violations=1 files=1 scope=range skipped=0;pre-push: result=1" \
+  "rc=1 pre-push: step=against:<oid>;md-format: summary=violations=1 files=1 scope=range skipped=0;pre-push: result=1" \
   "$(push_ref "$REVERTING" topic --force-with-lease)"
 
 # md-refs' shape: the destination is AHEAD, so the force push rolls it back and
@@ -874,7 +891,7 @@ assert_eq "the two-dot edit took" "rewritten" \
 DOTTED_FORMAT=""
 reverting DOTTED_FORMAT dotted-format "$DOTS"
 assert_eq "must-fail: with three dots, the reverted document is outside the range and pushes" \
-  "rc=0 pre-push: step=against:<oid>:history:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
+  "rc=0 pre-push: step=against:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
   "$(push_ref "$DOTTED_FORMAT" topic --force-with-lease)"
 
 DOTTED_REFS=""
