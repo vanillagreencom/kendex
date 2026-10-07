@@ -23,6 +23,9 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 CM="$SKILL_DIR/scripts/conflict-markers"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+# An unread inventory warns outside CI and blocks inside it: the rows pin the
+# local verdict unless they set CI themselves.
+unset CI GITHUB_ACTIONS
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_CONFLICT_EXCLUDES COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 

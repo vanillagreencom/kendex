@@ -13,6 +13,9 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 PY_NAMES="$SKILL_DIR/scripts/py-names"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+# An unread inventory warns outside CI and blocks inside it: the rows pin the
+# local verdict unless they set CI themselves.
+unset CI GITHUB_ACTIONS
 
 PASS=0
 FAIL=0

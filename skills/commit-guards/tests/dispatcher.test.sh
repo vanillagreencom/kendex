@@ -298,6 +298,9 @@ assert_eq "control: the shipped package runs the same check" \
 assert_eq "every enabled check unrunnable is named, and nothing runs" \
   "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: unrun-all=conflict-markers" \
   "$(incomplete COMMIT_GUARDS_CHECKS=conflict-markers)"
+assert_eq "one check named directly whose script is unrunnable is named, not a shell error" \
+  "rc=0 commit-guards: package-incomplete=conflict-markers" \
+  "$(cd "$R" && rc=0; out="$(env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" "$PKG/scripts/commit-guards" conflict-markers 2>&1)" || rc=$?; printf 'rc=%s %s' "$rc" "$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-guards: [a-z-]+=/' | paste -sd ';' -)")"
 assert_eq "a setting naming no known check stays the committer's refusal" \
   "rc=2 commit-guards: check-unknown=no-such-check" \
   "$(incomplete COMMIT_GUARDS_CHECKS=no-such-check)"

@@ -21,6 +21,9 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SB="$SKILL_DIR/scripts/suppression-ban"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+# An unread inventory warns outside CI and blocks inside it: the rows pin the
+# local verdict unless they set CI themselves.
+unset CI GITHUB_ACTIONS
 unset COMMIT_GUARDS_SUPPRESSION_EXCLUDES COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -221,6 +224,7 @@ fx_inv_newline() { badinv inv-newline '["a\\nb"]\n'; }
 fx_inv_nul() { badinv inv-nul '["a\\u0000b"]\n'; }
 fx_inv_number() { badinv inv-number '[1]\n'; }
 fx_inv_unread_hit() { file inv-unread-hit "$INV" "${BLANKET}fn v() {}\n"; put .kendex-generated.json '{}\n'; stage; }
+fx_inv_unread_hit_ci() { file inv-unread-hit-ci "$INV" "${BLANKET}fn v() {}\n"; put .kendex-generated.json '{}\n'; stage; }
 run_rows \
   "the inventoried render is left out of the blanket lanes and the ratchet|fx_inv|||rc=0 $OK|-" \
   "an in-place skill source beside it is scanned: the inventory names renders only|fx_inv_owned|||rc=1 $(hit 'module-wide rust allow' .agents/skills/owned/lib.rs 1 '#![allow(dead_code)]');$(summary '' 1 0)|-" \
@@ -240,7 +244,8 @@ run_rows \
   "a path carrying a newline is unread|fx_inv_newline|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
   "a path carrying a NUL is unread|fx_inv_nul|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
   "a non-string entry is unread|fx_inv_number|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
-  "an unread inventory excludes nothing and its findings warn: they may sit in a render|fx_inv_unread_hit|||rc=0 $ERR_INV;$UNREAD;$(hit 'module-wide rust allow' "$INV" 1 '#![allow(dead_code)]');$(summary '' 1 0);suppression-ban: owner-unknown=1|-"
+  "an unread inventory excludes nothing and its findings warn: they may sit in a render|fx_inv_unread_hit|||rc=0 $ERR_INV;$UNREAD;$(hit 'module-wide rust allow' "$INV" 1 '#![allow(dead_code)]');$(summary '' 1 0);suppression-ban: owner-unknown=1|-" \
+  "under CI the same findings block: CI admits nothing an unread inventory left unclassified|fx_inv_unread_hit_ci|CI=true||rc=1 $ERR_INV;$UNREAD;$(hit 'module-wide rust allow' "$INV" 1 '#![allow(dead_code)]');$(summary '' 1 0)|-"
 
 SECTION=index
 echo "=== the baseline comes from the index, like the scan; --update reads the work tree it rewrites ==="

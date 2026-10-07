@@ -19,6 +19,9 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 MDF="$SKILL_DIR/scripts/md-format"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+# An unread inventory warns outside CI and blocks inside it: the rows pin the
+# local verdict unless they set CI themselves.
+unset CI GITHUB_ACTIONS
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_MD_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 

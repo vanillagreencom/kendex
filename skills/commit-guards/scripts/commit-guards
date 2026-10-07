@@ -126,7 +126,15 @@ if [ $# -ge 1 ]; then
       CHECK="$1"
       shift
       case " $KNOWN_CHECKS " in
-        *" $CHECK "*) exec "$SCRIPT_DIR/$CHECK" "$@" ;;
+        *" $CHECK "*)
+          # The batch's package-incomplete rule, for one check by name.
+          if [ ! -f "$SCRIPT_DIR/$CHECK" ] || [ ! -x "$SCRIPT_DIR/$CHECK" ]; then
+            gg_message package-incomplete "$CHECK" "The check's script is missing or not executable in $(gg_shown "$SCRIPT_DIR"), so it did not run.
+Reinstall the commit-guards package with kendex refresh; if that does not restore it, report it with kendex report."
+            exit 0
+          fi
+          exec "$SCRIPT_DIR/$CHECK" "$@"
+          ;;
       esac
       gg_fail check-unknown "$CHECK" "unknown check '$CHECK' (known: $KNOWN_CHECKS)"
       ;;

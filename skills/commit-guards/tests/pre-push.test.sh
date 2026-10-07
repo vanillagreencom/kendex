@@ -211,6 +211,7 @@ case "$DIRECT_OUT" in
   *"pre-push: lane-missing=$DIRECT/.agents/skills/doc-limits/scripts/doc-limits"*) UNRUNNABLE_SEEN=refused ;;
 esac
 assert_eq "an installed doc-limits that cannot run refuses the push, never a skip" "refused" "$UNRUNNABLE_SEEN"
+assert_eq "and the refusal is exit 2" "rc=2" "$(direct origin "refs/heads/main $TIP refs/heads/main $SEED" | cut -d' ' -f1)"
 rm -rf -- "${DIRECT:?}/.agents/skills/doc-limits"
 
 # remote.<name>.url is not a scalar. A remote set up to push one branch to two

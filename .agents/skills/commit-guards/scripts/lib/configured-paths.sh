@@ -433,11 +433,14 @@ Its findings are warnings until the inventory is repaired: run kendex refresh in
 }
 
 # The verdict of a gate that found VIOLATIONS. Under an unread inventory some
-# may sit in renders the committer does not own, so they warn and the gate
-# passes; otherwise the gate blocks.
-gg_inventory_verdict() { # VIOLATIONS — exits 0 under an unread inventory, else 1
+# may sit in renders the committer does not own, so at commit and push they
+# warn and the gate passes; otherwise the gate blocks. Under a non-empty CI or
+# GITHUB_ACTIONS they still block: CI is the gate that admits the change, and
+# an inventory unread there, by a missing or old jq or a malformed file, is
+# repaired before admission rather than admit findings nobody classified.
+gg_inventory_verdict() { # VIOLATIONS — exits 0 under an unread inventory outside CI, else 1
   [ "$1" -gt 0 ] || return 0
-  if [ "$GG_RENDER_INVENTORY" = unread ]; then
+  if [ "$GG_RENDER_INVENTORY" = unread ] && [ -z "${CI:-}" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
     gg_message owner-unknown "$1" "The findings above are warnings: the render inventory is unread, so they may sit in files kendex renders."
     exit 0
   fi
