@@ -280,6 +280,18 @@ run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg r "$REPO" '{packages: [
    targets: [{kind: ["lib"], src_path: ($r + "/crates/c/src/lib.rs")}]}]}')"
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q -p r --all-targets" \
   "a source root two members share lints both, and the dependents of each"
+# p roots at shared/, whose module tree can reach shared/nested/helper.rs,
+# and q roots deeper, at shared/nested/. The helper is the only change.
+rm -- "${REPO:?}/shared/lib.rs"
+mkdir -p "$REPO/shared/nested"
+printf 'pub fn helper() {}\n' >"$REPO/shared/nested/helper.rs"
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$(jq -cn --arg r "$REPO" '{packages: [
+  {name: "p", manifest_path: ($r + "/crates/a/Cargo.toml"), dependencies: [],
+   targets: [{kind: ["lib"], src_path: ($r + "/shared/lib.rs")}]},
+  {name: "q", manifest_path: ($r + "/crates/b/Cargo.toml"), dependencies: [],
+   targets: [{kind: ["lib"], src_path: ($r + "/shared/nested/lib.rs")}]}]}')"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p p -p q --all-targets" \
+  "a file under nested source roots lints the shallower root's member too, not only the deepest"
 rm -r -- "${REPO:?}/shared"
 printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA_RC=101

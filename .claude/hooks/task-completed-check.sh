@@ -3,7 +3,7 @@
 # name: task-completed-check
 # event: TaskCompleted
 # matcher:
-# description: Before a task is marked complete, runs `cargo clippy --all-targets` once for the workspace members that own the changed Rust files and every member depending on one of them, however indirectly, through a path dependency whose directory is that member's, `-p` per member as the one `cargo metadata --no-deps` read names them, against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file; a moved file counts at both its old and its new path. A failing clippy, a compile error or a deny-by-default lint, refuses the completion naming the first error lines, or the output tail when there are none; warnings complete the task and are shown as advice under a `warnings=<count>` notice. A changed Rust file belongs to every member under the directory of one of whose target root files it lies, deepest first, or whose build script it is; any other changed Rust file, a root package's own directory included, lints the whole workspace, since any member may compile it in through `#[path]` or `include!`. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event (Codex hooks reference, CLI 0.160.0). Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: it has no TaskCompleted event.
+# description: Before a task is marked complete, runs `cargo clippy --all-targets` once for the workspace members that own the changed Rust files and every member depending on one of them, however indirectly, through a path dependency whose directory is that member's, `-p` per member as the one `cargo metadata --no-deps` read names them, against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file; a moved file counts at both its old and its new path. A failing clippy, a compile error or a deny-by-default lint, refuses the completion naming the first error lines, or the output tail when there are none; warnings complete the task and are shown as advice under a `warnings=<count>` notice. A changed Rust file belongs to every member under the directory of one of whose target root files it lies, however deep another member's root sits, or whose build script it is; any other changed Rust file, a root package's own directory included, lints the whole workspace, since any member may compile it in through `#[path]` or `include!`. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event (Codex hooks reference, CLI 0.160.0). Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: it has no TaskCompleted event.
 # summary: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 # safety: Refuses on a clippy that exits nonzero and on a `cargo metadata` read that fails, both a defect in the change. A host that cannot run the check is not the committer's to fix and is never read as a pass: a git that cannot list the changed set, or a missing cargo or jq, completes the task with one `git=<subcommand>` or `missing-tools=<list>` notice saying the change was not checked. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Every refusal and notice opens with `task-completed-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 600
@@ -213,10 +213,10 @@ while IFS="$TAB" read -r kind name dir; do
   done <<<"$PACKAGES"
 done <<<"$WORKSPACE"
 
-# A member compiles the module tree under its targets' root files, so a
-# changed Rust file belongs to every member whose source root is its longest
-# prefix, or whose build script it is; two members may root targets in the
-# same directory, and each then compiles it. A package directory alone proves
+# A member's module tree reaches anything under the directory of one of its
+# targets' root files, so a changed Rust file belongs to every member with
+# such a directory above it, however deep another member's root lies, and to
+# the member whose build script it is. A package directory alone proves
 # nothing: a workspace root that is also a package holds every path in the
 # repository. Any other file can be compiled into any member through
 # `#[path]` or `include!`, and which ones only a build knows, so it lints the
@@ -226,8 +226,7 @@ SELECTED=" "
 WHOLE=""
 while IFS= read -r path; do
   abs="$REPO_REAL/$path"
-  best=""
-  best_len=0
+  owners=""
   while IFS="$TAB" read -r name real kind; do
     [ -n "$real" ] || continue
     if [ "$kind" = F ]; then
@@ -235,15 +234,10 @@ while IFS= read -r path; do
     elif [ "${abs#"$real"/}" = "$abs" ]; then
       continue
     fi
-    if [ "${#real}" -gt "$best_len" ]; then
-      best=$name
-      best_len=${#real}
-    elif [ "${#real}" -eq "$best_len" ]; then
-      best="$best $name"
-    fi
+    owners="$owners $name"
   done <<<"$ROOTS"
-  [ -n "$best" ] || WHOLE=1
-  for name in $best; do
+  [ -n "$owners" ] || WHOLE=1
+  for name in $owners; do
     case "$SELECTED" in
       *" $name "*) ;;
       *) SELECTED="$SELECTED$name " ;;
