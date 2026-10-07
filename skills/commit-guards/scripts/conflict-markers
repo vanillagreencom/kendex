@@ -2,6 +2,7 @@
 # conflict-markers — flat ban on unresolved merge-conflict markers in
 # tracked files, scanned from the index: the open/base/close trio at column
 # 0, each exactly seven characters followed by a space or end of line. The
+# render paths .kendex-generated.json lists are not judged. The
 # seven-equals separator is deliberately not matched — a real conflict
 # always carries the open and close markers, and a bare seven-equals line
 # is a valid Markdown setext underline.
@@ -29,7 +30,9 @@ scanned from the index: the open/base/close trio (seven '<', seven '|',
 seven '>') at column 0, each followed by a space or end of line. Indented
 or quoted occurrences do not fire, and neither does the seven-equals
 separator (a valid Markdown setext underline; a real conflict always
-carries the open and close markers).
+carries the open and close markers). The render paths .kendex-generated.json
+lists are not judged; an inventory that cannot be read excludes nothing and
+turns the findings into warnings, exit 0.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -62,6 +65,10 @@ gg_repo_root_cd
 
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_CONFLICT_EXCLUDES "tools/conflict-markers-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
+# A render's marker is its source's, which the author's own scan judges, and
+# a local edit to the render is overwritten. The inventory is read at the
+# first carrier the scan lists, so a tree with no marker never reads it.
+GG_RENDER_INVENTORY=deferred
 gg_tmpdir
 
 # The trio at column 0, each exactly seven characters followed by a space
@@ -81,6 +88,6 @@ UNMEASURED=""
 
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
   gg_message result "$GG_VIOLATIONS:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "Conflict markers found$UNMEASURED"
-  exit 1
+  gg_inventory_verdict "$GG_VIOLATIONS"
 fi
 gg_message result "0:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "No conflict markers in tracked files$UNMEASURED"

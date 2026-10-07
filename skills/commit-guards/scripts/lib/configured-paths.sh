@@ -385,24 +385,63 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
 # The render inventory gg_is_excluded consults, read from the index through
 # gg_policy_content. An absent inventory is an empty one: a project whose
 # items are all in-place has no renders to record, and excluding nothing keeps
-# every tracked file scanned. An unread or malformed one refuses.
+# every tracked file scanned.
+#
+# An unread or malformed one is the refresh owner's to repair, not the
+# committer's: kendex refresh in the main checkout writes it, and kendex's own
+# inventory test proves it where the catalog is built. A gate given one cannot
+# tell a render from the committer's own file, so it excludes nothing, judges
+# everything, and reports its findings as warnings through gg_inventory_verdict
+# rather than block the commit on a render's defect. A reader that answers
+# what a path IS, rather than gating, passes `refuse` and keeps the refusal.
 #
 # GG_RENDER_INVENTORY is none for a lane that consults no inventory, deferred
-# for one that reads it at the first path a walk selects, and loaded once read.
-# A deferred lane whose walk selects nothing never reads it, so a commit that
-# gives the lane nothing to judge is never refused on the inventory.
+# for one that reads it at the first path a walk selects, loaded once read,
+# and unread once a read or a load failed. A deferred lane whose walk selects
+# nothing never reads it, so a commit that gives the lane nothing to judge
+# never hears about the inventory.
 GG_RENDER_INVENTORY=none
-gg_load_render_inventory() { # sets GENERATED_PATHS, or refuses
-  local inventory status=0
+gg_load_render_inventory() { # [refuse] — sets GENERATED_PATHS
+  local inventory status=0 refuse="${1-}"
   # A walk calls this with its record file on stdin: nothing here may read it.
   inventory="$(gg_policy_content .kendex-generated.json </dev/null)" || status=$?
   case "$status" in
     0) ;;
     1) inventory='[]' ;;
-    *) gg_fail inventory-read "$status" "refusing to run on an unread render inventory: .kendex-generated.json (exit $status, cause above)" ;;
+    *)
+      [ "$refuse" != refuse ] \
+        || gg_fail inventory-read "$status" "refusing to run on an unread render inventory: .kendex-generated.json (exit $status, cause above)"
+      gg_render_inventory_unread "read:$status"
+      return 0
+      ;;
   esac
-  generated_paths_load "$inventory" || exit 2
+  status=0
+  generated_paths_load "$inventory" || status=$?
+  if [ "$status" -ne 0 ]; then
+    [ "$refuse" != refuse ] || exit 2
+    gg_render_inventory_unread "load:$status"
+    return 0
+  fi
   GG_RENDER_INVENTORY=loaded
+}
+
+gg_render_inventory_unread() { # CAUSE — the inventory read failed; the loader's diagnostic is above
+  GENERATED_PATHS=""
+  GG_RENDER_INVENTORY=unread
+  gg_message inventory-unread "$1" "The render inventory .kendex-generated.json could not be read, so this lane cannot tell a render from your own file and excludes none.
+Its findings are warnings until the inventory is repaired: run kendex refresh in the main checkout and stage the inventory with the renders, or report it with kendex report." >&2
+}
+
+# The verdict of a gate that found VIOLATIONS. Under an unread inventory some
+# may sit in renders the committer does not own, so they warn and the gate
+# passes; otherwise the gate blocks.
+gg_inventory_verdict() { # VIOLATIONS — exits 0 under an unread inventory, else 1
+  [ "$1" -gt 0 ] || return 0
+  if [ "$GG_RENDER_INVENTORY" = unread ]; then
+    gg_message owner-unknown "$1" "The findings above are warnings: the render inventory is unread, so they may sit in files kendex renders."
+    exit 0
+  fi
+  exit 1
 }
 
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
@@ -451,9 +490,9 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
 
 gg_is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
   case "$GG_RENDER_INVENTORY" in
-    none | loaded) ;;
+    none | loaded | unread) ;;
     deferred) gg_load_render_inventory ;;
-    *) gg_fail render-inventory-state "$GG_RENDER_INVENTORY" "gg_is_excluded: the render inventory state is none, deferred or loaded" ;;
+    *) gg_fail render-inventory-state "$GG_RENDER_INVENTORY" "gg_is_excluded: the render inventory state is none, deferred, loaded or unread" ;;
   esac
   # The loaded lists, matched by the one spelling above. Guarded expansion: an
   # empty array is an unbound variable under Bash 3.2 with set -u.

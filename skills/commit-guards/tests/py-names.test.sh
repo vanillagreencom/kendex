@@ -2,8 +2,9 @@
 # Pins for scripts/py-names: a staged Python script holding an undefined name
 # or a syntax error is refused at its path and line, and a clean one is judged
 # and passes; a scope that selects no Python file passes at its no-match line
-# without reading the render inventory, and a render the inventory lists is
-# excluded even when it is the path that triggers the read. A row
+# without reading the render inventory, a render the inventory lists is
+# excluded even when it is the path that triggers the read, an unread
+# inventory warns, and no usable tool is a gap everywhere but a CI gate. A row
 # stages CONTENT as script.py in a fresh repository, runs the lane with
 # --staged, and pins the exit status with the first stable line printed.
 set -euo pipefail
@@ -61,8 +62,8 @@ ROW=0
 for row in \
   "a staged change with no Python file skips at its no-match line|--staged|[1]|-||rc=0 py-names: no-match=staged:*.py" \
   "a range with no Python file skips at its no-match line|--against HEAD|[1]|-||rc=0 py-names: no-match=against:*.py" \
-  "control: a staged Python file reads the inventory, which refuses at entry shape|--staged|[1]|script.py|x = 1\n|rc=2 py-names: inventory-status=21" \
-  "control: the whole tree selects the committed script, and the inventory refuses|--all|[1]|-||rc=2 py-names: inventory-status=21" \
+  "control: a staged Python file reads the inventory, which the loader rejects at entry shape|--staged|[1]|script.py|x = 1\n|rc=0 py-names: inventory-status=21" \
+  "control: the whole tree selects the committed script, and the loader rejects the inventory|--all|[1]|-||rc=0 py-names: inventory-status=21" \
   "a render the inventory lists, the first Python path selected, is excluded though it holds an undefined name|--staged|[\"render.py\"]|render.py|print(undefined_x)\n|rc=0 py-names: summary=violations=0 files=0 scope=staged skipped=0"; do
   IFS='|' read -r label scope inventory py content expect <<<"$row"
   ROW=$((ROW + 1))
@@ -87,31 +88,64 @@ for row in \
   assert_eq "$label" "$expect" "rc=$rc $(printf '%s\n' "$out" | LC_ALL=C awk '/^py-names: [a-z-]+=/ && !seen { print; seen=1 }')"
 done
 
-echo "=== with neither tool reachable the lane refuses and names the CI remedy ==="
+echo "=== an unread inventory judges every file and turns its findings into warnings ==="
+r="$TMP/unread-inventory"
+git -c init.defaultBranch=main init -q "$r"
+printf '{}\n' >"$r/.kendex-generated.json"
+printf 'print(undefined_x)\n' >"$r/render.py"
+git -C "$r" add .kendex-generated.json render.py
+rc=0
+out="$(cd "$r" && "$PY_NAMES" --staged 2>&1)" || rc=$?
+assert_eq "an undefined name under an unread inventory is reported and warns, exit 0" \
+  "rc=0 py-names: inventory-unread=load:2;py-names: undefined-name=render.py:1;py-names: owner-unknown=1" \
+  "rc=$rc $(printf '%s\n' "$out" | LC_ALL=C awk '/^py-names: (inventory-unread|undefined-name|owner-unknown)=/' | paste -sd ';' -)"
+
+echo "=== with no usable tool the lane names the unjudged files and passes, except a CI range or --all scan ==="
 # The lane runs with one directory on PATH, so no ruff is reachable wherever it
 # is installed. It holds a python3 that exits 1, standing in for the pyflakes
 # probe, and a link to each command the lane needs to reach its tool check; a
-# missing one fails this row at its own refusal key, never silently.
+# missing one fails this row at its own refusal key, never silently. The
+# unusable rows add a ruff that fails every run, as a ruff too old to know
+# py314 does.
 NO_TOOL_PATH="$TMP/no-tool-bin"
-mkdir -p "$NO_TOOL_PATH"
+BAD_TOOL_PATH="$TMP/bad-tool-bin"
+mkdir -p "$NO_TOOL_PATH" "$BAD_TOOL_PATH"
 printf '#!/bin/sh\nexit 1\n' >"$NO_TOOL_PATH/python3"
 chmod +x "$NO_TOOL_PATH/python3"
-for cmd in bash git jq mktemp dirname rm tr head wc; do
+for cmd in bash git jq mktemp dirname rm tr head wc mkdir; do
   cmd_path="$(command -v "$cmd")" || { echo "harness: $cmd is not on PATH" >&2; exit 2; }
   ln -s -- "$cmd_path" "$NO_TOOL_PATH/$cmd"
+  ln -s -- "$cmd_path" "$BAD_TOOL_PATH/$cmd"
 done
+ln -s -- "$NO_TOOL_PATH/python3" "$BAD_TOOL_PATH/python3"
+printf '#!/bin/sh\necho "error: invalid value for --target-version" >&2\nexit 2\n' >"$BAD_TOOL_PATH/ruff"
+chmod +x "$BAD_TOOL_PATH/ruff"
 r="$TMP/row-tool-missing"
 git -c init.defaultBranch=main init -q "$r"
+git -C "$r" config user.email test@example.com
+git -C "$r" config user.name test
 printf 'x = 1\n' >"$r/script.py"
 git -C "$r" add script.py
-rc=0
-out="$(cd "$r" && PATH="$NO_TOOL_PATH" "$PY_NAMES" --staged 2>&1)" || rc=$?
-assert_eq "a selected file with neither tool installed refuses at the stable key" \
-  "rc=2 py-names: tool-missing=ruff,pyflakes" \
-  "rc=$rc $(printf '%s\n' "$out" | LC_ALL=C awk '/^py-names: [a-z-]+=/ && !seen { print; seen=1 }')"
-assert_eq "the refusal carries the CI ordering remedy" \
-  "  In CI, install ruff, or pyflakes for python3 3.11 or newer, in a step before the commit-guards step, and on every run, including a harness-only run." \
-  "$(printf '%s\n' "$out" | LC_ALL=C awk '/^  In CI, /')"
+git -C "$r" commit -qm 'feat: seed'
+printf 'print(undefined_x)\n' >"$r/second.py"
+git -C "$r" add second.py
+git -C "$r" commit -qm 'feat: second'
+printf 'y = 2\n' >"$r/third.py"
+git -C "$r" add third.py
+for row in \
+  "a staged file with neither tool installed is a gap naming the one file left unjudged|$NO_TOOL_PATH|--staged||rc=0 py-names: gap=tool-missing:1" \
+  "a staged file with only an unusable ruff is a gap naming the unusable tool|$BAD_TOOL_PATH|--staged||rc=0 py-names: gap=tool-unusable:1" \
+  "the whole tree outside CI is a gap over all three files|$NO_TOOL_PATH|--all||rc=0 py-names: gap=tool-missing:3" \
+  "a CI scan of the whole tree refuses: a gate admits nothing unjudged|$NO_TOOL_PATH|--all|CI=true|rc=2 py-names: tool-missing=ruff,pyflakes" \
+  "a CI range refuses with the unusable tool|$BAD_TOOL_PATH|--against HEAD~1|GITHUB_ACTIONS=true|rc=2 py-names: tool-unusable=ruff,pyflakes" \
+  "a CI staged scan keeps the gap: CI stages nothing to gate|$NO_TOOL_PATH|--staged|CI=true|rc=0 py-names: gap=tool-missing:1"; do
+  IFS='|' read -r label path scope ci expect <<<"$row"
+  rc=0
+  # $scope is a flag and, for a range, its ref; $ci is one assignment or none.
+  # shellcheck disable=SC2086
+  out="$(cd "$r" && env -u CI -u GITHUB_ACTIONS PATH="$path" $ci "$PY_NAMES" $scope 2>&1)" || rc=$?
+  assert_eq "$label" "$expect" "rc=$rc $(printf '%s\n' "$out" | LC_ALL=C awk '/^py-names: [a-z-]+=/ && !seen { print; seen=1 }')"
+done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

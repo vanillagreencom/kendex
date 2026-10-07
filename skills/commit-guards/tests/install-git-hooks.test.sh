@@ -37,6 +37,33 @@ run_rows \
   "a cleared execute bit is repaired by the next install|fx_execbit||install||rc=0 $ARMED|$FRESH" \
   "a bare repository is refused: nothing there commits|fx_bare||install||rc=2 install-git-hooks: repo-not-worktree=<repo>|"
 
+echo "=== setup names what the armed chain cannot run, and still arms ==="
+# A PATH holding every command on the caller's PATH but ruff and python, plus
+# a python3 that exits 1, standing in for a host with neither tool.
+NO_PY="$TMP/no-py-bin"
+mkdir -p "$NO_PY"
+IFS=: read -ra path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  [ -d "$d" ] || continue
+  for f in "$d"/*; do
+    name="${f##*/}"
+    case "$name" in ruff | python | python3 | python3.*) continue ;; esac
+    [ -x "$f" ] && [ ! -e "$NO_PY/$name" ] && ln -s -- "$f" "$NO_PY/$name"
+  done
+done
+printf '#!/bin/sh\nexit 1\n' >"$NO_PY/python3"
+chmod +x "$NO_PY/python3"
+sibling() { R="$(new_repo "$1")"; mkdir -p "$R/.agents/skills/preflight/scripts"; printf '#!/bin/sh\nexit 0\n' >"$R/.agents/skills/preflight/scripts/preflight"; } # NAME — a preflight whose script lacks the execute bit
+fx_sibling_unrunnable() { sibling sibling-unrunnable; }
+fx_sibling_runnable() { sibling sibling-runnable; chmod +x "$R/.agents/skills/preflight/scripts/preflight"; }
+fx_py_tracked() { R="$(new_repo py-tracked)"; stage a.py 'x = 1\n'; }
+fx_py_none() { R="$(new_repo py-none)"; stage a.txt 'x\n'; }
+run_rows \
+  "an installed sibling whose lane script is not executable is named at setup, and the install arms|fx_sibling_unrunnable||install||rc=0 install-git-hooks: package-incomplete=<repo>/.agents/skills/preflight/scripts/preflight;$ARMED|$FRESH" \
+  "control: the same sibling runnable is no notice|fx_sibling_runnable||install||rc=0 $ARMED|$FRESH" \
+  "a repository tracking Python on a host with no ruff or pyflakes is told at setup, and the install arms|fx_py_tracked|PATH=$NO_PY|install||rc=0 install-git-hooks: tool-missing=ruff,pyflakes;$ARMED|$FRESH" \
+  "control: a repository tracking no Python on that host is no notice|fx_py_none|PATH=$NO_PY|install||rc=0 $ARMED|$FRESH"
+
 echo "=== the gate a real git commit meets ==="
 fx_clean() { armed clean; stage a.txt 'hello\n'; }
 fx_marker() { armed marker; stage_marker; }
@@ -53,7 +80,7 @@ run_rows \
   "control: the same staged content commits under a conventional header|fx_header_ok||commit|feat: add c|rc=0 $CHAIN_OK;${MSG_OK}feat: add c|" \
   "a document over the committed ceiling blocks|fx_over_limit||commit|feat: add big|rc=1 $BLOCKED|" \
   "control: a document at the ceiling passes|fx_at_limit||commit|feat: add big|rc=0 $CHAIN_OK;${MSG_OK}feat: add big|" \
-  "a dangling doc-limits install blocks, never skips|fx_dangling_doc_limits||commit|feat: add a|rc=1 pre-commit: lane-missing=<repo>/.agents/skills/doc-limits/scripts/doc-limits|" \
+  "a dangling doc-limits install is named unrun, never a silent skip, and the commit lands|fx_dangling_doc_limits||commit|feat: add a|rc=0 pre-commit: package-incomplete=<repo>/.agents/skills/doc-limits/scripts/doc-limits;$CHAIN_OK;${MSG_OK}feat: add a|" \
   "control: an absent doc-limits is a skip and the commit lands|fx_absent_doc_limits||commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|"
 
 echo "=== the chain reads its configuration and its blobs from the commit, not the worktree ==="
@@ -305,6 +332,7 @@ drifted_shims() { edit "$R/.git/hooks/pre-commit" 's|^kendex_gg_h=|#kendex_gg_h=
 fx_wt_install() { wt_with_package wt-install; drifted_shims; }
 fx_wt_install_main() { wt_with_package wt-install-main; drifted_shims; }
 fx_wt_check() { wt_with_package wt-check; }
+fx_wt_install_armed() { wt_with_package wt-install-armed; }
 fx_wt_hookspath() { wt_with_package wt-hookspath; git -C "$R" config core.hooksPath "$TMP/wt-elsewhere"; }
 # A bare repository with a work tree added has no main checkout: every work
 # tree of it is a linked one, and the hooks directory is the bare one.
@@ -333,10 +361,11 @@ run_rows \
   "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|" \
   "a linked worktree carrying its own render is judged by it, not by the main checkout's|fx_wt_own|$ONE|commit|feat: from the worktree|rc=0 $WT_OWN;foreign: tree copy ran;$WT_OWN;${MSG_OK}feat: from the worktree|" \
   "control: a linked worktree carrying none runs the copy the main checkout armed|fx_wt_none|$ONE|commit|feat: from the worktree|rc=0 foreign: main copy ran;${MSG_OK}feat: from the worktree|" \
-  "arming from a linked worktree is refused, and the shared hooks are left as they were|fx_wt_install||install-wt||rc=2 install-git-hooks: linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
-  "control: the main checkout arms and repairs the drift the refused run left|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \
+  "a linked worktree over unarmed hooks writes nothing, names the main checkout's owner and exits 0|fx_wt_install||install-wt||rc=0 install-git-hooks: linked-worktree=<repo>/.git/hooks;commit-guards git hooks: unarmed-linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
+  "a linked worktree over the main checkout's arming says it is in place and writes nothing|fx_wt_install_armed||install-wt||rc=0 commit-guards git hooks: armed-by-main=<repo>/.git/hooks|$FRESH" \
+  "control: the main checkout arms and repairs the drift the worktree left alone|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \
   "control: --check answers from the linked worktree|fx_wt_check||check-wt||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
-  "a configured hooks path reports itself before the refusal|fx_wt_hookspath||install-wt||rc=0 install-git-hooks: hooks-path-configured=<root>/wt-elsewhere;install-git-hooks: hooks-path-set=core.hooksPath;install-git-hooks: hooks-path-origin=\$'local\\tfile:<repo>/.git/config\\t<root>/wt-elsewhere';commit-guards git hooks: skipped-hooks-path=<root>/wt-elsewhere|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath='<root>/wt-elsewhere'" \
+  "a configured hooks path reports itself before the worktree stand-down|fx_wt_hookspath||install-wt||rc=0 install-git-hooks: hooks-path-configured=<root>/wt-elsewhere;install-git-hooks: hooks-path-set=core.hooksPath;install-git-hooks: hooks-path-origin=\$'local\\tfile:<repo>/.git/config\\t<root>/wt-elsewhere';commit-guards git hooks: skipped-hooks-path=<root>/wt-elsewhere|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath='<root>/wt-elsewhere'" \
   "a work tree of a bare repository has no main checkout, and arms into the bare hooks directory|fx_bare_host||install-wt||rc=0 commit-guards git hooks: installed=<repo>/hooks|helper=$X:ours['<root>/bare-host-wt/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== uninstall gives the repository back ==="

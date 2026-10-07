@@ -3,8 +3,9 @@
 # column 0 fires naming file:line and the remedy, indented, quoted, mid-prose
 # and glued occurrences and the seven-equals separator do not, an excludes
 # row with a reason carves a path out and the list resolves through the
-# setting and the flag, the check's own source never trips it, and a
-# carrier the sniff skips is counted and qualifies the verdict. Two tables:
+# setting and the flag, the check's own source never trips it, a
+# carrier the sniff skips is counted and qualifies the verdict, a render the
+# inventory lists is not judged, and an unread inventory warns. Two tables:
 # one file of CONTENT judged, and the runs over a built repository. A row
 # runs the scan once and pins the exit status with every line printed, so
 # the hit, its line, the remedy, the count, the excludes list named and
@@ -158,6 +159,15 @@ run_rows \
   "a clean verdict says how many went unmeasured|asset asset|||rc=0 $(clean 1)" \
   "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|||rc=1 $(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" 1)" \
   "control: the same bytes without a NUL are read, fire on their line, and nothing goes unmeasured|fx_asset_text|||rc=1 $(hit asset.png 4 "$OPEN HEAD");$(failed 1)"
+
+echo "=== a render the inventory lists is not judged; an unread inventory judges everything and warns ==="
+RENDER=.agents/skills/rendered/SKILL.md
+rendered() { repo "$1"; put "$RENDER" "$MERGE"; put .kendex-generated.json "$2"; } # NAME INVENTORY
+RENDER_HITS="$(hit "$RENDER" 1 "$OPEN HEAD");$(hit "$RENDER" 3 "$CLOSE theirs");$(failed 2)"
+run_rows \
+  "a conflict in a listed render passes: its source carries the defect|rendered render-listed [\"$RENDER\"]\\n|||rc=0 $(clean)" \
+  "control: the same conflict in a path the inventory does not list fails|rendered render-unlisted [\"other.md\"]\\n|||rc=1 $RENDER_HITS" \
+  "an unread inventory excludes nothing and the conflict warns, exit 0|rendered render-unread {}\\n|||rc=0 conflict-markers: inventory-status=21;conflict-markers: inventory-unread=load:2;$RENDER_HITS;conflict-markers: owner-unknown=2"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

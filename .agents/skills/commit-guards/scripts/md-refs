@@ -22,8 +22,12 @@
 # markdown only, never in comment text, where the section sign pre-filter that
 # keeps the source pass cheap has no counterpart for `::`.
 #
-# Exit codes: 0 clean or rendered-file warnings; 1 dead authored references;
-# 2 usage/config/collection error. --strict makes every dead reference fail.
+# Exit codes: 0 clean, rendered-file warnings, or unjudged files; 1 dead
+# authored references; 2 usage/config/collection error. --strict makes every
+# dead reference fail. A file the reader cannot follow, a Markdown construct
+# left open or comment text the extractor cannot separate, is named unjudged
+# and counted as skipped, and a reference into the headings of one is
+# unjudged too, never dead.
 # The catalog-render test reads summary sources and skipped as the source
 # scan's admitted count, and markdown as its separately judged document count.
 set -euo pipefail
@@ -99,7 +103,10 @@ references in callers the change never touched. Callers and targets both
 resolve against the index. Exclusions apply to both sets.
 
 A matched path this lane cannot read — a symlink, a submodule gitlink, a
-binary blob — is counted by reason on the summary line rather than named.
+binary blob, a Markdown file with a construct left open, comment text the
+reader cannot separate — is counted by reason on the summary line. The last
+two are also named unjudged, as is a target whose headings cannot be read;
+none of them fails the run.
 One is named anyway when a judged reference lands on it, and --verbose
 names every one.
 
@@ -228,7 +235,6 @@ if [ "$STRICT" -eq 0 ]; then
   LOCK_PATHS="$GG_TMP/lock-paths"
 fi
 gg_md_select markdown
-SKIPPED="$GG_WALK_SKIPPED"
 
 MD_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 
@@ -254,7 +260,10 @@ if git ls-files --error-unmatch -- "$DEC_DIR" >/dev/null 2>&1; then
   fi
 fi
 
-lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
+# A construct md-blocks cannot end leaves the rest of the file unread. That
+# is the file's own malformation, md-format's to judge, and no reference in
+# or into it can be judged, so it is named unjudged rather than refused.
+lines_of() { # BLOBFILE PATH — md-blocks' line stream; 1 when the parser cannot end the file, named
   local status=0 block_stderr="" refusal="" row
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
   if [ -s "$GG_TMP/lines.err" ]; then
@@ -270,28 +279,49 @@ lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot
       || gg_fail_cause block-exit "$2:$status" "$GG_TMP/lines.err" "The Markdown parser exited without a refusal record."
     refusal="${refusal#R"$GG_TAB"}"
     gg_md_block_message "${refusal#*"$GG_TAB"}" "$2" "${refusal%%"$GG_TAB"*}"
-    gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION${block_stderr:+ $block_stderr}"
+    gg_message unjudged "$GG_MD_RULE:$GG_MD_DETAIL" "$GG_MD_EXPLANATION${block_stderr:+ $block_stderr}
+references=unjudged
+The Markdown parser cannot read this file past the construct named above, so no
+reference in it or into its headings was judged. md-format names the construct
+in your own file; in a file kendex renders, report it with kendex report."
+    return 1
   fi
   [ -z "$block_stderr" ] || gg_message block-stderr "$2:$status" "$block_stderr" >&2
 }
 
-# Pass one: what each selected file cites.
+# Files whose references went unjudged: a consumer is told, and the run
+# passes; --strict, the catalog's own install check, is where the package's
+# author judges its files, so there each one refuses the run.
+UNJUDGED=0
+strict_unjudged() { # — returns only when --strict is off or nothing went unjudged
+  [ "$STRICT" -eq 1 ] && [ "$UNJUDGED" -gt 0 ] || return 0
+  gg_message incomplete "files=$UNJUDGED skipped=$SKIPPED${SKIP_COUNTS:-}" "Some files could not be read for references; --strict judges every file."
+  exit 2
+}
+
+# Pass one: what each selected file cites. A file the parser cannot end is
+# counted as skipped rather than judged, and its headings are unread for
+# every reference into it.
 : >"$GG_TMP/refs.tsv"
+: >"$GG_TMP/unread"
 while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
   gg_read_blob "$sha" "$f" "markdown file"
-  lines_of "$GG_TMP/blob" "$f"
+  if ! lines_of "$GG_TMP/blob" "$f"; then
+    gg_note_skip "$f" malformed "the Markdown parser cannot read it to its end"
+    printf '%s\n' "$f" >>"$GG_TMP/unread"
+    GG_MD_COUNT=$((GG_MD_COUNT - 1))
+    UNJUDGED=$((UNJUDGED + 1))
+    continue
+  fi
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v src="$f" -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/lines" >>"$GG_TMP/refs.tsv" \
     || gg_fail reference-read "$f:$?" "The reference parser failed."
 done <"$GG_TMP/md-files.z"
+SKIPPED="$GG_WALK_SKIPPED"
 
 # Pass one, continued: what each source file cites in its comment text, and
 # a TOML file in its string literals too — a manifest's text is its content,
 # where a program's string literals are its data.
 SRC_COUNT=0
-# A carrier this lane could not read is not a clean file. The comments lane
-# calls that an incomplete scan and exits 2; a carrier holds a section sign,
-# so leaving it unread and exiting 0 would pass a citation nobody judged.
-SRC_EXTRACT_ERRORS=0
 # One file carrying a section sign; 1 when the path was counted as unmeasured.
 source_file() { # PATH BLOBFILE
   local f="$1" blob="$2" want=comments status=0 fam
@@ -309,14 +339,17 @@ source_file() { # PATH BLOBFILE
     return 1
   fi
   [ "$fam" != hash-toml ] || want=strings
+  # The reader's grammar is the package's, not the committer's: a construct
+  # it cannot follow leaves the file's citations unjudged, named and counted,
+  # never judged clean and never a refusal of the commit.
   if ! gg_comment_text "$fam" "$blob" "$f" "$want" >"$GG_TMP/text"; then
     gg_message extraction "$f:$GG_COMMENT_ERROR" "$GG_COMMENT_ERROR_DETAIL
 citations=unjudged
 The reader could not separate this file's comment text from its code, so
-no citation in it was judged and the citation is not the cause. Leave the
-citation as written and change the construct named above."
+no citation in it was judged and the citation is not the cause. The gap is
+the reader's: report it with kendex report."
     gg_note_skip "$f" extraction "The comment text could not be extracted."
-    SRC_EXTRACT_ERRORS=$((SRC_EXTRACT_ERRORS + 1))
+    UNJUDGED=$((UNJUDGED + 1))
     return 1
   fi
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v grammar=text -v src="$f" \
@@ -400,14 +433,7 @@ SKIP_COUNTS="$(
     END { for (i = 1; i <= k; i++) printf " %s=%d", order[i], n[order[i]] }'
 )" || gg_fail skip-tally "$?" "The skipped-reason tally failed."
 
-# Before the empty-set answer below: a carrier this lane could not read is
-# what the verdict cannot speak for, and a run whose only source file was
-# that carrier would otherwise call itself measurable-free and exit 0.
-if [ "$SRC_EXTRACT_ERRORS" -gt 0 ]; then
-  gg_message incomplete "files=$SRC_EXTRACT_ERRORS skipped=$SKIPPED$SKIP_COUNTS" "Some citation carriers could not be read."
-  exit 2
-fi
-
+strict_unjudged
 if [ "$GG_MD_COUNT" -eq 0 ] && [ "$SRC_COUNT" -eq 0 ]; then
   if [ "$SKIPPED" -eq 0 ]; then
     gg_message no-match "$MD_GLOBS_SHOWN;$SRC_GLOBS_SHOWN" "No configured documents or source files match."
@@ -425,14 +451,21 @@ LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v t
 : >"$GG_TMP/headings.tsv"
 while IFS= read -r target; do
   [ -n "$target" ] || continue
+  # Named unjudged already, when pass one read it as a citing file.
+  ! grep -qxF -e "$target" -- "$GG_TMP/unread" || continue
   gg_read_blob ":0:$target" "$target" "markdown file"
   if gg_blob_is_binary "$GG_TMP/blob" "$target"; then
     gg_fail target-binary "$target" "A heading citation cannot target binary content."
   fi
-  lines_of "$GG_TMP/blob" "$target"
+  if ! lines_of "$GG_TMP/blob" "$target"; then
+    printf '%s\n' "$target" >>"$GG_TMP/unread"
+    UNJUDGED=$((UNJUDGED + 1))
+    continue
+  fi
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=index -v src="$target" -- "$GG_TMP/lines" >>"$GG_TMP/headings.tsv" \
     || gg_fail headings-exit "$target:$?" "The heading parser failed."
 done <"$GG_TMP/targets"
+strict_unjudged
 
 # Pass two, continued: the phrases each content citation claims its file holds.
 # The pairs are sorted so every phrase for one target is contiguous and the
@@ -467,7 +500,7 @@ done <"$GG_TMP/wanted.sorted"
 # Pass three: the verdict.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
   -v contents="$GG_TMP/contents.tsv" -v skips="$GG_TMP/skips.tsv" \
-  -v lock_paths="$LOCK_PATHS" \
+  -v lock_paths="$LOCK_PATHS" -v unread="$GG_TMP/unread" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
   || gg_fail references-exit "$?" "The reference resolver failed."
 

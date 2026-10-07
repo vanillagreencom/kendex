@@ -276,5 +276,31 @@ commit_rc=0
 git -C "$R" commit -qm 'docs: restore prose control' >"$TMP/prose-control.log" 2>&1 || commit_rc=$?
 assert_eq "control: restoring prose refuses the dated guidance" 1 "$commit_rc"
 
+echo "=== a check the package does not ship runnable is named and left out; a setting naming no check is refused ==="
+# A private copy of the package with one check's execute bit removed: the
+# settings name a real check, the package cannot run it.
+PKG="$TMP/incomplete-package"
+mkdir -p "$PKG"
+cp -R "$SKILL_DIR/scripts" "$PKG/scripts"
+chmod -x "$PKG/scripts/conflict-markers"
+incomplete() { # ENVS — the dispatcher's own records from the private copy
+  local rc=0 out=""
+  out="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" "$1" "$PKG/scripts/commit-guards" 2>&1)" || rc=$?
+  printf 'rc=%s %s' "$rc" "$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-guards: [a-z-]+=/' | paste -sd ';' -)"
+}
+clean incomplete-one
+assert_eq "an unrunnable check is named and left out; the rest run and the verdict names only them" \
+  "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: step=todo-ban;commit-guards: result=0:todo-ban" \
+  "$(incomplete COMMIT_GUARDS_CHECKS='todo-ban conflict-markers')"
+assert_eq "control: the shipped package runs the same check" \
+  "rc=0 commit-guards: step=todo-ban;commit-guards: step=conflict-markers;commit-guards: result=0:todo-ban conflict-markers" \
+  "$(R="$R" batch COMMIT_GUARDS_CHECKS='todo-ban conflict-markers' '')"
+assert_eq "every enabled check unrunnable is named, and nothing runs" \
+  "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: unrun-all=conflict-markers" \
+  "$(incomplete COMMIT_GUARDS_CHECKS=conflict-markers)"
+assert_eq "a setting naming no known check stays the committer's refusal" \
+  "rc=2 commit-guards: check-unknown=no-such-check" \
+  "$(incomplete COMMIT_GUARDS_CHECKS=no-such-check)"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

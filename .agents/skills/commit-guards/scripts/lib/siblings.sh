@@ -68,12 +68,22 @@ gg_resolve_sibling() { # SCRIPTS-DIR SKILL — skill directory on stdout; 1 when
   return 1
 }
 
+# A present sibling skill whose lane script is missing, dangling or not
+# executable is an incomplete package: its author's or its installer's to
+# repair, and nothing in the change being judged can restore it. The lane is
+# named unrun, so the chain never passes by losing a gate in silence, and the
+# verdict is left to the lanes that ran.
+gg_lane_incomplete() { # LANE SKILL-DIR
+  gg_message package-incomplete "$1" "=== $GG_CHECK: $(gg_shown "$1") is missing or not executable, so this lane did not run.
+Reinstall the package at $(gg_shown "$2") with kendex refresh; if that does not restore it, report it with kendex report."
+}
+
 # The doc-limits lane, announced here and folded by the caller's own
 # aggregator. Whether the SKILL is present decides, not whether its script
 # happens to be runnable: a present skill with a missing, dangling or
-# unexecutable script is a broken install, and a chain must never pass by
-# losing a gate. -L catches a dangling symlink, which -e reports as absent.
-gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean or skipped, 1 violations, 2 could not complete
+# unexecutable script is a broken install, named by gg_lane_incomplete. -L
+# catches a dangling symlink, which -e reports as absent.
+gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean, skipped or unrunnable, 1 violations, 2 could not complete
   local scripts="$1" skill="" lane="" out="" status=0
   if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then
     [ "$GG_CHECK" = "pre-commit" ] && return 0
@@ -81,7 +91,10 @@ gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean or skipped, 1 violations, 2 cou
     return 0
   fi
   lane="$skill/scripts/doc-limits"
-  [ -x "$lane" ] || gg_fail lane-missing "$lane" "the doc-limits skill is installed at $skill but $lane is missing or not executable — reinstall it"
+  if [ ! -x "$lane" ]; then
+    gg_lane_incomplete "$lane" "$skill"
+    return 0
+  fi
   gg_message step doc-limits "=== $GG_CHECK: doc-limits (document byte ceilings)"
   out="$("$lane" --staged 2>&1)" || status=$?
   [ -n "$out" ] && printf '%s\n' "$out"

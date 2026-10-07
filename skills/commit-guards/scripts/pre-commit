@@ -10,7 +10,10 @@
 #
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
-# else 1 if any found violations, else 0. Both nonzero verdicts block.
+# else 1 if any found violations, else 0. Both nonzero verdicts block. A lane
+# a present package does not ship runnable is named unrun and blocks
+# nothing: the package's repair is not the committer's. The repo-local entry
+# is the committer's own setting, so a missing one still blocks.
 # Sibling resolution and the doc-limits lane, which the pre-push lane runs
 # too, are lib/siblings.sh's.
 set -euo pipefail
@@ -103,8 +106,9 @@ esac
 # checks CI would otherwise report first.
 if PREFLIGHT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" preflight)"; then
   PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
-  [ -x "$PREFLIGHT" ] || gg_fail lane-missing "$PREFLIGHT" "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
-  if git rev-parse --verify --quiet HEAD >/dev/null; then
+  if [ ! -x "$PREFLIGHT" ]; then
+    gg_lane_incomplete "$PREFLIGHT" "$PREFLIGHT_SKILL"
+  elif git rev-parse --verify --quiet HEAD >/dev/null; then
     run_step preflight "$PREFLIGHT" --staged
   else
     # The very first commit has nothing to diff --staged against; blocking
@@ -119,14 +123,20 @@ fi
 # one coherent staged state, so no consumer wires a wrapper of its own.
 if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
   BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
-  [ -x "$BOT_CHECK" ] || gg_fail lane-missing "$BOT_CHECK" "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
-  run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
+  if [ -x "$BOT_CHECK" ]; then
+    run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
+  else
+    gg_lane_incomplete "$BOT_CHECK" "$BOT_SKILL"
+  fi
 
 fi
 
 BATCH="$SCRIPT_DIR/commit-guards"
-[ -x "$BATCH" ] || gg_fail lane-missing "$BATCH" "$BATCH is missing or not executable — reinstall the commit-guards skill"
-run_step "commit-guards all --staged" "$BATCH" all --staged
+if [ -x "$BATCH" ]; then
+  run_step "commit-guards all --staged" "$BATCH" all --staged
+else
+  gg_lane_incomplete "$BATCH" "${SCRIPT_DIR%/scripts}"
+fi
 
 local_paths_touched() { # 0 when the commit touches a path LOCAL_PATHS matches
   local f

@@ -192,6 +192,32 @@ for c in $CHECKS; do
   esac
 done
 
+# A check this package names but does not ship runnable is the package's
+# defect, not the committer's: the settings named a real check, and nothing
+# in the commit can restore its script. It is named, left out of the run and
+# out of the verdict record, never counted clean and never a block. A
+# setting naming no known check stays the refusal above: that is the
+# committer's own input.
+UNRUN=""
+KEPT=""
+for c in $CHECKS; do
+  if [ -f "$SCRIPT_DIR/$c" ] && [ -x "$SCRIPT_DIR/$c" ]; then
+    KEPT="${KEPT:+$KEPT }$c"
+  else
+    UNRUN="${UNRUN:+$UNRUN }$c"
+    gg_message package-incomplete "$c" "The check's script is missing or not executable in $(gg_shown "$SCRIPT_DIR"), so it did not run.
+Reinstall the commit-guards package with kendex refresh; if that does not restore it, report it with kendex report."
+  fi
+done
+CHECKS="$KEPT"
+case "$CHECKS" in
+  *[!\ ]*) ;;
+  *)
+    gg_message unrun-all "$UNRUN" "No enabled check could run; the package is incomplete."
+    exit 0
+    ;;
+esac
+
 # A check whose CONFIGURED scope selects from the staged diff reads nothing
 # at all under a caller that stages nothing: it reports a count of zero and a
 # clean verdict over content it never opened, which is the verdict about

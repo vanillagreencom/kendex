@@ -116,7 +116,7 @@ CHAIN_OK="pre-commit: result=0"
 BLOCKED="pre-commit: result=1"
 ERRORS="pre-commit: result=2"
 incomplete() { printf 'pre-commit: step-incomplete=%s:%s' "$1" "$2"; } # LABEL STATUS
-broken() { printf 'pre-commit: lane-missing=<repo>/.agents/skills/%s/scripts/%s' "$1" "$1"; } # SKILL
+broken() { printf 'pre-commit: package-incomplete=<repo>/.agents/skills/%s/scripts/%s' "$1" "$1"; } # SKILL
 
 # The table: label | fixture | env | install | args | expect.
 run_rows() {
@@ -139,6 +139,9 @@ fx_tree_over_project() { repo tree-over-project; tree doc-limits "fixture=worktr
 fx_project() { repo project; }
 fx_tree_bot_fails() { repo tree-bot-fails; tree bot-instructions "fixture=bot-instructions-stale" 1; }
 fx_tree_bot_broken() { repo tree-bot-broken; tree bot-instructions "never runs" 0; chmod -x "$R/.agents/skills/bot-instructions/scripts/bot-instructions"; }
+fx_tree_bot_broken_fails() { repo tree-bot-broken-fails; tree bot-instructions "never runs" 0; chmod -x "$R/.agents/skills/bot-instructions/scripts/bot-instructions"; tree doc-limits "fixture=doc-limits-violation" 1; }
+fx_tree_pf_broken() { repo tree-pf-broken; tree preflight "never runs" 0; chmod -x "$R/.agents/skills/preflight/scripts/preflight"; }
+fx_tree_dl_broken() { repo tree-dl-broken; tree doc-limits "never runs" 0; chmod -x "$R/.agents/skills/doc-limits/scripts/doc-limits"; }
 fx_absent() { repo absent; }
 run_rows \
   "the tree's doc-limits and preflight run, each under its own root, from an install carrying neither, and the absent third lane is silent|fx_tree_two||$BARE||rc=0 $DL;fixture=worktree-doc-limits --staged;$PF;fixture=worktree-preflight --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
@@ -148,7 +151,10 @@ run_rows \
   "the tree's copy outranks the one under the install's project root: the re-vendor rule|fx_tree_over_project||$PROJ||rc=0 $DL;fixture=worktree-doc-limits --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
   "control: a tree carrying none gets the project root's copy|fx_project||$PROJ||rc=0 $DL;fixture=project-doc-limits --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
   "a failing tree-carried bot-instructions check blocks under its own announcement|fx_tree_bot_fails||$BARE||rc=1 $BOT;fixture=bot-instructions-stale check --staged;$BATCH_OK;$LOCAL_NONE;$BLOCKED" \
-  "a tree-carried bot-instructions skill whose script is not executable is a broken install, never a skip|fx_tree_bot_broken||$BARE||rc=2 $(broken bot-instructions)" \
+  "a tree-carried bot-instructions skill whose script is not executable is named unrun, never a silent skip, and blocks nothing|fx_tree_bot_broken||$BARE||rc=0 $(broken bot-instructions);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "control: the lanes that ran still decide, a violation beside the unrun lane blocking|fx_tree_bot_broken_fails||$BARE||rc=1 $DL;fixture=doc-limits-violation --staged;$(broken bot-instructions);$BATCH_OK;$LOCAL_NONE;$BLOCKED" \
+  "an unrunnable preflight is named unrun the same way|fx_tree_pf_broken||$BARE||rc=0 $(broken preflight);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "an unrunnable doc-limits is named unrun the same way|fx_tree_dl_broken||$BARE||rc=0 $(broken doc-limits);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
   "absence on both sides is silent and the chain passes|fx_absent||$BARE||rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
 
 echo "=== every step runs before the verdict, and could-not-complete outranks violations ==="

@@ -44,7 +44,11 @@ usage: md-format [--staged | --base REF | --against REF | --all]
 A markdown file is one paragraph per line and one list item per line, with
 blank lines between paragraphs, list blocks, headings and fences, and no
 trailing-double-space line break. Fenced code, tables, HTML blocks, indented
-code and front matter are not judged. Reflow a file with md-reflow.
+code and front matter are not judged. A fence, front matter or block left
+open is a violation, after which the rest of the file is not judged. The
+render paths .kendex-generated.json lists are not judged; an inventory that
+cannot be read excludes nothing and turns the findings into warnings, exit 0.
+Reflow a file with md-reflow.
 
 --staged judges every markdown file the staged diff adds or changes, in
 full; --base REF judges the same over what this branch adds since the
@@ -110,6 +114,10 @@ gg_md_load_paths md-format COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
 gg_md_scope md-format "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
 
+# A render is not judged: its source is, and a local edit to a render is
+# overwritten. The inventory is read at the first markdown path a walk
+# selects.
+GG_RENDER_INVENTORY=deferred
 gg_tmpdir
 gg_md_select markdown
 skipped="$GG_WALK_SKIPPED"
@@ -142,15 +150,20 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
         gg_message "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION $REMEDY"
         violations=$((violations + 1))
         ;;
+      # A construct left open is the file's own malformation, and the
+      # committer's to close: a violation, after which nothing in the file
+      # is judged.
       R)
         gg_md_block_message "$text" "$f" "$line"
-        gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION"
+        gg_message "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION The rest of the file is not judged."
+        violations=$((violations + 1))
         ;;
       *) gg_fail block-record "$f:$kind" "The block parser returned an unknown record." ;;
     esac
   done <"$GG_TMP/verdict"
-  [ "$status" -eq 0 ] || gg_fail block-exit "$f:$status" "The block parser failed."
+  [ "$status" -eq 0 ] || grep -q "^R$GG_TAB" -- "$GG_TMP/verdict" \
+    || gg_fail block-exit "$f:$status" "The block parser failed."
 done <"$GG_TMP/md-files.z"
 
 gg_message summary "violations=$violations files=$GG_MD_COUNT scope=$GG_MD_MODE skipped=$skipped" "The Markdown format scan is complete."
-[ "$violations" -eq 0 ] || exit 1
+gg_inventory_verdict "$violations"

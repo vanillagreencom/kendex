@@ -3,8 +3,8 @@
 # per-line counterpart proven to pass, the bare-allow ratchet fails in every
 # direction (new, grow, loose, stale), --update tightens only, baseline
 # hygiene is enforced, the baseline is read from the index like the scan,
-# the render inventory (.kendex-generated.json, the one check that loads
-# it) excludes its exact paths, and a carrier the sniff skips is counted once
+# the render inventory (.kendex-generated.json) excludes its exact paths and
+# an unread one turns the findings into warnings, and a carrier the sniff skips is counted once
 # and qualifies the verdict.
 # Two tables. The first builds one tracked file per row from the row's own
 # content; the second runs a fixture function per row for the cases that
@@ -197,6 +197,7 @@ echo "=== the render inventory excludes its exact paths for every lane, read fro
 INV=.agents/skills/rendered/lib.rs
 INV_HIT="$(hit 'module-wide rust allow' "$INV" 1 '#![allow(dead_code)]');$(new "$INV" 1);$(summary '' 1 1)"
 ERR_INV="suppression-ban: inventory-status=21"
+UNREAD="suppression-ban: inventory-unread=load:2"
 # A render carrying a blanket allow and a bare allow, named by the inventory.
 inv() { file "$1" "$INV" "${BLANKET}${DEAD}fn v() {}\n"; put .kendex-generated.json "[\"$INV\"]\n"; stage; } # NAME
 fx_inv() { inv inv; }
@@ -219,6 +220,7 @@ fx_inv_empty_path() { badinv inv-empty-path '[""]\n'; }
 fx_inv_newline() { badinv inv-newline '["a\\nb"]\n'; }
 fx_inv_nul() { badinv inv-nul '["a\\u0000b"]\n'; }
 fx_inv_number() { badinv inv-number '[1]\n'; }
+fx_inv_unread_hit() { file inv-unread-hit "$INV" "${BLANKET}fn v() {}\n"; put .kendex-generated.json '{}\n'; stage; }
 run_rows \
   "the inventoried render is left out of the blanket lanes and the ratchet|fx_inv|||rc=0 $OK|-" \
   "an in-place skill source beside it is scanned: the inventory names renders only|fx_inv_owned|||rc=1 $(hit 'module-wide rust allow' .agents/skills/owned/lib.rs 1 '#![allow(dead_code)]');$(summary '' 1 0)|-" \
@@ -232,12 +234,13 @@ run_rows \
   "a never-tracked inventory excludes nothing either: the index is the only reader|fx_inv_untracked|||rc=1 $INV_HIT|-" \
   "no inventory anywhere excludes nothing: an all-in-place project has no renders|fx_inv_none|||rc=1 $INV_HIT|-" \
   "control: with no inventory a clean render passes|fx_inv_none_clean|||rc=0 $OK|-" \
-  "an object is refused: the writer emits an array|fx_inv_object|||rc=2 $ERR_INV|-" \
-  "two documents are refused|fx_inv_two|||rc=2 suppression-ban: inventory-status=20|-" \
-  "an empty path is refused|fx_inv_empty_path|||rc=2 $ERR_INV|-" \
-  "a path carrying a newline is refused|fx_inv_newline|||rc=2 $ERR_INV|-" \
-  "a path carrying a NUL is refused|fx_inv_nul|||rc=2 $ERR_INV|-" \
-  "a non-string entry is refused|fx_inv_number|||rc=2 $ERR_INV|-"
+  "an object is unread: the writer emits an array, and a clean tree passes|fx_inv_object|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
+  "two documents are unread|fx_inv_two|||rc=0 suppression-ban: inventory-status=20;$UNREAD;$OK|-" \
+  "an empty path is unread|fx_inv_empty_path|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
+  "a path carrying a newline is unread|fx_inv_newline|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
+  "a path carrying a NUL is unread|fx_inv_nul|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
+  "a non-string entry is unread|fx_inv_number|||rc=0 $ERR_INV;$UNREAD;$OK|-" \
+  "an unread inventory excludes nothing and its findings warn: they may sit in a render|fx_inv_unread_hit|||rc=0 $ERR_INV;$UNREAD;$(hit 'module-wide rust allow' "$INV" 1 '#![allow(dead_code)]');$(summary '' 1 0);suppression-ban: owner-unknown=1|-"
 
 SECTION=index
 echo "=== the baseline comes from the index, like the scan; --update reads the work tree it rewrites ==="

@@ -44,8 +44,9 @@ kendex.settings.toml [env] > default):
   COMMIT_GUARDS_SUPPRESSION_BASELINE   baseline path        (default tools/suppression-baseline.tsv)
   COMMIT_GUARDS_SUPPRESSION_EXCLUDES   exclusion-list path  (default tools/suppression-ban-excludes)
 Flags override both for the path settings.
-Generated files are excluded by exact path from .kendex-generated.json.
-The inventory is required and reads from the index when tracked.
+Generated files are excluded by exact path from .kendex-generated.json,
+read from the index when tracked. An inventory that cannot be read excludes
+nothing and turns the findings into warnings, exit 0.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -301,6 +302,6 @@ UNMEASURED=""
 total=$((BLANKET_VIOLATIONS + ratchet_violations))
 if [ "$total" -gt 0 ]; then
   gg_message result "$total:$BLANKET_VIOLATIONS:$ratchet_violations:$BASELINE_FILE:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "Suppression violations found$UNMEASURED"
-  exit 1
+  gg_inventory_verdict "$total"
 fi
 gg_message result "0:0:0:$BASELINE_FILE:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "No blanket suppressions; bare allows meet the baseline$UNMEASURED"

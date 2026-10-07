@@ -29,7 +29,8 @@
 #       heading with prose after it is the § rule's.
 #   -v mode=resolve -v phase=targets|contents|verdict -v tracked=FILE
 #         [-v headings=FILE -v contents=FILE -v skips=FILE -v dec_dir=DIR
-#          -v dec_judge=0|1 -v dec_index=FILE -v id_prefix=D -v lock_paths=FILE]
+#          -v dec_judge=0|1 -v dec_index=FILE -v id_prefix=D -v lock_paths=FILE
+#          -v unread=FILE]
 #       `dec_index` holds the tracked `DECISIONS_DIR/INDEX.md` blob; each
 #       of its rows reserves its ID only within that row.
 #       `lock_paths` holds newline-separated repo-relative emitted paths from
@@ -42,7 +43,9 @@
 #       `verdict` prints one V or W record per dead reference as defined above,
 #       T<TAB>path<TAB>code<TAB>explanation per `skips` path a
 #       judged reference lands on, and a final N<TAB>count of references
-#       judged. The caller answers the `contents` pairs with
+#       judged. `unread` lists the targets whose headings the parser could
+#       not read, one per line: a heading reference into one is a T record
+#       with code `unread`, not a V. The caller answers the `contents` pairs with
 #       P<TAB>target<TAB>phrase records for the phrases it found, which
 #       `verdict` reads back from `contents`.
 #
@@ -428,6 +431,20 @@ function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] 
 # gave: the only per-path notice a passing run keeps.
 function seen_target(t) { if (phase == "verdict" && (t in skipped) && !(t in reached)) { reached[t] = 1; printf "T\t%s\t%s\n", t, skipped[t] } }
 
+# A target whose headings the parser could not read: a reference into them is
+# unjudged, named once, never dead.
+function unread_target(t) {
+  if (phase != "verdict" || !(t in unread_set)) return 0
+  if (!(t in reached)) { reached[t] = 1; printf "T\t%s\tunread\tthe Markdown parser could not read its headings, so references into them are unjudged\n", t }
+  return 1
+}
+
+function load_unread(   line) {
+  if (unread == "") return
+  while ((getline line < unread) > 0) unread_set[line] = 1
+  close(unread)
+}
+
 function want_content(t, phrase,   key) {
   key = t SUBSEP phrase
   if (phase == "contents" && !(key in asked)) { asked[key] = 1; printf "%s\t%s\n", t, phrase }
@@ -450,7 +467,7 @@ BEGIN {
     load_tracked()
     if (dec_judge) load_dec_index()
     if (phase == "verdict") {
-      load_headings(); load_contents(); load_skips()
+      load_headings(); load_contents(); load_skips(); load_unread()
       if (lock_paths != "") {
         while ((lock_status = getline path < lock_paths) > 0) rendered[path] = 1
         if (lock_status < 0) {
@@ -529,6 +546,7 @@ mode == "resolve" {
     if (anchor == "") next
     if (target !~ /\.md$/) { fail("anchor-type", raw ":" target); next }
     want_target(target)
+    if (unread_target(target)) next
     if (!((target "#" anchor) in slugs)) fail("anchor-missing", raw ":" target ":" anchor)
     next
   }
@@ -553,6 +571,7 @@ mode == "resolve" {
       next
     }
     want_target(target)
+    if (unread_target(target)) next
     if (ckind == "section") {
       if (!((target "#" tolower(value)) in texts)) fail("heading-missing", raw ":" target ":" value)
     } else if (ckind == "prefix-section") {
@@ -572,6 +591,7 @@ mode == "resolve" {
       next
     }
     want_target(decfile[f[4]])
+    if (unread_target(decfile[f[4]])) next
     if (!has_section_prefix(decfile[f[4]], f[5])) \
       fail("heading-prefix", f[4] SECTION_SEP f[5] ":" decfile[f[4]] ":" f[5])
     next

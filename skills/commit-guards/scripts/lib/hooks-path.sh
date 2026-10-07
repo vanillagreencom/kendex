@@ -147,9 +147,12 @@ hooks_path_off() { # -> 0 when hooks are switched off
 # say — and the sentence after it names no path and no command. Nothing here
 # asserts what an origin IS.
 #
-# Arming is not the whole of it: the installer stands down under any value
-# at all, empty included, so clearing the setting comes first.
-HOOKS_PATH_REMEDY="Clear the setting at its source, then run kendex guard install."
+# The setting is its owner's: whoever wrote it at the source git reports,
+# often another hook manager. The installer never takes it over, so the text
+# routes the decision to that owner rather than tell the reader to clear it.
+# The guards stay unarmed while it is set, empty included; clearing it and
+# re-arming is the owner's call.
+HOOKS_PATH_REMEDY="The guards stay unarmed while this is set: the setting belongs to whoever set it at the source below. Ask that owner; if they clear it, run kendex guard install."
 
 # Both modes print this block, so both say the same thing about the same
 # repository. It goes to stderr in each: --check keeps one verdict line on

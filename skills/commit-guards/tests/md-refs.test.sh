@@ -429,7 +429,7 @@ fx_dec_symlink() { repo dec-symlink; put docs/decisions/real.md '# D008\n'; ln -
 fx_newline_src() { world_src newline-src; put "one"$'\n'"two.sh" "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
 # A shell carrier whose quote never closes, the opener past line 1.
 fx_unclosed_quote() { world_src unclosed-quote; put bin/q.sh "$SH"'# AGENTS.md \302\247 Rules\necho '"'"'open\n'; }
-UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1;md-refs: incomplete=files=1 skipped=$(unmeasured 1 extraction=1)"
+UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1"
 run_rows \
   "a citation in comment text resolves|fx_comment_ok comment-ok||--all|rc=0 $(clean 1 2 1)" \
   "a comment citing a heading the target does not have is dead, the heading read to the end of the line|fx_comment_dead||--all|rc=1 $(dead bin/helper.sh 2 "$(noprefix 'docs/architecture/plugins.md § Gone, not this file.' docs/architecture/plugins.md 'Gone, not this file.')");$(failed 1 1 2 1)" \
@@ -447,8 +447,9 @@ run_rows \
   "a path in a URL query is prose wherever it sits in the URL|fx_url_query||--all|rc=0 $(clean 0 2 1)" \
   "and so is a decision ID in one|fx_url_query_id||--all|rc=0 $(clean 0 2 1 "$DEC_YES")" \
   "control: the same path without the scheme is judged|fx_no_scheme||--all|rc=1 $(dead scripts/link.sh 2 "$(noprefix 'AGENTS.md § Gone for more.' AGENTS.md 'Gone for more.')");$(failed 1 1 2 1)" \
-  "a carrier the extractor cannot read is exit 2, never a clean verdict|fx_unclosed unclosed||--all|rc=2 $UNCLOSED" \
-  "an unreadable carrier beats the empty-set fast path|fx_unclosed unclosed-empty|COMMIT_GUARDS_MD_REFS_PATHS=no/such/*.md|--all|rc=2 $UNCLOSED" \
+  "a carrier the extractor cannot read is named unjudged and counted skipped, never judged clean or refused|fx_unclosed unclosed||--all|rc=0 $UNCLOSED;$(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 extraction=1)")" \
+  "an unreadable carrier is counted on the empty-set answer too|fx_unclosed unclosed-empty|COMMIT_GUARDS_MD_REFS_PATHS=no/such/*.md|--all|rc=0 $UNCLOSED;md-refs: unmeasured-count=$(unmeasured 1 extraction=1)" \
+  "--strict, the catalog's install check, refuses the unjudged carrier|fx_unclosed unclosed-strict||--all --strict|rc=2 $UNCLOSED;md-refs: incomplete=files=1 skipped=$(unmeasured 1 extraction=1)" \
   "a symlink at a source path is counted by reason, and its target still judged|fx_symlink_src||--all|rc=1 $(dead target.sh 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1 "$DEC_NO" "$(unmeasured 1 symlink=1)")" \
   "a path holding a newline is counted, never quietly passed|fx_newline_src||--all|rc=0 $(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 path-newline=1)")" \
   "a passing run over a tree of tracked symlinks names no path and carries the count|fx_symlink_tree symlink-tree||--all|rc=0 $(clean 0 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
@@ -458,13 +459,13 @@ run_rows \
   "--verbose names a skipped path a reference lands on once|fx_symlink_linked symlink-linked-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
   "a decision ID landing on a skipped record names it|fx_dec_symlink|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md docs/decisions/*.md|--all|rc=0 $(skip docs/decisions/D008-scope.md symlink);$(clean 1 2 0 "$DEC_YES" "$(unmeasured 1 symlink=1)")" \
   "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS"
-# The refusal's explanation opens with the reader's cause at the opener's
+# The notice's explanation opens with the reader's cause at the opener's
 # line and says no citation in the file was judged, so the citation is not
 # what an author edits.
 R=""
 fx_unclosed_quote
 CAUSE="$(cd "$R" && "$MDR" --all 2>&1)" || true
-assert_eq "an unclosed quote's refusal names the reader's cause and marks its citations unjudged" \
+assert_eq "an unclosed quote's notice names the reader's cause and marks its citations unjudged" \
   "md-refs: extraction=bin/q.sh:unclosed-string:3;  comment-reader:unclosed-string line=3;  citations=unjudged" \
   "$(printf '%s\n' "$CAUSE" | LC_ALL=C awk '/^md-refs: extraction=|^  comment-reader:|^  citations=/' | LC_ALL=C paste -sd ';' -)"
 
@@ -503,9 +504,16 @@ fx_awk_exit() {
   printf '#!/usr/bin/env bash\ncase " $* " in *" mode=lines "*) echo "dependency-order-control: block-exit" >&2; exit 7 ;; esac\nexec %q "$@"\n' "$(command -v awk)" >"$R/shim/awk"
   chmod +x "$R/shim/awk"
 }
+# The guide is spelled without a space, its headings tab-separated: the
+# fixture column is split into words.
+fx_open_target() { repo "$1"; put docs/guide.md "$2"; put AGENTS.md '[setup](docs/guide.md#install)\n'; } # NAME GUIDE
 fx_symlink_doc() { repo symlink-doc; put notes/target.md 'clean\n'; ln -s notes/target.md "$R/AGENTS.md"; git -C "$R" add -A; }
 run_rows \
-  "an unterminated fence is exit 2, naming the line|fx_open_fence open-fence||--all|rc=2 ${ERR}fence-unclosed=AGENTS.md:3" \
+  "an unterminated fence leaves the file unjudged, named at its line and counted skipped|fx_open_fence open-fence||--all|rc=0 ${ERR}unjudged=fence-unclosed:AGENTS.md:3;md-refs: unmeasured-count=$(unmeasured 1 malformed=1)" \
+  "a reference into a target whose headings cannot be read is unjudged, never dead|fx_open_target open-target #\\tGuide\\n\\n\`\`\`\\nopen\\n||--all|rc=0 ${ERR}unjudged=fence-unclosed:docs/guide.md:3;$(skip docs/guide.md unread);$(clean 1 1)" \
+  "--strict refuses a target whose headings cannot be read|fx_open_target open-target-strict #\\tGuide\\n\\n\`\`\`\\nopen\\n||--all --strict|rc=2 ${ERR}unjudged=fence-unclosed:docs/guide.md:3;md-refs: incomplete=files=1 skipped=0" \
+  "--strict refuses a citing file left open|fx_open_fence open-fence-strict||--all --strict|rc=2 ${ERR}unjudged=fence-unclosed:AGENTS.md:3;md-refs: incomplete=files=1 skipped=$(unmeasured 1 malformed=1)" \
+  "control: the same reference into a readable target without the heading is dead|fx_open_target closed-target #\\tGuide\\n\\n##\\tSetup\\n||--all|rc=1 $(dead AGENTS.md 1 "$(noslug '](docs/guide.md#install)' docs/guide.md install)");$(failed 1 1 1)" \
   "an AWK exit without a refusal record reports its status before the dependency cause|fx_awk_exit awk-exit|PATH=$TMP/awk-exit/shim:$PATH|--all|rc=2 ${ERR}block-exit=AGENTS.md:7;dependency-order-control: block-exit" \
   "a symlink at a scoped path is counted by reason, with no path named|fx_symlink_doc||--all|rc=0 md-refs: unmeasured-count=$(unmeasured 1 symlink=1)" \
   "--staged and --all are exclusive|fx_open_fence both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all" \

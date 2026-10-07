@@ -148,7 +148,7 @@ aliased() { # TEXT -> the text with the row's repository and the scratch root al
 # print. The lanes' own lines — the step announcements, each check's
 # findings, the sibling gates' reports — are their suites' contract and are
 # dropped here.
-KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|commit-guards: hook-refs=|pre-commit: (result|lane-missing|local-missing|path-escape)=|pre-push: (result|lane-missing)=|commit-msg: |foreign: |local: |fatal: |error: )'
+KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|commit-guards: hook-refs=|pre-commit: (result|lane-missing|package-incomplete|local-missing|path-escape)=|pre-push: (result|lane-missing|package-incomplete)=|commit-msg: |foreign: |local: |fatal: |error: )'
 
 # One line for a run inside the row's repository: the exit status, then
 # every kept line in order joined by ';'. ENVS is a comma-separated list of

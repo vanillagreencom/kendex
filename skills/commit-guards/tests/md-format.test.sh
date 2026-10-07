@@ -4,7 +4,8 @@
 # paragraphs, list blocks, headings and fences, no trailing-double-space
 # break; fenced code, tables, HTML blocks, indented code and front matter
 # left alone; the three scopes select the files the docs say; what cannot be
-# judged is named rather than passed. Two tables: the first holds one shape
+# judged is named rather than passed; a construct left open is the file's
+# violation; a listed render is not judged and an unread inventory warns. Two tables: the first holds one shape
 # as doc.md judged with --all, the second the scopes, the path list and the
 # unmeasured paths. A row runs the judge once and pins the exit status with
 # every line printed, so each violation's file, line and rule, the remedy,
@@ -149,11 +150,12 @@ shape_rows \
   "a blockquote paragraph on one line passes|> one line\n\n> another\n|rc=0 $(clean 1)" \
   "a file without a trailing newline passes|Para|rc=0 $(clean 1)"
 
-echo "=== a construct with no end is a collection error naming the opener, not a pass ==="
+echo "=== a construct with no end is the file's violation naming the opener, not a pass ==="
 shape_rows \
-  "fence-unclosed is exit 2, naming the file and line|Para\n\n\`\`\`\nnever closed\n|rc=2 $(refused 3 'fence-unclosed')" \
-  "front-unclosed is exit 2|---\ntitle: x\n|rc=2 $(refused 1 'front-unclosed')" \
-  "a prompt-section block with no closing tag is exit 2, naming the opener's line and tag|Para\n\n<output_format>\nprose\n\nmore\n|rc=2 $(refused 3 'block-unclosed:</output_format>')"
+  "fence-unclosed is a violation, naming the file and line|Para\n\n\`\`\`\nnever closed\n|rc=1 $(refused 3 'fence-unclosed');$(failed 1 1)" \
+  "front-unclosed is a violation|---\ntitle: x\n|rc=1 $(refused 1 'front-unclosed');$(failed 1 1)" \
+  "a prompt-section block with no closing tag is a violation, naming the opener's line and tag|Para\n\n<output_format>\nprose\n\nmore\n|rc=1 $(refused 3 'block-unclosed:</output_format>');$(failed 1 1)" \
+  "a wrap ahead of the unclosed fence is judged beside it|Wrapped\ntext.\n\n\`\`\`\nnever closed\n|rc=1 $(viol doc.md 2 "$WRAP");$(refused 4 'fence-unclosed');$(failed 2 1)"
 
 # Table two: FIXTURE (a function and its words) builds the repository; the
 # judge runs with ARGS under ENVS.
@@ -223,6 +225,14 @@ run_rows \
 # The usage text carries a '|', which a row cannot: its first line and the
 # exit status, beside the table.
 assert_eq "--help prints usage at exit 0" "rc=0 md-format: usage=md-format" "$(run '' --help | sed -n 1p | LC_ALL=C cut -d';' -f1)"
+
+echo "=== a render the inventory lists is not judged; an unread inventory judges everything and warns ==="
+RENDER=.agents/skills/rendered/SKILL.md
+rendered() { repo "$1"; put "$RENDER" "$WRAPPED"; put .kendex-generated.json "$2"; } # NAME INVENTORY
+run_rows \
+  "a wrapped render the inventory lists passes: its source carries the defect|rendered render-listed [\"$RENDER\"]\\n||--all|rc=0 $(nomatch all '*.md')" \
+  "control: the same render unlisted fails|rendered render-unlisted [\"other.md\"]\\n||--all|rc=1 $(viol "$RENDER" 2 "$WRAP");$(failed 1 1)" \
+  "an unread inventory excludes nothing and the wrap warns, exit 0|rendered render-unread {}\\n||--all|rc=0 md-format: inventory-status=21;md-format: inventory-unread=load:2;$(viol "$RENDER" 2 "$WRAP");$(failed 1 1);md-format: owner-unknown=1"
 
 echo "=== a selected path that is not markdown is named, never counted clean ==="
 fx_symlink() { repo "$1"; put notes/target.md "$WRAPPED"; mkdir -p "$R/docs"; ln -s ../notes/target.md "$R/docs/link.md"; git -C "$R" add -A; }

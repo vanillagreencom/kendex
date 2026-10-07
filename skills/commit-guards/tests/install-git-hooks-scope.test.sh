@@ -205,7 +205,7 @@ run_rows \
   "the first commit states the preflight skip instead of blocking|fx_pf_first|$ONE|commit|feat: add ok|rc=0 $DL;$PF_FIRST;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
   "a staged fail-open script blocks through preflight|fx_pf_blocks|$ONE|commit|feat: add loose|rc=1 $DL;$PF_RAN;$PF_LANES_TAIL;$BLOCKED|" \
   "control: clean staged content commits through a run preflight|fx_pf_clean|$ONE|commit|feat: add ok|rc=0 $DL;$PF_RAN;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "a dangling preflight install blocks, never skips|fx_pf_dangling|$ONE|commit|feat: add d|rc=1 $DL;pre-commit: lane-missing=<repo>/.agents/skills/preflight/scripts/preflight|" \
+  "a dangling preflight install is named unrun, never a silent skip, and the commit lands|fx_pf_dangling|$ONE|commit|feat: add d|rc=0 $DL;pre-commit: package-incomplete=<repo>/.agents/skills/preflight/scripts/preflight;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add d|" \
   "a preflight that dies at run time is a step that did not complete, and blocks|fx_pf_dies|$ONE|commit|feat: add d|rc=1 $DL;$PF_RAN;pre-commit: step-incomplete=preflight:2;$PF_LANES_TAIL;$ERRORS|"
 
 echo "=== a repo-local doc-limits replacement is judged like the skill, and blocks when it does not complete ==="

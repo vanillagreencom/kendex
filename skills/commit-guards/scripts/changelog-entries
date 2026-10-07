@@ -235,7 +235,8 @@ package_record_of() { # VERSION_FILE — that package's CHANGELOG.md on stdout; 
 }
 
 if [ "$CLASSIFY" -eq 1 ]; then
-  gg_load_render_inventory
+  # A reader of what each path is, not a gate: an unread inventory refuses.
+  gg_load_render_inventory refuse
   for f in "${CLASSIFY_PATHS[@]}"; do
     kind=none
     package_json="${f%CHANGELOG.md}package.json"

@@ -12,8 +12,9 @@
 # diff records, and each blob is judged from a scratch copy under its own file
 # name, since pyflakes defines `__path__` only in `__init__.py`.
 #
-# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, a
-# missing tool included.
+# Exit codes: 0 clean, or a gap notice for a missing or unusable tool outside
+# CI; 1 violations; 2 usage/config/collection error, or a missing tool under a
+# CI range or --all scan.
 set -euo pipefail
 # Pathname expansion off: the path glob matches the index, never the work tree.
 set -f
@@ -39,8 +40,12 @@ name where ruff is absent), and so does a file that does not parse.
 --against REF between REF's own tree and HEAD (two dots); --all judges every
 tracked *.py file.
 
-Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or
-neither ruff nor pyflakes installed while a file is selected.
+With neither tool usable while a file is selected, the lane prints a gap
+notice naming the unjudged files and exits 0; under a non-empty CI or
+GITHUB_ACTIONS a --base, --against or --all scan refuses instead, exit 2.
+
+Exit codes: 0 clean or a gap; 1 violations; 2 usage/config/collection error,
+or no usable tool under a CI range or --all scan.
 EOF
 }
 
@@ -78,19 +83,37 @@ GG_RENDER_INVENTORY=deferred
 gg_tmpdir
 
 TOOL=""
+# Why no tool judges this run, for the gap below: missing when neither tool
+# is installed, unusable when one is but fails a probe on a clean file, such
+# as a ruff too old to know py314.
+TOOL_GAP=""
+TOOL_WHY=""
 pick_tool() {
+  mkdir -p -- "$GG_TMP/py" "$GG_TMP/probe"
+  printf 'x = 1\n' >"$GG_TMP/probe/probe.py"
+  TOOL_GAP=missing
   if command -v ruff >/dev/null 2>&1; then
-    TOOL=ruff
+    if ruff check --no-cache --isolated --ignore-noqa --target-version py314 --select F821 --output-format json -- "$GG_TMP/probe/probe.py" \
+      </dev/null >/dev/null 2>&1; then
+      TOOL=ruff
+      return 0
+    fi
+    TOOL_GAP=unusable
+    TOOL_WHY="ruff $(ruff --version 2>/dev/null || echo 'of unknown version') fails a probe on a clean file."
+  fi
   # -P: the lane runs at the repository root, and a root module named like
   # one pyflakes imports would otherwise shadow it. A python3 without -P
-  # (before 3.11) finds no pyflakes here and the lane refuses.
-  elif python3 -P -c 'import pyflakes' </dev/null >/dev/null 2>&1; then
-    TOOL=pyflakes
-  else
-    gg_fail tool-missing "ruff,pyflakes" "A Python file is selected and neither ruff nor pyflakes for python3 is installed. Install one.
-In CI, install ruff, or pyflakes for python3 3.11 or newer, in a step before the commit-guards step, and on every run, including a harness-only run."
+  # (before 3.11) finds no pyflakes here.
+  if python3 -P -c 'import pyflakes' </dev/null >/dev/null 2>&1; then
+    if python3 -P -W ignore -m pyflakes "$GG_TMP/probe/probe.py" </dev/null >/dev/null 2>&1; then
+      TOOL=pyflakes
+      return 0
+    fi
+    TOOL_GAP=unusable
+    TOOL_WHY="${TOOL_WHY:+$TOOL_WHY }pyflakes for python3 fails a probe on a clean file."
   fi
-  mkdir -p -- "$GG_TMP/py"
+  TOOL=none
+  [ -n "$TOOL_WHY" ] || TOOL_WHY="Neither ruff nor pyflakes for python3 3.11 or newer is installed."
 }
 
 # Each tool's findings become "code<TAB>line" rows in $GG_TMP/rows: F821 or
@@ -136,9 +159,14 @@ run_pyflakes() { # COPY
 
 violations=0
 checked=0
+unjudged=0
 judge() { # PATH BLOBFILE SHA
   local copy code line
   [ -n "$TOOL" ] || pick_tool
+  if [ "$TOOL" = none ]; then
+    unjudged=$((unjudged + 1))
+    return 0
+  fi
   copy="$GG_TMP/py/${1##*/}"
   cp -- "$2" "$copy"
   "run_$TOOL" "$copy"
@@ -170,5 +198,22 @@ if [ "$GG_RENDER_INVENTORY" = deferred ]; then
   exit 0
 fi
 
+# No usable tool is the host's gap, not the commit's: the operator provisions
+# one, which the commit's author cannot do from the commit. Outside CI the
+# lane names the unjudged files and passes, so a machine the tool has not
+# reached is not stopped at every commit. A CI range or --all scan is the
+# gate that admits the change, so there it refuses until a tool is installed.
+# --staged keeps the gap in CI too, since CI stages nothing to gate.
+if [ "$TOOL" = none ]; then
+  install="Install ruff, or pyflakes for python3 3.11 or newer. In CI, install it in a step before the commit-guards step, on every run, including a harness-only run."
+  if [ "$MODE" != staged ] && { [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; }; then
+    gg_fail "tool-$TOOL_GAP" "ruff,pyflakes" "$TOOL_WHY
+In CI the lane refuses rather than pass the change unjudged. $install"
+  fi
+  gg_message gap "tool-$TOOL_GAP:$unjudged" "$TOOL_WHY
+The selected Python files were not judged. The lane allows the change, because a missing tool must not stop every commit. $install"
+  exit 0
+fi
+
 gg_message summary "violations=$violations files=$checked scope=$MODE skipped=$GG_WALK_SKIPPED" "The Python name scan is complete."
-[ "$violations" -eq 0 ] || exit 1
+gg_inventory_verdict "$violations"
