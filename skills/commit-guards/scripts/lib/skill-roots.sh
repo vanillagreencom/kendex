@@ -69,9 +69,15 @@ gg_project_rel() { # VAR SCRIPT_DIR WORKTREE -> sets VAR to the prefix
 
 # What a SKILL.md declares: its frontmatter's `name`, then its `metadata:`
 # block's `version` on a second line where it states one, double or single
-# quotes taken off. Nonzero when the frontmatter or the name is missing, or
-# the version is stated empty, so an unreadable package never compares equal
-# to another and never reads as one that states no version.
+# quotes taken off. Nonzero when the frontmatter or the name is missing, so
+# an unreadable package never compares equal to another.
+#
+# A package reads as versionless only when no frontmatter line is a
+# `version:` key, wherever it sits: a version line this cannot place under
+# `metadata:`, or one stated empty, is nonzero, never a package that states
+# no version, which the changelog check would let change without a raise.
+# A YAML comment line holds no key, so it neither ends the metadata block
+# nor counts as a version line.
 gg_skill_id() { # FILE
   LC_ALL=C awk '
     function value(l) {
@@ -82,9 +88,11 @@ gg_skill_id() { # FILE
     { sub(/\r$/, "") }
     NR == 1 { if ($0 != "---") { bad = 1; exit } next }
     $0 == "---" { closed = 1; exit }
+    /^[ \t]*#/ { next }
     /^[^ \t]/ { meta = ($0 ~ /^metadata:[ \t]*$/) }
     /^name:/ { name = value($0) }
-    meta && /^[ \t]+version:/ { version = value($0); has = 1 }
+    /^[ \t]*version:/ { has = 1 }
+    meta && /^[ \t]+version:/ { version = value($0) }
     END { if (bad || !closed || name == "" || (has && version == "")) exit 1; print name; if (has) print version }
   ' "$1"
 }

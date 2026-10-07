@@ -623,14 +623,12 @@ for row in \
   "versionless|a SKILL.md stating no metadata.version is a versionless package: its change and fragment pass with no raise|1.9.0|none|none|$RUN||pkg/fixed/entry.md|- Fix a typo.|rc=0 $(within 1)" \
   "version-dropped|a change dropping metadata.version owes no raise|1.9.0|1.0.0|none|$RUN||||rc=0 $PKG_NOMATCH" \
   "first-version|a change stating a first metadata.version owes no raise|1.9.0|none|1.0.0|$RUN||||rc=0 $PKG_NOMATCH" \
-  "nameless|a package file with no name is a collection error|1.9.0|1.0.0|nameless|$RUN||||rc=2 ${ERR}version-read=$PKG" \
-  "empty-version|a SKILL.md stating an empty metadata.version is a collection error, never a versionless package|1.9.0|1.0.0|empty|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
+  "nameless|a package file with no name is a collection error|1.9.0|1.0.0|nameless|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
   IFS='|' read -r name label app_next pkg_prior pkg_next change base_frag frag fragment expected <<<"$row"
   pkg_repo "package-$name" "$pkg_prior" "$base_frag"
   put app.json "{\"version\":\"$app_next\"}\n"
   case "$pkg_next" in
     nameless) put "$PKG" '---\nmetadata:\n  version: "1.0.0"\n---\n' ;;
-    empty) put "$PKG" "$(skill pkg '')\n" ;;
     *) put "$PKG" "$(skill pkg "$pkg_next")\n" ;;
   esac
   [ -z "$change" ] || put "$change" 'echo two\n'
@@ -645,15 +643,20 @@ repo package-new
 put app.json '{"version":"1.9.0"}\n'; stage; git -C "$R" commit -qm base
 put "$PKG" "$(skill pkg 1.0.0)\n"; put skills/pkg/run.sh 'echo one\n'; stage
 assert_eq 'a new package needs no raise' "rc=0 $PKG_NOMATCH" "$(run "$PKG_ENV" '')"
-# The version is the metadata block's, plain or quoted.
+# The version is the metadata block's, plain or quoted, and a package is
+# versionless only where no frontmatter line is a version key: one the
+# reader cannot place, or one stated empty, is a collection error.
 for row in \
-  "plain|a plain metadata.version above a top-level version line is the version read|metadata:\n  version: 1.0.0\nversion: 9.9.9" \
-  "single|a single-quoted metadata.version is read without its quotes|metadata:\n  version: '1.0.0'"; do
-  IFS='|' read -r name label frontmatter <<<"$row"
+  "plain|a plain metadata.version above a top-level version line is the version read|metadata:\n  version: 1.0.0\nversion: 9.9.9|$UNBUMPED" \
+  "single|a single-quoted metadata.version is read without its quotes|metadata:\n  version: '1.0.0'|$UNBUMPED" \
+  "comment|a column-zero comment inside metadata leaves its version read|metadata:\n# note\n  version: \"1.0.0\"|$UNBUMPED" \
+  "top-level|a version line outside metadata is a collection error, never a versionless package|version: 1.0.0|rc=2 ${ERR}version-read=$PKG" \
+  "empty|an empty metadata.version is a collection error, never a versionless package|metadata:\n  version: \"\"|rc=2 ${ERR}version-read=$PKG"; do
+  IFS='|' read -r name label frontmatter expected <<<"$row"
   repo "package-form-$name"
   put "$PKG" "---\nname: pkg\n$frontmatter\n---\n"; put skills/pkg/run.sh 'echo one\n'; stage; git -C "$R" commit -qm base
   put skills/pkg/run.sh 'echo two\n'; stage
-  assert_eq "$label" "$UNBUMPED" "$(run "$PKG_ENV" '')"
+  assert_eq "$label" "$expected" "$(run "$PKG_ENV" '')"
 done
 # A program pattern globbing deeper than its root has no package slot.
 repo package-mid-glob
@@ -728,8 +731,12 @@ control 'judging a dropped version as a raise refuses the change' package-versio
   "rc=1 ${ERR}package-unbumped=$PKG:1.0.0;$(summary 1 0)" '[ -n "$new" ] || continue' ':'
 control 'judging a first version against an absent one refuses the change' package-first-version \
   "rc=1 ${ERR}major-breaking=$PKG::1.0.0;$(summary 1 0)" '[ -n "$old" ] || continue' ':'
-control 'reading an empty metadata.version as no version passes the change' package-empty-version \
+control 'reading an empty metadata.version as no version passes the change' package-form-empty \
   "rc=0 $PKG_NOMATCH" ' || (has && version == "")' '' lib/skill-roots.sh
+control 'counting only metadata version lines reads a top-level one as versionless' package-form-top-level \
+  "rc=0 $PKG_NOMATCH" '/^[ \t]*version:/ { has = 1 }' 'meta && /^[ \t]+version:/ { has = 1 }' lib/skill-roots.sh
+control 'a comment ending the metadata block leaves its version unplaced' package-form-comment \
+  "rc=2 ${ERR}version-read=$PKG" '/^[ \t]*#/ { next }' '' lib/skill-roots.sh
 if [ -r "/proc/$$/cmdline" ]; then
   gg_mutant judge changelog-entries '[ -z "$GG_COMMIT_BASE" ] || diff_args+=("$GG_COMMIT_BASE")' ':'
   amend_repo amend-head "$judge"
