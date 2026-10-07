@@ -1743,22 +1743,23 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
   "control: a read that takes any mode names the ci run"
 
 # --- The command's own preview resolves an all selection before launch -------
-# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base
+# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch
 SELECTION_ROWS=(
-  "a full all selection uses required PR CI|full|yes|all|rules|ci||unreported|no"
-  "a range all selection uses required PR CI|range|yes|all|rules|ci||unreported|no"
-  "a full subset retains local execution|full|yes|subset|rules|full||unreported|no"
-  "a range subset retains local execution|range|yes|subset|rules|range||unreported|yes"
-  "an unset selector preserves local execution|full|no|all|rules|full||unreported|no"
-  "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no"
-  "an unknown selection preserves local execution|full|yes|unknown|rules|full||unreported|no"
-  "an all selection without required CI retains local execution|full|yes|all|unrequired|full||unreported|no"
-  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||unreported|no"
-  "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-unread|full|true|subset|yes"
-  "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-unread|range|true|subset|yes"
+  "a full all selection uses required PR CI|full|yes|all|rules|ci||unreported|no|absent"
+  "a range all selection uses required PR CI|range|yes|all|rules|ci||unreported|no|absent"
+  "a full subset retains local execution|full|yes|subset|rules|full||unreported|no|full"
+  "a range subset retains local execution|range|yes|subset|rules|range||unreported|yes|range"
+  "an unset selector preserves local execution|full|no|all|rules|full||unreported|no|full"
+  "an unset selector preserves range local execution|range|no|all|rules|range||unreported|yes|range"
+  "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no|full"
+  "an unknown selection preserves local execution|full|yes|unknown|rules|full||unreported|no|full"
+  "an all selection without required CI retains local execution|full|yes|all|unrequired|full||unreported|no|full"
+  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||unreported|no|full"
+  "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-unread|full|true|subset|yes|absent"
+  "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-unread|range|true|subset|yes|absent"
 )
 selection_rows() { # SCRIPT [LABEL]
-  local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base args n answer
+  local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch args n answer
   local initial_fail="$FAIL"
   n=0
   for row in "${SELECTION_ROWS[@]}"; do
@@ -1766,6 +1767,13 @@ selection_rows() { # SCRIPT [LABEL]
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "proj-selection-$n" CI)"
+    cat > "$proj/local-command" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> local-launch
+printf '%s\n' "$1"
+SH
+    chmod +x "$proj/local-command"
+    sed -i.bak 's/^DEV_VALIDATE_CMD = .*/DEV_VALIDATE_CMD = ".\/local-command full"/; s/^DEV_VALIDATE_RANGE_CMD = .*/DEV_VALIDATE_RANGE_CMD = ".\/local-command range"/' "$proj/kendex.settings.toml"
     cat > "$proj/selection" <<'SH'
 #!/usr/bin/env bash
 if [[ "${DEV_VALIDATE_SCOPED:-false}" == true ]]; then
@@ -1796,7 +1804,9 @@ SH
       assert_eq "$(record_field scoped "$OUT") $(record_field class-base "$OUT")" \
         "true $(git -C "$proj" rev-parse HEAD)" "$label: scoped receipt cannot stand for the whole battery" "$ERR"
     fi
-    printf '%s\t%s|%s|%s|%s\n' "$label" "$got_mode" "$got_scoped" "$got_selection" "$got_base"
+    got_launch=absent
+    [[ ! -f "$proj/local-launch" ]] || got_launch="$(cat "$proj/local-launch")"
+    printf '%s\t%s|%s|%s|%s|%s\n' "$label" "$got_mode" "$got_scoped" "$got_selection" "$got_base" "$got_launch"
     # A base-aware read resolves the same range selection without starting.
     if [[ "$requested" == range ]]; then
       RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED=true \
@@ -1812,9 +1822,9 @@ SH
 }
 SELECTION_GOT="$(selection_rows "$CI_SCRIPT")"
 for row in "${SELECTION_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base <<<"$row"
+  IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base want_launch <<<"$row"
   assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$SELECTION_GOT")" \
-    "$want_mode|$want_scoped|$want_selection|$want_base" "$label"
+    "$want_mode|$want_scoped|$want_selection|$want_base|$want_launch" "$label"
 done
 selection_control() { # LABEL ANCHOR REPLACEMENT ROW
   local got want
@@ -1842,6 +1852,14 @@ selection_control 'ignoring class coverage turns automatic CI resolution red' \
   '&& [[ "$selection" == selection=all ]] && ci_class_covered; then' \
   '&& [[ "$selection" == selection=all ]] && true; then # ci_class_covered' \
   'an all selection CI does not cover retains local execution'
+for row in "${SELECTION_ROWS[@]}"; do
+  IFS='|' read -r label _ _ _ _ _ _ _ _ want_launch <<<"$row"
+  [[ "$want_launch" == absent ]] || continue
+  selection_control "launching the original command before preview turns $label red" \
+    $'  scoped=false\n  if [[ "$validate_mode" != ci ]]; then' \
+    $'  scoped=false\n  if [[ "$validate_mode" != ci ]]; then\n    "$BASH" -c "$cmd" >/dev/null' \
+    "$label"
+done
 }
 
 # --- A run the bound already ended answers a later run over no fewer paths ----
