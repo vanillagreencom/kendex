@@ -373,6 +373,45 @@ for wf in dev-fix review-pr-comments; do
   fi
 done
 
+# Copilot can list a finding only in its review body, and an APPROVED review
+# is no exception. Within § 7.2, each route that leaves an approved head (the
+# APPROVED line already at the head, and the `approved`/`APPROVED` re-review
+# row) runs the body check before it ends the step or sends its notice, and
+# that check runs the one body reader. Otherwise body findings surface first
+# at the merge gate, after a full CI run.
+review_workflow="$SKILL_DIR/workflows/review-pr-comments.md"
+approved_head_runs_body_check() { # review-doc
+  awk '
+    /^### 7\.2 / { inside = 1; next }
+    /^### / { inside = 0 }
+    !inside { next }
+    index($0, "check-review-replies [PR_NUMBER]") { reader = 1 }
+    index($0, "`state` is `APPROVED`") && index($0, "ends this step") {
+      head = 1
+      check = index($0, "body check"); end = index($0, "ends this step")
+      if (!check || check > end) bad = 1
+    }
+    /^ *\| `approved` \| `APPROVED` \|/ {
+      row = 1
+      check = index($0, "body check"); notice = index($0, "copilot-approved-on-rerequest")
+      if (!check || !notice || check > notice) bad = 1
+    }
+    END { exit (bad || !reader || !head || !row) }' "$1"
+}
+if approved_head_runs_body_check "$review_workflow"; then
+  pass "review-pr-comments runs the body check before leaving an approved head"
+else
+  fail "review-pr-comments must run the body check before leaving an approved head"
+fi
+assert_doc_mutant_fails approved_head_runs_body_check "$review_workflow" \
+  '| `approved` | `APPROVED` | Run the body check below; on its exit `0`, notice' \
+  '| `approved` | `APPROVED` | Notice' \
+  "an APPROVED re-review notified with no body check"
+assert_doc_mutant_fails approved_head_runs_body_check "$review_workflow" \
+  'and whose `state` is `APPROVED` runs the body check below, and its exit `0` ends this step' \
+  'and whose `state` is `APPROVED` ends this step' \
+  "an approved head ending the step with no body check"
+
 # Approval-wait owns gate-mode resolution for workflows that wait on a
 # reviewer: each resolves it through the one --resolve-mode call, named for
 # the pull request whose base it reads.
