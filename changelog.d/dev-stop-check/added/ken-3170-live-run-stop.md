@@ -1,0 +1,1 @@
+- New hook `dev-stop-check` (Claude Code and Codex, `SubagentStop`): a subagent that ends its turn while a `dev-validate-run` it started in its worktree is still going is held once and handed the `dev-validate-run --wait --run-dir` command to run next, so its round is no longer left with a verdict on disk and nothing committed. A stop with no run still going passes unchanged.

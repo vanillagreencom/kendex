@@ -565,6 +565,11 @@ source = "."
 harnesses = ["claude", "codex", "copilot"]
 enabled = true
 
+[hooks.dev-stop-check]
+source = "."
+harnesses = ["claude", "codex"]
+enabled = true
+
 [hooks.lane-mail-check]
 source = "."
 enabled = true

@@ -1,0 +1,1 @@
+- `dev-validate-run --live --worktree PATH` prints the run still going in that worktree, `run-dir=… pid=N`, or `live=none` at exit 1, by the same judgment a start refuses on as run-live, and starts nothing.

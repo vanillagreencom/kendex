@@ -660,7 +660,7 @@ assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: option-unused option=--budge
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--resolve-mode,--last-pass,--child" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--resolve-mode,--last-pass,--live,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -1643,6 +1643,46 @@ live_control mutant mutant-live-verdict $'dir="${pid_file%/pid}"\n    [[ ! -s "$
 live_control lib_mutant mutant-live-argv '[[ "$args" == $2 ]] || return 1' ':' live-reused-pid
 live_control lib_mutant mutant-unread-gone $'kill -0 "$1" 2>/dev/null || return 1\n    return 2' $'kill -0 "$1" 2>/dev/null || return 1\n    return 1' live-child-unread
 live_control mutant mutant-unread-no-run '[[ "$is" != 1 ]] || continue' '[[ "$is" == 0 ]] || continue' live-child-unread
+
+# --live answers the judgment a start refuses on, over the same planted
+# records, and starts nothing: the run the start names as run-live, or
+# live=none at exit 1. dev-stop-check reads it.
+live_read_rows() { # SCRIPT
+  local row name verdict process argv proj RUN_PATH
+  for row in "${LIVE_ROWS[@]}"; do
+    IFS='|' read -r name verdict process argv _ <<<"$row"
+    RUN_PATH=""
+    [[ "$argv" == reads ]] || RUN_PATH="$TMP_ROOT/unread-ps-bin:$PATH"
+    plant "$name" setsid "$verdict" "$process"
+    proj="$PLANT_PROJ"
+    run_script "$1" --live --worktree "$proj"
+    printf '%s %s rc=%s runs=%s\n' "$name" "$(sed "s|$proj|PROJ|; s|pid=$PLANTED\$|pid=PLANTED|" <<<"$OUT")" "$RC" \
+      "$(find "$proj/tmp" -mindepth 1 -maxdepth 1 -name 'dev-validate-*' | wc -l | tr -d ' ')"
+    [[ -z "$PLANTED" ]] || kill -KILL -- "-$PLANTED" 2>/dev/null || kill -KILL "$PLANTED" 2>/dev/null || true
+    rm -rf -- "$proj"
+  done
+}
+live_read_want() { # NAME
+  local row name process want
+  for row in "${LIVE_ROWS[@]}"; do
+    IFS='|' read -r name _ process _ want <<<"$row"
+    [[ "$name" == "$1" ]] || continue
+    case "$want" in
+      refused) printf '%s run-dir=PROJ/tmp/dev-validate-planted-%s pid=PLANTED rc=0 runs=1\n' "$name" "$name" ;;
+      started) printf '%s live=none rc=1 runs=%s\n' "$name" "$([[ "$process" == none ]] && echo 0 || echo 1)" ;;
+    esac
+  done
+}
+live_read_out="$(live_read_rows "$RUN")"
+for row in "${LIVE_ROWS[@]}"; do
+  IFS='|' read -r name _ <<<"$row"
+  assert_eq "$(grep "^$name " <<<"$live_read_out")" "$(live_read_want "$name")" \
+    "--live in a worktree holding a planted $name record"
+done
+mutant mutant-live-read-none $'if [[ -z "$LIVE_RUN_DIR" ]]; then\n    echo live=none' $'if :; then\n    echo live=none'
+live_read_got="$(live_read_rows "$MUTANT" | grep '^live-child ' || true)"
+assert_eq "$([[ "$live_read_got" != "$(live_read_want live-child)" ]] && echo turned || echo "held:$live_read_got")" "turned" \
+  "control: a --live that reports no run turns the live-child row"
 
 # --- --last-pass names the newest passing run and the tree it validated --------
 # The pass validates an edit not yet committed, as dev-implement validates

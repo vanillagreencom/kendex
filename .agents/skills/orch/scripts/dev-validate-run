@@ -107,6 +107,11 @@
 #       that tree. A ci run ran nothing and is never one. Exit 1 where the
 #       worktree has none, or where a later full or range run did not pass,
 #       an unfinished one included: that run is named as red.
+#   dev-validate-run --live --worktree PATH
+#       Print the run still going in that worktree, read-only and starting
+#       nothing: the run a start there would refuse as run-live, judged the
+#       same way. Exit 1 where none is. The dev-stop-check hook holds a
+#       subagent's stop on it.
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
@@ -192,6 +197,8 @@
 #   validate-mode=full|range                                                  (--resolve-mode)
 #   run-dir=… head=SHA tree=SHA                                               (--last-pass)
 #   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
+#   run-dir=… pid=N                                                           (--live)
+#   live=none                                                                 (--live, exit 1)
 #
 # --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
 # for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
@@ -264,7 +271,7 @@ die() {
       missing-value) printf 'The option requires a value.\n' ;;
       required) printf 'The required option is absent or empty.\n' ;;
       unknown-argument) printf 'The argument is not supported.\n' ;;
-      mode-conflict) printf 'Use one of --worktree, --wait, --stop, --record, --resolve-mode, --last-pass or --child.\n' ;;
+      mode-conflict) printf 'Use one of --worktree, --wait, --stop, --record, --resolve-mode, --last-pass, --live or --child.\n' ;;
       record-unreadable) printf 'The start record names no validation mode of full, range or ci.\n' ;;
       option-unused) printf 'The option has no meaning in this mode and would be silently dropped.\n' ;;
       repeated) printf 'The option was given twice, and one of its values would be silently dropped.\n' ;;
@@ -460,6 +467,7 @@ while (( $# > 0 )); do
     --record)   set_mode "$1" record; shift ;;
     --resolve-mode) set_mode "$1" resolve; shift ;;
     --last-pass) set_mode "$1" last-pass; shift ;;
+    --live)     set_mode "$1" live; shift ;;
     --run-dir)  need "$1" $# "${2:-}"; once "$1" "$run_dir_given"; run_dir_given=true; run_dir="$2"; shift 2 ;;
     --poll)     need "$1" $# "${2:-}"; once "$1" "$poll_given"; poll_given=true; poll="$2"; shift 2 ;;
     --budget)   need "$1" $# "${2:-}"; once "$1" "$budget_given"; budget_given=true; budget="$2"; shift 2 ;;
@@ -472,15 +480,15 @@ while (( $# > 0 )); do
 done
 
 # --worktree alone is the start path; with --stop it names what to stop, with
-# --resolve-mode the project whose settings are read, and with --last-pass the
-# worktree whose runs are read.
+# --resolve-mode the project whose settings are read, and with --last-pass or
+# --live the worktree whose runs are read.
 [[ -n "$mode" || "$worktree_given" == false ]] || mode=start
 
 # Every option belongs to one mode. A flag the mode cannot use is refused rather
 # than dropped, so no caller believes it set a bound this script then ignores.
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
 case "$mode" in
-  start|stop|resolve|last-pass)
+  start|stop|resolve|last-pass|live)
     [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
     [[ "$budget_given" == false ]] || die option-unused "option=--budget" "mode=$mode"
     [[ "$mode" == start || "$poll_given" == false ]] || die option-unused "option=--poll" "mode=$mode"
@@ -508,7 +516,7 @@ case "$mode" in
     [[ -d "$run_dir" ]] || die not-directory "path=$run_dir"
     [[ "$mode" != wait ]] || check_seconds option=--budget "$budget"
     ;;
-  *) die required options=--worktree,--wait,--stop,--record,--resolve-mode,--last-pass,--child ;;
+  *) die required options=--worktree,--wait,--stop,--record,--resolve-mode,--last-pass,--live,--child ;;
 esac
 
 # Sets validate_mode, and cmd for a range run, to what a range request runs
@@ -852,6 +860,18 @@ read_sentinel() {
     *) SENTINEL_VERDICT=FAILING ;;
   esac
 }
+
+# --- Live: the run a start would refuse as run-live, read-only ---------------
+if [[ "$mode" == live ]]; then
+  worktree="$(cd "$worktree" && pwd)"
+  find_live_run "$worktree"
+  if [[ -z "$LIVE_RUN_DIR" ]]; then
+    echo live=none
+    exit 1
+  fi
+  printf 'run-dir=%s pid=%s\n' "$LIVE_RUN_DIR" "$LIVE_RUN_PID"
+  exit 0
+fi
 
 # --- Last pass: the newest run that validated a known tree, read-only --------
 # Run directories are named for the UTC second they started, so the last match
