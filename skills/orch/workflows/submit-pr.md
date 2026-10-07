@@ -76,7 +76,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed. While workflow state `pr_order` reads `open-first`, an armed read is a PR armed before its internal review returned: unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1, whose hand-back pushes nothing and returns to the caller. After § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
 
-1. **Push**. With workflow state `pr_order` reading `open-first-returned`, the first pass after the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened, run § 3's triage pass first, `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1` with managed context, `[PR_NUMBER]` from step 2's read, run first: its fix round commits on top of the internal review's, its push carries both, and the push below sends what remains.
+1. **Push**. With workflow state `pr_order` reading `open-first-returned`, the first pass after the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened, first run § 3's triage pass, `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context, `[PR_NUMBER]` being the `number` this section's opening `pr-view-json` read printed: its fix round commits on top of the internal review's, its push carries both, and the push below sends what remains. The triage returns to the `worktree-push` command below, never to this step's start, whose condition still holds.
 
    ```bash
    .agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
@@ -88,11 +88,13 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 
-   After that triage pass, once the push lands, record the pass, then run [review-pr-comments.md](review-pr-comments.md) § 7.2 on the pushed head: the triage's own § 7.2 routed no head while the internal fix round was unpushed, and a head it already re-requested gets no second request.
+   **Open-first head.** On that `open-first-returned` pass, once the push lands, this step owns the pushed head: it ends the overseer's hold and routes the head once. In a lane whose brief names a status file, write the review line `Review: [VERDICT]` in place of the pending line, `[VERDICT]` being the verdict [review-pr.md](review-pr.md) § 9 returned, then record the pass:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-pushed
    ```
+
+   Then run [review-pr-comments.md](review-pr-comments.md) § 7.2 from its mode read, past its **Skip if**: the triage's own § 7.2 routed no head on this pull request, so this run is the pushed head's one route whatever threads the triage answered. With no Copilot review on the pull request, the head takes its **Head moved** route, an exact-head request even where the push moved nothing: GitHub's request event restarts pr-watch's quiet period, so an `awaiting-stale` line the hold held rises again for this head now that the hold has ended.
 
 2. **Check for an existing PR**:
 

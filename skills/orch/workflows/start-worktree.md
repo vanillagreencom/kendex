@@ -108,7 +108,13 @@ Both rows end at the caller's review step: § 3 here, or [small.md](small.md) §
   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state
   ```
 
-  An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on: record `pr_order` as `review-first` with the command above, report once that the early open failed, with the line submit-pr or this read printed, and take the `review-first` row.
+  An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on. Record the review-first order:
+
+  ```bash
+  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order review-first
+  ```
+
+  Then report once that the early open failed, with the line submit-pr or this read printed, and take the `review-first` row.
 
 ## 3. Review
 
@@ -116,7 +122,7 @@ Both rows end at the caller's review step: § 3 here, or [small.md](small.md) §
 
 ## 4. Submit
 
-**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, and its step 5 arms the head once § 3 has returned.
+**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, then writes § 3's verdict line and routes the pushed head, and its step 5 arms the head once § 3 has returned.
 
 ## 5. Finalize
 

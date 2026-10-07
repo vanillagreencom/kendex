@@ -388,7 +388,7 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-**Skip if** no thread this triage answered is Copilot's and the body check below, run now, exits `0`; any other exit runs this step. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+**Skip if** no thread this triage answered is Copilot's and the body check below, run now, exits `0`; any other exit runs this step. **Skip if** workflow state `pr_order` reads `open-first-returned`, with no notice and no request: on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, the lane's `Review:` line still reads pending, and [submit-pr.md](submit-pr.md) § 2 step 1 routes the head once its push lands. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
@@ -400,7 +400,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
 
-A non-zero exit, which is reported, ends this step. With workflow state `pr_order` reading `open-first-returned`, a `git -C [WORKTREE_PATH] rev-parse HEAD` other than `[HEAD_SHA]` also ends this step, with no notice and no request: the internal review's fix round is still local on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, and [submit-pr.md](submit-pr.md) § 2 step 1 runs this step again once its push lands. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id` and `state` per line:
+A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id` and `state` per line:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state] | @tsv'
