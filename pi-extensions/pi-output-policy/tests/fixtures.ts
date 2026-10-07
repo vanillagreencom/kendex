@@ -85,6 +85,7 @@ export function fakeCtx(cwd: string): ExtensionContext {
 
 interface FakeResult {
 	content: Array<{ type: string; text: string }>;
+	structuredContent?: unknown;
 	details: {
 		[key: string]: unknown;
 		big: string;

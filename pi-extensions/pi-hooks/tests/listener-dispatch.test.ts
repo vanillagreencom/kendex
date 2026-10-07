@@ -114,6 +114,23 @@ function renderRegisteredGuard(project: string, listener: string, name: string, 
  * except on `StopFailure` and `SessionEnd`, whose word is the person's.
  */
 describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", () => {
+	test("PostToolUse context preserves structured tool output", async () => {
+		const project = initCleanRustRepo("pi-hooks-structured-result-");
+		try {
+			registerRendered(join(project, ".pi"), TOOL_RESULT_LISTENER, "Bash", 'echo "hook-context=added"');
+			const handler = installCarrier().handler(TOOL_RESULT_LISTENER);
+			for (const structuredContent of [{ output: "ok", truncated: false, exit_code: 0 }, undefined]) {
+				const event = { ...toolResultEvent("bash", { command: "printf ok" }, "ok"), ...(structuredContent === undefined ? {} : { structuredContent }) };
+				const result = await handler(event, trusted(project)) as { content: { type: string; text: string }[]; structuredContent?: unknown };
+				expect(result.content).toEqual([{ type: "text", text: "ok" }, { type: "text", text: "hook-context=added" }]);
+				expect(result.structuredContent).toBe(structuredContent);
+				expect(event.content).toEqual([{ type: "text", text: "ok" }]);
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	/** The hook's stdout, or its stderr on a refusal, in the tool result the
 	 * model reads — Claude Code's own `PostToolUse` exit-2 consequence. */
 	test("a registered PostToolUse hook runs and its word lands on the tool result", async () => {

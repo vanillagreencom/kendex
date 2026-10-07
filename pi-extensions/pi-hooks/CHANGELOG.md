@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.19.1
+
+- Codemode scripts retain structured tool output when a PostToolUse hook adds context to the displayed result.
+
 ### 0.19.0
 
 - A `StopFailure` payload carries `last_assistant_message`, the error text Pi recorded on the failed response, such as a usage limit and its reset, where Pi recorded one. orch's session rows keep it as the row's `message`, from which `oversee-watch` judges a Pi overseer walled or wedged. `extensions/vocab.ts` adds `claudeFailureFields`.

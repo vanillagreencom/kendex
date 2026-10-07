@@ -323,7 +323,11 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const added: { type: "text"; text: string }[] = [];
 		await report(TOOL_RESULT_LISTENER, run, ctx, (text) => added.push({ type: "text", text }));
 		if (added.length === 0) return undefined;
-		return { content: [...event.content, ...added] };
+		return {
+			content: [...event.content, ...added],
+			// Hook context does not change the tool's own structured output.
+			structuredContent: "structuredContent" in event ? event.structuredContent : undefined,
+		};
 	});
 
 	// `Stop` and `TaskCompleted` fire when Claude Code's agent has finished

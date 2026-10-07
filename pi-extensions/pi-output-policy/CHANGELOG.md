@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.4
+
+- Codemode scripts retain structured tool output when display text is shortened or details are capped. Details-only changes keep the original text.
+
 ### 2.1.3
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.

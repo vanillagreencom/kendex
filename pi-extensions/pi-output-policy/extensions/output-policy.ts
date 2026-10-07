@@ -1040,6 +1040,9 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 				reason: "details payload exceeded inline budget; capped per policyMode (set policyMode=compat or sanitizeDetails=false to disable)",
 			};
 		}
-		return { content: processed.content, details };
+		if (!processed.changed) return { details };
+		// Text budgets change the model's display, not the tool's output for
+		// programmatic callers. Pi's bash already gives these different budgets.
+		return { content: processed.content, details, structuredContent: event.structuredContent };
 	});
 }

@@ -4,6 +4,34 @@ import { withConfigAsync, fakeCtx, createFakePi } from "./fixtures.ts";
 
 beforeEach(() => { __resetSessionCountersForTests(); });
 
+test("tool-result presentation changes preserve structured tool output", async () => {
+	const noisy = Array.from({ length: 180 }, (_, i) => `   Compiling crate_${i} v0.1.0`).join("\n");
+	for (const row of [
+		{ name: "details only", text: "hello", details: { big: "x".repeat(20_000) }, changed: false },
+		{ name: "truncated", text: "q".repeat(30_000), details: {}, changed: true },
+		{ name: "minimized", text: noisy, details: {}, changed: true },
+	]) {
+		for (const structuredContent of [{ output: row.text, truncated: false, exit_code: 0 }, undefined]) {
+			await withConfigAsync({}, async (cwd) => {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const content = [{ type: "text", text: row.text }];
+				const event = { toolName: "bash", toolCallId: row.name, input: { command: "cargo test" }, content, details: row.details, isError: false, ...(structuredContent === undefined ? {} : { structuredContent }) };
+				const result = await fake.fire("tool_result", event, fakeCtx(cwd));
+				expect(result).toBeDefined();
+				if (row.changed) {
+					expect(result!.content).not.toEqual(content);
+					expect(result!.structuredContent).toBe(structuredContent);
+				} else {
+					expect(result!.content).toBeUndefined();
+					expect(result!.details.big.length).toBeLessThan(row.details.big!.length);
+				}
+				expect(event.content).toBe(content);
+			});
+		}
+	}
+});
+
 test("tool-result detail sanitization", async () => {
 	for (const row of [
 		{ kind: "object", toolName: "grep", config: {}, changes: true },
