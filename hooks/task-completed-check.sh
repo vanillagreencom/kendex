@@ -151,15 +151,19 @@ fi
 # no source being a path dependency, the only kind a member can be. Only
 # stdout is JSON: a read that succeeds may still warn on stderr, so stderr is
 # captured apart and replayed under the key only when the read fails.
+# On Windows cargo writes native `C:\...` paths, and `@tsv` would double each
+# backslash into a path no `cd` resolves, so separators become `/` first, a
+# form the Windows bash ports `cd` into as well.
 # A repository whose root holds Cargo.toml leaves MANIFEST_ARGS empty, and
 # bash 3.2 under `set -u` reads an empty array as an unbound variable.
 # Hence the guarded expansion.
 WORKSPACE=$(
   {
     cause=$( { cargo metadata ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --no-deps --format-version 1 |
-      jq -r '.packages[] | .name as $n |
-        (["M", $n, (.manifest_path | sub("[/\\\\][^/\\\\]*$"; ""))] | @tsv),
-        ((.dependencies // [])[] | select(.source == null and .path != null) | ["D", $n, .path] | @tsv)' >&3; } 2>&1) || {
+      jq -r 'def slashed: gsub("\\\\"; "/");
+        .packages[] | .name as $n |
+        (["M", $n, (.manifest_path | slashed | sub("/[^/]*$"; ""))] | @tsv),
+        ((.dependencies // [])[] | select(.source == null and .path != null) | ["D", $n, (.path | slashed)] | @tsv)' >&3; } 2>&1) || {
       printf '%s\n' "$cause"
       exit 1
     }

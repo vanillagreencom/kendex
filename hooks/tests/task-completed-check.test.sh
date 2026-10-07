@@ -217,6 +217,14 @@ printf 'pub fn b() { }\n' >"$REPO/crates/b/src/lib.rs"
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$DEPS_META"
 assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c -p d --all-targets" \
   "a change to b also lints every member depending on it, however indirectly, and no registry or outside path namesake"
+# cargo on Windows writes native backslash separators in both path fields.
+WIN_META=$(jq -cn --arg r "$REPO" '{packages: [
+  {name: "b", manifest_path: ($r + "\\crates\\b\\Cargo.toml"), dependencies: []},
+  {name: "c", manifest_path: ($r + "\\crates\\c\\Cargo.toml"),
+   dependencies: [{name: "b", source: null, path: ($r + "\\crates\\b")}]}]}')
+run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$WIN_META"
+assert_eq "$(sed -n '/^clippy/p' "$ARGS_LOG")" "clippy -p b -p c --all-targets" \
+  "backslash-separated cargo paths still map files and dependencies to members"
 fgit -C "$REPO" checkout -q -- crates
 fgit -C "$REPO" mv crates/a/src/lib.rs crates/b/src/moved.rs
 run_hook "$REPO" FAKE_RC=0 FAKE_METADATA="$MEMBERS_META"
