@@ -1,0 +1,1 @@
+- A dev round that changes a view, layout, styling or UI copy raises the `needs-ui-review` QA signal, and the completion summary lists its before and after screenshots under Screenshots.

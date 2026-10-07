@@ -358,6 +358,12 @@ git -C [WORKTREE_PATH] diff --exit-code -G'unsafe |Ordering::|Atomic(U|I|Bool|Pt
 .agents/skills/orch/scripts/orch-env QA_PERF_PATHS ""
 ```
 
+   When the repo sets `QA_UI_PATHS` (space-separated path globs), any changed file matching one adds `needs-ui-review`:
+
+```bash
+.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""
+```
+
 3. **Judgment** — you may add or drop a signal with a one-line reason; record it:
 
 ```bash
@@ -370,7 +376,7 @@ Drop a signal when the triggering code is trivial or test-only; never drop one f
 
 **Skip if** the recorded `qa_decision.signals` is empty → § 7, which finds no QA artifacts, converges, and routes on: the exit is decided in one place even when QA never ran.
 
-Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`; a project may override the mapping in its instructions. For each, delegate and wait.
+Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`, `needs-ui-review` → `reviewer-quality`, whose UI lens judges the dev summary's before and after screenshots against the design-system doc `QA_UI_DESIGN_DOC` names; a project may override the mapping in its instructions. For each, delegate and wait.
 
 Fill `Worktree:` by the rule at the top of this workflow.
 

@@ -229,6 +229,7 @@ Based on the FINAL validated code, decide which extra QA passes the change needs
 | Unsafe code, atomics, lock-free | `needs-safety-audit` |
 | Hot path, latency-sensitive, or shared/main-build perf risk | `needs-perf-test` |
 | New module, public API | `needs-review` |
+| Changed view, layout, styling or UI copy | `needs-ui-review` |
 
 Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected.
 
@@ -259,6 +260,9 @@ Always required. Linear posts it to the issue you implemented: write `tmp/comple
 
 ### Domain Metrics
 [Agent-specific: frame time, latency, etc.]
+
+### Screenshots
+- `tmp/ui-shots/[FILE]` - [View], [before|after], [dark|light]
 
 ### Discovered Work
 - [Type]: Description (estimate: N)

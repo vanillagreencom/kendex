@@ -13,7 +13,7 @@ color: purple
 
 ## Scope
 
-Implementation maintainability of the reviewed scope: simplification, abstraction value, type/boundary clarity, canonical helper reuse, decomposition (god objects, files/functions this change makes materially harder to scan, tests located against convention). Document byte ceilings are deterministic (doc-limits). Don't re-enforce them. Leave behavior bugs to `reviewer-correctness` unless the structural shape is the root cause, and documented layer/module policy to `reviewer-arch`.
+Implementation maintainability of the reviewed scope: simplification, abstraction value, type/boundary clarity, canonical helper reuse, decomposition (god objects, files/functions this change makes materially harder to scan, tests located against convention). Document byte ceilings are deterministic (doc-limits). Don't re-enforce them. Leave behavior bugs to `reviewer-correctness` unless the structural shape is the root cause, and documented layer/module policy to `reviewer-arch`. Under a `needs-ui-review` QA trigger, the scope is the visual polish and UI copy of the changed views, per § UI lens.
 
 ## Discipline
 
@@ -29,6 +29,14 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 - Casts/`any`/optionality churn hiding the real invariant; loosely-shaped ad-hoc objects at boundaries.
 - Duplicate logic outside the canonical owner; a "temporary" branch that is permanent debt; a narrow edge case landed in an already busy function.
 - Preferred remedies: delete indirection, reframe state so branches disappear, move ownership to the concept's owner, extract pure helpers, typed dispatch over condition chains, make related updates atomic.
+
+### UI lens
+
+Under `Trigger: needs-ui-review` this lens is the whole review. Read the consumer's design-system doc, the path `.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""` prints, and the before and after screenshots the dev summary lists. Judge each changed view against that doc and the polish bar in the `frontend` agent's Discipline, the diff included for token use.
+
+- A changed view with no before and after screenshot is a blocker: the change cannot be judged.
+- A regression from before to after, a one-off value where the doc has a token, or copy a first-time user would misread is a blocker. A lesser polish gap is a `fix` suggestion.
+- An unset `QA_UI_DESIGN_DOC`, or one naming a missing file, is an `issue` suggestion naming the gap. Judge against the polish bar alone and infer no token the consumer did not write.
 
 ## Output
 

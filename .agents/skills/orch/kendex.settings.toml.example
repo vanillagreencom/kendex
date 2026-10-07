@@ -245,6 +245,12 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # separated by spaces.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 
+# The files whose change asks for a UI review, as path patterns separated
+# by spaces, and the design-system doc that review judges screenshots
+# against.
+# QA_UI_PATHS = "ui/src/*"
+# QA_UI_DESIGN_DOC = "docs/design-system.md"
+
 # How many lanes the overseer keeps running at once. A launch that would
 # go past it is refused.
 ORCH_OVERSEER_LANES = "3"

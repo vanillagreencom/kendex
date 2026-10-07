@@ -1,0 +1,1 @@
+- The frontend agent builds to a stated polish bar, the design-system doc `QA_UI_DESIGN_DOC` names, and captures before and after screenshots of each changed view, in dark and light where the app has both.

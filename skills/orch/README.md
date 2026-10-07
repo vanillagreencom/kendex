@@ -79,6 +79,8 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_LANE_HOST` | `lane-host`'s host: `local`, `claude-cloud` (Claude Code's own cloud sessions) or a provider executable, each a [host kind](schemas/lane-host.md#host-kinds); `ORCH_LANE_HOST_MAX_CALLS` and `ORCH_LANE_HOST_BUSY_WAIT_SECS` cap a provider: [Host protocol](schemas/lane-host.md) | `local` |
 | `ORCH_OVERSEER_HOST` | Runtime of the overseer's own session: `tmux`, the included provider; another is refused as `runtime-unsupported`. [Protocol](schemas/overseer-host.md) | `tmux` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
+| `QA_UI_PATHS` | Space-separated path globs whose modification adds the `needs-ui-review` QA signal | empty |
+| `QA_UI_DESIGN_DOC` | Repository path of the design-system doc the `frontend` agent builds to and the `needs-ui-review` pass judges against; unset is reported as a gap | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Review-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](references/gates.md) | |
