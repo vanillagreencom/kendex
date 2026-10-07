@@ -171,7 +171,8 @@ reason=ineligible-event
 printf 'tree=%s\nworkflow=%s\nreuse=%s\nreason=%s\ndetail=stub\nrun=%s\nrecord=%s\n' \
   "${STUB_TREE:-}" "${STUB_WORKFLOW-.github/workflows/ci.yml}" "${STUB_REUSE:-false}" \
   "${STUB_REASON:-$reason}" "${STUB_RUN:-}" "$record"
-[ -z "${STUB_KIND:-}" ] || printf 'kind=%s\npatch_id=%s\n' "$STUB_KIND" "${STUB_PATCH:-}"
+[ -z "${STUB_KIND:-}" ] || printf 'kind=%s\npatch_id=%s\nmacos_contract=%s\n' \
+  "$STUB_KIND" "${STUB_PATCH:-}" "${STUB_MACOS_CONTRACT:-}"
 STUB
 chmod +x "$STUB_PROOF"
 
@@ -1093,10 +1094,23 @@ case "$(skip_answer "$mutant" "STUB_TREE=t1 STUB_WORKFLOW= RUNNER_TEMP=$RUNNER")
   *) bad "must-fail: a classify recording an unread workflow writes the record" ;;
 esac
 
-status="$(run "$CLASSIFY" MACOS_PATCH_PROOF=true STUB_KIND=tree STUB_PATCH=p1 STUB_TREE=t1 RUNNER_TEMP="$RUNNER")"
+# The shipped macOS proof reader requires the PR's contract to match the
+# merge group's contract before it can reuse the patch proof.
+PR_PATCH_RECORD='patch_id=p1
+macos_patch=true
+macos_contract=c1'
+status="$(run "$CLASSIFY" MACOS_PATCH_PROOF=true STUB_KIND=tree STUB_PATCH=p1 STUB_MACOS_CONTRACT=c1 STUB_TREE=t1 RUNNER_TEMP="$RUNNER")"
 check "PR patch record writer exit" "0" "$status"
-check "PR record carries patch identity and macOS opt-in" "patch_id=p1
-macos_patch=true" "$(grep -E '^(patch_id|macos_patch)=' "$RECORD_DIR/record")"
+check "PR record carries patch identity, macOS opt-in and contract" "$PR_PATCH_RECORD" \
+  "$(grep -E '^(patch_id|macos_patch|macos_contract)=' "$RECORD_DIR/record")"
+plant classify 'macos_contract="$(proof_line macos_contract)"' \
+  'macos_contract="$(proof_line macos_contract)"; macos_contract=""'
+status="$(run "$PLANTED" MACOS_PATCH_PROOF=true STUB_KIND=tree STUB_PATCH=p1 STUB_MACOS_CONTRACT=c1 STUB_TREE=t1 RUNNER_TEMP="$RUNNER")"
+if [ "$status" = 0 ] && [ "$(grep -E '^(patch_id|macos_patch|macos_contract)=' "$RECORD_DIR/record")" != "$PR_PATCH_RECORD" ]; then
+  ok "must-fail: clearing the contract after reading it fails the PR record assertion"
+else
+  bad "must-fail: clearing the contract after reading it fails the PR record assertion"
+fi
 
 # The record's names, bound at both ends. The one file in record_dir is the
 # member proof unzips, and the upload step uploads record_dir itself, so the
