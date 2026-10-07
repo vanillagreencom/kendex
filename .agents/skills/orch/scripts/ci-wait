@@ -186,11 +186,12 @@ Verdicts (JSON "verdict"):
   pass     every current-head check settled green, only ever paired with
            status "complete"
   fail     a settled current-head failure — current-run failures are
-           terminal. EVERY red check counts, whether or not the base branch
-           requires its context, unless --required-only; only the github pr-merge readiness check
-           applies that filter, in --check, in an immediate merge and under
-           --auto alike, so a red optional check fails this wait while that
-           gate reports it as a ci_optional_failed warning
+           terminal. By default EVERY red check counts, whether or not the
+           base branch requires its context, so a red optional check fails
+           this wait while the github pr-merge readiness check reports it
+           as a ci_optional_failed warning. --required-only applies that
+           gate's filter, from the same required set: a red optional check
+           is not a failure, and fail names only required contexts
   pending  checks still running, not yet registered, or settled green but
            unconfirmed; at the deadline the result is status "timeout" with
            this verdict, never silent success
@@ -816,13 +817,13 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   rollup_key=$(jq -cS '[.[] | {name, state}] | sort_by(.name, .state)' <<<"$checks_json")
 
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
-  # gh output. The waiter counts EVERY red check, required or not: it reports
-  # what ran on the head. Only the github pr-merge readiness check applies the
-  # base branch's required-context filter, and it runs in every mode, so the
-  # two disagree on a red check the base does not require — there the waiter
-  # fails while the merge gate does not. The shared
-  # run scoping above keeps them agreeing on which run is current; nothing
-  # makes them agree on which checks block.
+  # gh output. By default the waiter counts EVERY red check, required or not:
+  # it reports what ran on the head. The github pr-merge readiness check
+  # applies the base branch's required-context filter in every mode, so
+  # without --required-only the two disagree on a red check the base does
+  # not require — there the waiter fails while the merge gate does not. The
+  # shared run scoping above keeps them agreeing on which run is current, and
+  # --required-only on which checks block.
   check_classes=$(echo "$checks_json" | classify_checks)
   last_check_classes="$check_classes"
   pending_count=$(echo "$check_classes" | jq '.pending | length')
