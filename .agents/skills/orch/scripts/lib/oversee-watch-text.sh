@@ -332,8 +332,9 @@ The long pass's events, checked and reported in this order:
                              which --relaunch and handoffs keep and a fresh
                              launch after lane-close renews. stage= is the Step line of its
                              status file, `parked`, `unread` where its read
-                             failed, or `none`. Reported once per
-                             launched_at
+                             failed, or `none`. Reported once per age interval
+                             of ORCH_WATCH_LANE_AGE_SECS, including after a
+                             relaunch; a late pass reports the current interval
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
                              the line: the remedy is one relaunch, which
                              reads the item's worktree and PR, not a screen

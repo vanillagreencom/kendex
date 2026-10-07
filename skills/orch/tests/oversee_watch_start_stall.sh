@@ -6,9 +6,8 @@
 # kind declares files=none, a Claude cloud session, writes no file: its own
 # open pull request on the item branch is its start. Reported once, then every
 # ORCH_OVERSEER_MARK_REPEAT passes while it stands. The file also covers
-# lane-long, check_lane_long: one report for a running or parked lane
-# ORCH_WATCH_LANE_AGE_SECS past its launched_at, which relaunches and handoffs
-# keep.
+# lane-long, check_lane_long: one report per age interval for a running or
+# parked lane, including across watch restarts, relaunches and handoffs.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
@@ -174,7 +173,7 @@ for row in "start_stall_cloud_none||EVENT start-stalled issue-7 age=700" "start_
   assert_eq "events=$EVENTS" "events=$want" "$name: a files=none lane's start is its own open pull request" "$STUB_DIR/err"
 done
 
-echo "=== a lane past ORCH_WATCH_LANE_AGE_SECS is lane-long once, across a relaunch and a handoff ==="
+echo "=== lane-long repeats at age intervals across a relaunch and a handoff ==="
 # issue-1 was launched at LAUNCHED; issue-2 an hour later and recorded running
 # an hour after that, so it crosses at the last pass only when aged from its
 # launched_at, not its running_at; issue-3 is parked.
@@ -192,12 +191,45 @@ long_state() { # STATUS_1 [RUNNING_AFTER_1]
 for row in "running||14399|" \
   "running||14400|EVENT lane-long issue-3 age=14400 stage=parked|EVENT lane-long issue-1 age=14400 stage=dev round 1" \
   "running||14460|" "stopped||15000|" "running|15060|15100|" "running|15060|17999|" \
-  "running|15060|18000|EVENT lane-long issue-2 age=14400 stage=dev round 1"; do
+  "running|15060|18000|EVENT lane-long issue-2 age=14400 stage=dev round 1" \
+  "running|15060|28799|" \
+  "running|15060|28800|EVENT lane-long issue-3 age=28800 stage=parked|EVENT lane-long issue-1 age=28800 stage=dev round 1" \
+  "running|28900|28960|" \
+  "running|28900|32400|EVENT lane-long issue-2 age=28800 stage=dev round 1" \
+  "running|28900|43199|" \
+  "running|28900|43200|EVENT lane-long issue-3 age=43200 stage=parked|EVENT lane-long issue-1 age=43200 stage=dev round 1" \
+  "running|28900|72000|EVENT lane-long issue-3 age=72000 stage=parked|EVENT lane-long issue-1 age=72000 stage=dev round 1|EVENT lane-long issue-2 age=68400 stage=dev round 1" \
+  "running|28900|72060|"; do
   IFS='|' read -r status running age want <<<"$row"
   want="${row#*|*|*|}"
   long_state "$status" "$running"
   watch "$age"
   assert_eq "events=$EVENTS" "events=$want" "a $status issue-1 record ${age}s after launch reports '${want:-nothing}'" "$STUB_DIR/err"
+done
+
+echo "=== a fresh launch renews lane-long age even while the item keeps its row ==="
+new_case lane_long_fresh
+ROOT_1="$(worktree issue-1 status)"
+write_state "$(launched issue-1 "$ROOT_1" claude)"
+watch 14400
+write_state "$(launched issue-1 "$ROOT_1" claude | jq -c '.launched_at = "2026-08-15T14:00:00Z"')"
+for row in "28799|" "28800|EVENT lane-long issue-1 age=14400 stage=dev round 1" "28860|"; do
+  IFS='|' read -r age want <<<"$row"
+  watch "$age"
+  assert_eq "events=$EVENTS" "events=$want" "a fresh launch reports only when its own age crosses the bound" "$STUB_DIR/err"
+done
+
+echo "=== epoch-only rows from the older watch count as the first interval ==="
+new_case lane_long_legacy
+ROOT_1="$(worktree issue-1 status)"
+write_state "$(launched issue-1 "$ROOT_1" claude)"
+mkdir -p "$STATE_DIR"
+printf 'lane-long\tissue-1\t%s\n' "$LAUNCHED_EPOCH" > "$STATE_DIR/owner_repo__none"
+for row in "14460|" "28799|" "28800|EVENT lane-long issue-1 age=28800 stage=dev round 1" "28860|" \
+  "43200|EVENT lane-long issue-1 age=43200 stage=dev round 1"; do
+  IFS='|' read -r age want <<<"$row"
+  watch "$age"
+  assert_eq "events=$EVENTS" "events=$want" "an older row suppresses interval one and permits later intervals" "$STUB_DIR/err"
 done
 
 echo "=== lane-long reads the Step line bare or as a list item ==="
@@ -315,18 +347,30 @@ mutate_file "$SECS_WATCH" '[[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die' 'true
 WATCH_BIN="$SECS_WATCH" watch 120 ORCH_WATCH_LANE_AGE_SECS=060
 assert_eq "refused=$(grep -c '^oversee-watch: lane-age-secs-invalid' "$STUB_DIR/err" || true)" "refused=0" \
   "control: without its check a lane-long bound of 060 is taken" "$STUB_DIR/err"
-# lane-long never keyed by launched_at: every pass past the bound reports again.
+# lane-long never keyed by its interval: every pass past the bound reports again.
 ONCE_DIR="$TMP_ROOT/lane-long-once"
 ONCE_WATCH="$(mutant_scripts lane-long-once/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$ONCE_DIR/github"
 # shellcheck disable=SC2016
-mutate_file "${ONCE_WATCH%/*}/lib/watch-host-kinds.sh" '    [[ "$prior" != "$launched" ]] || continue' '    true || continue'
+mutate_file "${ONCE_WATCH%/*}/lib/watch-host-kinds.sh" '    [[ "$prior" != "$launched|$interval" ]] || continue' '    true || continue'
 new_case lane_long_once_mutant
 write_state "$(launched issue-1 "$(worktree issue-1 status)" claude)"
 WATCH_BIN="$ONCE_WATCH" watch 14400
 WATCH_BIN="$ONCE_WATCH" watch 14460
 assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=14460 stage=dev round 1" \
   "control: without the reported key a lane past the bound is lane-long on every pass" "$STUB_DIR/err"
+# A fixed interval restores the older watch's once-per-launch behavior.
+REPEAT_DIR="$TMP_ROOT/lane-long-repeat"
+REPEAT_WATCH="$(mutant_scripts lane-long-repeat/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$REPEAT_DIR/github"
+# shellcheck disable=SC2016
+mutate_file "${REPEAT_WATCH%/*}/lib/watch-host-kinds.sh" '    interval=$((age / LANE_AGE_SECS))' '    interval=1'
+new_case lane_long_repeat_mutant
+write_state "$(launched issue-1 "$(worktree issue-1 status)" claude)"
+WATCH_BIN="$REPEAT_WATCH" watch 14400
+WATCH_BIN="$REPEAT_WATCH" watch 28800
+assert_eq "events=$EVENTS" "events=" \
+  "control: a fixed interval loses the warning at the next age multiple" "$STUB_DIR/err"
 # lane-long rows pruned by the running set: the stopped record a handoff
 # leaves drops the row, and the relaunch reports the lane again.
 GAP_DIR="$TMP_ROOT/lane-long-gap"

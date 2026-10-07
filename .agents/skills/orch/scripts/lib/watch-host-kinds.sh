@@ -269,26 +269,29 @@ check_lane_stall() {
 
 # A running or parked lane LANE_AGE_SECS past its record's launched_at, which
 # --relaunch and handoffs keep and a fresh launch after lane-close renews, is
-# reported lane-long once per launched_at, its stage the Step
-# line of its status file.
+# reported lane-long once per age interval, its stage the Step line of its
+# status file. Keep the launch with the interval so a fresh launch starts over.
 check_lane_long() {
-  local entry item launched age prior rows="${PW_SEEN[0]}"
+  local entry item launched age interval prior rows="${PW_SEEN[0]}"
   for entry in ${LANE_AGES[@]+"${LANE_AGES[@]}"}; do
     item="${entry%%=*}"
     launched="${entry#*=}"
     age=$((PASS_NOW - launched))
     (( age >= LANE_AGE_SECS )) || continue
+    interval=$((age / LANE_AGE_SECS))
     if ! prior="$(lane_row_get lane-long "$rows" "$item")"; then
       die state-read-failed "" "item=$item" "row=lane-long"
     fi
-    [[ "$prior" != "$launched" ]] || continue
+    # Older watch runs stored only launched_at after their first report.
+    [[ "$prior" != "$launched" ]] || prior="$launched|1"
+    [[ "$prior" != "$launched|$interval" ]] || continue
     lane_step "$item"
     echo "EVENT lane-long $item age=$age stage=$LANE_STEP"
     PASS_EVENT=1
-    rows="$(lane_row_set lane-long "$rows" "$item" "$launched")"
+    rows="$(lane_row_set lane-long "$rows" "$item" "$launched|$interval")"
   done
   # Pruned only once no record names the item, so the gap a relaunch or a
-  # handoff leaves between running records never reports the lane again.
+  # handoff leaves between running records keeps the reported interval.
   rows="$(lane_row_prune lane-long "$rows" ${RECORDED_ITEMS[@]+"${RECORDED_ITEMS[@]}"})"
   lane_row_commit "$rows"
 }
