@@ -178,20 +178,20 @@ assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|lane-mail: 
   "an empty mailbox wakes nobody, and mail the lane has read is not announced again"
 stop_watch
 
-# An answer belongs to the `wait` that asked for it: the watch announces nothing
-# for one, so the directive after it is announced alone.
+# An answer a wait returned is read; a later directive still wakes the watch.
 new_lane answer
-start_watch
-await_polls 1
 ASK="$(lm ask --item KEN-1 --file "$(text q 'Merge now?')")"
 ASK="${ASK#id=}"
 lm send --item KEN-1 --root "$LANE" --re "$ASK" --file "$(text a 'Merge it.')" >/dev/null
+assert_eq "$(lm wait --item KEN-1 --id "$ASK" --timeout 5 --interval 1)" "Merge it." \
+  "the ask's wait receives its answer"
+assert_eq "$(lm inbox --item KEN-1)" "" "inbox does not repeat an answer a wait returned"
+start_watch
+await_polls 1
 send_directive 'Also tag it.'
 await_announced 1
 await_polls 2
-assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|" "an answer wakes nothing"
-assert_eq "$(lm wait --item KEN-1 --id "$ASK" --timeout 5 --interval 1)" "Merge it." \
-  "the ask's wait still receives its answer"
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|" "a waited answer does not wake the watch again"
 stop_watch
 
 # A watch started over a cursor the lane already moved: what it read is never
@@ -252,13 +252,23 @@ liveness_rows
 # expects it, so a loaded runner is not read as a watch that kept running,
 # and 15 for the control that expects it still running, which waits the
 # whole bound.
-once_row() { # TRIES [BIN] — ONCE holds how the watch ended
-  local tries=0 rc=0 bound="$1"
+ONCE_RUN=0
+once_row() { # TRIES [BIN] [notice] — ONCE holds how the watch ended
+  local tries=0 rc=0 bound="$1" mode="${3:-directive}" notice_id=""
   shift
-  new_lane "once${1:+-mutant}"
+  ONCE_RUN=$((ONCE_RUN + 1))
+  new_lane "once-$mode-$ONCE_RUN"
+  if [ "$mode" = notice ]; then
+    lm notice --item KEN-1 --file "$(text n 'Ready.')" >/dev/null
+    notice_id="$(jq -r '.id' <"$BOX/to-overseer.jsonl")"
+  fi
   start_watch "${1:-$LANE_MAIL}" --item KEN-1 --once
   await_polls 1
-  send_directive 'Wake up.'
+  if [ "$mode" = notice ]; then
+    lm send --item KEN-1 --root "$LANE" --re "$notice_id" --file "$(text a 'GO.')" >/dev/null
+  else
+    send_directive 'Wake up.'
+  fi
   await_announced 1
   while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt "$bound" ]; do sleep 0.2; tries=$((tries + 1)); done
   if kill -0 "$WATCH_PID" 2>/dev/null; then
@@ -282,6 +292,13 @@ await_announced 1
 assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
   "the re-armed watch announces at once every directive still unread"
 stop_watch
+
+once_row 75 "$LANE_MAIL" notice
+assert_eq "$ONCE $(mail_lines | tr '\n' '|')" "exit=0 lane-mail: mail=KEN-1 new=1|" \
+  "an answer to a notice wakes a --once watch"
+assert_eq "$(lm inbox --item KEN-1 | jq -r '.kind + " " + .text')" "answer GO." \
+  "inbox delivers the notice's answer after the watch wakes"
+assert_eq "$(lm inbox --item KEN-1)" "" "inbox delivers the notice's answer once"
 
 # Refusals, keyed on their first line.
 new_lane refusals
@@ -388,6 +405,11 @@ mutant once-keeps-running '        [ "$ONCE" -eq 0 ] || exit 0' '        :'
 once_row 15 "$MUTANT"
 assert_eq "$ONCE" "running" \
   "control: without its exit a --once watch keeps polling after its announcement, and wakes nobody"
+
+mutant drops-answers '  lm_objects "$1"' '  lm_objects "$1" | jq -c '\''select(.kind != "answer")'\'''
+once_row 15 "$MUTANT" notice
+assert_eq "$ONCE $(announced)" "running 0" \
+  "control: excluding answers leaves the watch asleep after a reply to a notice"
 
 mutant wider-window 'now - at <= 2 * interval + 5' 'now - at <= 4 * interval + 5'
 LIVENESS=""

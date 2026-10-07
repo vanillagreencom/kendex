@@ -49,11 +49,10 @@ Lane side, rooted at the lane's own git worktree:
               searched, so a restarted lane still finds an answer that arrived
               while it was gone
   inbox --item ITEM [--root ROOT] [--peek | --ack N]
-              print every unread to-lane.jsonl envelope that is not an answer,
-              then advance to-lane.cursor past every complete line. An answer
-              belongs to the `wait` that asked for it; `--item overseer` is
-              the exception, and hands answers over too, because an overseer
-              runs its watch rather than blocking in `wait`. With --peek, print
+              print every unread to-lane.jsonl envelope, including answers,
+              then advance to-lane.cursor past every complete line. A `wait`
+              advances the same cursor past the answer it returns, so the
+              inbox does not hand that answer over again. With --peek, print
               the header below, then every such envelope after to-lane.cursor,
               moving no cursor but one already past the complete lines
               present, which comes down to them. With --ack N, print nothing
@@ -75,8 +74,8 @@ Lane side, rooted at the lane's own git worktree:
               that reads them, with --root naming the mailbox this watch
               reads. One watch process announces an envelope at most once,
               however many polls find it still unread; a re-armed watch
-              announces again every envelope still unread. An answer prints
-              nothing: its `wait` hands it over.
+              announces again every envelope still unread, including answers
+              no `wait` has read.
               Each poll rewrites to-lane.watch, the liveness record a send's
               receipt reads. Moves no cursor, runs until it is stopped, and
               refuses `mailbox-missing` when the mailbox directory is absent
@@ -102,10 +101,9 @@ Overseer side:
               `lane-mail: archived=PATH`; prune consumes this path.
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
               append to to-lane.jsonl the answer to MSGID, or a directive that
-              answers no ask. MSGID names an ask the lane sent: inbox and
-              watch hand a lane no answer, only that ask's `wait` reads one,
-              so any other id, a lane notice's included, is `ask-unknown`
-              and appends nothing. --halt sends a directive the lane-mail-halt
+              answers no ask. A lane's MSGID can name a notice: its inbox and
+              watch hand over the answer. In the overseer mailbox MSGID must
+              name an owner ask. --halt sends a directive the lane-mail-halt
               hook refuses every lane tool call on until a plain inbox read
               acknowledges it. Prints the receipt below on stdout. No halt
               goes to `--item overseer`: no hook halts an overseer on it, and
@@ -539,7 +537,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
-    ask-unknown) text='No ask in the mailbox carries that id: an owner ask in the overseer mailbox, or in a lane'"'"'s, an ask that lane sent. send --re answers an ask and resolve closes an owner ask. A lane'"'"'s notice is waited on by nothing, so text for that lane goes as `send --directive`.' ;;
+    ask-unknown) text='No ask in the mailbox carries that id: an owner ask in the overseer mailbox, or in a lane'"'"'s, an ask that lane sent. An overseer send --re answers an owner ask and resolve closes one.' ;;
     resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
     owner-notice-repeated) text='The owner already holds this notice: the owner notice named by id= above carries the same text and was sent within the last 24 hours, so nothing is appended whatever the attachment or reference. That id is the receipt of the send that landed. New words send it again; waiting does not.' ;;
@@ -1685,14 +1683,11 @@ lm_after() { # VALUE
   esac
 }
 
-# The envelopes among FILE's lines that `inbox` hands over. An answer is handed
-# to the `wait` that asked for it, never to the inbox, so a lane is not told
-# twice about a reply it already acted on. The overseer mailbox is the
-# exception: an overseer runs the watch for its whole session rather than
-# blocking in `wait`, and that watch reads this mailbox with `inbox`, so a
-# peer's answer would otherwise reach nothing.
+# FILE holds lines past the read cursor. Answers to notices have no `wait`,
+# so inbox and watch must include them. A `wait` advances the same cursor
+# past the answer it returns to keep that answer out of the next inbox read.
 lm_inbox_objects() { # FILE
-  lm_objects "$1" | jq -c --arg item "$ITEM" 'select($item == "overseer" or .kind != "answer")'
+  lm_objects "$1"
 }
 
 # Replaced by rename, so a reader never meets a half-written count.
@@ -1858,11 +1853,9 @@ case "$VERB" in
       refuse option-required --re
     fi
     [ "$HALT" -eq 0 ] || [ "$ITEM" != overseer ] || refuse option-conflict '--item=overseer,--halt'
-    # An answer reaches only the `wait` its ask runs: inbox and watch hand a
-    # lane no answer, so one naming a notice or nothing would be read by nobody.
-    if [ -n "$MSGID" ]; then
+    if [ -n "$MSGID" ] && [ "$ITEM" = overseer ]; then
       lm_ask "$MSGID"
-      [ "$ITEM" != overseer ] || BY=text
+      BY=text
     fi
     [ "$ITEM" != overseer ] || [ "$HOST" -eq 1 ] || lm_require_overseer full "$ROOT"
     # The delivery-id check runs under the lock on the disk that holds the
@@ -2014,8 +2007,15 @@ case "$VERB" in
       lm_objects "$WORK_DIR/lane.jsonl" |
         jq -c --arg re "$MSGID" 'select(.kind == "answer" and .re == $re)'>"$WORK_DIR/match"
       if [ -s "$WORK_DIR/match" ]; then
-        # The first answer to this ask. The inbox drops every answer, so a
-        # correction reaches the lane as a directive, never a second answer.
+        : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
+        exec 9>>"$CURSOR.lock"
+        orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
+        lm_cursor_read
+        ANSWER_ID="$(awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.id')"
+        jq -rR '(fromjson? // null) | if type == "object" then .id // "" else "" end' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/ids"
+        ANSWER_AT="$(awk -v id="$ANSWER_ID" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
+          $0 == id { print line[FNR]; exit }' "$WORK_DIR/lane.jsonl.index" "$WORK_DIR/ids")"
+        [ "$SEEN" -ge "$ANSWER_AT" ] || lm_cursor_write "$ANSWER_AT"
         awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.text'
         exit 0
       fi

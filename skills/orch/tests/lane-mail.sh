@@ -118,6 +118,10 @@ assert_eq "$RC=$ERR=$SLEPT" "124=lane-mail: timeout=$MINE=1" "wait ignores an an
 lm send --item KEN-1 --root "$LANE" --re "$MINE" --file "$(text a 'Merge it.')"
 lm wait --item KEN-1 --id "$MINE" --timeout 5 --interval 1
 assert_eq "$RC=$OUT" "0=Merge it." "wait returns the answer that names its own ask"
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'After the answer.')"
+lm inbox --item KEN-1
+assert_eq "$RC=$(jq -rs 'map(.kind + " " + .text) | join(",")' <<<"$OUT")" "0=directive After the answer." \
+  "inbox does not repeat a waited answer and still hands over the next directive"
 
 # --timeout is a deadline, not a count of intervals: one shorter than the
 # interval must not wait the whole interval out, so the naps sum to the timeout.
@@ -137,12 +141,10 @@ assert_eq "$RC=$OUT" "0=" "a second inbox re-reads nothing"
 lm ask --item KEN-1 --file "$(text q 'Merge now?')"
 lm send --item KEN-1 --root "$LANE" --re "${OUT#id=}" --file "$(text a 'Answered.')"
 lm inbox --item KEN-1
-assert_eq "$RC=$OUT" "0=" "an answer belongs to the wait that asked for it, never to the inbox"
-assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor still passes the answer it did not hand over"
+assert_eq "$RC=$(jq -r '.kind + " " + .text' <<<"$OUT")" "0=answer Answered." "inbox hands over an answer no wait read"
+assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor passes the answer it handed over"
 
-# Since only an ask's `wait` reads an answer, a send --re to a lane names an
-# ask that lane sent: an answer to its notice, or to an id nothing carries,
-# would land where no reader looks, so it is refused before any append.
+# A lane inbox reads answers even when no ask's wait runs.
 new_lane re_names_ask
 lm ask --item KEN-1 --file "$(text q 'Land it?')"
 RE_ASK="${OUT#id=}"
@@ -160,8 +162,8 @@ while IFS='|' read -r name id want; do
   re_send "$id"
   assert_eq "$RE_SENT" "$want" "send --re to a lane: $name"
 done <<ROWS
-a lane notice's id is refused and appends nothing|$RE_NOTICE|2=lane-mail: ask-unknown=$RE_NOTICE answers=0
-an id no envelope carries is refused and appends nothing|1790000000-1-1|2=lane-mail: ask-unknown=1790000000-1-1 answers=0
+a lane notice's id receives an answer|$RE_NOTICE|0= answers=1
+an unrecorded id receives an answer|1790000000-1-1|0= answers=1
 the lane's own ask is answered|$RE_ASK|0= answers=1
 ROWS
 
@@ -592,21 +594,19 @@ assert_eq "${OUT%% id=*}" "lane-mail: sent item=overseer" "peer send prints the 
 LANE="$PEER_A"
 lm pending --item overseer
 assert_eq "$RC=$(jq -c 'select(.kind == "ask")' <<<"$OUT")" "0=" "the answered peer ask is no longer pending"
-lm wait --item overseer --id "$PEER_ASK" --timeout 5 --interval 1
-assert_eq "$RC=$OUT" "0=It is ours." "the asker's wait on the overseer mailbox returns the peer's answer"
-
-# An answer in the overseer mailbox has no `wait` to go to: the overseer runs
-# its watch, which reads this mailbox with `inbox`.
+# The overseer's watch reads its peer answer through inbox.
 lm inbox --item overseer
 assert_eq "$(jq -rs 'map(.kind) | join(",")' <<<"$OUT")" "directive,answer" \
   "inbox hands the overseer its own note and the peer's answer"
+lm wait --item overseer --id "$PEER_ASK" --timeout 5 --interval 1
+assert_eq "$RC=$OUT" "0=It is ours." "a restarted wait still finds an answer the inbox read"
 lm pending --item overseer
 assert_eq "$RC=$OUT" "0=" "a directive the inbox has read is no longer pending"
 lm ask --item KEN-1 --file "$(text q 'Lane question.')"
 lm send --item KEN-1 --root "$PEER_A" --re "${OUT#id=}" --file "$(text a 'Lane answer.')"
 lm inbox --item KEN-1
-assert_eq "$RC=$(jq -rs 'map(.kind) | unique | join(",")' <<<"$OUT")" "0=directive" \
-  "a lane item's answer still belongs to the wait that asked for it"
+assert_eq "$RC=$(jq -rs 'map(.kind) | unique | join(",")' <<<"$OUT")" "0=answer,directive" \
+  "a lane inbox includes its unread answer"
 
 lm send --item KEN-1 --root "$PEER_B" --directive --file "$(text d 'Not yours.')"
 assert_eq "$RC=$ERR" "2=lane-mail: lane-foreign=$PEER_B" \
@@ -1165,7 +1165,7 @@ mutant_lib() {
   MUTANT_LIB_BIN="$dir/lane-mail"
 }
 
-# The overseer exception through the cursor-backed read the watch makes, from
+# The overseer answer through the cursor-backed read the watch makes, from
 # the start of PEER_A's mailbox: its peek hands the peer's answer over.
 overseer_peek_answers() {
   rm -f -- "${PEER_A:?}/tmp/lane-mail/overseer/to-lane.cursor"
@@ -1226,6 +1226,17 @@ done
 # above call directly. Each mutant is a private copy of one file beside links
 # to the shipped rest (lane-mail resolves its lock library, the transport and
 # the checkout judge beside itself), and removes one behaviour.
+
+new_lane control_wait_cursor
+LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Read once?')"
+WAIT_ID="${OUT#id=}"
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re "$WAIT_ID" --file "$(text a 'Once.')"
+mutant wait-cursor-frozen '        [ "$SEEN" -ge "$ANSWER_AT" ] || lm_cursor_write "$ANSWER_AT"' '        :'
+lm wait --item KEN-1 --id "$WAIT_ID" --timeout 5 --interval 1
+assert_eq "$RC=$OUT" "0=Once." "control: the wait still returns its answer with its cursor frozen"
+LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+assert_eq "$RC=$(jq -r '.text' <<<"$OUT")" "0=Once." \
+  "control: without wait advancing the cursor the inbox repeats its answer"
 
 new_lane control_partial
 LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'whole')"
@@ -1303,13 +1314,14 @@ lm send --item KEN-1 --root "$PEER_B" --directive --file "$(text d 'Not yours.')
 assert_eq "$RC=$(jq -r '.text' < "$PEER_B/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0=Not yours." \
   "control: without the ownership rule the same send writes the foreign lane"
 
-new_lane control_re_notice
+new_lane control_inbox_answer
 LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'ready: KEN-1')"
 RE_NOTICE="$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl")"
-mutant re-unjudged '      lm_ask "$MSGID"' '      [ "$ITEM" != overseer ] || lm_ask "$MSGID"'
-re_send "$RE_NOTICE"
-assert_eq "$RE_SENT" "0= answers=1" \
-  "control: without the ask check a lane answer to a notice lands where no reader looks"
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re "$RE_NOTICE" --file "$(text a 'GO.')"
+mutant inbox-drops-answer '  lm_objects "$1"' '  lm_objects "$1" | jq -c '\''select(.kind != "answer")'\'''
+lm inbox --item KEN-1
+assert_eq "$RC=$OUT" "0=" \
+  "control: excluding answers from inbox loses the answer to a notice"
 
 mutant self-allowed '[ "$ROOT" != "$OWN_ROOT" ] || refuse repo-self "$ROOT"' ':'
 new_lane control_self_target
