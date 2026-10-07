@@ -467,7 +467,7 @@ fx_packages_versionless() {
   printf -- '---\nname: pkg\n---\n' >"$R/skills/pkg/SKILL.md"
   git -C "$R" commit -qam 'chore: versionless'
 }
-PACKAGES_VERSIONLESS="${PACKAGES_OUT/'#### pkg 2.0.0'/'#### pkg'}"
+PACKAGES_VERSIONLESS="${PACKAGES_OUT/'#### pkg 2.0.0'/#### pkg}"
 run_rows \
   "package entries fold under per-package headings with their versions; the program sections hold the program's alone; every package directory goes|fx_packages|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
   "a nested hooks/tests/lib/pkg.sh leaves skills/pkg the package and its heading versioned|fx_packages_nested|$PKG_ENV||rc=0 $(folded 4 entries)|PACKAGES_OUT|-" \
