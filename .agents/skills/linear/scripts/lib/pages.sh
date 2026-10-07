@@ -11,7 +11,11 @@ set -euo pipefail
 # and a --max read held the whole backlog several times over.
 graphql_pages() (
     local query="$1" variables="$2" path="$3" limit="${4:-0}" initial="${5:-}"
-    local result nodes spool cursor='null' next count=0 key collected=0 rows
+    local result nodes spool cursor='null' next count=0 key collected=0 rows state row
+    local complete='all(.. | objects | select(has("nodes") or has("pageInfo"));
+        (.nodes | type == "array") and (.pageInfo | type == "object") and
+        (.pageInfo.hasNextPage | type == "boolean")) and
+        (any(.. | objects | select(has("nodes")); .pageInfo.hasNextPage) | not)'
     key=$(jq -cn --arg path "$path" '$path | split(".")') || return 1
     spool=$(mktemp -d) || return 1
     trap 'rm -rf -- "${spool:?}"' EXIT
@@ -65,15 +69,32 @@ graphql_pages() (
         else setpath($key + ["nodes"]; $nodes) end' "$spool/last" "$spool/nodes" >"$spool/result" || return 1
     # A result whose collections are all well formed and closed is one
     # linear_complete_result would print unchanged, so it never enters a variable.
-    if jq -e 'all(.. | objects | select(has("nodes") or has("pageInfo"));
-        (.nodes | type == "array") and (.pageInfo | type == "object") and
-        (.pageInfo.hasNextPage | type == "boolean")) and
-        (any(.. | objects | select(has("nodes")); .pageInfo.hasNextPage) | not)' "$spool/result" >/dev/null; then
+    if jq -e "$complete" "$spool/result" >/dev/null; then
         cat -- "$spool/result"
-    else
+        return
+    fi
+    # A nested continuation is one entity's collection and completes whole.
+    if [[ "$path" == *.* ]] || ! jq -e --arg path "$path" 'keys == [$path]' "$spool/result" >/dev/null; then
         result=$(cat -- "$spool/result") || return 1
         linear_complete_result "$result"
+        return
     fi
+    # A root collection completes one row at a time, so a backlog with one open
+    # row never enters a variable either.
+    jq -r --arg path "$path" ".[\$path].nodes[] |
+        (if $complete then \"closed\" else \"open\" end) + \"\\t\" + tojson" "$spool/result" >"$spool/split" || return 1
+    : >"$spool/rows" || return 1
+    while IFS=$'\t' read -r state row; do
+        if [[ "$state" == open ]]; then
+            row=$(jq -c --arg path "$path" '{($path): {nodes: [.], pageInfo: {hasNextPage: false, endCursor: null}}}' <<<"$row") || return 1
+            row=$(linear_complete_result "$row") || return 1
+            row=$(jq -c --arg path "$path" '.[$path].nodes[0]' <<<"$row") || return 1
+        fi
+        printf '%s\n' "$row" >>"$spool/rows" || return 1
+    done <"$spool/split"
+    jq -cn --arg path "$path" 'input as $result | [inputs] as $rows | $result | .[$path].nodes = $rows' \
+        "$spool/result" "$spool/rows" >"$spool/completed" || return 1
+    cat -- "$spool/completed"
 )
 
 # List bounds, one owner for every list verb: the default row bound, --limit,

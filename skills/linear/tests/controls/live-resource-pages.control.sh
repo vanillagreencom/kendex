@@ -7,11 +7,16 @@ control_expect 'cumulative: completes'
 control_replace scripts/lib/pages.sh 1 \
     '    jq -cn --argjson key "$key" --argjson limit "$limit" '\''' \
     '    jq -cn --argjson key "$key" --argjson limit "$limit" --argjson all "$(jq -cs add "$spool/nodes")" '\'''
-# The merged result goes through linear_complete_result, a variable of its own.
+# The merged result passes through a variable on its way out.
 control_expect 'spooled: no variable past one page'
 control_replace scripts/lib/pages.sh 1 \
-    '    if jq -e '\''all(.. | objects | select(has("nodes") or has("pageInfo"));' \
-    '    if false && jq -e '\''all(.. | objects | select(has("nodes") or has("pageInfo"));'
+    '        cat -- "$spool/result"' \
+    '        result=$(cat -- "$spool/result") && printf '\''%s\n'\'' "$result"'
+# A root collection with an open row completes whole, in one variable.
+control_expect 'spooled-open: no variable past one page'
+control_replace scripts/lib/pages.sh 1 \
+    '    if [[ "$path" == *.* ]] || ! jq -e --arg path "$path" '\''keys == [$path]'\'' "$spool/result" >/dev/null; then' \
+    '    if true; then'
 # Root truncation leaves nested completion intact. An open nested page passed
 # to linear_complete_result would otherwise re-enter that same broken pager.
 control_expect 'shape: rows and fields'

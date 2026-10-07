@@ -481,6 +481,11 @@ pages_case() {
 		elif $name == "cumulative" then
 			{initial:root([issue("first";60000)];true;"c1"),replies:[range(1;4) as $n |
 			 reply(null;("c"+($n|tostring));root([issue(($n|tostring);60000)];$n<3;("c"+(($n+1)|tostring))))]}
+		elif $name == "cumulative-open" then
+			{initial:root([issue("first";60000) | .labels=conn([{name:"a"}];true;"l1")];true;"c1"),
+			 replies:([range(1;4) as $n | reply(null;("c"+($n|tostring));
+				root([issue(($n|tostring);60000) | .labels=conn([{name:"a"}];true;"l1")];$n<3;("c"+(($n+1)|tostring))))]
+				+ [("first","1","2","3") as $id | reply($id;"l1";{issue:{id:$id,labels:conn([{name:"b"}];false;null)}})])}
 		elif $name == "entity" or $name == "nested" then {initial:{issue:owner},replies:[labelReply("owner")]}
 		elif $name == "create" or $name == "update" then
 			{initial:{("issue"+(if $name == "create" then "Create" else "Update" end)):{success:true,issue:owner}},replies:[labelReply("owner")]}

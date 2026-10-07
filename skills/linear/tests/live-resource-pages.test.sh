@@ -34,6 +34,19 @@ page_size=$(jq '[.initial, .replies[].response | tojson | length] | max' "$PAGE_
 largest=$(sort -n "$PAGE_ROOT/largest" | tail -n 1)
 assert 'spooled: no variable past one page' test "${largest%% *}" -le "$page_size"
 
+# A row whose own collection is open completes alone: the merged backlog still
+# never enters a variable, and each row gains its continuation.
+PAGES_LARGEST="$PAGE_ROOT/largest" pages_case cumulative-open pages
+assert_eq 'spooled-open: completes' "$PAGE_RC" 0
+assert_eq 'spooled-open: merged result' "$PAGE_OUT" "$(jq -c '. as $f | .replies[] | select(.id == null and .response.issues.pageInfo.hasNextPage == false) | .response |
+    .issues.nodes = [($f.initial, ($f.replies[] | select(.id == null) | .response)) | .issues.nodes[] |
+        .labels = {nodes: [{name: "a"}, {name: "b"}], pageInfo: {hasNextPage: false, endCursor: null}}]' "$PAGE_ROOT/fixture.json")"
+# One completed row holds a root page's row and its own continuation page.
+page_size=$(jq '([.initial, (.replies[] | select(.id == null) | .response) | tojson | length] | max)
+    + ([.replies[] | select(.id != null) | .response | tojson | length] | max)' "$PAGE_ROOT/fixture.json")
+largest=$(sort -n "$PAGE_ROOT/largest" | tail -n 1)
+assert 'spooled-open: no variable past one page' test "${largest%% *}" -le "$page_size"
+
 pages_case bounded pages
 assert_eq 'bounded: completes' "$PAGE_RC" 0
 assert_jq 'bounded: preserves open metadata' "$PAGE_OUT" '(.issues.nodes | length == 1) and .issues.pageInfo.hasNextPage == true'
