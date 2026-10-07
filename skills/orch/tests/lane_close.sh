@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lane-close resolves one recorded pane, refuses live lanes, and closes in order.
-# One must-fail control closes the file: lane-close is one script, one surface.
+# Each independent close protection has a must-fail control.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
@@ -81,6 +81,12 @@ fi
 [[ "$1" == oversee ]]; shift
 case "$verb" in
   get) jq "$1" "$LANE_CLOSE_STATE" ;;
+  update-report)
+    expr="$1"; shift
+    jq "$@" "$expr" "$LANE_CLOSE_STATE" >"$LANE_CLOSE_STATE.report"
+    jq '.state' "$LANE_CLOSE_STATE.report" >"$LANE_CLOSE_STATE.next"
+    mv -- "$LANE_CLOSE_STATE.next" "$LANE_CLOSE_STATE"
+    jq '.report' "$LANE_CLOSE_STATE.report" ;;
   update)
     [[ "${LANE_CLOSE_STATE_WRITE_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_STATE_WRITE_FAIL"
     args=()
@@ -1408,7 +1414,7 @@ LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
 assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 ask=1 host=0 status=stopped' 'the full close of that stopped record refuses until the ask is answered'
 
-# A preparing record: a hosted launch whose background job has written no
+# This background launch has written no
 # outcome. The job stands in as a process group leader running a script named
 # open-terminal that blocks until the test ends it; the close stops that group,
 # closes the window, closes or keeps the host, and records done or stopped. A
@@ -1462,6 +1468,89 @@ assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host
 prepare_close "$SCRIPT" "$JOB_DIR/other-job"
 assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 job=running status=done' 'a recorded pid that runs anything but open-terminal is left running'
+
+echo '=== a saved selection keeps the started harness close protections ==='
+# The busy selection read in launch_record_finish reaches host_launch_pending
+# after open_tmux starts Codex. Run those production record writers rather
+# than copy their JSON format. The fixture replaces only the state transport.
+SELECTION_WRITERS="$TMP_ROOT/selection-writers.sh"
+python3 - "$TEST_DIR/../scripts/open-terminal" "$SELECTION_WRITERS" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+parts = []
+start = text.index("UNPARK_JQ='")
+end = text.index("'\n", start) + 2
+parts.append(text[start:end])
+for name in ("lane_record_write", "host_launch_pending"):
+    marker = f"\n{name}() {{"
+    if text.count(marker) != 1:
+        raise SystemExit(f"writer match count={text.count(marker)} name={name}")
+    start = text.index(marker) + 1
+    end = text.index("\n}\n", start) + 3
+    parts.append(text[start:end])
+pathlib.Path(sys.argv[2]).write_text("\n".join(parts))
+PY
+selection_state() (
+  WORKFLOW_STATE="$SCRIPTS/workflow-state"
+  LANE_HOST=/host LANE_ENV=CODEX_HOME=/lane HARNESS=codex RELAUNCH=false
+  FLEET=true RECORD_MODE=launch wt_id=KEN-1 title=KEN-1 remote_path="$MAIL_ROOT"
+  LAUNCH_SESSION=kendex LAUNCH_PANE=%7 LAUNCH_SERVER=999 LAUNCH_HARNESS_ID=""
+  LAUNCH_HARNESS=codex LAUNCH_MODEL=model LAUNCH_EFFORT=medium TERMINAL_MODE=tmux
+  TRACKER=linear REPO=owner/repo CONNECTED_REPO="" PREFERENCE_ENTRY="" CAP_PASSED=""
+  LAUNCH_TIER_RECORD='{}' HOST_KIND=ssh
+  launched_at=2026-09-20T00:00:00Z
+  host_line=$'ssh-target=host\tpath=/srv/worktree\tremote-prefix=cd /srv/worktree'
+  source "$SELECTION_WRITERS"
+  LANE_CLOSE_STATE="$STATE" LANE_CLOSE_STATE_CALLS="$STATE_CALLS" host_launch_pending selection
+)
+selection_close() { # SCRIPT CASE [OPTIONS...]
+  local script="$1" kind="$2"
+  shift 2
+  write_state running codex /host linear owner/repo
+  selection_state
+  write_panes codex
+  case "$kind" in
+    live) printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$script" "$@" ;;
+    ask) codex_screen; LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$script" "$@" ;;
+    idle) codex_screen; run_close "$script" "$@" ;;
+  esac
+  SELECTION_GOT="rc=$RC stop=$(stop_count KEN-1 codex) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+for options in full keep; do
+  selection_args=()
+  [[ "$options" != keep ]] || selection_args=(--keep-sandbox)
+  for kind in live ask idle; do
+    selection_close "$SCRIPT" "$kind" ${selection_args[@]+"${selection_args[@]}"}
+    case "$kind:$options" in
+      live:*|ask:*) expected='rc=1 stop=0 close=0 kill=0 status=preparing' ;;
+      idle:full) expected='rc=0 stop=1 close=1 kill=1 status=done' ;;
+      idle:keep) expected='rc=0 stop=1 close=0 kill=1 status=stopped' ;;
+    esac
+    assert_eq "$SELECTION_GOT" "$expected" "selection $kind $options preserves its close protection"
+    case "$kind" in
+      live) assert_eq "$(grep -c '^lane-close: lane-live ' <<<"$ERR" || true)" 1 'the live pane reaches the live-lane guard' ;;
+      ask) assert_eq "$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true)" 1 'the pending ask reaches the unanswered-ask guard' ;;
+    esac
+  done
+done
+# Each control preserves the changed routing and disables one protection.
+# shellcheck disable=SC2016
+MUTANT="$(mutant selection-live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) : ;; # message lane-live')"
+selection_close "$MUTANT" live
+assert_eq "$SELECTION_GOT" 'rc=0 stop=0 close=1 kill=1 status=done' 'control: the live-lane guard prevents selection close'
+# shellcheck disable=SC2016
+MUTANT="$(mutant selection-ask '  refuse_unanswered_ask
+  close_secs=' '  : # refuse_unanswered_ask
+  close_secs=')"
+selection_close "$MUTANT" ask
+assert_eq "$SELECTION_GOT" 'rc=0 stop=1 close=1 kill=1 status=done' 'control: the ask guard prevents selection close'
+# shellcheck disable=SC2016
+MUTANT="$(mutant selection-stop '  stop_harness
+  [[ "$STOP_SKIPPED"' '  : # stop_harness
+  finish_close
+  [[ "$STOP_SKIPPED"')"
+selection_close "$MUTANT" idle --keep-sandbox
+assert_eq "$SELECTION_GOT" 'rc=0 stop=0 close=0 kill=1 status=stopped' 'control: the kept selection must stop its hosted harness'
 
 run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
@@ -1801,7 +1890,7 @@ assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 ' <<<"$OUT" |
 write_state preparing codex /host linear owner/repo
 run_close "$SCRIPT" --park --pr 7
 assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid item=KEN-1 field=status value=preparing$' <<<"$ERR" || true) host=$(host_call_count)" \
-  'rc=1 invalid=1 host=0' 'a preparing record has no session to park'
+  'rc=1 invalid=1 host=0' 'preparation before harness start cannot park'
 
 echo '=== the park options are refused in the shapes that name nothing ==='
 write_state running codex /host linear owner/repo; write_panes python; working_screen

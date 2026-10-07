@@ -1347,8 +1347,7 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # window, so no write here inits by hand; a wake creates nothing and writes
 # into the state a launch already made. Every field the launch does not know is
 # null, never "": a reader tests presence, and a hosted lane is one whose host
-# is set. STATUS is running unless a launch handed to a background job names
-# preparing or stopped; that launch's LAUNCH_PREPARE is recorded as `prepare`,
+# is set. LAUNCH_PREPARE is recorded as `prepare`,
 # and any other launch or relaunch drops an earlier one, as it drops the
 # `parked` record a park left: the resumed lane is running again. A launch or
 # relaunch recording the lane running stamps `running_at` with the time it
@@ -2554,7 +2553,7 @@ open_wake() { # DIR TITLE CMD
 # installed. Of the carrier only package.json, whose extensions list names the
 # lane mail wake, and extensions/vocab.ts, the file that puts context_window on
 # the hook payloads, are read. A file the host does not hold is one Pi does not
-# read. Returns 1 with its keyed line printed on any refusal.
+# read.
 host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
   local pi_item="$1" pi_wt="$2" dir i rc root="${3:-.pi/agent}" carrier=@vanillagreen/pi-hooks
   local -a remote=("$root/settings.json" "$4/.pi/settings.json") packages=("$4/.pi/packages" "$root/packages")

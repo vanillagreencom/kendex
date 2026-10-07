@@ -203,10 +203,10 @@ removes the item's files as below, then kills the record's window where a
 pane carries it, the session's local client, then removes its worktree on
 this machine, the record's mail_root, through worktree remove, records it done and prints
 host-kept kind=KIND session=ID, the session the operator archives from the
-claude.ai sidebar. --park refuses on its stop-sandbox --check read. A
-preparing record, a hosted launch whose background job has written no
-outcome, closes without a harness exit: the job the record names is stopped
-and its window closed. --keep-sandbox ends the harness, closes its window and
+claude.ai sidebar. --park refuses on its stop-sandbox --check read.
+Before harness start, close stops the recorded preparation job and closes
+its window. A saved selection continuation uses the started harness's close
+checks. --keep-sandbox ends the harness, closes its window and
 records stopped without closing the lane host.
 A local lane's close also ends every validation run its worktree, the record's
 mail_root, holds with no verdict, through dev-validate-run --stop; a hosted
@@ -216,8 +216,8 @@ directory through workflow-state remove before the host close, printing its
 removed path= lines and its removed kept= line, which names the archive
 workflow-state wrote of those files before removing them; a removal or an
 archive that fails refuses as item-files-failed with the host, window and
-record unchanged. An exited, stopped or preparing lane's
-tracker is read for that alone: an item it holds open, or a read that does not
+record unchanged. An exited or stopped lane, or preparation before harness
+start, reads its tracker for that alone: an item it holds open, or a read that does not
 answer, keeps the files and prints item-files-kept with the cause, and the
 close goes on.
 That hosted close of a completed item passes --merged to lane-host close where
@@ -417,6 +417,7 @@ derive_identity() { # OUT_VAR DERIVED
 }
 
 status="$(record_field status)"
+prepare_step="$(jq -r '.prepare.step // empty' <<<"$record")"
 window_name="$(record_field window)"
 mail_root="$(record_field mail_root)"
 host="$(record_field host)"
@@ -923,14 +924,10 @@ if [[ "$status" == parked ]]; then
   finish_close
 fi
 
-# A preparing record is a hosted launch open-terminal handed to a background
-# job that has written no outcome, so no session was started and no harness is
-# exited. A lane with no session cannot hold an ask, and the host need not have
-# its mailbox until its preparation ends, so no mailbox is read. The job is stopped by the process group the record names, where
-# that group still runs open-terminal, a pid since reused being left alone; the
-# window it holds is closed with its claim; the host is closed or kept as for a
-# stopped record.
-if [[ "$status" == preparing ]]; then
+# The selection continuation keeps the started harness's pane, so its close
+# must reach the same checks and stop as a running record. Earlier steps may
+# have no mailbox yet. Stop only a recorded job still running open-terminal.
+if [[ "$status" == preparing && "$prepare_step" != selection ]]; then
   [[ "$PARK" == false ]] || { message record-invalid "item=$ITEM" "field=status" "value=preparing" >&2; exit 1; }
   [[ -z "$window_name" ]] || resolve_window
   job="$(jq -r '.prepare.pid // empty' <<<"$record")"

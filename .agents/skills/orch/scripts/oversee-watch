@@ -402,9 +402,6 @@ fi
 # and only a larger cap brings it back.
 WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 [[ "$WATCH_TAIL_LINES" =~ ^[1-9][0-9]*$ ]] || die tail-lines-invalid "" "value=$WATCH_TAIL_LINES"
-# How long a lane handed to a background launch job may read preparing before
-# it is reported stuck. The host's own preparation takes minutes; the default
-# leaves it several times that before a record nothing finished is named.
 PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
 [[ "$PREPARE_SECS" =~ ^[1-9][0-9]*$ ]] || die prepare-secs-invalid "" "value=$PREPARE_SECS"
 # The mail pass's own cadence, apart from --interval: its reads are files and
@@ -602,12 +599,7 @@ LANE_ROWS_FILTER="$LANE_RUNNING_JQ"'
      (.launched_at | if . == null then "" else (fromdateiso8601 | tostring) end)]
   | join("\u001f"))'
 
-# The preparation records of lanes open-terminal handed to a background job,
-# one line each: item, outcome, the preparation's start in epoch seconds, the
-# job's log and the failure reason, joined by the unit separator. The record's
-# status is the outcome: preparing is pending, running is ready, and stopped
-# carrying the job's reason is failed. Any other record's preparation is over,
-# a close or a kept sandbox included, and is not read.
+# The unit separator keeps paths with spaces in one field.
 PREPARE_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and (.prepare | type) == "object")
   | ({preparing: "pending", running: "ready"}[.status // ""] // (if .status == "stopped" and .prepare.reason != null then "failed" else empty end)) as $outcome
@@ -1501,10 +1493,7 @@ check_handoff() {
   lane_row_commit "$state"
 }
 
-# A lane open-terminal handed to a background job while its host prepared it
-# is reported from its record: the outcome the job wrote, once, and a record
-# still preparing past PREPARE_SECS, once. The row is keyed by the
-# preparation's start, so a relaunch that prepares again is reported afresh.
+# Key by the preparation's start so a relaunch is reported afresh.
 check_prepare() {
   local item outcome since log reason key age rows="${PW_SEEN[0]}" items=()
   while IFS=$'\x1f' read -r item outcome since log reason; do
