@@ -19,7 +19,7 @@ Below the table: a Format Reference section with one link to this schema and one
 
 File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`, `ADR-0001-runtime-choice.md`. A `DECISION_ID` is a prefix plus numeric suffix; a project keeps one scheme (`D001` by default; keep `ADR-0001` where established).
 
-An active, superseded or withdrawn significant record has a short document. A withdrawn record keeps the choice and its reason, with status `Withdrawn` and the reason for withdrawal in `**Why**:`. A removed routine record has no document, except a one-line document kept where a citation outside the repository needs the path: the title, the back-link, `**Status**:` and one `**Decision**:` line. The commit-guards md-refs lane accepts an ID whose INDEX row exists with no document.
+An active, superseded or withdrawn significant record has a short document. A withdrawn record keeps the choice and its reason, with status `Withdrawn` and the reason for withdrawal in `**Why**:`. A removed routine record has no document, except a one-line document kept where a citation outside the repository needs the path: the title, the back-link, `**Status**:` and one `**Decision**:` line. The commit-guards md-refs lane permits an ID with no tracked document only within that ID's own INDEX row. A citation elsewhere needs a tracked decision document or a link to the rule's current home.
 
 | Element | Format |
 |---------|--------|

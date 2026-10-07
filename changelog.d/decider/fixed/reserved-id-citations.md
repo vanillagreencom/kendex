@@ -1,0 +1,1 @@
+- Clarify that a reserved decision ID resolves only in its own index row. Other citations need a tracked decision document or a link to the rule's current home.

@@ -18,7 +18,7 @@ Set `**Status**:` to the value above. For a revisit, rewrite the `**Decision**:`
 
 ## 2. INDEX row
 
-Set the Status column of that decision's row to the same value. For a revisit, rewrite the Decision, Rationale and Revisit When cells with the file. For a removal, write where the reason now lives in the Rationale cell: the code path or the principle doc. For a retirement, keep the document link and state the withdrawal reason in the Rationale cell. For a removal that deletes the document, rewrite the Link cell to the backticked filename, `[Full](D0NN-x.md)` becoming `` `D0NN-x.md` ``, so no dead link remains; `decisions check` compares the filename the cell resolves to, so the record keeps its identity across branches. Never remove a row: it keeps the ID reserved and a citation resolving.
+Set the Status column of that decision's row to the same value. For a revisit, rewrite the Decision, Rationale and Revisit When cells with the file. For a removal, write where the reason now lives in the Rationale cell: the code path or the principle doc. For a retirement, keep the document link and state the withdrawal reason in the Rationale cell. For a removal that deletes the document, rewrite the Link cell to the backticked filename, `[Full](D0NN-x.md)` becoming `` `D0NN-x.md` ``, so no dead link remains; `decisions check` compares the filename the cell resolves to, so the record keeps its identity across branches. Never remove a row: it keeps the ID reserved. For citations outside that row, follow § 3 and [Decision Format § Decision document](../schemas/decision-format.md#decision-document).
 
 ## 3. Citations
 
