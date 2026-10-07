@@ -623,12 +623,14 @@ for row in \
   "versionless|a SKILL.md stating no metadata.version is a versionless package: its change and fragment pass with no raise|1.9.0|none|none|$RUN||pkg/fixed/entry.md|- Fix a typo.|rc=0 $(within 1)" \
   "version-dropped|a change dropping metadata.version owes no raise|1.9.0|1.0.0|none|$RUN||||rc=0 $PKG_NOMATCH" \
   "first-version|a change stating a first metadata.version owes no raise|1.9.0|none|1.0.0|$RUN||||rc=0 $PKG_NOMATCH" \
-  "nameless|a package file with no name is a collection error|1.9.0|1.0.0|nameless|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
+  "nameless|a package file with no name is a collection error|1.9.0|1.0.0|nameless|$RUN||||rc=2 ${ERR}version-read=$PKG" \
+  "empty-version|a SKILL.md stating an empty metadata.version is a collection error, never a versionless package|1.9.0|1.0.0|empty|$RUN||||rc=2 ${ERR}version-read=$PKG"; do
   IFS='|' read -r name label app_next pkg_prior pkg_next change base_frag frag fragment expected <<<"$row"
   pkg_repo "package-$name" "$pkg_prior" "$base_frag"
   put app.json "{\"version\":\"$app_next\"}\n"
   case "$pkg_next" in
     nameless) put "$PKG" '---\nmetadata:\n  version: "1.0.0"\n---\n' ;;
+    empty) put "$PKG" "$(skill pkg '')\n" ;;
     *) put "$PKG" "$(skill pkg "$pkg_next")\n" ;;
   esac
   [ -z "$change" ] || put "$change" 'echo two\n'
@@ -726,6 +728,8 @@ control 'judging a dropped version as a raise refuses the change' package-versio
   "rc=1 ${ERR}package-unbumped=$PKG:1.0.0;$(summary 1 0)" '[ -n "$new" ] || continue' ':'
 control 'judging a first version against an absent one refuses the change' package-first-version \
   "rc=1 ${ERR}major-breaking=$PKG::1.0.0;$(summary 1 0)" '[ -n "$old" ] || continue' ':'
+control 'reading an empty metadata.version as no version passes the change' package-empty-version \
+  "rc=0 $PKG_NOMATCH" ' || (has && version == "")' '' lib/skill-roots.sh
 if [ -r "/proc/$$/cmdline" ]; then
   gg_mutant judge changelog-entries '[ -z "$GG_COMMIT_BASE" ] || diff_args+=("$GG_COMMIT_BASE")' ':'
   amend_repo amend-head "$judge"
