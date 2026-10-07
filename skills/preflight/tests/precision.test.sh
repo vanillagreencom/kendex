@@ -395,8 +395,19 @@ trap '
 ' INT
 echo "$D"
 EOF
+cat >"$R/scripts/multisubst-trap.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(mktemp -d)"
+trap "
+  echo EXIT $(printf done)
+" INT
+echo "$D"
+EOF
 run_pf
-fires "a multiline INT trap whose action says EXIT still leaves scratch behind" "scripts/multitrap.sh:3: [mktemp-trap]"
+fires "a multiline INT trap whose action says EXIT, plainly or beside a substitution, still leaves scratch behind" \
+  "scripts/multitrap.sh:3: [mktemp-trap]" \
+  "scripts/multisubst-trap.sh:3: [mktemp-trap]"
 
 echo "=== a temp-path literal is a finding only in a creation call's hands ==="
 seed tmppath
