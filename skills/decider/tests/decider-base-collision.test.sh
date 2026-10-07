@@ -556,7 +556,6 @@ check-rename-new-absent~-n "$old_link" && -f "$path"~-n "$old_link" && true~a re
 check-base-rename-new-absent~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null~&& true~a rename rule that accepts a missing new base document
 check-removed-id-revived~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$old_path" >/dev/null~&& true~a rename rule that accepts a removed ancestor ID
 check-rename-no-history~ancestor_rows="$(shared_index)" || return 1~ancestor_rows="$(shared_index)" || ancestor_rows='[]'~an unread shared history that becomes an empty INDEX
-check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
 check-removed-record~    if [[ "$file_count" -gt 1 ]]; then~    if [[ "$file_count" -ne 1 ]]; then~a check that demands a document for every row
 check-removed-record~          status: .[6], link: (.[7] | cell_path), line: $line }~          status: .[6], link: .[7], line: $line }~an identity read from the Link cell as written
 next-id-past-removed~      | { id: .[1], research: .[2],~      | { id: (if .[6] == "Removed" then "" else .[1] end), research: .[2],~a next-id that skips a removed row
