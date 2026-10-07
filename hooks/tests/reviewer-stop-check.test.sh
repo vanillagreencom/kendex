@@ -534,54 +534,91 @@ rows_control artifact_rows artifact-unchecked \
   "an artifact that is not JSON blocks"
 
 echo "reviewer-stop-check: only paths the review changed block"
-# The subagent transcript's first entry dates the review's start, 2020-06-01.
-# The author's dirt is dated 2020-01-01: a modified tracked file, an untracked
-# file and a deleted tracked file, whose directory carries the deletion's date.
-# A row is `label|transcript|probe|expected`: transcript `dated` or `undated`,
-# probe `yes` adds a file the reviewer created now.
+# The author leaves a modified tracked file, an untracked file, a staged new
+# file and a deleted tracked file. The review starts at the next whole second,
+# the dated transcript's first entry, since a change time cannot be set back
+# and the hook compares whole seconds; then the reviewer acts. A row is
+# `label|transcript|act|expected|named`: transcript `dated` or `undated`; act
+# `none`, `probe` (creates a file), `chmod` (a tracked file's mode, its content
+# and mtime untouched), `stage` (git add of the author's modified file) or
+# `move` (mv of the author's untracked file, which keeps its mtime); named is
+# the status line the refusal must carry, or `-`.
 START_ROWS="\
-dirt the author left before the review passes|dated|no|rc=0 first=-
-a probe the reviewer created blocks over the author's dirt|dated|yes|rc=2 first=reviewer-stop-check: worktree=@REPO@
-with no dated first entry the author's dirt blocks|undated|no|rc=2 first=reviewer-stop-check: worktree=@REPO@
+dirt the author left before the review passes|dated|none|rc=0 first=-|-
+a probe the reviewer created blocks over the author's dirt|dated|probe|rc=2 first=reviewer-stop-check: worktree=@REPO@|?? probe.sh
+a mode the reviewer changed blocks though the file's mtime is old|dated|chmod|rc=2 first=reviewer-stop-check: worktree=@REPO@| M tools/run.sh
+the reviewer staging the author's change blocks|dated|stage|rc=2 first=reviewer-stop-check: worktree=@REPO@|M  src/lib.rs
+the reviewer moving the author's file blocks though its mtime is old|dated|move|rc=2 first=reviewer-stop-check: worktree=@REPO@|?? notes-moved.txt
+with no dated first entry the author's dirt blocks|undated|none|rc=2 first=reviewer-stop-check: worktree=@REPO@|-
 "
 start_rows() { # TAG
-  local tag="$1" row label dated probe want repo t n=0 before=$((PASS + FAIL))
+  local tag="$1" row label dated act want named repo t t0 n=0 before=$((PASS + FAIL))
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    IFS='|' read -r label dated probe want <<<"$row"
+    IFS='|' read -r label dated act want named <<<"$row"
     n=$((n + 1))
     repo="$(new_repo "start-$tag$n")"
+    mkdir -p "$repo/tools"
     printf 'pub fn gone() {}\n' >"$repo/src/gone.rs"
-    fgit -C "$repo" add src/gone.rs
-    fgit -C "$repo" commit -q -m gone
+    printf 'echo run\n' >"$repo/tools/run.sh"
+    fgit -C "$repo" add src/gone.rs tools/run.sh
+    fgit -C "$repo" commit -q -m author
     printf 'pub fn b() {}\n' >>"$repo/src/lib.rs"
     printf 'notes\n' >"$repo/author-notes.txt"
+    printf 'staged\n' >"$repo/author-staged.txt"
+    fgit -C "$repo" add author-staged.txt
     rm -f -- "${repo:?}/src/gone.rs"
-    touch -t 202001010000 "$repo/src/lib.rs" "$repo/author-notes.txt" "$repo/src" "$repo"
     t="$(transcript_for "$repo")"
+    t0=$(date +%s)
+    while [ "$(date +%s)" -le "$t0" ]; do :; done
     if [ "$dated" = dated ]; then
-      { printf '{"type":"user","timestamp":"2020-06-01T00:00:00.000Z"}\n'; cat -- "$t"; } >"$t.dated"
+      { printf '{"type":"user","timestamp":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"; cat -- "$t"; } >"$t.dated"
       t="$t.dated"
     fi
-    [ "$probe" = no ] || printf 'probe\n' >"$repo/probe.sh"
+    case "$act" in
+      none) ;;
+      probe) printf 'probe\n' >"$repo/probe.sh" ;;
+      chmod) chmod +x "$repo/tools/run.sh" ;;
+      stage) fgit -C "$repo" add src/lib.rs ;;
+      move) mv -- "$repo/author-notes.txt" "$repo/notes-moved.txt" ;;
+      *) printf 'start rows: no act named %s\n' "$act" >&2; exit 2 ;;
+    esac
     run_hook "$t" reviewer-test "$tag$n"
     assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
-    if [ "$probe" = yes ]; then
-      assert_contains "$err" "?? probe.sh" "$label, naming the probe"
-      assert_not_contains "$err" "author-notes.txt" "$label, and not the author's file"
+    if [ "$named" != - ] && [ "$dated" = dated ]; then
+      assert_contains "$err" "$named" "$label, naming the reviewer's path"
+      assert_not_contains "$err" " D src/gone.rs" "$label, and not the author's deletion"
     fi
   done <<<"$START_ROWS"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "start rows: no row was asserted" >&2; exit 2; }
 }
 start_rows st
-# Every dirty path counted as the reviewer's reds the rows that rely on the
-# author's dirt passing; none of them counted reds the probe's.
-rows_control start_rows start-ignored '[ "$changed" -lt "$START" ]' 'false' \
+# Every path counted as the reviewer's reds the author's row and each row's
+# claim that the author's file is not named; no path counted reds every act a
+# file time shows; the index left unread reds the staging; the modification
+# time in place of the change time reds the chmod and the move.
+rows_control start_rows start-ignored '[ "$t" -ge "$START" ]' 'true' \
   "dirt the author left before the review passes" \
-  "a probe the reviewer created blocks over the author's dirt, and not the author's file"
-rows_control start_rows start-all-old '[ "$changed" -lt "$START" ]' 'true' \
+  "a probe the reviewer created blocks over the author's dirt, and not the author's deletion" \
+  "a mode the reviewer changed blocks though the file's mtime is old, and not the author's deletion" \
+  "the reviewer staging the author's change blocks, and not the author's deletion" \
+  "the reviewer moving the author's file blocks though its mtime is old, and not the author's deletion"
+rows_control start_rows start-all-old '[ "$t" -ge "$START" ]' 'false' \
   "a probe the reviewer created blocks over the author's dirt" \
-  "a probe the reviewer created blocks over the author's dirt, naming the probe"
+  "a probe the reviewer created blocks over the author's dirt, naming the reviewer's path" \
+  "a mode the reviewer changed blocks though the file's mtime is old" \
+  "a mode the reviewer changed blocks though the file's mtime is old, naming the reviewer's path" \
+  "the reviewer moving the author's file blocks though its mtime is old" \
+  "the reviewer moving the author's file blocks though its mtime is old, naming the reviewer's path"
+rows_control start_rows index-unread '[ "$INDEX_CHANGED" -eq 0 ] || return 0' ':' \
+  "the reviewer staging the author's change blocks" \
+  "the reviewer staging the author's change blocks, naming the reviewer's path"
+rows_control start_rows mtime 'stat -c %Z "$1" 2>/dev/null || stat -f %c "$1" 2>/dev/null' \
+  'stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null' \
+  "a mode the reviewer changed blocks though the file's mtime is old" \
+  "a mode the reviewer changed blocks though the file's mtime is old, naming the reviewer's path" \
+  "the reviewer moving the author's file blocks though its mtime is old" \
+  "the reviewer moving the author's file blocks though its mtime is old, naming the reviewer's path"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not
