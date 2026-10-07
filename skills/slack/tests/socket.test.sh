@@ -316,7 +316,7 @@ assert_eq "$(awaited opened_at_least $((OPENED + 1)))" "yes" "Slack's disconnect
 assert_eq "$(lines "$GAMMA" disconnect | sed -n '2p')" "disconnect slack-refresh_requested" "the disconnect is journaled with Slack's reason"
 TS2="$(sk_inject "$GC" U001 'after the refresh')"
 assert_eq "$(landed "$GAMMA" "$GC:$TS2")" "after the refresh" "a message after the refresh lands from its event"
-awaited reconnect_polled "$GAMMA" "$POLLED_AT" >/dev/null
+assert_eq "$(awaited reconnect_polled "$GAMMA" "$POLLED_AT")" "yes" "after the refresh the reconnect poll completes"
 assert_eq "$(state_link "$GAMMA")" "ok connected" "after the refresh the doctor row reads ok and connected"
 
 # --- a relay that cannot reconnect shows reconnecting ----------------------------------------
