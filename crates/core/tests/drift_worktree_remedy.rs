@@ -174,7 +174,7 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     );
     assert!(
         report::render_plain(&checked).contains(
-            "fix: kendex remove --kind agent gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)\n"
+            "fix: kendex remove --kind agent gh (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"
         ),
         "an absent manifest retains the explicit elsewhere marker"
     );

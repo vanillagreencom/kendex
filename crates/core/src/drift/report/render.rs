@@ -10,7 +10,7 @@ use super::*;
 /// because this is the only place it is printed, and it names the
 /// condition rather than a place to go instead: which session is free of
 /// the hook is not something a report can know.
-const NOT_FROM_HERE: &str = "(no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)";
+const NOT_FROM_HERE: &str = "(the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)";
 
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
 fn age_word(secs: u64) -> String {
@@ -38,11 +38,13 @@ fn next_action(report: &CheckReport) -> Option<Sentence> {
     }
     let command =
         |global| match Remedy::render_refresh_action(global, report.project_target.as_ref()) {
-            Some(Fix::Here(command)) => Some(format!("{command} --yes")),
-            Some(Fix::Elsewhere(_)) | None => None,
+            Some(Fix::Here(command) | Fix::Elsewhere(command)) => Some(format!("{command} --yes")),
+            None => None,
         };
+    // The main checkout's refresh is its refresh owner's, run there: the
+    // hook refuses it from this worktree.
     let checkout = match report.project_target {
-        Some(ProjectTarget::MainCheckout(_)) => " in that checkout",
+        Some(ProjectTarget::MainCheckout(_)) => " from the main checkout, as its refresh owner,",
         Some(ProjectTarget::Worktree(_)) | None => " in this checkout",
     };
     let next = Sentence::default().prose("Next: ");

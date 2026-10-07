@@ -96,10 +96,11 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
 ///
 /// A project scope is ordinarily the directory a command is typed in, and
 /// the command carries no destination at all. Where it is a linked git
-/// worktree writing the main checkout's project, the destination has to be
-/// in the words for `refresh`, `apply` and `updates --apply`, which have a
-/// flag for it, and the verbs without one are marked as running somewhere
-/// else: a reader left with the drift line and no remedy has nothing to
+/// worktree whose project is the main checkout's, the destination is in
+/// the words for the verbs with a flag for it, and every write is marked
+/// as its refresh owner's to run from the main checkout, the shared base
+/// the hook refuses from a worktree; the plan, which writes nothing, runs
+/// here. A reader left with the drift line and no remedy has nothing to
 /// act on. A worktree carrying its own manifest is written by every bare
 /// verb typed in it, `update-pi` included, so no command names it and none
 /// is marked.
@@ -118,21 +119,21 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             "apply",
             Remedy::Apply { global: false },
             here("kendex apply"),
-            here("kendex apply --project-path '/w/app'"),
+            elsewhere("kendex apply --project-path '/w/app'"),
             here("kendex apply"),
         ),
         (
             "apply --replace-unmanaged",
             Remedy::ReplaceUnmanaged { global: false },
             here("kendex apply --replace-unmanaged"),
-            here("kendex apply --replace-unmanaged --project-path '/w/app'"),
+            elsewhere("kendex apply --replace-unmanaged --project-path '/w/app'"),
             here("kendex apply --replace-unmanaged"),
         ),
         (
             "refresh",
             Remedy::Refresh { global: false },
             here("kendex refresh"),
-            here("kendex refresh --project-path '/w/app'"),
+            elsewhere("kendex refresh --project-path '/w/app'"),
             here("kendex refresh"),
         ),
         (
@@ -211,7 +212,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
     assert_eq!(
         Remedy::Refresh { global: false }
             .render(Some(&ProjectTarget::MainCheckout("/w/my lane".into()))),
-        here("kendex refresh --project-path '/w/my lane'")
+        elsewhere("kendex refresh --project-path '/w/my lane'")
     );
 }
 
@@ -351,18 +352,18 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
 
     let text = render_plain(&report(ProjectTarget::MainCheckout("/w/app".into())));
     assert!(
-        text.contains("— fix: kendex refresh --project-path '/w/app'\n"),
+        text.contains("— fix: kendex refresh --project-path '/w/app' (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"),
         "{text}"
     );
     for command in commands {
         assert!(
             text.contains(&format!(
-                "— fix: {command} (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)\n"
+                "— fix: {command} (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"
             )),
             "{command} missing its marker: {text}"
         );
     }
-    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/app' --yes in that checkout for project packages.\n"));
+    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/app' --yes from the main checkout, as its refresh owner, for project packages.\n"));
 
     let text = render_plain(&report(ProjectTarget::Worktree("/w/lane".into())));
     assert!(text.contains("— fix: kendex refresh\n"), "{text}");

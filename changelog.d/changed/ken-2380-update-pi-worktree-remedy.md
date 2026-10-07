@@ -1,1 +1,1 @@
-- `kendex check` in a linked worktree that carries its own manifest offers `kendex update-pi --scope project` as a fix that runs there, instead of marking it as one that has to run elsewhere.
+- `kendex check` in a linked worktree that carries its own manifest offers `kendex update-pi --scope project` as a fix that runs there. In a worktree whose project is the main checkout's, every fix that writes it, `--project-path` forms included, is marked as the main checkout's refresh owner's to run there, and the next step says so; `kendex apply --plan` still runs where you are.

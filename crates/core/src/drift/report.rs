@@ -154,14 +154,14 @@ pub enum Remedy {
 pub enum Fix {
     /// Runnable where the report was read.
     Here(String),
-    /// Runnable, but not where it was read: the line is about a project
-    /// the command has to name and this verb has no `--project-path`
-    /// form, so a session running the catalog's `block-worktree-refresh`
-    /// hook is refused it inside that linked git worktree: every such
-    /// verb where the project is the main checkout's. The command is still the
-    /// fix, and the renderer marks it with why it will not run here — a
-    /// reader handed no remedy at all is left with the drift and no way
-    /// out of it.
+    /// Runnable, but not where it was read: the line is about the main
+    /// checkout's project, the shared base its refresh owner writes from
+    /// there, so a session running the catalog's `block-worktree-refresh`
+    /// hook is refused every write to it from a linked worktree, named by
+    /// `--project-path` or typed bare. The command is still the fix, and
+    /// the renderer marks it with why it will not run here — a reader
+    /// handed no remedy at all is left with the drift and no way out of
+    /// it.
     Elsewhere(String),
 }
 
@@ -251,9 +251,11 @@ impl Remedy {
     /// reach the place the line is about, set by [`CheckReport`] where the
     /// checked directory is a linked worktree. Only the main checkout's
     /// project is named: a verb that takes `--project-path` carries it,
-    /// and one with no such form renders its bare command as
-    /// [`Fix::Elsewhere`]: the command is still the fix, and the marker the
-    /// renderer adds says why it will not run where the report was read.
+    /// and one with no such form is spelled bare. Every write to it is
+    /// [`Fix::Elsewhere`], its refresh owner's to run from the main
+    /// checkout: the command is still the fix, and the marker the renderer
+    /// adds says why it will not run where the report was read. The plan
+    /// writes nothing and runs here.
     /// The worktree's own project is reached by every bare verb typed
     /// there, so its command carries no path and runs here.
     pub fn render(&self, target: Option<&ProjectTarget>) -> Option<Fix> {
@@ -337,7 +339,7 @@ impl Remedy {
         };
         let elsewhere = match named {
             None | Some(ProjectTarget::Worktree(_)) => false,
-            Some(ProjectTarget::MainCheckout(_)) => !self.takes_project_path(),
+            Some(ProjectTarget::MainCheckout(_)) => self.mutates(),
         };
         Some(match elsewhere {
             true => Fix::Elsewhere(command),

@@ -520,6 +520,10 @@ update-pi in a worktree with no manifest of its own is refused|payload|worktree|
 a target naming the main checkout is the shared base, the refresh owner's write|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path $MAIN
 and from a worktree that owns its manifest too|payload|own|2|block-worktree-refresh: shared=apply|kendex apply --project-path $MAIN
 a project below the main checkout's root is the shared base too|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply --project-path $MAIN/app
+a single-quoted target spelled with an equals sign is still a target|payload|own|2|block-worktree-refresh: shared=apply|kendex apply '--project-path=$MAIN'
+and double-quoted|payload|own|2|block-worktree-refresh: shared=apply|kendex apply "--project-path=$MAIN"
+and on updates --apply|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply '--project-path=$MAIN'
+a quoted target naming the worktree's own project passes|payload|own|0|-|kendex refresh "--project-path=$OWN"
 a relative target is resolved from the working directory|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path ../main
 an absolute target after a cd is still read from the words|payload|own|2|block-worktree-refresh: shared=refresh|cd $OWN && kendex refresh --project-path $MAIN
 a relative target after a cd resolves against a directory the words do not establish|payload|own|2|block-worktree-refresh: unproven=refresh|cd $OWN && kendex refresh --project-path .
@@ -696,11 +700,11 @@ assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: missi
 
 echo "=== block-worktree-refresh: without the command reader ==="
 # The hook alone, with no commit-guards install within reach of it: an install
-# gap the caller cannot repair from the call. What cannot write another
-# checkout is allowed with the gap reported on stderr and handed to the model
-# as context on stdout; a kendex write word typed in a linked worktree the
-# main checkout's manifest declares, or one a move or a named target could
-# send elsewhere, is refused, and the main checkout is the caller's own fix.
+# gap the caller cannot repair from the call. Outside a linked worktree the
+# call is allowed with the gap reported on stderr and handed to the model as
+# context on stdout; in one, a command with a `kendex` word is refused, since
+# its other words prove neither the verb nor where it runs, and the main
+# checkout is the caller's own fix.
 # The Copilot install is the copy under .github/hooks.
 mkdir -p "$TMP_ROOT/lone/hooks" "$TMP_ROOT/lone-copilot/.github/hooks"
 cp "$HOOK" "$TMP_ROOT/lone/hooks/block-worktree-refresh.sh"
@@ -729,14 +733,15 @@ while IFS='|' read -r label install world expected first shape command; do
   assert_eq "rc=$rc first=$(first_line) context=$got" "rc=$expected first=$first context=$want" "$label"
 done <<ROWS
 a command naming no kendex passes silently|lone/hooks|worktree|0|-|-|git status
-a kendex read in a worktree the main checkout declares passes, the gap handed over as context|lone/hooks|worktree|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex verify
-and on Copilot as its top-level additionalContext|lone-copilot/.github/hooks|worktree|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.additionalContext|kendex verify
-a kendex write word there is refused: the caller's fix is the main checkout|lone/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh
-a write in a worktree that owns its manifest passes with the gap reported|lone/hooks|own|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex update-pi
-a move there may send the write elsewhere, so it is refused|lone/hooks|own|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|cd $WT && kendex add orch
-and so may a named target|lone/hooks|own|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh --project-path $MAIN
+a kendex write in a linked worktree is refused: the caller's fix is the main checkout|lone/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh
+a quoted span the shell joins into a verb is refused too, unread|lone/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex re""fresh
+and so is a kendex read: its other words prove nothing unread|lone/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex verify
+a worktree that owns its manifest is no proof either: an expansion can move the shell|lone/hooks|own|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|x=cd; \$x $MAIN; kendex refresh
+nor for a bare update-pi there|lone/hooks|own|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex update-pi
+on Copilot the refusal is the same|lone-copilot/.github/hooks|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|-|kendex refresh
 a write from the main checkout passes with the gap reported|lone/hooks|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex refresh
 and outside every repository|lone/hooks|outside|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.hookSpecificOutput.additionalContext|kendex refresh
+and on Copilot as its top-level additionalContext|lone-copilot/.github/hooks|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|.additionalContext|kendex refresh
 ROWS
 # A global Pi install sits four directories under the home, and a harness root
 # a setting relocated sits outside it; both find the reader in the home's

@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree, the command does not name the global scope, and the project the write lands in is not the worktree's own; and whenever a `cd`, `pushd`, `env -C` or `sudo -D` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. The project a bare verb writes is the one kendex resolves from the working directory; where that project has no manifest of its own in the linked worktree (kendex.toml, or kendex-local.toml for a source catalog), its declarations are the main checkout's, so a project-scope write renders into that checkout and removes what it does not expect there. Where it has one, it is a project in its own right and its target is unambiguous, so every writing verb, `update-pi` included, passes there bare. `refresh`, `apply` and `updates --apply` may name their target with `--project-path PATH` instead, and the target is judged, not the working directory: a project holding its own manifest in a linked worktree, or one outside this repository, passes; a project in the main checkout of this repository is the shared base, which its refresh owner writes from there, and is refused; one with no manifest of its own in its worktree is refused as a bare write there would be; and a path the words do not spell plainly (an expansion, a command substitution, quoted whitespace, a leading `~`, no value, or a relative path after a move) proves no target and is refused. A path that does not exist or is no project root passes, since kendex refuses it before it writes. Names the forms that are right: `--project-path PATH` where the verb takes it and the installed kendex lists the flag, the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest, the `source` subcommands included). An installed kendex whose `refresh --help` does not list `--project-path` is named with its version instead of the flag it lacks.
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; the hook itself writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook. Without it the command is judged by its text alone: one with no `kendex` word passes silently; one with no writing verb's word anywhere, or run outside a linked worktree, or in a linked worktree whose project holds its own manifest with no move word and no `--project-path` in the text, passes with a `missing-library` report on stderr and as context on stdout (top-level `additionalContext` for the Copilot install, `hookSpecificOutput.additionalContext` elsewhere); any other is refused under the same key, naming the main checkout as the caller's fix. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex help VERB`, a matched verb with `--help`, `-h` or `--plan` among the words Bash passes it, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path`, `--apply`, `--help`, `-h` and `--plan` are read from the words Bash passes kendex after the verb in its own segment, and for a `source` subcommand also from the option words between `source` and it, where its parser takes them too: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read, so a segment the command's text does not follow with a separator, a comment or its end names no global scope and counts as `--apply`. update-pi's `--check` is read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there is judged by the project the value names, resolved from the working directory and asked of git and the manifest as the working directory is. On the refusal path only, and only where the refusal of `refresh`, `apply` or `updates --apply` would offer `--project-path`, the hook runs `kendex refresh --help` and `kendex --version` once from the PATH it was given, reads whether the help lists the flag, and captures what both wrote; a kendex that is not on PATH or whose help cannot be read is named as unasked, and the flag is not offered. That kendex is a binary of its own: its first run on a machine records the command's path under kendex's data directory, and it writes into no checkout. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; the hook itself writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook. Without it the command is judged by its text alone: one with no `kendex` word passes silently; one run outside a linked worktree passes with a `missing-library` report on stderr and as context on stdout (top-level `additionalContext` for the Copilot install, `hookSpecificOutput.additionalContext` elsewhere); one run in a linked worktree is refused under the same key, naming the main checkout as the caller's fix, since its other words prove neither the verb (`re""fresh` is joined by the shell) nor where it runs (a `cd` an expansion spells). The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex help VERB`, a matched verb with `--help`, `-h` or `--plan` among the words Bash passes it, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path`, `--apply`, `--help`, `-h` and `--plan` are read from the words Bash passes kendex after the verb in its own segment, and for a `source` subcommand also from the option words between `source` and it, where its parser takes them too: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read, so a segment the command's text does not follow with a separator, a comment or its end names no global scope and counts as `--apply`. update-pi's `--check` is read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there is judged by the project the value names, resolved from the working directory and asked of git and the manifest as the working directory is. On the refusal path only, and only where the refusal of `refresh`, `apply` or `updates --apply` would offer `--project-path`, the hook runs `kendex refresh --help` and `kendex --version` once from the PATH it was given, reads whether the help lists the flag, and captures what both wrote; a kendex that is not on PATH or whose help cannot be read is named as unasked, and the flag is not offered. That kendex is a binary of its own: its first run on a machine records the command's path under kendex's data directory, and it writes into no checkout. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -126,7 +126,7 @@ refuse() { # KEY VALUE [CAUSE]
       echo "the commands ${2//,/, } are required to read the hook payload and the worktree and are not on PATH; refusing rather than skipping the guard" >&2
       ;;
     missing-library=*)
-      echo "refusing a kendex command from the linked worktree $CWD: the commit-guards skill's $2 is not installed beside this hook, so which verb runs and where it writes cannot be read, and here a bare write could land in the main checkout's project." >&2
+      echo "refusing a kendex command from the linked worktree $CWD: the commit-guards skill's $2 is not installed beside this hook, so which verb runs and where it writes cannot be read, and from a linked worktree a write can land in the main checkout's project." >&2
       echo "  Run the command from the main checkout (the first line of 'git worktree list'), where this hook refuses nothing it cannot read; then install the commit-guards skill in this scope so commands here are read again." >&2
       ;;
     payload=unreadable)
@@ -205,8 +205,8 @@ refuse() { # KEY VALUE [CAUSE]
 }
 
 # A missing command library is an install defect the caller cannot repair
-# from the call, so where nothing the hook could not read can land a write in
-# another checkout, the call is allowed with the gap reported. The report
+# from the call, so outside a linked worktree, where no write is judged, the
+# call is allowed with the gap reported. The report
 # reaches the model as context as well as on stderr, which Claude Code and
 # Copilot keep from it, in the shape skill-load-check::notice uses for the
 # same gap: Copilot reads a top-level `additionalContext`, the rest
@@ -216,7 +216,7 @@ refuse() { # KEY VALUE [CAUSE]
 library_gap() { # -> exit 0, the gap reported
   local text shape context
   text="block-worktree-refresh: missing-library=$LIBRARY
-the commit-guards skill's $LIBRARY is not installed beside this hook, so the command is not read; it is allowed because it names no kendex writing verb, or runs where a bare write lands in no other checkout. Install the commit-guards skill in this scope so commands are read again."
+the commit-guards skill's $LIBRARY is not installed beside this hook, so the command is not read; it is allowed because it runs outside a linked worktree. Install the commit-guards skill in this scope so commands are read again; until then a kendex command in a linked worktree is refused."
   printf '%s\n' "$text" >&2
   case "$HOOK_DIR" in
     */.github/hooks) shape='{additionalContext: $text}' ;;
@@ -252,10 +252,10 @@ done
 # tree, for a harness root CODEX_HOME, PI_CODING_AGENT_DIR or COPILOT_HOME moved
 # out of the home; then the repository's own copy, only where this hook is
 # installed in that repository. Without it no command can be read: that is a
-# gap in the install, not the caller's, so `library_gap` allows what cannot
-# write another checkout, and only a kendex write word typed in a linked
-# worktree the main checkout's manifest declares is refused, the one case the
-# caller ends by running it from the main checkout.
+# gap in the install, not the caller's, so `library_gap` allows a command
+# outside a linked worktree, and in one only a command with a `kendex` word
+# is refused, the one case the caller ends by running it from the main
+# checkout.
 LIBRARY=commit-guards/scripts/lib/command-position.sh
 HOOK_DIR=${BASH_SOURCE[0]%/*}
 [ "$HOOK_DIR" != "${BASH_SOURCE[0]}" ] || HOOK_DIR=.
@@ -345,10 +345,6 @@ CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
 # `sudo` anywhere in the segment, a short one inside a cluster included.
 MOVE_RE='(^|[^[:alnum:]_.-])((cd|pushd)([[:space:]]|$)|env([[:space:]]+[^[:space:]]+)*[[:space:]]+(-[[:alnum:]]*C|--chdir)|sudo([[:space:]]+[^[:space:]]+)*[[:space:]]+(-[[:alnum:]]*D|--chdir))'
 KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
-# Any word naming a writing verb, read over the whole command text when the
-# command reader is missing: wider than the verb words `writing_verb` reads,
-# so a command it lets through holds none of them anywhere.
-WRITE_WORD_RE='(^|[^[:alnum:]_.-])(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source|marketplace)([^[:alnum:]_.-]|$)'
 
 # The writing verb of one segment, and the text after it. A quote may close
 # the command word or wrap the verb, as in `"/path/kendex" refresh` and
@@ -535,7 +531,11 @@ read_options() { # TAIL SEGMENT -> ARG_SCOPE, ARG_TARGET, ARG_PATH, ARG_APPLY, A
         value=target
         continue
         ;;
-      :--project-path=*) ARG_PATH=${word#--project-path=} ;;
+      :--project-path=*)
+        # A quoted word reaches here only once its quotes are off.
+        [ -n "$unsure" ] || ARG_TARGET=1
+        ARG_PATH=${word#--project-path=}
+        ;;
       :--apply) ARG_APPLY=1 ;;
       :--help | :-h | :--plan) ARG_READ=1 ;;
     esac
@@ -585,11 +585,11 @@ FIELD=$'\037'
 WRITES=""
 MOVED=""
 if [ -z "$FOUND_LIBRARY" ]; then
-  # Unread, the command is judged by its text alone. One with no `kendex`
-  # word runs no kendex verb; one with no writing verb's word anywhere runs
-  # no write. Every other one is judged by the directory it runs in below.
+  # Unread, a command with no `kendex` word passes as the reader would pass
+  # it. Its other words prove nothing: the shell joins `re""fresh` into a
+  # verb and runs a `cd` an expansion spells, so any other command is judged
+  # by the directory it runs in below.
   [[ $COMMAND =~ $KENDEX_RE ]] || exit 0
-  [[ $COMMAND =~ $WRITE_WORD_RE ]] || library_gap
   WRITES=unread
 else
   command_segments "$COMMAND"
@@ -833,18 +833,9 @@ if ! git_dirs "$CWD" || [ "$GIT_DIR" = "$COMMON_DIR" ]; then
   exit 0
 fi
 CALLER_COMMON=$COMMON_DIR
-# Unread, a kendex write word typed in a linked worktree passes only where a
-# bare verb writes that worktree's own project, and nothing in the text can
-# have moved it or named another one; else the caller's own fix is the main
-# checkout, where nothing is refused unread.
-if [ -z "$FOUND_LIBRARY" ]; then
-  ownership "$CWD"
-  if [ "$OWNER" = worktree ] && ! [[ $COMMAND =~ $MOVE_RE ]] \
-    && [[ $COMMAND != *--project-path* ]]; then
-    library_gap
-  fi
-  refuse missing-library "$LIBRARY"
-fi
+# Unread, a kendex command typed in a linked worktree has no proven target;
+# the caller's own fix is the main checkout, where nothing is refused unread.
+[ -n "$FOUND_LIBRARY" ] || refuse missing-library "$LIBRARY"
 # A project that owns its manifest is the one a bare verb typed there writes,
 # update-pi and the whole-scope writers included, so the target is
 # unambiguous and nothing is refused. A named target is judged by itself.
