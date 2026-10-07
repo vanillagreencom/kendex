@@ -1,0 +1,1 @@
+- `slack listen --status` reads a status record an older relay wrote without the connection fields, printing its state with `connection=unknown` instead of raising `KeyError`.

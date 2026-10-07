@@ -230,10 +230,15 @@ def status(roots: List[Path], now: float) -> int:
             continue
         age = now - float(record["last_poll"])
         fresh = age <= 2 * int(record["poll_seconds"]) + 5
+        # A record the pre-Socket-Mode relay wrote has no connection fields:
+        # its state comes from freshness and last_poll_ok alone.
+        last_poll_at = format_at(float(record["last_poll"]))
+        connection = record.get("connection", "unknown")
+        connection_since = record.get("connection_since", last_poll_at)
         # A connect refused past the bound keeps owner messages from
         # arriving though every poll succeeds.
-        link_error = record["connection_error"]
-        if record["connection"] == "reconnecting" and now - parse_at(record["connection_since"]) <= RECONNECT_BOUND_SECONDS:
+        link_error = record.get("connection_error", "")
+        if connection == "reconnecting" and now - parse_at(connection_since) <= RECONNECT_BOUND_SECONDS:
             link_error = ""
         if not fresh:
             state, fix = "stale", " fix=restart the relay and read its last lines"
@@ -245,9 +250,9 @@ def status(roots: List[Path], now: float) -> int:
             state, fix = "ok", ""
         # A stale record's relay is gone, whatever connection it recorded.
         if fresh:
-            connection, since = record["connection"], record["connection_since"]
+            since = connection_since
         else:
-            connection, since = "disconnected", format_at(float(record["last_poll"]))
+            connection, since = "disconnected", last_poll_at
         unknown = record.get("unknown") or []
         held = f" held-by={record['held_by']}" if record.get("held_by") else ""
         print(
