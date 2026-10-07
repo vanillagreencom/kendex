@@ -659,8 +659,9 @@ git -C "$R" add skills/narrow hooks
 git -C "$R" commit -q -m "chore: a skill and hooks with a suite no change maps to"
 printf 'echo more\n' >>"$R/skills/narrow/scripts/alpha.sh"
 printf 'echo more\n' >>"$R/hooks/narrow.sh"
-narrow_row_holds() { # — the row's verdict over OUT and RC
+narrow_row_holds() { # [SELECTION] — the row's verdict over OUT and RC
   [ "$RC" -eq 0 ] &&
+    [ "$(sed -n '$p' <<<"$OUT")" = "validate: lanes=guard-scans selection=${1:-subset}" ] &&
     [[ "$OUT" == *"=== skills/narrow/tests/alpha.test.sh"* ]] &&
     [[ "$OUT" == *"=== hooks/tests/narrow.test.sh"* ]] &&
     [[ "$OUT" == *"guard-note: suites=1/2 reason=mapped tree=skills/narrow"* ]] &&
@@ -698,6 +699,11 @@ for row in "${narrow_controls[@]}"; do
     bad "control: $name could not be planted in a guard copy"
   fi
 done
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+run_guard
+narrow_row_holds all && [[ "$OUT" == *"guard-note: suites=1/1 reason=mapped tree=skills/demo"* ]] \
+  && ok "a whole mapped tree beside smaller mapped trees reports all in full validation" \
+  || bad "a whole mapped tree beside smaller mapped trees reports all in full validation" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard "$narrow_head"
 FULL_GUARD=0
 
@@ -851,22 +857,29 @@ LANE_ROWS=(
   "micro|false|$CODE|suites parse lint apple windows test"
   "small|false|$CODE ui/app.ts|$ALL"
   "micro|false|docs/guide.md|test"
+  "||crates/core/src/lib.rs ui/app.ts|parse lint apple windows test ui"
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
   IFS='|' read -r class docs paths want <<<"$row"
   run_lanes "$class" "$docs" $paths
   got="$(lanes_ran)"
-  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=subset' ] \
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
 done
 [ "$(grep -cF "printf 'validate: " "$GUARD")" -eq 1 ] || { echo 'lane control: reporting edit has no unique match' >&2; exit 1; }
 lane_guard "/^printf 'validate: /s/^/: # /"
 run_lanes '' '' $CODE ui/app.ts
-[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != 'validate: lanes=guard-scans selection=subset' ] \
+[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != 'validate: lanes=guard-scans selection=all' ] \
   && ok "control: without the final report the lane assertion turns red" \
   || bad "control: without the final report the lane assertion turns red" "$OUT"
+lane_guard 's/^suite_selection=""$/suite_selection=subset/'
+run_lanes render false $CODE
+[ "$RC" -eq 0 ] && [ "$(lanes_ran)" = "" ] \
+  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=subset' ] \
+  && ok "control: with the default reporting subset a disabled shell lane fails its all assertion" \
+  || bad "control: with the default reporting subset a disabled shell lane fails its all assertion" "rc=$RC out=$OUT"
 lane_guard
 run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \

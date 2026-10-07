@@ -62,7 +62,7 @@ printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_range "$BASE"
 [ "$RC" -eq 0 ] && [ -z "$LOG" ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"skills/quiet"* ]] \
-  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=subset' ] \
+  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
   && ok "the touched skill's suite runs, the untouched one does not, and cargo and npm are never called" \
   || bad "the touched skill's suite runs, the untouched one does not, and cargo and npm are never called" "rc=$RC log=$LOG out=$OUT"
 # The inverse is the battery a fix round ran before range mode: the same diff
@@ -119,7 +119,7 @@ for row in "${ROWS[@]}"; do
     git -C "$R" commit -q -m "fix: a change inside the range"
   fi
   run_range "$BASE"
-  [ "$RC" -eq 0 ] && [ "$LOG" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=subset' ] \
+  [ "$RC" -eq 0 ] && [ "$LOG" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
     && ok "$label" \
     || bad "$label" "rc=$RC log=$LOG out=$OUT"
   back_to_base
@@ -493,6 +493,48 @@ hook_suite alpha ': ../alpha.sh'
 hook_suite alpha-copilot ':'
 hook_suite via-world '. "$(dirname "$0")/lib/world.sh"'
 hook_suite beta 'cat "$(dirname "$0")/../README.md"; : ../beta.sh'
+# Shipped directory reads: workflow_helpers.sh's quoted find operands,
+# workflow-state-init-guard-lint's W assignment and iced-rs's SOURCES array.
+# second-opinion reads each assigned schema_file through sed. Keep these
+# apart from the other mapping rows so a reader case changes no older set.
+D="$R/skills/doc-readers"
+mkdir -p "$D/scripts/lib" "$D/tests" "$D/workflows" "$D/references" "$D/schemas"
+printf '# Flow\n' >"$D/workflows/flow.md"
+printf '# Reference\n' >"$D/references/guide.md"
+printf '# Prompt\n' >"$D/schemas/review-finding-prompt.md"
+M_SAVED=$M
+M=$D
+suite_running quoted-find 'SKILL_DIR="$(dirname "$0")/.."; find "$SKILL_DIR/workflows" "$SKILL_DIR/references" "$SKILL_DIR/schemas" -type f -name "*.md" >/dev/null'
+suite_running assigned-dir 'SKILL_DIR="$(dirname "$0")/.."
+W="$SKILL_DIR/workflows"
+grep -r Flow "$W" >/dev/null'
+suite_running array-dir 'SKILL_DIR="$(dirname "$0")/.."
+SOURCES=("$SKILL_DIR/references")
+grep -r Reference "${SOURCES[@]}" >/dev/null'
+suite_naming assigned-script 'runs ../scripts/schema'
+suite_naming assigned-lib 'sources ../scripts/lib/schema.sh'
+suite_naming api 'calls "repos/demo/actions/workflows"'
+suite_naming brief 'runs ../scripts/brief; sources ../scripts/lib/brief.sh'
+suite_naming unused 'runs ../scripts/unused'
+suite_naming printed-path 'runs ../scripts/printed-path'
+M=$M_SAVED
+for f in "$D/scripts/schema" "$D/scripts/lib/schema.sh"; do
+  cat >"$f" <<'SH'
+#!/usr/bin/env bash
+read_schema() {
+  local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
+  schema=$(sed 's/Prompt/Fixture/g' "$schema_file")
+}
+read_other_schema() {
+  local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
+  schema=$(sed 's/Prompt/Fixture/g' "${schema_file}")
+}
+SH
+done
+printf '#!/usr/bin/env bash\nprintf "Read .agents/skills/doc-readers/workflows and schemas/review-finding-prompt.md"\n' >"$D/scripts/brief"
+printf 'brief="Read .agents/skills/doc-readers/schemas/review-finding-prompt.md"\n' >"$D/scripts/lib/brief.sh"
+printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\n' >"$D/scripts/unused"
+printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\nprintf "%%s\\n" "$schema_file"\n' >"$D/scripts/printed-path"
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: two skills and hooks with suites named for their files"
 mapped_base="$(git -C "$R" rev-parse HEAD)"
@@ -526,7 +568,7 @@ mapped_note() { printf 'guard-note: suites=%s reason=mapped tree=%s' "$1" "$2"; 
 # guard prints for a tree with no runner, or for the mapped skill once its
 # runner is deleted.
 started() {
-  printf '%s\n' "$OUT" | sed -n 's/^start suite=//p; s#^=== skills/plain/tests/##p; s#^=== hooks/tests/##p; /run-all\.sh/!s#^=== skills/mapped/tests/\(.*\)\.sh$#\1#p' | sort | tr '\n' ' ' | sed 's/ $//'
+  printf '%s\n' "$OUT" | sed -n 's/^start suite=//p; s#^=== skills/plain/tests/##p; s#^=== hooks/tests/##p; s#^=== skills/doc-readers/tests/\(.*\)\.sh$#\1#p; /run-all\.sh/!s#^=== skills/mapped/tests/\(.*\)\.sh$#\1#p' | sort | tr '\n' ' ' | sed 's/ $//'
 }
 back_to_mapped() {
   git -C "$R" reset -q --hard "$mapped_base"
@@ -578,6 +620,9 @@ MAP_ROWS=(
   "a changed hook runs its namesake suites and the suite whose helper names it|append|hooks/alpha.sh|alpha-copilot.test.sh alpha.test.sh via-world.test.sh|$(mapped_note 3/5 hooks)"
   "a changed render of a hook runs that hook's suite|append|.codex/hooks/demo.sh|demo.test.sh|$(mapped_note 1/5 hooks)"
   "a changed hooks helper runs the suite sourcing it|append|hooks/tests/lib/world.sh|via-world.test.sh|$(mapped_note 1/5 hooks)"
+  "quoted find operands and an assigned workflow directory select their readers without API or brief readers|append|skills/doc-readers/workflows/flow.md|assigned-dir quoted-find|$(mapped_note 2/9 skills/doc-readers)"
+  "a quoted reference directory in an array selects its reader beside find|append|skills/doc-readers/references/guide.md|array-dir quoted-find|$(mapped_note 2/9 skills/doc-readers)"
+  "assigned schema paths used by sed select script and lib readers without briefs or unread assignments|append|skills/doc-readers/schemas/review-finding-prompt.md|assigned-lib assigned-script quoted-find|$(mapped_note 3/9 skills/doc-readers)"
   "a changed hook no suite reaches runs the whole hooks set and says so|append|hooks/lone.sh|$HOOKS_ALL|$(note_for unmapped hooks/lone.sh)"
   "a hooks doc runs its reader alone|append|hooks/README.md|beta.test.sh|$(mapped_note 1/5 hooks)"
   "a hooks doc no file reads runs nothing|append|hooks/unused.md||$(mapped_note 0/5 hooks)"
@@ -613,14 +658,26 @@ for row in "${MAP_ROWS[@]}"; do
 done
 [ "$((PASS + FAIL))" -eq "$((before + ${#MAP_ROWS[@]}))" ] || { echo "a suite-map row asserted nothing" >&2; exit 2; }
 # dev-validate-run consumes this machine-readable final line.
-for row in 'skills/mapped/tests/tool.sh|subset' 'skills/mapped/settings.example|all' 'hooks/README.md|subset' 'hooks/settings.example|all'; do
+for row in \
+  'skills/mapped/tests/tool.sh|subset' \
+  'skills/mapped/settings.example|all' \
+  'hooks/README.md|subset' \
+  'hooks/settings.example|all' \
+  'docs/guide.md|all' \
+  'skills/demo/scripts/demo.sh|all' \
+  'skills/mapped/tests/tool.sh hooks/settings.example|all' \
+  'skills/mapped/settings.example hooks/README.md|all'; do
   IFS='|' read -r path selection <<<"$row"
   map_row append "$path" none
   [ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" = "validate: lanes=guard-scans selection=$selection" ] \
     && ok "the final report records $selection for $path" \
     || bad "the final report records $selection for $path" "$OUT"
 done
-for row in 'skills/mapped/tests/tool.sh|subset|s/^suite_selection=subset$/suite_selection=all/' 'skills/mapped/settings.example|all|s/^          suite_selection=all$/          suite_selection=subset/'; do
+for row in \
+  'skills/mapped/tests/tool.sh|subset|s/^            \[ "\$suite_selection" = all \] || suite_selection=subset$/            [ "$suite_selection" = all ] || suite_selection=all/' \
+  'skills/mapped/settings.example|all|s/^          suite_selection=all$/          suite_selection=subset/' \
+  'docs/guide.md|all|s/^suite_selection=""$/suite_selection=subset/' \
+  'skills/demo/scripts/demo.sh|all|s/^          if \[ "\$selected_count" -lt "\$total_count" \]; then$/          if true; then/'; do
   IFS='|' read -r path selection expr <<<"$row"
   if mutant_guard "$expr"; then
     map_row append "$path" none "$MUTANT_TOOLS/guard"
@@ -659,6 +716,10 @@ MAP_CONTROLS=(
   "control: without the hook doc role README runs the whole hooks set~append~hooks/README.md~/^    hooks:\*.md) echo doc ;;$/d~$HOOKS_ALL"
   "control: without the script read filter a printed brief reaches its suites~append~skills/mapped/SKILL.md~/^      script | lib)$/,/^        ;;$/d~brief catalogscan rootglob skillmd walker"
   "control: without cat as a read command the workflow script reader stands down~append~skills/mapped/workflows/flow.md~s/(cat|grep|sed|awk|head|tail|read|find|for)/(grep|sed|awk|head|tail|read|find|for)/~catalogscan flowdir flowread walker"
+  'control: without quoted directory paths the find and assigned directory readers stand down~append~skills/doc-readers/workflows/flow.md~s/|\[\\"'"'"'\](.*$/"/~'
+  'control: without quoted directory paths the array and find readers stand down~append~skills/doc-readers/references/guide.md~s/|\[\\"'"'"'\](.*$/"/~'
+  'control: without path assignments the sed readers stand down~append~skills/doc-readers/schemas/review-finding-prompt.md~/^        assignments=/s/grep -E .*/printf "") || return 2/~quoted-find'
+  'control: without variable reads unread and printed assignments select their suites~append~skills/doc-readers/schemas/review-finding-prompt.md~/^          if grep -qE .*<<<"\$reads"; then$/s/.*/          if true; then/~assigned-lib assigned-script printed-path quoted-find unused'
   'control: with any directory mention counted the API suite joins~append~skills/mapped/workflows/flow.md~s#^      dir=.*#      dir="/${rel%%/*}(/?\\$|/[^[:alnum:]._-]|[^/[:alnum:]._-])"#~api catalogscan flowdir flowread readflow walker'
   "control: with a test module matching a script only on a source line the suite using it stands down~append~skills/mapped/scripts/driven~s/^          suite | helper | test-module) ;;$/          suite | helper) ;;/~helped wrap"
   "control: without the runner arm a deleted runner runs nothing~delete~skills/mapped/tests/run-all.sh~/^    \*:tests\/run-all.sh) return 1 ;;$/d~"

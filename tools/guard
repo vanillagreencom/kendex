@@ -1329,15 +1329,17 @@ scan_load() { # DIR
 #     as `"$SKILL_DIR"/*.md` or `"$SKILL_DIR/$doc"`;
 #   - or a skill-root variable or a path ending in /skills among the start
 #     paths of a find, a walk that meets every doc.
-# Scripts and libraries join only on a read command or a directory glob.
+# Scripts and libraries join only on a read command, a directory glob or a
+# path assignment whose variable those lines use. This text scan does not
+# resolve shell scope or control flow.
 # A comment, printed brief or API path reads nothing, nor does a find from
 # any other start or a walk in another language.
 doc_readers() { # REL
-  local rel="$1" i code dir token
+  local rel="$1" i code dir token reads assignments assignment name
   token="(^|[^[:alnum:]._/-])$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
-      dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])"
+      dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"'](\\\$|[./])[^\"']*/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
       ;;
     *) dir='\$\{?[A-Z_]*SKILL[A-Z_]*\}?"?/[^[:alnum:]._-]' ;;
   esac
@@ -1345,7 +1347,17 @@ doc_readers() { # REL
     code=${SCAN_CODE[i]}
     case "${SCAN_ROLE[i]}" in
       script | lib)
-        code=$(grep -E '(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find|for)[[:space:]]|/[^[:space:]]*["}]*[[:space:]]*/?\*' <<<"$code") || [ $? -eq 1 ] || return 2
+        reads=$(grep -E '(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find|for)[[:space:]]|/[^[:space:]]*["}]*[[:space:]]*/?\*' <<<"$code") || [ $? -eq 1 ] || return 2
+        assignments=$(grep -E '(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[./])' <<<"$code") || [ $? -eq 1 ] || return 2
+        code=$reads
+        while IFS= read -r assignment; do
+          [ -n "$assignment" ] || continue
+          name=$(sed -nE 's/(^|.*[;&|({[:space:]])([[:alpha:]_][[:alnum:]_]*)=["'\'']?(\$|[./]).*/\2/p' <<<"$assignment") || return 2
+          if grep -qE "\\\$\\{?$name(\\}|[^[:alnum:]_]|\$)" <<<"$reads"; then
+            code="$code
+$assignment"
+          fi
+        done <<<"$assignments"
         ;;
     esac
     if grep -qF -e "/$rel" <<<"$code" ||
@@ -1494,9 +1506,9 @@ mapped_suites() { # DIR REL
   fi
   MAPPED=$out
 }
-# The final report uses the runner's subset vocabulary for mapped selection.
-# A whole-tree run, including a conservative fallback, makes the report all.
-suite_selection=subset
+# The final report uses the runner's subset vocabulary only for a smaller
+# mapped set. Empty means no tree was selected; any whole set makes it all.
+suite_selection=""
 if [ "$MODE" != default ] && lane_on shell_shards; then
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
   # it> TAB <path>`: a render reads as the source it renders.
@@ -1569,7 +1581,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           suite_selection=all
           run=$(skill_suites "$d")
         else
-          note suites "$(count_lines "$run")/$(count_lines "$(skill_suites "$d")") reason=mapped tree=$d"
+          selected_count=$(count_lines "$run")
+          total_count=$(count_lines "$(skill_suites "$d")")
+          if [ "$selected_count" -lt "$total_count" ]; then
+            [ "$suite_selection" = all ] || suite_selection=subset
+          else
+            suite_selection=all
+          fi
+          note suites "$selected_count/$total_count reason=mapped tree=$d"
           [ -n "$run" ] || continue
           while IFS= read -r t; do
             [ -n "$t" ] || continue
@@ -1596,6 +1615,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     esac
   done
 fi
+[ -n "$suite_selection" ] || suite_selection=all
 
 if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
