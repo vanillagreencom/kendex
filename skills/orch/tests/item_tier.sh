@@ -125,40 +125,55 @@ assert_eq "$(run_tier - --production 1 --body "$TMP_ROOT/body" --path src/a --pa
   "launch output retains the unfloored estimate, production delta and every path"
 unset TIER_RAW
 
-# A malformed header warns once on stderr, naming the line and the accepted
-# forms, and the tier proceeds as with no delta.
+# A malformed or empty header warns once on stderr, naming the line, and the
+# tier proceeds as with no delta. The wording past the line is not pinned.
 printf '**Expected delta**: about 4 lines\n' > "$TMP_ROOT/about-body"
-warn_stderr() { # TIER_BIN
-  env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "$1" --repo "$TMP_ROOT" \
-    --production 1 --body "$TMP_ROOT/about-body" 2>&1 >/dev/null
+printf '**Expected delta**:\n' > "$TMP_ROOT/empty-delta-body"
+warn_count() { # BODY
+  env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
+    --production 1 --body "$1" 2>&1 >/dev/null | grep -c "^item-tier-warning: cause=invalid-delta line=\[$2\]" || true
 }
-assert_eq "$(warn_stderr "$TIER" | grep -c '^item-tier-warning: cause=invalid-delta line=\[about 4 lines\] accepted=\[N lines\] \[N lines, M test lines\]')" \
-  "1" "a malformed Expected delta warns once naming the line and the accepted forms"
-assert_eq "$(TIER_RAW=true run_tier - --production 1 --body "$TMP_ROOT/about-body")" \
-  "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=0 rc=0" \
-  "a malformed Expected delta proceeds with no delta"
-# Must-fail control: a copy that drops the warning line stays silent.
+assert_malformed_warns() {
+  assert_eq "$(warn_count "$TMP_ROOT/about-body" 'about 4 lines')" "1" \
+    "a malformed Expected delta warns once naming the line"
+  assert_eq "$(warn_count "$TMP_ROOT/empty-delta-body" '')" "1" \
+    "an empty Expected delta warns once"
+  assert_eq "$(TIER_RAW=true run_tier - --production 1 --body "$TMP_ROOT/about-body")" \
+    "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=0 rc=0" \
+    "a malformed Expected delta proceeds with no delta"
+}
+assert_zero_reads() {
+  assert_eq "$(TIER_RAW=true run_tier - --body "$TMP_ROOT/zero-test-body")" \
+    "tier=micro brief=micro cause=estimate-within-micro production=4 estimate=- delta=4 paths=0 rc=0" \
+    "a stated zero test count reads"
+}
+assert_malformed_warns
+assert_zero_reads
+# Must-fail controls: each assertion above turns red against a copy without
+# its fix: the warning line dropped, the empty-header check dropped, and the
+# grammar before a stated zero.
 cp -R "$LAYOUT" "$TMP_ROOT/no-delta-warning"
 awk '/item-tier-warning: cause=invalid-delta/ {hits++; print "    :"; getline; next} {print} END {exit hits == 1 ? 0 : 3}' \
   "$TIER" > "$TMP_ROOT/no-delta-warning/orch/scripts/item-tier"
-if [[ "$(warn_stderr "$TMP_ROOT/no-delta-warning/orch/scripts/item-tier")" == *item-tier-warning* ]]; then
-  fail "delta warning control still warns"
-else
-  pass "delta warning regression turns red without the warning"
-fi
-# Must-fail control: the grammar before a stated zero refuses the zero form.
+cp -R "$LAYOUT" "$TMP_ROOT/no-empty-check"
+awk '$0 ~ /grep -qE "\$header"/ {hits++; print "  [[ -n \"$(sed -n \"/$header/p\" <<<\"$1\" | sed \"s/$header[[:space:]]*//\")\" ]] || return 0"; next} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$ORCH_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-empty-check/orch/scripts/lib/branch-growth.sh"
 cp -R "$LAYOUT" "$TMP_ROOT/no-zero"
 sed -e 's/(0 lines|1 line|/(1 line|/' -e 's/(0 test lines|1 test line|/(1 test line|/' \
   "$ORCH_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-zero/orch/scripts/lib/branch-growth.sh"
-if cmp -s "$ORCH_DIR/scripts/lib/branch-growth.sh" "$TMP_ROOT/no-zero/orch/scripts/lib/branch-growth.sh"; then
-  echo 'FAIL: zero grammar control changed nothing' >&2; exit 1
-fi
-TIER_BIN="$TMP_ROOT/no-zero/orch/scripts/item-tier"
-if [[ "$(TIER_RAW=true run_tier - --body "$TMP_ROOT/zero-test-body")" == *"delta=4 "* ]]; then
-  fail "zero grammar control still reads the zero form"
-else
-  pass "zero form regression turns red without the stated zero"
-fi
+for mutant in no-empty-check no-zero; do
+  if cmp -s "$ORCH_DIR/scripts/lib/branch-growth.sh" "$TMP_ROOT/$mutant/orch/scripts/lib/branch-growth.sh"; then
+    echo "FAIL: $mutant control changed nothing" >&2; exit 1
+  fi
+done
+for control in no-delta-warning:assert_malformed_warns no-empty-check:assert_malformed_warns no-zero:assert_zero_reads; do
+  TIER_BIN="$TMP_ROOT/${control%%:*}/orch/scripts/item-tier"
+  if (PASS=0; FAIL=0; "${control#*:}" >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+    fail "control ${control%%:*}: ${control#*:} stays green"
+  else
+    pass "control ${control%%:*}: ${control#*:} turns red"
+  fi
+done
 unset TIER_BIN
 
 # The floor control retains the assignment but stops applying the header.
