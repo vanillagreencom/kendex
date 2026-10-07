@@ -9,7 +9,7 @@ for (const row of [
   { name: 'failed metadata default', response: { ...nativeDefault, selectorChange: { tag: 'unknown' } }, model: 'claude-opus-5-5', fails: true },
 ]) {
   test(row.name, async ($, on) => {
-    const fixture = install(on, row.response, intent, row.fails);
+    const fixture = install(on, row.response, { variables: intent, metadataFails: row.fails });
     let calls = 0;
     on('turn.step', async function* ($, e) {
       calls += 1;
@@ -34,7 +34,7 @@ for (const row of [
 
 for (const row of [{ name: 'child', agentId: 'child', variables: intent }, { name: 'untagged root', agentId: undefined, variables: {} }]) {
   test(`${row.name} keeps its native model without core dispatch`, async ($, on) => {
-    const fixture = install(on, selected, row.variables);
+    const fixture = install(on, selected, { variables: row.variables });
     let calls = 0;
     on('turn.step', async function* ($, e) {
       calls += 1;
@@ -50,7 +50,7 @@ for (const row of [{ name: 'child', agentId: 'child', variables: intent }, { nam
 }
 
 test('a confirmed native change withdraws root intent', async ($, on) => {
-  const fixture = install(on, { ...selected, selectorChange: { tag: 'changed' } }, intent);
+  const fixture = install(on, { ...selected, selectorChange: { tag: 'changed' } }, { variables: intent });
   let calls = 0;
   on('turn.step', async function* ($, e) {
     calls += 1;
@@ -65,12 +65,12 @@ test('a confirmed native change withdraws root intent', async ($, on) => {
 });
 
 for (const row of [
-  { name: 'core failure', response: selected, exit: 1 },
-  { name: 'invalid protocol', response: { ...selected, protocol: 'other' }, exit: 0 },
-  { name: 'missing selector decision', response: selected, exit: 0 },
+  { name: 'core failure', response: undefined, exitCode: 1, stderr: 'error: fixture failure', cause: 'core-exit=1 stderr=error: fixture failure' },
+  { name: 'invalid protocol', response: { ...selected, protocol: 'other' }, cause: 'invalid=protocol' },
+  { name: 'missing selector decision', response: selected, cause: 'invalid=selector-change' },
 ]) {
-  test(`${row.name} makes no model call`, async ($, on) => {
-    install(on, row.response, intent, false, row.exit);
+  test(`${row.name} shows its refusal and makes no model call`, async ($, on) => {
+    install(on, row.response, { variables: intent, exitCode: row.exitCode, stderr: row.stderr });
     let calls = 0;
     on('turn.step', async function* ($, e) {
       calls += 1;
@@ -78,8 +78,14 @@ for (const row of [
     });
     const stream = $.turn.step({ turnId: 'turn', index: 0, model: 'opus', messageCount: 1 });
     let step = await stream.next();
-    while (step.done !== true) step = await stream.next();
+    const text: string[] = [];
+    while (step.done !== true) {
+      if (step.value.kind === 'text') text.push(step.value.text);
+      step = await stream.next();
+    }
     expect(step.value.answer).toContain('model-resolution: refused=');
+    expect(step.value.answer).toContain(row.cause);
+    expect(text).toEqual([step.value.answer]);
     expect(step.value.toolUses).toEqual([]);
     expect(step.value.usage).toBe(null);
     expect(calls).toBe(0);
@@ -87,7 +93,7 @@ for (const row of [
 }
 
 test('a receipt without an observable selector asks core to retain unknown', async ($, on) => {
-  const fixture = install(on, { ...nativeDefault, selectorChange: { tag: 'unknown' } }, { KENDEX_MODEL_REQUEST: 'standard' });
+  const fixture = install(on, { ...nativeDefault, selectorChange: { tag: 'unknown' } }, { variables: { KENDEX_MODEL_REQUEST: 'standard' } });
   on('turn.step', async function* ($, e) {
     return { turnId: e.turnId, index: e.index, answer: e.model, toolUses: [], stopReason: 'end_turn', usage: null };
   });

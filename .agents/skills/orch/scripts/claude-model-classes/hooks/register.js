@@ -1,5 +1,5 @@
 // Claude Code 2.1.287 is the first version with the model rewrites and fail-closed catches used here.
-// `kendex tier-model` owns request parsing, selector equivalence, access and fallback; no class table lives here.
+// `kendex tier-model` owns request parsing, selector equivalence, access, fallback and the warning line; no class table lives here.
 const protocol = 'model-resolution-v1';
 
 function record(value, name) {
@@ -16,44 +16,56 @@ function selector(value) {
   return value;
 }
 
-function readResponse(result, observation) {
-  if (result.exitCode !== 0 || result.isStdoutTruncated === true) {
-    throw new Error(`model-resolution: core-exit=${result.exitCode}`);
+// Core prints a refused response on stdout and exits 1; every other failure speaks on stderr.
+function coreFailure(result) {
+  let response;
+  try {
+    response = JSON.parse(result.stdout);
+  } catch {
+    response = undefined;
   }
+  const decision = response?.protocol === protocol ? response.resolution : undefined;
+  if (decision?.tag === 'refused') {
+    const causes = (Array.isArray(decision.diagnostics) ? decision.diagnostics : [])
+      .map(d => d?.cause).filter(c => typeof c === 'string');
+    const cause = causes.length === 0 ? '' : ` cause=${causes.join(',')}`;
+    return new Error(`model-resolution: refused=${selector(decision.code)}${cause}`);
+  }
+  const line = result.stderr.trim().split('\n')[0];
+  return new Error(`model-resolution: core-exit=${result.exitCode}${line === '' ? '' : ` stderr=${line}`}`);
+}
+
+// The decided record: `model` is core's selected selector, `fallback` the observed default it kept.
+function readResponse(result) {
+  if (result.exitCode !== 0) throw coreFailure(result);
+  if (result.isStdoutTruncated === true) throw new Error('model-resolution: invalid=truncated-response');
   const response = record(JSON.parse(result.stdout), 'response');
   if (response.protocol !== protocol || response.harness !== 'claude') {
     throw new Error('model-resolution: invalid=protocol');
   }
-  record(response.request, 'request');
+  if (response.warning !== undefined && typeof response.warning !== 'string') {
+    throw new Error('model-resolution: invalid=warning');
+  }
+  const decided = { model: undefined, fallback: undefined, change: response.selectorChange, warning: response.warning };
   const decision = record(response.resolution, 'resolution');
   switch (decision.tag) {
     case 'selected':
-      selector(record(decision.selection, 'selection').nativeSelector);
+      decided.model = selector(record(decision.selection, 'selection').nativeSelector);
       break;
     case 'harness-default':
       switch (record(decision.path, 'path').tag) {
         case 'native-default': break;
-        case 'observed-session-or-default': selector(decision.path.selector); break;
+        case 'observed-session-or-default': decided.fallback = selector(decision.path.selector); break;
         default: throw new Error('model-resolution: invalid=default-path');
       }
       break;
     case 'inherit':
     case 'unmanaged':
       break;
-    case 'refused':
-      throw new Error(`model-resolution: refused=${selector(decision.code)}`);
     default:
       throw new Error('model-resolution: invalid=runtime-result');
   }
-  if (observation) {
-    switch (record(response.selectorChange, 'selector-change').tag) {
-      case 'unknown':
-      case 'equivalent':
-      case 'changed': break;
-      default: throw new Error('model-resolution: invalid=selector-change');
-    }
-  }
-  return response;
+  return decided;
 }
 
 async function runtimeContext($, parentModel) {
@@ -90,50 +102,14 @@ async function resolve($, args, cwd, context, next) {
     '--runtime-context-json', JSON.stringify(context), '--json',
   ], { cwd, timeoutMs: 30000 });
   if (next.signal.aborted) throw new Error('model-resolution: abandoned=request');
-  return readResponse(result, context.selectorObservation !== undefined);
+  return readResponse(result);
 }
 
-// The original request spelling, as core's own warning line writes it.
-function requested(request) {
-  switch (request.tag) {
-    case 'class': return request.class;
-    case 'native-family': return `${request.provider}/${request.family}`;
-    case 'exact': return request.selector;
-    default: return request.tag;
-  }
-}
-
-async function warn($, response) {
-  const diagnostics = response.resolution.diagnostics;
-  if (diagnostics === undefined || diagnostics.length === 0) return;
-  if (!Array.isArray(diagnostics)) throw new Error('model-resolution: invalid=diagnostics');
-  if (await $.env.get('KENDEX_MODEL_WARNING_EMITTED') === '1') return;
-  const decision = response.resolution;
-  const selected = decision.selection?.nativeSelector ?? decision.path?.selector ?? 'native-default';
-  const causes = diagnostics.map(d => selector(record(d, 'diagnostic').code)).join(',');
-  const sources = diagnostics.map(d => d.source).filter(s => typeof s === 'string').join(',');
-  const failures = diagnostics.map(d => d.cause).filter(s => typeof s === 'string')
-    .map(s => s.split(/\s+/).filter(Boolean).join(' '));
-  const detail = failures.length === 0 ? '' : ` detail=${failures.join(',')}`;
+// Core writes the line; this session prints it once.
+async function warn($, line) {
+  if (line === undefined || await $.env.get('KENDEX_MODEL_WARNING_EMITTED') === '1') return;
   await $.env.set('KENDEX_MODEL_WARNING_EMITTED', '1');
-  await $.ui.log(`model-resolution: requested=${requested(response.request)} selected=${selected} causes=${causes} source=${sources}${detail}`);
-}
-
-function chosenModel(response, nativeDefault) {
-  const decision = response.resolution;
-  switch (decision.tag) {
-    case 'selected': return decision.selection.nativeSelector;
-    case 'harness-default':
-      return decision.path.tag === 'observed-session-or-default' ? decision.path.selector : nativeDefault;
-    case 'inherit':
-    case 'unmanaged': return undefined;
-    default: throw new Error('model-resolution: invalid=forward-result');
-  }
-}
-
-function stepRefusal(e, cause) {
-  return { turnId: e.turnId, index: e.index, answer: `model-resolution: refused=${cause}`,
-    toolUses: [], stopReason: null, usage: null };
+  await $.ui.log(line);
 }
 
 /** Register native model callbacks. Known integration errors stop downstream startup. */
@@ -141,10 +117,10 @@ export function register(on) {
   on('agent.spawn', async ($, e, next) => {
     const cwd = e.cwd === undefined ? await $.session.cwd() : selector(e.cwd);
     const context = await runtimeContext($, e.parentModel);
-    const response = await resolve($, ['--agent', selector(e.subagentType)], cwd, context, next);
-    await warn($, response);
-    const model = chosenModel(response, 'inherit');
-    return model === undefined ? next(e) : next({ ...e, model });
+    const decided = await resolve($, ['--agent', selector(e.subagentType)], cwd, context, next);
+    await warn($, decided.warning);
+    // Without a selection the spawn goes on unchanged, so Claude applies the declared child's own alias.
+    return decided.model === undefined ? next(e) : next({ ...e, model: decided.model });
   }).catch(($, e, next) => ({ deny: `model-resolution: integration=${next.error.kind} cause=${next.error.message}` }));
 
   on('turn.step', async function* ($, e, next) {
@@ -155,15 +131,24 @@ export function register(on) {
     const receipt = await $.env.get('KENDEX_MODEL_SELECTED_SELECTOR');
     context.selectorObservation = { priorSelector: receipt ?? null, currentSelector: e.model };
     const cwd = await $.session.cwd();
-    const response = await resolve($, ['--model', request], cwd, context, next);
-    if (response.selectorChange.tag === 'changed') {
-      await $.env.set('KENDEX_MODEL_REQUEST', undefined);
-      return yield* next(e);
+    const decided = await resolve($, ['--model', request], cwd, context, next);
+    switch (record(decided.change, 'selector-change').tag) {
+      case 'changed':
+        await $.env.set('KENDEX_MODEL_REQUEST', undefined);
+        return yield* next(e);
+      case 'unknown':
+      case 'equivalent':
+        break;
+      default:
+        throw new Error('model-resolution: invalid=selector-change');
     }
-    await warn($, response);
-    const model = chosenModel(response, e.model);
+    await warn($, decided.warning);
+    const model = decided.model ?? decided.fallback;
     return yield* next(model === undefined ? e : { ...e, model });
   }).catch(async function* ($, e, next) {
-    return stepRefusal(e, `${next.error.kind} cause=${next.error.message}`);
+    // Streamed chunks are what the person sees and the transcript keeps; the result alone shows nothing.
+    const answer = `model-resolution: refused=${next.error.kind} cause=${next.error.message}`;
+    yield { kind: 'text', index: 0, text: answer };
+    return { turnId: e.turnId, index: e.index, answer, toolUses: [], stopReason: null, usage: null };
   });
 }
