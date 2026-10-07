@@ -125,10 +125,12 @@ impl CacheGuard {
 const BACKGROUND_LOCK_WAIT: Duration = Duration::from_millis(500);
 const FIXTURE_FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 const LOCK_POLL: Duration = Duration::from_millis(10);
+const CLONE_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[cfg(not(test))]
-const DETACHED_OPERATION_LIMIT: Duration =
-    crate::process::DEFAULT_TIMEOUT.saturating_add(crate::drift::refresh::FETCH_DEADLINE);
+const DETACHED_OPERATION_LIMIT: Duration = CLONE_TIMEOUT
+    .saturating_mul(2)
+    .saturating_add(crate::drift::refresh::FETCH_DEADLINE);
 #[cfg(not(test))]
 const FOREGROUND_LOCK_WAIT: Duration =
     DETACHED_OPERATION_LIMIT.saturating_add(BACKGROUND_LOCK_WAIT);
@@ -259,6 +261,23 @@ fn stdout(git: Hardened) -> Option<String> {
 /// the checkout even with the attribute source pinned. Emptied, git copies
 /// no template at all and the mirror carries no `info` directory.
 pub fn ensure_mirror(mirror: &Path, url: &str) -> Result<()> {
+    ensure_mirror_using(mirror, |timeout| {
+        run(Hardened::git(
+            &[
+                "clone",
+                "--quiet",
+                "--mirror",
+                "--template=",
+                url,
+                &mirror.display().to_string(),
+            ],
+            None,
+        )
+        .timeout(timeout))
+    })
+}
+
+fn ensure_mirror_using(mirror: &Path, clone: impl Fn(Duration) -> Result<()>) -> Result<()> {
     if mirror.join("HEAD").is_file() {
         return Ok(());
     }
@@ -268,20 +287,21 @@ pub fn ensure_mirror(mirror: &Path, url: &str) -> Result<()> {
     // A half-written mirror from an interrupted clone would fail every
     // later fetch; git refuses to clone onto an existing directory, so the
     // remains go first.
-    if mirror.exists() {
-        fs::remove_dir_all(mirror).map_err(|e| CoreError::io(mirror, e))?;
+    for attempt in 0..2 {
+        if mirror.exists() {
+            fs::remove_dir_all(mirror).map_err(|e| CoreError::io(mirror, e))?;
+        }
+        match clone(CLONE_TIMEOUT) {
+            Err(CoreError::GitFailed { .. }) if attempt == 0 => continue,
+            Err(CoreError::Io { source, .. })
+                if attempt == 0 && source.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue;
+            }
+            result => return result,
+        }
     }
-    run(Hardened::git(
-        &[
-            "clone",
-            "--quiet",
-            "--mirror",
-            "--template=",
-            url,
-            &mirror.display().to_string(),
-        ],
-        None,
-    ))
+    unreachable!("each final clone attempt returns its result")
 }
 
 /// Update every ref, following tags that moved upstream — a mirror's
@@ -513,3 +533,6 @@ fn check_out(into: &Path, mirror: &Path, commit: &str) -> Result<()> {
         &["checkout-index", "--all", "--force"],
     ))
 }
+
+#[cfg(test)]
+mod tests;
