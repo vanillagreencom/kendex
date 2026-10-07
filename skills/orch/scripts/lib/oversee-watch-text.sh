@@ -253,6 +253,7 @@ The long pass's events, checked and reported in this order:
   EVENT security-alert <repo> kind=<dependabot|code-scanning|secret-scanning>
         number=<N> [severity=<s>] <package|rule>=<name> [manifest=<path>]
         [scope=<scope>] [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
+        [report=repeat]
                              an open alert in any --repo that the fleet
                              state's alerts_triaged records no verdict for:
                              a Dependabot alert names its package, manifest,
@@ -261,9 +262,12 @@ The long pass's events, checked and reported in this order:
                              repository path percent-encoded, %20 a space
                              and %25 a percent sign; a code scanning
                              alert its rule; a secret its type and, where
-                             GitHub checks it, its validity. Reported once;
-                             a first-repository baseline row keeps it quiet,
-                             a record or the alert closing clears the row.
+                             GitHub checks it, its validity. Reported, then
+                             on every long pass that reads it printed again
+                             with report=repeat until a record or the alert
+                             closing clears its first-repository baseline
+                             row; a repeat ends the run only beside a first
+                             report.
                              ORCH_SECURITY_ALERTS=off lists nothing
   EVENT security-alerts-unread reads=<source>:<cause>[,...]
                              an alert list or the alerts_triaged record could
@@ -583,8 +587,9 @@ verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: overseer-dead,
 overseer-walled, merged, lane-asking, usage-limit, model-capacity,
-lane-exited, idle-after-return, handoff, account, outside-contribution and
-security-alert are keyed in that baseline. Mail is reported at least once and never lost: lane-question,
+lane-exited, idle-after-return, handoff, account and outside-contribution
+are keyed in that baseline. A security-alert is keyed there too, and a re-run
+prints it again only as report=repeat while no verdict names it. Mail is reported at least once and never lost: lane-question,
 lane-notice, directive-unread and, for a directive read after its lane is
 first watched, directive-read are keyed in the mail pass's own file beside
 it, owner-note, owner-ask-resolved and peer-note by the overseer mailbox's

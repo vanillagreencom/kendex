@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # oversee-watch security-alert events: that each open alert of every kind is
-# reported once, and not at all once the fleet state records its verdict; that
+# reported, then repeated on every pass until the fleet state records its
+# verdict, and not at all once it does; that
 # a failed read is one unread line per pass; that a Dependabot pull request is
 # named on its alert's line and in the heartbeat; and what turns the check off.
 set -euo pipefail
@@ -31,6 +32,12 @@ unread() {
   printf '%s' "${got:-none}"
 }
 heartbeats() { grep -c '^EVENT heartbeat ' <<<"$OUT" || true; }
+# firsts — the run's security-alert lines that are first reports, or `none`.
+firsts() {
+  local got
+  got="$(grep '^EVENT security-alert ' <<<"$OUT" | grep -v ' report=repeat$' || true)"
+  printf '%s' "${got:-none}"
+}
 
 URL=https://github.com/owner/repo/security
 DEPENDABOT="{\"number\":7,\"html_url\":\"$URL/dependabot/7\",\"dependency\":{\"package\":{\"ecosystem\":\"npm\",\"name\":\"fast-uri\"},\"manifest_path\":\"ui/package-lock.json\",\"scope\":\"runtime\"},\"security_advisory\":{\"ghsa_id\":\"GHSA-aaaa-bbbb-cccc\",\"severity\":\"high\"}}"
@@ -144,8 +151,8 @@ for shape in unset missing empty whitespace multiline; do
   calls="$(awk -F'\t' '$2 == "api" && ($3 == "graphql" || ($3 == "--paginate" && $4 ~ /\/alerts\?/)) { n++ } END { print n+0 }' "$STUB_DIR/gh.auth")" || exit 1
   printf 'ghs_fixture_renewed\n' > "$STUB_DIR/alert-token"
   run --
-  assert_eq "$refused|$retained|$calls|$RC|$(unread)|$(events)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|EVENT security-alerts-unread reads=installation-token:credential|none|1|owner/repo	bot-fix pr=12 alert=7|0|0|none|none" \
-    "unusable token refuses fallback, retains the mapping during the outage and recovers without repeating alerts: $shape" "$ERR"
+  assert_eq "$refused|$retained|$calls|$RC|$(unread)|$(firsts)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|EVENT security-alerts-unread reads=installation-token:credential|none|1|owner/repo	bot-fix pr=12 alert=7|0|0|none|none" \
+    "unusable token refuses fallback, retains the mapping during the outage and recovers with no alert a first report again: $shape" "$ERR"
 done
 
 # Must-fail control: keep the token file reader's read and checks but disable
@@ -166,7 +173,9 @@ for shape in missing empty; do
 done
 
 # One open alert of each kind prints one line each, the Dependabot line naming
-# its pull request, and ends the run as news. The next pass reports none.
+# its pull request, and ends the run as news. The next pass, with no verdict
+# recorded, prints each again marked report=repeat, and the heartbeat follows:
+# an overseer replaced or out of context after the first line still sees it.
 # An alert whose Dependabot pull request is closed names none, and the secret
 # list is read without the secret's value.
 new_case security_once
@@ -181,8 +190,22 @@ $LINE_SECRET|0" "an open alert of each kind is one line each, and the run ends o
 assert_eq "$(grep -c '^api --paginate repos/owner/repo/secret-scanning/alerts?state=open&per_page=100&hide_secret=true ' "$STUB_DIR/gh.calls" || true)" "1" \
   "the secret scanning list asks GitHub to leave each secret's value out" "$ERR"
 run --
-assert_eq "$RC|$(events)|$(head -n 1 <<<"$OUT")" "0|none|$HEARTBEAT" \
-  "an alert already reported is not a second line" "$ERR"
+assert_eq "$RC|$(events)|$(heartbeats)" "0|$LINE_DEPENDABOT pr=12 report=repeat
+$LINE_DEPENDABOT_DEV report=repeat
+$LINE_CODE report=repeat
+$LINE_SECRET report=repeat|1" \
+  "an alert reported on an earlier pass with no verdict is listed again as a repeat, and the heartbeat still comes" "$ERR"
+# A first report beside the repeats still ends the run, and a verdict recorded
+# since ends the alert's repeats.
+printf '[%s]\n' "$DEPENDABOT" > "$STUB_DIR/dependabot.json"
+printf '[%s,%s]\n' "$CODE_SCANNING" "${CODE_SCANNING//9/10}" > "$STUB_DIR/code-scanning.json"
+printf '{"triaged":[],"alerts_triaged":[{"repo":"owner/repo","kind":"secret-scanning","number":3,"verdict":"filed","item":"KEN-2","reason":"live token"}]}\n' \
+  > "$STUB_DIR/oversee-state.json"
+run --
+assert_eq "$RC|$(events)|$(heartbeats)" "0|$LINE_DEPENDABOT pr=12 report=repeat
+$LINE_CODE report=repeat
+${LINE_CODE//9/10}|0" \
+  "a first report beside the repeats ends the run, and a recorded verdict ends its alert's repeats" "$ERR"
 
 # The verdict record, not the baseline, is what silences an alert for good: a
 # fresh baseline reports nothing the fleet state records, whatever the case of
@@ -223,7 +246,7 @@ assert_eq "$RC|$(unread)|$(heartbeats)" "0|EVENT security-alerts-unread reads=ow
   "a standing failure prints the unread line again and the heartbeat still comes" "$ERR"
 
 # A read that fails keeps the rows of its source: the alert reported before it
-# is not news once the read comes back.
+# is a repeat, not news, once the read comes back.
 new_case security_rows_stand
 one_of_each
 run --
@@ -231,8 +254,8 @@ touch "$STUB_DIR/dependabot-fail"
 run --
 rm -f "$STUB_DIR/dependabot-fail"
 run --
-assert_eq "$RC|$(events)|$(unread)" "0|none|none" \
-  "an alert reported before a failed read is not reported again after it" "$ERR"
+assert_eq "$RC|$(firsts)|$(unread)|$(grep -c ' report=repeat$' <<<"$OUT" || true)" "0|none|none|3" \
+  "an alert reported before a failed read is a repeat after it, not a first report" "$ERR"
 
 # The cause a failed list read is named by, from what gh printed: a missing
 # permission and an alert feature turned off are told apart by GitHub's own
@@ -278,18 +301,18 @@ for row in \
 done
 
 # A scanning feature turned off keeps the rows reported before it, so its
-# alert is not news when the feature comes back on; while off, the other
-# lists are still read.
+# alert is a repeat, not news, when the feature comes back on; while off, the
+# other lists are still read.
 new_case security_feature_off_rows
 one_of_each
 run --
 printf 'gh: Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)\n' > "$STUB_DIR/code-scanning-fail"
 printf '[%s,%s]\n' "$DEPENDABOT" "$DEPENDABOT_DEV" > "$STUB_DIR/dependabot.json"
 run --
-off="$RC|$(events)|$(unread)"
+off="$RC|$(firsts)|$(unread)"
 rm -f -- "${STUB_DIR:?}/code-scanning-fail"
 run --
-assert_eq "$off|$RC|$(events)|$(unread)" "0|$LINE_DEPENDABOT_DEV|none|0|none|none" \
+assert_eq "$off|$RC|$(firsts)|$(unread)" "0|$LINE_DEPENDABOT_DEV|none|0|none|none" \
   "code scanning turned off keeps its rows, and its alert is not news once it is back on" "$ERR"
 
 # Refusals of a list's content: a line with no whole number, and a value with
@@ -394,18 +417,28 @@ run ORCH_SECURITY_ALERTS=yes --
 assert_eq "$RC|${OUT:-empty}|$(grep -c 'oversee-watch: security-alerts-invalid setting=ORCH_SECURITY_ALERTS value=yes' "$ERR" || true)" \
   "2|empty|1" "an ORCH_SECURITY_ALERTS value other than on or off is refused" "$ERR"
 
-# Must-fail control: with the baseline row read dropped, a second pass without
-# a record reports the same alert again.
-MUTANT_DIR="$TMP_ROOT/security-mutant"
-MUTANT_LIB="$(mutant_scripts security-mutant/orch lib/security-alerts.sh)/lib/security-alerts.sh" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-mutate_file "$MUTANT_LIB" "[[ \"\$reported\" != *\$'\\n'\"\$key\"\$'\\n'* ]] || continue" ':'
-new_case security_mutant
-printf '[%s]\n' "$CODE_SCANNING" > "$STUB_DIR/code-scanning.json"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
-assert_eq "$(events)" "$LINE_CODE" \
-  "control: without the baseline read a second pass without a record reports the same alert again" "$ERR"
+# Must-fail controls on the second pass without a record. With the baseline
+# row read dropped, the alert is a first report again and ends the run; with
+# the repeat dropped, the once-only check this replaced, it is silent.
+for mutant in baseline once-only; do
+  MUTANT_DIR="$TMP_ROOT/security-mutant-$mutant"
+  MUTANT_LIB="$(mutant_scripts "security-mutant-$mutant/orch" lib/security-alerts.sh)/lib/security-alerts.sh" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  case "$mutant" in
+    baseline)
+      mutate_file "$MUTANT_LIB" "if [[ \"\$reported\" == *\$'\\n'\"\$key\"\$'\\n'* ]]; then" 'if false; then'
+      want="$LINE_CODE|0" ;;
+    once-only)
+      mutate_file "$MUTANT_LIB" "repeats+=\"\$line report=repeat\"\$'\\n'" ':'
+      want="none|1" ;;
+  esac
+  new_case "security_mutant_$mutant"
+  printf '[%s]\n' "$CODE_SCANNING" > "$STUB_DIR/code-scanning.json"
+  WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
+  WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
+  assert_eq "$(events)|$(heartbeats)" "$want" \
+    "control $mutant: a second pass without a record no longer repeats the alert as report=repeat" "$ERR"
+done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

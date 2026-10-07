@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # The security-alert pass of oversee-watch: every open Dependabot, code
-# scanning and secret scanning alert in each --repo, reported once until the
+# scanning and secret scanning alert in each --repo, reported until the
 # overseer records its verdict in the fleet state's `alerts_triaged`. Sourced
 # by oversee-watch, and like the rest of its lib/ it reads that script's
 # globals (REPOS, PW_SEEN, WORK_DIR, WORKFLOW_STATE, WORKFLOW_STATE_ARGS) and
@@ -10,7 +10,7 @@
 # ../../references/security-alerts.md:
 #   EVENT security-alert <repo> kind=<kind> number=<N> [severity=<s>]
 #         <package|rule>=<name> [manifest=<path>] [scope=<scope>]
-#         [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
+#         [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>] [report=repeat]
 #   EVENT security-alerts-unread reads=<source>:<cause>[,<source>:<cause>...]
 # <kind> is the alert API's own path segment, `dependabot`, `code-scanning` or
 # `secret-scanning`; <path> is the manifest's repository path with each `%`
@@ -130,7 +130,11 @@ security_unread() { # SOURCE CAUSE [ERR_FILE]
 # And, while any read fails:
 #   security-alerts-unread<TAB>fleet<TAB><the reads= value>
 # An alert whose verdict `alerts_triaged` records has no row and no line; one
-# that leaves the open list takes its row with it. A read that fails keeps
+# that leaves the open list takes its row with it. An alert whose row stands is
+# printed again on every pass that reads it, `report=repeat` at its end, so an
+# overseer that loses the first line, by succession or lost context, still
+# judges it; like the unread line, a repeat rides the pass's output and ends
+# the run only beside a first report. A read that fails keeps
 # every row of its source, so a failure never reports its alerts again nor
 # drops a pull request's mapping. The unread line goes out on every pass a
 # read fails, and ends the run only when the set of failed reads changes: a
@@ -141,7 +145,7 @@ check_security_alerts() {
   [[ "$SECURITY_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/security.err" state="${PW_SEEN[0]}" events="" new_rows="" rc
   local recorded="" reported repo kind out prs line key number severity subject_key subject
-  local manifest scope advisory validity url pr fields row alerts source query token cause keys=() fix_keys=() fix_rows=""
+  local manifest scope advisory validity url pr fields row alerts source query token cause keys=() fix_keys=() fix_rows="" repeats=""
   SECURITY_UNREAD=""
   # The fleet renews the installation token in this file: the control VM for
   # a hosted overseer, the fleet worker for a local one. Read once per
@@ -228,7 +232,6 @@ check_security_alerts() {
         key="$repo#$kind/$number"
         [[ "$recorded" != *$'\n'"$key"$'\n'* ]] || continue
         keys+=("$key")
-        [[ "$reported" != *$'\n'"$key"$'\n'* ]] || continue
         line="EVENT security-alert $repo kind=$kind number=$number"
         [[ -z "$severity" ]] || line+=" severity=$severity"
         line+=" $subject_key=$subject"
@@ -238,6 +241,10 @@ check_security_alerts() {
         line+=" url=$url"
         pr="$(awk -F'\t' -v n="$number" '$1 == n { print $3; exit }' <<<"$prs")"
         [[ -z "$pr" ]] || line+=" pr=$pr"
+        if [[ "$reported" == *$'\n'"$key"$'\n'* ]]; then
+          repeats+="$line report=repeat"$'\n'
+          continue
+        fi
         events+="$line"$'\n'
         new_rows+="security-alert"$'\t'"$key"$'\t'"reported"$'\n'
       done <<<"$out"
@@ -251,6 +258,7 @@ check_security_alerts() {
     state="$(lane_row_set "$row" "$state" "$key" "$alerts")"
   done <<<"$fix_rows"
   [[ -z "$new_rows" ]] || state="$(printf '%s\n%s' "$state" "${new_rows%$'\n'}" | awk 'NF')"
+  printf '%s' "$repeats"
   if [[ -n "$events" ]]; then
     printf '%s' "$events"
     PASS_EVENT=1

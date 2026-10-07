@@ -1,0 +1,1 @@
+- oversee-watch prints an open security alert again, with `report=repeat`, on every long pass until `alerts_triaged` records its verdict or the alert closes, so an alert whose first line fell to an overseer succession or lost context is no longer left silent; a repeat ends the run only beside a first report.
