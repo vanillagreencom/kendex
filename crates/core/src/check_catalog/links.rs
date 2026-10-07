@@ -50,14 +50,23 @@ impl SourceUrl {
             ],
         )
         .unwrap_or_default();
-        let refs = listed
-            .lines()
-            .filter_map(|full| match full.strip_prefix("refs/remotes/origin/") {
-                Some("HEAD") => None,
-                Some(name) => MirrorRef::from_full(&format!("refs/heads/{name}")),
-                None => MirrorRef::from_full(full),
-            })
-            .collect();
+        // A clone holds most branches twice, locally and as origin's; one
+        // name read twice would be two refs claiming it, an ambiguity
+        // that is not there.
+        let mut refs: Vec<MirrorRef> = Vec::new();
+        for known in
+            listed
+                .lines()
+                .filter_map(|full| match full.strip_prefix("refs/remotes/origin/") {
+                    Some("HEAD") => None,
+                    Some(name) => MirrorRef::from_full(&format!("refs/heads/{name}")),
+                    None => MirrorRef::from_full(full),
+                })
+        {
+            if !refs.contains(&known) {
+                refs.push(known);
+            }
+        }
         Some(SourceUrl {
             blob: format!("github.com/{owner_repo}/blob/"),
             refs,

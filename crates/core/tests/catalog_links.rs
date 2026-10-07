@@ -32,8 +32,9 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 /// The check of a catalog checkout whose `origin` is `acme/cat` and which
-/// holds a `feat/x` branch, offering one `review` skill with a
-/// `DEVELOPMENT.md`, and `link` on line 6 of its `SKILL.md`.
+/// holds branches `main` and `feat/x`, locally and as origin's, offering
+/// one `review` skill with a `DEVELOPMENT.md`, and `link` on line 6 of its
+/// `SKILL.md`.
 #[allow(clippy::unwrap_used)]
 fn checked(link: &str) -> CatalogCheck {
     let tmp = tempfile::tempdir().unwrap();
@@ -44,7 +45,15 @@ fn checked(link: &str) -> CatalogCheck {
         &["remote", "add", "origin", "https://github.com/acme/cat.git"],
     );
     git(&root, &["commit", "-q", "--allow-empty", "-m", "start"]);
+    git(&root, &["branch", "-M", "main"]);
     git(&root, &["branch", "feat/x"]);
+    // A clone also holds each branch as origin's.
+    for name in ["main", "feat/x"] {
+        git(
+            &root,
+            &["update-ref", &format!("refs/remotes/origin/{name}"), "HEAD"],
+        );
+    }
     let skill = root.join("skills/review");
     fs::create_dir_all(&skill).unwrap();
     let head = "---\nname: review\ndescription: reviews\n---\nBody.\n";
