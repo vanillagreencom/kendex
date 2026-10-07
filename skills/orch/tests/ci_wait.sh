@@ -184,6 +184,8 @@ case "${1:-}" in
           green2)  echo '[{"name":"build","state":"SUCCESS"},{"name":"lint","state":"SUCCESS"}]'; exit 0 ;;
           mixed)   echo '[{"name":"build","state":"SUCCESS"},{"name":"docs","state":"SKIPPED"}]'; exit 0 ;;
           skipped) echo '[{"name":"build","state":"SKIPPED"}]'; exit 0 ;;
+          pending) echo '[{"name":"build","state":"IN_PROGRESS"}]'; exit 8 ;;
+          empty)   echo '[]'; exit 0 ;;
           fail_rerun)
             [[ ! -s "${STUB_RERUN_CALLS_FILE:-/dev/null}" ]] || { echo '[{"name":"build","state":"SUCCESS"}]'; exit 0; }
             echo '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/301","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
@@ -506,10 +508,14 @@ echo "=== the no-checks grace is the default the settings template declares ==="
 # The budget outlasts any of them, so the no-checks error's dispatch-grace key
 # line names the grace it resolved and elapsed_seconds the seconds it waited,
 # at an interval that divides the grace and at the production one that does
-# not. The grace runs from the first empty answer, not the first request, and
-# the probe's seconds count against it: a 100-second first read and a
-# 50-second probe end a 600-second grace at 700, where a clock read only at
-# sleeps ends it at 650 and one that skips the probe at 750.
+# not. The grace runs from the wait's start, and the probe's seconds count
+# against it: a 100-second first read and a 50-second probe at a 400-second
+# interval end a 600-second grace at 600, where a grace counted from the first
+# empty answer ends at 700 and one that skips the probe at 650. At the
+# production interval and budget, a first read that took time still ends in
+# the no-checks error at the deadline rather than a pending timeout. Checks
+# that registered and then vanished start a fresh grace at the first empty
+# answer after them.
 GRACE_DECLARED=$(sed -n 's/^CI_WAIT_NO_CHECKS_GRACE = "\([0-9]*\)"$/\1/p' "$REPO_ROOT/skills/orch/kendex.settings.toml.example")
 [[ -n "$GRACE_DECLARED" ]] || { echo "the settings template declares no CI_WAIT_NO_CHECKS_GRACE default" >&2; exit 1; }
 table '1 30 3600 --json' \
@@ -521,7 +527,9 @@ table '1 30 3600 --json' \
   "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
   'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
   'a leading-zero grace is read in base 10|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=090|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
-  "a slow first read and probe leave the grace whole from the first empty answer||1 400 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=100,STUB_PROBE_COST=50|rc=1 status=error elapsed_seconds=$((100 + GRACE_DECLARED))"
+  "a slow first read and probe spend the grace from the wait's start||1 400 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=100,STUB_PROBE_COST=50|rc=1 status=error elapsed_seconds=${GRACE_DECLARED}" \
+  "a first read that took time at the production interval and budget is the no-checks error||1 180 ${GRACE_DECLARED} --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty,STUB_FIRST_CHECKS_COST=5|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  'checks that vanish start a fresh grace at the first empty answer after them|||STUB_PR_CHECKS_SEQUENCE=pending:empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=120 stderr~ci-wait:+dispatch-grace+grace=90=true'
 
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the

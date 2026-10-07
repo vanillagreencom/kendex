@@ -253,8 +253,10 @@ JSON output (always when --json):
 Environment:
   CI_WAIT_NO_CHECKS_GRACE
                 seconds to keep polling before failing when no checks have
-                registered yet (default 600; the last poll waits only
-                what is left of it). ci-wait runs after the
+                registered yet, counted from the start of the wait, or
+                from the first empty poll after checks were seen
+                (default 600; the last poll waits only what is left of
+                it). ci-wait runs after the
                 submit-pr approval gate; approval-gated repos dispatch CI
                 from the pull_request_review event, so check registration
                 can lag. Within the grace window the result stays verdict
@@ -535,8 +537,13 @@ TRANSIENT_PATTERNS=(
 retries=0
 max_retries=1
 no_checks_count=0
-# Elapsed second of the first poll in the current no-checks streak.
+# Elapsed second the current no-checks streak's grace runs from. The first
+# streak runs from the wait's start, the second 0: ci-wait starts as CI is due
+# to dispatch, and a grace counted from the first empty answer would end past
+# a budget equal to it (both default to 600) by however long startup took. A
+# streak after checks were seen runs from its own first empty answer.
 no_checks_since=0
+checks_seen=false
 # Set by the sleep that ends the grace within the budget: the poll after it
 # runs even where that sleep lands on the deadline, so a grace equal to the
 # budget ends in the no-checks verdict rather than a pending timeout.
@@ -751,9 +758,11 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
     # on: every required context, pending as missing.
     last_check_classes=$(classify_checks <<<'[]')
     # The clock last moved at the previous sleep; the checks read since then
-    # took time, and the streak starts when its empty answer arrived.
+    # took time, and a later streak starts when its empty answer arrived.
     update_elapsed
-    [ "$no_checks_count" -eq 1 ] && no_checks_since="$elapsed"
+    if [ "$no_checks_count" -eq 1 ] && [ "$checks_seen" = true ]; then
+      no_checks_since="$elapsed"
+    fi
     # One-time probe: a repo with no active workflows AND no required checks
     # on the PR's base branch has no CI to wait for — report that as its own
     # terminal state instead of burning the dispatch grace and exiting 1.
@@ -844,6 +853,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
 
   # Reset no-checks counter once we see checks
   no_checks_count=0
+  checks_seen=true
 
   # Drop checks belonging to superseded workflow runs before classifying, so a
   # prior canceled run can't be reported as a current failure.
