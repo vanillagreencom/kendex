@@ -175,6 +175,19 @@ pub fn plan_scope(
     lock: &Lock,
     options: &PlanOptions,
 ) -> Result<EngineReport> {
+    plan_scope_with_lock_base(env, scope, declared, lock, lock, options)
+}
+
+/// A sanctioned unsubscribe transfer changes the planning record before the
+/// item pass. The save still compares with the record read from disk.
+fn plan_scope_with_lock_base(
+    env: &Env,
+    scope: &Scope,
+    declared: &Manifest,
+    lock: &Lock,
+    lock_base: &Lock,
+    options: &PlanOptions,
+) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
     manifest::refuse_output_styles(env, scope, declared.output_styles.len())?;
@@ -247,7 +260,7 @@ pub fn plan_scope(
     let resolved_sources = resolved_revisions(&new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
     let wanted = wanted(&manifest, &state);
-    plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
+    plan_lock_write(env, scope, declared, lock_base, &new_lock, &mut ops)?;
     let generated =
         generated_paths::plan(scope, &state, &instruction_shims, &drift, &trees, &mut ops)?;
 

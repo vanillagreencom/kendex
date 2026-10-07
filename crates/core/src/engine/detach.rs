@@ -275,7 +275,8 @@ pub fn remove(
         ..super::PlanOptions::locked()
     };
     let rebound = rebound_survivors(env, &scope, source_name, &without, &lock)?;
-    let mut report = super::plan_scope(env, &scope, &without, &rebound, &options)?;
+    let mut report =
+        super::plan_scope_with_lock_base(env, &scope, &without, &rebound, &lock, &options)?;
     if !super::persists_manifest(&report.plan.ops) {
         crate::engine::ops::insert_manifest_save(env, &scope, &mut report.plan, without)?;
     }

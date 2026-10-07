@@ -445,6 +445,93 @@ fn discarding_a_leaving_edit_preserves_an_edited_transferred_survivor() {
     assert_eq!(recorded, ["other"]);
 }
 
+/// Folder bundles have no recorded commits. A transfer must save its record
+/// even when no package leaves and the normal item pass holds the bytes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn folder_survivors_save_their_transfer_without_other_lock_changes() {
+    use kendex_core::engine::{DriftCause, DriftState};
+
+    for edited in [true, false] {
+        let (_tmp, env, scope, cat) = world(
+            "[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
+            "",
+        );
+        let other = env.home.join("other");
+        for catalog in [&cat, &other] {
+            skill(catalog, "shared", "same bytes");
+        }
+        fs::write(
+            cat.join("kendex.toml"),
+            "[bundles.core]\nskills = [\"shared\"]\n",
+        )
+        .unwrap();
+        fs::write(other.join("kendex.toml"), "[bundles.also]\nskills = []\n").unwrap();
+        let manifest_path = manifest::manifest_path(&env, &scope);
+        let declaration = fs::read_to_string(&manifest_path).unwrap();
+        fs::write(
+            &manifest_path,
+            format!("{declaration}\n[sources.other]\n{}", source_path(&other)),
+        )
+        .unwrap();
+        apply_now(&env, &scope);
+        let before = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope)).unwrap();
+        assert!(before.sources.is_empty());
+        assert!(before.bundles.is_empty());
+        let installed = scope_skill(&scope, "shared").join("SKILL.md");
+        if edited {
+            let bytes = fs::read_to_string(&installed).unwrap() + "\nmy edit\n";
+            fs::write(&installed, bytes).unwrap();
+        }
+        let preserved = fs::read(&installed).unwrap();
+        fs::write(
+            other.join("kendex.toml"),
+            "[bundles.also]\nskills = [\"shared\"]\n",
+        )
+        .unwrap();
+        let closure = detach::closure(&env, &scope, "cat", &manifest_of(&env, &scope)).unwrap();
+        assert!(closure.items.is_empty());
+        let report = detach::remove(&env, &scope, "cat", false).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+
+        let manifest = manifest_of(&env, &scope);
+        assert!(!manifest.sources.contains_key("cat"));
+        assert!(!manifest.bundles.contains_key("core"));
+        let after = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope)).unwrap();
+        let recorded: Vec<_> = after
+            .entries
+            .values()
+            .map(|entry| entry.source.as_str())
+            .collect();
+        assert_eq!(recorded, ["other"], "edited={edited}: persisted transfer");
+        assert!(after.sources.is_empty());
+        assert!(after.bundles.is_empty());
+        assert_eq!(fs::read(&installed).unwrap(), preserved, "edited={edited}");
+        for (key, entry) in &after.entries {
+            assert_eq!(entry.rendered_hash, before.entries[key].rendered_hash);
+            assert_eq!(entry.emitted, before.entries[key].emitted);
+        }
+        let later = kendex_core::engine::audit(&env, &scope).unwrap();
+        let shared: Vec<_> = later
+            .drift
+            .iter()
+            .filter(|row| row.name == "shared")
+            .collect();
+        if edited {
+            assert!(!shared.is_empty());
+            for row in shared {
+                assert_eq!(row.state, DriftState::Conflict);
+                assert!(matches!(
+                    row.cause,
+                    Some(DriftCause::LocalEdit | DriftCause::Both)
+                ));
+            }
+        } else {
+            assert!(shared.is_empty());
+        }
+    }
+}
+
 /// A `plugin/item` name round-trips through the local source: detaching a
 /// nested-name package writes it to the nested local path, the declaration
 /// keeps its `plugin/item` spelling, and the local reader lists and resolves it
