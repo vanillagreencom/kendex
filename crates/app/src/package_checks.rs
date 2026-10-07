@@ -8,8 +8,8 @@
 
 use kendex_core::apply::Plan;
 use kendex_core::drift::hook;
-use kendex_core::drift::setup::SetupPlan;
-use kendex_core::engine::{EngineReport, PlanOptions, plan_apply};
+use kendex_core::drift::setup::{self, SetupPlan};
+use kendex_core::engine::EngineReport;
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, Scope};
 use serde::Serialize;
@@ -26,7 +26,7 @@ use crate::scopes::env;
 #[specta::specta]
 pub fn package_check_plan(scope: Scope) -> Result<SetupPlan, String> {
     let env = env()?;
-    kendex_core::drift::setup::setup_plan(&env, &scope).map_err(|e| e.to_string())
+    setup::setup_plan(&env, &scope).map_err(|e| e.to_string())
 }
 
 /// Why the setup did not finish in this action.
@@ -77,13 +77,11 @@ pub struct SetupResult {
 #[specta::specta]
 pub fn enable_package_checks(scope: Scope) -> Result<SetupResult, String> {
     let env = env()?;
-    let options = PlanOptions::default();
     // What is waiting here that the checks did not ask for, read through
     // the judge the confirmation showed its count from: with work waiting,
     // this action writes the declaration and leaves the render to whoever
     // applies that work.
-    let before = kendex_core::drift::setup::pending_without_checks(&env, &scope)
-        .map_err(|e| e.to_string())?;
+    let before = setup::pending_without_checks(&env, &scope).map_err(|e| e.to_string())?;
     let pending = !before.plan.is_empty();
     // Refuses a folder that went away since the confirmation opened, and
     // binds the same check into the plan the apply runs.
@@ -91,16 +89,16 @@ pub fn enable_package_checks(scope: Scope) -> Result<SetupResult, String> {
     kendex_core::apply::execute(&env, &plan).map_err(|e| e.to_string())?;
     if pending {
         let held = held_by(&before.plan);
-        return stand(&env, &scope, &options, Some(held));
+        return stand(&env, &scope, Some(held));
     }
-    let report = plan_apply(&env, &scope, &options).map_err(|e| e.to_string())?;
+    let report = setup::render_plan(&env, &scope).map_err(|e| e.to_string())?;
     // Through the one executor, like every other report. Nothing was
     // pending when this started, so the lock this plan writes is the one
     // the scope already carries and no package leaves with it — which is
     // what makes it safe to run a whole-scope plan off a yes given about
     // the checks.
     crate::repo_effects::write_nothing_leaving(&env, &report)?;
-    stand(&env, &scope, &options, None)
+    stand(&env, &scope, None)
 }
 
 /// What is holding the setup on the path that leaves the render for
@@ -127,15 +125,9 @@ fn held_by(pending: &Plan) -> SetupHeld {
 /// declaration names read off that plan's drift. A tool with a row saying
 /// its registration is missing, stale or blocked is not registered; one
 /// with no row is.
-fn stand(
-    env: &Env,
-    scope: &Scope,
-    options: &PlanOptions,
-    held: Option<SetupHeld>,
-) -> Result<SetupResult, String> {
-    let report = plan_apply(env, scope, options).map_err(|e| e.to_string())?;
-    let waiting = kendex_core::drift::setup::targets_waiting(env, scope, &report)
-        .map_err(|e| e.to_string())?;
+fn stand(env: &Env, scope: &Scope, held: Option<SetupHeld>) -> Result<SetupResult, String> {
+    let report = setup::render_plan(env, scope).map_err(|e| e.to_string())?;
+    let waiting = setup::targets_waiting(env, scope, &report).map_err(|e| e.to_string())?;
     // Complete is the absence of a reason, never a separate judgement:
     // an incomplete setup that carries no reason is the state the issue
     // exists to remove, so the two cannot come apart.
@@ -157,7 +149,7 @@ fn reason_for(report: &EngineReport, waiting: Vec<HarnessId>) -> Option<SetupHel
     if waiting.is_empty() {
         return None;
     }
-    let detail = kendex_core::drift::setup::check_conflicts(report);
+    let detail = setup::check_conflicts(report);
     match detail.is_empty() {
         false => Some(SetupHeld::Conflicts { detail }),
         true => Some(SetupHeld::NotRegistered { harnesses: waiting }),

@@ -195,14 +195,7 @@ fn run_unsubscribe(
         }
     }
     if keep_packages {
-        // Keeping moved the catalog's mapping tables into the manifest, so
-        // the install records are re-synced here — otherwise every kept
-        // agent would read as drifted until the next refresh.
-        let resync = kendex_core::engine::plan_apply(
-            env,
-            &scope,
-            &kendex_core::engine::PlanOptions::default(),
-        )?;
+        let resync = detach::resync_kept(env, &scope)?;
         apply_report(env, &resync)?;
     }
     let kept = if keep_packages { "kept" } else { "removed" };

@@ -784,3 +784,91 @@ fn a_refusal_after_the_uninstaller_ran_says_what_it_ran() {
         "the refusal carried only part of the account: {message}"
     );
 }
+
+/// A project installed from a git catalog with two skills, `one` and
+/// `two`, and the catalog then moved past the install: `one` changes and
+/// the mirror is fetched there. The rendered `one` and its record still
+/// name the installed commit.
+#[cfg(unix)]
+fn scope_behind_a_moved_catalog() -> (tempfile::TempDir, Env, Scope) {
+    use crate::test_util::{git, rooted};
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let catalog = home.join("cat");
+    let project = home.join("dev/app");
+    std::fs::create_dir_all(project.join(".claude")).unwrap();
+    for name in ["one", "two"] {
+        std::fs::create_dir_all(catalog.join("skills").join(name)).unwrap();
+        std::fs::write(
+            catalog.join("skills").join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: skill {name}\n---\nBody.\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(catalog.join("kendex.toml"), "[catalog]\n").unwrap();
+    git(&catalog, &["init", "--quiet", "-b", "main"]);
+    git(&catalog, &["add", "-A"]);
+    git(&catalog, &["commit", "--quiet", "-m", "catalog"]);
+    std::fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = {MANIFEST_SCHEMA}\n\n[sources.cat]\nrepo = \"file://{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.one]\nsource = \"cat\"\n\n[skills.two]\nsource = \"cat\"\n",
+            catalog.display()
+        ),
+    )
+    .unwrap();
+    let scope = Scope::Project { root: project };
+    crate::sources::refresh(&env, std::slice::from_ref(&scope)).unwrap();
+    crate::audit::apply_scope(&env, &scope, false).unwrap();
+
+    let one = catalog.join("skills/one/SKILL.md");
+    let before = std::fs::read_to_string(&one).unwrap();
+    std::fs::write(&one, format!("{before}\nA paragraph added later.\n")).unwrap();
+    git(
+        &catalog,
+        &["commit", "--quiet", "-am", "the catalog moves on"],
+    );
+    crate::sources::refresh(&env, std::slice::from_ref(&scope)).unwrap();
+    (tmp, env, scope)
+}
+
+/// A save that changes one package's table renders that package and holds
+/// every other at the commit its lock entry records, as `kendex apply`
+/// does: the moved catalog is not brought current by a save. The control
+/// is the save planned at the catalog's tip, which rewrote `one` beside
+/// the `two` it named.
+#[cfg(unix)]
+#[test]
+fn a_save_holds_every_package_it_did_not_change_at_its_recorded_commit() {
+    let (_tmp, env, scope) = scope_behind_a_moved_catalog();
+    let root = match &scope {
+        Scope::Project { root } => root.clone(),
+        Scope::Global => unreachable!("the fixture is a project"),
+    };
+    let commits = |name: &str| -> Vec<Option<String>> {
+        load_lock(&lock_path(&env, &scope))
+            .unwrap()
+            .entries
+            .values()
+            .filter(|entry| entry.name == name)
+            .map(|entry| entry.source_commit.clone())
+            .collect()
+    };
+    let recorded = commits("one");
+    assert!(!recorded.is_empty());
+    let path = manifest::manifest_path(&env, &scope);
+    let (read, base) = manifest::read_for_mutation(&path).unwrap();
+    let mut draft = read.unwrap();
+    draft
+        .skill_instructions
+        .insert("two".to_owned(), "Cite the issue.".to_owned());
+
+    write_customize(&env, scope.clone(), Some((draft, base)), None, None).unwrap();
+
+    let two = std::fs::read_to_string(root.join(".claude/skills/two/SKILL.md")).unwrap();
+    assert!(two.contains("Cite the issue."), "{two}");
+    let one = std::fs::read_to_string(root.join(".claude/skills/one/SKILL.md")).unwrap();
+    assert!(!one.contains("A paragraph added later."), "{one}");
+    assert_eq!(commits("one"), recorded);
+}

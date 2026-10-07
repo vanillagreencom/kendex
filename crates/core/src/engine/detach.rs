@@ -194,7 +194,9 @@ pub fn remove(
     // off disk. The filter is the closure's own names, so orphan removal is
     // scoped to what left with this source — a derived dependency is named so
     // it is not kept as "unaccountable" now that its origin is gone — and no
-    // unrelated pre-existing orphan is swept along.
+    // unrelated pre-existing orphan is swept along. Held at the record, as
+    // `kendex remove` is: this names one source, and a package of another
+    // re-rendered at a newer catalog commit is an update nobody asked for.
     let options = super::PlanOptions {
         remove_orphans: true,
         removal_filter: Some(
@@ -206,7 +208,7 @@ pub fn remove(
         ),
         sweep_unneeded: true,
         overwrite_edited: discard_edits,
-        ..super::PlanOptions::default()
+        ..super::PlanOptions::locked()
     };
     let mut report = super::plan_scope(env, &scope, &without, &lock, &options)?;
     if !super::persists_manifest(&report.plan.ops) {
@@ -371,6 +373,15 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         },
     });
     Plan::landed(scope.clone(), ops)
+}
+
+/// The plan that follows [`source`] once it is applied: the kept agents now
+/// carry the catalog's mapping tables in the manifest, so their install
+/// records are re-synced to them here, or each reads as drifted until the
+/// next refresh. Held at the record: the packages of every other source
+/// stay at the commit their lock entries record.
+pub fn resync_kept(env: &Env, scope: &Scope) -> Result<EngineReport> {
+    super::plan_apply(env, scope, &super::PlanOptions::locked())
 }
 
 /// The manifest this conversion writes: every kept package reading `local`

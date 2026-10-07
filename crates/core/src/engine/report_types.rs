@@ -922,6 +922,12 @@ impl PlanOptions {
     /// declared at another repository or revision read the selector now
     /// declared ([`PlanOptions::keep_source_records`]). What
     /// `refresh --locked` and `apply` write.
+    ///
+    /// The plan of every write that brings no catalog current: a removal,
+    /// a switch, a source change, an editor save, the package-check render.
+    /// [`PlanOptions::default`] reads every source where its mirror sits
+    /// now, so a write planned from it moves every package whose catalog
+    /// moved since the install, which only `refresh` is asked to do.
     pub fn locked() -> Self {
         PlanOptions {
             keep_source_records: true,

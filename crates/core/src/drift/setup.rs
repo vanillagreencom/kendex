@@ -374,18 +374,26 @@ fn places(artifact: &Artifact) -> Vec<(&PathBuf, FileRole, Option<String>)> {
     }
 }
 
+/// The rule every plan here reads by: held at the record, as `kendex apply`
+/// holds it. The count the confirmation shows, the files it lists and the
+/// render the yes runs then agree, and that yes moves no package the record
+/// places to a newer catalog commit.
+fn options() -> crate::engine::PlanOptions {
+    crate::engine::PlanOptions::locked()
+}
+
+/// The render that follows the check's declaration, and the read-back after
+/// it: the scope planned from the manifest as it sits.
+pub fn render_plan(env: &Env, scope: &Scope) -> Result<crate::engine::EngineReport> {
+    crate::engine::plan_apply(env, scope, &options())
+}
+
 /// The scope planned with the check declared: what the render will write,
 /// and what stands in its way at the check's own destinations.
 fn plan_with_checks(env: &Env, scope: &Scope) -> Result<crate::engine::EngineReport> {
     let mut wanted = crate::engine::ops::manifest_for_mutation(env, scope)?;
     super::hook::declare(&mut wanted, scope);
-    crate::engine::plan_scope(
-        env,
-        scope,
-        &wanted,
-        &loaded_lock(env, scope)?,
-        &crate::engine::PlanOptions::default(),
-    )
+    crate::engine::plan_scope(env, scope, &wanted, &loaded_lock(env, scope)?, &options())
 }
 
 /// Everything waiting in this scope that the checks did not ask for: the
@@ -418,17 +426,11 @@ pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine:
         // Nothing is declared here, so nothing waits that the checks did
         // not ask for. Answered through the ordinary whole-scope read, so
         // this and an apply cannot disagree about such a scope.
-        return crate::engine::plan_apply(env, &scope, &crate::engine::PlanOptions::default());
+        return render_plan(env, &scope);
     };
     declared.hooks.remove(HOOK_NAME);
     let lock = loaded_lock(env, &scope)?;
-    let mut report = crate::engine::plan_scope(
-        env,
-        &scope,
-        &declared,
-        &lock,
-        &crate::engine::PlanOptions::default(),
-    )?;
+    let mut report = crate::engine::plan_scope(env, &scope, &declared, &lock, &options())?;
     // Kendex's own housekeeping is not the person's waiting work either.
     // The ignore block that keeps this machine's half of the record under
     // `.cache` and the workflow scratch under `tmp` out of the repository

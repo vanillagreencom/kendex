@@ -101,15 +101,7 @@ pub fn unsubscribe(
         crate::repo_effects::write(env, &report)?
     };
     if keep {
-        // Keeping moved the catalog's mapping tables into the manifest, so
-        // the install records are re-synced here — otherwise every kept
-        // agent would read as drifted until the next refresh.
-        let resync = kendex_core::engine::plan_apply(
-            env,
-            scope,
-            &kendex_core::engine::PlanOptions::default(),
-        )
-        .map_err(|e| e.to_string())?;
+        let resync = detach::resync_kept(env, scope).map_err(|e| e.to_string())?;
         undone.extend(crate::repo_effects::write(env, &resync)?);
     }
     Ok(Unsubscribed { undone })

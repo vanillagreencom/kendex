@@ -145,12 +145,15 @@ pub fn list_subscriptions(env: &Env, scope: &Scope) -> Result<Vec<SubscriptionRo
     Ok(rows)
 }
 
+/// Write a source change to the manifest and plan the scope around it,
+/// held at the record: the change names a source, and every package of
+/// another source stays at the commit its lock entries record.
 pub(crate) fn persist_and_plan(
     env: &Env,
     scope: &Scope,
     manifest: Manifest,
 ) -> Result<EngineReport> {
-    persist_and_plan_with(env, scope, manifest, &PlanOptions::default())
+    persist_and_plan_with(env, scope, manifest, &PlanOptions::locked())
 }
 
 /// `persist_and_plan` with the caller's plan options — for a manifest
@@ -205,9 +208,7 @@ pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineRepor
         });
     }
     manifest.sources.remove(name);
-    // Held at the record, as a package removal is: this names one source,
-    // and every package it does not name stays at its recorded commit.
-    persist_and_plan_with(env, scope, manifest, &PlanOptions::locked())
+    persist_and_plan(env, scope, manifest)
 }
 
 /// Disabling deactivates the source's installations in place; re-enabling
@@ -221,7 +222,7 @@ pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Res
         });
     };
     decl.enabled = enabled;
-    persist_and_plan_with(env, scope, manifest, &PlanOptions::locked())
+    persist_and_plan(env, scope, manifest)
 }
 
 #[cfg(test)]

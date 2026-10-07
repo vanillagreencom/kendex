@@ -206,7 +206,10 @@ fn write_customize(
     // failure to say out loud, not a stale copy: the reload cannot fix a
     // permission or an encoding, and offering it would hide what did.
     let (current, now) = manifest::read_for_mutation(&path).map_err(|e| e.to_string())?;
-    let mut options = PlanOptions::default();
+    // Held at the record, as `kendex apply` holds it: every package the
+    // record places renders at its recorded commit, and a new table at its
+    // source's tip.
+    let mut options = PlanOptions::locked();
     // The whole-file copies this save holds: the scope manifest, and the
     // settings file where there is one. A rollback on either can reach the
     // page as the reload the base checks give — `refused_write` decides,

@@ -33,10 +33,9 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         let report = kendex_core::engine::EngineReport::observed(plan);
         confirm_and_execute(env, &report, yes)?;
     }
-    // Render what was just declared — the same refresh any declaration
-    // gets, previewed and confirmed the same way.
-    let report =
-        kendex_core::engine::plan_apply(env, scope, &kendex_core::engine::PlanOptions::default())?;
+    // Render what was just declared, previewed and confirmed the way any
+    // apply is.
+    let report = kendex_core::drift::setup::render_plan(env, scope)?;
     if !report.plan.is_empty() {
         for op in &report.plan.ops {
             say(&format!("  - {}", op.line()));
