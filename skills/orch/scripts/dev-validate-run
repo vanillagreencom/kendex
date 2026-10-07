@@ -229,9 +229,11 @@
 # nor where it is recorded.
 #
 # Exit: 0 the command passed, a ci run left its validation to the pull request
-# CI, or --stop left nothing running; 1 it failed,
-# the bound ended it, it was lost, or the cap elapsed with no verdict, or a --stop could
-# not end a run; 2 usage or configuration error, or a start refused as
+# CI, --stop left nothing running, --live found a run going, or --last-pass
+# found a pass; 1 it failed, the bound ended it, it was lost, or the cap elapsed
+# with no verdict, a --stop could not end a run, --live found no run going, or
+# --last-pass found no pass that still speaks for the worktree; 2 usage or
+# configuration error, or a start refused as
 # run-live; 3 --wait's budget elapsed while the run was still going, so poll
 # again.
 

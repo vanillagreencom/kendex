@@ -68,6 +68,7 @@ hooks = [
   "skill-load-record",
   "reviewer-read-only",
   "reviewer-stop-check",
+  "dev-stop-check",
   "lane-mail-check",
   "lane-mail-deliver",
   "lane-mail-halt",
@@ -93,6 +94,7 @@ skills = [
   "linear",
 ]
 hooks = [
+  "dev-stop-check",
   "lane-mail-check",
   "lane-mail-deliver",
   "lane-mail-halt",
