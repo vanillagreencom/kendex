@@ -253,8 +253,8 @@ JSON output (always when --json):
 Environment:
   CI_WAIT_NO_CHECKS_GRACE
                 seconds to keep polling before failing when no checks have
-                registered yet (default 600, four polls at the default
-                interval). ci-wait runs after the
+                registered yet (default 600; the last poll waits only
+                what is left of it). ci-wait runs after the
                 submit-pr approval gate; approval-gated repos dispatch CI
                 from the pull_request_review event, so check registration
                 can lag. Within the grace window the result stays verdict
@@ -535,6 +535,8 @@ TRANSIENT_PATTERNS=(
 retries=0
 max_retries=1
 no_checks_count=0
+# Elapsed second of the first poll in the current no-checks streak.
+no_checks_since=0
 # Grace window for check registration, in seconds. Approval-gated repos start
 # CI only after a review approval lands (pull_request_review dispatch), so
 # checks can take minutes to register after the approval gate clears. Within
@@ -544,6 +546,9 @@ NO_CHECKS_GRACE="${CI_WAIT_NO_CHECKS_GRACE:-600}"
 if ! [[ "$NO_CHECKS_GRACE" =~ ^[0-9]+$ ]]; then
   NO_CHECKS_GRACE=600
 fi
+# Normalized where the digits are proven: arithmetic reads a leading zero as
+# octal, so `090` would abort the script instead of waiting 90 seconds.
+NO_CHECKS_GRACE=$((10#$NO_CHECKS_GRACE))
 max_no_checks=$(((NO_CHECKS_GRACE + POLL_INTERVAL - 1) / POLL_INTERVAL))
 if [ "$max_no_checks" -lt 1 ]; then
   max_no_checks=1
@@ -740,6 +745,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # Under --required-only an empty rollup still names what GitHub waits
     # on: every required context, pending as missing.
     last_check_classes=$(classify_checks <<<'[]')
+    [ "$no_checks_count" -eq 1 ] && no_checks_since="$elapsed"
     # One-time probe: a repo with no active workflows AND no required checks
     # on the PR's base branch has no CI to wait for — report that as its own
     # terminal state instead of burning the dispatch grace and exiting 1.
@@ -801,7 +807,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
         exit 0
       fi
     fi
-    if [ $no_checks_count -ge $max_no_checks ]; then
+    # The grace is measured in seconds, not polls: a count of polls ends the
+    # window up to one interval early, since the first poll is at its start.
+    no_checks_left=$((NO_CHECKS_GRACE - (elapsed - no_checks_since)))
+    if [ "$no_checks_left" -le 0 ]; then
       emit_error no-checks
       ci_message no-checks "$@" >&2
       ci_message dispatch-causes "$@" >&2
@@ -812,7 +821,11 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       fi
       exit 1
     fi
-    poll_sleep "$POLL_INTERVAL"
+    if [ "$no_checks_left" -lt "$POLL_INTERVAL" ]; then
+      poll_sleep "$no_checks_left"
+    else
+      poll_sleep "$POLL_INTERVAL"
+    fi
     continue
   fi
 

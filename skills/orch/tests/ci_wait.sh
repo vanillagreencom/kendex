@@ -493,15 +493,20 @@ table "$JSON" \
 echo "=== the no-checks grace is the default the settings template declares ==="
 # The Customize view shows the template's value as the default, so the grace
 # ci-wait resolves for an unset, empty or non-numeric key is that value; an
-# explicit whole number is taken as given. The budget outlasts any of them, so
-# the no-checks error's dispatch-grace key line names the grace it resolved.
+# explicit whole number, leading zero included, is taken as given in base 10.
+# The budget outlasts any of them, so the no-checks error's dispatch-grace key
+# line names the grace it resolved and elapsed_seconds the seconds it waited,
+# at an interval that divides the grace and at the production one that does
+# not.
 GRACE_DECLARED=$(sed -n 's/^CI_WAIT_NO_CHECKS_GRACE = "\([0-9]*\)"$/\1/p' "$REPO_ROOT/skills/orch/kendex.settings.toml.example")
 [[ -n "$GRACE_DECLARED" ]] || { echo "the settings template declares no CI_WAIT_NO_CHECKS_GRACE default" >&2; exit 1; }
 table '1 30 3600 --json' \
-  "an unset grace waits the declared default|||-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
-  'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error stderr~ci-wait:+dispatch-grace+grace=90=true'
+  "an unset grace waits the declared default|||-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "an unset grace at the production interval waits the declared default||1 180 3600 --json|-u,CI_WAIT_NO_CHECKS_GRACE,STUB_PR_CHECKS_MODE=empty|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "an empty grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  "a non-numeric grace waits the declared default|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=abc|rc=1 status=error elapsed_seconds=${GRACE_DECLARED} stderr~ci-wait:+dispatch-grace+grace=${GRACE_DECLARED}=true" \
+  'an explicit grace is taken as given|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=90|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true' \
+  'a leading-zero grace is read in base 10|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=090|rc=1 status=error elapsed_seconds=90 stderr~ci-wait:+dispatch-grace+grace=90=true'
 
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
