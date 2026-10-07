@@ -644,12 +644,18 @@ put app.json '{"version":"1.9.0"}\n'; stage; git -C "$R" commit -qm base
 put "$PKG" "$(skill pkg 1.0.0)\n"; put skills/pkg/run.sh 'echo one\n'; stage
 assert_eq 'a new package needs no raise' "rc=0 $PKG_NOMATCH" "$(run "$PKG_ENV" '')"
 # The version is the metadata block's, plain or quoted, and a package is
-# versionless only where no frontmatter line is a version key: one the
-# reader cannot place, or one stated empty, is a collection error.
+# versionless only where no frontmatter line holds a version key in any
+# spelling: one the block reader cannot resolve to a non-empty version is a
+# collection error, and the word in a value is no key.
 for row in \
   "plain|a plain metadata.version above a top-level version line is the version read|metadata:\n  version: 1.0.0\nversion: 9.9.9|$UNBUMPED" \
   "single|a single-quoted metadata.version is read without its quotes|metadata:\n  version: '1.0.0'|$UNBUMPED" \
   "comment|a column-zero comment inside metadata leaves its version read|metadata:\n# note\n  version: \"1.0.0\"|$UNBUMPED" \
+  "metadata-comment|a comment on the metadata line leaves its version read|metadata: # note\n  version: 1.0.0|$UNBUMPED" \
+  "word|the word version inside a value is no key: the package reads versionless|summary: \"Cuts a version: bumps it, tags.\"|rc=0 $PKG_NOMATCH" \
+  "flow|a flow-mapping version is a collection error, never a versionless package|metadata: {version: \"1.0.0\"}|rc=2 ${ERR}version-read=$PKG" \
+  "quoted-key|a quoted version key is a collection error, never a versionless package|metadata:\n  \"version\": \"1.0.0\"|rc=2 ${ERR}version-read=$PKG" \
+  "spaced|a version key with space before its colon is a collection error, never a versionless package|metadata:\n  version : 1.0.0|rc=2 ${ERR}version-read=$PKG" \
   "top-level|a version line outside metadata is a collection error, never a versionless package|version: 1.0.0|rc=2 ${ERR}version-read=$PKG" \
   "empty|an empty metadata.version is a collection error, never a versionless package|metadata:\n  version: \"\"|rc=2 ${ERR}version-read=$PKG"; do
   IFS='|' read -r name label frontmatter expected <<<"$row"
@@ -734,7 +740,13 @@ control 'judging a first version against an absent one refuses the change' packa
 control 'reading an empty metadata.version as no version passes the change' package-form-empty \
   "rc=0 $PKG_NOMATCH" ' || (has && version == "")' '' lib/skill-roots.sh
 control 'counting only metadata version lines reads a top-level one as versionless' package-form-top-level \
-  "rc=0 $PKG_NOMATCH" '/^[ \t]*version:/ { has = 1 }' 'meta && /^[ \t]+version:/ { has = 1 }' lib/skill-roots.sh
+  "rc=0 $PKG_NOMATCH" '/(^[ \t]*|[{,][ \t]*)["\047]?version["\047]?[ \t]*:/ { has = 1 }' 'meta && /^[ \t]+version:/ { has = 1 }' lib/skill-roots.sh
+control 'counting only a bare version key at a line start reads a flow mapping as versionless' package-form-flow \
+  "rc=0 $PKG_NOMATCH" '/(^[ \t]*|[{,][ \t]*)["\047]?version["\047]?[ \t]*:/ { has = 1 }' '/^[ \t]*version:/ { has = 1 }' lib/skill-roots.sh
+control 'counting the word version anywhere refuses a value holding it' package-form-word \
+  "rc=2 ${ERR}version-read=$PKG" '/(^[ \t]*|[{,][ \t]*)["\047]?version["\047]?[ \t]*:/ { has = 1 }' '/version/ { has = 1 }' lib/skill-roots.sh
+control 'a comment on the metadata line ending the block leaves its version unplaced' package-form-metadata-comment \
+  "rc=2 ${ERR}version-read=$PKG" '/^metadata:[ \t]*($|[ \t]#)/' '/^metadata:[ \t]*$/' lib/skill-roots.sh
 control 'a comment ending the metadata block leaves its version unplaced' package-form-comment \
   "rc=2 ${ERR}version-read=$PKG" '/^[ \t]*#/ { next }' '' lib/skill-roots.sh
 if [ -r "/proc/$$/cmdline" ]; then

@@ -72,12 +72,16 @@ gg_project_rel() { # VAR SCRIPT_DIR WORKTREE -> sets VAR to the prefix
 # quotes taken off. Nonzero when the frontmatter or the name is missing, so
 # an unreadable package never compares equal to another.
 #
-# A package reads as versionless only when no frontmatter line is a
-# `version:` key, wherever it sits: a version line this cannot place under
-# `metadata:`, or one stated empty, is nonzero, never a package that states
-# no version, which the changelog check would let change without a raise.
-# A YAML comment line holds no key, so it neither ends the metadata block
-# nor counts as a version line.
+# This reads one spelling: `metadata:` then an indented `version: X`. A
+# package reads as versionless only when no frontmatter line holds a
+# version key in any spelling: at a line's start or after a flow mapping's
+# `{` or `,`, quoted or not, with space before its colon or none. A version
+# key where this reads no non-empty metadata.version is nonzero, never a
+# package that states no version, which the changelog check would let
+# change without a raise; a version key outside `metadata:` beside one this
+# reads is ignored. The word in a value, `bumps the version`, is no key. A
+# YAML comment holds no key: a comment line neither ends the metadata block
+# nor counts, and the `metadata:` line may carry one.
 gg_skill_id() { # FILE
   LC_ALL=C awk '
     function value(l) {
@@ -89,9 +93,9 @@ gg_skill_id() { # FILE
     NR == 1 { if ($0 != "---") { bad = 1; exit } next }
     $0 == "---" { closed = 1; exit }
     /^[ \t]*#/ { next }
-    /^[^ \t]/ { meta = ($0 ~ /^metadata:[ \t]*$/) }
+    /^[^ \t]/ { meta = ($0 ~ /^metadata:[ \t]*($|[ \t]#)/) }
     /^name:/ { name = value($0) }
-    /^[ \t]*version:/ { has = 1 }
+    /(^[ \t]*|[{,][ \t]*)["\047]?version["\047]?[ \t]*:/ { has = 1 }
     meta && /^[ \t]+version:/ { version = value($0) }
     END { if (bad || !closed || name == "" || (has && version == "")) exit 1; print name; if (has) print version }
   ' "$1"

@@ -106,13 +106,13 @@ GG_VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]
 # metadata.version, read by lib/skill-roots.sh's gg_skill_id, which the
 # caller sources. A SKILL.md whose frontmatter holds no version key prints
 # nothing: it declares a versionless package. A file this reads without a
-# name, or with a version line stated empty or outside metadata, is a
-# collection error.
+# name, or with a version key in any spelling and no non-empty
+# metadata.version that reader takes, is a collection error.
 gg_package_version() { # MODE SHA PATH
   local id
   gg_mode_is_regular "$1" || gg_fail version-mode "$(gg_shown "$3"):$1" "A package file must be a regular file."
   gg_read_blob "$2" "$3" version
-  id="$(gg_skill_id "$GG_TMP/blob")" || gg_fail version-read "$(gg_shown "$3")" "Expected frontmatter with a name, and any version line a non-empty metadata.version."
+  id="$(gg_skill_id "$GG_TMP/blob")" || gg_fail version-read "$(gg_shown "$3")" "Expected frontmatter with a name, and either no version key or a non-empty version stated as metadata: then an indented version: X line."
   case "$id" in *"$GG_NL"*) ;; *) return 0 ;; esac
   jq -enr --arg v "${id#*"$GG_NL"}" --arg re "$GG_VERSION_RE" '$v | select(test($re))' 2>"$GG_TMP/dependency.err" \
     || gg_fail_cause version-read "$(gg_shown "$3")" "$GG_TMP/dependency.err" "Expected frontmatter metadata.version in major.minor.patch form."
