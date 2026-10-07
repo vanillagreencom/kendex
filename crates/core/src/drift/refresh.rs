@@ -93,15 +93,18 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         }
         // The deep work is legal here: after fetching, re-derive the
         // snapshot so the next session check reads verdicts. Also derived
-        // when the scope has never been evaluated at all. A scope with no
-        // remote source has no verdict a fetch could move, and the check
+        // when another lane fetched or the scope has never been evaluated.
+        // A scope with no remote source has no verdict a fetch could move, and the check
         // reads its absent snapshot as nothing to say.
         if remotes
             && (touched
-                || !matches!(
-                    super::snapshot::load(env, scope),
-                    super::snapshot::SnapshotFile::Current(_)
-                ))
+                || match super::snapshot::load(env, scope) {
+                    super::snapshot::SnapshotFile::Current(snapshot) => {
+                        snapshot.sources_changed(env)
+                    }
+                    super::snapshot::SnapshotFile::Absent
+                    | super::snapshot::SnapshotFile::Unreadable(_) => true,
+                })
             && let Err(error) = super::snapshot::record(env, scope)
         {
             notes.push(format!("{}: snapshot not derived ({error})", scope.label()));

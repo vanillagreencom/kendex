@@ -1002,9 +1002,23 @@ impl ScopeCheck<'_> {
             }
         }
         for note in &snapshot.unreadable {
-            sections
-                .unknown
-                .push(unknown(format!("{prefix}{}", shown(note))));
+            let kind = note.kind.name();
+            let name = shown(&note.name);
+            if crate::drift::snapshot::source_changed(
+                self.env,
+                &note.repo,
+                note.refs_state.as_deref(),
+            ) {
+                sections.unevaluated.push(unevaluated(
+                    format!("{prefix}{kind} '{name}': source changed since evaluation; not yet re-evaluated"),
+                    Remedy::Refresh { global: self.global },
+                ));
+            } else {
+                sections.unknown.push(unknown(format!(
+                    "{prefix}{kind} {name}: {}",
+                    shown(&note.message)
+                )));
+            }
         }
     }
 

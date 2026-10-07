@@ -811,7 +811,8 @@ fn stamp_for(env: &Env, repo: &str) -> Option<super::stamps::FetchStamp> {
 }
 
 /// Whether the check should spawn the detached background refresh: a
-/// stale mirror needs fetching, a scope with remote sources has no
+/// stale mirror needs fetching, a snapshot predates another fetch, or a
+/// scope with remote sources has no
 /// snapshot (a mutation just invalidated it, or nothing ever evaluated),
 /// or the report it just produced says a plan over unrecorded copies
 /// outran the deadline and is still owed — either way the deep pass is
@@ -834,11 +835,14 @@ pub fn wants_background_refresh(env: &Env, scopes: &[Scope], checked: &CheckRepo
         if !remotes {
             return false;
         }
-        if !matches!(
-            super::snapshot::load(env, scope),
-            super::snapshot::SnapshotFile::Current(_)
-        ) {
-            return true;
+        match super::snapshot::load(env, scope) {
+            super::snapshot::SnapshotFile::Current(snapshot) => {
+                if snapshot.sources_changed(env) {
+                    return true;
+                }
+            }
+            super::snapshot::SnapshotFile::Absent
+            | super::snapshot::SnapshotFile::Unreadable(_) => return true,
         }
         manifest.sources.values().any(|decl| {
             decl.enabled

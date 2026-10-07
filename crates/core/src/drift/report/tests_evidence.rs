@@ -3,7 +3,7 @@
 
 use super::tests::*;
 use super::*;
-use crate::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot};
+use crate::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot, UnreadableSnapshot};
 use crate::drift::stamps;
 
 #[test]
@@ -104,29 +104,55 @@ fn an_old_fetch_failure_becomes_a_line_dated_from_first_failure() {
 }
 
 #[test]
-fn unreadable_evidence_is_could_not_check() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let scope = project_scope(tmp.path());
-    write_manifest(&env, &scope, &manifest_with_remote());
-    crate::drift::snapshot::store(
-        &env,
-        &scope,
-        &ScopeSnapshot {
-            schema: SNAPSHOT_SCHEMA,
-            taken_at: crate::clock::unix_now(),
-            scope: scope.canonical().label(),
-            packages: vec![],
-            unreadable: vec!["skill gh: history could not be read".into()],
-        },
-    )
-    .unwrap();
+fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
+    for (repo, evaluated, current, changed) in [
+        ("owner/repo", Some("same-refs"), Some("same-refs"), false),
+        ("owner/repo", Some("old-refs"), Some("new-refs"), true),
+        ("owner/repo", None, Some("new-refs"), true),
+        ("owner/repo", None, None, false),
+        ("", None, Some("new-refs"), false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let scope = project_scope(tmp.path());
+        write_manifest(&env, &scope, &manifest_with_remote());
+        crate::drift::snapshot::store(
+            &env,
+            &scope,
+            &ScopeSnapshot {
+                schema: SNAPSHOT_SCHEMA,
+                taken_at: crate::clock::unix_now(),
+                scope: scope.canonical().label(),
+                packages: vec![],
+                unreadable: vec![UnreadableSnapshot {
+                    kind: crate::model::ItemKind::Skill,
+                    name: "gh".into(),
+                    message: "history could not be read".into(),
+                    repo: repo.into(),
+                    refs_state: evaluated.map(str::to_owned),
+                }],
+            },
+        )
+        .unwrap();
 
-    let report = check(
-        &env,
-        std::slice::from_ref(&scope),
-        crate::drift::copies::CheckMode::Settle,
-    );
-    assert_eq!(report.status, CheckStatus::Unknown);
-    assert!(render_plain(&report).contains("history could not be read"));
+        record_refs(&env, "owner/repo", current);
+
+        let report = check(
+            &env,
+            std::slice::from_ref(&scope),
+            crate::drift::copies::CheckMode::Settle,
+        );
+        assert_eq!(
+            report.sections[0].lines[0].class,
+            if changed {
+                Class::Unevaluated
+            } else {
+                Class::Unknown
+            }
+        );
+        assert_eq!(
+            wants_background_refresh(&env, std::slice::from_ref(&scope), &report),
+            changed
+        );
+    }
 }

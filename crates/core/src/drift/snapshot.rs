@@ -15,7 +15,7 @@ use crate::model::{ItemKind, Scope};
 
 /// Bumped when the shape changes; an older or newer snapshot reads as
 /// absent, which the check reports as not-yet-evaluated.
-pub const SNAPSHOT_SCHEMA: u32 = 2;
+pub const SNAPSHOT_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,8 +28,40 @@ pub struct ScopeSnapshot {
     pub packages: Vec<PackageSnapshot>,
     /// Evidence the derivation could not read — a mirror whose history
     /// failed, a source that refused. The check reports these as
-    /// could-not-check lines, never as silence.
-    pub unreadable: Vec<String>,
+    /// could-not-check lines while their mirror state still matches.
+    pub unreadable: Vec<UnreadableSnapshot>,
+}
+
+/// A failed evaluation belongs to the mirror state that produced it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct UnreadableSnapshot {
+    pub kind: ItemKind,
+    pub name: String,
+    pub message: String,
+    pub repo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_state: Option<String>,
+}
+
+impl ScopeSnapshot {
+    pub(crate) fn sources_changed(&self, env: &Env) -> bool {
+        self.packages
+            .iter()
+            .any(|package| source_changed(env, &package.repo, package.refs_state.as_deref()))
+            || self
+                .unreadable
+                .iter()
+                .any(|note| source_changed(env, &note.repo, note.refs_state.as_deref()))
+    }
+}
+
+pub(crate) fn source_changed(env: &Env, repo: &str, evaluated: Option<&str>) -> bool {
+    if repo.is_empty() {
+        return false;
+    }
+    let key = crate::remote::cache_key(env, repo);
+    super::stamps::load(env, &key).refs_state.as_deref() != evaluated
 }
 
 /// One package's standing at derivation time.
@@ -124,16 +156,7 @@ pub fn record_with(
     let mut refs_by_repo: std::collections::BTreeMap<String, Option<String>> = Default::default();
     let mut packages = Vec::new();
     for row in &report.rows {
-        let refs_state = match row.repo.is_empty() {
-            true => None,
-            false => refs_by_repo
-                .entry(row.repo.clone())
-                .or_insert_with(|| {
-                    let key = crate::remote::cache_key(env, &row.repo);
-                    super::stamps::refs_state(&crate::remote::store::mirror_dir(env, &key))
-                })
-                .clone(),
-        };
+        let refs_state = evaluated_refs(env, &row.repo, &mut refs_by_repo);
         packages.push(PackageSnapshot {
             kind: row.kind,
             name: row.name.clone(),
@@ -149,24 +172,70 @@ pub fn record_with(
             forked: row.forked,
         });
     }
+    let mut repos: std::collections::BTreeMap<_, _> = report
+        .rows
+        .iter()
+        .map(|row| ((row.kind, row.name.clone()), row.repo.clone()))
+        .collect();
+    // A source that could not resolve produces a warning without a row.
+    // The effective declarations also cover bundle members and dependencies.
+    if report
+        .warnings
+        .iter()
+        .any(|warning| !repos.contains_key(&(warning.kind, warning.name.clone())))
+        && let Some(manifest) =
+            crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
+    {
+        for planned in crate::engine::planned_declarations(env, scope, &manifest) {
+            let repo = manifest
+                .sources
+                .get(&planned.decl.source)
+                .and_then(|source| source.repo.clone())
+                .unwrap_or_default();
+            repos.entry((planned.kind, planned.name)).or_insert(repo);
+        }
+    }
+    let unreadable = report
+        .warnings
+        .iter()
+        .map(|warning| {
+            let repo = repos
+                .get(&(warning.kind, warning.name.clone()))
+                .cloned()
+                .unwrap_or_default();
+            UnreadableSnapshot {
+                kind: warning.kind,
+                name: warning.name.clone(),
+                message: warning.message.clone(),
+                refs_state: evaluated_refs(env, &repo, &mut refs_by_repo),
+                repo,
+            }
+        })
+        .collect();
     let snapshot = ScopeSnapshot {
         schema: SNAPSHOT_SCHEMA,
         taken_at: crate::clock::unix_now(),
         scope: scope.canonical().label(),
         packages,
-        unreadable: report
-            .warnings
-            .iter()
-            .map(|warning| {
-                format!(
-                    "{} {}: {}",
-                    warning.kind.name(),
-                    warning.name,
-                    warning.message
-                )
-            })
-            .collect(),
+        unreadable,
     };
     store(env, scope, &snapshot)?;
     Ok(snapshot)
+}
+
+fn evaluated_refs(
+    env: &Env,
+    repo: &str,
+    refs_by_repo: &mut std::collections::BTreeMap<String, Option<String>>,
+) -> Option<String> {
+    if repo.is_empty() {
+        return None;
+    }
+    refs_by_repo
+        .entry(repo.to_owned())
+        .or_insert_with(|| {
+            let key = crate::remote::cache_key(env, repo);
+            super::stamps::refs_state(&crate::remote::store::mirror_dir(env, &key))
+        })
+        .clone()
 }
