@@ -4,7 +4,7 @@ Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before 
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
-`oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper.
+`oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper. The helper keeps its command before the old watch can exit. Automatic death and wall recovery leave a watch for the successor.
 
 Read that watch's log without starting another watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside the turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
 
@@ -18,9 +18,15 @@ Every harness follows with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT
 
 For a hand-opened session with no live watch claim, launch the workflow's repeat command once by [Waiter launch](waiter-launch.md) § Launch. That launch uses `[RUN_DIR]/watch`, `[RUN_DIR]/watch.log`, `[RUN_DIR]/watch.exit` and `[RUN_DIR]/watch.runner`, as the steps below specify.
 
-For a watch the overseer launcher started, check `watch_pid_live [OVERSEE_STATE]` after each delivery and expiry. Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, follow [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance)'s stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
+For a watch the overseer launcher started, run this claim read after each delivery and expiry. It prints the live watch's `[PID]`, also used by the stop command below.
 
-To stop a launcher-owned watch, read its claim to get `[PID]`. Run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[OVERSEE_STATE_DIR]/oversee-watch.runner" [PID] '*oversee-watch*'`. The runner stops its exact unit or its verified process group. Report any failed stop with its `job-unit:` line.
+```bash
+bash -c '. "$1" || exit 3; watch_pid_live "$2" && printf "%s\n" "$WATCH_PID"' _ .agents/skills/orch/scripts/lib/watch-pid.sh "[OVERSEE_STATE]"
+```
+
+Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, follow [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance)'s stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
+
+To stop a launcher-owned watch, use `[PID]` from that claim read. Run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[OVERSEE_STATE_DIR]/oversee-watch.runner" [PID] '*oversee-watch*'`. The runner stops its exact unit or its verified process group. Report any failed stop with its `job-unit:` line.
 
 For a hand-opened session's waiter launch, find its group with `pgrep -f 'waiter[.][RUN_ID]/watc[h] '`. Exit 0 is a live watch and exit 1 is no watch. Report any other status and start nothing. Run `test -s "[RUN_DIR]/watch.exit"` after each delivery and expiry. With no pid, read that file: `stopped` ends oversight, another value follows the workflow's stop and restart rules, and an empty file means the watch died without a verdict. To stop that watch, write `stopped` into `[RUN_DIR]/watch.exit`, then stop its verified group with `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID] '*waiter.[RUN_ID]/watch *'`.
 

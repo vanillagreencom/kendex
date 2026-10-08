@@ -284,9 +284,11 @@ restart_helper() {
   new_caller
   fresh_output
   start_watch
+  watch_argv_read "$FLEET_STATE"
   SUCC_PANE="$(tm new-window -d -t fleet:2 -P -F '#{pane_id}' 'exec sleep 100000')"
   ( cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX="$TMUX_ADDR" \
       "${1:-$SUCCEED}" --watch-restart "$FLEET_STATE" "$CALLER_PANE" "$SUCC_PANE" CLAUDE_CONFIG_DIR "$H/.claude" claude \
+      "$WATCH_CWD" "$WATCH_SCRIPT" "${#WATCH_ARGV[@]}" "${WATCH_ARGV[@]}" \
       >>"$WATCH_ERR" 2>&1 </dev/null & )
 }
 restart_helper
@@ -361,10 +363,9 @@ start_watch
 rm -f -- "${TMP_ROOT:?}/work/tmp/oversee-watch.argv"
 STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
 run_succeed
-wait_failed 100
-assert_eq "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
-  "0|oversee-succeed: watch-restart-failed step=argv pid=$OLD|$STARTED" \
-  "a restart with no recorded command is a notice beside the fleet state, and starts nothing"
+assert_eq "$RC|$(grep -c '^oversee-succeed: watch-restart-failed step=argv ' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
+  "1|1|$STARTED" \
+  "a missing recorded command refuses before closing the predecessor"
 watch_stop "$OLD" "$FLEET_STATE" || true
 
 touch "$TMP_ROOT/norecord"

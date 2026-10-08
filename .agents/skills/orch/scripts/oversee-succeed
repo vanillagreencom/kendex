@@ -444,10 +444,10 @@
 # stdout and in the fleet log, and settles no exit status.
 # `successor-launch` is on stdout too, but settles no
 # exit status: it is printed mid-run, before the window is opened, and names the
-# form the lane reached the harness by. `watch-handover` and `watch-absent` are
+# form the lane reached the harness by. `watch-handover` and `watch-started` are
 # on stdout too and settle nothing either, printed before the close, and a
-# `watch-restart-failed step=state-path` or `step=helper` there is a notice on
-# stderr.
+# `watch-restart-failed` before the close refuses the launch. A failure
+# after the close is recorded in the watch error log.
 # `successor-working` goes to stdout only after the close succeeded, and a real
 # handoff has ended this script's window by then.
 # In the self-succession mode alone, every refusal from `successor-launch` on
@@ -525,9 +525,8 @@ message() { # KEY FIELD=VALUE...
     successor-working) text='The successor is running in the caller window slot.' ;;
     close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
     watch-handover) text='The fleet watch serving the caller pane is restarted from the successor pane once this window closes, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
-    watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output goes beside the fleet state until the successor starts its own watch, which takes it over and prints that output.' ;;
+    watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output stays beside the fleet state for the successor to read.' ;;
     watch-started) text='The repeat fleet watch runs outside the successor session. Read the log field to receive its events.' ;;
-    watch-absent) text='The watch ended before the restart helper could read its claim.' ;;
     watch-restart-failed) text='The fleet watch could not be started or restarted from the successor pane. Before the caller closes, this failure refuses the succession. A later helper failure is recorded in the watch error log.' ;;
   esac
   printf 'oversee-succeed: %s' "$key"
@@ -591,17 +590,21 @@ source "$SCRIPT_DIR/lib/job-unit.sh"
 source "$SCRIPT_DIR/lib/watch-handover.sh"
 
 # The internal `--watch-restart STATE CALLER_SESSION PANE LANE_VAR LANE_HOME
-# HARNESS [FLAG...]` run, step 6's helper, which the succession starts before its
+# HARNESS CWD SCRIPT ARGC ARGS... [FLAG...]` run, step 6's helper, which the succession starts before its
 # close through the orch job runner (header step 6). Every
 # line it prints goes to oversee-watch.err, where the handover pointed its
 # stdout and stderr, so the next watch start on the state other than a
 # succession's prints it. Each outcome is one keyed line, and none is a refusal
 # of anything: the succession has already committed.
-watch_restart() { # STATE CALLER_SESSION PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
+watch_restart() { # STATE CALLER_SESSION PANE LANE_VAR LANE_HOME HARNESS CWD SCRIPT ARGC ARGS... [FLAG...]
   local state="$1" caller="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner
-  local -a flags=()
-  shift 6
+  local cwd="$7" script="$8" argc="$9"
+  local -a argv=() flags=()
+  shift 9
+  argv=("${@:1:$argc}")
+  shift "$argc"
   [[ $# -eq 0 ]] || flags=(-- "$@")
+  watch_pid_paths "$state" || { message watch-restart-failed step=state-path "path=$state"; return 0; }
   deadline=$((SECONDS + WATCH_STOP_SECS))
   # The caller is closed once the runtime's `inspect` no longer lists it.
   while [[ -n "$caller" ]]; do
@@ -617,26 +620,21 @@ watch_restart() { # STATE CALLER_SESSION PANE LANE_VAR LANE_HOME HARNESS [FLAG..
     fi
     sleep 0.1
   done
-  if ! watch_pid_live "$state"; then
-    message watch-absent "path=$state"
-    return 0
-  fi
-  watch_argv_read "$state" || { message watch-restart-failed step=argv "pid=$WATCH_PID"; return 0; }
   # A unit gets none of this run's directory or variables unless it is handed
   # them: the runner names the directory it is launched from and every
   # exported variable, and env sets the three the successor changes. STATE
   # is the absolute path `workflow-state path` printed, so it still names the
   # state from there.
-  if ! cd -- "$WATCH_CWD" 2>/dev/null; then
-    message watch-restart-failed step=start "dir=$WATCH_CWD"
+  if ! cd -- "$cwd" 2>/dev/null; then
+    message watch-restart-failed step=start "dir=$cwd"
     return 0
   fi
   local harness_args=()
   [[ -z "$harness" ]] || harness_args=(--harness "$harness")
   if ! watch_job_launch watch-restart "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
       env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession \
-      "$WATCH_SCRIPT" ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"} ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
-    message watch-restart-failed step=start "dir=$WATCH_CWD" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR"
+      "$script" ${argv[@]+"${argv[@]}"} ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
+    message watch-restart-failed step=start "dir=$cwd" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR"
     return 0
   fi
   runner="$JOB_UNIT_LINE"
@@ -656,7 +654,7 @@ watch_restart() { # STATE CALLER_SESSION PANE LANE_VAR LANE_HOME HARNESS [FLAG..
 }
 if [[ "${1:-}" == --watch-restart ]]; then
   shift
-  [[ $# -ge 6 ]] || die unknown-option "arg=--watch-restart"
+  [[ $# -ge 9 ]] || die unknown-option "arg=--watch-restart"
   watch_restart "$@"
   exit 0
 fi

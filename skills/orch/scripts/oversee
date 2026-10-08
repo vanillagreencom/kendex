@@ -181,7 +181,7 @@
 # explanation and any failing dependency's own stderr under it. A refusal is
 # on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
 # `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
-# `overseer-launched`, `registered`, `watch-handover` and `watch-absent` are on
+# `overseer-launched`, `registered`, `watch-handover` and `watch-started` are on
 # stdout; `overseer-lane-unobserved`, `watch-restart-failed`,
 # `checkout-unsynced` and `fleet-log-unwritten`, the last naming a
 # `checkout-unsynced` row the fleet log could not take, are notices on stderr
