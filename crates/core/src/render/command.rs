@@ -106,7 +106,9 @@ fn description(front: Option<&str>, prose: &str, name: &str) -> String {
     if let Some(declared) = declared {
         return declared;
     }
-    for line in prose.lines() {
+    // The project's instructions block describes the project, not the
+    // command, so the fallback reads the publisher's prose alone.
+    for line in crate::render::skill::strip_block(prose).lines() {
         let line = line.trim().trim_start_matches('#').trim();
         if !line.is_empty() {
             return line.to_owned();
@@ -122,6 +124,27 @@ mod tests {
     fn described(body: &str, name: &str) -> String {
         let (front, prose) = split(body);
         description(front, prose, name)
+    }
+
+    /// Configured instructions sit above the prose; a command describing
+    /// itself only in prose still says what it does, not the block's marker.
+    #[test]
+    fn the_prose_fallback_skips_the_project_instructions() {
+        let manifest: Manifest = toml::from_str(
+            "schema = 6\n[command-instructions]\nship = \"Keep the merge review.\"\n",
+        )
+        .unwrap();
+        let bytes = with_instructions(b"\n# Ship the branch\n\nSteps.\n", &manifest, "ship");
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains("Keep the merge review."), "{body}");
+        assert_eq!(described(&body, "ship"), "Ship the branch");
+        let table: toml::Table = gemini(&bytes, "ship").unwrap().parse().unwrap();
+        assert_eq!(table["description"].as_str(), Some("Ship the branch"));
+        assert!(
+            codex_skill("ship", &body, "ship")
+                .starts_with("---\nname: ship\ndescription: Ship the branch\n"),
+            "{body}"
+        );
     }
 
     #[test]

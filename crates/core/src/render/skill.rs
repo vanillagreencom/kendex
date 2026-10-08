@@ -149,7 +149,7 @@ pub fn inject_instructions(skill_md: &str, instructions: Option<&str>) -> String
     }
 }
 
-fn strip_block(text: &str) -> String {
+pub(crate) fn strip_block(text: &str) -> String {
     let Some((start, cut_to)) = instructions_block_range(text) else {
         return text.to_owned();
     };
