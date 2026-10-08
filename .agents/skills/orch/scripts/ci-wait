@@ -798,6 +798,23 @@ classify_checks() {
   '
 }
 
+# A remote push can land while Actions runs are read. Neither caller may
+# consume that response until the head still matches the checks snapshot.
+# Run in the polling shell so rejecting it also clears all confirmation state.
+confirm_actions_for_checks() {
+  local after_actions_head
+  run_confirmation=$(superseding_run_state "$check_classes")
+  after_actions_head=$(read_checks_head) || after_actions_head=""
+  if [ -z "$checks_head" ] || [ -z "$after_actions_head" ] || [ "$after_actions_head" != "$checks_head" ]; then
+    seen_in_progress=false
+    stale_key=""
+    confirmation_head="$after_actions_head"
+    last_check_classes='{"pending":[{"name":"current-head Actions","state":"EXPECTED"}],"failed":[],"passed":[]}'
+    return 1
+  fi
+  supersede_state=$(jq -r '.state' <<<"$run_confirmation")
+}
+
 checks_stderr=$(mktemp)
 trap 'rm -f "$checks_stderr"' EXIT
 
@@ -988,8 +1005,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
   if [ "$failed_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
     supersede_state="terminal"
     if jq -e 'all(.failed[]; (.link // "") | test("/actions/runs/[0-9]+"))' >/dev/null 2>&1 <<<"$check_classes"; then
-      run_confirmation=$(superseding_run_state "$check_classes")
-      supersede_state=$(jq -r '.state' <<<"$run_confirmation")
+      if ! confirm_actions_for_checks; then
+        poll_sleep "$POLL_INTERVAL"
+        continue
+      fi
     fi
     case "$supersede_state" in
       active)
@@ -1039,8 +1058,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
     # A known required set already names every context that blocks the merge;
     # optional workflows cannot postpone its passed result.
     if [ -z "$checks_head" ] || ! $REQUIRED_ONLY || [ "$REQUIRED_CONTEXTS" = '[]' ]; then
-      run_confirmation=$(superseding_run_state "$check_classes")
-      supersede_state=$(jq -r '.state' <<<"$run_confirmation")
+      if ! confirm_actions_for_checks; then
+        poll_sleep "$POLL_INTERVAL"
+        continue
+      fi
       if [ "$supersede_state" = "terminal" ]; then
         check_classes=$(jq -cs '.[0].failed += .[1].failed | .[0]' <<<"$check_classes
 $run_confirmation")

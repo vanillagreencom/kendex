@@ -82,6 +82,7 @@ case "${1:-}" in
     # runs. Record the query when asked so tests can prove head-sha scoping.
     if [[ "${2:-}" == repos/*/actions/runs* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      : > "$STUB_PR_CHECKS_COUNT_FILE.actions-read"
       if [[ -n "${STUB_ACTIONS_RUNS_QUERY_FILE:-}" ]]; then
         printf '%s' "$2" > "$STUB_ACTIONS_RUNS_QUERY_FILE"
       fi
@@ -97,6 +98,12 @@ case "${1:-}" in
         [[ "$arg" != --slurp ]] || slurp=true
       done
       fixture="${STUB_ACTIONS_RUNS_FIXTURE:-}"
+      if [[ -n "${STUB_HEAD_DURING_ACTIONS:-}" ]]; then
+        : > "$STUB_PR_CHECKS_COUNT_FILE.actions-pushed"
+        if [[ "$2" == *"head_sha=$STUB_HEAD_DURING_ACTIONS&"* && -n "${STUB_ACTIONS_NEXT_HEAD_FIXTURE:-}" ]]; then
+          fixture="$STUB_ACTIONS_NEXT_HEAD_FIXTURE"
+        fi
+      fi
       if [[ -n "${STUB_ACTIONS_RUNS_RELEASE_AFTER:-}" ]] && [[ "$(cat "$STUB_PR_CHECKS_COUNT_FILE")" -gt "$STUB_ACTIONS_RUNS_RELEASE_AFTER" ]]; then
         fixture="$STUB_ACTIONS_RUNS_RELEASE_FIXTURE"
       fi
@@ -168,12 +175,20 @@ case "${1:-}" in
       # as GitHub does when a push lands while a waiter remains active.
       for _a in "$@"; do
         if [[ "$_a" == "headRefOid" ]]; then
+          if [[ "${STUB_HEAD_AFTER_ACTIONS_EXIT:-0}" != 0 && -f "$STUB_PR_CHECKS_COUNT_FILE.actions-read" ]]; then
+            printf 'HTTP 403: Resource not accessible by integration\n' >&2
+            exit "$STUB_HEAD_AFTER_ACTIONS_EXIT"
+          fi
           if [[ "${STUB_HEAD_EXIT:-0}" != 0 ]]; then
             printf 'HTTP 403: Resource not accessible by integration\n' >&2
             exit "$STUB_HEAD_EXIT"
           fi
           if [[ -n "${STUB_HEAD_DURING_CHECKS:-}" && -f "$STUB_PR_CHECKS_COUNT_FILE.pushed" ]]; then
             echo "$STUB_HEAD_DURING_CHECKS"
+            exit 0
+          fi
+          if [[ -n "${STUB_HEAD_DURING_ACTIONS:-}" && -f "$STUB_PR_CHECKS_COUNT_FILE.actions-pushed" ]]; then
+            echo "$STUB_HEAD_DURING_ACTIONS"
             exit 0
           fi
           if [[ -n "${STUB_NEXT_HEAD_SHA:-}" ]] && [[ "$(cat "$STUB_CLOCK")" -ge "$((STUB_RUN_STARTED + 30))" ]]; then
@@ -194,6 +209,10 @@ case "${1:-}" in
     if [[ "${2:-}" == "checks" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       [[ -z "${STUB_HEAD_DURING_CHECKS:-}" ]] || : > "$STUB_PR_CHECKS_COUNT_FILE.pushed"
+      if [[ -n "${STUB_CHECKS_AFTER_ACTIONS_FIXTURE:-}" && -f "$STUB_PR_CHECKS_COUNT_FILE.actions-read" ]]; then
+        cat "$STUB_CHECKS_AFTER_ACTIONS_FIXTURE"
+        exit 0
+      fi
       if [[ -n "${STUB_PR_CHECKS_FIXTURE:-}" ]]; then
         cat "$STUB_PR_CHECKS_FIXTURE"
         exit "${STUB_PR_CHECKS_EXIT:-0}"
@@ -672,7 +691,7 @@ table "$JSON" \
   "same-head progress still completes immediately|||STUB_PR_CHECKS_SEQUENCE=pending:green|rc=0 status=complete verdict=pass elapsed_seconds=30" \
   "a push during the check request discards the unbound snapshot|||STUB_PR_CHECKS_SEQUENCE=green,STUB_HEAD_DURING_CHECKS=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=120" \
   "a known required build passes while optional docs is active||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=0 status=complete verdict=pass check.build=SUCCESS check.docs=absent check.current-head+Actions=absent pending=0 rollup.build=true rollup.docs=false elapsed_seconds=90" \
-  "a known required build still needs a readable head||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1|rc=1 status=timeout verdict=pending check.build=SUCCESS check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403" \
+  "a known required build still needs a readable head||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1|rc=1 status=timeout verdict=pending check.build=absent check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403" \
   "an unreadable required set keeps the Actions hold||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_REQUIRED_READ_EXIT=1,$OPTIONAL|rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=EXPECTED runs_head=$NEXT_HEAD elapsed_seconds=300" \
   "a missing required build stays pending with only the request check visible||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,$REQUEST,$OPTIONAL|rc=1 status=timeout verdict=pending check.build+(missing)=EXPECTED check.request=absent" \
   "a failed Actions read with a green-looking response stays pending|||$REQUEST,STUB_ACTIONS_RUNS_EXIT=1|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED stderr~ci-wait:+actions-read-failed=true lookup_http_status=403" \
@@ -692,6 +711,19 @@ table "$JSON" \
   "a later skipped dispatch cannot erase a substantive failure|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-skipped.json|rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE" \
   "a successful rerun with the older run id replaces the failed newer dispatch|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json|rc=0 status=complete verdict=pass failed=0 elapsed_seconds=90" \
   "a failed latest rerun stays terminal|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 status=complete verdict=fail check.Actions+run+29662588017=FAILURE"
+
+echo "=== Actions confirmation discards a moved or unreadable head ==="
+# Acknowledgements in the gh stub place a remote push, or a failed head read,
+# inside the Actions request. The response still belongs to the prior head.
+ACTION_PUSH="STUB_HEAD_DURING_ACTIONS=$NEXT_HEAD,STUB_ACTIONS_NEXT_HEAD_FIXTURE=$FX/runs-request-only-active.json"
+FAILED_ROLLUP="STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-failure.json,STUB_CHECKS_AFTER_ACTIONS_FIXTURE=$FX/request-only-checks.json"
+table "$JSON" \
+  "a push during green Actions confirmation cannot pass old-head progress|||STUB_PR_CHECKS_SEQUENCE=pending:green,$ACTION_PUSH|rc=1 status=timeout verdict=pending failed=0 check.current-head+Actions=EXPECTED elapsed_seconds=300 runs_head=$NEXT_HEAD" \
+  "a push during failed Actions confirmation cannot end on the old failure|||$FAILED_ROLLUP,$ACTION_PUSH|rc=1 status=timeout verdict=pending failed=0 check.current-head+Actions=EXPECTED elapsed_seconds=300 runs_head=$NEXT_HEAD" \
+  "a push during green Actions failure lookup cannot end on that old failure|||STUB_PR_CHECKS_SEQUENCE=request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-failed.json,$ACTION_PUSH|rc=1 status=timeout verdict=pending failed=0 check.current-head+Actions=EXPECTED elapsed_seconds=300" \
+  "unreadable post-Actions head discards green progress and the rollup|||STUB_PR_CHECKS_SEQUENCE=pending:green,STUB_HEAD_AFTER_ACTIONS_EXIT=1|rc=1 status=timeout verdict=pending failed=0 passed=0 pending=1 check.current-head+Actions=EXPECTED elapsed_seconds=300 lookup_http_status=403" \
+  "unreadable post-Actions head discards a failed rollup|||$FAILED_ROLLUP,STUB_HEAD_AFTER_ACTIONS_EXIT=1|rc=1 status=timeout verdict=pending failed=0 passed=0 pending=1 check.current-head+Actions=EXPECTED elapsed_seconds=300 lookup_http_status=403" \
+  "a completed new head needs its own confirmation after an Actions push|||STUB_PR_CHECKS_SEQUENCE=pending:green,STUB_HEAD_DURING_ACTIONS=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=150"
 
 echo "=== every Actions page must finish before a green rollup passes ==="
 # GitHub returns at most 100 runs per page and caps head_sha searches at
@@ -769,7 +801,11 @@ control_rows=(
   "rerun activity~max_by([(.updated_at // \"\"), .id]))) as \$latest~max_by(.id))) as \$latest~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json~rc=0 verdict=pass elapsed_seconds=90"
   "failed rerun identity~(map(select(.conclusion != \"skipped\"))) as \$substantive~(map(select(.conclusion != \"skipped\" and (((.run_attempt // 1) > 1 and .conclusion == \"failure\") | not)))) as \$substantive~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json~rc=1 status=complete verdict=fail check.Actions+run+29662588017=FAILURE~~rc=1 status=complete verdict=fail check.Actions+run+29662812172=CANCELLED check.Actions+run+29662588017=absent"
   "separate workflow outcomes~group_by(.workflow_id)~group_by(null)~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-other-workflow-success.json~rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE~~rc=0 status=complete verdict=pass failed=0"
-  "required head binding~if [ -z \"\$checks_head\" ] || ! \$REQUIRED_ONLY || [ \"\$REQUIRED_CONTEXTS\" = '[]' ]; then~if ! \$REQUIRED_ONLY || [ \"\$REQUIRED_CONTEXTS\" = '[]' ]; then~STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1~rc=1 status=timeout verdict=pending check.build=SUCCESS check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403~$JSON --required-only~rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=absent pending=0"
+  "required head binding~if [ -z \"\$checks_head\" ] || ! \$REQUIRED_ONLY || [ \"\$REQUIRED_CONTEXTS\" = '[]' ]; then~if ! \$REQUIRED_ONLY || [ \"\$REQUIRED_CONTEXTS\" = '[]' ]; then~STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1~rc=1 status=timeout verdict=pending check.build=absent check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403~$JSON --required-only~rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=absent pending=0"
+  "green Actions push~[ \"\$after_actions_head\" != \"\$checks_head\" ]~false~STUB_PR_CHECKS_SEQUENCE=pending:green,$ACTION_PUSH~rc=1 status=timeout verdict=pending failed=0 check.current-head+Actions=EXPECTED elapsed_seconds=300~~rc=0 status=complete verdict=pass elapsed_seconds=30"
+  "failed Actions push~[ \"\$after_actions_head\" != \"\$checks_head\" ]~false~$FAILED_ROLLUP,$ACTION_PUSH~rc=1 status=timeout verdict=pending failed=0 check.current-head+Actions=EXPECTED elapsed_seconds=300~~rc=1 status=complete verdict=fail elapsed_seconds=0"
+  "unreadable green Actions head~after_actions_head=\$(read_checks_head) || after_actions_head=\"\"~after_actions_head=\$(read_checks_head) || after_actions_head=\"\$checks_head\"~STUB_PR_CHECKS_SEQUENCE=pending:green,STUB_HEAD_AFTER_ACTIONS_EXIT=1~rc=1 status=timeout verdict=pending failed=0 passed=0 pending=1 check.current-head+Actions=EXPECTED elapsed_seconds=300~~rc=0 status=complete verdict=pass elapsed_seconds=30"
+  "unreadable failed Actions head~after_actions_head=\$(read_checks_head) || after_actions_head=\"\"~after_actions_head=\$(read_checks_head) || after_actions_head=\"\$checks_head\"~$FAILED_ROLLUP,STUB_HEAD_AFTER_ACTIONS_EXIT=1~rc=1 status=timeout verdict=pending failed=0 passed=0 pending=1 check.current-head+Actions=EXPECTED elapsed_seconds=300~~rc=1 status=complete verdict=fail elapsed_seconds=0"
 )
 for row in "${control_rows[@]}"; do
   IFS='~' read -r label match replacement env expect args mutant_expect <<<"$row"
