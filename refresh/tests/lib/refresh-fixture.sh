@@ -177,12 +177,12 @@ reset_default() {
 
 # Assert the runner's publication record, body data and arm together. The arm
 # names the rolling head the remote holds and no disable follows it.
-refresh_class_matches() { # CLASS STATE REASON METHOD
+refresh_class_matches() { # CLASS STATE REASON METHOD [MEASURED]
   local head
   head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
   [ "$RC" -eq 0 ] &&
     grep -qxF -- "refresh-state=$2 pr=1 class=$1" <<<"$OUT" &&
-    grep -qxF -- "class: class=$1 measured=true $3" "$TMP/state/body" &&
+    grep -qxF -- "class: class=$1 measured=${5:-true} $3" "$TMP/state/body" &&
     grep -qF -- "api --method $4 repos/acme/test/pulls" "$TMP/state/calls" &&
     grep -qxF -- "pr merge 1 --repo acme/test --auto --squash --match-head-commit $head" "$TMP/state/calls" &&
     ! grep -qF -- '--disable-auto' "$TMP/state/calls" &&

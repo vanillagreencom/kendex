@@ -286,6 +286,10 @@ fi
 # The real classifier prints a queue-only line on every verdict, ahead of the
 # class line; a row's setting notes replace the clean one.
 printf '%s\n' "${TEST_CLASS_NOTES:-queue-only: queue_only=false cause=no-queue-path}" >&2
+if [ "$TEST_CLASS" = missing-line ]; then
+  printf 'change_class=standard\n'
+  exit 0
+fi
 printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
@@ -884,17 +888,67 @@ for row in \
     ok "$class $mode publishes its class and cause and arms its head"
   else bad "$class $mode class publication" "$OUT"; fi
 done
-# change-class prints removed dependency names in render-path-unowned paths.
-# A name accepted by kendex can contain text that resembles protocol fields.
+# A standard fallback publishes with full review and CI, including when the
+# rolling pull request already exists. Restore the old refusal as its control.
+reset_default
+cp "$runner" "$TMP/class-runner"
 for row in \
-  'fallback|false|0|cause=paths-unread' \
-  'false-marker|false|0|cause=render-path-unowned path=.claude/skills/helper measured=true extra/SKILL.md' \
-  'call-failed|true|2|cause=paths-unread'; do
-  IFS='|' read -r name MEASURED CLASS_EXIT CLASS_REASON <<<"$row"
+  'open|none|cause=paths-unread' \
+  'update|none|cause=render-path-unowned path=.github/copilot-instructions.md' \
+  'update|old-refusal|cause=paths-unread'; do
+  IFS='|' read -r mode mutation CLASS_REASON <<<"$row"
+  reset_default
+  cp "$TMP/class-runner" "$runner"
+  if [ "$mutation" = old-refusal ]; then
+    python3 - "$runner" <<'OLD_CLASS_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '''    { [[ "$class_line" != "class: class=$class measured=true "* ]] &&
+      { [ "$class" != standard ] || [[ "$class_line" != "class: class=standard measured=false "* ]]; }; }'''
+assert s.count(old) == 1
+changed = '# ' + old.replace('\n', '\n# ') + '\n' + s.replace(old, '    [[ "$class_line" != "class: class=$class measured=true "* ]]')
+assert changed != s
+p.write_text(changed)
+OLD_CLASS_CONTROL
+  fi
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  method=PATCH
+  if [ "$mode" = open ]; then : >"$TMP/state/pr"; method=POST; fi
+  : >"$TMP/state/calls"
+  MEASURED=false; CLASS_EXIT=0
+  run_refresh "fallback-$mode-$mutation" pass standard
+  if [ "$mutation" = none ]; then
+    published="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    if refresh_class_matches standard pushed "$CLASS_REASON" "$method" false &&
+        [ "$published" != "$before" ] &&
+        [ "$(git --git-dir="$TMP/remote" show "$published:rendered.txt")" = "fallback-$mode-$mutation" ]; then
+      ok "an unmeasured standard $mode publishes its renders and class"
+    else bad "unmeasured standard $mode publication" "$OUT"; fi
+  elif refresh_stopped_at_class "$before" &&
+      ! refresh_class_matches standard pushed "$CLASS_REASON" "$method" false; then
+    ok 'control: the old measurement refusal stops standard publication'
+  else bad 'old measurement refusal control' "$OUT"; fi
+done
+reset_default
+cp "$TMP/class-runner" "$runner"
+commit "$repo"
+git -C "$repo" push -q origin main
+# A name accepted by kendex can contain text that resembles protocol fields.
+# Only the leading measured field can authorize a narrower class.
+for row in \
+  'unmeasured-render|render|false|0|cause=paths-unread' \
+  'false-marker|render|false|0|cause=render-path-unowned path=.claude/skills/helper measured=true extra/SKILL.md' \
+  'call-failed|standard|true|2|cause=paths-unread' \
+  'missing-line|missing-line|true|0|cause=paths-unread'; do
+  IFS='|' read -r name class MEASURED CLASS_EXIT CLASS_REASON <<<"$row"
   reset_default
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
   : >"$TMP/state/calls"
-  run_refresh "$name" pass standard
+  run_refresh "$name" pass "$class"
   if refresh_stopped_at_class "$before"; then ok "$name stops before publication"; else bad "$name class stop" "$OUT"; fi
 done
 # Each class rule has a control on a disposable runner. Keeping the matched
@@ -928,7 +982,9 @@ CLASS_CONTROL
   esac
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
   : >"$TMP/state/calls"
-  run_refresh "control-$mutation" pass standard
+  class=standard
+  [ "$mutation" != measured ] || class=render
+  run_refresh "control-$mutation" pass "$class"
   if [ "$mutation" = disable ]; then
     if [ "$RC" -eq 1 ] && grep -qF 'refresh-error=arm-state pr=1 ' <<<"$OUT" &&
         grep -qxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" &&
@@ -936,7 +992,7 @@ CLASS_CONTROL
       ok 'control: a disabled standard class turns its arm assertion red'
     else bad 'standard disable control' "$OUT"; fi
   else
-    if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" && ! refresh_stopped_at_class "$before"; then
+    if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" && ! refresh_stopped_at_class "$before"; then
       ok "control: $mutation bypass breaks the class stop assertion"
     else bad "$mutation class stop control" "$OUT"; fi
   fi
@@ -962,28 +1018,19 @@ for row in \
   'clean|none' \
   'clean|original' \
   'verify-not-clean|none' \
-  'verify-not-clean|drop-measured' \
-  'paths-unread|none' \
-  'paths-unread|drop-measured'; do
+  'paths-unread|none'; do
   IFS='|' read -r proof control <<<"$row"
   cp "$TMP/class-proof-script" "$repo/.agents/skills/harness-ci/scripts/change-class"
   cp "$TMP/class-runner" "$runner"
   if [ "$control" != none ]; then
-    python3 - "$repo/.agents/skills/harness-ci/scripts/change-class" "$runner" "$control" <<'PROOF_CONTROL'
+    python3 - "$repo/.agents/skills/harness-ci/scripts/change-class" <<'PROOF_CONTROL'
 from pathlib import Path
 import sys
-if sys.argv[3] == 'original':
-    p = Path(sys.argv[1]).resolve()
-    text = p.read_text()
-    old = '; RENDER_MEASURED=measured'
-    assert text.count(old) == 3
-    changed = text.replace(old, '')
-else:
-    p = Path(sys.argv[2]).resolve()
-    text = p.read_text()
-    old = ' || [[ "$class_line" != "class: class=$class measured=true "* ]]'
-    assert text.count(old) == 1
-    changed = '# ' + old + '\n' + text.replace(old, '')
+p = Path(sys.argv[1]).resolve()
+text = p.read_text()
+old = '; RENDER_MEASURED=measured'
+assert text.count(old) == 3
+changed = text.replace(old, '')
 assert changed != text
 p.write_text(changed)
 PROOF_CONTROL
@@ -994,39 +1041,25 @@ PROOF_CONTROL
   printf '%s\n' "$proof" >"$TMP/state/classifier-proof"
   : >"$TMP/state/calls"
   run_refresh "proof-$proof-$control" pass standard
+  expected_measured=true
+  CLASS_REASON='cause=render-path-unowned path=.github/copilot-instructions.md'
   case "$proof:$control" in
-    clean:none)
-      CLASS_REASON='cause=render-path-unowned path=.github/copilot-instructions.md'
-      published="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
-      if refresh_class_matches standard pushed "$CLASS_REASON" PATCH &&
-          [ "$published" != "$before" ] &&
-          git --git-dir="$TMP/remote" show "$published:.kendex-generated.json" |
-            jq -e 'index(".agents/skills/probe/SKILL.md") != null' >/dev/null &&
-          [ "$(git --git-dir="$TMP/remote" show "$published:.github/copilot-instructions.md")" = 'refreshed bot instructions' ]; then
-        ok 'a gained render and unowned bot output publish standard with the real classifier'
-      else bad 'real classifier refresh publication' "$OUT"; fi ;;
-    clean:original)
-      if refresh_stopped_at_class "$before" &&
-          grep -qxF 'class: class=standard measured=false cause=render-path-unowned path=.github/copilot-instructions.md' <<<"$OUT"; then
-        ok 'control: the original classifier stops the same refresh before publication'
-      else bad 'original classifier control' "$OUT"; fi ;;
-    *:none)
-      if refresh_stopped_at_class "$before" &&
-          grep -q "^class: class=standard measured=false " <<<"$OUT" &&
-          ! grep -qxF 'git push' "$TMP/state/calls"; then
-        case "$proof" in
-          verify-not-clean) evidence='class: class=standard measured=false cause=verify-not-clean checked=3 failed=1' ;;
-          paths-unread) evidence='queue-only: queue_only=true cause=paths-unread' ;;
-        esac
-        if grep -qxF "$evidence" <<<"$OUT"; then ok "$proof stops publication with the real classifier";
-        else bad "$proof read failure not reached" "$OUT"; fi
-      else bad "$proof real classifier stop" "$OUT"; fi ;;
-    *:drop-measured)
-      if [ "$RC" -eq 0 ] && ! refresh_stopped_at_class "$before" &&
-          grep -qxF 'git push' "$TMP/state/calls"; then
-        ok "control: dropping measured admits $proof and turns its stop assertion red"
-      else bad "$proof measured condition control" "$OUT"; fi ;;
+    clean:original) expected_measured=false ;;
+    verify-not-clean:*) expected_measured=false; CLASS_REASON='cause=verify-not-clean checked=3 failed=1' ;;
+    paths-unread:*) expected_measured=false ;;
   esac
+  published="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  if [ "$proof" = paths-unread ]; then
+    proof_base="$(git -C "$repo" rev-parse main)"
+    CLASS_REASON="cause=unreadable-diff range=$proof_base...$published"
+  fi
+  if refresh_class_matches standard pushed "$CLASS_REASON" PATCH "$expected_measured" &&
+      [ "$published" != "$before" ] &&
+      git --git-dir="$TMP/remote" show "$published:.kendex-generated.json" |
+        jq -e 'index(".agents/skills/probe/SKILL.md") != null' >/dev/null &&
+      [ "$(git --git-dir="$TMP/remote" show "$published:.github/copilot-instructions.md")" = 'refreshed bot instructions' ]; then
+    ok "$proof $control publishes standard with the real classifier"
+  else bad "$proof $control real classifier publication" "$OUT"; fi
   reset_default
 done
 # A checked-in classifier can refuse the very refresh that would replace it.
