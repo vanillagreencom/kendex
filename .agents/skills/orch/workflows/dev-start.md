@@ -149,7 +149,7 @@ Handoff from prior agents:
 
 ### Store Stage Start
 
-The implement and fix delegation paths run this write after their delegation stamp. `[KIND]` is `implement` or `fix`. A repeated write keeps the entry already recorded for this round.
+The implement and fix delegation paths run this write after their delegation stamp. `[KIND]` is `implement` or `fix`. A replacement round appends its own entry and leaves the interrupted round unchanged. A repeated write keeps the entry already recorded for this round.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg kind [KIND] '.dev_round_id as $round | if any(.stages[]?; .round_id == $round) then . else .stages = ((.stages // []) + [{kind: $kind, round_id: $round, start: .dev_delegated_at, end: null}]) end'
@@ -200,7 +200,7 @@ Each Store subsection below runs whatever the one before it did. `status: no_pr`
 
 ### Store Stage End
 
-The accepting workflow runs this write for the stage's `[STAGE_ROUND_ID]`. A repeated acceptance keeps the first end time. A stage that stops before acceptance keeps `end: null`.
+The dev workflow runs this write on acceptance for the stage's `[STAGE_ROUND_ID]`. The review workflow runs it when all stage members resolve under [review-pr.md § 3](review-pr.md#3-collect-results). A repeated write keeps the first end time. A stage interrupted before its closure point keeps `end: null`.
 
 ```bash
 .agents/skills/orch/scripts/git-context timestamp epoch
