@@ -477,6 +477,92 @@ fn a_plan_reuses_a_crlf_source_hash_across_harnesses() {
 }
 
 #[test]
+fn overlapping_catalog_roots_keep_distinct_skill_identities() {
+    use crate::engine::{DriftState, PlanOptions, plan_scope};
+    use crate::env::{Env, FakeOs};
+    use crate::model::Scope;
+
+    // Path sources can expose one directory as a namespaced catalog skill
+    // and as a discovered root skill. Only the root view prunes build output.
+    for excluded in ["target", "dist", "build"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::test_util::rooted(&tmp);
+        let catalog = root.join("catalog");
+        let inner = catalog.join("skills/plugin/inner");
+        let project = root.join("project");
+        std::fs::create_dir_all(inner.join(excluded)).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(catalog.join("kendex.toml"), "schema = 6\n").unwrap();
+        std::fs::write(
+            inner.join("SKILL.md"),
+            "---\nname: inner\ndescription: fixture\n---\nDo the work.\n",
+        )
+        .unwrap();
+        std::fs::write(inner.join(excluded).join("output.txt"), "Build output.\n").unwrap();
+        let manifest: Manifest = toml::from_str(&format!(
+            "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\
+             [sources.parent]\n{}\n[sources.nested]\n{}\n\
+             [skills.\"plugin/inner\"]\nsource = \"parent\"\n\
+             [skills.inner]\nsource = \"nested\"\n",
+            crate::test_util::source_path(&catalog),
+            crate::test_util::source_path(&inner),
+        ))
+        .unwrap();
+        let env = Env::fake(root.join("home"), FakeOs::Linux);
+        let scope = Scope::Project { root: project };
+        let installed = plan_scope(
+            &env,
+            &scope,
+            &manifest,
+            &crate::lock::Lock::default(),
+            &PlanOptions::current(),
+        )
+        .unwrap();
+        assert!(installed.refused.is_empty());
+        let entry = |name: &str| {
+            installed
+                .record
+                .entries
+                .values()
+                .find(|entry| entry.kind == ItemKind::Skill && entry.name == name)
+                .unwrap()
+        };
+        assert_ne!(
+            entry("plugin/inner").source_hash,
+            entry("inner").source_hash
+        );
+        crate::apply::execute(&env, &installed.plan).unwrap();
+
+        for (removed, retained) in [("inner", "plugin/inner"), ("plugin/inner", "inner")] {
+            let mut remaining = manifest.clone();
+            remaining.skills.remove(removed).unwrap();
+            let report = plan_scope(
+                &env,
+                &scope,
+                &remaining,
+                &installed.record,
+                &PlanOptions::current(),
+            )
+            .unwrap();
+            assert!(report.refused.is_empty());
+            let unchanged = report
+                .record
+                .entries
+                .values()
+                .find(|entry| entry.kind == ItemKind::Skill && entry.name == retained)
+                .unwrap();
+            assert_eq!(unchanged.source_hash, entry(retained).source_hash);
+            assert_eq!(unchanged.rendered_hash, entry(retained).rendered_hash);
+            assert!(!report.drift.iter().any(|row| {
+                row.kind == ItemKind::Skill
+                    && row.name == retained
+                    && row.state == DriftState::Stale
+            }));
+        }
+    }
+}
+
+#[test]
 fn editing_a_shared_key_invalidates_dependents() {
     let tmp = tempfile::tempdir().unwrap();
     let skill = tmp.path().join("skill");

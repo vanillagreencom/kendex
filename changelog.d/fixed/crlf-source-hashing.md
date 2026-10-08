@@ -1,1 +1,1 @@
-- Catalogs with CRLF line endings reuse one source hash across AI tools and read Git line-ending metadata once per source tree during planning.
+- Catalogs with CRLF line endings reuse one source hash across AI tools and read Git line-ending metadata once per source tree during planning. Overlapping catalogs keep separate source identities.

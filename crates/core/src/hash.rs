@@ -565,7 +565,7 @@ pub fn installation_hash(
 /// outside this cache.
 #[derive(Default)]
 pub(crate) struct SourceHashes {
-    hashes: RefCell<BTreeMap<(ItemKind, PathBuf), String>>,
+    hashes: RefCell<BTreeMap<(ItemKind, PathBuf, PathBuf), String>>,
 }
 
 impl SourceHashes {
@@ -576,7 +576,9 @@ impl SourceHashes {
         kind: ItemKind,
     ) -> Result<String> {
         let mut hashes = self.hashes.borrow_mut();
-        let key = (kind, source_tree.to_owned());
+        // A skill at the catalog root excludes files that a nested skill
+        // carries, even when both declarations name the same directory.
+        let key = (kind, sealed.root().to_owned(), source_tree.to_owned());
         let hash = match hashes.entry(key) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
