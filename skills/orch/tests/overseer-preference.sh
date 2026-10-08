@@ -60,14 +60,19 @@ claude@:opus:high|lane|1|0|||claude@:opus:high|claude@:opus:high
 claude@cloud@local:opus:high|lane|1|0|||claude@cloud@local:opus:high|claude@cloud@local:opus:high
 claude@cloud;exec:opus:high|lane|1|0|||claude@cloud;exec:opus:high|claude@cloud;exec:opus:high
 ROWS
-MUTANT="$(mutant_scripts host-grammar lib/overseer-launch.sh)"
-mutate_file "$MUTANT/lib/overseer-launch.sh" '! "$host" =~ ^[a-zA-Z0-9_./~-]+$' 'false'
-OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" 'claude@:opus:high' other lane 2>"$TMP_ROOT/err")"
-assert_eq "$OUT" '0|1|claude:opus:high|||' 'control: removing host validation admits the empty host'
-MUTANT="$(mutant_scripts overseer-host-refusal lib/overseer-launch.sh)"
-mutate_file "$MUTANT/lib/overseer-launch.sh" '"${2:-}" != lane ||' 'false ||'
-OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" 'claude@claude-cloud:opus:high' other 2>"$TMP_ROOT/err")"
-assert_eq "$OUT" '0|1|claude@claude-cloud:opus:high|||' 'control: removing the lane-only check admits an overseer host'
+# A bare word such as false is true inside [[ ... ]]. Each control keeps its
+# original condition but makes only that condition false.
+while IFS='|' read -r mutation preference mode old admitted; do
+  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  assert_eq "$OUT" "1|0|||$preference|$preference" "control baseline: $mutation refuses $preference"
+  MUTANT="$(mutant_scripts "$mutation" lib/overseer-launch.sh)"
+  mutate_file "$MUTANT/lib/overseer-launch.sh" "$old" "( 0 == 1 && $old )"
+  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  assert_eq "$OUT" "0|1|$admitted|||" "control: $mutation admits $preference"
+done <<'ROWS'
+host-grammar|claude@:opus:high|lane|! "$host" =~ ^[a-zA-Z0-9_./~-]+$|claude:opus:high
+overseer-host-refusal|claude@claude-cloud:opus:high||"${2:-}" != lane|claude@claude-cloud:opus:high
+ROWS
 for mutation in refusal model warning; do
   MUTANT="$(mutant_scripts "$mutation" lib/overseer-launch.sh)"
   case "$mutation" in

@@ -597,8 +597,8 @@ tm kill-window -t "$(recorded window)"
 # opens nothing.
 COPILOTFIRSTCTL="$(mutant_scripts copilotfirstctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$COPILOTFIRSTCTL/lib/overseer-launch.sh" \
-  '    elif ! [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
-  '    elif ! [[ "$entry" =~ ^(claude|codex):[a-z][a-z0-9.-]*:[a-z]+$ \'
+  '    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
+  '    elif ! [[ "$parsed_entry" =~ ^(claude|codex):[a-z][a-z0-9.-]*:[a-z]+$ \'
 copilot_first_row "$COPILOTFIRSTCTL/oversee"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|invalid-preference entry=copilot:gpt-5.3-codex:high|0" \
   "control: a preference parse naming no copilot refuses the copilot entry and opens nothing"

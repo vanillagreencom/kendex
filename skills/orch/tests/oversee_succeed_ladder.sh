@@ -260,8 +260,8 @@ done
 # entry, which then fails somewhere other than the parse.
 RANKCTL="$(mutant_scripts rankctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$RANKCTL/lib/overseer-launch.sh" \
-  '    elif ! [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
-  '    elif ! [[ "$entry" =~ ^(claude|codex|copilot):([0-9]+|[a-z][a-z0-9.-]*):[a-z]+$ \'
+  '    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
+  '    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):([0-9]+|[a-z][a-z0-9.-]*):[a-z]+$ \'
 new_caller
 SUCCEED_BIN="$RANKCTL/oversee-succeed" run_succeed rankctl 'claude:0:high'
 assert_eq "$(keyed invalid-preference)" "none" \
@@ -762,7 +762,7 @@ seat claude 10 99 99
 # Its control: a preference parse naming no pi refuses the entry.
 PIPARSECTL="$(mutant_scripts piparsectl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PIPARSECTL/lib/overseer-launch.sh" \
-  '       || "$entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]' '       ]]'
+  '       || "$parsed_entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]' '       ]]'
 new_pi_caller
 SUCCEED_BIN="$PIPARSECTL/oversee-succeed" run_succeed piparsectl 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
 assert_eq "$RC|$(first_key)|$(caller_open)|$(launched pi)" "1|invalid-preference|yes|none" \
