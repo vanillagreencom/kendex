@@ -211,20 +211,22 @@ stop: stdout stays empty and stderr says why.
                  Read committed policy with the caller's trusted settings reader, not PATH's code or private env.
                  Authentication stays with the caller's project.
   --request-review
-                 A kendex/refresh head from the lanes app answers
-                 fallback cause=refresh-identity and requests no Copilot review.
-                 resolve through --base-checkout each time. An off gate prints off
-                 and sends no request. An approval gate requests Copilot and prints
-                 approval, or prints a fallback line when no request went out
-                 (below). A resolution or PR_COPILOT_REQUESTS failure is nonzero
-                 and authorizes no wait or retry.
+                 Resolve through --base-checkout each time. An off gate prints
+                 off and sends no request. An approval gate requests Copilot and
+                 prints approval, or prints a fallback line when no request went
+                 out (below). A resolution or PR_COPILOT_REQUESTS failure is
+                 nonzero and authorizes no wait or retry.
                  Print a fallback line, exit 0, when an approval gate sends no
                  request, its first word fallback and then its cause:
+                   fallback cause=refresh-identity the exact kendex/refresh branch,
+                                                   lanes-app author and Bot type
                    fallback cause=off              PR_COPILOT_REQUESTS is off
                    fallback cause=refused exit=N   the request exited N, nonzero
                                                    (copilot-request-refused on stderr)
-                 The caller then asks the overseer for the head approval, naming
-                 the cause, and waits for no Copilot review.
+                 Route refresh-identity through references/copilot-head-notices.md
+                 section Consumer refresh approval. It requests no Copilot review.
+                 For other causes, ask the overseer for the head approval, naming
+                 the cause, and wait for no Copilot review.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -263,7 +265,8 @@ After a successful request or fallback, mail exits, timeouts and later waits
 on that head cannot issue another retry.
 After copilot-error, later waits wait for approval without repeating that result.
 Without --item the record lasts only for this invocation.
-Callers route copilot-error as copilot-fallback and wait for app approval.
+Callers route a refresh-identity copilot-error through Consumer refresh approval.
+Other copilot-error causes route as copilot-fallback and wait for app approval.
 
 Mode resolution requires --base-checkout; waits require --mode approval.
 Committed REVIEW_GATE_MODE=off prints off before native resolution; enforce (default) uses it.
@@ -370,7 +373,7 @@ JSON output (always when --json):
                                   # repo-unresolved, repo-shape
     "head_sha": <string>,         # head read by the poll
     "copilot_fallback_cause": <string>, # only for copilot-error: error, off,
-                                        # or refused exit=N
+                                        # refresh-identity, or refused exit=N
     "review_decision": <string>,  # raw reviewDecision ("" when unset)
     "approvals": <int>,           # reviewers whose latest review is APPROVED
     "changes_requested": <int>,   # reviewers at CHANGES_REQUESTED
