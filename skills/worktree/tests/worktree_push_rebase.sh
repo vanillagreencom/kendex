@@ -274,7 +274,7 @@ EOF
       ;;
     # A git whose trial merge cannot run: merge-tree exits 2, git's status
     # for a merge it could not attempt.
-    merge-tree-fails | patch-id-fails)
+    merge-tree-fails | diff-tree-fails)
       cat >"$ROOT/bin/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -404,6 +404,44 @@ step() {
         commit -q -m 'main: advanced elsewhere'
       git -C "$ROOT/other" push -q origin main
       ;;
+    repeated-base)
+      cat >"$MAIN/repeated.txt" <<'EOF'
+first block
+ctx1
+ctx2
+ctx3
+target=old
+ctx4
+ctx5
+ctx6
+separator
+second block
+ctx1
+ctx2
+ctx3
+target=old
+ctx4
+ctx5
+ctx6
+end
+EOF
+      git -C "$MAIN" add repeated.txt
+      git -C "$MAIN" commit -q -m 'base repeated blocks'
+      git -C "$MAIN" push -q origin main
+      git -C "$WT" merge --ff-only origin/main >/dev/null
+      ;;
+    repeated-fix)
+      sed '5s/old/new/' "$MAIN/repeated.txt" >"$WT/repeated.txt"
+      git -C "$WT" add repeated.txt
+      git -C "$WT" commit -q -m 'change first repeated block'
+      REMOTE_FILE=repeated.txt
+      ;;
+    same-file-base)
+      printf 'base appended\n' >>"$MAIN/repeated.txt"
+      git -C "$MAIN" add repeated.txt
+      git -C "$MAIN" commit -q -m 'base changes another line in the same file'
+      git -C "$MAIN" push -q origin main
+      ;;
     fix) commit_wt fix.txt fix ;;
     string-fix)
       commit_wt fix.txt 'message = "ab"'
@@ -496,12 +534,16 @@ step() {
       git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
       ;;
     # A collaborator amends the published string after the local bare rebase.
-    amend-string)
+    amend-string | amend-location)
       git clone -q -b "$ISSUE" "$ROOT/origin.git" "$ROOT/collaborator"
       git -C "$ROOT/collaborator" config gc.auto 0
       git -C "$ROOT/collaborator" config maintenance.auto false
-      printf 'message = "a b"\n' >"$ROOT/collaborator/fix.txt"
-      git -C "$ROOT/collaborator" add fix.txt
+      if [[ "$1" == amend-string ]]; then
+        printf 'message = "a b"\n' >"$ROOT/collaborator/fix.txt"
+      else
+        git -C "$ROOT/collaborator" show HEAD^:repeated.txt | sed '14s/old/new/' >"$ROOT/collaborator/repeated.txt"
+      fi
+      git -C "$ROOT/collaborator" add "$REMOTE_FILE"
       git -C "$ROOT/collaborator" -c user.email=test@example.com -c user.name=Test -c commit.gpgsign=false \
         commit -q --amend --no-edit
       git -C "$ROOT/collaborator" push -q --force-with-lease origin "$ISSUE"
@@ -513,7 +555,7 @@ step() {
     race-push) EXTERNAL="$(external_commit)"; git_shim race-push ;;
     record-push) git_shim record ;;
     merge-tree-fails) git_shim merge-tree-fails ;;
-    patch-id-fails) git_shim patch-id-fails ;;
+    diff-tree-fails) git_shim diff-tree-fails ;;
     base-fetch-fails) git_shim base-fetch-fails ;;
     index-unreadable-wt) git_shim index-unreadable-wt ;;
     index-unreadable-main) git_shim index-unreadable-main ;;
@@ -719,23 +761,23 @@ EOF
     # one that seeds an unread rules answer as a queue, one that reads a trial
     # merge that could not run as clean, and one whose record answers for any
     # branch, and one whose rules read keeps an inherited GH_REPO.
-    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo | unfixed-base-fetch | unfixed-rewrite-recovery | unfixed-rewrite-containment | unfixed-rewrite-lease | unfixed-patch-whitespace | unfixed-patch-coverage | unfixed-patch-unique)
+    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo | unfixed-base-fetch | unfixed-rewrite-recovery | unfixed-rewrite-containment | unfixed-rewrite-lease | unfixed-change-identity | unfixed-change-coverage | unfixed-change-unique)
       step standalone
       case "$1" in
-        unfixed-patch-whitespace)
+        unfixed-change-identity)
           mutant="$ROW_SCRIPT"
-          mutant_from='patch-id --verbatim'
-          mutant_to='patch-id --stable'
+          mutant_from='if (local[change] < 1) exit 1'
+          mutant_to='if (local[change] < 0) exit 1'
           ;;
-        unfixed-patch-coverage)
+        unfixed-change-coverage)
           mutant="$ROW_SCRIPT"
           mutant_from='covered[commit] != 1'
           mutant_to='covered[commit] < 0'
           ;;
-        unfixed-patch-unique)
+        unfixed-change-unique)
           mutant="$ROW_SCRIPT"
-          mutant_from='remote[patch] != 1 || local[patch] != 1'
-          mutant_to='local[patch] < 1'
+          mutant_from='remote[change] != 1 || local[change] > 1'
+          mutant_to='remote[change] < 0 || local[change] < 0'
           ;;
         unfixed-rewrite-recovery)
           mutant="$ROW_SCRIPT"
@@ -968,7 +1010,16 @@ state() {
     lock_state=" lock=$(sed -n '1p' "$WT/.kendex-lock.json"):$lock_clean"
   fi
   if [[ -n "$REMOTE_FILE" ]]; then
-    remote_content=" remote-content=$(git --git-dir="$ROOT/origin.git" show "refs/heads/$ISSUE:$REMOTE_FILE")"
+    if [[ "$REMOTE_FILE" == repeated.txt ]]; then
+      git --git-dir="$ROOT/origin.git" show "refs/heads/$ISSUE:$REMOTE_FILE" >"$ROOT/remote-file-after"
+      if cmp -s "$ROOT/remote-file-before" "$ROOT/remote-file-after"; then
+        remote_content=' remote-bytes=unchanged'
+      else
+        remote_content=' remote-bytes=changed'
+      fi
+    else
+      remote_content=" remote-content=$(git --git-dir="$ROOT/origin.git" show "refs/heads/$ISSUE:$REMOTE_FILE")"
+    fi
   fi
   printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s%s%s%s auth=%s map=%s' \
     "$(worktree_head)" "${ahead:--}" "${tree%,}" "${remotes:-,-}" \
@@ -979,6 +1030,9 @@ state() {
 # The command runs from the main checkout (or the row's directory) under the
 # row's PATH prefix and script; @wt names the worktree's path.
 run() {
+  if [[ "$REMOTE_FILE" == repeated.txt ]]; then
+    git --git-dir="$ROOT/origin.git" show "refs/heads/$ISSUE:$REMOTE_FILE" >"$ROOT/remote-file-before"
+  fi
   local -a argv
   local rc=0 i
   read -r -a argv <<<"$1"
@@ -1132,15 +1186,21 @@ a bare rebase of a pushed branch is republished under the observed lease|pair fi
 a bare rewrite also republishes when the base needs a further rebase|pair fix publish advance hand-rebase advance2 record-push|push TOPIC|0|republished-map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,main-advanced2.txt:advanced2 remote=origin:head upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map1
 must-fail: without rewrite recovery, the same pushed branch is refused|pair fix publish advance hand-rebase unfixed-rewrite-recovery|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
 a bare rebase cannot publish over remote work the branch lacks|pair fix publish advance hand-rebase move-remote observe record-push|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=- map=-
-must-fail: ignoring an uncomparable remote commit overwrites missing work|pair fix publish advance hand-rebase move-remote observe unfixed-patch-coverage|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
+must-fail: ignoring an uncomparable remote commit overwrites missing work|pair fix publish advance hand-rebase move-remote observe unfixed-change-coverage|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
 an amended string is remote work even when only whitespace differs|pair string-fix publish advance hand-rebase amend-string observe record-push|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:message = "ab",main-advanced.txt:advanced remote=origin:external upstream=origin push=- remote-content=message = "a b" auth=- map=-
-must-fail: stripping whitespace overwrites the amended remote string|pair string-fix publish advance hand-rebase amend-string observe unfixed-patch-whitespace|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:message = "ab",main-advanced.txt:advanced remote=origin:end upstream=origin push=- remote-content=message = "ab" auth=- map=-
-restack accepts an original head with a unique whitespace-preserving match|pair fix publish advance hand-rebase|original-authorized|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
+must-fail: ignoring changed-file identities overwrites the amended remote string|pair string-fix publish advance hand-rebase amend-string observe unfixed-change-identity|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:message = "ab",main-advanced.txt:advanced remote=origin:end upstream=origin push=- remote-content=message = "ab" auth=- map=-
+restack accepts an original head with a unique exact changed-file match|pair fix publish advance hand-rebase|original-authorized|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
 restack refuses an original head that lacks the amended remote string|pair string-fix publish advance hand-rebase amend-string observe|original-authorized|1|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:message = "ab",main-advanced.txt:advanced remote=origin:external upstream=origin push=- remote-content=message = "a b" auth=- map=-
-must-fail: stripping whitespace also authorizes the wrong restack original head|pair string-fix publish advance hand-rebase amend-string observe unfixed-patch-whitespace|original-authorized|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:message = "ab",main-advanced.txt:advanced remote=origin:external upstream=origin push=- remote-content=message = "a b" auth=- map=-
-repeated local patches cannot prove which commit holds remote work|pair fix publish advance hand-rebase repeat-fix|push TOPIC|1|-|not-contained|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
-must-fail: accepting duplicate matches publishes an ambiguous rewrite|pair fix publish advance hand-rebase repeat-fix unfixed-patch-unique|push TOPIC|0|republished|skip-rebase|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
-a failed patch comparison refuses before publication|pair fix publish advance hand-rebase patch-id-fails|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
+must-fail: ignoring changed-file identities also authorizes the wrong restack original head|pair string-fix publish advance hand-rebase amend-string observe unfixed-change-identity|original-authorized|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:message = "ab",main-advanced.txt:advanced remote=origin:external upstream=origin push=- remote-content=message = "a b" auth=- map=-
+repeated local changes cannot prove which commit holds remote work|pair fix publish advance hand-rebase repeat-fix|push TOPIC|1|-|not-contained|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
+must-fail: accepting duplicate matches publishes an ambiguous rewrite|pair fix publish advance hand-rebase repeat-fix unfixed-change-unique|push TOPIC|0|republished|skip-rebase|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
+a repeated-block edit republishes after an unrelated base update|pair repeated-base repeated-fix publish advance hand-rebase|push TOPIC|0|republished|skip-rebase|head=end ahead=1 tree=file.txt:orig,main-advanced.txt:advanced,repeated.txt:first block remote=origin:end upstream=origin push=- remote-bytes=unchanged auth=- map=-
+a moved edit in repeated blocks preserves all collaborator file bytes|pair repeated-base repeated-fix publish advance hand-rebase amend-location observe record-push|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,main-advanced.txt:advanced,repeated.txt:first block remote=origin:external upstream=origin push=- remote-bytes=unchanged auth=- map=-
+must-fail: ignoring changed-file identities overwrites the moved repeated-block edit|pair repeated-base repeated-fix publish advance hand-rebase amend-location observe unfixed-change-identity|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,main-advanced.txt:advanced,repeated.txt:first block remote=origin:end upstream=origin push=- remote-bytes=changed auth=- map=-
+restack refuses an original head with the edit in a different repeated block|pair repeated-base repeated-fix publish advance hand-rebase amend-location observe|original-authorized|1|-|-|head=end ahead=1 tree=file.txt:orig,main-advanced.txt:advanced,repeated.txt:first block remote=origin:external upstream=origin push=- remote-bytes=unchanged auth=- map=-
+must-fail: ignoring changed-file identities authorizes the moved edit for restack|pair repeated-base repeated-fix publish advance hand-rebase amend-location observe unfixed-change-identity|original-authorized|0|-|-|head=end ahead=1 tree=file.txt:orig,main-advanced.txt:advanced,repeated.txt:first block remote=origin:external upstream=origin push=- remote-bytes=unchanged auth=- map=-
+a same-file base update refuses an unproved bare rewrite|pair repeated-base repeated-fix publish same-file-base hand-rebase record-push|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,repeated.txt:first block remote=origin:published upstream=origin push=- remote-bytes=unchanged auth=- map=-
+a failed exact change comparison refuses before publication|pair fix publish advance hand-rebase diff-tree-fails|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
 must-fail: accepting every rewrite overwrites the remote work the branch lacks|pair fix publish advance hand-rebase move-remote observe unfixed-rewrite-containment|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
 a remote move after the rewrite check is refused by the pinned lease|pair fix publish advance hand-rebase race-push|push TOPIC|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=- map=-
 must-fail: an unpinned force push overwrites a move after the rewrite check|pair fix publish advance hand-rebase race-push unfixed-rewrite-lease|push TOPIC|0|republished|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-

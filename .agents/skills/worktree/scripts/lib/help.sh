@@ -592,8 +592,11 @@ A remote with work the local branch lacks is
 'worktree-push-remote-uncontained'. Fetch and integrate the remote branch
 before retrying 'worktree push'. For a base rewrite, use 'create <ID>
 --restack' or 'create <ID> --reuse', then 'push'. Where the branch already
-carries every remote commit under rewritten SHAs after a bare rebase, push
-republishes pinned to the remote OID it read. Success prints
+carries one exact local match for every remote commit after a bare rebase,
+push republishes pinned to the remote OID it read. The comparison includes
+changed paths, file modes and complete before/after file contents. A base
+update in the same file, missing changes, duplicate matches or a failed
+comparison keeps the refusal and the fetch-and-integrate route. Success prints
 'worktree-republished-after-rewrite: remote_oid=OID' on stdout. A remote
 that moves after that read is refused by the pinned lease. A rewrite push or
 guarded restack recorded but could not map is refused on that record before
