@@ -226,11 +226,20 @@ assert_eq 'control: alternates without promisor settings cannot check out the he
 # its own fetch and exact-pin comparison; no ownership operation is stubbed.
 release_catalog="$(new_repo released-caller)"
 mkdir -p "$release_catalog/skills/review-gate/templates"
-cp "$TEST_DIR/../../review-gate/templates/kendex-refresh.yml" \
+released_template="$SANDBOX/released-caller.yml"
+cp "$TEST_DIR/../../review-gate/templates/kendex-refresh.yml" "$released_template"
+cp "$released_template" \
   "$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
 git -C "$release_catalog" add -A
 git -C "$release_catalog" commit -q -m 'released refresh caller'
 git -C "$release_catalog" tag v1
+release_commit="$(git -C "$release_catalog" rev-parse v1)"
+# A version-shaped branch is not a release tag, even with matching bytes.
+sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v2|' "$released_template" \
+  >"$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
+git -C "$release_catalog" add -A
+git -C "$release_catalog" commit -q -m 'unreleased branch caller'
+git -C "$release_catalog" branch v2
 release_bin="$SANDBOX/release-bin"
 mkdir -p "$release_bin"
 real_git="$(command -v git)"
@@ -239,18 +248,22 @@ cat >"$release_bin/git" <<WRAPPER
 set -euo pipefail
 args=()
 for arg in "\$@"; do
+  [ "\$arg" != fetch ] || printf '%s\n' "\$*" >>'$SANDBOX/release-fetches'
   [ "\$arg" != https://github.com/vanillagreencom/kendex.git ] || arg='file://$release_catalog'
   args+=("\$arg")
 done
 exec '$real_git' "\${args[@]}"
 WRAPPER
 chmod +x "$release_bin/git"
-for variation in released byte-edited unreleased unavailable; do
+caller_rows=0
+while IFS='|' read -r label variation help_mode extra expected; do
+  caller_rows=$((caller_rows + 1))
   reset_case
   set_verifier clean
+  echo "$help_mode" >"$KENDEX_STUB_HELP"
+  : >"$SANDBOX/release-fetches"
   mkdir -p "$repo/.github/workflows"
-  cp "$release_catalog/skills/review-gate/templates/kendex-refresh.yml" \
-    "$repo/.github/workflows/kendex-refresh.yml"
+  cp "$released_template" "$repo/.github/workflows/kendex-refresh.yml"
   case "$variation" in
     byte-edited) printf '#' >>"$repo/.github/workflows/kendex-refresh.yml" ;;
     unreleased)
@@ -259,19 +272,95 @@ for variation in released byte-edited unreleased unavailable; do
       sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v999999|' \
         "$repo/.github/workflows/kendex-refresh.yml" >"$SANDBOX/unavailable-caller"
       mv "$SANDBOX/unavailable-caller" "$repo/.github/workflows/kendex-refresh.yml" ;;
+    branch-only | commit-pin)
+      pin=v2
+      [ "$variation" != commit-pin ] || pin="$release_commit"
+      sed "s|refresh-consumer.yml@v1$|refresh-consumer.yml@$pin|" "$released_template" \
+        >"$repo/.github/workflows/kendex-refresh.yml" ;;
   esac
+  if [ -n "$extra" ]; then
+    write_lines "$repo" "$extra" 4
+    # Legacy engine rows can own these paths without whole bot-output proof.
+    jq --arg path "$extra" '.rows += [{"kind":"skill","state":"ok",
+      "positions":[{"path":$path,"owns":"file"}]}]' \
+      "$KENDEX_STUB_LEDGER" >"$SANDBOX/mixed-ledger"
+    mv "$SANDBOX/mixed-ledger" "$KENDEX_STUB_LEDGER"
+  fi
   git -C "$repo" add -A
-  git -C "$repo" commit -q -m "adopted caller $variation"
+  git -C "$repo" commit -q -m "$label"
   caller_err="$(PATH="$release_bin:$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
     --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-  if [ "$variation" = released ]; then
+  assert_eq "$label classification" "class=$expected" \
+    "$(sed -n 's/^class: \(class=[^ ]*\).*/\1/p' <<<"$caller_err")"
+  if [ "$expected" = render ]; then
     want='class=render measured=true cause=renders-match-their-sources'
-  else
+    assert_eq "$label ownership" "$want" "$(sed -n 's/^class: //p' <<<"$caller_err")"
+  elif [ -z "$extra" ]; then
     want='class=standard measured=true cause=render-path-unowned path=.github/workflows/kendex-refresh.yml'
+    assert_eq "$label ownership refusal" "$want" "$(sed -n 's/^class: //p' <<<"$caller_err")"
   fi
-  assert_eq "adopted caller $variation has exact release ownership" "$want" \
-    "$(sed -n 's/^class: //p' <<<"$caller_err")"
-done
+  case "$variation" in
+    commit-pin)
+      commit_pin_head="$(git -C "$repo" rev-parse HEAD)"
+      assert_eq "$label grants no release fetch" '' "$(cat "$SANDBOX/release-fetches")" ;;
+    branch-only) branch_pin_head="$(git -C "$repo" rev-parse HEAD)" ;;
+  esac
+  if [ "$extra|$help_mode" = '.github/copilot-instructions.md|legacy' ]; then
+    mixed_legacy_head="$(git -C "$repo" rev-parse HEAD)"
+  fi
+done <<'CALLERS'
+adopted released caller|released|supported||render
+adopted released caller with legacy verifier|released|legacy||render
+byte-edited caller|byte-edited|supported||standard
+unpublished caller bytes|unreleased|supported||standard
+unavailable release|unavailable|supported||standard
+version-shaped branch without release tag|branch-only|supported||standard
+arbitrary commit pin|commit-pin|supported||standard
+caller and engine render with legacy verifier|released|legacy|.agents/skills/orch/SKILL.md|render
+caller and copilot output with legacy verifier|released|legacy|.github/copilot-instructions.md|standard
+caller and copilot output with supporting verifier|released|supported|.github/copilot-instructions.md|render
+caller and instruction output with legacy verifier|released|legacy|.github/instructions/kendex.instructions.md|standard
+caller and excluded workflow with legacy verifier|released|legacy|.github/workflows/ci.yml|standard
+caller and excluded workflow with supporting verifier|released|supported|.github/workflows/ci.yml|render
+CALLERS
+require_rows change-class-released-caller "$caller_rows"
+
+reset_case
+git -C "$repo" checkout -q --detach "$commit_pin_head"
+set_verifier clean
+: >"$SANDBOX/release-fetches"
+commit_pin_mutant="$(mutant commit-pin change-class \
+  '  grep -Eq '\''^v[0-9]+(\.[0-9]+){0,2}$'\'' <<<"$pin" || return 1' \
+  '  grep -Eq '\''^(v[0-9]+(\.[0-9]+){0,2}|[0-9a-f]{40})$'\'' <<<"$pin" || return 1')"
+PATH="$release_bin:$stub_bin:$PATH" "$commit_pin_mutant" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD >/dev/null 2>&1
+assert_eq 'must-fail: accepting a commit pin violates the no-fetch assertion' true \
+  "$([ -s "$SANDBOX/release-fetches" ] && echo true || echo false)"
+
+reset_case
+git -C "$repo" checkout -q --detach "$branch_pin_head"
+set_verifier clean
+branch_pin_mutant="$(mutant branch-pin change-class \
+  '      https://github.com/vanillagreencom/kendex.git "refs/tags/$pin" >>"$work/release-stderr" 2>&1 || {' \
+  '      https://github.com/vanillagreencom/kendex.git "$pin" >>"$work/release-stderr" 2>&1 || {')"
+PATH="$release_bin:$stub_bin:$PATH" CHANGE_CLASS="$branch_pin_mutant" assert_class \
+  'must-fail: an unqualified ref accepts an unreleased branch' render \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD
+
+reset_case
+git -C "$repo" checkout -q --detach "$mixed_legacy_head"
+set_verifier clean
+echo legacy >"$KENDEX_STUB_HELP"
+jq '.rows += [{"kind":"skill","state":"ok","positions":[
+  {"path":".github/copilot-instructions.md","owns":"file"}]}]' \
+  "$KENDEX_STUB_LEDGER" >"$SANDBOX/mixed-ledger"
+mv "$SANDBOX/mixed-ledger" "$KENDEX_STUB_LEDGER"
+mixed_mutant="$(mutant mixed-legacy change-class \
+  '    if [ "${1:-}" = narrow ] && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then' \
+  '    if false && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then')"
+PATH="$release_bin:$stub_bin:$PATH" CHANGE_CLASS="$mixed_mutant" assert_class \
+  'must-fail: the caller cannot lift another legacy exclusion' render \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # label | expected | verifier | file:lines pairs
 table_rows=0

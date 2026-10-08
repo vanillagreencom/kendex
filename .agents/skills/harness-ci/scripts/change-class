@@ -970,9 +970,9 @@ released_workflow_owned() { # PATH
   RENDER_WORKFLOW_CHECKED=true
   [ -f "$proof_tree/$1" ] && [ ! -L "$proof_tree/$1" ] || return 1
   pin="$(sed -n 's|^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@\([^[:space:]]*\)$|\1|p' "$proof_tree/$1")" || return 1
-  # The released caller uses a version tag; GitHub also supports an immutable
-  # commit pin. Neither form can turn the fetch's ref argument into an option.
-  grep -Eq '^(v[0-9]+(\.[0-9]+){0,2}|[0-9a-f]{40})$' <<<"$pin" || return 1
+  # Adoption ships version tags. A commit pin proves no release: the public
+  # repository also serves commits from pull requests.
+  grep -Eq '^v[0-9]+(\.[0-9]+){0,2}$' <<<"$pin" || return 1
   mkdir -p "$work/release-home" || return 1
   env -i PATH="$PATH" HOME="$work/release-home" SystemRoot="${SystemRoot:-}" \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
@@ -980,14 +980,14 @@ released_workflow_owned() { # PATH
   env -i PATH="$PATH" HOME="$work/release-home" SystemRoot="${SystemRoot:-}" \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
     git -C "$history" fetch -q --depth=1 --no-tags \
-      https://github.com/vanillagreencom/kendex.git "$pin" >>"$work/release-stderr" 2>&1 || {
+      https://github.com/vanillagreencom/kendex.git "refs/tags/$pin" >>"$work/release-stderr" 2>&1 || {
         cat "$work/release-stderr" >&2; return 1;
       }
   git -C "$history" show "FETCH_HEAD:$template" >"$work/release-template" \
     2>>"$work/release-stderr" || return 1
   cmp -s "$proof_tree/$1" "$work/release-template"
 }
-render_paths_covered() {
+render_paths_covered() { # [narrow]
   local path owns foreign position owned partial head_entry inventory_status owned_status retired=""
   if ! named_positions >"$work/render-named" 2>/dev/null; then
     RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
@@ -998,6 +998,17 @@ render_paths_covered() {
   printf 'render-coverage: named=%s\n' "$(grep -c '' "$work/render-named")" >&2
   while IFS= read -r path; do
     [ -n "$path" ] || continue
+    # Legacy verify can own engine positions, but cannot lift exclusions
+    # outside the inventory. Release equality owns only the adopted caller.
+    if [ "${1:-}" = narrow ] && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then
+      change_class_path "$path" narrow
+      if [ "$CHANGE_CLASS_PATH" = standard ]; then
+        released_workflow_owned "$path" && continue
+        render_refused_at "$path"
+        RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured
+        return 1
+      fi
+    fi
     if ! head_entry=$(git -C "$proof_tree" ls-tree --full-tree "$head_rev" -- "$path" 2>/dev/null); then
       RENDER_REFUSAL="cause=file-lookup-failed path=$path"
       return 1
@@ -1159,8 +1170,7 @@ if path_class_matches narrow standard; then
   narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"
   # Package outputs outside the engine inventory can still be proved by
   # their trusted checker. Without full ownership the path rule stands.
-  renders_match && render_paths_covered &&
-    { [ "$RENDER_BOT_INSTRUCTIONS" = true ] || [ "$RENDER_WORKFLOW_CHECKED" = true ]; } &&
+  renders_match && render_paths_covered narrow &&
     answer render "cause=renders-match-their-sources"
   [ "$RENDER_WORKFLOW_CHECKED" = false ] || answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
   answer standard "cause=$narrow_refusal" measured

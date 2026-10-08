@@ -41,6 +41,10 @@ approval_message() {
       printf 'approval-wait: request-identity-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' 'Could not read the pull request branch and author before requesting review.'
       ;;
+    refresh-identity-load)
+      printf 'approval-wait: refresh-identity-load path=%q\n' "$refresh_identity_lib"
+      printf '%s\n' 'Could not load the refresh identity rule.'
+      ;;
     base-unreadable)
       printf 'approval-wait: base-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "approval-wait: could not read the base branch and review decision of PR #$PR_NUM in $REPO, so no gate mode is available"
@@ -855,11 +859,16 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
         cat "$GH_ERR_FILE" >&2
         approval_message request-identity-unreadable >&2; exit 2;
       }
-      refresh_identity=$(jq -er 'if (.head.ref | type) == "string" and
-          (.user.login | type) == "string" and (.user.type | type) == "string"
-        then (.head.ref == "kendex/refresh" and
-          .user.login == "vanillagreen-fleet-lanes[bot]" and .user.type == "Bot") | tostring
-        else error("pull request identity unreadable") end' <<<"$identity") || {
+      if ! jq -e '(.head.ref | type) == "string" and
+          (.user.login | type) == "string" and (.user.type | type) == "string"' \
+          >/dev/null 2>&1 <<<"$identity"; then
+        approval_message request-identity-unreadable >&2; exit 2
+      fi
+      refresh_identity_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/refresh-identity.sh"
+      if [[ ! -r "$refresh_identity_lib" ]] || ! source "$refresh_identity_lib"; then
+        approval_message refresh-identity-load >&2; exit 2
+      fi
+      refresh_identity=$(jq -r "$REFRESH_IDENTITY_JQ" <<<"$identity") || {
         approval_message request-identity-unreadable >&2; exit 2;
       }
       if [[ "$refresh_identity" == true ]]; then

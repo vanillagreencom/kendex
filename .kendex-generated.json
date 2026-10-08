@@ -744,6 +744,7 @@
   ".agents/skills/review-gate/scripts/install-latest.sh",
   ".agents/skills/review-gate/scripts/lib/arm-published-head.sh",
   ".agents/skills/review-gate/scripts/lib/diagnostics.sh",
+  ".agents/skills/review-gate/scripts/lib/refresh-identity.sh",
   ".agents/skills/review-gate/scripts/lib/settings.sh",
   ".agents/skills/review-gate/scripts/lib/standard.sh",
   ".agents/skills/review-gate/scripts/pr-watch.sh",

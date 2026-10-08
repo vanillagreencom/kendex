@@ -26,6 +26,10 @@ fi
 }
 # shellcheck source=lib/settings.sh
 . "$script_dir/lib/settings.sh"
+if [ ! -r "$script_dir/lib/refresh-identity.sh" ] || ! . "$script_dir/lib/refresh-identity.sh"; then
+  rg_message error refresh-identity-load "$script_dir/lib/refresh-identity.sh" 'Could not load the refresh identity rule.' >&2
+  exit 2
+fi
 
 print_usage() {
   cat <<'USAGE'
@@ -207,9 +211,6 @@ REVIEW_STATE_JQ='if ((.errors? // []) | length) > 0 then error("graphql errors p
          + " " + ($p.reviewDecision // "NONE")
     end
   end'
-REFRESH_IDENTITY_JQ='.head.ref == "kendex/refresh"
-  and .user.login == "vanillagreen-fleet-lanes[bot]" and .user.type == "Bot"'
-
 read_review_state() { # pr, head, what — sets queued (the annotation) and decision; returns 1 after emitting an error
   local resp words queue_word
   resp="$(gh api graphql -f query="$REVIEW_STATE_QUERY" \

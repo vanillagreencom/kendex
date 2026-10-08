@@ -152,11 +152,11 @@ table \
 mutant_watch head-compare 's#if \[ "$head_now" != "$head" \]; then#if [ "$head_now" = "" ]; then#' 'if [ "$head_now" != "$head" ]; then'
 table "must-fail: without the head comparison a moved head reads as silence||STUB_HEAD_AFTER=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;STUB_OPEN_PRS=$P7|rc=0 kinds=none"
 
-mutant_watch refresh-branch 's#\.head.ref == "kendex/refresh"#true#' '.head.ref == "kendex/refresh"'
+mutant_watch refresh-branch 's#\.head.ref == "kendex/refresh"#true#' '.head.ref == "kendex/refresh"' lib/refresh-identity.sh
 table "must-fail: removing the exact branch check reports a product branch||$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c '.head.ref="product"' <<<"$REFRESH_ROW")]|rc=1 kinds=refresh-ready"
-mutant_watch refresh-author 's#\.user.login == "vanillagreen-fleet-lanes\[bot\]"#true#' '.user.login == "vanillagreen-fleet-lanes[bot]"'
+mutant_watch refresh-author 's#\.user.login == "vanillagreen-fleet-lanes\[bot\]"#true#' '.user.login == "vanillagreen-fleet-lanes[bot]"' lib/refresh-identity.sh
 table "must-fail: removing the app login check reports another author||$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c '.user.login="another[bot]"' <<<"$REFRESH_ROW")]|rc=1 kinds=refresh-ready"
-mutant_watch refresh-type 's#\.user.type == "Bot"#true#' '.user.type == "Bot"'
+mutant_watch refresh-type 's#\.user.type == "Bot"#true#' '.user.type == "Bot"' lib/refresh-identity.sh
 table "must-fail: removing the Bot type check reports a user identity||$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c '.user.type="User"' <<<"$REFRESH_ROW")]|rc=1 kinds=refresh-ready"
 mutant_watch refresh-ci-head 's#\.head_sha == \$head#true#' '.head_sha == $head'
 table "must-fail: removing CI head binding reports another head||$REFRESH_ENV;STUB_CI_RAW=$(jq -c --arg h "$HEAD_B" '.check_runs[0].head_sha=$h' <<<"$CI_GREEN")|rc=1 kinds=refresh-ready"

@@ -133,6 +133,15 @@ printf '%s\n' '{}' > "$IDENTITY_FILE"
 run_action "$RUN" 0 --request-review --base-checkout "$BASE"
 assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '2||0' 'an unreadable identity refuses the request' "$ERR"
 printf '%s\n' '{"head":{"ref":"feature/work"},"user":{"login":"vanillagreen-fleet-lanes[bot]","type":"Bot"}}' > "$IDENTITY_FILE"
+scripts="$(mutant_scripts missing-identity/orch approval-wait)"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/missing-identity/github"
+mkdir -p "$TMP_ROOT/missing-identity/review-gate/scripts/lib"
+ln -s "$REPO_ROOT/skills/review-gate/scripts/lib/settings.sh" \
+  "$TMP_ROOT/missing-identity/review-gate/scripts/lib/settings.sh"
+ln -s "$REPO_ROOT/skills/review-gate/scripts/lib/diagnostics.sh" \
+  "$TMP_ROOT/missing-identity/review-gate/scripts/lib/diagnostics.sh"
+run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '2||0' 'a missing identity owner refuses the request' "$ERR"
 
 for action in --request-review --resolve-mode; do
   for context in '' "$TMP_ROOT/missing"; do
