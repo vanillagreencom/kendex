@@ -108,7 +108,7 @@ Plan operations use `Style::plan_row` for both the initial report and additions 
 
 ## Help
 
-`src/help.rs` builds the command used by dispatch and applies the help layout to its children. The command description precedes usage. Clap supplies the Commands, Arguments and Options groups through the `{all-args}` template. Clap can copy a flattened argument struct's documentation into the root description; the command builder sets the root description after flattening. Internal contracts belong in this reference or the author instructions, outside help descriptions. `src/help/tests.rs` discovers the command tree and compares every command with its snapshot under `tests/snapshots/help/`, including hidden commands.
+`src/help.rs` builds the command used by dispatch and applies the help layout to its children. The command description precedes usage. Clap supplies the Commands, Arguments and Options groups through the `{all-args}` template. Clap can copy a flattened argument struct's documentation into the root description; the command builder sets the root description after flattening. Internal contracts belong in this reference or the author instructions, outside help descriptions. `src/help/tests.rs` discovers the command tree, including hidden commands. It checks help availability and adoption argument contracts through Clap.
 
 The commit flags form one mutually exclusive group. They apply only to commands that offer a commit. `CommitFlags::from_matches` reads the selected command's matches, including the bare install form. The bare source argument dispatches to `add` with its same flags. The author instructions define the check exit codes and the session hook's output exception.
 

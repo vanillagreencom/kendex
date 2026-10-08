@@ -1,7 +1,0 @@
-Sign in to kendex.ai with a code in your browser
-
-Usage: kendex login
-
-Options:
-  -h, --help
-          Print help

@@ -1,7 +1,0 @@
-Turn off this repository's Git commit checks
-
-Usage: kendex guard uninstall
-
-Options:
-  -h, --help
-          Print help

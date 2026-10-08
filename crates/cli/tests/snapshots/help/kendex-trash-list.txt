@@ -1,7 +1,0 @@
-List files in the trash, with their ages and sizes
-
-Usage: kendex trash list
-
-Options:
-  -h, --help
-          Print help

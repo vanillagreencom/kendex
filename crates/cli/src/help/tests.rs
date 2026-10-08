@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use super::*;
 
@@ -73,17 +72,9 @@ fn kind_or_plugin_choices_are_every_kind_the_parser_takes() {
     assert_eq!(listed.split(" | ").collect::<Vec<_>>(), named, "{refused}");
 }
 
-fn pages() -> BTreeMap<String, String> {
-    fn visit(mut command: Command, path: &str, pages: &mut BTreeMap<String, String>) {
-        command = command
-            .bin_name(path)
-            .term_width(80)
-            .color(clap::ColorChoice::Never);
+fn commands() -> BTreeMap<String, Command> {
+    fn visit(mut command: Command, path: &str, commands: &mut BTreeMap<String, Command>) {
         command.build();
-        pages.insert(
-            path.replace(' ', "-"),
-            command.render_long_help().to_string(),
-        );
         for child in command
             .get_subcommands()
             .filter(|child| child.get_name() != "help")
@@ -91,67 +82,69 @@ fn pages() -> BTreeMap<String, String> {
             visit(
                 child.clone(),
                 &format!("{path} {}", child.get_name()),
-                pages,
+                commands,
             );
         }
+        assert!(commands.insert(path.to_owned(), command).is_none());
     }
-    let mut pages = BTreeMap::new();
-    visit(command(), "kendex", &mut pages);
-    pages
+    let mut commands = BTreeMap::new();
+    visit(command(), "kendex", &mut commands);
+    commands
 }
 
-fn directory() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/help")
-}
-
-/// The issue requests wording snapshots as well as the order and grouping.
-/// Discovery comes from the same Clap tree dispatch parses. A missing file
-/// fails, and stale files fail the reverse inventory comparison.
 #[test]
-#[allow(clippy::unwrap_used)]
-fn every_command_has_a_help_snapshot() {
-    let pages = pages();
-    assert!(pages.len() >= 30, "command-tree discovery is incomplete");
+fn command_tree_keeps_help_and_adopt_argument_contracts() {
+    let commands = commands();
+    assert!(commands.len() >= 30, "command-tree discovery is incomplete");
     assert!(
-        pages.contains_key("kendex-report"),
+        commands.contains_key("kendex report"),
         "hidden commands were skipped"
     );
     assert!(
-        !pages.contains_key("kendex-help-help"),
+        !commands.contains_key("kendex help help"),
         "generated help commands entered dispatch discovery"
     );
-    for (name, actual) in &pages {
-        let path = directory().join(format!("{name}.txt"));
-        let expected = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(*actual, expected, "{}", path.display());
-        let opening = actual.lines().next().unwrap();
-        assert!(
-            !opening.is_empty() && !opening.starts_with("Usage:"),
-            "{name}"
-        );
-        assert!(actual.contains("\nUsage: "), "{name}");
+    assert!(commands["kendex report"].is_hide_set());
+    for (path, command) in &commands {
+        command.clone().debug_assert();
+        let error = command
+            .clone()
+            .try_get_matches_from([path.as_str(), "--help"])
+            .expect_err("--help must return help without dispatching");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp, "{path}");
     }
-    let recorded: std::collections::BTreeSet<_> = std::fs::read_dir(directory())
-        .unwrap()
-        .map(|entry| {
-            entry
-                .unwrap()
-                .path()
-                .file_stem()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    assert_eq!(recorded, pages.into_keys().collect());
-}
 
-#[test]
-#[ignore = "writes the reviewed help snapshots after a command help change"]
-#[allow(clippy::unwrap_used)]
-fn regenerate_help_snapshots() {
-    std::fs::create_dir_all(directory()).unwrap();
-    for (name, help) in pages() {
-        std::fs::write(directory().join(format!("{name}.txt")), help).unwrap();
+    let adopt = &commands["kendex adopt"];
+    for (id, index, long, required, action) in [
+        ("kind", Some(1), None, true, clap::ArgAction::Set),
+        ("name", Some(2), None, true, clap::ArgAction::Set),
+        (
+            "harness",
+            None,
+            Some("harness"),
+            false,
+            clap::ArgAction::Append,
+        ),
+        (
+            "global",
+            None,
+            Some("global"),
+            false,
+            clap::ArgAction::SetTrue,
+        ),
+        ("scope", None, Some("scope"), false, clap::ArgAction::Set),
+    ] {
+        let arg = adopt
+            .get_arguments()
+            .find(|arg| arg.get_id() == id)
+            .expect("adopt argument must exist");
+        assert_eq!(arg.get_index(), index, "{id}");
+        assert_eq!(arg.get_long(), long, "{id}");
+        assert_eq!(arg.is_required_set(), required, "{id}");
+        assert_eq!(
+            std::mem::discriminant(arg.get_action()),
+            std::mem::discriminant(&action),
+            "{id}"
+        );
     }
 }

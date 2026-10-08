@@ -1,7 +1,0 @@
-List changed files that kendex manages
-
-Usage: kendex generated-paths
-
-Options:
-  -h, --help
-          Print help

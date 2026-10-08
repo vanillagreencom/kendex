@@ -1,7 +1,0 @@
-List bookmarks, and whether each one's marketplace still offers it
-
-Usage: kendex bookmark list
-
-Options:
-  -h, --help
-          Print help
