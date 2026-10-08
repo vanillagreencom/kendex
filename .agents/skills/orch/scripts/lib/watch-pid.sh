@@ -13,7 +13,8 @@
 #                       none), origin (hand, or succession for a watch
 #                       `oversee-succeed` restarted), script (the watch it
 #                       runs) and cwd (the directory it runs in)
-#   oversee-watch.argv  NUL-separated: its arguments up to, never including,
+#   oversee-watch.argv  NUL-separated: watch-command-v1, script, cwd, then
+#                       its arguments up to, never including,
 #                       the `--` that starts the overseer's own flags, which a
 #                       restart replaces with the successor's
 #   oversee-watch.log   stdout of a watch an overseer launcher started, where no
@@ -101,7 +102,7 @@ watch_pid_write() { # STATE PANE ORIGIN SCRIPT [ARGS...]
   local state="$1" pane="$2" origin="$3" script="$4"
   shift 4
   watch_pid_paths "$state" || return 1
-  { [[ $# -eq 0 ]] || printf '%s\0' "$@"; } \
+  printf '%s\0' watch-command-v1 "$script" "$PWD" ${@+"$@"} \
     > "$WATCH_ARGV_FILE.$$" && mv -f -- "$WATCH_ARGV_FILE.$$" "$WATCH_ARGV_FILE" || return 1
   printf 'pid=%s\nstate=%s\npane=%s\norigin=%s\nscript=%s\ncwd=%s\n' \
     "$$" "$WATCH_STATE_CANON" "$pane" "$origin" "$script" "$PWD" \
@@ -116,13 +117,33 @@ watch_pid_release() { # STATE
   rm -f -- "$WATCH_PID_FILE"
 }
 
-# The recorded arguments as WATCH_ARGV.
+# The retained command as WATCH_SCRIPT, WATCH_CWD and WATCH_ARGV. The command
+# outlives the pid claim. The pre-1.0 argv form remains readable until the next
+# major release when its pid record still supplies the script and directory.
 watch_argv_read() { # STATE
-  local word
+  local word line
   WATCH_ARGV=()
+  WATCH_SCRIPT="" WATCH_CWD=""
   watch_pid_paths "$1" || return 1
-  [[ -f "$WATCH_ARGV_FILE" ]] || return 1
-  while IFS= read -r -d '' word; do WATCH_ARGV+=("$word"); done < "$WATCH_ARGV_FILE"
+  [[ -f "$WATCH_ARGV_FILE" && -r "$WATCH_ARGV_FILE" ]] || return 1
+  word=""
+  while IFS= read -r -d '' word; do WATCH_ARGV+=("$word"); word=""; done < "$WATCH_ARGV_FILE" || return 1
+  [[ -z "$word" ]] || return 1
+  if [[ "${WATCH_ARGV[0]:-}" == watch-command-v1 ]]; then
+    [[ ${#WATCH_ARGV[@]} -ge 3 ]] || return 1
+    WATCH_SCRIPT="${WATCH_ARGV[1]}" WATCH_CWD="${WATCH_ARGV[2]}"
+    WATCH_ARGV=("${WATCH_ARGV[@]:3}")
+  else
+    printf 'watch-pid: deprecated=argv replacement=watch-command-v1\n' >&2
+    [[ -f "$WATCH_PID_FILE" && -r "$WATCH_PID_FILE" ]] || return 1
+    while IFS= read -r line; do
+      case "$line" in
+        script=*) WATCH_SCRIPT="${line#script=}" ;;
+        cwd=*) WATCH_CWD="${line#cwd=}" ;;
+      esac
+    done < "$WATCH_PID_FILE" || return 1
+  fi
+  [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]]
 }
 
 # The shell's own clock in whole seconds, as WATCH_NOW. A suite that sources
@@ -154,4 +175,3 @@ watch_stop() { # PID STATE
     sleep 0.1
   done
 }
-

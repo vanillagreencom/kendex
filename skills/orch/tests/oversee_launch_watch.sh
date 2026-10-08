@@ -176,7 +176,7 @@ new_predecessor() {
   ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
   [[ "$RC" -eq 0 && "$PRED" == %* ]] || { printf 'fixture: the first launch failed\n%s\n' "$OUT" >&2; exit 1; }
   # shellcheck disable=SC2086
-  ( ( cd "$TMP_ROOT/work" || exit 1
+  ( ( cd "${WATCH_START_CWD:-$TMP_ROOT/work}" || exit 1
       exec env TMUX_PANE="$PRED" CLAUDE_CONFIG_DIR="$H/.claude-old" \
         "$FIXTURE_WATCH" $WATCH_ARGS -- --model old --verbose </dev/null >/dev/null 2>&1 ) &
     echo $! > "$TMP_ROOT/stand-in.pid" )
@@ -234,13 +234,105 @@ assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")" \
   "1" \
   "the watch serving the predecessor's pane is stopped, once"
 assert_eq "${NEW:+found}|$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')" \
-  "found|pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF" \
+  "found|pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF" \
   "and started again from the successor pane, with the successor's harness, flags and account"
 assert_eq "$(started_line "${NEW:-none}" | sed -n 's/.* tmux=\([^,]*\),\([0-9]*\),[0-9]* .*/\1 \2/p')" "$SOCKET $SERVER_PID" \
   "a launch from outside tmux hands the restarted watch the successor's tmux server"
 assert_eq "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC $SETSID_LINE\$" "$WATCH_ERR")" "1" \
   "the restart is written beside the fleet state with the new loop's pid and the successor pane"
 watch_stop "$NEW" "$FLEET_STATE" || true
+
+# The same complete command survives either claim state. The release control
+# leaves a readable descriptor with the recorded directory replaced. The
+# replay control drops the recorded selection and cadence before execution.
+COMMAND_CONTROL="$(mutant_scripts command-control lib/watch-handover.sh)" || exit 1
+mutate_file "$COMMAND_CONTROL/lib/watch-handover.sh" '          *) argv+=("$word") ;;' \
+  '          *) : ;;'
+mkdir -p "$TMP_ROOT/configured"
+WATCH_START_CWD="$TMP_ROOT/configured"
+DEFAULT_WATCH_ARGS="$WATCH_ARGS"
+WATCH_ARGS="--repeat 9 --interval 7 --state $FLEET_STATE --since 2026-01-01T00:00:00Z --repo custom/repo --item KEN-1 --hosted remote --root remote-root --handoff=old-handoff --harness codex"
+for COMMAND_CASE in live released descriptor-control replay-control; do
+  new_predecessor
+  fresh_output
+  COMMAND_BIN="$OVERSEE"
+  [[ "$COMMAND_CASE" != replay-control ]] || COMMAND_BIN="$COMMAND_CONTROL/oversee"
+  if [[ "$COMMAND_CASE" != live ]]; then
+    watch_stop "$OLD" "$FLEET_STATE"
+    assert_eq "$(test -e "$WATCH_PID_FILE" && echo present || echo absent)" absent \
+      "$COMMAND_CASE: normal release removed the live claim"
+  fi
+  if [[ "$COMMAND_CASE" == descriptor-control ]]; then
+    # A private retained-command mutation, with the command otherwise intact.
+    python3 - "$WATCH_ARGV_FILE" "$TMP_ROOT/work" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+words = p.read_bytes().split(b'\0')
+words[2] = sys.argv[2].encode()
+p.write_bytes(b'\0'.join(words))
+PY
+  fi
+  succeed "$COMMAND_BIN"
+  [[ "$COMMAND_CASE" != live ]] || wait_restart
+  watch_pid_live "$FLEET_STATE" || true
+  NEW="${WATCH_PID:-}"
+  EXPECT_COMMAND="pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/configured argv=${WATCH_ARGS% --handoff=old-handoff --harness codex} --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF"
+  ACTUAL_COMMAND="$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')"
+  if [[ "$COMMAND_CASE" == *control ]]; then
+    assert_eq "$(test "$ACTUAL_COMMAND" = "$EXPECT_COMMAND" && echo preserved || echo changed)" changed \
+      "$COMMAND_CASE: the complete-command assertion rejects the private defect"
+  else
+    assert_eq "$RC|$ACTUAL_COMMAND" "0|$EXPECT_COMMAND" \
+      "$COMMAND_CASE: replay keeps script, cwd, selection and cadence and replaces only successor values"
+    assert_eq "$WATCH_SCRIPT" "$FIXTURE_WATCH" "$COMMAND_CASE: the configured script remains the replay owner"
+  fi
+  [[ -z "$NEW" ]] || watch_stop "$NEW" "$FLEET_STATE" || true
+done
+WATCH_ARGS="$DEFAULT_WATCH_ARGS"
+unset WATCH_START_CWD
+
+# An unknown claim cannot grant permission to run any watch command.
+UNKNOWN_RESULT="$(
+  source "$SRC_DIR/lib/watch-handover.sh"
+  SCRIPT_DIR="$SRC_DIR" DEP_ERR="$TMP_ROOT/unknown.err" HANDOFF=handoff
+  watch_pid_live() { return 2; }
+  watch_job_launch() { echo unexpected-launch; }
+  unknown_rc=0
+  watch_handover old new LANE_HOME account claude || unknown_rc=$?
+  printf '%s|%s|%s' "$unknown_rc" "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[*]}"
+)"
+assert_eq "$UNKNOWN_RESULT" '1|watch-restart-failed|step=claim' \
+  "an unknown claim refuses before either fresh launch or replay"
+
+for DESCRIPTOR_CASE in live released; do
+  new_predecessor
+  [[ "$DESCRIPTOR_CASE" != released ]] || watch_stop "$OLD" "$FLEET_STATE"
+  rm -- "$WATCH_ARGV_FILE"
+  succeed
+  assert_eq "$RC|$(recorded pane)" "1|$PRED" \
+    "$DESCRIPTOR_CASE: an unreadable required command refuses instead of constructing the default"
+  watch_stop "$OLD" "$FLEET_STATE" || true
+done
+
+# Older installed watches wrote argv alone and kept metadata in the claim.
+# Read that form while the metadata exists; absence is not a fresh launch.
+LEGACY_STATE="$TMP_ROOT/work/tmp/legacy-state.json"
+watch_pid_write "$LEGACY_STATE" old hand "$FIXTURE_WATCH" --repo legacy/repo --repeat 9
+python3 - "$WATCH_ARGV_FILE" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.write_bytes(b'\0'.join(p.read_bytes().split(b'\0')[3:]))
+PY
+watch_argv_read "$LEGACY_STATE" 2>"$TMP_ROOT/legacy.err"
+assert_eq "$WATCH_SCRIPT|$WATCH_CWD|${WATCH_ARGV[*]}" \
+  "$FIXTURE_WATCH|$PWD|--repo legacy/repo --repeat 9" \
+  "the retired argv form keeps its complete command when its claim supplies metadata"
+assert_eq "$(grep -c '^watch-pid: deprecated=argv replacement=watch-command-v1$' "$TMP_ROOT/legacy.err")" 1 \
+  "the retired command form names its replacement once per read"
+watch_pid_release "$LEGACY_STATE"
+LEGACY_RC=0
+watch_argv_read "$LEGACY_STATE" 2>"$TMP_ROOT/legacy.err" || LEGACY_RC=$?
+assert_eq "$LEGACY_RC" 1 "a retired descriptor with lost metadata cannot become a successful command read"
 
 # A first launch and a succession each start a missing repeat watch.
 tm kill-window -a -t "$KEEP_WINDOW"
@@ -316,7 +408,7 @@ done
 # watch's existing default and ORCH_CONNECTED_REPOS resolution.
 SINCE_CONTROL="$(mutant_scripts since-control lib/watch-handover.sh)" || exit 1
 SINCE_FLOOR="$(mutant_scripts since-floor)" || exit 1
-mutate_file "$SINCE_CONTROL/lib/watch-handover.sh" '--since "$since" ' ''
+mutate_file "$SINCE_CONTROL/lib/watch-handover.sh" '--since "$since")' ')'
 for SINCE_CASE in floor control; do
   SINCE_BIN="$SINCE_FLOOR"
   [[ "$SINCE_CASE" != control ]] || SINCE_BIN="$SINCE_CONTROL"

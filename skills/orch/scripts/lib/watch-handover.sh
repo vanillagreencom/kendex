@@ -80,7 +80,14 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
         WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=logs)
         return 1
       fi
-      watch_start "$state" "${@:2}"; return $? ;;
+      if [[ -z "$1" ]]; then
+        watch_start fresh "$state" "${@:2}"; return $?
+      fi
+      if ! watch_argv_read "$state" 2>"$DEP_ERR"; then
+        WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=argv)
+        return 1
+      fi
+      watch_start replay "$state" "${@:2}"; return $? ;;
     *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=claim); return 1 ;;
   esac
   old="$WATCH_PID"
@@ -93,7 +100,7 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
   local cwd="$WATCH_CWD" script="$WATCH_SCRIPT" argv_count="${#WATCH_ARGV[@]}"
   local argv=(${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"})
   if ! watch_job_launch watch-handover "$state" "$WATCH_ERR_FILE" "$WATCH_ERR_FILE" \
-      "$SCRIPT_DIR/oversee-succeed" --watch-restart "$state" "${@:1:5}" \
+      env HANDOFF="$HANDOFF" "$SCRIPT_DIR/oversee-succeed" --watch-restart "$state" "${@:1:5}" \
       "$cwd" "$script" "$argv_count" ${argv[@]+"${argv[@]}"} "${@:6}"; then
     WATCH_HANDOVER_KEY=watch-restart-failed
     WATCH_HANDOVER_FIELDS=(step=helper "pid=$old" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR")
@@ -103,42 +110,63 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
   WATCH_HANDOVER_FIELDS=("pid=$old" "pane=$2" "log=$WATCH_ERR_FILE" "$JOB_UNIT_LINE")
 }
 
-# A first launch has no watch command to replay. Start the fleet reader with
-# the workflow's repeat cadence, using the new pane's server and account.
+# Replay the retained command for every successor, with the new pane's server,
+# account, handoff, harness and flags. Only an explicitly fresh launch creates
+# the workflow default; a missing claim alone cannot select that default.
 # Wait for its claim before reporting success: an accepted job whose command
 # exits during initialization has not left a watch running.
-watch_start() { # STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
-  local state="$1" pane="$2" var="$3" home="$4" harness="$5" deadline runner rc
-  shift 5
-  local flags=() harness_args=() since="" word prev=""
+watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
+  local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc
+  shift 6
+  local flags=() harness_args=() since="" word skip="" argv=()
+  local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start
   [[ $# -eq 0 ]] || flags=(-- "$@")
   [[ -z "$harness" ]] || harness_args=(--harness "$harness")
-  # The first lane record is the fleet's start. With no lanes yet, keep a
-  # prior watch's floor, or use this first launch's time.
-  if watch_argv_read "$state"; then
-    for word in ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"}; do
-      [[ "$prev" != --since ]] || since="$word"
-      case "$word" in --since=*) since="${word#--since=}" ;; esac
-      prev="$word"
-    done
-  fi
-  if ! since="$(jq -er --arg since "$since" '.lanes[0].launched_at // (if $since != "" then $since else now | strftime("%Y-%m-%dT%H:%M:%SZ") end)' "$state" 2>"$DEP_ERR")"; then
-    WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=since)
+  case "$mode" in
+    fresh)
+      # The first lane is the fleet's start; an empty fleet starts now.
+      if ! since="$(jq -er '.lanes[0].launched_at // (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' "$state" 2>"$DEP_ERR")"; then
+        WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=since)
+        return 1
+      fi
+      cwd="$PWD" script="$SCRIPT_DIR/oversee-watch"
+      argv=(--repeat 60 --state "$state" --since "$since") ;;
+    replay)
+      name=watch-restart
+      for word in ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"}; do
+        if [[ -n "$skip" ]]; then skip=""; continue; fi
+        case "$word" in
+          --handoff|--harness) skip=value ;;
+          --handoff=*) ;;
+          *) argv+=("$word") ;;
+        esac
+      done ;;
+    *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=mode); return 1 ;;
+  esac
+  if ! cd -- "$cwd" 2>"$DEP_ERR"; then
+    WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=start "dir=$cwd")
     return 1
   fi
-  if ! watch_job_launch watch-start "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
+  rc=0
+  if ! watch_job_launch "$name" "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
       env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession \
-      "$SCRIPT_DIR/oversee-watch" --repeat 60 --state "$state" --since "$since" --handoff "$HANDOFF" ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
+      "$script" ${argv[@]+"${argv[@]}"} --handoff "$HANDOFF" ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
     WATCH_HANDOVER_KEY=watch-restart-failed
     WATCH_HANDOVER_FIELDS=(step=start "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR")
+    rc=1
+  fi
+  if ! cd -- "$launch_cwd" 2>"$DEP_ERR"; then
+    WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=directory)
     return 1
   fi
+  [[ "$rc" -eq 0 ]] || return 1
   runner="$JOB_UNIT_LINE"
   deadline=$((SECONDS + WATCH_STOP_SECS))
+  [[ "$mode" != replay ]] || deadline=$((SECONDS + 2 * WATCH_STOP_SECS))
   while :; do
     rc=0
     watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?
-    if [[ "$rc" -eq 0 && "$WATCH_PANE" == "$pane" ]]; then
+    if [[ "$rc" -eq 0 && "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$pane" ]]; then
       WATCH_HANDOVER_KEY=watch-started
       WATCH_HANDOVER_FIELDS=("pid=$WATCH_PID" "pane=$pane" "log=$WATCH_LOG_FILE" "err=$WATCH_ERR_FILE" "$runner")
       return 0

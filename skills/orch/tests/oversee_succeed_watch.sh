@@ -215,7 +215,7 @@ assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|$(kill -0 "$OLD" 2
   "1|gone" \
   "the watch serving the caller's pane is stopped, once"
 assert_eq "${NEW:+found}|$(started_line "${NEW:-none}")" \
-  "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --harness claude -- --model fable --effort high --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --permission-mode dontAsk --verbose" \
+  "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --permission-mode dontAsk --verbose" \
   "and started again from the successor pane, with the successor's harness, flags and account"
 assert_eq "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC_PANE $SETSID_LINE\$" "$WATCH_ERR")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "1|2" \
@@ -377,7 +377,7 @@ run_succeed
 wait_failed 300
 rm -f -- "${TMP_ROOT:?}/norecord"
 assert_eq "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
-  "0|oversee-succeed: watch-restart-failed step=start log=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.err|$STARTED" \
+  "0|oversee-succeed: watch-restart-failed step=claim log=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.err $SETSID_LINE|$STARTED" \
   "a restarted watch that never records itself is a notice beside the fleet state"
 watch_stop "$OLD" "$FLEET_STATE" || true
 
@@ -412,7 +412,7 @@ if command -v setsid >/dev/null 2>&1; then
   ROW_PATH="$TMP_ROOT/helper-only" run_succeed
   wait_failed 100
   assert_eq "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
-    "0|oversee-succeed: watch-restart-failed step=start dir=$TMP_ROOT/work error=launch-failed status=1|$STARTED" \
+    "0|oversee-succeed: watch-restart-failed step=start error=launch-failed status=1|$STARTED" \
     "a restart the runner refuses is a notice beside the fleet state with the runner's error, and starts nothing"
   watch_stop "$OLD" "$FLEET_STATE" || true
 else

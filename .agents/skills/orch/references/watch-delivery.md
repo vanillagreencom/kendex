@@ -4,7 +4,7 @@ Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before 
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
-`oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper. The helper keeps its command before the old watch can exit. Automatic death and wall recovery leave a watch for the successor.
+`oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper. The retained command includes its script, directory and watch arguments after the old claim ends. Automatic death and wall recovery leave a watch for the successor.
 
 Read that watch's log without starting another watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside the turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
 
@@ -51,6 +51,7 @@ Keep single-pass delivery for a harness that wakes only when a background comman
 
 ```sh
 n=$2
+remaining=30
 while :; do
   lines="$(
     sed -n "${n},\$p" "$1" | while IFS= read -r line; do
@@ -58,11 +59,13 @@ while :; do
     done
   )" || exit 2
   if [ -n "$lines" ]; then printf '%s\n' "$lines"; exit 0; fi
+  [ "$remaining" -gt 0 ] || exit 0
   sleep 1 || exit 2
+  remaining=$((remaining - 1))
 done
 ```
 
-Run the follow as the harness's background command. Its exit wakes the session. Handle each numbered line and start the next pass after the last line handled. The detached watch keeps judging the overseer's pane for death and wall between deliveries. At Stop, stop that watch through its runner record and start no further reader pass.
+Run the follow as the harness's background command. Its exit wakes the session after new complete lines or a quiet expiry. After each return, read the claim and error log as § Repeat watch directs before any recovery action. A quiet return keeps the next unhandled line unchanged. Handle each numbered line and start the next pass after the last line handled. The detached watch keeps judging the overseer's pane for death and wall between deliveries. At Stop, stop that watch through its runner record and start no further reader pass.
 
 A hand-opened fleet with no repeat claim may still run the workflow command without `--repeat` as its background command. Its exit is the wake. This mode alone cannot report the session's death. Do not use it when a detached watch owns the state.
 
