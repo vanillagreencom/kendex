@@ -116,7 +116,11 @@ pub fn adopt(
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: "declare the adopted item in kendex.toml".into(),
+        description: format!(
+            "declare the adopted item in {}",
+            crate::manifest::manifest_file_name(env, scope)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

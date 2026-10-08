@@ -641,8 +641,9 @@ fn expand_read<'a>(
             // nothing — one of the two has to go, and the user picks which.
             if manifest.is_suppressed(kind, name) {
                 state.notes.push(format!(
-                    "{} {name} is declared and also kept removed — the declaration wins and it installs; drop it from [suppressed] in kendex.toml to settle it",
-                    kind.name()
+                    "{} {name} is declared and also kept removed — the declaration wins and it installs; drop it from [suppressed] in {} to settle it",
+                    kind.name(),
+                    crate::manifest::manifest_file_name(env, scope),
                 ));
             }
         }

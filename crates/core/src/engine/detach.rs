@@ -440,7 +440,11 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
 
     let manifest_path = crate::manifest::manifest_path(env, &scope);
     ops.push(PlannedOp {
-        description: format!("keep {source_name}'s packages as your own in kendex.toml").into(),
+        description: format!(
+            "keep {source_name}'s packages as your own in {}",
+            crate::manifest::manifest_file_name(env, &scope)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

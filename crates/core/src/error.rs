@@ -458,9 +458,9 @@ pub enum CoreError {
     /// Pi extensions are carrier-only: `add` never installs one. A scope
     /// declares the package in its manifest and `kendex update-pi` installs it.
     #[error(
-        "pi extension '{name}' is not installable on its own: declare it under [pi-extensions] in the scope's kendex.toml, then the update-pi verb installs it"
+        "pi extension '{name}' is not installable on its own: declare it under [pi-extensions] in the scope's {manifest_file}, then the update-pi verb installs it"
     )]
-    PiExtensionDirect { name: String },
+    PiExtensionDirect { name: String, manifest_file: String },
 
     /// Keeping a marketplace's packages copies each from its source form, which
     /// would drop a hand edit — so an edited package is decided first.

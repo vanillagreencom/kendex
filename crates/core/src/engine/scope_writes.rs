@@ -56,7 +56,11 @@ pub(super) fn plan_manifest_write(
     // place deciding it is the whole point of stamping at the write.
     let written = update.clone();
     ops.push(PlannedOp {
-        description: "Update agent settings in kendex.toml".into(),
+        description: format!(
+            "Update agent settings in {}",
+            crate::manifest::manifest_file_name(env, scope)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: manifest_pre(base, &path)?,
             path,

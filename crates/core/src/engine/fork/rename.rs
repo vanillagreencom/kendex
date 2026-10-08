@@ -109,7 +109,11 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     rekey_agent_tables(&mut manifest, kind, old, new, OldName::Gone);
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: format!("record the rename to {new} in kendex.toml").into(),
+        description: format!(
+            "record the rename to {new} in {}",
+            crate::manifest::manifest_file_name(env, scope)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

@@ -214,7 +214,12 @@ fn walk(
     // withholding spreads.
     expansion.report_rev_disagreements(state);
     settle_after_walk(catalogs.env, catalogs.scope, manifest, state, &mut wanted);
-    withhold_requirers(&mut wanted, expansion, state);
+    withhold_requirers(
+        &crate::manifest::manifest_file_name(catalogs.env, catalogs.scope),
+        &mut wanted,
+        expansion,
+        state,
+    );
     // A reference filtered to no tool installs nothing, so it is no edge:
     // the finding beside it already says the dependency is missing, and an
     // edge here would have the cycle note claim a co-install the graph
@@ -437,12 +442,13 @@ struct Dep {
 /// Skills are not in this: a skill runs without what it lacks, and its
 /// finding is the whole consequence.
 fn withhold_requirers(
+    manifest_file: &str,
     wanted: &mut BTreeMap<Node, Wanted>,
     expansion: &Expansion,
     state: &DesiredState,
 ) {
-    spread_upward(wanted);
-    withhold_kept_retired(wanted, state);
+    spread_upward(manifest_file, wanted);
+    withhold_kept_retired(manifest_file, wanted, state);
     withhold_orphans(wanted, expansion);
 }
 
@@ -483,7 +489,11 @@ fn carry_kept_retired_edges(expansion: &mut Expansion, state: &DesiredState) {
 /// copy, the orphan kept by the record that requires it
 /// (`removal::keep_what_kept_records_require`), and withholds nothing.
 /// Retired hooks that require each other are read until nothing changes.
-fn withhold_kept_retired(wanted: &mut BTreeMap<Node, Wanted>, state: &DesiredState) {
+fn withhold_kept_retired(
+    manifest_file: &str,
+    wanted: &mut BTreeMap<Node, Wanted>,
+    state: &DesiredState,
+) {
     loop {
         let mut spread: Vec<(Node, HarnessId, Node, String)> = Vec::new();
         for ((kind, name), retirement) in &state.retired {
@@ -543,6 +553,7 @@ fn withhold_kept_retired(wanted: &mut BTreeMap<Node, Wanted>, state: &DesiredSta
             let companion = (dep_kind, dep.clone());
             found.withhold_for(tools.iter().copied(), Withholding::Retired, &companion);
             found.answered.push(finding(
+                manifest_file,
                 &NotWritten::Withheld,
                 kind,
                 dep_kind,
@@ -570,7 +581,7 @@ struct Companion {
 /// per pass, and a reason outranking the one already held for the tool
 /// replaces it ([`Withholding`]). A companion orphaned by its requirers'
 /// withholding spreads nothing back.
-fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
+fn spread_upward(manifest_file: &str, wanted: &mut BTreeMap<Node, Wanted>) {
     loop {
         let mut spread: Vec<(Node, Companion)> = Vec::new();
         for ((kind, parent), found) in wanted.iter() {
@@ -630,6 +641,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
             } = companion;
             found.withhold_for(tools.iter().copied(), because, &(dep_kind, dep.clone()));
             found.answered.push(finding(
+                manifest_file,
                 &NotWritten::Withheld,
                 kind,
                 dep_kind,
@@ -893,7 +905,14 @@ fn wanted_by(
         Ok(None) | Err(_) => harnesses.to_vec(),
     };
     let found = &mut wanted.findings;
-    let chosen = chosen_extras(kind, parent, manifest, &declared, found);
+    let chosen = chosen_extras(
+        &crate::manifest::manifest_file_name(env, scope),
+        kind,
+        parent,
+        manifest,
+        &declared,
+        found,
+    );
     // Each name taken to the companion it names, and that companion to
     // the catalog the plan writes it from. A name that resolves to nothing
     // derives nothing, which withholds an armed hook where it is required.
@@ -1007,6 +1026,7 @@ fn dependency_harnesses(
 /// is the manifest's one table of chosen extras, so a hook has nothing to
 /// choose from.
 fn chosen_extras(
+    manifest_file: &str,
     kind: ItemKind,
     parent: &str,
     manifest: &Manifest,
@@ -1032,7 +1052,7 @@ fn chosen_extras(
             kind,
             parent,
             format!("{name} was chosen as an optional dependency, and {parent} does not offer one by that name"),
-            format!("remove {name} from optional-dependencies.{parent} in kendex.toml"),
+            format!("remove {name} from optional-dependencies.{parent} in {manifest_file}"),
         ));
     }
     chosen
@@ -1056,6 +1076,7 @@ fn derive(
     wanted: &mut Wanted,
 ) {
     let (env, scope) = (catalogs.env, catalogs.scope);
+    let manifest_file = crate::manifest::manifest_file_name(env, scope);
     let withholds = kind == ItemKind::Hook && wanted.armed;
     // Every companion's catalog is opened before any is read, since an
     // open may move what is already open.
@@ -1109,7 +1130,7 @@ fn derive(
                             kind.name()
                         )
                     }
-                    false => format!("drop what brings {parent} in from kendex.toml"),
+                    false => format!("drop what brings {parent} in from {manifest_file}"),
                 };
                 wanted.answered.push(warn(
                     kind,
@@ -1142,6 +1163,7 @@ fn derive(
                 Withholding::Requires
             }
             Offer::Silent => silent(
+                &manifest_file,
                 kind,
                 dep_kind,
                 &dep,
@@ -1169,6 +1191,7 @@ fn derive(
 /// silence, and the parent is withheld for it and nothing of it taken.
 #[allow(clippy::too_many_arguments)]
 fn silent(
+    manifest_file: &str,
     kind: ItemKind,
     dep_kind: ItemKind,
     dep: &str,
@@ -1184,7 +1207,14 @@ fn silent(
             let quiet = reason == NotWritten::SwitchedOff && !armed;
             if !quiet {
                 found.push(finding(
-                    &reason, kind, dep_kind, parent, dep, harnesses, source,
+                    manifest_file,
+                    &reason,
+                    kind,
+                    dep_kind,
+                    parent,
+                    dep,
+                    harnesses,
+                    source,
                 ));
             }
             Withholding::Requires
@@ -1263,7 +1293,14 @@ fn companion(
         let quiet = reason == NotWritten::SwitchedOff && !armed;
         if !quiet {
             wanted.findings.push(finding(
-                &reason, kind, dep_kind, parent, &dep, &tools, source,
+                &crate::manifest::manifest_file_name(env, scope),
+                &reason,
+                kind,
+                dep_kind,
+                parent,
+                &dep,
+                &tools,
+                source,
             ));
         }
         if kind == ItemKind::Hook && armed {
@@ -1281,7 +1318,9 @@ fn companion(
 
 /// The finding on a parent for a companion that will not run on `tools`,
 /// one sentence per reason `not_written` gives, and the remedy beside it.
+#[allow(clippy::too_many_arguments)]
 fn finding(
+    manifest_file: &str,
     reason: &NotWritten,
     kind: ItemKind,
     dep_kind: ItemKind,
@@ -1303,7 +1342,7 @@ fn finding(
         NotWritten::SwitchedOff => (
             format!("missing required dependency: {parent} requires {dep}, which is switched off"),
             format!(
-                "set enabled = true on {dep}'s declaration in kendex.toml, or drop it from {parent}'s dependencies"
+                "set enabled = true on {dep}'s declaration in {manifest_file}, or drop it from {parent}'s dependencies"
             ),
         ),
         NotWritten::UnreadableHeader(problem) => (
@@ -1333,7 +1372,7 @@ fn finding(
                 verb
             ),
             format!(
-                "add {tools} to {dep}'s harnesses line in the catalog, or list {parent}'s harnesses in kendex.toml without {tools}"
+                "add {tools} to {dep}'s harnesses line in the catalog, or list {parent}'s harnesses in {manifest_file} without {tools}"
             ),
         ),
         NotWritten::Undeliverable(reason) => (
@@ -1342,7 +1381,7 @@ fn finding(
                 verb
             ),
             format!(
-                "make {dep} deliverable on {tools}, or list {parent}'s harnesses in kendex.toml without {tools}"
+                "make {dep} deliverable on {tools}, or list {parent}'s harnesses in {manifest_file} without {tools}"
             ),
         ),
         NotWritten::RevConflict => (
@@ -1394,7 +1433,14 @@ fn settle_after_walk(
             for (reason, tools) in refused {
                 found.withhold(tools.iter().copied(), Withholding::Requires);
                 found.findings.push(finding(
-                    &reason, *kind, dep_kind, parent, &dep, &tools, &source,
+                    &crate::manifest::manifest_file_name(env, scope),
+                    &reason,
+                    *kind,
+                    dep_kind,
+                    parent,
+                    &dep,
+                    &tools,
+                    &source,
                 ));
             }
         }

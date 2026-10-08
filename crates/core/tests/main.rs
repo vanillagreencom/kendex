@@ -101,6 +101,7 @@ mod registry;
 mod repo_effects_leaving;
 mod retired_items;
 mod review_fixes;
+mod scope_manifest_messages;
 mod sealed_source;
 mod secret_destination;
 mod secret_storage;

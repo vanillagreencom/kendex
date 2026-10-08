@@ -243,3 +243,30 @@ fn source_catalog_routes_install_state_to_a_sibling() {
         "kendex.toml",
     );
 }
+mod scope_manifest_messages {
+    use crate::env::{Env, FakeOs};
+    use crate::model::Scope;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn display_names_follow_project_routing_and_the_global_manifest() {
+        for (marker, file) in [
+            ("", "kendex.toml"),
+            ("is_source_catalog = false\n", "kendex.toml"),
+            ("is_source_catalog = true\n", "kendex-local.toml"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = crate::test_util::rooted(&tmp);
+            std::fs::write(root.join("kendex.toml"), marker).unwrap();
+            let scope = Scope::Project { root: root.clone() };
+            for os in [FakeOs::Linux, FakeOs::Mac, FakeOs::Windows] {
+                let env = Env::fake(&root, os);
+                assert_eq!(super::manifest_file_name(&env, &scope), file);
+                assert_eq!(
+                    super::manifest_file_name(&env, &Scope::Global),
+                    "kendex.toml"
+                );
+            }
+        }
+    }
+}

@@ -191,7 +191,7 @@ fn a_direct_pi_extension_add_refuses_naming_the_carrier() {
     .unwrap_err();
 
     assert!(
-        matches!(error, CoreError::PiExtensionDirect { ref name } if name == "@vanillagreen/pi-hooks"),
+        matches!(error, CoreError::PiExtensionDirect { ref name, .. } if name == "@vanillagreen/pi-hooks"),
         "expected the carrier refusal, got {error}"
     );
     assert!(

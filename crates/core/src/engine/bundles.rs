@@ -73,9 +73,15 @@ pub(super) fn expand(
                 }
                 Entry::Occupied(mut slot) => {
                     let held = slot.get_mut();
-                    if let Some(warning) =
-                        disagreement(manifest, kind, &member, held, name, &member_decl)
-                    {
+                    if let Some(warning) = disagreement(
+                        &crate::manifest::manifest_file_name(catalogs.env, scope),
+                        manifest,
+                        kind,
+                        &member,
+                        held,
+                        name,
+                        &member_decl,
+                    ) {
                         state.warnings.push(warning);
                     }
                     // A member two bundles hold at different revisions is a
@@ -374,7 +380,9 @@ fn bundle_ref(name: &str, source: &str) -> BundleRef {
 /// on/off state have been merged. Where it comes from and how it lands are
 /// one answer each, so the first set's stands and the user is told they had
 /// a choice to make — declaring the item is how they make it.
+#[allow(clippy::too_many_arguments)]
 fn disagreement(
+    manifest_file: &str,
     manifest: &Manifest,
     kind: ItemKind,
     name: &str,
@@ -404,7 +412,7 @@ fn disagreement(
             held.by
         ),
         remediation: Some(format!(
-            "declare the {} {name} in kendex.toml to say how it should install",
+            "declare the {} {name} in {manifest_file} to say how it should install",
             kind.name()
         )),
         detail: None,

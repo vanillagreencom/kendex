@@ -46,7 +46,7 @@ pub fn detected_harnesses(env: &Env) -> Vec<HarnessId> {
 /// touches them, so an untouched picker and `--yes` install to one set.
 pub fn install_defaults(env: &Env, scope: &Scope) -> Result<Vec<HarnessId>> {
     let mut manifest = manifest_for_reading(env, scope)?;
-    settle_defaults(env, &mut manifest);
+    settle_defaults(env, scope, &mut manifest);
     Ok(manifest.install.harnesses)
 }
 
@@ -57,7 +57,7 @@ pub fn install_defaults(env: &Env, scope: &Scope) -> Result<Vec<HarnessId>> {
 /// every package in the scope, which nobody asked for on this run. An
 /// empty list declares nothing, the same as a manifest not written yet,
 /// so it takes what [`manifest_for_mutation`] seeds an absent one with.
-pub(crate) fn settle_defaults(env: &Env, manifest: &mut Manifest) -> Option<String> {
+pub(crate) fn settle_defaults(env: &Env, scope: &Scope, manifest: &mut Manifest) -> Option<String> {
     let detected = detected_harnesses(env);
     if manifest.install.harnesses.is_empty() {
         manifest.install.harnesses = detected;
@@ -74,8 +74,9 @@ pub(crate) fn settle_defaults(env: &Env, manifest: &mut Manifest) -> Option<Stri
         _ => ("are", "them"),
     };
     Some(format!(
-        "{} {verb} on this machine and not in [install].harnesses; name {them} with --harness or add {them} to kendex.toml",
-        left_out.join(", ")
+        "{} {verb} on this machine and not in [install].harnesses; name {them} with --harness or add {them} to {}",
+        left_out.join(", "),
+        manifest::manifest_file_name(env, scope),
     ))
 }
 

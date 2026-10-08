@@ -432,7 +432,8 @@ fn pin_records(ctx: &ItemCtx, state: &mut DesiredState, hook: &HookSpec) {
             }
             Some(NotWritten::OwnHarnessesLine { declared: true }) => {
                 state.notes.push(format!(
-                    "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\nkendex.toml lists {arg2} in this hook's harnesses, and the hook's own harnesses line in the catalog leaves it out; add {arg2} to the catalog line, or take it off the hook's harnesses in kendex.toml",
+                    "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\n{manifest_file} lists {arg2} in this hook's harnesses, and the hook's own harnesses line in the catalog leaves it out; add {arg2} to the catalog line, or take it off the hook's harnesses in {manifest_file}",
+                    manifest_file = crate::manifest::manifest_file_name(ctx.env, ctx.scope),
                     arg2 = harness.name(),
                     record_arg0 = crate::names::shown(ctx.name),
                     record_arg1 = crate::names::shown(harness.name()),

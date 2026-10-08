@@ -117,7 +117,10 @@ pub fn add_seeded(
     seed: Option<(String, crate::manifest::SourceDecl)>,
 ) -> Result<EngineReport> {
     if let Some(name) = request.pi_extensions.first() {
-        return Err(CoreError::PiExtensionDirect { name: name.clone() });
+        return Err(CoreError::PiExtensionDirect {
+            name: name.clone(),
+            manifest_file: manifest::manifest_file_name(env, scope),
+        });
     }
     let mut manifest = manifest_for_mutation(env, scope)?;
     // Arrival is the manifest gaining a declaration, and it is the one
@@ -134,7 +137,7 @@ pub fn add_seeded(
     // to. One that leaves them to the scope reads the scope's list as
     // written, filled from the machine only where it declares none.
     if request.harnesses.is_none()
-        && let Some(left_out) = super::settle_defaults(env, &mut manifest)
+        && let Some(left_out) = super::settle_defaults(env, scope, &mut manifest)
     {
         notes.push(left_out);
     }

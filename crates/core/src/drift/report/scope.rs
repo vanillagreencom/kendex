@@ -393,7 +393,8 @@ impl ScopeCheck<'_> {
                 }
                 for ((kind, name), harnesses) in unselected {
                     let mut text = format!(
-                        "{prefix}kendex.toml does not list recorded {} '{}' ({})",
+                        "{prefix}{} does not list recorded {} '{}' ({})",
+                        crate::manifest::manifest_file_name(self.env, self.scope),
                         kind.name(),
                         shown(&name),
                         harness_list(&harnesses)
@@ -544,10 +545,7 @@ impl ScopeCheck<'_> {
         // catalog and leaves the duplicate standing. `manifest_path`
         // joins a name onto a directory, so one is always there.
         let manifest_path = crate::manifest::manifest_path(self.env, self.scope);
-        let manifest_file = manifest_path
-            .file_name()
-            .unwrap_or(std::ffi::OsStr::new(crate::manifest::MANIFEST_FILE))
-            .to_string_lossy();
+        let manifest_file = crate::manifest::manifest_file_name(self.env, self.scope);
         let edit = super::edit_command(self.env, &manifest_path);
         for name in manifest.pi_extensions.keys() {
             let Some(globally) = global
@@ -724,8 +722,9 @@ impl ScopeCheck<'_> {
                 return self.unjudged(
                     &occupied,
                     format!(
-                        "{}files already where kendex.toml installs could not be compared with their source inside the {} s the session hook allows",
+                        "{}files already where {} installs could not be compared with their source inside the {} s the session hook allows",
                         self.prefix,
+                        crate::manifest::manifest_file_name(self.env, self.scope),
                         budget.as_secs()
                     ),
                     sections,
@@ -735,8 +734,9 @@ impl ScopeCheck<'_> {
                 return self.unjudged(
                     &occupied,
                     format!(
-                        "{}files already where kendex.toml installs could not be compared with their source: {}",
+                        "{}files already where {} installs could not be compared with their source: {}",
                         self.prefix,
+                        crate::manifest::manifest_file_name(self.env, self.scope),
                         shown(&error)
                     ),
                     sections,
@@ -922,8 +922,9 @@ impl ScopeCheck<'_> {
     fn blocked_line(&self, install: &crate::engine::Occupied, sections: &mut Sections) {
         sections.blocked.push(drift(
             format!(
-                "{}kendex.toml asks for {} '{}' for {}, and files are already where it would go",
+                "{}{} asks for {} '{}' for {}, and files are already where it would go",
                 self.prefix,
+                crate::manifest::manifest_file_name(self.env, self.scope),
                 install.kind.name(),
                 shown(&install.name),
                 install.harness.display_name()

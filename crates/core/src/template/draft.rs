@@ -195,7 +195,12 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             });
             continue;
         }
-        let origin = origin_of(&manifest, &row.decl, candidate);
+        let origin = origin_of(
+            &crate::manifest::manifest_file_name(env, &scope),
+            &manifest,
+            &row.decl,
+            candidate,
+        );
         members.push(DraftMember {
             key: member_key(kind, &row.name),
             kind,
@@ -218,7 +223,12 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             enabled: decl.enabled,
             derived: false,
             required_by: Vec::new(),
-            origin: origin_of(&manifest, decl, None),
+            origin: origin_of(
+                &crate::manifest::manifest_file_name(env, &scope),
+                &manifest,
+                decl,
+                None,
+            ),
         });
     }
     members.sort_by(|a, b| (a.kind, &a.name).cmp(&(b.kind, &b.name)));
@@ -497,6 +507,7 @@ fn offered_locally(
 
 /// What the template would record for one declared package.
 fn origin_of(
+    manifest_file: &str,
     manifest: &Manifest,
     decl: &crate::manifest::ItemDecl,
     candidate: Option<&ImportCandidate>,
@@ -524,7 +535,7 @@ fn origin_of(
     let Some(source) = manifest.sources.get(&decl.source) else {
         return DraftOrigin::Unresolved {
             why: format!(
-                "this project declares it from '{}', which the project's kendex.toml does not declare",
+                "this project declares it from '{}', which the project's {manifest_file} does not declare",
                 crate::names::shown(&decl.source)
             ),
         };

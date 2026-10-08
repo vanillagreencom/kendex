@@ -140,10 +140,10 @@ fn origin(
             ));
         }
         SourceState::Disabled { .. } => {
-            return Origin::Unread(
-                "is switched off — switch it back on in kendex.toml, or remove what it installed by name"
-                    .to_owned(),
-            );
+            return Origin::Unread(format!(
+                "is switched off — switch it back on in {}, or remove what it installed by name",
+                crate::manifest::manifest_file_name(env, scope),
+            ));
         }
     };
     let read = SealedSource::open(&ready.root).and_then(|sealed| {

@@ -1,0 +1,1 @@
+- Plans and remedies in source-catalog projects name `kendex-local.toml`, where the project's declarations are stored.

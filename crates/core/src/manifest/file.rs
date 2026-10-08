@@ -56,6 +56,15 @@ pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
     }
 }
 
+/// The file a scope declares in, for plans and remedies that name it.
+pub fn manifest_file_name(env: &Env, scope: &Scope) -> String {
+    manifest_path(env, scope)
+        .file_name()
+        .unwrap_or_else(|| unreachable!("manifest_path always joins a file name onto a directory"))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Refuse a scope that would carry `count` output styles when Claude Code
 /// selects one, naming the scope's manifest as the file to fix.
 pub fn refuse_output_styles(env: &Env, scope: &Scope, count: usize) -> Result<()> {

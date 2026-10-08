@@ -9,8 +9,8 @@ mod file;
 mod fold;
 mod validate;
 pub use file::{
-    ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_path,
-    model_class_overrides, parse_text, project_manifest_path, read_for_mutation,
+    ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_file_name,
+    manifest_path, model_class_overrides, parse_text, project_manifest_path, read_for_mutation,
     refuse_output_styles, seed,
 };
 // Crate-only: the apply op is `save`'s one sanctioned caller — it checks

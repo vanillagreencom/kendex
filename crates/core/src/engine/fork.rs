@@ -6,6 +6,10 @@
 
 use std::path::PathBuf;
 
+#[cfg(test)]
+#[path = "fork/tests.rs"]
+mod scope_manifest_messages;
+
 use super::desired::native_dir;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
@@ -89,7 +93,11 @@ pub fn fork(
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: format!("record the fork of {name} in kendex.toml").into(),
+        description: format!(
+            "record the fork of {name} in {}",
+            manifest::manifest_file_name(env, scope)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,
@@ -450,7 +458,10 @@ pub(super) fn absorb_ops(
     if carry_needs_writing(manifest, name, captured.carry) {
         return Err(CoreError::ForkWidensAccess {
             name: crate::names::shown(name),
-            problem: "its catalog settings would have to be written to kendex.toml first".into(),
+            problem: format!(
+                "its catalog settings would have to be written to {} first",
+                manifest::manifest_file_name(env, scope)
+            ),
         });
     }
     into_local_source(env, scope, kind, name, captured.files)

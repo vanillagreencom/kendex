@@ -392,7 +392,7 @@ pub fn render_plan(env: &Env, scope: &Scope) -> Result<crate::engine::EngineRepo
 /// and what stands in its way at the check's own destinations.
 fn plan_with_checks(env: &Env, scope: &Scope) -> Result<crate::engine::EngineReport> {
     let mut wanted = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    super::hook::declare(&mut wanted, scope);
+    super::hook::declare(env, &mut wanted, scope);
     crate::engine::plan_scope(env, scope, &wanted, &loaded_lock(env, scope)?, &options())
 }
 

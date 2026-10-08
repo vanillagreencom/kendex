@@ -992,7 +992,11 @@ fn install_local(
     ops.extend(notice_ops(env, template, &local_root)?);
     let manifest_path = crate::manifest::manifest_path(env, destination);
     ops.push(PlannedOp {
-        description: "declare the template's own packages in kendex.toml".into(),
+        description: format!(
+            "declare the template's own packages in {}",
+            crate::manifest::manifest_file_name(env, destination)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

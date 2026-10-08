@@ -91,7 +91,11 @@ pub(super) fn adopt_hook(
     });
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: "declare the adopted hook in kendex.toml".into(),
+        description: format!(
+            "declare the adopted hook in {}",
+            crate::manifest::manifest_file_name(env, scope)
+        )
+        .into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

@@ -266,7 +266,7 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
         });
     }
 
-    let description = declare(&mut manifest, &scope);
+    let description = declare(env, &mut manifest, &scope);
     if let Some(description) = description {
         let path = crate::manifest::manifest_path(env, &scope);
         ops.push(PlannedOp {
@@ -291,7 +291,8 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
 /// audits clean, and one naming fewer tools renders fewer, so a plan that
 /// only declared would leave both as they are and report success over a
 /// check that never fires, or fires in half the places it promised.
-pub(crate) fn declare(manifest: &mut Manifest, scope: &Scope) -> Option<&'static str> {
+pub(crate) fn declare(env: &Env, manifest: &mut Manifest, scope: &Scope) -> Option<String> {
+    let manifest_file = crate::manifest::manifest_file_name(env, scope);
     let wanted = target_harnesses(scope);
     // The tools the script runs in that `[install]` already gives the hook
     // are the hook's own with no list; a pin naming just those is left off.
@@ -316,7 +317,7 @@ pub(crate) fn declare(manifest: &mut Manifest, scope: &Scope) -> Option<&'static
                 env: None,
             },
         );
-        return Some("declare the drift hook in kendex.toml");
+        return Some(format!("declare the drift hook in {manifest_file}"));
     };
     // A narrower list already on the file is not narrowed again by the
     // planner: a declaration that names its harnesses is taken as it
@@ -333,8 +334,10 @@ pub(crate) fn declare(manifest: &mut Manifest, scope: &Scope) -> Option<&'static
     match (switched, widened) {
         // Re-enabling is the headline where both changed: a declaration
         // switched off renders nothing whatever its list says.
-        (true, _) => Some("switch the drift hook back on in kendex.toml"),
-        (false, true) => Some("register the drift hook for every tool it runs in, in kendex.toml"),
+        (true, _) => Some(format!("switch the drift hook back on in {manifest_file}")),
+        (false, true) => Some(format!(
+            "register the drift hook for every tool it runs in, in {manifest_file}"
+        )),
         (false, false) => None,
     }
 }
