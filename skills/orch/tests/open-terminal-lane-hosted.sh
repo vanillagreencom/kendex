@@ -8,6 +8,10 @@
 # stubs: run under a live session (TMUX set) open-terminal's default is tmux
 # mode, and an unstubbed launch would open a real window per row. The world
 # they share is lib/open-terminal-lane-world.sh.
+# Keep one alias launch below. Other named launches use their account path:
+# alias resolution measures every fixture account before judging the selected
+# one. Repeating that unrelated inventory made this suite exceed the macOS
+# runner's bound. open-terminal-lane-pick.sh owns the alias cases.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Physical: on macOS the temp root sits under /var -> /private/var, and the
@@ -53,7 +57,7 @@ CLOUD_CAPABILITIES="$(env ORCH_LANE_HOST=claude-cloud "$SCRIPTS_DIR/lane-host" c
 CLOUD_LAND="$(printf '%s\n' "$CLOUD_CAPABILITIES" | tr '\t' '\n' | sed -n 's/^land=//p')"
 assert_eq "$CLOUD_LAND" handoff "only a fleet that declares handoff admits the local landing exception"
 printf '/orch merge-pr 4296\n' > "$TMP_ROOT/cloud-only-landing-brief"
-run_ot "ORCH_LANE_HOST=claude-cloud;ORCH_LANE_ALIASES=eclaude=work;cmd=true --model opus --effort high {brief}" --host local --harness claude --lane work --repo o/r --relaunch --brief-file "$TMP_ROOT/cloud-only-landing-brief" KEN-3276
+run_ot "ORCH_LANE_HOST=claude-cloud;ORCH_LANE_ALIASES=eclaude=work;cmd=true --model opus --effort high {brief}" --host local --harness claude --lane "$H/.eclaude" --repo o/r --relaunch --brief-file "$TMP_ROOT/cloud-only-landing-brief" KEN-3276
 assert_eq "$(observe 'rc=0 creates=1 launched=1') calls=$(host_call)" \
   "rc=0 creates=1 launched=1 calls=nolog" \
   "a cloud-only fleet admits the explicit local landing command" "$OUT"
@@ -108,7 +112,7 @@ STUB
 chmod +x "$LANDING_PROVIDER" || exit 1
 printf '/orch merge-pr 4296\n' > "$TMP_ROOT/landing-brief"
 LANDING_ENV="ORCH_LANE_ALIASES=eclaude=work;LANDING_ORIGIN=$LANDING_ORIGIN;LANDING_STUB=$HOST_STUB;cmd=true --model opus --effort high {brief}"
-run_ot "$LANDING_ENV" --host "$LANDING_PROVIDER" --harness claude --lane work --repo o/r --relaunch --brief-file "$TMP_ROOT/landing-brief" KEN-3276
+run_ot "$LANDING_ENV" --host "$LANDING_PROVIDER" --harness claude --lane "$H/.eclaude" --repo o/r --relaunch --brief-file "$TMP_ROOT/landing-brief" KEN-3276
 assert_eq "$(observe 'rc=0 creates=nolog launched=1')" "rc=0 creates=nolog launched=1" \
   "a hosted landing relaunch admits an origin-only branch without an earlier sandbox"
 LANDING_BRANCH="$(git -C "$RUN/remote/landing-tree" branch --show-current)" || exit 1
@@ -121,13 +125,13 @@ LANDING_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-landing-authority/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-landing-authority/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)' '[[ "$RELAUNCH" != true ]] || :'
-run_ot "$LANDING_ENV" --host "$LANDING_PROVIDER" --harness claude --lane work --repo o/r --relaunch --brief-file "$TMP_ROOT/landing-brief" KEN-3276
+run_ot "$LANDING_ENV" --host "$LANDING_PROVIDER" --harness claude --lane "$H/.eclaude" --repo o/r --relaunch --brief-file "$TMP_ROOT/landing-brief" KEN-3276
 assert_eq "$(observe 'rc=75 creates=nolog launched=nolog') tree=$([[ -e "$RUN/remote/landing-tree" ]] && echo present || echo absent)" \
   "rc=75 creates=nolog launched=nolog tree=absent" \
   "control: removing hosted relaunch authority refuses the origin-only landing before a window opens"
 OPEN_TERMINAL="$LANDING_SHIPPED"
 
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r --lane-refresh KEN-40
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r --lane-refresh KEN-40
 assert_eq "rc=$RC refresh=$(hosted_refresh)" "rc=0 refresh=[/srv/lane]" "a hosted --lane-refresh launch puts the lane's root in the refresh record"
 # Q is how single_quote renders one quote of the continuation line inside the
 # remote command. A hosted relaunch selects a resume or the start brief and
@@ -161,7 +165,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
 HOSTED_LINE='Resume the orch workflow for KEN-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item KEN-48 first and act on every envelope it prints, answers and directives alike, as its text directs.'
 PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
-run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-48
+run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 PI_RESUME="0) exec pi '--exclude-tools' 'question' '--model' 'github-copilot/opus' '--thinking' 'high' --session \"\$session\" '$HOSTED_LINE $UNATTENDED_TEXT' ;; 1) exec pi"
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi KEN-48 ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start KEN-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
@@ -171,7 +175,7 @@ PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-native/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-native/orch"
 mutate_file "$OPEN_TERMINAL" '      codex | pi)' '      pi) printf '\''pi %s-c%s\n'\'' "$flags" "$line"; return ;;'$'\n''      pi | codex)'
-run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-48
+run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC selection=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) native=$(grep -cF " -c '$HOSTED_LINE $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
   "rc=0 selection=0 native=1" "control: the old pi -c form fails the resume-or-fresh assertion"
@@ -180,7 +184,7 @@ OPEN_TERMINAL="$PI_OT_SHIPPED"
 # host call, auto and named alike: the host protocol hands a Pi lane its
 # account as its Pi root and carries no Claude seat. The control drops the
 # refusal, and the auto launch goes on to the provider.
-for pi_seat_lane in auto work; do
+for pi_seat_lane in auto "$H/.eclaude"; do
   run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane "$pi_seat_lane" --repo o/r KEN-1690
   assert_eq "$(observe "rc=1 launched=nolog hostseat=host=$HOST_STUB,model=pi-claude/opus") calls=$(host_call)" \
     "rc=1 launched=nolog hostseat=host=$HOST_STUB,model=pi-claude/opus calls=nolog" \
@@ -198,7 +202,7 @@ OPEN_TERMINAL="$PI_OT_SHIPPED"
 # harness=pi row nor the override reads is refused as unmeasured, with the fix
 # naming the provider's accounts read, and open-terminal does not ask whether
 # the provider holds the account: the judge already read the provider's row.
-run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1665
+run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-1665
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows unanswered=0 relaunchgate=0 poolfix=host:$H/.eclaude")" \
   "rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows unanswered=0 relaunchgate=0 poolfix=host:$H/.eclaude" \
   "a hosted Pi relaunch on an unread Copilot pool is refused as unmeasured, naming the accounts read, open-terminal never asking whether the provider holds the account"
@@ -210,11 +214,11 @@ pi_hosted_row() { # PCT
   printf 'account=%s\tharness=pi\tmonthly-pct=%s\tmonthly-resets=2026-10-07T00:00:00Z\n' "$H/.eclaude" "$1" > "$PI_ROW_FILE"
 }
 pi_hosted_row 40
-run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
+run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=0 launched=1 unreadable=none poolfix=none")" "rc=0 launched=1 unreadable=none poolfix=none" \
   "a hosted Pi relaunch is admitted on the provider's pool row with no stated reading"
 pi_hosted_row 97
-run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
+run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,pct=97,bucket=monthly,projected-headroom=3")" \
   "rc=1 launched=nolog walled=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,pct=97,bucket=monthly,projected-headroom=3" \
   "a hosted Pi relaunch is refused on a walled provider row, the stated override replaced"
@@ -223,7 +227,7 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.eclaude,model=github-c
 # open-terminal would take the row as held and relaunch on a pool nobody read.
 printf 'account=%s\tharness=pi\tstatus=refused\tdetail=http-403-forbidden\n' "$H/.eclaude" > "$PI_ROW_FILE"
 PI_HELD="ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high"
-run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
+run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 poolfix=row:$H/.eclaude")" "rc=1 launched=nolog relaunchgate=0 poolfix=row:$H/.eclaude" \
   "a hosted Pi relaunch on a provider row that reads no pool is refused, never relaunched as held"
 # The same row under `auto` is the unstated refusal, its fix naming the row,
@@ -241,7 +245,7 @@ PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-host/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]]' '[[ "$LANE_HOST" == local ]]'
-run_ot "$HARNESS_UP;$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
+run_ot "$HARNESS_UP;$PI_HELD" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=0 relaunchgate=1")" "rc=0 relaunchgate=1" \
   "control: a Pi relaunch that asks the provider relaunches on a held row whose pool nobody read"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
@@ -275,7 +279,7 @@ assert_eq "$(observe "rc=0 launched=1") policy=$(typed "COPILOT_ALLOW_ALL=true c
   "control: without the hosted policy a hosted copilot lane keeps the COPILOT_GITHUB_TOKEN its host exports"
 OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
 CODEX_RELAUNCH="$HARNESS_UP;LANE_HOST_STUB_SELECTION=resume;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high"
-run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch KEN-49
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"
 CODEX_RESUME="0) printf resume > tmp/lane-mail/KEN-49/relaunch-selection || exit 2; exec $CODEX_LEAD resume \"\$session\" ;; 1) printf fresh > tmp/lane-mail/KEN-49/relaunch-selection || exit 2; exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for KEN-49. $UNATTENDED_TEXT'"
@@ -310,7 +314,7 @@ CODEX_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-codex-native/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-codex-native/orch"
 mutate_file "$OPEN_TERMINAL" '      codex | pi)' '      codex) printf '\''codex %sresume --last\n'\'' "$flags"; return ;;'$'\n''      pi | codex)'
-run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch KEN-49
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC selection=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) native=$(grep -cF ' resume --last' <<<"$CODEX_REMOTE" || true)" \
   "rc=0 selection=0 native=1" "control: the old codex resume --last form fails the resume-or-fresh assertion"
@@ -320,7 +324,7 @@ CODEX_UNATTENDED_SCRIPTS="$(mutant_scripts ctl-codex-unattended/orch lib/lane-la
 orch_fixture_shared_libs "$TMP_ROOT/ctl-codex-unattended/orch"
 mutate_file "$CODEX_UNATTENDED_SCRIPTS/lib/lane-launch.sh" "LAUNCH_UNATTENDED_TEXT='This is" "LAUNCH_UNATTENDED_TEXT='changed unattended text. This is"
 OPEN_TERMINAL="$CODEX_UNATTENDED_SCRIPTS/open-terminal"
-run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch KEN-49
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) changed=$(grep -cF 'changed unattended text.' <<<"$CODEX_REMOTE" || true)" \
   "rc=0 arms=0 changed=1" "control: changed unattended text fails the exact codex resume-or-fresh assertion"
@@ -333,7 +337,7 @@ OPEN_TERMINAL="$CODEX_OT_SHIPPED"
 # line with no transcript lookup, so it is where the two ids are visibly
 # distinct, and the assertion below is what reddens if the bare number returns.
 HOSTED_LINE="$(hosted_line issue-2708)"
-run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
+run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane "$H/.eclaude" --repo o/r --relaunch 2708
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume issue-2708 github-2708 '/orch start github o/r#2708')")" \
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;put,--item,issue-2708,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number, and asks the provider nothing beyond the judge's one accounts read on an account that measured"
@@ -779,11 +783,11 @@ pending_launch_case() { # NAME STEP CREATE_EXIT [fleet]
   [[ "$step" != wait && "$code" != 75 ]] || line+=$'\tstate=preparing'
   env_list="ORCH_STATE_DIR=$state;ORCH_LANE_ALIASES=eclaude=work;PENDING_STUB=$HOST_STUB;PENDING_CREATED=$state/created;PENDING_BUSY=$state/busy;PENDING_CREATE_EXIT=$code;PENDING_BUSY_VERB=$([[ "$step" == wait ]] && echo wait || echo cat);LANE_HOST_STUB_CREATE_LINE=$line;LANE_HOST_STUB_LOG=$state/calls;$CHOICE_CMD"
   [[ "${4:-}" != fleet ]] || env_list+=" $COMPACTION_OFF_ALL;ORCH_OVERSEER_LANES=1"
-  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$PENDING_PROVIDER" --harness claude --lane work --repo o/r KEN-3241
+  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$PENDING_PROVIDER" --harness claude --lane "$H/.eclaude" --repo o/r KEN-3241
   assert_eq "rc=$RC record=$(jq -r "$prepare_query" "$record_path") preparing=$(grep -c 'preparing=1' <<<"$OUT" || true) failed=$(grep -c 'failed=0' <<<"$OUT" || true)" \
     "rc=0 record=preparing:$step preparing=1 failed=1" "busy $step after create $code keeps the pending launch"
   if [[ "${4:-}" == fleet ]]; then
-    run_ot "$env_list" "${fleet_args[@]}" --host "$PENDING_PROVIDER" --harness claude --lane work --repo o/r KEN-3242
+    run_ot "$env_list" "${fleet_args[@]}" --host "$PENDING_PROVIDER" --harness claude --lane "$H/.eclaude" --repo o/r KEN-3242
     assert_eq "rc=$RC creates=$(grep -c '^create ' "$state/calls") refused=$(awk '$2 == "cap-reached" { print $3 }' <<<"$OUT")" \
       "rc=1 creates=1 refused=item=KEN-3242" "another item cannot consume the full fleet's saved slot"
   fi
@@ -791,7 +795,7 @@ pending_launch_case() { # NAME STEP CREATE_EXIT [fleet]
     PENDING_CASE_ENV="$env_list" PENDING_CASE_STATE="$state"
     return 0
   fi
-  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$PENDING_PROVIDER" --harness claude --lane work --repo o/r KEN-3241
+  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$PENDING_PROVIDER" --harness claude --lane "$H/.eclaude" --repo o/r KEN-3241
   [[ "$name" != control && "$name" != cap-control ]] || return 0
   assert_eq "rc=$RC creates=$(grep -c '^create ' "$state/calls") waits=$(grep -c '^wait ' "$state/calls" || true) pending=$(jq "$pending_query" "$record_path") launched=$(typed "clear; ssh 'lane.example'")" \
     "rc=0 creates=1 waits=$([[ "$step" == wait || "$code" == 75 ]] && echo 1 || echo 0) pending=false launched=1" "the next $step launch reuses the accepted sandbox from create $code"
@@ -848,8 +852,8 @@ while IFS='|' read -r identity harness lane relaunch; do
   OPEN_TERMINAL="$IDENTITY_OT_SHIPPED"
 done <<ROWS
 account|claude|$H/.claude|false
-harness|codex|work|false
-relaunch|claude|work|true
+harness|codex|$H/.eclaude|false
+relaunch|claude|$H/.eclaude|true
 ROWS
 
 terminal_case() { # NAME STEP [CONTROL]
@@ -857,7 +861,7 @@ terminal_case() { # NAME STEP [CONTROL]
   pending_launch_case "$name" "$step" 0 '' defer
   if [[ "$step" == wait ]]; then failure=LANE_HOST_STUB_WAIT_STATUS=1
   else failure='LANE_HOST_STUB_CAT_STATUS=1;LANE_HOST_STUB_CAT_PATH=/srv/lane/.git'; fi
-  run_ot "$PENDING_CASE_ENV;$failure" --host "$PENDING_PROVIDER" --harness claude --lane work --repo o/r KEN-3241
+  run_ot "$PENDING_CASE_ENV;$failure" --host "$PENDING_PROVIDER" --harness claude --lane "$H/.eclaude" --repo o/r KEN-3241
   TERMINAL_RESULT="rc=$RC creates=$(grep -c '^create ' "$PENDING_CASE_STATE/calls") pending=$(jq 'has("host_launch")' "$PENDING_CASE_STATE/workflow-state-KEN-3241.json")"
   [[ "${3:-}" == control ]] || assert_eq "$TERMINAL_RESULT" "rc=1 creates=1 pending=false" "terminal $step failure removes the saved continuation"
 }
@@ -905,7 +909,7 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
   env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane"$'\t'"remote-prefix=exec bash -lc"$'\t'"pi-root=/pi;$HARNESS_UP"
   if [[ "$harness" == codex ]]; then env_list+=';flags=-m gpt-6-astra -c model_reasoning_effort=high'
   else env_list+=";ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"; fi
-  run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane work --repo o/r --relaunch KEN-3241
+  run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch KEN-3241
   first_starts="$(typed "clear; ssh 'lane.example'")"; first_starts="${first_starts:-0}"
   assert_eq "rc=$RC step=$(jq -r '.lanes[0].prepare.step' "$record") failed=$(awk '$2 == "summary" { for (i=3;i<=NF;i++) if ($i ~ /^failed=/) print $i }' <<<"$OUT")" \
     "rc=0 step=$step failed=failed=0" "dispatcher busy during $name retains the accepted preparation"
@@ -915,7 +919,7 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
     env_list="${env_list/flags=-m gpt-6-astra -c model_reasoning_effort=high/flags=-m gpt-6.1-sol -c model_reasoning_effort=medium}"
   fi
   rm -f "$state/home/.cache/orch/lane-host-slots/short/slot.$$"
-  run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane work --repo o/r --relaunch KEN-3241
+  run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch KEN-3241
   retry_starts="$(typed "clear; ssh 'lane.example'")"; retry_starts="${retry_starts:-0}"
   RECOVERY_RESULT="rc=$RC creates=$(grep -c '^create ' "$state/calls") starts=$((first_starts + retry_starts)) status=$(jq -r '.lanes[0].status' "$record") pending=$(jq 'has("prepare")' <<<"$(jq '.lanes[0]' "$record")")"
   [[ "${6:-}" == control ]] || assert_eq "$RECOVERY_RESULT" "rc=0 creates=1 starts=1 status=running pending=false" "retry after $name starts one harness in the accepted sandbox"
