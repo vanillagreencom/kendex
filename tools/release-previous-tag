@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'release-previous-tag: %s=%s\n' "$1" "$2" >&2
+  exit 1
+}
+
+# Read every page: rolling main builds can fill a page before a stable release.
+if ! releases=$(gh api --paginate --slurp 'repos/{owner}/{repo}/releases'); then
+  fail release-read failed
+fi
+if ! tag=$(jq -er '
+  [.[][]
+   | select(.draft == false and .prerelease == false)
+   | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))]
+  | sort_by(.published_at) | last | .tag_name // empty
+' <<<"$releases"); then
+  fail stable-release unavailable
+fi
+
+# A release PR head can be outside main, so fetching main cannot retrieve it.
+if ! git fetch origin tag "$tag" >&2; then
+  fail tag-fetch "$tag"
+fi
+printf '%s\n' "$tag"

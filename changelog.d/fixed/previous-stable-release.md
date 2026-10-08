@@ -1,0 +1,1 @@
+- Release comparisons use the newest published stable release and fetch its tag before comparing files.
