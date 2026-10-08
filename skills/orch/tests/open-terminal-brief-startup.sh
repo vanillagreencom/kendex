@@ -21,6 +21,10 @@ REAL_SLEEP="$(command -v sleep)" || exit 1
 if [[ "${1:-}" == --case ]]; then
   ROOT="$2" OT="$3" HARNESS="$4" SHELL_BIN="$5"
   mkdir -p "$ROOT/home/.config/fish" "$ROOT/bin" "$ROOT/real-bin"
+  # Fish skips its disowned completion generator when these stores exist.
+  # The generator otherwise can keep writing after the pane shell exits.
+  mkdir -p "$ROOT/home/.local/share/fish/generated_completions" \
+    "$ROOT/home/.cache/fish/generated_completions"
   # macOS temp paths leave too little room for tmux's default socket suffix.
   tm() { env -i PATH="$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
   trap 'tm kill-server 2>/dev/null || true' EXIT
@@ -31,15 +35,30 @@ if [[ "${1:-}" == --case ]]; then
     "$ROOT/startup-entered" "$ROOT/startup-gate" "$ROOT/startup-released" > "$ROOT/home/.config/fish/config.fish"
   printf 'printf ready > %q\nread -r -n 1 < %q\nprintf ready > %q\n' \
     "$ROOT/startup-entered" "$ROOT/startup-gate" "$ROOT/startup-released" > "$ROOT/bashrc"
+  # Positive rows must fit macOS's 1024-byte input queue, including Enter.
+  # The inline control deliberately exceeds it to prove actual delivery loss.
+  check_capacity=false
+  [[ "$OT" != "$SCRIPTS_DIR/open-terminal" ]] || check_capacity=true
   {
-    printf '#!%s\nroot=%q\nreal_tmux=%q\nreal_sleep=%q\n' "$BASH" "$ROOT" "$REAL_TMUX" "$REAL_SLEEP"
+    printf '#!%s\nroot=%q\nreal_tmux=%q\nreal_sleep=%q\ncheck_capacity=%q\n' \
+      "$BASH" "$ROOT" "$REAL_TMUX" "$REAL_SLEEP" "$check_capacity"
     cat <<'WRAPPER'
 set -euo pipefail
 if [[ "$1" == paste-buffer ]]; then
   for i in {1..100}; do [[ ! -f "$root/startup-entered" ]] || break; "$real_sleep" 0.02; done
   [[ -f "$root/startup-entered" && ! -f "$root/startup-released" ]] || exit 70
 fi
-"$real_tmux" -S "$root/s" "$@"
+if [[ "$1" == load-buffer && "${!#}" == - ]]; then
+  cat > "$root/typed-command"
+  input_bytes="$(wc -c < "$root/typed-command")"
+  if [[ "$check_capacity" == true ]] && (( input_bytes + 1 > 1024 )); then
+    printf 'brief-startup: input-bytes=%s limit=1024\n' "$input_bytes" > "$root/input-bound"
+    exit 76
+  fi
+  "$real_tmux" -S "$root/s" "$@" < "$root/typed-command"
+else
+  "$real_tmux" -S "$root/s" "$@"
+fi
 if [[ "$1" == send-keys && "${!#}" == Enter ]]; then
   printf x > "$root/startup-gate"
 fi
@@ -47,8 +66,8 @@ WRAPPER
   } > "$ROOT/real-bin/tmux"
   chmod +x "$ROOT/real-bin/tmux"
   printf '#!%s\nprintf "%%s\\0" "$@" > %q\nprintf "%%s" "${!#}" > %q\nmv -- %q %q\n' \
-    "$BASH" "$ROOT/argv" "$ROOT/received.tmp" "$ROOT/received.tmp" "$ROOT/received" > "$ROOT/harness"
-  chmod +x "$ROOT/harness"
+    "$BASH" "$ROOT/argv" "$ROOT/received.tmp" "$ROOT/received.tmp" "$ROOT/received" > "$ROOT/bin/$HARNESS"
+  chmod +x "$ROOT/bin/$HARNESS"
   tm -f /dev/null new-session -d -s fixture -x 200 -y 50
   if [[ "$SHELL_BIN" == "$REAL_FISH" ]]; then
     printf '#!%s\nexec %q -l\n' "$BASH" "$REAL_FISH" > "$ROOT/pane-shell"
@@ -79,7 +98,7 @@ WRAPPER
   env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 LINEAR_TEAM= \
     WORKTREE_CLI="$ROOT/bin/worktree" ORCH_TMUX_SESSION=fixture \
     ORCH_LANE_HOST=local OT_WT_LOG="$ROOT/worktree.log" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-    "$OT" --tmux --harness "$HARNESS" --cmd "$ROOT/harness $flags $QUESTION_OFF_ALL {brief}" \
+    "$OT" --tmux --harness "$HARNESS" --cmd "$HARNESS $flags $QUESTION_OFF_ALL {brief}" \
     --brief-file "$ROOT/brief" KEN-1 > "$ROOT/launch.log" 2>&1
   for i in {1..100}; do [[ ! -f "$ROOT/received" ]] || break; "$REAL_SLEEP" 0.02; done
   [[ -f "$ROOT/startup-entered" && -f "$ROOT/startup-released" ]] || exit 71
@@ -112,6 +131,7 @@ run_case() { # NAME SCRIPT HARNESS SHELL
   RC=0
   env -i PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 timeout 20 "$BASH" "$TEST_DIR/open-terminal-brief-startup.sh" \
     --case "$RUN" "$ot" "$harness" "$shell" > "$RUN/log" 2>&1 || RC=$?
+  [[ ! -f "$RUN/input-bound" ]] || cat "$RUN/input-bound" >> "$RUN/log"
 }
 
 while IFS='|' read -r harness shell; do
