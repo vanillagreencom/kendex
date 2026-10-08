@@ -759,6 +759,7 @@ table "$JSON" \
 # Each control edits a private script copy. The same pending assertion must
 # reject its false pass, proving later-page work, incomplete totals and the
 # endpoint cap each hold the verdict independently.
+# Splice literal text: Bash 3.2 keeps replacement quotes in ${var/pat/rep}.
 control_source=$(cat "$REPO_ROOT/skills/orch/scripts/ci-wait")
 control_rows=(
   'later-page work~[$runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]~[$runs[0:100][] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]~runs-pages-active.json'
@@ -771,7 +772,7 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/control/skills/github"
 for row in "${control_rows[@]}"; do
   IFS='~' read -r label match replacement fixture <<<"$row"
   [[ "$control_source" == *"$match"* && "${control_source#*"$match"}" != *"$match"* ]] || { echo 'ci_wait: control-match=invalid' >&2; exit 1; }
-  mutant="${control_source/"$match"/"$replacement"}"
+  mutant="${control_source%%"$match"*}$replacement${control_source#*"$match"}"
   [[ "$mutant" != "$control_source" ]] || { echo 'ci_wait: control-edit=unchanged' >&2; exit 1; }
   printf '%s\n' "$mutant" > "$TMP_ROOT/control/skills/orch/scripts/ci-wait"
   chmod +x "$TMP_ROOT/control/skills/orch/scripts/ci-wait"
@@ -810,7 +811,7 @@ control_rows=(
 for row in "${control_rows[@]}"; do
   IFS='~' read -r label match replacement env expect args mutant_expect <<<"$row"
   [[ "$control_source" == *"$match"* && "${control_source#*"$match"}" != *"$match"* ]] || { echo 'ci_wait: control-match=invalid' >&2; exit 1; }
-  mutant="${control_source/"$match"/"$replacement"}"
+  mutant="${control_source%%"$match"*}$replacement${control_source#*"$match"}"
   [[ "$mutant" != "$control_source" ]] || { echo 'ci_wait: control-edit=unchanged' >&2; exit 1; }
   printf '%s\n' "$mutant" > "$TMP_ROOT/control/skills/orch/scripts/ci-wait"
   chmod +x "$TMP_ROOT/control/skills/orch/scripts/ci-wait"
