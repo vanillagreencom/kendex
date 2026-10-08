@@ -146,6 +146,8 @@ checks_of() {
     ci-required) printf '[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]' ;;
     # a green context beside a red one, and beside one still running
     optional-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
+    workflow-optional-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
+    workflow-required-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"FAILURE","bucket":"fail"},{"name":"CodeQL","state":"SUCCESS","bucket":"pass"}]' ;;
     # the same red check with no entry for the required context at all
     unregistered) printf '[{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
     optional-pending) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"IN_PROGRESS","bucket":"pending"}]' ;;
@@ -220,6 +222,27 @@ word() {
     classic:*) W_ENV+=("STUB_GATE_RULES=[]" "STUB_CLASSIC_JSON=$(jq -c --arg c "$v" '{protection: {required_status_checks: {contexts: [], checks: [{context: $c}]}}}' <<<null)") ;;
     classic-contexts:*) W_ENV+=("STUB_GATE_RULES=[]" "STUB_CLASSIC_JSON=$(jq -c --arg c "$v" '{protection: {required_status_checks: {contexts: [$c], checks: []}}}' <<<null)") ;;
     rule-type:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg t "$v" '[{type: $t}, {type: "required_status_checks", parameters: {required_status_checks: [{context: "Lint"}]}}]' <<<null)") ;;
+    workflow:*)
+      W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":123}]}}]'
+        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]'
+        'STUB_WORKFLOW_CHECKS=[{"total_count":1,"check_runs":[{"name":"Request review"}]}]')
+      case "$v" in
+        matched) ;;
+        paged) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":499}]},{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]'
+          'STUB_WORKFLOW_CHECKS=[{"total_count":2,"check_runs":[{"name":"Request review"}]},{"total_count":2,"check_runs":[{"name":"Lint"}]}]') ;;
+        second-missing) W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":123},{"path":".github/workflows/second.yml","repository_id":123}]}}]') ;;
+        runs-fail) W_ENV+=("STUB_WORKFLOW_RUNS_EXIT=1") ;;
+        checks-fail) W_ENV+=("STUB_WORKFLOW_CHECKS_EXIT=1") ;;
+        missing) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":0,"workflow_runs":[]}]') ;;
+        partial-runs) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]') ;;
+        partial-checks) W_ENV+=('STUB_WORKFLOW_CHECKS=[{"total_count":2,"check_runs":[{"name":"Request review"}]}]') ;;
+        wrong-path) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]') ;;
+        wrong-head) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"old-head","check_suite_id":500}]}]') ;;
+        wrong-repository) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":999},"head_sha":"test-head","check_suite_id":500}]}]') ;;
+        empty-checks) W_ENV+=('STUB_WORKFLOW_CHECKS=[{"total_count":0,"check_runs":[]}]') ;;
+        *) echo "UNKNOWN-WORKFLOW: $v" >&2; exit 2 ;;
+      esac
+      ;;
     rules:fail) W_ENV+=("STUB_RULES_EXIT=1") ;;
     branch:fail) W_ENV+=("STUB_BRANCH_EXIT=1") ;;
     repo:no-protection) W_ENV+=('STUB_CLASSIC_JSON={"name":"main","protected":true}') ;;
@@ -292,6 +315,7 @@ argv_for() {
       printf '%s' "${1#*:}" | tr '+' '\n'
       echo
       ;;
+    check-mutant:*) printf '%s\n' "$TMPDIR/${1#check-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --check ;;
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
     admin) printf '%s\n' "$PR_MERGE" 123 --admin --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
@@ -358,7 +382,7 @@ check_text() {
 }
 stdout_text() {
   [[ -s "$TMPDIR/stdout" ]] || { printf -- '-'; return; }
-  if [[ "$1" == check ]]; then check_text <"$TMPDIR/stdout"; return; fi
+  case "$1" in check|check-mutant:*) check_text <"$TMPDIR/stdout"; return ;; esac
   sed 's/;/\\;/g' "$TMPDIR/stdout" | paste -s -d ';' -
 }
 err_lines() {

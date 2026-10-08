@@ -1,0 +1,1 @@
+- Merge checks include the required workflow's jobs. A failed optional check no longer blocks the merge when GitHub supplies the required workflow's check names.

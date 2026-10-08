@@ -243,7 +243,8 @@ classify_checks_rollup() {
 # the check rollup. `pull_request` is the review gate among them: it demands a
 # REVIEW and, where set, resolved threads, which GitHub enforces itself and
 # never reports as a check on the head. `copilot_code_review`
-# only requests a review and gates no merge at all. Every other type — `workflows`, `code_scanning`,
+# only requests a review and gates no merge at all. Required workflows resolve
+# their check names through the head runs and check suites below. Other types, such as `code_scanning`,
 # `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
 # merge on a check result whose context the rule never names, so naming a
 # required set beside one would drop that check's red to a warning. An
@@ -258,22 +259,28 @@ RULESET_CONTEXTS_JQ='
     "max_file_path_length", "max_file_size", "merge_queue",
     "non_fast_forward", "pull_request", "required_deployments",
     "required_linear_history", "required_signatures",
-    "required_status_checks", "tag_name_pattern", "update"
+    "required_status_checks", "tag_name_pattern", "update", "workflows"
   ] as $accounted
   | .[]
   | (.type // "") as $type
   | (select(($accounted | index($type)) == null) | "unnameable:" + $type)
   , (select($type == "required_status_checks")
      | .parameters.required_status_checks[]?
-     | "ctx:" + (.context // ""))'
+     | "ctx:" + (.context // ""))
+  , (select($type == "workflows")
+     | if (.parameters.workflows | type) == "array" and (.parameters.workflows | length) > 0
+       then .parameters.workflows[] | "workflow:" + tojson
+       else "unnameable:workflows" end)'
 # Both reads yield one line per rule: `ctx:<context>` for a context a ruleset
-# or classic protection names, `unnameable:<type>` for a ruleset rule gating
+# or classic protection names, `workflow:<json>` for a required workflow,
+# `unnameable:<type>` for a ruleset rule gating
 # on a check it does not name. A failed read or an unnameable rule prints `[]`.
 # Arg 2, when given, is the owner/name the PR lives in; without it gh resolves
 # the repository from the working directory, as pr-merge relies on.
 required_contexts() {
     local pr_num="$1" repo="${2:-}" base="" rules="" classic="" branch_json=""
     local path="{owner}/{repo}" repo_arg=()
+    local head runs workflow suites suite checks names="" resolved
     if [ -n "$repo" ]; then
         path="$repo"
         repo_arg=(--repo "$repo")
@@ -288,7 +295,47 @@ required_contexts() {
         echo '[]'
         return 0
     fi
-    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
+    if grep -q '^workflow:' <<<"$rules"; then
+        if ! head=$(gh pr view "$pr_num" ${repo_arg[@]+"${repo_arg[@]}"} --json headRefOid --jq '.headRefOid' 2>/dev/null) \
+            || [ -z "$head" ] \
+            || ! head=$(jq -nr --arg v "$head" '$v | @uri') \
+            || ! runs=$(gh api "repos/$path/actions/runs?head_sha=$head&per_page=100" --paginate --slurp 2>/dev/null) \
+            || ! runs=$(jq -ce '
+                [.[].workflow_runs[]] as $runs
+                | if length > 0 and all(.[]; (.workflow_runs | type) == "array" and .total_count == ($runs | length))
+                  then $runs else error("incomplete workflow runs") end' <<<"$runs" 2>/dev/null); then
+            echo '[]'
+            return 0
+        fi
+        while IFS= read -r workflow; do
+            case "$workflow" in workflow:*) workflow=${workflow#workflow:} ;; *) continue ;; esac
+            # A matching path in another repository cannot prove the source
+            # of a ruleset workflow. Keep the all-check fallback in that case.
+            if ! suites=$(jq -er --argjson workflow "$workflow" --arg head "$head" '
+                [.[] | select(.path == $workflow.path and .head_sha == $head
+                              and .repository.id == $workflow.repository_id) | .check_suite_id]
+                | if length > 0 and all(.[]; type == "number" and . > 0)
+                  then unique[] else error("required workflow has no check suite") end' <<<"$runs" 2>/dev/null); then
+                echo '[]'
+                return 0
+            fi
+            while IFS= read -r suite; do
+                if ! checks=$(gh api "repos/$path/check-suites/$suite/check-runs?per_page=100" --paginate --slurp 2>/dev/null) \
+                    || ! resolved=$(jq -er '
+                        [.[].check_runs[]] as $checks
+                        | if length > 0 and all(.[]; (.check_runs | type) == "array" and .total_count == ($checks | length))
+                             and ($checks | length) > 0 and all($checks[]; (.name | type) == "string" and (.name | length) > 0)
+                          then $checks[] | "ctx:" + .name
+                          else error("incomplete workflow checks") end' <<<"$checks" 2>/dev/null); then
+                    echo '[]'
+                    return 0
+                fi
+                names="$names
+$resolved"
+            done <<<"$suites"
+        done <<<"$rules"
+    fi
+    printf '%s\n%s\n%s\n' "$rules" "$classic" "$names" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
 }
 
 # The `head-run: <ids>` line for a --check JSON (stdin): the run ids the CI

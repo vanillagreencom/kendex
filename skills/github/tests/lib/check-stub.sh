@@ -133,6 +133,16 @@ case "${1:-}" in
             prev="$a"
         done
         case "${2:-}" in
+            'repos/{owner}/{repo}/actions/runs?head_sha='*)
+                [[ "${STUB_WORKFLOW_RUNS_EXIT:-0}" == 0 ]] || exit "$STUB_WORKFLOW_RUNS_EXIT"
+                printf '%s\n' "${STUB_WORKFLOW_RUNS:-[]}"
+                exit 0
+                ;;
+            'repos/{owner}/{repo}/check-suites/'*'/check-runs?per_page=100')
+                [[ "${STUB_WORKFLOW_CHECKS_EXIT:-0}" == 0 ]] || exit "$STUB_WORKFLOW_CHECKS_EXIT"
+                printf '%s\n' "${STUB_WORKFLOW_CHECKS:-[]}"
+                exit 0
+                ;;
             # An installation token (ghs_) has no user: gh's integration 403.
             # A revoked token (*_REVOKED) gets gh's plain 401.
             user)
