@@ -1,6 +1,5 @@
 use crate::env::Env;
 use crate::error::Result;
-use crate::hash::installation_hash;
 use crate::lock::entry_key;
 use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest, Method};
 use crate::mapping::EffectiveSkills;
@@ -170,14 +169,7 @@ pub(super) fn desired_agent(
             provenance: ctx.provenance.to_owned(),
             source_commit: ctx.source_commit.map(str::to_owned),
             recorded_fork: ctx.manifest.recorded_fork(ItemKind::Agent, ctx.name),
-            hash: installation_hash(
-                ctx.sealed,
-                ctx.item_path,
-                &hash_manifest,
-                ItemKind::Agent,
-                ctx.name,
-                harness,
-            )?,
+            hash: ctx.installation_hash(&hash_manifest, ItemKind::Agent, harness)?,
             rendered_hash: artifact.rendered_hash(),
             source: Some(ctx.source(ItemKind::Agent, &artifact)?),
             upstream_skills: Some(skills.upstream_now.clone()),

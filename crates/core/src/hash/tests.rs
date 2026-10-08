@@ -107,7 +107,7 @@ fn tree_hash_is_content_and_layout_sensitive() {
 #[test]
 fn clean_checkout_hash_normalizes_only_gits_text_conversion() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
+    let root = &crate::test_util::rooted(&tmp);
     let git = |args: &[&str]| {
         let output = crate::process::Hardened::git(args, Some(root))
             .run()
@@ -120,9 +120,11 @@ fn clean_checkout_hash_normalizes_only_gits_text_conversion() {
     };
     git(&["init", "-q", "-b", "main"]);
     git(&["config", "core.autocrlf", "true"]);
+    std::fs::write(root.join(".gitattributes"), "literal -text\n").unwrap();
     std::fs::write(root.join("text"), b"one\ntwo\n").unwrap();
+    std::fs::write(root.join("literal"), b"keep\r\n").unwrap();
     std::fs::write(root.join("binary"), b"one\0\r\ntwo\r\n").unwrap();
-    git(&["add", "text", "binary"]);
+    git(&["add", ".gitattributes", "text", "literal", "binary"]);
     git(&[
         "-c",
         "user.name=t",
@@ -144,6 +146,18 @@ fn clean_checkout_hash_normalizes_only_gits_text_conversion() {
     assert_eq!(
         hash_clean_checkout_tree(&root.join("binary")).unwrap(),
         Some(hash_bytes(b"one\0\r\ntwo\r\n"))
+    );
+    let selected = vec![
+        (PathBuf::from("text"), b"one\r\ntwo\r\n".to_vec()),
+        (PathBuf::from("literal"), b"keep\r\n".to_vec()),
+    ];
+    let portable = vec![
+        (PathBuf::from("text"), b"one\ntwo\n".to_vec()),
+        (PathBuf::from("literal"), b"keep\r\n".to_vec()),
+    ];
+    assert_eq!(
+        hash_clean_checkout_files(root, &selected),
+        Some(hash_files(&portable))
     );
 
     std::fs::write(root.join("text"), b"one\r\nchanged\r\n").unwrap();
@@ -392,8 +406,74 @@ fn a_source_hash_asks_git_only_where_a_crlf_pair_could_convert() {
         std::fs::read(root.join("skill/asset.bin")).unwrap(),
         b"four\0\n"
     );
-    let (crlf, _) = hash();
+    let (crlf, crlf_queries) = hash();
     assert_eq!(crlf, lf, "a CRLF checkout lost the committed identity");
+    assert_eq!(crlf_queries, 4);
+}
+
+#[test]
+fn a_plan_reuses_a_crlf_source_hash_across_harnesses() {
+    use crate::engine::{PlanOptions, plan_scope};
+    use crate::env::{Env, FakeOs};
+    use crate::model::Scope;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let catalog = root.join("catalog");
+    let project = root.join("project");
+    std::fs::create_dir_all(catalog.join("skills/demo")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    let git = |args: &[&str]| crate::test_util::git(&catalog, args);
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "core.autocrlf", "true"]);
+    std::fs::write(catalog.join("kendex.toml"), "schema = 6\n").unwrap();
+    std::fs::write(
+        catalog.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: fixture\n---\nDo the work.\n",
+    )
+    .unwrap();
+    std::fs::write(catalog.join("skills/demo/notes.md"), "Reference.\n").unwrap();
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "fixture",
+    ]);
+    std::fs::remove_dir_all(catalog.join("skills")).unwrap();
+    git(&["checkout", "--", "skills"]);
+    assert!(
+        std::fs::read(catalog.join("skills/demo/notes.md"))
+            .unwrap()
+            .ends_with(b"\r\n")
+    );
+
+    let env = Env::fake(root.join("home"), FakeOs::Linux);
+    let scope = Scope::Project { root: project };
+    for (harnesses, queries) in [("\"claude\"", 6), ("\"claude\",\"codex\",\"pi\"", 10)] {
+        let manifest: Manifest = toml::from_str(&format!(
+            "schema = 6\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n[sources.fixture]\n{}\n[skills.demo]\nsource = \"fixture\"\n",
+            crate::test_util::source_path(&catalog),
+        ))
+        .unwrap();
+        GIT_QUERY_COUNT.with(|count| count.set(0));
+        let report = plan_scope(
+            &env,
+            &scope,
+            &manifest,
+            &crate::lock::Lock::default(),
+            &PlanOptions::current(),
+        )
+        .unwrap();
+        assert!(report.refused.is_empty());
+        assert!(report.drift.iter().any(|row| row.name == "demo"));
+        // Four source queries, plus destination repository lookups when
+        // rendering and planning each tree outside Git.
+        GIT_QUERY_COUNT.with(|count| assert_eq!(count.get(), queries));
+    }
 }
 
 #[test]

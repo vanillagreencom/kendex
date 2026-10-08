@@ -665,7 +665,9 @@ pub(super) fn desired_state(
     prune_retired: bool,
     removal_filter: Option<&[super::report_types::RemovalName]>,
 ) -> Result<DesiredState> {
+    let source_hashes = crate::hash::SourceHashes::default();
     let first = compute(
+        &source_hashes,
         env,
         scope,
         manifest,
@@ -680,6 +682,7 @@ pub(super) fn desired_state(
         return Ok(first);
     };
     let mut second = compute(
+        &source_hashes,
         env,
         scope,
         &merged,
@@ -699,6 +702,7 @@ pub(super) fn desired_state(
 
 #[allow(clippy::too_many_arguments)]
 fn compute(
+    source_hashes: &crate::hash::SourceHashes,
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
@@ -783,6 +787,7 @@ fn compute(
             harnesses.retain(|harness| collisions.allows(kind, name, *harness));
             let reasons = reasons_for(kind, name, &harnesses, &expansion, &state.kept_members);
             let ctx = ItemCtx {
+                source_hashes,
                 model_classes: &model_classes,
                 env,
                 scope,
@@ -902,6 +907,7 @@ fn reasons_for(
 }
 
 pub(super) struct ItemCtx<'a> {
+    source_hashes: &'a crate::hash::SourceHashes,
     pub(super) model_classes: &'a BTreeMap<String, String>,
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
@@ -927,6 +933,24 @@ pub(super) struct ItemCtx<'a> {
 }
 
 impl ItemCtx<'_> {
+    pub(super) fn installation_hash(
+        &self,
+        manifest: &Manifest,
+        kind: ItemKind,
+        harness: HarnessId,
+    ) -> Result<String> {
+        let source_hash = self
+            .source_hashes
+            .source_hash(self.sealed, self.item_path, kind)?;
+        Ok(crate::hash::installation_hash_from_source(
+            &source_hash,
+            manifest,
+            kind,
+            self.name,
+            harness,
+        ))
+    }
+
     pub(super) fn reasons_for(&self, harness: HarnessId) -> BTreeSet<crate::lock::Reason> {
         self.reasons.get(&harness).cloned().unwrap_or_default()
     }

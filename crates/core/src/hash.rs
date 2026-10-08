@@ -1,3 +1,5 @@
+use std::cell::{OnceCell, RefCell};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -288,9 +290,8 @@ fn checkout_hash(root: &Path, files: &[(PathBuf, Vec<u8>)], checkout: Checkout) 
     let cwd = root.ancestors().find(|candidate| candidate.is_dir())?;
     let top = git_stdout(cwd, &["rev-parse", "--show-toplevel"])?;
     let top = crate::paths::canonical(Path::new(std::str::from_utf8(&top).ok()?.trim())).ok()?;
+    let selected = literal_pathspec(root.strip_prefix(&top).ok()?);
     if checkout == Checkout::Observed {
-        let selected = root.strip_prefix(&top).ok()?;
-        let selected = literal_pathspec(selected);
         let status = git_stdout(
             &top,
             &[
@@ -308,6 +309,24 @@ fn checkout_hash(root: &Path, files: &[(PathBuf, Vec<u8>)], checkout: Checkout) 
         }
     }
 
+    let mut args = vec!["ls-files", "--eol", "-z", "--cached"];
+    if matches!(checkout, Checkout::Rendered | Checkout::ObservedOwned) {
+        args.extend(["--others", "--exclude-standard"]);
+    }
+    args.extend(["--", &selected]);
+    let answer = git_stdout(&top, &args)?;
+    let mut rows = BTreeMap::new();
+    for record in answer
+        .split(|byte| *byte == 0)
+        .filter(|row| !row.is_empty())
+    {
+        let (named, row) = parse_eol_row(record)?;
+        if rows.insert(named, row).is_some() {
+            return None;
+        }
+    }
+    let autocrlf = OnceCell::new();
+
     let mut normalized = Vec::with_capacity(files.len());
     for (relative, bytes) in files {
         if checkout != Checkout::Observed && !normalization_eligible(bytes) {
@@ -317,25 +336,11 @@ fn checkout_hash(root: &Path, files: &[(PathBuf, Vec<u8>)], checkout: Checkout) 
         let named = root.join(relative);
         let named = named.strip_prefix(&top).ok()?;
         let named = crate::paths::slashed(named);
-        let pathspec = format!(":(literal){named}");
-        let mut args = vec!["ls-files", "--eol", "-z", "--cached"];
-        if matches!(checkout, Checkout::Rendered | Checkout::ObservedOwned) {
-            args.extend(["--others", "--exclude-standard"]);
-        }
-        args.extend(["--", &pathspec]);
-        let answer = git_stdout(&top, &args)?;
-        let mut records = answer
-            .split(|byte| *byte == 0)
-            .filter(|row| !row.is_empty());
-        let row = match records.next() {
-            Some(record) if records.next().is_none() => parse_eol_row(record, &named),
-            Some(_) => return None,
-            None => None,
-        };
+        let row = rows.get(named.as_bytes());
         if checkout == Checkout::Observed && row.is_none() {
             return None;
         }
-        let normalize = portable_text(&top, &named, bytes, row.as_ref());
+        let normalize = portable_text(&top, &named, bytes, row, &autocrlf);
         let bytes = match normalize {
             true => crlf_to_lf(bytes),
             false => bytes.clone(),
@@ -374,11 +379,9 @@ enum EolAttribute {
     Unspecified,
 }
 
-fn parse_eol_row(record: &[u8], named: &str) -> Option<EolRow> {
+fn parse_eol_row(record: &[u8]) -> Option<(&[u8], EolRow)> {
     let tab = record.iter().position(|byte| *byte == b'\t')?;
-    if record.get(tab + 1..) != Some(named.as_bytes()) {
-        return None;
-    }
+    let named = record.get(tab + 1..)?;
     let eol = std::str::from_utf8(&record[..tab]).ok()?;
     let mut fields = eol.split_ascii_whitespace();
     let index = fields.next()?.to_owned();
@@ -394,10 +397,16 @@ fn parse_eol_row(record: &[u8], named: &str) -> Option<EolRow> {
         }
         policy
     });
-    Some(EolRow { index, policy })
+    Some((named, EolRow { index, policy }))
 }
 
-fn portable_text(top: &Path, named: &str, bytes: &[u8], row: Option<&EolRow>) -> bool {
+fn portable_text(
+    top: &Path,
+    named: &str,
+    bytes: &[u8],
+    row: Option<&EolRow>,
+    autocrlf: &OnceCell<bool>,
+) -> bool {
     if !normalization_eligible(bytes) || row.is_some_and(|row| row.index == "i/crlf") {
         return false;
     }
@@ -413,9 +422,11 @@ fn portable_text(top: &Path, named: &str, bytes: &[u8], row: Option<&EolRow>) ->
     {
         return true;
     }
-    git_stdout(top, &["config", "--get", "core.autocrlf"])
-        .and_then(|value| String::from_utf8(value).ok())
-        .is_some_and(|value| matches!(value.trim(), "true" | "input"))
+    *autocrlf.get_or_init(|| {
+        git_stdout(top, &["config", "--get", "core.autocrlf"])
+            .and_then(|value| String::from_utf8(value).ok())
+            .is_some_and(|value| matches!(value.trim(), "true" | "input"))
+    })
 }
 
 fn text_attributes(top: &Path, named: &str) -> Option<TextPolicy> {
@@ -539,16 +550,67 @@ pub fn installation_hash(
     name: &str,
     harness: HarnessId,
 ) -> Result<String> {
+    let source_hash = source_hash(sealed, source_tree, kind)?;
+    Ok(installation_hash_from_source(
+        &source_hash,
+        manifest,
+        kind,
+        name,
+        harness,
+    ))
+}
+
+/// Source identities belong to one plan, including its second pass after
+/// upstream declarations merge. Harness-specific manifest sections stay
+/// outside this cache.
+#[derive(Default)]
+pub(crate) struct SourceHashes {
+    hashes: RefCell<BTreeMap<(ItemKind, PathBuf), String>>,
+}
+
+impl SourceHashes {
+    pub(crate) fn source_hash(
+        &self,
+        sealed: &crate::source_read::SealedSource,
+        source_tree: &Path,
+        kind: ItemKind,
+    ) -> Result<String> {
+        let mut hashes = self.hashes.borrow_mut();
+        let key = (kind, source_tree.to_owned());
+        let hash = match hashes.entry(key) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(source_hash(sealed, source_tree, kind)?)
+            }
+        };
+        Ok(hash.clone())
+    }
+}
+
+fn source_hash(
+    sealed: &crate::source_read::SealedSource,
+    source_tree: &Path,
+    kind: ItemKind,
+) -> Result<String> {
     let files = sealed.rendered_item(kind, source_tree)?.into_files();
+    Ok(portable_source_hash(source_tree, &files))
+}
+
+pub(crate) fn installation_hash_from_source(
+    source_hash: &str,
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(portable_source_hash(source_tree, &files));
+    hasher.update(source_hash);
     hasher.update(relevant_sections(manifest, kind, name, harness).as_bytes());
-    Ok(hex(&hasher.finalize()))
+    hex(&hasher.finalize())
 }
 
 /// A source's bytes under the identity a committed lock carries. Git is
-/// asked only where it could convert something: a plan hashes every source
-/// once per harness, and the Git route starts a process per file.
+/// asked only where it could convert something.
 fn portable_source_hash(source_tree: &Path, files: &[(PathBuf, Vec<u8>)]) -> String {
     let exact = hash_files(files);
     match git_can_convert(files) {

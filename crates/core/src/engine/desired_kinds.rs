@@ -9,7 +9,7 @@ use super::targets::{
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
 use crate::error::Result;
-use crate::hash::{hash_bytes, installation_hash};
+use crate::hash::hash_bytes;
 use crate::hook::{HookBody, HookSpec, codex_event, parse_hook};
 use crate::lock::{Reason, entry_key};
 use crate::manifest::{Manifest, Method};
@@ -34,14 +34,7 @@ pub(super) fn declared(
         provenance: ctx.provenance.to_owned(),
         source_commit: ctx.source_commit.map(str::to_owned),
         recorded_fork: ctx.manifest.recorded_fork(kind, ctx.name),
-        hash: installation_hash(
-            ctx.sealed,
-            ctx.item_path,
-            ctx.manifest,
-            kind,
-            ctx.name,
-            harness,
-        )?,
+        hash: ctx.installation_hash(ctx.manifest, kind, harness)?,
         rendered_hash: artifact.rendered_hash(),
         source: Some(ctx.source(kind, &artifact)?),
         upstream_skills: None,

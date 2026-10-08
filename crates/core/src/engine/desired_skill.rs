@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::error::Result;
-use crate::hash::{hash_files, in_place_installation_hash, installation_hash};
+use crate::hash::{hash_files, in_place_installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -340,14 +340,7 @@ fn push_installs(
                 None,
             ),
             false => (
-                installation_hash(
-                    ctx.sealed,
-                    ctx.item_path,
-                    ctx.manifest,
-                    ItemKind::Skill,
-                    ctx.name,
-                    *harness,
-                )?,
+                ctx.installation_hash(ctx.manifest, ItemKind::Skill, *harness)?,
                 artifact.rendered_hash(),
             ),
         };
