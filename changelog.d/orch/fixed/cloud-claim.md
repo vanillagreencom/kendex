@@ -1,0 +1,1 @@
+- Cloud session launches keep a local Git claim without a source checkout, reducing disk use on the control host while retaining branch pushes and session mail.

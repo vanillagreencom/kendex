@@ -3081,7 +3081,7 @@ cloud_cli_wait() { # PANE
 cloud_session_launch() {
   local wt branch words model cmd form line pane session prompt prompt_file rc=0 launched_at record_rc=0 detached=false exit_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
-  wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
+  wt="$("$WORKTREE_CLI" create "$wt_id" --no-checkout)" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
   [[ "$rc" -eq 0 ]] || { ot_message worktree-failed "item=$item" "exit=$rc" >&2; return 1; }
   # A detached worktree has no current branch for the CLI to clone.

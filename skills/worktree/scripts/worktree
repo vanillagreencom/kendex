@@ -1440,13 +1440,20 @@ configure_worktree_git() {
 # app-specific; it is the same setup `create` applies once git has made the
 # worktree, which is why both entry points share it.
 setup_app_worktree() {
-  local wt="$1"
+  local wt="$1" checkout="${2:-true}"
 
-  setup_worktree_links "$wt" || return 1
+  # Push guards read the index; --no-checkout leaves it empty. Initialize
+  # that metadata without writing the source files a cloud claim never uses.
+  if [[ "$checkout" == true ]]; then
+    setup_worktree_links "$wt" || return 1
+  else
+    git -C "$wt" read-tree HEAD || return 1
+  fi
   configure_worktree_git "$wt" || return 1
   # Best-effort by contract: a repo where the hooks cannot be written
   # still gets a fully provisioned worktree.
-  install_worktree_autorepair_hooks
+  if [[ "$checkout" == true ]]; then install_worktree_autorepair_hooks; fi
+  return 0
 }
 
 is_git_worktree_path() {
@@ -2604,10 +2611,13 @@ case "${1:-}" in
     REPLAY=false
     KEEP_ON_CONFLICT=false
     HOST_KIND=local
+    CHECKOUT=true
+    CHECKOUT_ARGS=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
         --hosted) HOST_KIND=hosted; shift ;;
+        --no-checkout) CHECKOUT=false; CHECKOUT_ARGS=(--no-checkout); shift ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
         --transfer) TRANSFER="${2:-}"; [[ -n "$TRANSFER" ]] || { worktree_message transfer-branch-missing "--transfer" "Error: --transfer requires the local branch checked out in the main checkout." >&2; exit 1; }; shift 2 ;;
@@ -2626,6 +2636,10 @@ case "${1:-}" in
         *) BRANCH="$1"; shift ;;
       esac
     done
+    if [[ "$CHECKOUT" == false && ( "$REUSE" == true || "$RESTACK" == true || -n "$TRANSFER" ) ]]; then
+      worktree_message checkout-mode-invalid "--no-checkout" "Error: --no-checkout creates a new tree; it cannot reuse, restack, or transfer existing work." >&2
+      exit 1
+    fi
     if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
       worktree_message replay-mode-required "--replay" "Error: --replay selects the restack engine for --reuse/--restack; combine it with one of them." >&2
       exit 1
@@ -3085,9 +3099,9 @@ case "${1:-}" in
         exit 1
       fi
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
+      git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
       release_issue_claim_lock
-      setup_app_worktree "$WT_PATH"
+      setup_app_worktree "$WT_PATH" "$CHECKOUT"
       report_created_worktree
       exit 0
     fi
@@ -3142,7 +3156,7 @@ case "${1:-}" in
         # skips new tracking config, but -B keeps an upstream a pre-existing
         # branch carried; drop it so a push cannot reach an origin branch of
         # that name.
-        git -C "$PROJECT_ROOT" worktree add --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
+        git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
         if git -C "$WT_PATH" config --get "branch.$BASE.merge" >/dev/null 2>&1; then
           git -C "$WT_PATH" branch --unset-upstream "$BASE" >/dev/null 2>&1 || {
             worktree_message upstream-clear-failed "$BASE" "Error: could not clear the upstream of branch '$BASE' in $WT_PATH" >&2
@@ -3150,8 +3164,8 @@ case "${1:-}" in
           }
         fi
       else
-        git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
-          git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
+        git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
+          git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} "$WT_PATH" "$BASE" >/dev/null 2>&1
       fi
     else
       resolve_default_branch || exit 1
@@ -3166,7 +3180,7 @@ case "${1:-}" in
 
       BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
+      git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
     fi
 
     release_issue_claim_lock
@@ -3182,7 +3196,7 @@ case "${1:-}" in
       fi
     fi
 
-    setup_app_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH" "$CHECKOUT"
     report_created_worktree
     ;;
 

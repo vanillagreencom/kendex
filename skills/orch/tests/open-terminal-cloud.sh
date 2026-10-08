@@ -61,7 +61,7 @@ OT_BIN="$TMP_ROOT/ot-bin"
 ot_stub_bin "$OT_BIN"
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
+printf '#!/usr/bin/env bash\n[[ "${STUB_GH_OK:-}" == 1 ]]\n' > "$BIN/gh"
 cat > "$BIN/lanes" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -210,7 +210,7 @@ made() { [[ -e "$WT_LOG" ]] && echo yes || echo no; }
 
 echo "=== a cloud session is launched from the item's pushed branch and recorded ==="
 run_ot -- "${CLOUD[@]}" CC-1
-assert_eq "rc=$RC worktree=$(paste -sd, "$WT_LOG")" "rc=0 worktree=create CC-1,push CC-1 --set-upstream" \
+assert_eq "rc=$RC worktree=$(paste -sd, "$WT_LOG")" "rc=0 worktree=create CC-1 --no-checkout,push CC-1 --set-upstream" \
   "the launch creates the item worktree and pushes its branch before the session" "$TMP_ROOT/err"
 assert_eq "$(grep -c -- "^new-window .* -n CC-1 -c $TMP_ROOT/wt/CC-1 " "$TMUX_LOG" || true)" 1 \
   "the item's window opens in the item worktree"
@@ -497,11 +497,11 @@ echo "=== a failed push, branch read, composer or capture stops with no record =
 # composer wait's capture before it having succeeded.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 FAILURE_ROWS=(
-  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none|create CC-20,push CC-20 --set-upstream||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
-  'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none|create CC-25||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
-  'STUB_WT_PROMPT_DIR=1|cloud-prompt-failed item=CC-28|none|create CC-28||| { ot_message cloud-prompt-failed -> || true || { ot_message cloud-prompt-failed'
-  'OT_COMPOSER_ON_ENTER=99|cloud-composer-stuck item=CC-26|ran|create CC-26,push CC-26 --set-upstream|    1 | 3) ->     1 | 3) ;; 9)'
-  'OT_TMUX_FAIL_NTH=capture-pane:2|tmux-failed operation=capture-pane item=CC-27|ran|create CC-27,push CC-27 --set-upstream|capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2 -> capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 1'
+  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none|create CC-20 --no-checkout,push CC-20 --set-upstream||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
+  'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none|create CC-25 --no-checkout||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
+  'STUB_WT_PROMPT_DIR=1|cloud-prompt-failed item=CC-28|none|create CC-28 --no-checkout||| { ot_message cloud-prompt-failed -> || true || { ot_message cloud-prompt-failed'
+  'OT_COMPOSER_ON_ENTER=99|cloud-composer-stuck item=CC-26|ran|create CC-26 --no-checkout,push CC-26 --set-upstream|    1 | 3) ->     1 | 3) ;; 9)'
+  'OT_TMUX_FAIL_NTH=capture-pane:2|tmux-failed operation=capture-pane item=CC-27|ran|create CC-27 --no-checkout,push CC-27 --set-upstream|capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2 -> capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 1'
 )
 failure_row() { # SCRIPT ROW — the launch, with RC and ERR set
   local env line item
@@ -857,6 +857,92 @@ perl -0777 -pi -e 's/\{branch\}//g or die "branch-words: matches=0\n"' -- "$MUTA
 run_ot SCRIPT="$MUTANT_ROOT/scripts/open-terminal" -- "${CLOUD[@]}" CC-1
 assert_eq "$(branch_named CC-1 cc-1)" "named=no unfilled=0" \
   "control: session words naming no {branch} fail the prompt row"
+
+echo "=== a cloud claim has no source checkout and accepts a session directive ==="
+# A real worktree and push, with network calls mapped to a local bare remote.
+# The cloud CLI, tmux, account picker and GitHub reads are stubs.
+REAL_WORKTREE="$TEST_DIR/../../worktree/scripts/worktree"
+CLAIM_MAIL="$SCRIPTS_DIR/lane-mail"
+git -C "$REPO" symbolic-ref HEAD refs/heads/main
+git -C "$REPO" config user.name Test
+git -C "$REPO" config user.email test@example.com
+git -C "$REPO" config commit.gpgsign false
+printf 'source payload\n' > "$REPO/payload.txt"
+git -C "$REPO" add payload.txt
+git -C "$REPO" commit -qm source
+git init --bare -q "$TMP_ROOT/origin.git"
+git -C "$TMP_ROOT/origin.git" config gc.auto 0
+git -C "$TMP_ROOT/origin.git" config maintenance.auto false
+# Keep origin's GitHub identity visible to the bundle check. The transport
+# stub adds Git's URL rewrite only to commands that contact the remote.
+REAL_GIT="$(command -v git)"
+cat > "$BIN/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  case "\$arg" in
+    fetch | push | ls-remote)
+      exec "$REAL_GIT" -c "url.$TMP_ROOT/origin.git.insteadOf=https://github.com/owner/repo.git" "\$@" ;;
+  esac
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$BIN/git"
+"$BIN/git" -C "$REPO" push -qu origin main
+# The fleet's real push guard holds the index to the pushed commit. It reads
+# committed files through Git, so an absent source checkout can still pass.
+printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$TEST_DIR/../../commit-guards/scripts/pre-push" > "$REPO/.git/hooks/pre-push"
+chmod +x "$REPO/.git/hooks/pre-push"
+printf 'private setup\n' > "$REPO/private.txt"
+printf 'copied setup\n' > "$REPO/copy.txt"
+cat > "$CLAUDE_BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+{ printf 'argv=%s\nconfig=%s\nstdin=' "$*" "${CLAUDE_CONFIG_DIR:-}"; cat; } > "$STUB_CLAUDE_LOG"
+printf '{"ok":true}\n'
+EOF
+
+claim_row() { # OPEN_TERMINAL WORKTREE ITEM
+  local claim git_dir mail_rc=0 mail_out
+  run_ot SCRIPT="$1" WORKTREE_CLI="$2" STUB_GH_OK=1 WORKTREE_DEFAULT_BRANCH=main \
+    COMMIT_GUARDS_CHECKS=byte-ceiling \
+    WORKTREE_BASE_DIR="$TMP_ROOT/claims-real" WORKTREE_SYMLINKS="private.txt" WORKTREE_COPIES="copy.txt" \
+    WORKTREE_MKDIRS="scratch" -- "${CLOUD[@]}" "$3"
+  [[ "$RC" -eq 0 ]] || { CLAIM_RESULT="launch=$RC"; return; }
+  claim="$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$3"'") | .mail_root')"
+  git_dir="$(git -C "$claim" rev-parse --absolute-git-dir)"
+  mail_out="$(cd "$REPO" && env PATH="$CLAUDE_BIN:$BIN:$OT_BIN:$PATH" STUB_CLAUDE_LOG="$TMP_ROOT/directive.log" \
+    "$CLAIM_MAIL" send --item "$3" --directive --file "$BRIEF" --state-dir "$STATE" 2>"$TMP_ROOT/mail.err")" || mail_rc=$?
+  CLAIM_RESULT="launch=$RC files=$(find "$claim" -mindepth 1 -maxdepth 1 ! -name .git -print | wc -l | tr -d ' ') source=$([[ -f "$claim/payload.txt" ]] && echo yes || echo no) branch=$(git -C "$claim" symbolic-ref --short HEAD) claim=$(cat "$git_dir/kendex-issue") pushed=$(git -C "$TMP_ROOT/origin.git" rev-parse "refs/heads/$(git -C "$claim" symbolic-ref --short HEAD)") prompt=$([[ -s "$git_dir/cloud-prompt" ]] && echo yes || echo no) mail=$mail_rc"
+  assert_eq "$mail_out" "lane-mail: sent item=$3 channel=session session=session_01CLOUD" \
+    "the claim record routes its directive to the cloud session" "$TMP_ROOT/mail.err"
+  assert_eq "$(cat "$TMP_ROOT/directive.log")" "argv=-p --cloud session_01CLOUD --output-format json"$'\n'"config=$LANE_DIR"$'\n'"stdin=$(cat "$BRIEF")" \
+    "the session receives the directive under the record's account"
+}
+CLAIM_HEAD="$(git -C "$REPO" rev-parse HEAD)"
+claim_row "$OT" "$REAL_WORKTREE" CC-101
+assert_eq "$CLAIM_RESULT" "launch=0 files=0 source=no branch=cc-101 claim=cc-101 pushed=$CLAIM_HEAD prompt=yes mail=0" \
+  "the cloud launch leaves only the Git link, retains the claim and prompt, pushes the branch and permits a directive" "$TMP_ROOT/err"
+
+# Each producer of a checkout can break this contract: the launcher omitting
+# the option, and worktree create ignoring it. Both leave source files.
+# shellcheck disable=SC2016
+mutant claim-checkout 'create "$wt_id" --no-checkout' 'create "$wt_id"'
+claim_row "$MUTANT" "$REAL_WORKTREE" CC-102
+assert_eq "full=$([[ "$CLAIM_RESULT" == 'launch=0 files='*' source=yes '* ]] && echo yes || echo no)" "full=yes" \
+  "control: a full source checkout fails the cloud claim row"
+mkdir -p "$TMP_ROOT/claim-mutant/worktree"
+cp -R "$TEST_DIR/../../worktree/scripts" "$TMP_ROOT/claim-mutant/worktree/scripts"
+# shellcheck disable=SC2016
+mutate_file "$TMP_ROOT/claim-mutant/worktree/scripts/worktree" 'CHECKOUT_ARGS=(--no-checkout)' 'CHECKOUT_ARGS=()'
+claim_row "$OT" "$TMP_ROOT/claim-mutant/worktree/scripts/worktree" CC-103
+assert_eq "full=$([[ "$CLAIM_RESULT" == 'launch=0 files='*' source=yes '* ]] && echo yes || echo no)" "full=yes" \
+  "control: create ignoring the checkout option fails the cloud claim row"
+# shellcheck disable=SC2016
+mutate_file "$TMP_ROOT/claim-mutant/worktree/scripts/worktree" 'git -C "$wt" read-tree HEAD || return 1' 'git -C "$wt" read-tree --empty || return 1'
+claim_row "$OT" "$TMP_ROOT/claim-mutant/worktree/scripts/worktree" CC-104
+assert_eq "$CLAIM_RESULT" "launch=1" "control: an empty index blocks the claim branch push"
+assert_contains "$ERR" "pre-push: index-drift=" "the push guard refuses the empty index" "$TMP_ROOT/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

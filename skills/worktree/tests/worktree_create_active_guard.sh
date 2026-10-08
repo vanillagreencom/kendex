@@ -455,6 +455,53 @@ git -C "$MAIN" switch -q topic
 assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
   "the main-checkout route from the not-on-origin advice ends in a worktree on the branch"
 
+# A checkout-free create is a new tree, not a destructive conversion of
+# existing work. The cloud launcher produces this option on a fresh claim.
+echo "=== checkout-free create ==="
+for row in \
+  'claim|-|create topic --no-checkout|topic' \
+  'from|-|create topic --from main --no-checkout|topic' \
+  'base|remote:feature|create topic --base feature --no-checkout|feature' \
+  'pr|wt push dropped pr-json|create topic --pr 42 --no-checkout|topic'; do
+  IFS='|' read -r name fixture command branch <<<"$row"
+  # shellcheck disable=SC2086
+  build "checkout-$name" $fixture
+  run "$command" > "$ROOT/result"
+  assert_eq "$(sed 's/ out=.*//' "$ROOT/result") branch=$(git -C "$WT" symbolic-ref --short HEAD) source=$([[ -e "$WT/base.txt" ]] && echo yes || echo no) claim=$(cat "$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-issue")" \
+    "rc=0 branch=$branch source=no claim=topic" "a $name create omits the source checkout and keeps its issue record"
+done
+
+for row in \
+  'reuse|wt|--reuse' \
+  'restack|wt|--restack' \
+  'transfer|main-checkout|--transfer topic'; do
+  IFS='|' read -r name fixture options <<<"$row"
+  build "checkout-invalid-$name" "$fixture"
+  before="$(state)"
+  assert_eq "$(run "create topic --no-checkout $options")" \
+    "rc=1 out= err=worktree-checkout-mode-invalid: --no-checkout $before" \
+    "a checkout-free create refuses $name without changing existing work"
+done
+
+mkdir -p "$TMP_ROOT/checkout-mutant"
+cp -R "$(dirname "$WORKTREE_SCRIPT")" "$TMP_ROOT/checkout-mutant/scripts"
+# The existing-work guard is one rule shared by the incompatible modes.
+python3 - "$TMP_ROOT/checkout-mutant/scripts/worktree" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+old = 'if [[ "$CHECKOUT" == false && ( "$REUSE" == true || "$RESTACK" == true || -n "$TRANSFER" ) ]]; then'
+text = path.read_text()
+assert text.count(old) == 1
+path.write_text(text.replace(old, 'if false; then'))
+PY
+build checkout-mode-control wt
+WORKTREE_ORIGINAL="$WORKTREE_SCRIPT"
+WORKTREE_SCRIPT="$TMP_ROOT/checkout-mutant/scripts/worktree"
+assert_eq "$(run 'create topic --no-checkout --reuse' | sed 's/ out=.*//')" "rc=0" \
+  "control: without the existing-work guard a checkout-free create accepts reuse"
+WORKTREE_SCRIPT="$WORKTREE_ORIGINAL"
+
 # --- the concurrent claim -------------------------------------------------------
 # Two claimers both pass their read-only preliminary discovery (the gh stub
 # pauses so they overlap). The repository-local issue lock makes exactly one

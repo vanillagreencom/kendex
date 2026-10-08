@@ -1,0 +1,1 @@
+- `worktree create --no-checkout` creates a Git worktree and issue record without source files or file setup for work that runs elsewhere.
