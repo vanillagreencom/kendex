@@ -2362,19 +2362,21 @@ assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "an unmeasured caller account is not reused at the context mark"
 
-# The same unmeasured account where the pick names NO lane. `lanes pick` is the
-# one judge of account room and its refusal is never overridden, so a walled
-# fleet refuses rather than reopening the successor on an account nothing
-# measured and closing the window that was still running.
+# The same unmeasured account where the pick names NO lane. At the context
+# mark the successor spends the account the caller already spends, so the
+# caller's own account is kept, named on one keyed line with its record's
+# status and detail and in one fleet-log row, rather than leaving a person to
+# hand over by hand.
+fleet_state
 new_caller "$MARK"
 mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed unmeasuredwall ''
 mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=1 unmeasured=1 mark=context|yes|0|none" \
-  "an unmeasured caller with every lane of its harness walled refuses at the context mark"
+assert_eq "$RC|$(grep -m1 '^oversee-succeed: successor-account-unmeasured ' <<<"$OUT" | sed 's/ detail=.*/ detail=/')|$(caller_open)|$(recorded claude)|$(jq -r --arg l "oversee-succeed: successor-account-unmeasured lane=$H/.claude status=unreachable detail=" '[(.fleet_log // [])[] | select(.text | startswith($l))] | length' "$FLEET_STATE")" \
+  "0|oversee-succeed: successor-account-unmeasured lane=$H/.claude status=unreachable detail=|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;|1" \
+  "an unmeasured caller with every lane of its harness walled keeps its own account at the context mark"
 
 # The same wall with the caller's own account MEASURED at the trigger: the
 # refusal names that account and when its binding bucket frees up, and the

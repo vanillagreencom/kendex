@@ -157,7 +157,7 @@ run_succeed() {
   OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" \
     "$lane" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    ORCH_LANE_DIRS="${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.fclaude:$H/.codex:$H/.dcodex}" ORCH_LANES_USAGE_TTL=0 \
+    ORCH_LANE_DIRS="${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.fclaude:$H/.codex:$H/.dcodex}" ORCH_LANES_USAGE_TTL="${USAGE_TTL:-0}" \
     ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS="${SUCCESSOR_ACCOUNTS:-0}" ORCH_QUESTION_TOOL=overseer \
     ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" ${wait[@]+"${wait[@]}"} "$@" -- ${CALLER_FLAGS[@]+"${CALLER_FLAGS[@]}"} 2>&1)" || RC=$?
   printf '%s\n' "$OUT" > "$TMP_ROOT/out"
@@ -478,10 +478,12 @@ COPILOT_LINE=(--model claude-opus-5.5 --reasoning-effort high --yolo --autopilot
   --max-autopilot-continues 5 --context long_context --no-auto-update)
 CLAUDE_COMPACT="$(launch_choice_compaction_off claude)"
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
-# copilot_ladder ROW walled|check [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE] — the Copilot caller, its
-# launch record naming its account, run as the wall recovery under its whole
-# line, or as --check-marks, handed no flags, against the same preference.
-copilot_ladder() { # ROW walled|check [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE]
+# copilot_ladder ROW walled|check|context|below [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE] — the
+# Copilot caller, its launch record naming its account, run as the wall
+# recovery under its whole line, as a succession past its context mark
+# (`context`) or below it (`below`), or as --check-marks, handed no flags,
+# against the same preference.
+copilot_ladder() { # ROW walled|check|context|below [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE]
   local -a mode_args=(--walled-pane)
   local no_wait=""
   new_caller copilot ""
@@ -498,14 +500,15 @@ copilot_ladder() { # ROW walled|check [SUCCEED_BIN] [caller|empty|restricted] [P
     empty) CALLER_FLAGS=("${COPILOT_LINE[@]:2}") ;;
     restricted) CALLER_FLAGS=(--allow-all-tools) ;;
   esac
-  if [[ "$2" == check ]]; then
-    CALLER_FLAGS=() mode_args=(--check-marks) no_wait=1
-  else
-    mode_args+=("$CALLER_PANE")
-  fi
+  case "$2" in
+    check) CALLER_FLAGS=() mode_args=(--check-marks) no_wait=1 ;;
+    context) mode_args=(--context 790000:800000) ;;
+    below) mode_args=(--context 100000:800000) ;;
+    *) mode_args+=("$CALLER_PANE") ;;
+  esac
   CALLER_LANE="COPILOT_HOME=$H/.1copilot" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.1copilot:$H/.2copilot" \
     SUCCEED_BIN="${3:-}" NO_WAIT="$no_wait" \
-    run_succeed "$1" "${5:-claude:1:high,claude:claude-opus-5-5:high}" "${mode_args[@]}" --harness copilot
+    run_succeed "$1" "${5-claude:1:high,claude:claude-opus-5-5:high}" "${mode_args[@]}" --harness copilot
   CALLER_FLAGS=("$BYPASS")
 }
 # claude_argv — the claude successor's recorded lane and argv, `;`-joined.
@@ -580,6 +583,62 @@ SUCCESSOR_ACCOUNTS=2 copilot_ladder quietctl check "$QUIETCTL/oversee-succeed" e
 assert_eq "$RC|$(keyed entry-permission-untransferable)" \
   "0|oversee-succeed: entry-permission-untransferable entry=pi:openai/gpt-5:high source=copilot target=pi" \
   "control: a check that does not keep the permission skip silent prints it"
+cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
+
+# A Copilot caller whose pool nothing measures, its login unreadable, past its
+# context mark, with the other Copilot account spent: its successor spends the
+# pool the caller already spends, so the walk keeps the caller's own account,
+# names it with the record's status and detail, and writes one fleet-log row.
+COPILOT_WALLED='{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":0}}}'
+mv "$H/.1copilot/config.json" "$H/.1copilot/config.json.held"
+printf '%s\n' "$COPILOT_WALLED" > "$FIXTURE_DIR/.2copilot.json"
+# kept_line — the keyed line with its detail value cut, which is the record's
+# own words; `none` where the run printed none.
+kept_line() { grep -m1 '^oversee-succeed: successor-account-unmeasured ' <<<"$OUT" | sed 's/ detail=.*/ detail=/' || echo none; }
+kept_rows() { jq -r '[(.fleet_log // [])[] | select(.text | startswith("oversee-succeed: successor-account-unmeasured "))] | length' "$TMP_ROOT/work/tmp/workflow-state-oversee.json"; }
+KEPT_LINE="oversee-succeed: successor-account-unmeasured lane=$H/.1copilot status=no_credentials detail="
+copilot_ladder unmeasuredkeep context "" caller ''
+assert_eq "$RC|$(kept_line)|$(kept_rows)|$(caller_open)|$(launched copilot)" \
+  "0|$KEPT_LINE|1|no|$H/.1copilot claude-opus-5.5" \
+  "an unmeasured Copilot caller past its context mark keeps its own account, named once on stdout and in the fleet log"
+# Its control: a walk that never keeps the unmeasured account refuses.
+KEEPCTL="$(mutant_scripts keepctl oversee-succeed)" || exit 1
+mutate_file "$KEEPCTL/oversee-succeed" \
+  '  [[ "$CALLER_STATE:$MARK_KIND" != unmeasured:context ]] || OL_WALK_KEEP_UNMEASURED="$CALLER_ACCOUNT_HARNESS"' ''
+copilot_ladder keepctl context "$KEEPCTL/oversee-succeed" caller ''
+assert_eq "$RC|$(first_key)|$(caller_open)|$(launched copilot)" "3|no-lane-qualifies|yes|none" \
+  "control: a walk that never keeps the unmeasured account refuses no-lane-qualifies"
+# A Copilot-first preference with Claude room: the named Copilot entry's pick
+# finds no Copilot account with room, so it keeps the caller's own account and
+# launches its own model and effort there, ahead of the Claude entry.
+copilot_ladder unmeasuredfirst context "" caller 'copilot:claude-opus-5.5:high,claude:claude-opus-5-5:high'
+assert_eq "$RC|$(kept_line)|$(launched copilot)|$(grep -cx -e --reasoning-effort -e high "$TMP_ROOT/argv.copilot")|$(launched claude)" \
+  "0|$KEPT_LINE|$H/.1copilot claude-opus-5.5|2|none" \
+  "a Copilot-first preference keeps the unmeasured caller's own account ahead of a Claude account with room"
+# Below the context mark nothing is kept: with one other Copilot account
+# with room the qualifying mark fires, its successor must move, and the walk
+# opens it on that account, never on the caller's unmeasured one.
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.2copilot.json"
+SUCCESSOR_ACCOUNTS=1 copilot_ladder unmeasuredqualifying below "" caller ''
+assert_eq "$RC|$(kept_line)|$(launched copilot)" "0|none|$H/.2copilot claude-opus-5.5" \
+  "an unmeasured Copilot caller at the qualifying mark moves off its own account"
+printf '%s\n' "$COPILOT_WALLED" > "$FIXTURE_DIR/.2copilot.json"
+# The headroom mark: the caller's own account measured at the trigger and the
+# other spent, so no account qualifies and the caller's is not kept.
+mv "$H/.1copilot/config.json.held" "$H/.1copilot/config.json"
+printf '%s\n' "$COPILOT_WALLED" > "$FIXTURE_DIR/.1copilot.json"
+copilot_ladder measuredwall below "" caller ''
+assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $7}')|$(kept_line)|$(caller_open)|$(launched copilot)" \
+  "3|no-lane-qualifies mark=headroom|none|yes|none" \
+  "a Copilot caller at its headroom mark with no account qualifying still refuses"
+# An unreadable judge keeps nothing: a usage TTL `lanes` refuses before it
+# measures anything leaves the account judge without an answer, and the
+# caller entry still goes through its pick, whose refusal ends the run.
+USAGE_TTL=forever copilot_ladder unreadablejudge context "" caller ''
+assert_eq "$RC|$(keyed lanes-failed | awk '{print $2, $3}')|$(kept_line)|$(caller_open)|$(launched copilot)" \
+  "1|lanes-failed entry=caller|none|yes|none" \
+  "an unreadable judge keeps no account and the caller entry refuses on its own pick"
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
 # The ladder's first rung: the first claude seat with Opus room takes an Opus

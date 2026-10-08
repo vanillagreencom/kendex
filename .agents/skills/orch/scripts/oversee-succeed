@@ -94,9 +94,9 @@
 #        and a judge that could not answer at all, both report NO headroom,
 #        which is its own
 #        state and never a healthy one: the account mark does not fire, the
-#        context, rate and qualifying marks still decide, and
-#        the unmeasured account is never reused for the successor, because
-#        only room by that `lanes pick --lane` keeps the caller's own lane
+#        context, rate and qualifying marks still decide. An unmeasured
+#        account is kept for the successor at the context mark alone, where
+#        no account with room is found, and an unreadable judge keeps none
 #        (step 3).
 #        The QUALIFYING mark (ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, 0 turns it
 #        off) counts the accounts of this overseer's harness above
@@ -205,10 +205,19 @@
 #        apply. Its pick is judged on the model this pane already runs, since
 #        those flags are what the successor will carry. That entry is the one
 #        exception above, the launch the pick
-#        does not name, and the caller's own lane is kept only where the
-#        account mark found room on it; where that found none, and where
+#        does not name, and the caller's own lane is kept unpicked only where
+#        the account mark found room on it; where that found none, and where
 #        nothing measured it, the fleet-wide pick over the caller's harness
-#        names the lane instead. A preference states a FIRST choice and never
+#        names the lane instead. At the context mark an account nothing
+#        measured is still kept where that pick, or the pick of a named entry
+#        of the caller's harness on that account's harness, finds no account
+#        with room: the successor spends the account the caller already
+#        spends, so the refusal would protect none. The named entry launches
+#        its own model and effort on it. The run prints
+#        `successor-account-unmeasured lane=<dir> status=<status>
+#        detail=<detail>` on stdout, the status and detail of the caller's
+#        account record, and writes it as one fleet-log row. An unreadable
+#        judge keeps nothing, so its entries take their picks alone. A preference states a FIRST choice and never
 #        gives up this last one: without it a single entry whose one harness
 #        was spent refused with every account of the caller's harness
 #        unexamined. A walk where that entry is skipped too refuses
@@ -458,7 +467,9 @@
 # the print's stdout alone.
 # `succession-off`, `context-unmeasured`, `context-below-mark`,
 # `account-below-mark`, `mark-reached` and `mark-unmeasured` are on stdout
-# and end the run at exit 0. `successor-launch` is on stdout too, but settles no
+# and end the run at exit 0. `successor-account-unmeasured` (step 3) is on
+# stdout and in the fleet log, and settles no exit status.
+# `successor-launch` is on stdout too, but settles no
 # exit status: it is printed mid-run, before the window is opened, and names the
 # form the lane reached the harness by. `watch-handover` and `watch-absent` are
 # on stdout too and settle nothing either, printed before the close, and a
@@ -521,6 +532,7 @@ message() { # KEY FIELD=VALUE...
     model-window-unknown) text='The claude adapter names no context window for the model this successor would run, and a successor runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a claude model the window table in lib/adapters/claude.sh names.' ;;
     pi-account-unknown) text='This pi overseer names its model with no provider, in its launch record, the --model word after -- and its context reading alike, so the account its successor would spend is unknown and nothing was launched. Pass --model as provider/id after --, pi-claude/<id> for a claude account.' ;;
     pi-handoff-unmarked) text='A pi successor would compact or reach its wall with no handoff mark, so nothing was launched. The reason field names which: compaction-on is a pi settings file, the one the file field names, leaving compaction.enabled on; settings-unreadable is that file present and unreadable, its reader words below; no-window-read is no installed pi-hooks carrier sending the context window.' ;;
+    successor-account-unmeasured) text='Nothing measured this overseer'\''s own account and no account with room was found at the context mark, so the successor opens on that account, which the caller already spends. The status and detail fields are that account'\''s record; detail runs to the end of the line.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked clears the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable or unparseable, a dangling shim link being the usual codex cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account, or the claude config dir .claude.json, that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
@@ -1023,7 +1035,7 @@ case "$CALLER_ACCOUNT_HARNESS" in
   claude | codex | pi) [[ -n "$CALLER_CFG" ]] || CALLER_CFG="$(lane_context_caller_cfg "$CALLER_ACCOUNT_HARNESS")" ;;
 esac
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
-CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
+CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS="" CALLER_STATUS="" CALLER_DETAIL=""
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
 if (( JUDGES )); then
   # An account `lanes` does not measure is one nothing measured, its exit 4.
@@ -1060,7 +1072,14 @@ if (( JUDGES )); then
         (( caller_rc == 0 )) || CALLER_STATE=at-trigger
       fi
       ;;
-    4|5) CALLER_STATE=unmeasured HEADROOM_FIELD=none ;;
+    4|5)
+      CALLER_STATE=unmeasured HEADROOM_FIELD=none
+      # Exit 5 prints the record, whose status and detail say why nothing
+      # measured it; exit 4 is a harness `lanes` measures no account of.
+      caller_row="$(jq -r '[(.status // ""), (.detail // "")] | @tsv' <<<"$caller_record" 2>/dev/null)" || caller_row=""
+      CALLER_STATUS="${caller_row%%$'\t'*}" CALLER_DETAIL=""
+      [[ "$caller_row" != *$'\t'* ]] || CALLER_DETAIL="${caller_row#*$'\t'}"
+      ;;
     *) ;;
   esac
 fi
@@ -1150,7 +1169,13 @@ build_entries() {
 # the account that ran out; unmeasured or unreadable, nothing established that
 # it has room. Every other state goes through `lanes pick`, the one judge of
 # account room for every entry alike, so its exit 3 skips this entry exactly
-# as it skips another harness's. `print` reads no account at all and keeps the
+# as it skips another harness's, but for one state at one mark: `unmeasured`
+# at the context mark keeps the caller's account where the pick of an entry
+# of the caller's harness on that account's harness finds none with room.
+# The successor spends the account the caller is already
+# spending, so a refusal there protects no account and leaves a person to
+# hand over by hand. `unreadable` keeps nothing: a judge that failed says
+# nothing about this account, and the pick alone decides. `print` reads no account at all and keeps the
 # lane the session already runs on. `walled` judges no mark, so CALLER_STATE
 # was never read off the account judge and stands at `unreadable`: the pane's
 # own banner established the wall, and it never keeps the lane.
@@ -1190,6 +1215,8 @@ walk_entries() {
     *:has-room:rate | *:has-room:qualifying) ;;
     *:has-room:*) OL_WALK_CALLER_KEEP=1 ;;
   esac
+  OL_WALK_KEEP_UNMEASURED=""
+  [[ "$CALLER_STATE:$MARK_KIND" != unmeasured:context ]] || OL_WALK_KEEP_UNMEASURED="$CALLER_ACCOUNT_HARNESS"
   # `check` is handed no permission words, so it asks what the harness rows
   # alone can answer and skips an entry on permission saying nothing: it
   # judges no launch of its own, and never chooses an entry the succession it
@@ -1348,6 +1375,10 @@ if [[ "$MODE" == dead ]]; then
 elif [[ -z "$chosen" ]]; then
   build_entries
   walk_entries
+  if (( OL_KEPT_UNMEASURED )); then
+    message successor-account-unmeasured "lane=$OL_LANE_DIR" "status=${CALLER_STATUS:-none}" "detail=${CALLER_DETAIL:-none}"
+    ol_fleet_log_notice successor-account-unmeasured "lane=$OL_LANE_DIR" "status=${CALLER_STATUS:-none}" "detail=${CALLER_DETAIL:-none}"
+  fi
 fi
 
 # `mark=` says which fields follow, and the account and reset only follow the
