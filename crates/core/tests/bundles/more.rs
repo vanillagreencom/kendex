@@ -5,11 +5,94 @@ use crate::test_util::source_path;
 
 use std::fs;
 
-use kendex_core::apply;
+use kendex_core::apply::{self, Op};
+use kendex_core::configedit::ConfigEdit;
 use kendex_core::engine::{DriftState, PlanOptions, SetDirection, audit, ops, plan_apply};
 use kendex_core::model::ItemKind;
+use kendex_core::source_read::SealedSource;
 
 use super::{Fixture, apply_now, catalog_bundles, fixture, installed, lock_of, manifest_of, write};
+
+/// Consumers install these bundles from the shipped catalog. A hook file
+/// without its SessionStart registration cannot claim a hand-opened session.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
+    let catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let sealed = SealedSource::open(&catalog).unwrap();
+    let catalog = sealed.root();
+    let catalog_text = sealed
+        .read_to_string(&catalog.join("kendex.toml"))
+        .unwrap()
+        .replace("\r\n", "\n");
+
+    for bundle in ["workflow", "orchestration"] {
+        let f = fixture(&format!("[bundles.{bundle}]\nsource = \"cat\"\n"));
+        for directory in ["skills", "agents", "hooks"] {
+            for (relative, bytes) in sealed.collect_tree(&catalog.join(directory), &[]).unwrap() {
+                let target = f.source.join(directory).join(relative);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                fs::write(target, bytes).unwrap();
+            }
+        }
+        catalog_bundles(&f.source, &catalog_text);
+        write(
+            &f.project,
+            "kendex.toml",
+            &format!(
+                "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[bundles.{bundle}]\nsource = \"cat\"\n",
+                source_path(&f.source)
+            ),
+        );
+
+        let planned_hook = |report: &kendex_core::engine::EngineReport, tool: &str| {
+            let relative_hook = format!(".{tool}/hooks/worktree-session-claim.sh");
+            let hook = f.project.join(&relative_hook);
+            let settings = f.project.join(match tool {
+                "claude" => ".claude/settings.json",
+                "codex" => ".codex/hooks.json",
+                other => panic!("unexpected fixture tool: {other}"),
+            });
+            let rendered = report.plan.ops.iter().any(|planned| {
+                matches!(&planned.op, Op::WriteFile { path, bytes, .. }
+                    if path == &hook && !bytes.is_empty())
+            });
+            let registered = report.plan.ops.iter().any(|planned| {
+                matches!(&planned.op, Op::EditFile { path, edits, .. }
+                if path == &settings && edits.iter().any(|edit| {
+                    matches!(edit, ConfigEdit::UpsertHook { event, command, .. }
+                        if event == "SessionStart" && command.contains(&relative_hook))
+                }))
+            });
+            (rendered, registered)
+        };
+
+        let report = audit(&f.env, &f.scope).unwrap();
+        for tool in ["claude", "codex"] {
+            assert_eq!(
+                planned_hook(&report, tool),
+                (true, true),
+                "{bundle}: {tool}"
+            );
+        }
+
+        // Removing this member must remove both planned outputs.
+        let mut missing: toml::Value = toml::from_str(&catalog_text).unwrap();
+        missing["bundles"][bundle]["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|name| name.as_str() != Some("worktree-session-claim"));
+        catalog_bundles(&f.source, &toml::to_string(&missing).unwrap());
+        let report = audit(&f.env, &f.scope).unwrap();
+        for tool in ["claude", "codex"] {
+            assert_eq!(
+                planned_hook(&report, tool),
+                (false, false),
+                "{bundle}: {tool} control"
+            );
+        }
+    }
+}
 
 /// A member the catalog drops is a change to what is installed, so it is
 /// previewed like any other: the plan says what would go and why, and nothing

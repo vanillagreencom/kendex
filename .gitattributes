@@ -4,6 +4,7 @@
 # in with `include_str!` and asserted to hold no carriage return, and the
 # authoring golden digest is over those same bytes.
 * -text
+kendex.toml text eol=lf
 .github/workflows/request-copilot-review.yml text eol=lf
 
 # Binary assets, declared so git keeps them out of its textual diffs. That

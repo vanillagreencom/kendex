@@ -1,0 +1,1 @@
+- The workflow and orchestration bundles install the session-start hook that gives a session opened by hand in an issue worktree a cleanup lease.
