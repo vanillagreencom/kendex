@@ -619,6 +619,27 @@ assert_eq "$(record KEN-3 micro)" \
   "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
   "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
 
+echo "=== armed time starts after both CI and the gate are green ==="
+while IFS='|' read -r name ci gate armed queued want_phase want_secs; do
+  new_case "arm-order-$name"
+  printf micro > "$CASE/class"
+  timeline 1800
+  edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at "$ci")\" | .gate_met = \"$(at "$gate")\"
+    | .armed = $(if [[ "$armed" == null ]]; then echo null; else printf '\"%s\"' "$(at "$armed")"; fi)
+    | .queued = $(if [[ "$queued" == null ]]; then echo null; else printf '\"%s\"' "$(at "$queued")"; fi))"
+  got="$(record KEN-1 micro)"
+  assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=$want_phase phase_secs=$want_secs" "$name"
+  assert_eq "$(state '.lanes[0].cycle | [.phase, .phase_secs, .stamps.armed]')" \
+    "[\"$want_phase\",$want_secs,\"$(at "${armed/null/$queued}")\"]" "$name persists the phase and original arm"
+done <<'ROWS'
+arm before both|1700|1600|1500|null|gate_green|1480
+arm before CI|1700|300|1500|null|ci_green|1400
+arm before gate|300|1700|1500|null|gate_green|1400
+arm at last green|1700|300|1700|null|ci_green|1400
+arm after both|300|360|1700|null|armed|1340
+queue before CI|1700|300|null|1500|ci_green|1400
+ROWS
+
 echo "=== the gate_green phase is split into the waits it holds ==="
 # gate_timeline PUSHES REVIEWS MERGED: a PR whose gate_green gap, opened at
 # 120 to the gate at 3000, is the longest unless MERGED is late; CI 3060,
@@ -991,6 +1012,15 @@ assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened ite
 control m-phase-end oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at >= $o)]'
 assert_eq "$(repeat_row c-phase-end "a:1 a:2 a:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=ci,ci,ci" \
   "control: without the upper bound, a CI green after the merge charges the miss to merged to CI green"
+
+control m-arm-order oversee-cycle \
+  '| map(select(.name != "armed" or .at > ([$stamps.ci_green, $stamps.gate_green] | map(fromdate) | max)))' \
+  '| map(select(true))'
+new_case c-arm-order; printf micro > "$CASE/class"; timeline 1800
+edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at 1700)\" | .armed = \"$(at 1500)\")"
+got="$(record KEN-1 micro)"
+assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=armed phase_secs=1200" \
+  "control: old ordering charges pre-CI time to armed and fails the ci_green row"
 
 control m-ci-bar oversee-cycle '(.phase != "ci_green" or .cause == "ci")' '(true)'
 assert_eq "$(repeat_row c-ci-bar "cw:1 cw:2 cw:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=work,work,work" \

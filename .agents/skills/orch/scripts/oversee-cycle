@@ -81,6 +81,8 @@
 #             A stamp outside that span enters no gap: a ci_green whose
 #             checks finished before the PR opened, or one an optional check
 #             completes after the merge.
+#             An armed stamp at or before the later of ci_green and
+#             gate_green enters no gap; that time stays with CI or the gate.
 #             Null while a stamp other than launched, first_commit and
 #             armed is missing: a missing stamp has no time, and one that
 #             could fall in the span joins two gaps. A null armed is a merge
@@ -504,6 +506,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if $missing - ["launched", "first_commit", "armed"] != [] then null else ($stamps.pr_opened | fromdate) as $o
      | ($stamps.merged | fromdate) as $m
      | [$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)} | select(.at >= $o and .at <= $m)]
+     | map(select(.name != "armed" or .at > ([$stamps.ci_green, $stamps.gate_green] | map(fromdate) | max)))
      | sort_by(.at) end) as $seq
   | (if $seq == null then {phase: null, secs: null} else
        [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}
