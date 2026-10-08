@@ -1625,8 +1625,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
 # where this PATH answers about the wrong one, and a --cmd template is the
 # caller's own command, not ours to rewrite.
 #
-# A local --cmd template keeps the env prefix under the `custom` form, and its
-# account is read back. A HOSTED launch carries no lane env prefix at
+# A HOSTED launch carries no lane env prefix at
 # all: its credential reaches the sandbox through `lane-host create`, which
 # takes the config dir as --account, so there is nothing local to prefix and
 # nothing local to read back.
