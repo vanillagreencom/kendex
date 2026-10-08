@@ -233,6 +233,7 @@ does not replace a substantive outcome. An active run or an unreadable
 head/run lookup keeps the verdict pending, even if the only visible check
 is a completed review-request check or earlier polls saw checks in progress.
 Failed and invalid lookups report their diagnostic category on stderr.
+Completion in every mode needs a readable head for the checks snapshot.
 With a known required set, --required-only completes when those contexts
 have passed, regardless of active optional workflows.
 
@@ -680,7 +681,8 @@ read_checks_head() {
 #   terminal   - no such newer run, the newest one itself failed or was
 #                cancelled, or a failure cannot be attributed to a run.
 #   settled    - no failures, no current-head run remains active, and the
-#                latest substantive attempt per workflow ended green.
+#                latest non-skipped outcome per workflow across all events
+#                ended green, or every outcome in that workflow was skipped.
 #   unavailable - the head or its run list could not be read. A pass waits;
 #                 a failure remains terminal, as with unattributable failures.
 # A green rollup with no failures still needs this read: after a head push,

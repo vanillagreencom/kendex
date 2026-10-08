@@ -672,6 +672,7 @@ table "$JSON" \
   "same-head progress still completes immediately|||STUB_PR_CHECKS_SEQUENCE=pending:green|rc=0 status=complete verdict=pass elapsed_seconds=30" \
   "a push during the check request discards the unbound snapshot|||STUB_PR_CHECKS_SEQUENCE=green,STUB_HEAD_DURING_CHECKS=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=120" \
   "a known required build passes while optional docs is active||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=0 status=complete verdict=pass check.build=SUCCESS check.docs=absent check.current-head+Actions=absent pending=0 rollup.build=true rollup.docs=false elapsed_seconds=90" \
+  "a known required build still needs a readable head||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1|rc=1 status=timeout verdict=pending check.build=SUCCESS check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403" \
   "an unreadable required set keeps the Actions hold||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_REQUIRED_READ_EXIT=1,$OPTIONAL|rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=EXPECTED runs_head=$NEXT_HEAD elapsed_seconds=300" \
   "a missing required build stays pending with only the request check visible||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,$REQUEST,$OPTIONAL|rc=1 status=timeout verdict=pending check.build+(missing)=EXPECTED check.request=absent" \
   "a failed Actions read with a green-looking response stays pending|||$REQUEST,STUB_ACTIONS_RUNS_EXIT=1|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED stderr~ci-wait:+actions-read-failed=true lookup_http_status=403" \
@@ -682,13 +683,15 @@ table "$JSON" \
 echo "=== the latest Actions workflow outcome decides a green rollup ==="
 jq '.workflow_runs[0].conclusion = "failure"' "$TMP_ROOT/runs-request-only-completed.json" > "$TMP_ROOT/runs-request-only-failed.json"
 jq '.workflow_runs += [.workflow_runs[0] + {id: (.workflow_runs[0].id + 1), conclusion: "success"}]' "$TMP_ROOT/runs-request-only-failed.json" > "$TMP_ROOT/runs-request-newer-success.json"
+jq '.workflow_runs += [.workflow_runs[0] + {id: (.workflow_runs[0].id + 1), workflow_id: (.workflow_runs[0].workflow_id + 1), conclusion: "success"}]' "$TMP_ROOT/runs-request-only-failed.json" > "$TMP_ROOT/runs-request-other-workflow-success.json"
 jq '.workflow_runs += [.workflow_runs[0] + {id: (.workflow_runs[0].id + 1), conclusion: "skipped"}]' "$TMP_ROOT/runs-request-only-failed.json" > "$TMP_ROOT/runs-request-newer-skipped.json"
 table "$JSON" \
   "a failed latest run fails even when the rollup carries only the review request|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-failed.json|rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE elapsed_seconds=0" \
   "a newer successful run replaces the earlier failure|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-success.json|rc=0 status=complete verdict=pass failed=0 elapsed_seconds=90" \
+  "a newer successful workflow cannot erase another workflow's failure|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-other-workflow-success.json|rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE" \
   "a later skipped dispatch cannot erase a substantive failure|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-skipped.json|rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE" \
   "a successful rerun with the older run id replaces the failed newer dispatch|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json|rc=0 status=complete verdict=pass failed=0 elapsed_seconds=90" \
-  "a failed latest rerun stays terminal|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 status=complete verdict=fail"
+  "a failed latest rerun stays terminal|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 status=complete verdict=fail check.Actions+run+29662588017=FAILURE"
 
 echo "=== every Actions page must finish before a green rollup passes ==="
 # GitHub returns at most 100 runs per page and caps head_sha searches at
@@ -764,9 +767,12 @@ control_rows=(
   "failed Actions outcome~select((.conclusion // \"\") | IN(\"success\", \"neutral\", \"skipped\") | not)~select(false)~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-failed.json~rc=1 verdict=fail elapsed_seconds=0"
   "newer successful run~max_by([(.updated_at // \"\"), .id]))) as \$latest~min_by([(.updated_at // \"\"), .id]))) as \$latest~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-success.json~rc=0 verdict=pass elapsed_seconds=90"
   "rerun activity~max_by([(.updated_at // \"\"), .id]))) as \$latest~max_by(.id))) as \$latest~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json~rc=0 verdict=pass elapsed_seconds=90"
+  "failed rerun identity~(map(select(.conclusion != \"skipped\"))) as \$substantive~(map(select(.conclusion != \"skipped\" and (((.run_attempt // 1) > 1 and .conclusion == \"failure\") | not)))) as \$substantive~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json~rc=1 status=complete verdict=fail check.Actions+run+29662588017=FAILURE~~rc=1 status=complete verdict=fail check.Actions+run+29662812172=CANCELLED check.Actions+run+29662588017=absent"
+  "separate workflow outcomes~group_by(.workflow_id)~group_by(null)~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-other-workflow-success.json~rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE~~rc=0 status=complete verdict=pass failed=0"
+  "required head binding~if [ -z \"\$checks_head\" ] || ! \$REQUIRED_ONLY || [ \"\$REQUIRED_CONTEXTS\" = '[]' ]; then~if ! \$REQUIRED_ONLY || [ \"\$REQUIRED_CONTEXTS\" = '[]' ]; then~STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1~rc=1 status=timeout verdict=pending check.build=SUCCESS check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403~$JSON --required-only~rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=absent pending=0"
 )
 for row in "${control_rows[@]}"; do
-  IFS='~' read -r label match replacement env expect <<<"$row"
+  IFS='~' read -r label match replacement env expect args mutant_expect <<<"$row"
   [[ "$control_source" == *"$match"* && "${control_source#*"$match"}" != *"$match"* ]] || { echo 'ci_wait: control-match=invalid' >&2; exit 1; }
   mutant="${control_source/"$match"/"$replacement"}"
   [[ "$mutant" != "$control_source" ]] || { echo 'ci_wait: control-edit=unchanged' >&2; exit 1; }
@@ -775,7 +781,10 @@ for row in "${control_rows[@]}"; do
   rm "$TMP_ROOT/repo/.agents/skills/orch"
   ln -s "$TMP_ROOT/control/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
   # shellcheck disable=SC2086
-  run_wait "$env" $JSON
+  run_wait "$env" ${args:-$JSON}
+  if [[ -n "$mutant_expect" ]]; then
+    assert_eq "$(observe "$mutant_expect")" "$mutant_expect" "control reaches $label through the real entry point" "$RUN/stderr"
+  fi
   actual=$(observe "$expect")
   set +e
   ( FAIL=0; assert_eq "$actual" "$expect" "$label"; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/control/assertion.log"
