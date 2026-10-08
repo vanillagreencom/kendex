@@ -115,7 +115,7 @@ micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +gu
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
 micro|false|skills/orch/scripts/lane-mail|$SHARD_CODE|+guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
-micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear -linear-controls +guards-tools
+micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls +guards-tools
 micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls +guards-commit
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
