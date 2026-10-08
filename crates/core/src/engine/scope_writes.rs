@@ -177,9 +177,9 @@ pub(super) struct RecordReadings {
 /// a source was written for the repository and revision declared now, that
 /// entry is kept instead. A redeclared source is read afresh, since the
 /// record speaks for another declaration, unless a plan that writes held a
-/// follower of it (`held`): that write read the follower under the
-/// selector the record names and did not apply the edit, so the record
-/// keeps saying so, and the next write that keeps the record still finds
+/// follower of it (`held` or an installation an add kept): that write read
+/// the follower under the selector the record names and did not apply the
+/// edit, so the record keeps saying so. The next write that keeps it finds
 /// it pending. A plan never applied ([`PlanOptions::never_applied`]) reads
 /// it afresh all the same: its record is what the lock is proved against,
 /// and a kept entry would prove the lock against itself.
@@ -200,7 +200,12 @@ pub(super) fn record_readings(
                     Some(recorded)
                         if !options.never_applied
                             && !recorded.written_for(repo, rev)
-                            && held.iter().any(|pin| &pin.source == name) =>
+                            && (held.iter().any(|pin| &pin.source == name)
+                                || state.addition_kept.iter().any(|key| {
+                                    lock.entries
+                                        .get(key)
+                                        .is_some_and(|entry| &entry.source == name)
+                                })) =>
                     {
                         Reading::Kept
                     }
@@ -225,6 +230,23 @@ pub(super) fn record_readings(
         .bundles
         .iter()
         .map(|(name, decl)| {
+            let named = options.update_only.as_ref().is_some_and(|targets| {
+                targets
+                    .declarations
+                    .contains(&super::Held::Set { name: name.clone() })
+            });
+            if !named
+                && state.addition_kept.iter().any(|key| {
+                    lock.entries.get(key).is_some_and(|entry| {
+                        entry.reasons.iter().any(|reason| {
+                            matches!(reason, crate::lock::Reason::MemberOf { bundle }
+                            if bundle.name == *name && bundle.source == decl.source)
+                        })
+                    })
+                })
+            {
+                return (name.clone(), Reading::Kept);
+            }
             let reading = match repository(manifest, &decl.source) {
                 Some((repo, source_rev)) => {
                     let (rev, resolution) = match &decl.rev {

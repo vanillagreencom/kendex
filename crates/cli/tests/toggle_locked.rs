@@ -84,9 +84,6 @@ struct Row {
     /// the subject, and nothing else about its record moves.
     requirement: Option<&'static str>,
     changed: &'static [&'static str],
-    /// Unchanged paths that leave the generated-paths inventory: only a
-    /// switched-off source's renders, which stay on disk unmanaged.
-    delisted: &'static [&'static str],
 }
 
 const HOOK_PATHS: &[&str] = &[
@@ -123,7 +120,6 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex enable",
@@ -135,7 +131,6 @@ const ROWS: &[Row] = &[
         enabled: Some(true),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "app toggle",
@@ -147,7 +142,6 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex disable, a requirement nothing declares",
@@ -170,7 +164,6 @@ const ROWS: &[Row] = &[
             ".claude/skills/helper/SKILL.md",
             ".claude/skills/helper/SKILL.md.disabled",
         ],
-        delisted: &[],
     },
     Row {
         case: "kendex source remove",
@@ -182,7 +175,6 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex source disable",
@@ -194,7 +186,6 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex source enable",
@@ -206,7 +197,6 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: SOURCE_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex marketplace unsubscribe --remove-packages",
@@ -230,7 +220,6 @@ const ROWS: &[Row] = &[
             ".claude/skills/data-science__eda/SKILL.md",
             ".opencode/skills/data-science-eda/SKILL.md",
         ],
-        delisted: &[],
     },
     Row {
         case: "kendex marketplace unsubscribe --keep-packages",
@@ -248,7 +237,6 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: &["kendex.toml", ".kendex-lock.json", ".kendex-local/"],
-        delisted: &[],
     },
     Row {
         case: "kendex source add",
@@ -260,7 +248,6 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: &["kendex.toml"],
-        delisted: &[],
     },
     Row {
         case: "kendex marketplace subscribe",
@@ -272,7 +259,6 @@ const ROWS: &[Row] = &[
         enabled: None,
         requirement: None,
         changed: &["kendex.toml"],
-        delisted: &[],
     },
     Row {
         case: "kendex drift-hook",
@@ -295,7 +281,6 @@ const ROWS: &[Row] = &[
             ".claude/settings.json",
             ".pi/kendex/",
         ],
-        delisted: &[],
     },
     Row {
         case: "kendex disable, record ahead of the mirror",
@@ -307,7 +292,6 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex source disable, catalog unreachable",
@@ -318,15 +302,7 @@ const ROWS: &[Row] = &[
         subject: Subject::Source("cat"),
         enabled: None,
         requirement: None,
-        changed: &["kendex.toml", ".kendex-lock.json", ".kendex-generated.json"],
-        delisted: &[
-            ".agents/skills/second/SKILL.md",
-            ".agents/skills/second__command/SKILL.md",
-            ".claude/agents/review.md",
-            ".claude/hooks/guard.sh",
-            ".claude/skills/second/SKILL.md",
-            ".mcp.json",
-        ],
+        changed: &["kendex.toml", ".kendex-lock.json"],
     },
     Row {
         case: "kendex disable, a switched-off source unreachable",
@@ -356,7 +332,6 @@ const ROWS: &[Row] = &[
             ".opencode/skills/data-science-eda/SKILL.md",
             ".opencode/skills/data-science-eda/SKILL.md.disabled",
         ],
-        delisted: &[],
     },
     Row {
         case: "kendex disable, recorded commit gone",
@@ -368,7 +343,6 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex enable, recorded commit gone",
@@ -380,7 +354,6 @@ const ROWS: &[Row] = &[
         enabled: Some(true),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "app toggle, recorded commit gone",
@@ -392,7 +365,6 @@ const ROWS: &[Row] = &[
         enabled: Some(false),
         requirement: None,
         changed: HOOK_PATHS,
-        delisted: &[],
     },
     Row {
         case: "kendex source enable, recorded commit gone",
@@ -403,8 +375,7 @@ const ROWS: &[Row] = &[
         subject: Subject::Source("cat"),
         enabled: Some(true),
         requirement: None,
-        changed: &["kendex.toml", ".kendex-lock.json", ".kendex-generated.json"],
-        delisted: &[],
+        changed: &["kendex.toml", ".kendex-lock.json"],
     },
 ];
 
@@ -690,11 +661,7 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
             .map(String::as_str)
             .filter(|path| !row.changed.contains(path))
             .collect();
-        assert_eq!(
-            unlisted,
-            row.delisted.iter().copied().collect(),
-            "{case}: de-listed"
-        );
+        assert!(unlisted.is_empty(), "{case}: de-listed {unlisted:?}");
 
         let mut expected = expected_record(&world, row, before, &after);
         // The requirement switches with its parent, which renames what it

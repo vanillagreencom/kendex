@@ -505,11 +505,11 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 /// keeps the record as it stands; a single-package update writes the
 /// source's entry unchanged too (`record_readings`), so an unrelated edit
 /// stays pending for the next write that keeps the record. An add keeps
-/// the record and applies the source edit, while
+/// followers and leaves their source edit pending, while
 /// `verify --at-record` reads the source at the revision declared now.
 /// After a repository edit the record installed nothing from the
 /// repository declared now, so [`held_at`] and [`held_commit`] place no
-/// follower under any hold, and a single-package update or an add records
+/// follower under any hold, and a single-package update records
 /// the rebind at once. A source with no account is held to its entries
 /// alone.
 fn held_repo<'a>(

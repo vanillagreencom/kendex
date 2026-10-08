@@ -87,7 +87,7 @@ fn world() -> World {
 #[allow(clippy::unwrap_used)]
 fn world_at(repo: &str) -> World {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = crate::test_util::rooted(&tmp);
     let upstream = home.join("git").join(repo);
     fs::create_dir_all(&upstream).unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);

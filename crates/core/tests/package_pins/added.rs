@@ -798,9 +798,8 @@ fn overlapping_sets_added_to_different_tools_share_their_member() {
     }
 }
 
-/// The manifest's explicit source edits apply when an add names a package:
-/// a new revision or repository supplies
-/// the added package while the installed package keeps its recorded bytes.
+/// A new revision or repository supplies the added package.
+/// Its source edit stays pending while an unnamed installation keeps its bytes.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_reads_an_explicitly_redeclared_source() {
@@ -845,8 +844,9 @@ fn an_add_reads_an_explicitly_redeclared_source() {
             "replacement_repo={replacement_repo}"
         );
         let lock = super::load_lock(&super::lock_path(&w.env, &w.scope)).unwrap();
-        assert_eq!(lock.sources["cat"].repo, repo);
-        assert_eq!(lock.sources["cat"].commit, revision);
+        assert_eq!(lock.sources["cat"].repo, super::REPO);
+        assert_eq!(lock.sources["cat"].commit, first);
+        assert_eq!(lock.sources["cat"].rev, None);
         assert!(installed_body(&w, "a").contains("a version one."));
         assert_eq!(locked_commit(&w, "a"), first);
     }

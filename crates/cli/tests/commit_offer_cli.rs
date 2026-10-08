@@ -509,7 +509,10 @@ fn a_remove_commits_the_deletion_of_a_render_the_person_edited() {
 
     assert!(output.status.success(), "{text}");
     assert!(!render.exists(), "{text}");
-    let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    let files = git(
+        &project,
+        &["show", "--no-renames", "--name-only", "--format=", "HEAD"],
+    );
     for carried in [RENDER, "kendex.toml", ".kendex-lock.json"] {
         assert!(
             files.lines().any(|line| line == carried),

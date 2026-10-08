@@ -136,22 +136,16 @@ fn an_apply_after_a_source_revision_edit_renders_at_that_revision() {
     }
 }
 
-/// Pin holds the other followers at their recorded commits, so Apply must
-/// render them at the edited source revision. Add already applies that
-/// declared revision to every follower, so its later Apply changes nothing.
+/// Pin and Add hold unnamed installations at their recorded commits.
+/// Apply renders those installations at the edited source revision.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision() {
-    for (case, write_args, applies_edit) in [
-        (
-            "kendex pin",
-            &["pin", "agent", "review", "", "-y"][..],
-            true,
-        ),
+    for (case, write_args) in [
+        ("kendex pin", &["pin", "agent", "review", "", "-y"][..]),
         (
             "kendex add",
             &["add", "cat", "--agent", "lint", "--harness", "claude", "-y"],
-            false,
         ),
     ] {
         let world = world();
@@ -179,25 +173,29 @@ fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision
             .iter()
             .map(|arg| if arg.is_empty() { moved.as_str() } else { arg })
             .collect();
+        let before_write = record(&world);
         let wrote = kendex(&world.home, &world.project, &args);
         assert!(wrote.status.success(), "{case}: {}", said(&wrote));
+        let after_write = record(&world);
+        assert_eq!(
+            after_write["sources"]["cat"], before_write["sources"]["cat"],
+            "{case}"
+        );
+        assert_eq!(
+            after_write["bundles"]["starter"], before_write["bundles"]["starter"],
+            "{case}"
+        );
         commit(&world.project, "one package written");
 
         let skill_path = world.project.join(".claude/skills/second/SKILL.md");
         let before_apply = fs::read_to_string(&skill_path).unwrap();
-        assert_eq!(
-            before_apply.contains("A paragraph added later."),
-            !applies_edit,
+        assert!(
+            !before_apply.contains("A paragraph added later."),
             "{case}: {before_apply}"
         );
         let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
         assert!(applied.status.success(), "{case}: {}", said(&applied));
-        assert_eq!(
-            changed(&world).is_empty(),
-            !applies_edit,
-            "{case}: {}",
-            said(&applied)
-        );
+        assert!(!changed(&world).is_empty(), "{case}: {}", said(&applied));
 
         let skill = fs::read_to_string(&skill_path).unwrap();
         assert!(
@@ -236,9 +234,7 @@ fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision
             assert_eq!(entry["sourceCommit"], moved.as_str(), "{case}: {entry}");
         }
 
-        if applies_edit {
-            commit(&world.project, "applied");
-        }
+        commit(&world.project, "applied");
         let verified = kendex(
             &world.home,
             &world.project,

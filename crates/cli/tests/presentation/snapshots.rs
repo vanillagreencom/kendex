@@ -44,7 +44,7 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// The report every verb that plans prints before its own lines: one
+/// The report a whole-scope plan prints before its own lines: one
 /// conflict however many tools it blocks, first, then one score per item
 /// and matching result, its render mirrors implied.
 fn planned_block() -> Vec<&'static str> {
@@ -102,16 +102,18 @@ fn each_verb_prints_its_plain_lines() {
         (
             &[],
             &["add", "{catalog}", "--skill", "tidy", "-y"],
-            planned(&[
+            vec![
+                "safety:",
+                "  skill tidy for Claude Code, Codex scores 75/100",
+                "  [finding]",
                 "plan: 4 changes",
                 "  - Save kendex.toml",
                 "  - Write skill tidy's files for Claude Code",
                 "  - Write skill tidy's files for Codex",
                 "  - Update the install record",
-                "<project>: added 4 changes · skipped 1 item on conflict · flagged 2 items on safety",
-                "  skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
+                "<project>: added 4 changes · flagged 1 item on safety",
                 "  flagged — the safety lines above",
-            ]),
+            ],
         ),
         (
             &["refresh", "-y", "--scope", "project"],

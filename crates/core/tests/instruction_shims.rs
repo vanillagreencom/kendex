@@ -1022,7 +1022,28 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
             .any(|path| path == ".agents/skills/generated/helper.sh")
     );
     fs::write(f.project.join("kendex.toml"), "schema = 6\n[install]\nharnesses = [\"codex\"]\n[skills.authored]\nsource = \"in-place\"\n").unwrap();
-    apply_now(&f);
+    let report = apply_now(&f);
+    assert!(
+        report
+            .generated
+            .whole
+            .contains(&f.project.join(".agents/skills/generated/SKILL.md"))
+    );
+    assert!(
+        read_paths()
+            .iter()
+            .any(|path| path == ".agents/skills/generated/helper.sh")
+    );
+    let removal = kendex_core::engine::ops::remove(
+        &f.env,
+        &f.scope,
+        &["generated".to_owned()],
+        Some(kendex_core::model::ItemKind::Skill),
+        false,
+    )
+    .unwrap();
+    apply::execute(&f.env, &removal.plan).unwrap();
+    assert!(!f.project.join(".agents/skills/generated").exists());
     assert_eq!(
         read_paths(),
         vec![
