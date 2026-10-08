@@ -1,1 +1,0 @@
-- The fleet watch reports long-running lanes after 3.5 hours by default. Its event includes recorded review rounds and patch rounds that repeat a finding class.

@@ -6,6 +6,91 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-10-08
+
+### Fixed
+
+- Keep source revision changes pending for installed packages that an unrelated add preserves, so a later apply can update them.
+- Verification can compare generated review-bot files through a trusted checker supplied for that run. Consumer refresh can prove Copilot instruction changes without running code from the checked branch. Nested projects exclude checker code and tool directories from their enclosing Git worktree, including Windows paths of different lengths.
+- Keep installed dependency paths in the generated-file inventory and commit offer when an add leaves a pending installation-method change unapplied.
+- Adding a package keeps unrelated installed packages and shared dependency files unchanged. It keeps their file records for verification and commit ownership. It refuses dependency version conflicts across coding tools before writing, with the conflicting package and both source commits. It also refuses an install position occupied by another retained package. The first project Pi output style also keeps global Pi instructions.
+- Refresh, Updates and Library reuse each catalog snapshot's receipt validation within one operation instead of hashing the full catalog for each package.
+
+### Packages
+
+#### bot-instructions
+
+- The checker can report verified regular output files for refresh classification, including disabled installations, and refuses output links.
+
+#### commit-guards
+
+- The default commit checks accept binary files without a size limit. Add `byte-ceiling` to `COMMIT_GUARDS_CHECKS` to enable the binary-size check.
+
+#### decider
+
+- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
+
+#### dev
+
+- Codex artifact-backed dev delegation points callers to the round wait that keeps their turn active until the completion artifact or deadline.
+
+#### github
+
+- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
+
+#### harness-ci
+
+- Refreshes that only regenerate Copilot instructions can classify as rendered changes after the trusted checker verifies them.
+- Generated-file refreshes keep the render class with released kendex verifiers that lack `--bot-instructions-from`. Whole Copilot instruction ownership requires a verifier that supports the option.
+
+#### linear
+
+- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
+
+#### orch
+
+- Closed lane records retain the start and end of each implementation, review and fix stage. Cycle reports show these times without reconstructing them from status messages.
+- The fleet watch reports long-running lanes after 3.5 hours by default. Its event includes recorded review rounds and patch rounds that repeat a finding class.
+- Cloud session launches keep a local Git claim without a source checkout, reducing disk use on the control host while retaining branch pushes and session mail.
+- Approval waits with `--item` retry a Copilot error review once per head. These waits keep the retry record across restarts. A second error asks the overseer for fallback approval.
+- CI waits reset confirmation after a commit change and reject failed latest Actions runs that the pull request's check list omits.
+- Send mail through the hosted lane's recorded provider and require its recorded mailbox root, so a different provider or root cannot receive mail with a false sent receipt.
+- Refetch cached account usage when a consumed bucket resets, so account selection and overseer succession use the reset capacity.
+- Hosted SSH lanes give scripts and hooks their own workflow state directory. Recovery, delegation, host reads, and close archives use that state.
+- Codex lanes wait for artifact-backed dev round completion in the same turn with either supported timeout command. CI fixes keep their return-message-plus-pushed-commit rule. The watch reports an idle Codex lane after a submitted turn on its first long pass.
+- Keep responsive reviewers running required mutation and stability measurements on the test-review deadline, regardless of agent name.
+- Close parked and stopped lanes when their tracker item is Done or Canceled, after recording a detected merge cycle. Resume open parked items for post-merge work. Report a sandbox close refusal once per lane record and tracker state.
+- Changes to the trusted bot-instructions checker require the merge queue and full checks because that checker can grant the rendered-change classification.
+- Hosted SSH lanes hide selected private settings files, their link targets, and provisioned copies, including accepted copy paths through directory aliases, in the clone and current worktree during dependency installation. Files and links are restored on success or failure. Installation refuses missing copy-path support or an older settings loader before project settings load, and refuses a private target outside both checkouts.
+
+#### preflight
+
+- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
+- Treat EXIT traps inside here-document bodies as data on Bash 3.2 and Bash 5, so preflight reports missing parent-script cleanup.
+
+#### review-gate
+
+- The consumer refresh workflow requests checks for kendex changes every 6 hours after adoption. Merges into kendex no longer dispatch a refresh. GitHub can delay, drop or disable scheduled runs. Run the catalog's dispatch workflow by hand when a fix cannot wait.
+- Consumer refreshes publish an unmeasured standard class through full review and CI instead of stopping before publication.
+
+#### reviewer-stop-check
+
+- Keep required review reports when another agent changes tracked files during a review. Attribute tracked edits from the reviewer's successful file changes instead of file times.
+
+#### reviewer
+
+- Clarify that reviewer completion checks preserve the required report and require evidence for tracked edits.
+- Completion polling accepts either supported timeout command and keeps the caller active until the job records its exit.
+
+#### second-opinion
+
+- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
+
+#### worktree
+
+- `worktree create --no-checkout` creates a fresh remote-work claim without source files. Push keeps its creation snapshot. Local reuse checks out its files, gets cloud commits, and applies project setup. Existing-branch and PR inspection require a full checkout.
+- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation. Shared setup-path parsing lets callers protect the same copy paths that worktree setup provisions.
+
 ## [1.12.1] - 2026-10-08
 
 ### Changed
@@ -2056,7 +2141,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.12.1...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.12.2..HEAD
+[1.12.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.2
 [1.12.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.1
 [1.12.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.0
 [1.11.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.11.0

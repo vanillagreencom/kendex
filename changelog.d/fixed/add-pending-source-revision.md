@@ -1,1 +1,0 @@
-- Keep source revision changes pending for installed packages that an unrelated add preserves, so a later apply can update them.

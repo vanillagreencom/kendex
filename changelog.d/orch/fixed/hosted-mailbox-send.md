@@ -1,1 +1,0 @@
-- Send mail through the hosted lane's recorded provider and require its recorded mailbox root, so a different provider or root cannot receive mail with a false sent receipt.

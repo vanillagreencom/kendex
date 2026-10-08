@@ -1,1 +1,0 @@
-- Refreshes that only regenerate Copilot instructions can classify as rendered changes after the trusted checker verifies them.

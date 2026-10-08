@@ -1,1 +1,0 @@
-- The consumer refresh workflow requests checks for kendex changes every 6 hours after adoption. Merges into kendex no longer dispatch a refresh. GitHub can delay, drop or disable scheduled runs. Run the catalog's dispatch workflow by hand when a fix cannot wait.

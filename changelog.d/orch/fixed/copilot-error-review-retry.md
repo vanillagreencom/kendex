@@ -1,1 +1,0 @@
-- Approval waits with `--item` retry a Copilot error review once per head. These waits keep the retry record across restarts. A second error asks the overseer for fallback approval.

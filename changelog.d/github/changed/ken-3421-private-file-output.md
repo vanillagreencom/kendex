@@ -1,1 +1,0 @@
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.

@@ -1,1 +1,0 @@
-- Changes to the trusted bot-instructions checker require the merge queue and full checks because that checker can grant the rendered-change classification.

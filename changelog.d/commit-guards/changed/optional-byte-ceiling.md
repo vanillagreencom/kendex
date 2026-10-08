@@ -1,1 +1,0 @@
-- The default commit checks accept binary files without a size limit. Add `byte-ceiling` to `COMMIT_GUARDS_CHECKS` to enable the binary-size check.

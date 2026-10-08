@@ -1,1 +1,0 @@
-- Refresh, Updates and Library reuse each catalog snapshot's receipt validation within one operation instead of hashing the full catalog for each package.

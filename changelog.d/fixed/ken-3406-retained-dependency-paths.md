@@ -1,1 +1,0 @@
-- Keep installed dependency paths in the generated-file inventory and commit offer when an add leaves a pending installation-method change unapplied.

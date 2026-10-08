@@ -1,1 +1,0 @@
-- Generated-file refreshes keep the render class with released kendex verifiers that lack `--bot-instructions-from`. Whole Copilot instruction ownership requires a verifier that supports the option.

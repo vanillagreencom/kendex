@@ -1,1 +1,0 @@
-- CI waits reset confirmation after a commit change and reject failed latest Actions runs that the pull request's check list omits.

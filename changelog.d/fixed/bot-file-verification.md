@@ -1,1 +1,0 @@
-- Verification can compare generated review-bot files through a trusted checker supplied for that run. Consumer refresh can prove Copilot instruction changes without running code from the checked branch. Nested projects exclude checker code and tool directories from their enclosing Git worktree, including Windows paths of different lengths.
