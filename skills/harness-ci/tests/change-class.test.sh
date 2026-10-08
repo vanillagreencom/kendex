@@ -27,7 +27,8 @@ commit_paths "$repo" baseline seed.txt
 base="$(git -C "$repo" rev-parse HEAD)"
 
 # The dependency double. It answers `--version` with a version of its own and
-# records nothing for it. Every other invocation it records with the tree it
+# records nothing for it. The help mode advertises or refuses the new flag.
+# Every proof invocation it records with the tree it
 # ran in, the commit checked out there and how many arming records its git
 # directories hold, prints the ledger line the row chose, and exits with the
 # row's status.
@@ -36,13 +37,34 @@ mkdir -p "$stub_bin"
 cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
 [ "$*" != --version ] || { echo 'kendex 0.0.0-stub'; exit 0; }
+if [ "$*" = 'verify --help' ]; then
+  printf '%s\n' "$*" >>"$KENDEX_STUB_HELP_CALLS"
+  case "$(cat "$KENDEX_STUB_HELP")" in
+    supported) echo '  --bot-instructions-from <DIR>' ;;
+    legacy) echo '  --scope <SCOPE> --json' ;;
+    unavailable) exit 2 ;;
+  esac
+  exit 0
+fi
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
+bot_instructions=false
+for arg in "$@"; do
+  [ "$arg" != --bot-instructions-from ] || bot_instructions=true
+done
+if [ "$bot_instructions" = true ] && [ "$(cat "$KENDEX_STUB_HELP")" != supported ]; then
+  echo "error: unexpected argument '--bot-instructions-from'" >&2
+  exit 2
+fi
 records=0
 for dir in "$(git rev-parse --git-common-dir)" "$(git rev-parse --git-dir)"; do
   [ ! -d "$dir/kendex/armed" ] || records=$((records + 1))
 done
 printf 'head=%s records=%s\n' "$(git rev-parse HEAD)" "$records" >>"$KENDEX_STUB_TREES"
-cat "$KENDEX_STUB_LEDGER"
+if [ "$bot_instructions" = true ]; then
+  cat "$KENDEX_STUB_LEDGER"
+else
+  jq 'if .rows then .rows |= map(select(.kind != "bot-instructions")) else . end' "$KENDEX_STUB_LEDGER"
+fi
 cat "$KENDEX_STUB_SAYS" >&2
 exit "$(cat "$KENDEX_STUB_STATUS")"
 STUB
@@ -51,6 +73,8 @@ export KENDEX_STUB_STATUS="$SANDBOX/kendex-status"
 export KENDEX_STUB_LEDGER="$SANDBOX/kendex-ledger"
 export KENDEX_STUB_CALLS="$SANDBOX/kendex-calls"
 export KENDEX_STUB_TREES="$SANDBOX/kendex-trees"
+export KENDEX_STUB_HELP="$SANDBOX/kendex-help"
+export KENDEX_STUB_HELP_CALLS="$SANDBOX/kendex-help-calls"
 # What the stub says on stderr beside the document: verify's human rows,
 # for the row that pins them being carried to a refusal.
 export KENDEX_STUB_SAYS="$SANDBOX/kendex-says"
@@ -94,6 +118,8 @@ document() { # FOREIGN AGENT_STATE FAILED [without]
 # records one, not the shared registry file.
 owned_by_base='[{"path":".agents/skills/orch","owns":"tree"},{"path":".codex/agents/rust.md","owns":"file"}]'
 set_verifier() { # MODE
+  echo supported >"$KENDEX_STUB_HELP"
+  : >"$KENDEX_STUB_HELP_CALLS"
   : >"$KENDEX_STUB_CALLS"
   : >"$KENDEX_STUB_TREES"
   : >"$KENDEX_STUB_SAYS"
@@ -221,6 +247,74 @@ render-root-is-one-subsystem|small|dirty|runtime/one.ts:30 .agents/runtime/two.t
 excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
 require_rows change-class-table "$table_rows"
+
+# Released kendex 1.12.1 rejects the flag. A post-tag build can report the
+# same version and accept it, so these rows vary help with one stub version.
+# Legacy documents provide engine ownership but no whole bot-file ownership.
+capability_rows=0
+while IFS='|' read -r label help_mode path expected flag; do
+  capability_rows=$((capability_rows + 1))
+  reset_case
+  set_verifier clean
+  echo "$help_mode" >"$KENDEX_STUB_HELP"
+  jq '.rows += [{"kind":"bot-instructions","state":"ok","positions":[{"path":".github/copilot-instructions.md","owns":"file"}]}]' \
+    "$KENDEX_STUB_LEDGER" >"$SANDBOX/bot-ledger"
+  mv "$SANDBOX/bot-ledger" "$KENDEX_STUB_LEDGER"
+  write_lines "$repo" "$path" 4
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  PATH="$stub_bin:$PATH" assert_class "$label" "$expected" \
+    --repo "$repo" --event pull_request --base "$base" --head HEAD
+  assert_eq "$label reads help once" 'verify --help' "$(cat "$KENDEX_STUB_HELP_CALLS")"
+  option=""
+  [ "$flag" = false ] || option=" --bot-instructions-from $(dirname "$CHANGE_CLASS")/../../bot-instructions"
+  assert_eq "$label passes only supported options" \
+    "verify --scope project --json$option --base $base --at-record" \
+    "$(cat "$KENDEX_STUB_CALLS")"
+done <<'CAPABILITIES'
+legacy verifier proves an engine render|legacy|.agents/skills/orch/SKILL.md|render|false
+supporting verifier proves an engine render|supported|.agents/skills/orch/SKILL.md|render|true
+legacy verifier grants no whole copilot ownership|legacy|.github/copilot-instructions.md|standard|false
+supporting verifier proves a whole copilot render|supported|.github/copilot-instructions.md|render|true
+unavailable help keeps the legacy engine proof|unavailable|.agents/skills/orch/SKILL.md|render|false
+unavailable help grants no whole copilot ownership|unavailable|.github/copilot-instructions.md|standard|false
+CAPABILITIES
+require_rows change-class-verifier-capability "$capability_rows"
+
+reset_case
+set_verifier clean
+echo legacy >"$KENDEX_STUB_HELP"
+write_lines "$repo" .agents/skills/orch/SKILL.md 4
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "an engine render for the released verifier"
+unconditional_flag="$(mutant unconditional-flag change-class \
+  '    grep -Eq -- '\''(^|[[:space:]])--bot-instructions-from([[:space:]=]|$)'\'' <<<"$verify_help"; then' \
+  '    true; then')"
+capability_control="$(PATH="$stub_bin:$PATH" "$unconditional_flag" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "must-fail: forcing the flag makes the legacy engine render refuse verification" \
+  'class=standard measured=false cause=verify-refused verifier=path version=0.0.0-stub' \
+  "$(printf '%s\n' "$capability_control" | sed -n 's/^class: //p')"
+
+reset_case
+set_verifier clean
+jq '.rows += [{"kind":"bot-instructions","state":"ok","positions":[{"path":".github/copilot-instructions.md","owns":"file"}]}]' \
+  "$KENDEX_STUB_LEDGER" >"$SANDBOX/bot-ledger"
+mv "$SANDBOX/bot-ledger" "$KENDEX_STUB_LEDGER"
+write_lines "$repo" .github/copilot-instructions.md 4
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a whole copilot render for the supporting verifier"
+missing_flag="$(mutant missing-flag change-class \
+  '    verify_args=("${verify_args[@]}" --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")' \
+  '    :')"
+PATH="$stub_bin:$PATH" CHANGE_CLASS="$missing_flag" assert_class \
+  "must-fail: omitting the supported flag loses whole copilot ownership" standard \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD
+missing_support="$(mutant missing-support change-class \
+  '    RENDER_BOT_INSTRUCTIONS=true' '    RENDER_BOT_INSTRUCTIONS=false')"
+PATH="$stub_bin:$PATH" CHANGE_CLASS="$missing_support" assert_class \
+  "must-fail: denying verified support keeps whole copilot ownership excluded" standard \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # A refresh can add a package file to the inventory. The inventory is input,
 # not provenance: verify must pass and own the gained path and inventory.
@@ -2138,8 +2232,8 @@ TOML
   classify_here "a copilot-only bot re-render has verified ownership" render \
     --repo "$bot_consumer" --event pull_request --base "$bot_base" --head HEAD
   bot_unowned_class="$(mutant bot-unowned change-class \
-    '  verify_args=(verify --scope project --json --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")' \
-    '  verify_args=(verify --scope project --json)')"
+    '    verify_args=("${verify_args[@]}" --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")' \
+    '    :')"
   CHANGE_CLASS="$bot_unowned_class" classify_here \
     "control: omitting the trusted checker turns the copilot-only render row red" standard \
     --repo "$bot_consumer" --event pull_request --base "$bot_base" --head HEAD

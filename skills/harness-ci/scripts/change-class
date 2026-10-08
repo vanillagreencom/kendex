@@ -91,8 +91,9 @@
 # The render proof runs `kendex verify --scope
 # project --json` in the head revision's private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
-# document. `--bot-instructions-from` licenses the trusted sibling checker's
-# comparison of bot files; the judged package supplies doctrine data only.
+# document. Where verify's help advertises `--bot-instructions-from`, that
+# option licenses the trusted sibling checker's comparison of bot files;
+# the judged package supplies doctrine data only.
 # The classes, first match winning:
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
@@ -811,8 +812,9 @@ RENDER_REFUSAL=""
 # `measured` where the refusal is a rule's verdict rather than a failed read.
 RENDER_MEASURED=""
 VERIFY_JSON=""
+RENDER_BOT_INSTRUCTIONS=false
 renders_match() {
-  local verify_args counts checked failed version verifier=kendex kind=path verifier_version
+  local verify_args verify_help counts checked failed version verifier=kendex kind=path verifier_version
   if [ "$changed" = .kendex-lock.json ] && [ -n "${HARNESS_CI_LOCK_KENDEX:-}" ]; then
     verifier="$HARNESS_CI_LOCK_KENDEX"
     kind=lock
@@ -845,7 +847,16 @@ renders_match() {
     RENDER_REFUSAL="cause=head-checkout-failed head=$head_rev"
     return 1
   fi
-  verify_args=(verify --scope project --json --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")
+  verify_args=(verify --scope project --json)
+  RENDER_BOT_INSTRUCTIONS=false
+  # Released kendex 1.12.1 lacks this option; post-tag builds can share its
+  # version, so help decides support. Keep the legacy proof until the next
+  # major release permits removing compatibility with 1.12.1.
+  if verify_help="$("$verifier" verify --help 2>/dev/null </dev/null)" &&
+    grep -Eq -- '(^|[[:space:]])--bot-instructions-from([[:space:]=]|$)' <<<"$verify_help"; then
+    RENDER_BOT_INSTRUCTIONS=true
+    verify_args=("${verify_args[@]}" --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")
+  fi
   if [ -n "$base_rev" ]; then
     # `--at-record` weighs each package at the commit the install record
     # names, and goes only beside `--base`: the base's record is the floor
@@ -1095,7 +1106,7 @@ if path_class_matches narrow standard; then
   narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"
   # Package outputs outside the engine inventory can still be proved by
   # their trusted checker. Without full ownership the path rule stands.
-  renders_match && render_paths_covered &&
+  renders_match && [ "$RENDER_BOT_INSTRUCTIONS" = true ] && render_paths_covered &&
     answer render "cause=renders-match-their-sources"
   answer standard "cause=$narrow_refusal" measured
 fi
