@@ -1,1 +1,1 @@
-- Hosted SSH lanes hide the selected private settings file, `.env.local`, and worktree copies during dependency installation. Files and links are restored on success or failure.
+- Hosted SSH lanes hide both selected private settings files and `.env.local` in the clone and the current item's worktree during dependency installation. Files and links are restored on success or failure. An older settings loader refuses installation and reports its missing selected-path output.

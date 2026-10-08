@@ -314,7 +314,7 @@ def install_dependencies(row, item):
     come through the clone's own loader, so this reads what the worktree
     command reads, in a subshell: npm ci and the dependencies' install scripts
     run with the SSH session's environment. The selected private env files and
-    .env.local are moved out of the clone and any standing worktree after
+    .env.local are moved out of the clone and the current item's standing worktree after
     settings resolution and restored when this call exits, so install scripts
     cannot read those paths or provisioned copies.
     npm ci empties node_modules first, so the marker of the
@@ -323,21 +323,37 @@ def install_dependencies(row, item):
     climbing out of the clone is the worktree command's to refuse, never a
     directory to install in.
     """
-    remote(row, '''settings=$(. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh" &&
-  kendex_load_project_env "$1" selected_private >&2 &&
-  printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private") || exit 1
+    remote(row, '''loader="$1/.agents/skills/worktree/scripts/lib/kendex-env.sh"
+load_install_settings() {
+  local selected_private
+  . "$loader" || return 1
+  kendex_load_project_env "$1" selected_private >&2 || return 1
+  # A remote checkout can still carry a loader that ignores the output argument.
+  if test -z "${selected_private:-}"; then
+    printf 'lane-host-ssh: loader-private-path-missing path=%s output=selected-private-path\\n' "$loader" >&2
+    return 1
+  fi
+  printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private"
+}
+settings=$(load_install_settings "$1") || exit 1
 # Only printf %q's shell-quoted values enter eval, including paths with spaces.
 eval "settings=($settings)"
 symlinks=${settings[0]}
-private_paths=("$1/.env.local" "$1/${settings[1]}")
+private_names=(.env.local "${settings[1]}")
+roots=("$1")
 tree=$(cd -- "$1" && .agents/skills/worktree/scripts/worktree path "$2") || exit 1
 if test -d "$tree"; then
-  selected=$(. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh" &&
-    kendex_load_project_env "$tree" selected_private >&2 &&
-    printf '%q' "$selected_private") || exit 1
+  selected=$(load_install_settings "$tree") || exit 1
   eval "selected=($selected)"
-  private_paths+=("$tree/.env.local" "$tree/${settings[1]}" "$tree/${selected[0]}")
+  private_names+=("${selected[1]}")
+  roots+=("$tree")
 fi
+private_paths=()
+for root in "${roots[@]}"; do
+  for name in "${private_names[@]}"; do
+    private_paths+=("$root/$name")
+  done
+done
 # A reused clone already holds the private file, so delaying its upload alone
 # would still expose it and worktree copies to dependency lifecycle scripts.
 private=$(mktemp -d) || exit 1
@@ -644,7 +660,7 @@ pair and each item occurs once. SSH keys and host verification use your SSH conf
 LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local.
 Dependency installation temporarily removes .env.local and the loader-selected
-private files from the clone and any standing worktree after resolving settings.
+private files from the clone and the current item's standing worktree after resolving settings.
 It restores each file or link on success or failure.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
