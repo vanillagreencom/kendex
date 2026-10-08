@@ -281,7 +281,8 @@ RULESET_CONTEXTS_JQ='
 # or classic protection names, `workflow:<json>` for a required workflow,
 # `unnameable:<type>` for a ruleset rule gating
 # on a check it does not name. Unreadable workflow parameters refuse.
-# The result is {state, contexts}. Other unnameable rules retain the empty-set
+# The result is {state, contexts}, with failed_runs for failed required runs
+# so ci-wait can retry the bound workflow. Other unnameable rules retain the empty-set
 # fallback. Required workflows instead hold as pending, failed or unreadable;
 # their partial job rollup cannot prove that the required run passed.
 # Arg 2, when given, is the owner/name the PR lives in; without it gh resolves
@@ -340,7 +341,7 @@ required_contexts() {
                 | if length == 0 or any(.[]; .status != "completed") then {state: "pending"}
                   elif any(.[]; (.conclusion | IN("success", "neutral", "skipped", "failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale")) | not)
                     or any(.[]; (.check_suite_id | type != "number" or . <= 0)) then {state: "unreadable"}
-                  elif any(.[]; (.conclusion | IN("success", "neutral", "skipped")) | not) then {state: "failed"}
+                  elif any(.[]; (.conclusion | IN("success", "neutral", "skipped")) | not) then {state: "failed", failed_runs: [ .[] | select((.conclusion | IN("success", "neutral", "skipped")) | not) | .id ]}
                   else {state: "ready", suites: (map(.check_suite_id) | unique)} end
             ' <<<"$runs" 2>/dev/null); then
                 echo '{"state":"unreadable","contexts":[]}'
@@ -348,7 +349,7 @@ required_contexts() {
             fi
             state=$(jq -r '.state' <<<"$evidence") || return 1
             if [ "$state" != ready ]; then
-                jq -c '{state, contexts: []}' <<<"$evidence"
+                jq -c '{state, contexts: []} + (if .state == "failed" then {failed_runs} else {} end)' <<<"$evidence"
                 return 0
             fi
             suites=$(jq -r '.suites[]' <<<"$evidence") || return 1

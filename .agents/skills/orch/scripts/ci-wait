@@ -104,6 +104,9 @@ ci_message() {
     head-read-failed|head-response-invalid)
       printf 'ci-wait: %s pr=%s repo=%s\n' "$_message_key" "$PR_NUM" "$REPO"
       ;;
+    required-workflow-unreadable)
+      printf 'ci-wait: required-workflow-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      ;;
     actions-read-failed|actions-response-invalid)
       printf 'ci-wait: %s head=%s repo=%s\n' "$_message_key" "$head_sha" "$REPO"
       ;;
@@ -866,6 +869,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
     confirmation_head="$checks_head"
   fi
 
+  required_state=ready
   if $REQUIRED_ONLY; then
     required_evidence=$(required_contexts "$PR_NUM" "$REPO" "$checks_head") || required_evidence='{"state":"unreadable","contexts":[]}'
     # The shared reader can fetch Actions after the checks snapshot. Bind
@@ -881,15 +885,18 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
     case "$required_state" in
       ready) ;;
       pending|unreadable)
+        if [ "$required_state" = unreadable ]; then
+          ci_message required-workflow-unreadable >&2
+        fi
         seen_in_progress=true
         last_check_classes='{"pending":[{"name":"required workflow","state":"EXPECTED"}],"failed":[],"passed":[]}'
         poll_sleep "$POLL_INTERVAL"
         continue
         ;;
       failed)
-        last_check_classes='{"pending":[],"failed":[{"name":"required workflow","state":"FAILURE"}],"passed":[]}'
-        emit_result "complete" "$last_check_classes"
-        exit 1
+        # The current required run failed even if its jobs all look green.
+        # Give that failure to the existing retry owner below.
+        checks_json='[{"name":"required workflow","state":"FAILURE"}]'
         ;;
       *) echo "ci-wait: required-state=$required_state" >&2; exit 1 ;;
     esac
@@ -1064,7 +1071,13 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
         # `gh pr checks` exits nonzero when checks have failed; without the
         # guard the pipefail status escapes the substitution and errexit kills
         # the script before any result is emitted.
-        failed_run=$(get_failed_run_id "$PR_NUM" || true)
+        if [ "$required_state" = failed ]; then
+          # Use the required reader's bound run, never a stale or optional
+          # job link from a second rollup read.
+          failed_run=$(jq -r '.failed_runs[0] // empty' <<<"$required_evidence")
+        else
+          failed_run=$(get_failed_run_id "$PR_NUM" || true)
+        fi
 
         # Try auto-retry for transient failures
         if [ -n "$failed_run" ] && [ $retries -lt $max_retries ] && is_transient_failure "$failed_run"; then

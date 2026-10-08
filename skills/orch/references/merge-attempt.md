@@ -14,7 +14,7 @@ The lane owns this approved-head wait. Read its completion file. `status=complet
 
 Start `[CI_PENDING_COUNT]=0` and `[MERGE_RETRY_COUNT]=0` for `[PREPARED_HEAD]`; a re-entry on that same head keeps both counts. On `status=timeout verdict=pending`, re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase `[CI_PENDING_COUNT]` and relaunch through Waiter launch while below `[CI_PENDING_LIMIT]=3`. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, pending checks and wait logs. Unarm by § 1 before handing back. Never attempt the merge on that pending timeout. Exit `5` follows the mail route without consuming this count.
 
-Other results take the attempt: the wait counts every red check, the attempt only required checks. `--expected-head` refuses a moved head.
+Other results take the attempt. `--expected-head` refuses a moved head.
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --expected-head [PREPARED_HEAD]

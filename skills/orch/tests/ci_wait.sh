@@ -723,10 +723,13 @@ jq '.workflow_runs += [.workflow_runs[0] + {id:123,conclusion:"failure",updated_
 printf '{"500":[{"total_count":1,"check_runs":[{"name":"request"}]}]}\n' > "$TMP_ROOT/required-workflow-checks.json"
 printf '{"500":[{"total_count":0,"check_runs":[]}]}\n' > "$TMP_ROOT/required-workflow-empty.json"
 printf '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"request","state":"SUCCESS","bucket":"pass"}]\n' > "$TMP_ROOT/required-workflow-green.json"
+jq '.[1] += {state:"FAILURE",bucket:"fail",workflow:"Required",link:"https://github.com/owner/repo/actions/runs/500/job/501"}' "$TMP_ROOT/required-workflow-green.json" > "$TMP_ROOT/required-workflow-runner-failed.json"
+printf 'runner error: network timeout\n' > "$TMP_ROOT/required-workflow-runner.log"
 jq '. + [{name:"CodeQL",state:"IN_PROGRESS",bucket:"pending"}]' "$TMP_ROOT/required-workflow-green.json" > "$TMP_ROOT/required-workflow-optional-pending.json"
 jq '.[2].state = "QUEUED"' "$TMP_ROOT/required-workflow-optional-pending.json" > "$TMP_ROOT/required-workflow-optional-queued.json"
 WORKFLOW="STUB_REQUIRED_CONTEXT=build,STUB_REQUIRED_WORKFLOW=1,STUB_HEAD_SHA=$NEXT_HEAD,STUB_WORKFLOW_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-checks.json"
 WORKFLOW_GREEN="$WORKFLOW,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-green.json"
+WORKFLOW_RETRY="$WORKFLOW,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-runner-failed.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-failed.json,STUB_RUN_LOG_FILE=$TMP_ROOT/required-workflow-runner.log"
 WORKFLOW_PENDING="$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-optional-pending.json,STUB_PR_CHECKS_EXIT=8"
 WORKFLOW_QUEUED="$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-optional-queued.json,STUB_PR_CHECKS_EXIT=8"
 WORKFLOW_PASS='rc=0 status=complete verdict=pass check.build=SUCCESS check.request=SUCCESS check.CodeQL=absent pending=0 elapsed_seconds=90'
@@ -736,13 +739,14 @@ table "$JSON --required-only" \
   "a push during required workflow evidence cannot consume old-head progress|||$WORKFLOW_PUSH|$WORKFLOW_HOLD" \
   "a source workflow runs in its consumer while optional CodeQL is pending|||$WORKFLOW_PENDING|$WORKFLOW_PASS" \
   "queued default-setup CodeQL cannot hold completed required jobs|||$WORKFLOW_QUEUED|$WORKFLOW_PASS" \
-  "an active required workflow holds with every visible job green|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-active.json|$WORKFLOW_HOLD" \
+  "an active required workflow holds with every visible job green|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-active.json|$WORKFLOW_HOLD stderr~ci-wait:+required-workflow-unreadable=false" \
   "required workflow completion during the wait releases its hold|||$WORKFLOW_GREEN,STUB_PR_CHECKS_SEQUENCE=green,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-active.json,STUB_ACTIONS_RUNS_RELEASE_AFTER=2,STUB_ACTIONS_RUNS_RELEASE_FIXTURE=$TMP_ROOT/runs-required-completed.json|rc=0 status=complete verdict=pass pending=0" \
   "unregistered required workflow jobs hold visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_WORKFLOW_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-empty.json|$WORKFLOW_HOLD" \
-  "unreadable required run evidence cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_EXIT=1|$WORKFLOW_HOLD" \
+  "unreadable required run evidence cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_EXIT=1|$WORKFLOW_HOLD stderr~ci-wait:+required-workflow-unreadable=true" \
   "unreadable required job evidence cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_WORKFLOW_CHECKS_EXIT=1|$WORKFLOW_HOLD" \
   "an unreadable required conclusion cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-unreadable.json|$WORKFLOW_HOLD" \
   "a failed required run cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-failed.json|rc=1 status=complete verdict=fail check.required+workflow=FAILURE" \
+  "a required runner timeout retries run 500 and refuses its unrecovered failure|||$WORKFLOW_RETRY|rc=1 status=complete verdict=fail check.required+workflow=FAILURE reruns=500" \
   "an older failed run finishing later cannot replace successful required work|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-older-finished.json|rc=0 status=complete verdict=pass failed=0"
 
 echo "=== the latest Actions workflow outcome decides a green rollup ==="
@@ -843,7 +847,7 @@ echo "=== controls reject progress carry-over and false Actions conclusions ==="
 head_reset='if [ -z "$checks_head" ] || [ "$checks_head" != "$confirmation_head" ]; then'
 workflow_pending_match='| if length == 0 or any(.[]; .status != "completed") then {state: "pending"}'
 workflow_pending_bypass='| if length == 0 or any(.[]; .status != "completed") then {state: "ready", suites: (map(.check_suite_id) | unique)}'
-workflow_failed_match='elif any(.[]; (.conclusion | IN("success", "neutral", "skipped")) | not) then {state: "failed"}'
+workflow_failed_match='elif any(.[]; (.conclusion | IN("success", "neutral", "skipped")) | not) then {state: "failed", failed_runs: [ .[] | select((.conclusion | IN("success", "neutral", "skipped")) | not) | .id ]}'
 workflow_failed_bypass='elif any(.[]; (.conclusion | IN("success", "neutral", "skipped")) | not) then {state: "ready", suites: (map(.check_suite_id) | unique)}'
 workflow_unreadable_match="then \$runs else error(\"incomplete workflow runs\") end' <<<\"\$runs\" 2>/dev/null); then\\n            echo '{\"state\":\"unreadable\",\"contexts\":[]}'"
 workflow_unreadable_bypass="then \$runs else error(\"incomplete workflow runs\") end' <<<\"\$runs\" 2>/dev/null); then\\n            echo '{\"state\":\"ready\",\"contexts\":[\"build\",\"request\"]}'"
@@ -865,7 +869,10 @@ control_rows=(
   "required workflow head window~[ \"\$required_head\" != \"\$checks_head\" ]~false~$WORKFLOW_PUSH~$WORKFLOW_HOLD~$JSON --required-only~rc=0 status=complete verdict=pass elapsed_seconds=30"
   "consumer workflow identity~and .repository.id == \$repo_id)]~and .repository.id == \$workflow.repository_id)]~$WORKFLOW_PENDING~$WORKFLOW_PASS~$JSON --required-only~$WORKFLOW_HOLD~github"
   "required workflow completion~$workflow_pending_match~$workflow_pending_bypass~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-active.json~$WORKFLOW_HOLD~$JSON --required-only~rc=0 status=complete verdict=pass pending=0~github"
-  "required workflow failure~$workflow_failed_match~$workflow_failed_bypass~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-failed.json~rc=1 status=complete verdict=fail check.required+workflow=FAILURE~$JSON --required-only~rc=0 status=complete verdict=pass pending=0~github"
+  "unrecovered required workflow failure~$workflow_failed_match~$workflow_failed_bypass~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-failed.json,STUB_RUN_LOG_FILE=$TMP_ROOT/required-workflow-runner.log~rc=1 status=complete verdict=fail check.required+workflow=FAILURE reruns=500~$JSON --required-only~rc=0 status=complete verdict=pass pending=0~github"
+  "required workflow retry~[ \$retries -lt \$max_retries ]~[ \$retries -lt 0 ]~$WORKFLOW_RETRY~rc=1 status=complete verdict=fail check.required+workflow=FAILURE reruns=500~$JSON --required-only~rc=1 status=complete verdict=fail reruns=none"
+  "required workflow retry binding~.failed_runs[0] // empty~\"499\"~$WORKFLOW_RETRY~rc=1 status=complete verdict=fail reruns=500~$JSON --required-only~rc=1 status=complete verdict=fail reruns=499"
+  "unreadable required diagnostic~ci_message required-workflow-unreadable >&2~:~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_EXIT=1~$WORKFLOW_HOLD stderr=line~$JSON --required-only~$WORKFLOW_HOLD stderr=empty"
   "unreadable required run~$workflow_unreadable_match~$workflow_unreadable_bypass~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_EXIT=1~$WORKFLOW_HOLD~$JSON --required-only~rc=0 status=complete verdict=pass pending=0~github"
   "unregistered required jobs~if [ -z \"\$resolved\" ]; then~if false; then~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_WORKFLOW_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-empty.json~$WORKFLOW_HOLD~$JSON --required-only~rc=0 status=complete verdict=pass pending=0~github"
   "required workflow endpoint cap~if length > 0 and (\$runs | length) < 1000 and all~if length > 0 and all~$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-cap.json~$WORKFLOW_HOLD~$JSON --required-only~rc=0 status=complete verdict=pass pending=0~github"

@@ -34,9 +34,11 @@
 #                          line, with `ci-classify-refusal: threads=unread
 #                          pr=<N>` on stderr
 #   ci_optional_failed: ...  red checks the base branch does not require,
-#                          which block nothing. Printed under every
-#                          non-terminal cause, `none` included: a PR blocked
-#                          by nothing still carries them. `merged` and
+#                          which block nothing. Printed only after the required
+#                          set is resolved and the checks are classified,
+#                          under any non-terminal cause, `none` included.
+#                          Pending, failed or unreadable required workflow
+#                          evidence prints no optional classification. `merged` and
 #                          `closed` return before it, their check data being
 #                          meaningless
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI
@@ -46,7 +48,7 @@
 #                          state, workflow, and run id. A required workflow
 #                          run failure uses its issue: detail above; visible
 #                          optional failures are not attributed to that run
-#   superseded: ...        (ci_failed only) runs on the head whose checks
+#   superseded: ...        (classified check failures only) runs on the head whose checks
 #                          were NOT counted — workflow runs (`workflow=`)
 #                          and commit statuses (`status=`) alike. A status
 #                          lands here when a newer same-name status
