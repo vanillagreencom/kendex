@@ -29,6 +29,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 #### commit-guards
 
 - The commit guards block only what the committer can fix. conflict-markers and md-format no longer judge a render `.kendex-generated.json` lists. Outside CI, an inventory the lanes cannot read turns their findings into `owner-unknown` warnings. md-format fails a fence or block left open. md-refs names a file it cannot read `unjudged` and refuses it only under `--strict`. py-names prints a `gap` notice when no ruff or pyflakes is usable, and a CI range or `--all` scan still refuses. The batch and the pre-commit chain name a check or companion script the package lacks as `package-incomplete` and skip it. In a linked worktree, `install-git-hooks` writes nothing and reports whether the main checkout armed the hooks, exiting 1 when it has not. The `core.hooksPath` notice points to the setting's owner.
+- The secrets check completes in a terminal when Bash updates its row count during the scan.
 
 #### decider
 
