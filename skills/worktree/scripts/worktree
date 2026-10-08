@@ -333,21 +333,50 @@ prepare_restack_authorization() {
   record_pending_restack_authorization "$wt" "$remote" "$branch" "$expected_oid" "$original_head" "$base_oid"
 }
 
-# Whether the local branch already carries every commit unique to the remote
-# branch, under different SHAs. Git's own patch-equivalence judge over the
-# symmetric difference answers it, so a branch a rewrite moved off the remote
-# is told from a remote that genuinely moved ahead. A rev-list that cannot
-# answer is not an answer: the caller keeps the fetch-and-rebase route, which
-# is the safe reading of an unknown.
+# A collaborator's amendment can change string contents with whitespace alone.
+# Require whitespace-preserving patches and one local match per remote commit.
+# Empty commits, merges without a patch, duplicate matches and failed Git reads
+# cannot prove containment, so they keep the fetch-and-integrate refusal.
 branch_holds_remote_commits() { # WT EXPECTED_OID [HEAD] -> 0 when every remote-only commit has a local twin
-  local wt="$1" expected_oid="$2" local_head="${3:-HEAD}" remote_only=""
+  local wt="$1" expected_oid="$2" local_head="${3:-HEAD}"
+  local remote_commits="" local_commits="" commits="" patches="" remote_patches="" local_patches=""
 
-  remote_only="$(git -C "$wt" rev-list --count --cherry-pick --right-only "$local_head...$expected_oid" 2>/dev/null)" || return 1
-  [[ "$remote_only" == 0 ]]
+  remote_commits="$(git -C "$wt" rev-list "$local_head..$expected_oid" 2>/dev/null)" || return 1
+  [[ -n "$remote_commits" ]] || return 0
+  local_commits="$(git -C "$wt" rev-list --no-merges "$expected_oid..$local_head" 2>/dev/null)" || return 1
+  for commits in "$remote_commits" "$local_commits"; do
+    patches="$(git -C "$wt" diff-tree --stdin --root -p --binary --full-index --unified=3 \
+      --no-ext-diff --no-textconv --no-renames --no-color --no-relative \
+      --src-prefix=a/ --dst-prefix=b/ --ignore-submodules=none --submodule=short <<<"$commits" 2>/dev/null | \
+      git -C "$wt" patch-id --verbatim 2>/dev/null)" || return 1
+    if [[ "$commits" == "$remote_commits" ]]; then
+      remote_patches="$patches"
+    else
+      local_patches="$patches"
+    fi
+  done
+  awk '
+    $0 == "--" { side++; next }
+    !NF { next }
+    side == 0 { expected[$1]++; next }
+    NF != 2 || $1 !~ /^[0-9a-f]+$/ || $2 !~ /^[0-9a-f]+$/ { invalid = 1; next }
+    side == 1 { remote[$1]++; covered[$2]++; next }
+    side == 2 { local[$1]++; next }
+    END {
+      if (invalid) exit 1
+      for (commit in expected) if (expected[commit] != 1 || covered[commit] != 1) exit 1
+      for (commit in covered) if (!(commit in expected)) exit 1
+      for (patch in remote) if (remote[patch] != 1 || local[patch] != 1) exit 1
+    }
+  ' <<<"$remote_commits
+--
+$remote_patches
+--
+$local_patches"
 }
 
 # Sets LEASE_EXPECTED_OID and REPUBLISH_REWRITE for the push arm. An empty
-# OID requires an absent remote branch. Git's patch-equivalence check permits
+# OID requires an absent remote branch. Whitespace-preserving patch comparison permits
 # recovery after a bare rebase without accepting work the local branch lacks.
 remote_ref_lease_oid() {
   local wt="$1" remote="$2" branch="$3"
