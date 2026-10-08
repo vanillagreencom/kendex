@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Runs with the consumer's default-branch checkout as the working directory,
 # from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
-# checkout, never executes the remote rolling branch, and pushes only after
-# the shared classifier measures the complete diff. It requests auto-merge
+# checkout and never executes the remote rolling branch. It requests auto-merge
 # after GitHub shows the published head. SKILL.md defines the arm outcomes.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
