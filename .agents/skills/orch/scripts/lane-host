@@ -5,7 +5,7 @@ set -euo pipefail
 
 case "${1:-}" in
   --help|-h|help)
-    printf '%s\n' 'Usage: lane-host resolve | capabilities | create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts [arguments]' \
+    printf '%s\n' 'Usage: lane-host resolve | capabilities | create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts [arguments]' \
       'ORCH_LANE_HOST: local (default), claude-cloud, or an executable script path.' \
       'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
       'capabilities prints the host kind'"'"'s one tab-separated key=value line (schemas/lane-host.md § Host kinds):' \
@@ -86,7 +86,7 @@ capabilities_print() { # LINE
 
 case "$verb" in
   resolve) printf '%s\n' "$host"; exit 0 ;;
-  capabilities|create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts) ;;
+  capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts) ;;
   *) printf 'lane-host: verb-invalid verb=%s\n' "$verb" >&2; exit 2 ;;
 esac
 # The kinds kendex owns, each running its harness CLI's own interface with no

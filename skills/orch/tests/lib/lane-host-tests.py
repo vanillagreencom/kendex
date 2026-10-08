@@ -4,18 +4,64 @@ The dispatcher's must-fail controls forward exec in place of stop and read
 an unavailable provider or a slot failure as an absent verb.
 """
 import os
+import base64
+import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
 import time
+import sys
 import unittest
 
 PACKAGE = Path(__file__).resolve().parents[2]
 
 
 class LaneHostTests(unittest.TestCase):
+    def test_batch_snapshot_validates_reply_and_returns_file_status(self):
+        helper = self.script.parent / "lib/lane-host-read.py"
+        cache = self.root / "cache"
+        cache.mkdir()
+        command = [sys.executable, str(helper)]
+        prepared = subprocess.run(command + ["request", "TEST-1", "/lane", "/clone"],
+                                  env=self.env, capture_output=True, check=True)
+        requests = json.loads(prepared.stdout)
+        self.assertIn({"item": "TEST-1", "path": "/clone/tmp/lane-mail/TEST-1/to-overseer.jsonl"}, requests)
+        self.assertIn({"item": "TEST-1", "path": "/lane/.git/HEAD"}, requests)
+        (cache / "request").write_bytes(prepared.stdout)
+        valid = [dict(r, status=2, data="") for r in requests]
+        valid[0].update(status=0, data=base64.b64encode(b"\x00\xff\n").decode())
+        valid[1].update(status=3)
+        cases = [valid, valid[:-1], [dict(valid[0], path="/wrong"), *valid[1:]],
+                 [dict(valid[0], data="?"), *valid[1:]],
+                 [dict(valid[0], status=2), *valid[1:]]]
+        for reply in cases:
+            (cache / "reply").write_text(json.dumps(reply))
+            result = subprocess.run(command + ["unpack", str(cache)], env=self.env, capture_output=True)
+            self.assertEqual(result.returncode, 0 if reply == valid else 1, result.stderr)
+        (cache / "reply").write_text(json.dumps(valid))
+        subprocess.run(command + ["unpack", str(cache)], env=self.env, check=True)
+        for row in valid[:3]:
+            result = subprocess.run([shutil.which("bash"), "-c",
+                'source "$1"; lane_host_cached_read "$2" TEST-1 "$3" "$4" "$5"', "test",
+                str(self.script.parent / "lib/lane-host-read.sh"), str(cache), row["path"],
+                str(self.root / "out"), str(self.root / "err")], env=self.env, capture_output=True)
+            self.assertEqual(result.returncode, row["status"], result.stderr)
+            if row["status"] == 0:
+                self.assertEqual((self.root / "out").read_bytes(), b"\x00\xff\n")
+        # A dropped reply is a failed batch, even with valid bytes elsewhere.
+        original = helper.read_text()
+        rule = 'len(reply) != len(expected)'
+        self.assertEqual(original.count(rule), 1)
+        (cache / "reply").write_text(json.dumps(valid[:-1]))
+        with tempfile.TemporaryDirectory() as control:
+            mutant = Path(control) / "lane-host-read.py"
+            mutant.write_text(original.replace(rule, 'False'))
+            result = subprocess.run([sys.executable, str(mutant), "unpack", str(cache)],
+                                    env=self.env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def setUp(self):
         scratch = Path.cwd() / "tmp"
         scratch.mkdir(exist_ok=True)
@@ -157,7 +203,7 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
                 time.sleep(0.05)
             return proc
         rows = {"create": "long", "wait": "long", "start": "long", "close": "long",
-                "stop": "long", "stop-sandbox": "long", "cat": "short", "put": "short",
+                "stop": "long", "stop-sandbox": "long", "read-many": "short", "cat": "short", "put": "short",
                 "append": "short", "touch": "short", "status": "short", "list": "short", "accounts": "short"}
         # Discover the real dispatcher's admitted verbs, including a future
         # verb with no row. Resolve is local and capabilities is slot-free.
@@ -378,7 +424,7 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
         self.assertEqual(self.run_host("--help").returncode, 0)
     def test_dispatch_protocol(self):
         original = self.script.read_text()
-        rule = "  capabilities|create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts)"
+        rule = "  capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts)"
         self.assertEqual(original.count(rule), 1)
         protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)),
                     (("status", "--item", "TEST-1", "--harness", "claude"), (0, True)),
@@ -402,7 +448,7 @@ class LaneHostCallersTests(unittest.TestCase):
     provider verb is a call outside the bound."""
     # A provider verb, or the caller's own argv forwarded whole, which is how
     # open-terminal's host_transport hands its verbs on.
-    VERB = re.compile(r"(?:capabilities|create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|\$@)")
+    VERB = re.compile(r"(?:capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|\$@)")
     # Keywords, `!`, environment assignments and optional argv prefixes, then
     # the command word and the word after it. A prefix is an array expanded
     # whole, `${X[@]+"${X[@]}"}` or `"${X[@]}"`, such as the github skill's

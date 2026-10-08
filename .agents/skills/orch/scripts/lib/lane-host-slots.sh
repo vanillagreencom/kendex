@@ -88,7 +88,7 @@ lane_host_slot_try() { # DIR CAP
 lane_host_slot_take() { # VERB ARGS...
   local verb="$1" item=- prev="" arg cap wait_s dir deadline rc pool cap_name wait_name
   case "$verb" in
-    cat|put|append|touch|status|list|accounts) pool=short ;;
+    read-many|cat|put|append|touch|status|list|accounts) pool=short ;;
     create|wait|start|close|stop|stop-sandbox) pool=long ;;
     capabilities) return 0 ;;
     *) return 2 ;;

@@ -768,6 +768,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SCRIPT_DIR/lib/mailbox-append.sh"
 # shellcheck source=lib/lane-host-slots.sh
 . "$SCRIPT_DIR/lib/lane-host-slots.sh"
+# shellcheck source=lib/lane-host-read.sh
+. "$SCRIPT_DIR/lib/lane-host-read.sh"
 # shellcheck source=lib/tmux-server.sh
 . "$SCRIPT_DIR/lib/tmux-server.sh"
 
@@ -1128,7 +1130,16 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
     return 0
   fi
-  "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
+  if [ -n "${LANE_HOST_READ_DIR:-}" ]; then
+    lane_host_cached_read "$LANE_HOST_READ_DIR" "$ITEM" "$1" "$2" "$WORK_DIR/host.err" || rc=$?
+    lm_host_busy "$rc" "$WORK_DIR/host.err"
+    case "$rc" in
+      0 | 2) LM_HOST_ANSWERED=1 ;;
+      *) refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")" ;;
+    esac
+  else
+    "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
+  fi
   if [ "$rc" -eq 0 ]; then
     LM_HOST_ANSWERED=1
     case "$1" in

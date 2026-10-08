@@ -1974,10 +1974,57 @@ resolve_due_owner_asks() {
 # One lane-mail read for the mail pass, its output in MAIL_OUT. A read that
 # failed is set as the lane's failure and returns 1, for the caller to report.
 MAIL_OUT=""
+MAIL_HOST_READS=()
+MAIL_HOST_READ_DIR=""
+mail_host_read_dir() { # HOST
+  local entry
+  MAIL_HOST_READ_DIR=""
+  for entry in ${MAIL_HOST_READS[@]+"${MAIL_HOST_READS[@]}"}; do
+    [[ "${entry%%$'\x1f'*}" != "$1" ]] || { MAIL_HOST_READ_DIR="${entry#*$'\x1f'}"; return 0; }
+  done
+  return 1
+}
+mail_host_reads() { # ITEMS...
+  local item host clone directory rc entries=() hosts=()
+  MAIL_HOST_READS=()
+  for item in "$@"; do
+    hosted_root "$item"
+    [[ -n "$HOSTED_ROOT" ]] || continue
+    item_in "$HOSTED_HOST" ${hosts[@]+"${hosts[@]}"} || hosts+=("$HOSTED_HOST")
+  done
+  for host in ${hosts[@]+"${hosts[@]}"}; do
+    entries=()
+    for item in "$@"; do
+      hosted_root "$item"
+      [[ -n "$HOSTED_ROOT" && "$HOSTED_HOST" == "$host" ]] || continue
+      clone="$(lane_row_get clone-root "$MAIL_SEEN" "$item")" || die state-read-failed "" "item=$item" "row=clone-root"
+      entries+=("$item" "$HOSTED_ROOT" "$clone")
+    done
+    directory="$WORK_DIR/mail-host-${#MAIL_HOST_READS[@]}"
+    mkdir -p -- "$directory" || die mail-read-failed "" "host=$host"
+    rm -f -- "${directory:?}/failed" "${directory:?}/index"
+    python3 "$SCRIPT_DIR/lib/lane-host-read.py" request "${entries[@]}" >"$directory/request" \
+      || die mail-read-failed "" "host=$host" "read=request"
+    rc=0
+    ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" read-many <"$directory/request" >"$directory/reply" 2>"$directory/error" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+      python3 "$SCRIPT_DIR/lib/lane-host-read.py" unpack "$directory" 2>"$directory/error" || rc=$?
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+      # Exit 2 on the whole call is a refused batch, never a missing file.
+      [[ "$rc" -eq "$LANE_HOST_BUSY_EXIT" ]] || rc=1
+      printf '%s\n' "$rc" >"$directory/failed"
+    fi
+    MAIL_HOST_READS+=("$host"$'\x1f'"$directory")
+  done
+}
 mail_read() { # ITEM LANE_MAIL_ARGS...
   local item="$1" rc=0 host_env=()
   shift
-  [[ "$item" == overseer || -z "$HOSTED_HOST" ]] || host_env=("ORCH_LANE_HOST=$HOSTED_HOST")
+  if [[ "$item" != overseer && -n "$HOSTED_HOST" ]]; then
+    mail_host_read_dir "$HOSTED_HOST" || die mail-read-failed "" "host=$HOSTED_HOST" "read=snapshot"
+    host_env=("ORCH_LANE_HOST=$HOSTED_HOST" "LANE_HOST_READ_DIR=$MAIL_HOST_READ_DIR")
+  fi
   MAIL_OUT="$(env ${host_env[@]+"${host_env[@]}"} "$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
   [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { lane_failure_set lane-host-busy "" "item=$item"; return 1; }
@@ -2010,6 +2057,7 @@ check_mail() { # [overseer]
       item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")
     done
   fi
+  mail_host_reads ${mail_items[@]+"${mail_items[@]}"}
   mail_items+=(overseer)
   for item in "${mail_items[@]}"; do
     root=""
@@ -2024,7 +2072,8 @@ check_mail() { # [overseer]
       if [[ -z "$root" ]]; then local_root "$item"; root="$LOCAL_ROOT"; host_flag=(); fi
     fi
     if [[ -n "$HOSTED_ROOT" && "$item" != overseer ]]; then
-      if ! hosted_clone "$item" "$state"; then
+      mail_host_read_dir "$HOSTED_HOST" || die mail-read-failed "" "host=$HOSTED_HOST" "read=snapshot"
+      if ! LANE_HOST_READ_DIR="$MAIL_HOST_READ_DIR" hosted_clone "$item" "$state"; then
         lane_failure_report "$item" "$state"
         mail_row_commit "$LANE_FAILURE_STATE"
         state="$MAIL_SEEN"

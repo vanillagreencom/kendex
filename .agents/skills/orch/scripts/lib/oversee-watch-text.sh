@@ -27,8 +27,10 @@ Two passes run on one clock. The mail pass starts every
 ORCH_WATCH_MAIL_INTERVAL seconds, reads every lane mailbox, the overseer
 mailbox and the lane records one after another, and prints what it finds as
 it finds it: lane-question, lane-notice, directive-read, directive-unread,
-peer-note, owner-note, owner-ask-resolved and owner-ask-closed. Before the
-overseer mailbox is read, `lane-mail resolve --default` closes due owner asks.
+peer-note, owner-note, owner-ask-resolved and owner-ask-closed. Hosted mail
+uses `lane-host read-many` once per provider per mail pass, as
+schemas/lane-host.md specifies. Before the overseer mailbox is read,
+`lane-mail resolve --default` closes due owner asks.
 Only an unanswered ask receives a recommendation answer. The interval is
 counted start to start and kept across runs in the state directory. Between
 two mail passes, and through a --repeat sleep, the overseer mailbox's size is

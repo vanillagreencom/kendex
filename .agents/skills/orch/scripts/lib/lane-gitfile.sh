@@ -10,6 +10,7 @@
 LANE_GITFILE_LIB="$(dirname -- "${BASH_SOURCE[0]}")"
 source "$LANE_GITFILE_LIB/lane-host-slots.sh"
 source "$LANE_GITFILE_LIB/lane-capabilities.sh"
+source "$LANE_GITFILE_LIB/lane-host-read.sh"
 
 # Print the absolute worktree git directory a worktree's `.git` file names.
 # Returns 1 on any other content, including a `.git` directory's own bytes and
@@ -46,6 +47,16 @@ lane_gitfile_common_dir() { # GITFILE_CONTENT
 # what lane-host said.
 lane_host_fetch() {
   local rc=0
+  if [[ -n "${LANE_HOST_READ_DIR:-}" ]]; then
+    lane_host_cached_read "$LANE_HOST_READ_DIR" "$2" "$3" "$4" "$5" || rc=$?
+    [[ "$rc" -ne 0 ]] || return 0
+    rm -f -- "${4:?}"
+    case "$rc" in
+      2) return 1 ;;
+      "$LANE_HOST_BUSY_EXIT") return 4 ;;
+      *) return 2 ;;
+    esac
+  fi
   "$1" cat --item "$2" "$3" >"$4" 2>"$5" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
   rm -f -- "$4"

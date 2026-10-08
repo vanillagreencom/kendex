@@ -4,6 +4,7 @@ One must-fail control per verb that has one: create, cat, put, append, stop,
 close, and list, which reads the inventory every verb reads first.
 """
 import json
+import base64
 import os
 from pathlib import Path
 import runpy
@@ -948,6 +949,38 @@ exec "$REAL_CAT" "$@"
         self.script.write_text(changed)
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
         self.assertEqual((result.returncode, target.read_bytes()), (1, b'{"id":"nowhere"}\n'))
+
+    def test_read_many_preserves_bytes_and_batches_each_target(self):
+        rows = [dict(self.row, item=f"TEST-{n}", clone=str(self.root / f"clone-{n}")) for n in (1, 2, 3)]
+        self.inventory.write_text(json.dumps(rows))
+        present = self.root / "binary file"
+        present.write_bytes(b"\x00\xff\nlast")
+        empty = self.root / "empty"
+        empty.touch()
+        requests = [{"item": row["item"], "path": str(path)} for row in rows
+                    for path in (present, empty, self.root / "absent", self.root)]
+        result = self.call("read-many", data=json.dumps(requests).encode())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        reply = json.loads(result.stdout)
+        for request, response in zip(requests, reply):
+            self.assertEqual((response["item"], response["path"]), (request["item"], request["path"]))
+            path = Path(request["path"])
+            expected = 0 if path in (present, empty) else 2 if path.name == "absent" else 1
+            self.assertEqual(response["status"], expected)
+            self.assertEqual(base64.b64decode(response["data"]), path.read_bytes() if expected == 0 else b"")
+        self.assertEqual(len(reply), len(requests))
+        self.assertEqual(sum(line.startswith("-T ") for line in (self.root / "calls").read_text().splitlines()), 1)
+        # The real provider's target grouping must control SSH calls.
+        original = self.script.read_text()
+        rule = 'groups.setdefault(row["target"], []).append(request)'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(rule, 'groups.setdefault(str(len(groups)), []).append(request)'))
+            (self.root / "calls").write_text("")
+            result = self.call("read-many", data=json.dumps(requests).encode())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertGreaterEqual(sum(line.startswith("-T ") for line in (self.root / "calls").read_text().splitlines()), 3)
 
     def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
         """Exit 2 is "not there"; every other read failure keeps its own status."""

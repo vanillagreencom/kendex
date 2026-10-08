@@ -2,6 +2,8 @@
 """Static SSH lane hosts. Use --help for configuration and the command contract."""
 
 import argparse
+import base64
+import io
 from contextlib import contextmanager
 import json
 import os
@@ -301,6 +303,8 @@ esac''', path, str(len(data)), row["clone"], "kendex-append", "append", data=dat
         raise SystemExit(4)
 
 
+READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
+
 def read(row, path):
     """Return a remote file's bytes, or None for a path that is not there.
 
@@ -308,8 +312,63 @@ def read(row, path):
     "the lane has not written this yet"; every other read failure keeps its
     own status so the caller refuses rather than reads empty.
     """
-    result = remote(row, MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"', path, accept=(2,))
+    result = remote(row, READ_FILE, path, accept=(2,))
     return None if result.returncode == 2 else result.stdout
+
+
+def read_many(rows, requests):
+    """Read each target in one SSH session; frame exact bytes before encoding.
+
+    Batching changes transport only. The same mailbox guard as cat rejects
+    unsafe components, and each failed file keeps a non-missing status.
+    """
+    if not isinstance(requests, list) or any(
+            not isinstance(r, dict) or set(r) != {"item", "path"}
+            or any(not isinstance(r[k], str) or not r[k]
+                   or any(c in r[k] for c in "\x00\t\r\n") for k in ("item", "path"))
+            for r in requests):
+        raise ValueError("invalid read-many request")
+    if len({(r["item"], r["path"]) for r in requests}) != len(requests):
+        raise ValueError("duplicate read-many request")
+    inventory = {r["item"]: r for r in rows}
+    groups = {}
+    for request in requests:
+        if request["item"] not in inventory:
+            raise ValueError("unconfigured read-many item")
+        row = inventory[request["item"]]
+        groups.setdefault(row["target"], []).append(request)
+    replies = {}
+    for target, group in groups.items():
+        # Stage each file before declaring its byte count. A failed read's
+        # partial bytes must never become a successful or missing file.
+        script = 'read_file() (\n' + READ_FILE + '\n)\n' + '''staged=$(mktemp -d) || exit 1
+trap 'rm -rf -- "${staged:?}"' EXIT
+for path in "$@"; do
+  rc=0
+  read_file "$path" >"$staged/data" 2>"$staged/error" || rc=$?
+  if test "$rc" -ne 0; then : >"$staged/data"; fi
+  count=$(wc -c <"$staged/data") || exit 1
+  errors=$(wc -c <"$staged/error") || exit 1
+  printf '%s %s %s\\n' "$rc" "$((count + 0))" "$((errors + 0))"
+  cat -- "$staged/data" "$staged/error" || exit 1
+done'''
+        result = remote(inventory[group[0]["item"]], script, *(r["path"] for r in group))
+        stream = io.BytesIO(result.stdout)
+        for request in group:
+            header = stream.readline().split()
+            if len(header) != 3 or any(not n.isdigit() for n in header):
+                raise ValueError("invalid read-many frame")
+            status, size, error_size = map(int, header)
+            data = stream.read(size)
+            error = stream.read(error_size)
+            if len(data) != size or len(error) != error_size or (status != 0 and size != 0):
+                raise ValueError("truncated read-many frame")
+            replies[(request["item"], request["path"])] = {
+                **request, "status": status, "data": base64.b64encode(data).decode("ascii"),
+                "error": error.decode("utf-8", errors="replace")}
+        if stream.read():
+            raise ValueError("extra read-many frame")
+    print(json.dumps([replies[(r["item"], r["path"])] for r in requests]))
 
 
 def claude_state(current, snapshot):
@@ -912,7 +971,10 @@ ACCOUNT/lane-host/.claude.json merges into the remote home's .claude.json (its
 top-level keys set, its project entries merged key by key), and
 ACCOUNT/lane-host/config.toml (Codex) or ACCOUNT/lane-host/trust.json (Pi) in the
 remote account directory, so folder trust and hook approval precede the first turn. Bytes
-travel on stdin. cat exits 2 for a path that is not there. put stages beside
+travel on stdin. read-many reads a JSON array of item/path requests from stdin
+and returns item/path/status/base64-data rows, in request order, with one SSH
+call per target. Missing files have status 2; other failed files keep their
+nonzero status and no bytes. cat exits 2 for a path that is not there. put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. Neither verb
 leaves its staged file behind. A failed write of the staged bytes, or of
@@ -1013,6 +1075,7 @@ capabilities prints the static ssh host kind's one capability line
         stopping = sub.add_parser(verb)
         stopping.add_argument("--item", required=True)
         stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
+    sub.add_parser("read-many")
     sub.add_parser("list")
     sub.add_parser("capabilities")
     args = parser.parse_args()
@@ -1041,6 +1104,9 @@ capabilities prints the static ssh host kind's one capability line
     if len({r["repo"] for r in rows}) > 1:
         notice("inventory-repo", path=inventory)
         raise SystemExit(2)
+    if args.verb == "read-many":
+        read_many(rows, json.load(sys.stdin))
+        return
     if args.verb == "list":
         for row in rows:
             state = remote(row, 'if test -f "$1/.git/lane-host-item"; then printf hosted; else printf available; fi', row["clone"])

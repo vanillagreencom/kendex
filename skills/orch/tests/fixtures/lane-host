@@ -94,6 +94,28 @@ mailbox_guard() { # PATH
   done
 }
 case "$1" in
+  read-many)
+    python3 - "$0" 3<&0 <<'READ_MANY'
+import base64
+import json
+import os
+import subprocess
+import sys
+requests = json.load(os.fdopen(3))
+with open(os.environ["LANE_HOST_STUB_LOG"], "a") as log:
+    for row in requests:
+        print("requested", row["item"], row["path"], file=log)
+environment = dict(os.environ, LANE_HOST_STUB_LOG=os.devnull)
+reply = []
+for row in requests:
+    result = subprocess.run([sys.argv[1], "cat", "--item", row["item"], row["path"]],
+                            env=environment, capture_output=True)
+    reply.append(dict(row, status=result.returncode,
+                      data=base64.b64encode(result.stdout if result.returncode == 0 else b"").decode(),
+                      error=result.stderr.decode(errors="replace")))
+print(json.dumps(reply))
+READ_MANY
+    exit ;;
   # LANE_HOST_STUB_CREATE_LINE replaces the create line, for a caller refusing
   # one that lacks a field.
   create)

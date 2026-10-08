@@ -152,56 +152,43 @@ assert_contains "$out" "Hosted question" "the hosted ask's text follows its even
 assert_contains "$(cat "$STUB_DIR/host.log")" "$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl" \
   "the transport call log names the remote path the pass read" "$err"
 
-# The launcher can start a hosted lane before either mailbox file exists.
-# The watch also reads lane state. Each mailbox invocation gets its own log,
-# so those separate reads do not count as mail probes.
-hosted_absent_passes() { # MAIL_READER: sets PROBE_COUNTS
-  local reader="$1" pass_number=0 log out err
-  new_case mail_hosted_absent
-  mail_reset KEN-10
-  REMOTE_ROOT=/srv/lane/ken-10
+# Three running lane records share one provider. The production mail pass
+# must fetch every mailbox in one call, including absent files and receipts.
+hosted_batch_pass() { # WATCH READER: sets MAIL_CALLS
+  local watch="$1" reader="$2" item root out err
+  new_case mail_hosted_batch
   REMOTE_DISK="$STUB_DIR/remote"
-  mkdir -p "$REMOTE_DISK$REMOTE_ROOT"
-  printf 'gitdir: /srv/clone/.git/worktrees/ken-10\n' > "$REMOTE_DISK$REMOTE_ROOT/.git"
-  cat > "$STUB_DIR/lane-mail-reader" <<'MAIL_READER'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1" == drain ]]; then
-  # The parent suite owns these logs until it reads their counts.
-  LANE_HOST_STUB_LOG="$(mktemp -- "$MAIL_PASS_LOG.XXXXXX")"
-  export LANE_HOST_STUB_LOG
-fi
-exec "$MAIL_PASS_READER" "$@"
-MAIL_READER
-  chmod +x "$STUB_DIR/lane-mail-reader"
-  err="$STUB_DIR/probes.err"
-  out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-    LANE_HOST_STUB_DIR="$REMOTE_DISK" OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-reader" \
-    MAIL_PASS_READER="$reader" MAIL_PASS_LOG="$STUB_DIR/mail-pass" -- \
-    --max-loops 2 --item KEN-10 --hosted "KEN-10=$REMOTE_ROOT" 2>"$err")"
-  assert_eq "$(head -1 <<<"$out")" 'EVENT heartbeat loops=2 interval=0s since=none' \
-    "an absent hosted mailbox stays silent through repeated mail passes" "$err"
-  PROBE_COUNTS=""
-  for log in "$STUB_DIR"/mail-pass.*; do
-    [[ -f "$log" ]] || continue
-    pass_number=$((pass_number + 1))
-    PROBE_COUNTS="$PROBE_COUNTS $(awk '/^touch / { count++ } END { print count + 0 }' "$log")"
+  mkdir -p -- "$REMOTE_DISK"
+  for item in KEN-10 KEN-11 KEN-12; do
+    root="/srv/lane/$item"
+    mkdir -p -- "$REMOTE_DISK$root/tmp/lane-mail/$item"
+    printf 'gitdir: /srv/clone/%s/.git/worktrees/lane\n' "$item" >"$REMOTE_DISK$root/.git"
+    printf '{"id":"batch-%s","kind":"notice","at":"t","text":"Batch notice"}\n' "$item" \
+      >"$REMOTE_DISK$root/tmp/lane-mail/$item/to-overseer.jsonl"
+    jq -nc --arg item "$item" --arg host "$FIXTURE_HOST" --arg root "$root" \
+      '{item:$item, status:"running", host:$host, mail_root:$root, harness:"claude"}' \
+      >>"$STUB_DIR/batch.lanes"
   done
-  assert_le 3 "$pass_number" "the real reader completed at least three hosted mail passes" "$err"
+  jq -s '{lanes:.}' "$STUB_DIR/batch.lanes" >"$STUB_DIR/batch-state.json"
+  err="$STUB_DIR/batch.err"
+  out="$(run_watch WATCH_BIN="$watch" OVERSEE_WATCH_LANE_MAIL="$reader" \
+    LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK" -- \
+    --max-loops 1 --state "$STUB_DIR/batch-state.json" 2>"$err")"
+  for item in KEN-10 KEN-11 KEN-12; do
+    assert_contains "$out" "EVENT lane-notice $item batch-$item" "the batch delivers each lane's notice" "$err"
+  done
+  MAIL_CALLS="$(awk '/^read-many / || ($1 == "cat" && /tmp\/lane-mail\//) { count++ } END { print count + 0 }' "$STUB_DIR/host.log")"
 }
-hosted_absent_passes "$LANE_MAIL"
-for PROBES in $PROBE_COUNTS; do
-  assert_le "$PROBES" 1 "each hosted mail pass probes an absent mailbox at most once"
-done
-
-ABSENT_MUTANT="$(mutant_scripts absent/orch lane-mail)/lane-mail" || exit 1
-mutate_file "$ABSENT_MUTANT" \
-  'if [ "$rc" -ne 2 ] || [ "$LM_HOST_ANSWERED" -eq 0 ]; then lm_host_answers; fi' \
-  'lm_host_answers'
-hosted_absent_passes "$ABSENT_MUTANT"
-for PROBES in $PROBE_COUNTS; do
-  assert_le 2 "$PROBES" "control: without host proof a mail pass takes repeated probes"
-done
+hosted_batch_pass "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$LANE_MAIL"
+assert_eq "$MAIL_CALLS" 1 "three hosted lane records use one provider call per mail pass"
+printf 'batch evidence: lanes=3 provider-calls=%s\n' "$MAIL_CALLS"
+# Restore per-file reads only in a disposable lane-mail copy. The actual
+# watch still runs, so its transport count must reject this old path.
+BATCH_MUTANT="$(mutant_scripts batch/orch lane-mail)/lane-mail" || exit 1
+mutate_file "$BATCH_MUTANT" '[ -n "${LANE_HOST_READ_DIR:-}" ]' '[ -n "" ]'
+hosted_batch_pass "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$BATCH_MUTANT"
+assert_le 3 "$MAIL_CALLS" "control: the per-lane path needs at least three provider calls"
+printf 'batch control: lanes=3 provider-calls=%s\n' "$MAIL_CALLS"
 
 new_case mail_hosted_invalid
 err="$TMP_ROOT/hosted-bad"
@@ -895,7 +882,7 @@ for row in \
   "a close that archived nothing is reported as kept=none|2|gone|2|LANE_HOST_STUB_CLOSE_EMPTY=1|$ONE closed=1 refused=0 closes=1 none=1" \
   "a close whose run then fails to commit is not closed again|2|gone|3|LANE_HOST_STUB_CLOSE_JAM=1|$ONE closed=1 refused=0 closes=1 none=0" \
   "a hosted read the provider fails is handoff-read-failed, never a missing file|2|gone|2|LANE_HOST_STUB_CAT_STATUS=1|$QUIET|rc=2 note=1|1|$READ_NOTE" \
-  "a missing file on a host that does not answer is handoff-read-failed|2|absent|2|LANE_HOST_STUB_TOUCH_STATUS=1|$QUIET|rc=2 note=1|1|$READ_NOTE"; do
+  "a failed batch transport is handoff-read-failed|2|absent|2|LANE_HOST_STUB_STATUS=255|$QUIET|rc=2 note=1|1|$READ_NOTE"; do
   IFS='|' read -r label lanes keep runs env expect exit run needle event <<<"$row"
   read -ra envs <<<"$env"
   hosted_runs "hosted_$((HOSTED_SEQ += 1))" "$lanes" "$keep" "$runs" ${envs[@]+"${envs[@]}"}
