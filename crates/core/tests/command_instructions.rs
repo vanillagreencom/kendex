@@ -198,8 +198,12 @@ fn a_legacy_agent_label_renders_under_the_current_name() {
             .warnings
             .iter()
             .any(|warning| warning.kind == ItemKind::Agent && warning.name == "engineer"),
-        "{:?}",
-        report.warnings
+        "warned about: {:?}",
+        report
+            .warnings
+            .iter()
+            .map(|warning| warning.name.as_str())
+            .collect::<Vec<_>>()
     );
     apply::execute(&f.env, &report.plan).unwrap();
     for (harness, text) in outputs(&f) {
