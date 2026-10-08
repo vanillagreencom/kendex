@@ -1,0 +1,1 @@
+- Keep responsive reviewers running required mutation and stability measurements on the test-review deadline, regardless of agent name.
