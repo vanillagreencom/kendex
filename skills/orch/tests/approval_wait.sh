@@ -711,6 +711,10 @@ table "$APPROVAL" \
   'an open thread routes before any retry||STUB_APPROVAL_MODE=copilot_error,STUB_THREADS_UNRESOLVED=1|rc=1 status=comments requests=0'
 
 echo "=== a restart preserves the error retry at this head ==="
+table '1 1 3 --json --mode approval --item KEN-error-mode-restart' \
+  'a failed mode read leaves the unsent retry available||STUB_APPROVAL_MODE=copilot_error,STUB_BASE_MODE=fail|rc=2 stdout=empty requests=0' \
+  'a same-head restart sends the retry after the mode read recovers||STUB_APPROVAL_MODE=copilot_error_approved|rc=0 status=approved requests=1 approval_polls=3'
+
 table '1 1 3 --json --mode approval --item KEN-error' \
   'the first wait claims the retry||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=1' \
   'a timeout restart cannot retry the same answer||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=0' \
@@ -949,6 +953,28 @@ WAIT_REPO="$TMP_ROOT/repo"
 # shellcheck disable=SC2016
 control copilot-error-restart '  if [[ -n "$ITEM" ]]; then' '  if false; then' \
   '1 1 3 --json --mode approval --item KEN-control-error' 'STUB_APPROVAL_MODE=copilot_error' 'rc=1 status=timeout requests=0'
+
+# A failed GitHub mode read must leave no consumed retry on a fresh wait.
+# Keep the update call and change only its filter so the failed wait persists
+# the claim; the recovered wait must then lose the request assertion.
+from='            '\''del(.pr_approval.copilot_error_retries[$head])'\''; then'
+to='            '\''.'\''; then'
+count="$(grep -Fxc -- "$from" "$PRISTINE" || true)"
+assert_eq "$count" '1' 'control copilot-mode-restart: the substitution matches one line'
+MUT_FROM="$from" MUT_TO="$to" awk '$0 == ENVIRON["MUT_FROM"] { print ENVIRON["MUT_TO"]; next } { print }' "$PRISTINE" >"$MUTANT_SCRIPT"
+if cmp -s "$MUTANT_SCRIPT" "$PRISTINE"; then
+  fail 'control copilot-mode-restart: the mutant must differ from the script'
+fi
+WAIT_REPO="$MUTANT_REPO"
+run_wait 'STUB_APPROVAL_MODE=copilot_error,STUB_BASE_MODE=fail' 1 1 3 --json --mode approval --item KEN-control-mode-restart
+assert_eq "$(observe 'rc=2 stdout=empty requests=0')" 'rc=2 stdout=empty requests=0' 'the mutant keeps the failed mode-read exit' "$RUN/stderr"
+run_wait 'STUB_APPROVAL_MODE=copilot_error_approved' 1 1 3 --json --mode approval --item KEN-control-mode-restart
+if [[ "$(observe 'rc=0 status=approved requests=1 approval_polls=3')" == 'rc=0 status=approved requests=1 approval_polls=3' ]]; then
+  fail 'must-fail copilot-mode-restart: the mutant still sends the retry'
+else
+  pass 'must-fail copilot-mode-restart: the retained claim prevents the retry'
+fi
+WAIT_REPO="$TMP_ROOT/repo"
 
 echo "=== a failed emit_result never reports a successful gate ==="
 # emit_result builds the --json object with `jq -n`, so this stub fails

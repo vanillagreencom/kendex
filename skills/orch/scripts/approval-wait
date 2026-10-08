@@ -248,7 +248,9 @@ nonzero exit and diagnostics. Approvals, changes requested and open threads
 route before an error retry.
 With --item, workflow-state's pr_approval.copilot_error_retries records the
 error review ID and request outcome by head, atomically before requesting.
-Mail exits, timeouts and later waits on that head cannot issue another retry.
+An action failure before a request releases that claim for a later wait.
+After a successful request or fallback, mail exits, timeouts and later waits
+on that head cannot issue another retry.
 After copilot-error, later waits wait for approval without repeating that result.
 Without --item the record lasts only for this invocation.
 Callers route copilot-error as copilot-fallback and wait for app approval.
@@ -1117,7 +1119,8 @@ read_copilot_error() {
 
 # The existing atomic workflow-state owner holds error-answer state, not a
 # request allowance. Claim before the request so mail or a restart cannot
-# repeat it. This local retry choice does not change merge policy.
+# repeat it. A request action's nonzero exit precedes any request and releases
+# the claim. Successful requests and fallback answers retain it.
 claim_copilot_error_retry() {
   local filter report
   filter='(.pr_approval.copilot_error_retries[$head] // null) as $previous
@@ -1260,6 +1263,10 @@ while true; do
         request_status=0
         retry_answer=$("$SCRIPT_DIR/approval-wait" "$PR_NUM" --request-review --base-checkout "$BASE_CHECKOUT") || request_status=$?
         if [ "$request_status" -ne 0 ]; then
+          if [[ -n "$ITEM" ]] && ! "$SCRIPT_DIR/workflow-state" update "$ITEM" --arg head "$last_head_sha" \
+            'del(.pr_approval.copilot_error_retries[$head])'; then
+            approval_message copilot-retry-state-failed >&2
+          fi
           [ "$request_status" -eq 2 ] || emit_error copilot-retry-failed
           exit "$request_status"
         fi
