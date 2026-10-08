@@ -147,7 +147,7 @@ fn locked_holds_require_the_recorded_selector_on_every_copy_and_set() {
             false,
             false,
         ),
-        ("old version 11 record", None, false, false),
+        ("old version 11 record", None, false, true),
         (
             "one copy has another selector",
             Some(DeclaredSelector {
@@ -169,7 +169,10 @@ fn locked_holds_require_the_recorded_selector_on_every_copy_and_set() {
         if mixed {
             let mut other = entry("a", Some("aaa"), &[Reason::Requested]);
             other.harness = HarnessId::Codex;
-            other.selector = None;
+            other.selector = Some(DeclaredSelector {
+                source_rev: None,
+                rev: Some("old".into()),
+            });
             lock.entries.insert("skill:a:codex".into(), other);
         }
         let (held, _) = planning_manifest(&manifest, &lock, &PlanOptions::locked());

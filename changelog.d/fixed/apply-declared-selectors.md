@@ -1,1 +1,1 @@
-- Apply follows a removed package revision and a changed source revision after discarding local edits, while existing install records remain readable.
+- Apply follows a removed package revision and a changed source revision after discarding local edits. Existing install records keep their earlier holds until refresh records revision choices.

@@ -76,9 +76,15 @@ fn an_apply_after_a_deleted_table_changes_only_that_package() {
 #[allow(clippy::unwrap_used)]
 fn an_apply_after_a_source_revision_edit_renders_at_that_revision() {
     let later = "A paragraph added later.";
-    for (case, current_first, pins_later) in [
-        ("forward to the moved catalog", false, true),
-        ("back to the install commit", true, false),
+    for (case, current_first, pins_later, disabled_first) in [
+        ("forward to the moved catalog", false, true, false),
+        ("back to the install commit", true, false, false),
+        (
+            "disabled source enabled after a revision edit",
+            false,
+            true,
+            true,
+        ),
     ] {
         let world = world();
         let installed = catalog_head(&world);
@@ -98,6 +104,26 @@ fn an_apply_after_a_source_revision_edit_renders_at_that_revision() {
             1,
         );
         assert_ne!(redeclared, declared, "{case}");
+        if disabled_first {
+            let disabled =
+                redeclared.replacen("[sources.cat]\n", "[sources.cat]\nenabled = false\n", 1);
+            assert_ne!(disabled, redeclared);
+            write(&manifest, &disabled);
+            let before = record(&world);
+            let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+            assert!(applied.status.success(), "{case}: {}", said(&applied));
+            let retained = record(&world);
+            for (key, entry) in before["entries"].as_object().unwrap() {
+                assert_eq!(
+                    retained["entries"][key]["selector"], entry["selector"],
+                    "{case}: {key}"
+                );
+                assert_eq!(
+                    retained["entries"][key]["sourceCommit"], entry["sourceCommit"],
+                    "{case}: {key}"
+                );
+            }
+        }
         write(&manifest, &redeclared);
         commit(&world.project, "the catalog pinned");
 
@@ -248,6 +274,75 @@ fn catalog_head(world: &World) -> String {
     git(&world.catalog, &["rev-parse", "HEAD"])
         .trim()
         .to_owned()
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_legacy_apply_keeps_installed_commits_until_refresh_records_selectors() {
+    let world = world();
+    let installed = catalog_head(&world);
+    let mut legacy = record(&world);
+    for section in ["entries", "bundles"] {
+        for entry in legacy[section].as_object_mut().unwrap().values_mut() {
+            assert!(entry.as_object_mut().unwrap().remove("selector").is_some());
+        }
+    }
+    write(
+        &world.project.join(".kendex-lock.json"),
+        &serde_json::to_string_pretty(&legacy).unwrap(),
+    );
+    commit(&world.project, "legacy install record");
+    let before = record(&world);
+    let agent = world.project.join(".claude/agents/review.md");
+    let skill = world.project.join(".agents/skills/second/SKILL.md");
+    let original_agent = fs::read_to_string(&agent).unwrap();
+    let original_skill = fs::read_to_string(&skill).unwrap();
+    move_the_catalog(&world);
+    let moved = catalog_head(&world);
+    let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+    assert!(fetched.status.success(), "{}", said(&fetched));
+
+    let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+    assert!(applied.status.success(), "{}", said(&applied));
+    assert_eq!(fs::read_to_string(&agent).unwrap(), original_agent);
+    assert_eq!(fs::read_to_string(&skill).unwrap(), original_skill);
+    let held = record(&world);
+    assert_eq!(held["bundles"], before["bundles"]);
+    for (key, entry) in before["entries"].as_object().unwrap() {
+        if entry["source"] != "cat" {
+            continue;
+        }
+        assert_eq!(held["entries"][key]["sourceCommit"], installed.as_str());
+        assert_eq!(held["entries"][key]["selector"], entry["selector"]);
+    }
+    commit(&world.project, "legacy locked apply");
+
+    let refreshed = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    assert!(
+        fs::read_to_string(&agent)
+            .unwrap()
+            .contains("Also read the tests.")
+    );
+    assert!(
+        fs::read_to_string(&skill)
+            .unwrap()
+            .contains("A paragraph added later.")
+    );
+    let current = record(&world);
+    assert_eq!(current["bundles"]["starter"]["commit"], moved.as_str());
+    for entry in current["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|entry| entry["source"] == "cat")
+    {
+        assert_eq!(entry["sourceCommit"], moved.as_str());
+        assert!(entry["selector"].is_object());
+        assert!(entry["selector"]["rev"].is_null());
+        assert!(entry["selector"]["sourceRev"].is_null());
+    }
+    assert!(current["bundles"]["starter"]["selector"].is_object());
 }
 
 #[test]

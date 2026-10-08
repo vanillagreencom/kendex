@@ -86,10 +86,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // own; of the rest, a new table, or one whose source is now declared
     // at another repository or revision, is one the record cannot place
     // and resolves at that source's revision, and every other
-    // package keeps its recorded commit whatever the mirror holds. The
-    // record keeps no package's own revision, so a package whose `rev` is
-    // removed keeps the commit it was pinned at. Bringing a catalog
-    // current is refresh's.
+    // package keeps its recorded commit whatever the mirror holds. A
+    // changed known selector releases the hold, including a removed
+    // package revision. A selector-less legacy record keeps its earlier
+    // hold until refresh records the selector.
     let options = PlanOptions {
         remove_orphans: true,
         removal_filter: None,

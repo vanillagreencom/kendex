@@ -329,8 +329,9 @@ fn release(
 /// somewhere nobody asked for, and fresh is what a whole-scope apply gives
 /// it anyway.
 /// A write that keeps records also releases an entry or set whose own
-/// selector differs or is unknown. A source record may already describe
-/// the new selector while an edit conflict kept an older item record.
+/// known selector differs. A source record may already describe the new
+/// selector while an edit conflict kept an older item record. A missing
+/// selector keeps the legacy hold until refresh records known metadata.
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
@@ -366,7 +367,7 @@ fn held_manifest(
                     if lock.entries.values().any(|entry| {
                         entry.kind == kind
                             && entry.name == *name
-                            && entry.selector.as_ref() != Some(&selector)
+                            && entry.selector.as_ref().is_some_and(|old| old != &selector)
                     }) {
                         return None;
                     }
@@ -400,12 +401,13 @@ fn held_manifest(
         };
         if keeps_records
             && lock.bundles.get(name).is_none_or(|recorded| {
-                recorded.selector.as_ref()
-                    != Some(&crate::lock::DeclaredSelector::of(
+                recorded.selector.as_ref().is_some_and(|old| {
+                    old != &crate::lock::DeclaredSelector::of(
                         manifest,
                         &decl.source,
                         decl.rev.as_deref(),
-                    ))
+                    )
+                })
             })
         {
             continue;

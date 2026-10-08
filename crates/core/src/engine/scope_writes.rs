@@ -180,6 +180,7 @@ pub(super) fn record_entry_selectors(
     manifest: &Manifest,
     lock: &Lock,
     new_lock: &mut Lock,
+    pass: &super::plan_pass::ItemPass,
     kept: &super::item_plan::KeptAsIs,
     held: &[HeldPin],
 ) {
@@ -189,7 +190,12 @@ pub(super) fn record_entry_selectors(
                 if *kind == entry.kind && *name == entry.name)
         }) {
             entry.selector = lock.entries.get(key).and_then(|old| old.selector.clone());
-        } else if entry.kind != crate::model::ItemKind::PiExtension && !kept.contains(key) {
+        } else if entry.kind != crate::model::ItemKind::PiExtension
+            && pass
+                .planned
+                .contains(&(entry.kind, entry.name.clone(), entry.harness))
+            && !kept.contains(key)
+        {
             let rev = manifest
                 .declared(entry.kind)
                 .get(&entry.name)
