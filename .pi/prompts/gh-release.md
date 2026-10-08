@@ -15,8 +15,8 @@ The `app-deploy` skill is the procedure and holds what a release carries; this p
 
 ## Steps
 
-1. `git fetch origin && git status --short` — must be clean and at `origin/main`. `gh release list --limit 1` — the last tag.
-2. Run `git diff --stat <last-tag> HEAD` to compare the release tag's files with `HEAD`. Empty output means no pending file change. Stop the release in that case. Follow the `app-deploy` skill for collation and release notes.
+1. `git fetch origin && git status --short`: must be clean and at `origin/main`. Read the last tag with `gh release list --limit 1`. Fetch that same tag with `git fetch origin tag <last-tag>`. The release tag can point to a pull request head outside the fetched `main` history. Stop the release if either fetch or the release lookup fails.
+2. Run `git diff --stat <last-tag> HEAD` to compare the release tag's files with `HEAD`. Stop the release if the comparison fails. Empty output means no pending file change. Stop the release in that case. Follow the `app-deploy` skill for collation and release notes.
 3. Bump the three version sites and edit the link footer (`app-deploy` step 2); `cargo build -q`; `tools/guard`.
 4. Commit with exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json CHANGELOG.md changelog.d`, carrying the collation declaration: `COMMIT_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): vX.Y.Z"`. That declaration is what makes `CHANGELOG.md` count as this commit's changelog entry — the version bump under `crates/` obliges one and the fragments were just deleted — so the `commit-msg` lane refuses the commit without it. Then open the release pull request and merge it as `app-deploy` step 3 says.
 5. Follow `app-deploy` step 3 for the pre-tag check, tag target and tag push. The tag starts `.github/workflows/release.yml`, which builds every target and creates a **draft** release. Do not call `gh release create`.
