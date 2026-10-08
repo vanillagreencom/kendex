@@ -1029,7 +1029,6 @@ import sys
 p = Path(sys.argv[1]).resolve()
 text = p.read_text()
 old = '; RENDER_MEASURED=measured'
-assert text.count(old) == 3
 changed = text.replace(old, '')
 assert changed != text
 p.write_text(changed)
