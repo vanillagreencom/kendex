@@ -45,6 +45,22 @@ approval_message() {
       printf 'approval-wait: rules-unreadable branch=%q repo=%s\n' "$RULES_BRANCH" "$REPO"
       printf '%s\n' "approval-wait: could not read the rules GitHub applies to branch '$RULES_BRANCH' in $REPO, so no gate mode is available"
       ;;
+    copilot-reviews-failed)
+      printf 'approval-wait: copilot-reviews-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' 'Could not read Copilot review identities for this head.'
+      ;;
+    copilot-retry-failed)
+      printf 'approval-wait: copilot-retry-failed pr=%s head=%s exit=%s\n' "$PR_NUM" "$last_head_sha" "$request_status"
+      printf '%s\n' 'The Copilot request owner failed before it returned a wait route.'
+      ;;
+    copilot-retry-action-invalid)
+      printf 'approval-wait: copilot-retry-action-invalid pr=%s result=%q\n' "$PR_NUM" "$retry_answer"
+      printf '%s\n' 'The retry owner returned no approval wait route.'
+      ;;
+    copilot-retry-state-failed)
+      printf 'approval-wait: copilot-retry-state-failed pr=%s head=%s item=%s\n' "$PR_NUM" "$last_head_sha" "$ITEM"
+      printf '%s\n' 'Could not record or read the error review retry.'
+      ;;
     threads-failed)
       printf 'approval-wait: threads-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "review thread query failed for PR #$PR_NUM in $REPO"
@@ -157,7 +173,7 @@ print_usage() {
   cat <<'USAGE'
 Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      --mode approval [--on-timeout block|proceed]
-                     [--item ID]
+                     [--item ID] [--base-checkout PATH]
        approval-wait <PR#> --resolve-mode --base-checkout PATH
        approval-wait <PR#> --request-review --base-checkout PATH
 
@@ -182,7 +198,8 @@ stop: stdout stays empty and stderr says why.
                  its rulesets and the PR's reviewDecision (approval |
                  off), and exit: see Mode resolution
   --base-checkout PATH
-                 use the consumer base directory; clear inherited repo/review overrides.
+                 waits use this trusted consumer base for error-review retries.
+                 Actions use the consumer base directory; clear inherited repo/review overrides.
                  Read committed policy with the caller's trusted settings reader, not PATH's code or private env.
                  Authentication stays with the caller's project.
   --request-review
@@ -214,6 +231,27 @@ Approval mode reads GitHub-native review state ONLY, on either signal:
   refuse an open thread, as does a base rule where it requires thread
   resolution, so the caller triages it first. A CHANGES_REQUESTED without an
   approval reports "changes_requested" ahead of the thread count.
+
+Copilot error reviews: a COMMENTED review by copilot-pull-request-reviewer
+containing Copilot's error sentence triggers one retry at the current head.
+The wait reads paginated REST reviews for the review ID and commit_id because
+latestReviews omits those identities. Earlier-head errors do not retry.
+The retry calls this script's --request-review owner with --base-checkout;
+that owner retains the existing GitHub request accounting. A retry needs a
+trusted base checkout. Without it, exit 2 stops the wait before a request.
+The wait keeps its original time budget. Repeated polls of the same review
+keep waiting. A different error review after the retry returns copilot-error
+(exit 1), with head_sha and copilot_fallback_cause=error. Errors already present
+when the retry goes out count as one answer. A request fallback returns the
+same status with that request's cause. Request or mode failures retain their
+nonzero exit and diagnostics. Approvals, changes requested and open threads
+route before an error retry.
+With --item, workflow-state's pr_approval.copilot_error_retries records the
+error review ID and request outcome by head, atomically before requesting.
+Mail exits, timeouts and later waits on that head cannot issue another retry.
+After copilot-error, later waits wait for approval without repeating that result.
+Without --item the record lasts only for this invocation.
+Callers route copilot-error as copilot-fallback and wait for app approval.
 
 Mode resolution requires --base-checkout; waits require --mode approval.
 Committed REVIEW_GATE_MODE=off prints off before native resolution; enforce (default) uses it.
@@ -313,11 +351,14 @@ resolution runs once and does not retry.
 JSON output (always when --json):
   {
     "status": "approved" | "changes_requested" | "comments"
-              | "timeout" | "proceeded" | "unreviewable" | "error",
+              | "timeout" | "proceeded" | "unreviewable" | "copilot-error" | "error",
     "repo": <string>,             # the repository this verdict is about,
                                   # "" whenever the wait ended before one
                                   # was resolved: missing gh, no auth,
                                   # repo-unresolved, repo-shape
+    "head_sha": <string>,         # head read by the poll
+    "copilot_fallback_cause": <string>, # only for copilot-error: error, off,
+                                        # or refused exit=N
     "review_decision": <string>,  # raw reviewDecision ("" when unset)
     "approvals": <int>,           # reviewers whose latest review is APPROVED
     "changes_requested": <int>,   # reviewers at CHANGES_REQUESTED
@@ -373,6 +414,7 @@ Exit codes:
      PR_REVIEW_ON_TIMEOUT=proceed); --resolve-mode printed a mode;
      --request-review printed off, approval or a fallback line
   1  changes requested, unresolved comments pending, timeout,
+     copilot-error (the retry failed to produce a review),
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
   2  usage error: missing or empty argument, invalid --mode value,
@@ -450,7 +492,7 @@ if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
 fi
 [[ -n "$MODE" ]] || $RESOLVE_MODE || $REQUEST_REVIEW || { approval_message missing-mode >&2; exit 2; }
 PR_NUM="${POSITIONAL[0]}"
-if $REQUEST_REVIEW || $RESOLVE_MODE || [[ -n "$BASE_CHECKOUT" ]]; then
+if $REQUEST_REVIEW || $RESOLVE_MODE; then
   if [[ ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG$ITEM" ]] \
     || $JSON_OUTPUT || { $REQUEST_REVIEW && $RESOLVE_MODE; } \
     || { ! $REQUEST_REVIEW && ! $RESOLVE_MODE; }; then
@@ -467,7 +509,7 @@ if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then
     *) approval_message copilot-requests-invalid >&2; exit 2 ;;
   esac
 fi
-if [[ -n "$BASE_CHECKOUT" ]]; then
+if { $REQUEST_REVIEW || $RESOLVE_MODE; } && [[ -n "$BASE_CHECKOUT" ]]; then
   if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P); then
     approval_message base-checkout-invalid >&2
     exit 2
@@ -536,6 +578,12 @@ DEFAULT_BRANCH=""
 # genuine reviewer silence — never past an active COMMENTED review.
 last_reviews_present=0
 
+# Copilot's own error sentence is the upstream producer (KEN-3455).
+COPILOT_REVIEWER='copilot-pull-request-reviewer'
+COPILOT_ERROR_SENTENCE='Copilot encountered an error and was unable to review this pull request.'
+copilot_error_retries='{}'
+copilot_fallback_cause=""
+
 # Transient-failure bookkeeping: every gh call in the poll loop
 # writes stderr to GH_ERR_FILE so a failure can be classified before it is
 # allowed to terminate the wait. retry_interval doubles per consecutive
@@ -573,7 +621,7 @@ run_approved_gate() {
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
 #   status: approved | changes_requested | comments | timeout | proceeded
-#         | unreviewable | error
+#         | unreviewable | copilot-error | error
 emit_result() {
   local status="$1" error_msg="${2:-}"
   update_elapsed
@@ -581,6 +629,8 @@ emit_result() {
     jq -n \
       --arg s "$status" \
       --arg repo "$REPO" \
+      --arg head "$last_head_sha" \
+      --arg copilot_cause "$copilot_fallback_cause" \
       --arg decision "$last_review_decision" \
       --arg base_ref "$last_base_ref" \
       --argjson auto_targeted "$last_auto_review_targeted" \
@@ -595,6 +645,7 @@ emit_result() {
       '{
         status: $s,
         repo: $repo,
+        head_sha: $head,
         review_decision: $decision,
         approvals: $approvals,
         changes_requested: $changes,
@@ -605,6 +656,7 @@ emit_result() {
         auto_review_target_source: $auto_source,
         auto_review_targets: $auto_targets
       }
+        + (if $s == "copilot-error" then {copilot_fallback_cause: $copilot_cause} else {} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
         + (if $error == "" then {} else {error: $error} end)' || return $?
     return 0
@@ -625,6 +677,9 @@ emit_result() {
       ;;
     unreviewable)
       echo "No automatic review for base '${last_base_ref:-unknown}' after ${elapsed}s: the automatic-review target set (${AUTO_REVIEW_TARGETS_TEXT:-none}, source: $AUTO_REVIEW_SOURCE) does not cover it. Request through approval-wait $PR_NUM --request-review --base-checkout PATH (the consumer base checkout)"
+      ;;
+    copilot-error)
+      printf 'Copilot review unavailable: head=%s cause=%s\n' "$last_head_sha" "$copilot_fallback_cause"
       ;;
     timeout)
       echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
@@ -1042,6 +1097,52 @@ copilot_fallback_notice() {
   fi
 }
 
+# REST's paginated review list supplies the identity and commit absent from
+# latestReviews. Only Copilot's last submitted review at this head can retry;
+# an earlier error must not override a completed review.
+read_copilot_error() {
+  local reviews status=0
+  : > "$GH_ERR_FILE"
+  reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE") || status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  jq -er -s --arg head "$last_head_sha" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg reviewer "${COPILOT_REVIEWER}[bot]" '
+    if length == 0 or any(.[]; type != "array") then error("review pages") else add end
+    | [.[] | select(.user.login == $reviewer
+        and .commit_id == $head and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]
+    | last
+    | if .state == "COMMENTED" and ((.body // "") | contains($sentence))
+      then if (.id | type) == "number" then .id | tostring else error("review identity") end
+      else "" end' <<<"$reviews"
+}
+
+# The existing atomic workflow-state owner holds error-answer state, not a
+# request allowance. Claim before the request so mail or a restart cannot
+# repeat it. This local retry choice does not change merge policy.
+claim_copilot_error_retry() {
+  local filter report
+  filter='(.pr_approval.copilot_error_retries[$head] // null) as $previous
+    | if $previous == null then
+        .pr_approval.copilot_error_retries[$head] = {review_id: $id, outcome: "requested"}
+        | {state: ., report: {request: true, review_id: $id, outcome: "requested"}}
+      else {state: ., report: ($previous + {request: false})} end'
+  if [[ -n "$ITEM" ]]; then
+    copilot_retry=$("$SCRIPT_DIR/workflow-state" update-report "$ITEM" "$filter" --arg head "$last_head_sha" --arg id "$1") || return $?
+  else
+    report=$(jq -c --arg head "$last_head_sha" --arg id "$1" "$filter" <<<"$copilot_error_retries") || return $?
+    copilot_error_retries=$(jq -c '.state' <<<"$report") || return $?
+    copilot_retry=$(jq -c '.report' <<<"$report") || return $?
+  fi
+}
+
+record_copilot_fallback() {
+  [ -n "$ITEM" ] || return 0
+  "$SCRIPT_DIR/workflow-state" update "$ITEM" --arg head "$last_head_sha" \
+    '.pr_approval.copilot_error_retries[$head].outcome = "fallback"' || {
+      emit_error copilot-retry-state-failed
+      exit 1
+    }
+}
+
 resolve_auto_review_targets
 
 update_elapsed
@@ -1138,6 +1239,50 @@ while true; do
     exit 1
   fi
   [ "$COPILOT_REQUESTS" = on ] || copilot_fallback_notice "$last_head_sha"
+  if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg reviewer "$COPILOT_REVIEWER" '
+    any(.latestReviews[]?; .author.login == $reviewer and .state == "COMMENTED")' >/dev/null <<<"$view_json"; then
+    error_status=0
+    copilot_error_id=$(read_copilot_error) || error_status=$?
+    if [ "$error_status" -ne 0 ]; then
+      if gh_failure_is_transient "$error_status"; then
+        transient_retry copilot-reviews-failed
+        continue
+      fi
+      emit_error copilot-reviews-failed
+      exit 1
+    fi
+    if [ -n "$copilot_error_id" ]; then
+      if ! claim_copilot_error_retry "$copilot_error_id"; then
+        emit_error copilot-retry-state-failed
+        exit 1
+      fi
+      if [ "$(jq -r '.request' <<<"$copilot_retry")" = true ]; then
+        request_status=0
+        retry_answer=$("$SCRIPT_DIR/approval-wait" "$PR_NUM" --request-review --base-checkout "$BASE_CHECKOUT") || request_status=$?
+        if [ "$request_status" -ne 0 ]; then
+          [ "$request_status" -eq 2 ] || emit_error copilot-retry-failed
+          exit "$request_status"
+        fi
+        case "$retry_answer" in
+          approval) ;;
+          off) approval_message copilot-retry-action-invalid >&2; exit 2 ;;
+          fallback*)
+            copilot_fallback_cause="${retry_answer#fallback cause=}"
+            record_copilot_fallback
+            emit_result "copilot-error"
+            exit 1
+            ;;
+          *) approval_message copilot-retry-action-invalid >&2; exit 2 ;;
+        esac
+      elif [ "$(jq -r '.outcome' <<<"$copilot_retry")" != fallback ] \
+        && [ "$(jq -r '.review_id' <<<"$copilot_retry")" != "$copilot_error_id" ]; then
+        copilot_fallback_cause=error
+        record_copilot_fallback
+        emit_result "copilot-error"
+        exit 1
+      fi
+    fi
+  fi
 
   # --- head-change bookkeeping for the proceed-on-timeout guard ---
   if [ "$last_head_sha" != "$prev_head_sha" ]; then

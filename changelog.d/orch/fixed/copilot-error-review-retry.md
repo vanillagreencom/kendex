@@ -1,0 +1,1 @@
+- Copilot error reviews trigger one review request per head. A second error asks the overseer for fallback approval. Wait restarts keep the retry record.

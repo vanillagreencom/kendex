@@ -15,16 +15,21 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo 'approval_wait: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "approval_wait: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'approval_wait: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/runs"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/repo/.agents/skills/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/repo/.agents/skills/review-gate"
 git -C "$TMP_ROOT/repo" init -q
+git -C "$TMP_ROOT/repo" config gc.auto 0
+git -C "$TMP_ROOT/repo" config maintenance.auto false
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
 
@@ -135,6 +140,34 @@ case "${1:-}" in
     fi
     ;;
   api)
+    if [[ "${2:-}" == repos/*/pulls/*/reviews ]]; then
+      case "${STUB_REVIEW_READ:-ok}" in
+        fail) echo 'HTTP 404: Not Found' >&2; exit 1 ;;
+        empty) exit 0 ;;
+        invalid) echo '{}'; exit 0 ;;
+      esac
+      id="${STUB_ERROR_ID:-1}"
+      poll="$(cat "$STUB_APPROVAL_COUNT_FILE")"
+      if [[ "${STUB_DUPLICATE_ERRORS:-0}" == 1 ]]; then id=2; fi
+      if [[ "${STUB_APPROVAL_MODE:-}" == copilot_error_twice && "$poll" -ge 3 ]]; then id=$((id + 1)); fi
+      head="${STUB_ERROR_HEAD:-headsha1}"
+      body='Copilot encountered an error and was unable to review this pull request. You can try again by re-requesting a review.'
+      login='copilot-pull-request-reviewer[bot]'
+      [[ "${STUB_APPROVAL_MODE:-}" != human_error ]] || login=colleague
+      [[ "${STUB_APPROVAL_MODE:-}" != copilot_comment ]] || body='Review completed with findings.'
+      [[ "${STUB_REST_REVIEWER:-}" != human ]] || login=colleague
+      rows="$(jq -nc --arg head "$head" --arg body "$body" --argjson id "$id" --arg login "$login" \
+        '[{id:$id,user:{login:$login},commit_id:$head,state:"COMMENTED",body:$body}]')"
+      if [[ "${STUB_DUPLICATE_ERRORS:-0}" == 1 ]]; then
+        rows="$(jq -c '[.[0] + {id:1}] + .' <<<"$rows")"
+      fi
+      if [[ "${STUB_REVIEW_PAGES:-0}" == 1 ]]; then
+        echo '[]'
+        [[ " $* " == *' --paginate '* ]] || exit 0
+      fi
+      echo "$rows"
+      exit 0
+    fi
     # Commit-status POST tripwire: repos/<repo>/statuses/<sha> (plural —
     # distinct from the singular commits/<sha>/status read). approval-wait must
     # never post a commit status; tests opt in via STUB_MARKER_LOG and assert
@@ -266,6 +299,10 @@ case "${1:-}" in
     fi
     ;;
   pr)
+    if [[ "${2:-}" == edit ]]; then
+      printf '%s\n' "$*" >> "$STUB_REQUEST_LOG"
+      exit "${STUB_REQUEST_EXIT:-0}"
+    fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       # Head-only confirm query (`--json headRefOid -q .headRefOid`), distinct
@@ -300,6 +337,10 @@ case "${1:-}" in
             exit 1
           fi
           mode="approved_decision"
+        fi
+        if [[ "$mode" == copilot_error* || "$mode" == human_error || "$mode" == copilot_comment ]]; then
+          count="$(_bump_count)"
+          if [[ "$mode" == copilot_error_approved && "$count" -ge 3 ]]; then mode=approved_decision; fi
         fi
         if [[ "$mode" == "approved_later" ]]; then
           count="$(_bump_count)"
@@ -342,6 +383,14 @@ case "${1:-}" in
             # access, beside a decision that approves.
             decision="APPROVED"
             reviews='[{"author":{"login":"reviewer1"},"state":"CHANGES_REQUESTED"},{"author":{"login":"colleague"},"state":"APPROVED"}]'
+            ;;
+          copilot_error*|human_error|copilot_comment)
+            decision="REVIEW_REQUIRED"
+            login=copilot-pull-request-reviewer
+            body='Copilot encountered an error and was unable to review this pull request. You can try again by re-requesting a review.'
+            [[ "$mode" != human_error ]] || login=colleague
+            [[ "$mode" != copilot_comment ]] || body='Review completed with findings.'
+            reviews="$(jq -nc --arg login "$login" --arg body "$body" '[{author:{login:$login},state:"COMMENTED",body:$body}]')"
             ;;
           commented_only)
             reviews='[{"author":{"login":"reviewer1"},"state":"COMMENTED"}]'
@@ -403,16 +452,25 @@ run_wait() {
     prev="$arg"
   done
   mkdir -p "$RUN"
+  if [[ -n "$RUN_ITEM" && ! -f "$WAIT_REPO/tmp/workflow-state-$RUN_ITEM.json" ]]; then
+    mkdir -p "$WAIT_REPO/tmp"
+    printf '{}\n' > "$WAIT_REPO/tmp/workflow-state-$RUN_ITEM.json"
+  fi
+  local base_args=()
+  if [[ " $* " == *' --mode '* && "$env_list" != *STUB_NO_BASE_CHECKOUT=1* ]]; then
+    base_args=(--base-checkout "$WAIT_REPO")
+  fi
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   set +e
   OUT=$(cd "$WAIT_REPO" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u GH_REPO -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN ${env_args[@]+"${env_args[@]}"} \
+    env -u GH_REPO -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR ${env_args[@]+"${env_args[@]}"} \
         STUB_APPROVAL_COUNT_FILE="$RUN/approval-polls" \
         STUB_HEAD_COUNT_FILE="$RUN/head-polls" \
         STUB_AUTHOR_COUNT_FILE="$RUN/author-reads" \
         STUB_RULES_LOG="$RUN/rules-reads" \
         STUB_MARKER_LOG="$RUN/marker-posts" \
-        .agents/skills/orch/scripts/approval-wait "$@" 2>"$RUN/stderr")
+        STUB_REQUEST_LOG="$RUN/requests" \
+        .agents/skills/orch/scripts/approval-wait "$@" ${base_args[@]+"${base_args[@]}"} 2>"$RUN/stderr")
   RC=$?
   set -e
 }
@@ -463,6 +521,8 @@ observe() {
       stderr_line) got="$got stderr_line=$(sed -n '1p' "$RUN/stderr" | tr ' ' '+')" ;;
       fallback_notices) got="$got fallback_notices=$(fallback_notices)" ;;
       unsent) got="$got unsent=$(grep -c '^approval-wait: copilot-fallback-unsent ' "$RUN/stderr" || true)" ;;
+      requests) got="$got requests=$(count_lines "$RUN/requests")" ;;
+      request_argv) got="$got request_argv=$(tr ' ' '+' < "$RUN/requests")" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       rules_reads) got="$got rules_reads=$(count_lines "$RUN/rules-reads")" ;;
       rules_url) got="$got rules_url=$(sed -n '$p' "$RUN/rules-reads" 2>/dev/null)" ;;
@@ -470,7 +530,7 @@ observe() {
       outage_marker) got="$got outage_marker=$(json 'has("outage_marker")')" ;;
       transient_errors_seen) got="$got transient_errors_seen=$(json '.transient_api_errors >= 1')" ;;
       target_patterns) got="$got target_patterns=$(json '.auto_review_targets | join(",")')" ;;
-      *) got="$got $name=$(json ".$name")" ;;
+      *) got="$got $name=$(json ".$name" | tr ' ' '+')" ;;
     esac
   done
   printf '%s' "${got# }"
@@ -629,6 +689,42 @@ table "$APPROVAL" \
   'a denied listing with no readable default branch is unresolved||STUB_RULESETS_MODE=denied,STUB_DEFAULT_BRANCH_MODE=fail,STUB_BASE_REF=main,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout auto_review_target_source=unresolved target_patterns=' \
   'a ruleset naming ~DEFAULT_BRANCH with no readable default branch is unresolved||STUB_DEFAULT_BRANCH_MODE=fail,STUB_BASE_REF=stack-base,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout auto_review_target_source=unresolved'
 
+echo "=== Copilot error answers retry once through the request owner ==="
+# KEN-3421 produced duplicate error reviews for one request. The first snapshot
+# consumes one retry; unchanged IDs are not new answers. A later ID is terminal.
+table "$APPROVAL" \
+  'the error retries once and an approval ends the continued wait||STUB_APPROVAL_MODE=copilot_error_approved|rc=0 status=approved requests=1 approval_polls=3 request_argv=pr+edit+1+--repo+owner/repo+--add-reviewer+@copilot' \
+  'a new error after unchanged polls ends early||STUB_APPROVAL_MODE=copilot_error_twice|rc=1 status=copilot-error requests=1 approval_polls=3 head_sha=headsha1 copilot_fallback_cause=error elapsed_seconds=2' \
+  'duplicate errors in the initial snapshot still permit one retry||STUB_APPROVAL_MODE=copilot_error_twice,STUB_DUPLICATE_ERRORS=1|rc=1 status=copilot-error requests=1 approval_polls=3' \
+  'the same error keeps waiting to the original deadline||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=1 approval_polls=4 elapsed_seconds=3' \
+  'an earlier-head error consumes no request||STUB_APPROVAL_MODE=copilot_error,STUB_ERROR_HEAD=oldsha|rc=1 status=timeout requests=0' \
+  'the sentence from another reviewer consumes no request||STUB_APPROVAL_MODE=human_error|rc=1 status=timeout requests=0' \
+  'a completed Copilot comment consumes no request||STUB_APPROVAL_MODE=copilot_comment|rc=1 status=timeout requests=0' \
+  'review identities on a later page are read||STUB_APPROVAL_MODE=copilot_error_twice,STUB_REVIEW_PAGES=1|rc=1 status=copilot-error requests=1' \
+  'a spent request allowance returns the existing refusal cause||STUB_APPROVAL_MODE=copilot_error,STUB_REQUEST_EXIT=8|rc=1 status=copilot-error requests=1 copilot_fallback_cause=refused+exit=8' \
+  'unreadable review identities refuse without a request||STUB_APPROVAL_MODE=copilot_error,STUB_REVIEW_READ=fail|rc=1 status=error requests=0' \
+  'an empty success body is no review evidence||STUB_APPROVAL_MODE=copilot_error,STUB_REVIEW_READ=empty|rc=1 status=error requests=0' \
+  'a non-list body is no review evidence||STUB_APPROVAL_MODE=copilot_error,STUB_REVIEW_READ=invalid|rc=1 status=error requests=0' \
+  'missing retry context stops without a request||STUB_APPROVAL_MODE=copilot_error,STUB_NO_BASE_CHECKOUT=1|rc=2 stdout=empty requests=0' \
+  'a failed mode read stops without a request||STUB_APPROVAL_MODE=copilot_error,STUB_BASE_MODE=fail|rc=2 stdout=empty requests=0' \
+  'a REST reviewer mismatch consumes no request||STUB_APPROVAL_MODE=copilot_error,STUB_REST_REVIEWER=human|rc=1 status=timeout requests=0' \
+  'an open thread routes before any retry||STUB_APPROVAL_MODE=copilot_error,STUB_THREADS_UNRESOLVED=1|rc=1 status=comments requests=0'
+
+echo "=== a restart preserves the error retry at this head ==="
+table '1 1 3 --json --mode approval --item KEN-error' \
+  'the first wait claims the retry||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=1' \
+  'a timeout restart cannot retry the same answer||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=0' \
+  'a distinct answer on a later wait names the fallback||STUB_APPROVAL_MODE=copilot_error,STUB_ERROR_ID=2|rc=1 status=copilot-error requests=0 head_sha=headsha1' \
+  'the fallback wait spends its period waiting for app approval||STUB_APPROVAL_MODE=copilot_error,STUB_ERROR_ID=2|rc=1 status=timeout requests=0 elapsed_seconds=3' \
+  'an app approval ends the fallback wait||STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved requests=0'
+
+mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-error-mail"
+table '1 1 3 --json --mode approval --item KEN-error-mail' \
+  "mail after a retry interrupts without a gate verdict||STUB_APPROVAL_MODE=copilot_error,STUB_MAIL_TO=$TMP_ROOT/repo/tmp/lane-mail/KEN-error-mail/to-lane.jsonl|rc=5 mail=1 requests=1"
+rm -f -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-error-mail/to-lane.jsonl"
+table '1 1 3 --json --mode approval --item KEN-error-mail' \
+  'a mail restart cannot repeat the claimed retry||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=0'
+
 echo "=== transient GitHub API failures are retried inside the budget and counted ==="
 # A 5xx or 429 from the pr view, or from the author read, is absorbed with
 # backoff and reported as transient_api_errors on the eventual result; one
@@ -748,6 +844,8 @@ cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_REPO/.agents/skills/orch/scripts
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_REPO/.agents/skills/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$MUTANT_REPO/.agents/skills/review-gate"
 git -C "$MUTANT_REPO" init -q
+git -C "$MUTANT_REPO" config gc.auto 0
+git -C "$MUTANT_REPO" config maintenance.auto false
 mkdir -p "$MUTANT_REPO/tmp/lane-mail/KEN-9"
 MUTANT_SCRIPT="$MUTANT_REPO/.agents/skills/orch/scripts/approval-wait"
 PRISTINE="$TMP_ROOT/approval-wait.pristine"
@@ -816,6 +914,41 @@ control fallback-once '  if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/d
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control fallback-outside-lane '  [ -d "$box" ] || return 0' '  : # [ -d "$box" ] || return 0' \
   '1 61 61 --json --mode approval --item KEN-7' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout unsent=0 fallback_notices=none'
+
+# The old loop keeps the error snapshot but performs no request. This must
+# redden the same request-and-continued-wait row, not merely its final status.
+# shellcheck disable=SC2016
+control copilot-error-no-retry '  if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg reviewer "$COPILOT_REVIEWER" '"'"'' \
+  '  if false && jq -e --arg reviewer "$COPILOT_REVIEWER" '"'"'' \
+  "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error_twice' 'rc=1 status=copilot-error requests=1 approval_polls=3'
+
+# shellcheck disable=SC2016
+control copilot-current-head '        and .commit_id == $head and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]' \
+  '        and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]' \
+  "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error,STUB_ERROR_HEAD=oldsha' 'rc=1 status=timeout requests=0'
+# shellcheck disable=SC2016
+control copilot-reviewer '    | [.[] | select(.user.login == $reviewer' \
+  '    | [.[] | select(true' \
+  "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error,STUB_REST_REVIEWER=human' 'rc=1 status=timeout requests=0'
+# shellcheck disable=SC2016
+control copilot-error-body '    | if .state == "COMMENTED" and ((.body // "") | contains($sentence))' \
+  '    | if .state == "COMMENTED"' \
+  "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_comment' 'rc=1 status=timeout requests=0'
+# shellcheck disable=SC2016
+control copilot-distinct-answer '        && [ "$(jq -r '\''.review_id'\'' <<<"$copilot_retry")" != "$copilot_error_id" ]; then' \
+  '        && [ "$(jq -r '\''.review_id'\'' <<<"$copilot_retry")" = "$copilot_error_id" ]; then' \
+  "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error' 'rc=1 status=timeout requests=1 approval_polls=4'
+
+# The seeded state belongs to the copied script's first wait. A fresh process
+# must reuse that record; local memory alone cannot satisfy this row.
+cp "$PRISTINE" "$MUTANT_SCRIPT"
+WAIT_REPO="$MUTANT_REPO"
+run_wait 'STUB_APPROVAL_MODE=copilot_error' 1 1 3 --json --mode approval --item KEN-control-error
+assert_eq "$(observe 'rc=1 status=timeout requests=1')" 'rc=1 status=timeout requests=1' 'the first copied wait claims its retry' "$RUN/stderr"
+WAIT_REPO="$TMP_ROOT/repo"
+# shellcheck disable=SC2016
+control copilot-error-restart '  if [[ -n "$ITEM" ]]; then' '  if false; then' \
+  '1 1 3 --json --mode approval --item KEN-control-error' 'STUB_APPROVAL_MODE=copilot_error' 'rc=1 status=timeout requests=0'
 
 echo "=== a failed emit_result never reports a successful gate ==="
 # emit_result builds the --json object with `jq -n`, so this stub fails
