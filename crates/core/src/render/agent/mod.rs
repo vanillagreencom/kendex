@@ -121,7 +121,11 @@ pub fn merged_instructions(
     agent_name: &str,
 ) -> Option<String> {
     let shared = SHARED_INSTRUCTIONS.iter().find_map(|key| table.get(*key));
-    let specific = table.get(agent_name);
+    // A package named `all` reads that key as everyone's, which it already
+    // got as the shared entry; read twice it would render twice.
+    let specific = table
+        .get(agent_name)
+        .filter(|_| !shared_instructions_key(agent_name));
     match (shared, specific) {
         (None, None) => None,
         (None, Some(text)) => Some(text.clone()),
@@ -416,6 +420,14 @@ mod tests {
         assert!(merged.ends_with("rust rule"));
         let solo = merged_instructions(&table, "other").unwrap();
         assert!(solo.contains(SHARED_START) && !solo.contains("rust rule"));
+    }
+
+    #[test]
+    fn a_package_named_all_takes_the_shared_entry_once() {
+        let mut table = BTreeMap::new();
+        table.insert("all".to_owned(), "fleet rule".to_owned());
+        let merged = merged_instructions(&table, "all").unwrap();
+        assert_eq!(merged.matches("fleet rule").count(), 1, "{merged}");
     }
 
     #[test]

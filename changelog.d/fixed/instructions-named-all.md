@@ -1,0 +1,1 @@
+- A skill, agent or command named `all` renders the project's `all` instructions once, instead of once as everyone's text and again as its own.
