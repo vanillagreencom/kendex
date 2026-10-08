@@ -1,7 +1,10 @@
 //! Turning off the checks a harness performs, and commands that are
 //! destructive whether or not anyone meant them to be.
 
+use std::borrow::Cow;
+
 use crate::model::ItemKind;
+use crate::quality::text::Span;
 
 use super::{
     AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Quotation, Severity, Standing, at,
@@ -70,6 +73,15 @@ impl AuditRule for SafetyBypass {
 
     fn check(&self, prepared: &Prepared) -> Outcome {
         scan_docs(prepared, AUTHORED, |doc, line, found| {
+            let mut line = Cow::Borrowed(line);
+            let pattern_end = line.lower.len() - command_half(&line.lower).len();
+            if pattern_end > 0 {
+                line.to_mut().spans.push(Span {
+                    start: 0,
+                    end: pattern_end,
+                    by: Quotation::ShellText,
+                });
+            }
             let tiers = BYPASS
                 .iter()
                 .map(|(needle, what)| (needle, what, Severity::Critical))
@@ -89,7 +101,7 @@ impl AuditRule for SafetyBypass {
                 ) else {
                     continue;
                 };
-                let finding = self.finding(doc, line, needle, what, base);
+                let finding = self.finding(doc, &line, needle, what, base);
                 found.push(standing, finding);
             }
         })

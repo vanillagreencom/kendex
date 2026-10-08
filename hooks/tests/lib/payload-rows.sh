@@ -158,7 +158,7 @@ payload_table() { # hook refusing passing [dir]
   [ -n "${PAYLOAD_TOOLS:-}" ] || { echo 'payload-rows: the suite must set PAYLOAD_TOOLS, the dependency list of the hook under test' >&2; exit 2; }
   local label shape command world rc first row field text path got before=$((PASS + FAIL))
   PAYLOAD_BASH="$(command -v bash)"
-  PAYLOAD_PREFIX="$(basename "$hook" .sh): "
+  PAYLOAD_PREFIX="${PAYLOAD_NAME:-$(basename "$hook" .sh)}: "
   PAYLOAD_ROOT="${TMP_ROOT:?}/payload-rows"
   rm -rf -- "${TMP_ROOT:?}/payload-rows"
   mkdir -p "$PAYLOAD_ROOT"

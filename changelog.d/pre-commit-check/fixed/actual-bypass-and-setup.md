@@ -1,0 +1,1 @@
+- Commit checks distinguish bypass options from messages and Git data. Missing setup names the consent or main checkout owner route. Reader failures report an unavailable check and allow the command.

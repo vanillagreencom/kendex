@@ -1,0 +1,1 @@
+- Safety scoring treats a bypass switch in a shell case pattern as a mention and still reports a command that uses the switch in the arm body.

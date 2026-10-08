@@ -50,6 +50,21 @@ fn a_shell_line_names_a_switch_or_uses_it() {
         ),
         ("rm -rf /\n", &["dangerous-commands"], &[]),
         ("git commit --no-verify\n", &["safety-bypass"], &[]),
+        (
+            "case \"$arg\" in\n  --no-verify|-n) : ;;\nesac\n",
+            &[],
+            &["safety-bypass"],
+        ),
+        (
+            "case \"$arg\" in\n  --no-verify) echo '--no-verify is refused' ;;\nesac\n",
+            &[],
+            &["safety-bypass"],
+        ),
+        (
+            "case \"$arg\" in\n  --no-verify) git commit --no-verify ;;\nesac\n",
+            &["safety-bypass"],
+            &[],
+        ),
         ("bash -c 'rm -rf /'\n", &["dangerous-commands"], &[]),
         ("eval \"rm -rf /\"\n", &["dangerous-commands"], &[]),
         ("echo \"rm -rf /\" | sh\n", &["dangerous-commands"], &[]),
