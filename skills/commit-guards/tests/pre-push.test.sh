@@ -206,11 +206,19 @@ mkdir -p "$DIRECT/.agents/skills/doc-limits/scripts"
 printf '#!/bin/sh\nexit 0\n' >"$DIRECT/.agents/skills/doc-limits/scripts/doc-limits"
 UNRUNNABLE_RC=0
 direct origin "refs/heads/main $TIP refs/heads/main $SEED" >/dev/null || UNRUNNABLE_RC=$?
-UNRUNNABLE_SEEN=absent
-case "$DIRECT_OUT" in
-  *"pre-push: lane-missing=$DIRECT/.agents/skills/doc-limits/scripts/doc-limits"*) UNRUNNABLE_SEEN=refused ;;
-esac
-assert_eq "an installed doc-limits that cannot run refuses the push, never a skip" "refused" "$UNRUNNABLE_SEEN"
+DIRECT_PHYSICAL="$(cd -- "$DIRECT" && pwd -P)" || exit 2
+for UNRUNNABLE_EXPECT in refused absent; do
+  UNRUNNABLE_OUT="$DIRECT_OUT"
+  # A wrong path must fail the same matcher while keeping the refusal key.
+  if [ "$UNRUNNABLE_EXPECT" = absent ]; then
+    UNRUNNABLE_OUT="${DIRECT_OUT/$DIRECT_PHYSICAL/$DIRECT_PHYSICAL-wrong}"
+  fi
+  UNRUNNABLE_SEEN=absent
+  case "$UNRUNNABLE_OUT" in
+    *"pre-push: lane-missing=$DIRECT_PHYSICAL/.agents/skills/doc-limits/scripts/doc-limits"*) UNRUNNABLE_SEEN=refused ;;
+  esac
+  assert_eq "an installed doc-limits that cannot run: path match=$UNRUNNABLE_EXPECT" "$UNRUNNABLE_EXPECT" "$UNRUNNABLE_SEEN"
+done
 assert_eq "and the refusal is exit 2" "rc=2" "$(direct origin "refs/heads/main $TIP refs/heads/main $SEED" | cut -d' ' -f1)"
 rm -rf -- "${DIRECT:?}/.agents/skills/doc-limits"
 
