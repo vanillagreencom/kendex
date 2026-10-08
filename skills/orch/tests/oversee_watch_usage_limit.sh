@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
-# mutant_scripts, the private copy the control below mutates.
+# mutant_scripts and mutate_file, the private copies the controls below mutate.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
@@ -273,11 +273,20 @@ usage_table \
   "a banner below the turn on a dialog screen is still the event, and outranks the question|new|live_over_question|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
   "a dialog's column-0 selected row is live input, not the turn: the banner above it is still the event|new|banner_over_column0_dialog|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~EVENT+lane-asking=false" \
   "a codex banner below the last turn is reported, the composer notwithstanding|new|codex_live|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
-  "a codex banner the lane has worked past is not the event: the composer never resurrects it|new|codex_stale|codex|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
+  "a codex banner the lane has worked past stays scrollback and the finished turn is idle|new|codex_stale|codex|-|-|rc=0 first=EVENT+idle-after-return+gh-2 out~EVENT+usage-limit=false" \
   "a codex dialog row is live input, so the banner above the turn stays scrollback|new|codex_dialog_stale|codex|-|-|rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
   "a banner below the turn on a codex dialog screen is still the event|new|codex_dialog_live|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
   "a codex startup screen is no event: an offered reset is credit to spend|new|codex_idle|codex|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
   "control: a lane with no banner reaches the heartbeat|new|healthy|claude|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
+
+# The first-pass shortcut needs a submitted turn. Without that check, the
+# unchanged startup fixture reports a return before Codex has taken a turn.
+STARTUP_SCRIPTS="$(mutant_scripts idle-startup/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/idle-startup/github"
+mutate_file "$STARTUP_SCRIPTS/oversee-watch" \
+  ' && [[ -n "$(pane_turn_slice "$pane" before)" ]]' ''
+WATCH_BIN="$STARTUP_SCRIPTS/oversee-watch" usage_table \
+  "control: without prior turn evidence a startup screen reports a return|new|codex_idle|codex|-|-|rc=0 first=EVENT+idle-after-return+gh-2 out~EVENT+usage-limit=false"
 
 # The payload is the slice the banner was found in, never the banner alone:
 # the handling (../references/oversee-events.md § Event kinds) is confirming
@@ -444,7 +453,7 @@ assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
 assert_eq "$(sed -n '2,5p' <<<"$OUT")" "$(printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
   "the wall's payload is the window around the banner, the lines on both sides of it included" "$ERR"
 
-# The suite's one must-fail control: the usage-limit arm's early exit
+# The usage-limit arm's must-fail control: its early exit
 # restored. The mutant leaves the pass on the first walled lane, so the fleet
 # above reads as usage-limit alone. The substitution is scoped to the arm, so
 # its one landing is counted rather than its pattern's absence. The copy keeps

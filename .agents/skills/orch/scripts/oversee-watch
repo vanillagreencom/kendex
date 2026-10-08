@@ -298,8 +298,8 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # delivering a line again for a walled, idle or exited lane or a merged --item.
 # Each helper takes the whole baseline blob and returns the answer or the
 # rewritten blob, so a pass mutates a local and commits once. `lane-exited` and
-# `lane-idle` hold the first of the two passes they need in a row, not a
-# global: a pass that found any event exits the process.
+# `lane-idle` hold a needed first pass in a row, not a global: a pass that
+# found any event exits the process.
 lane_row_get() {
   awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
 }
@@ -3562,9 +3562,9 @@ check_lanes() {
     PASS_EVENT=1
   done
   # The harness is up at its input prompt with nothing in flight. Codex is
-  # reported on the first pass: an agent return cannot start its next turn,
-  # and that return changes the screen while the lane remains parked. Other
-  # harnesses take two consecutive passes, because the screen
+  # reported on the first pass after a submitted turn: an agent return cannot
+  # start its next turn, and that return changes the screen while the lane
+  # remains parked. Other idle screens take two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same; the first is
   # a `lane-idle` row, as for lane-exited above. The second pass reports it and
   # marks the row, so a lane left at the same screen is reported once, however
@@ -3622,7 +3622,7 @@ check_lanes() {
       die state-read-failed "" "lane=$lane" "row=lane-idle"
     fi
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
-    if [[ "$prior" == "$screen_key" ]] || grep -Eq -- "$CODEX_MARKER_RE" <<<"$below"; then
+    if [[ "$prior" == "$screen_key" ]] || { grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
       # The lane's closing report, which decides whether it is free for
       # another launch. Below the last turn is the round that just ended,
