@@ -263,6 +263,7 @@ the organization standard is queue-only|queue_only=true cause=queue-path path=sk
 the settings naming required contexts are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
 the machine-local settings naming required contexts are queue-only|queue_only=true cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
 the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
+the trusted bot checker is queue-only|queue_only=true cause=queue-path path=skills/bot-instructions/scripts/lib/manifest.py glob=*skills/bot-instructions/scripts/*|skills/bot-instructions/scripts/lib/manifest.py=2
 the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
 the branch measurement's library is queue-only|queue_only=true cause=queue-path path=.agents/skills/orch/scripts/lib/branch-growth.sh glob=*skills/orch/scripts/lib/branch-growth.sh|.agents/skills/orch/scripts/lib/branch-growth.sh=2
 the measurement's settings reader is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh|skills/orch/scripts/lib/kendex-env.sh=2
