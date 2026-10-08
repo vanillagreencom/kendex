@@ -322,8 +322,7 @@ GUARD_FULL_CROSS_DOC = "run"
 
 # The repo-root executable the guard chain runs last, after doc-limits, preflight,
 # the bot-instructions check and the commit-guards batch. tools/guard holds this repository's
-# own scans and compile checks for changed crates or UI files. Expensive
-# tests, documentation builds and cross-target checks run through DEV_VALIDATE_CMD.
+# own scans and compile checks for changed crates or UI files.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The fragment scope of the changelog-entries lane. The two-segment glob
