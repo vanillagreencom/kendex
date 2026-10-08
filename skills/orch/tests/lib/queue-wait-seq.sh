@@ -84,7 +84,7 @@ case "${1:-}" in
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then echo "test-user"; exit 0; fi
-    if [[ "${2:-}" == repos/*/actions/runs* ]]; then echo '{"workflow_runs":[]}'; exit 0; fi
+    if [[ "${2:-}" == repos/*/actions/runs* ]]; then echo '[{"total_count":0,"workflow_runs":[]}]'; exit 0; fi
     ;;
   pr)
     if [[ "${2:-}" == "view" ]]; then

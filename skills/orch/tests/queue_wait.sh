@@ -146,11 +146,11 @@ case "${1:-}" in
       echo "test-user"
       exit 0
     fi
-    # ci-wait's superseded-run correlation (never reached by these fixtures,
-    # whose failing checks carry no Actions link).
+    # ci-wait reads current-head runs to confirm a green rollup. The slurped
+    # page records no Actions work in this consumer's neutral world.
     if [[ "${2:-}" == repos/*/actions/runs* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      echo '{"workflow_runs":[]}'
+      echo '[{"total_count":0,"workflow_runs":[]}]'
       exit 0
     fi
     # The base branch's required contexts (github required_contexts), named
