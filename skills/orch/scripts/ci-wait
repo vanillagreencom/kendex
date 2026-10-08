@@ -694,18 +694,29 @@ superseding_run_state() {
     echo "unavailable"
     return 0
   fi
-  if ! runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>"$checks_stderr"); then
+  if ! runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" --paginate --slurp 2>"$checks_stderr"); then
     ci_message actions-read-failed >&2
     cat "$checks_stderr" >&2
     echo "unavailable"
     return 0
   fi
-  if ! jq -e '(.workflow_runs? | type) == "array"' >/dev/null 2>&1 <<<"$runs_json"; then
+  # GitHub caps head_sha searches at 1,000 runs. At that bound, or when
+  # page totals disagree with the fetched count, unseen work can remain active.
+  if ! runs_json=$(jq -ce '
+    select(type == "array" and length > 0)
+    | select(all(.[]; (.workflow_runs? | type) == "array"))
+    | [.[].workflow_runs[]] as $runs
+    | select(($runs | length) < 1000)
+    | select(all(.[]; .total_count == ($runs | length)))
+    | [$runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]
+  ' 2>/dev/null <<<"$runs_json"); then
     ci_message actions-response-invalid >&2
     echo "unavailable"
     return 0
   fi
-  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]' <<<"$runs_json")" "$CI_RUN_JQ_DEFS"'
+  jq -rs "$CI_RUN_JQ_DEFS"'
+    .[0] as $runs | .[1]
+    |
     def substantive:
       ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
     ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
@@ -739,7 +750,8 @@ superseding_run_state() {
       else "superseded"
       end
       end
-  ' <<<"$classes"
+  ' <<<"$runs_json
+$classes"
 }
 
 classify_checks() {
