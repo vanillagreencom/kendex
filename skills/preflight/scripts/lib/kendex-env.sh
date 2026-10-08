@@ -308,7 +308,7 @@ kendex_private_env_file() { # OUT_VAR PROJECT_ROOT — project-relative private 
   printf -v "$1" '%s' "$_kendex_named"
 }
 
-kendex_load_project_env() {
+kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional output is the selected project-relative path
   local project_root="$1"
   [[ -n "$project_root" ]] || return 0
 
@@ -352,4 +352,7 @@ kendex_load_project_env() {
   done
 
   unset _KENDEX_PARENT_ENV_NAMES _KENDEX_PARENT_ENV_VALUES
+  if [[ -n "${2:-}" ]]; then
+    printf -v "$2" '%s' "$_kendex_private_file"
+  fi
 }

@@ -973,7 +973,12 @@ exec "$REAL_CAT" "$@"
 set -euo pipefail
 printf 'npm %s in %s%s\\n' "$*" "$PWD" "${WORKTREE_SYMLINKS+ project-env}" >> "$SSH_TEST_LOG"
 clone=$(git rev-parse --show-toplevel)
-if [[ -e "$clone/.env.local" || -e "$clone-worktree/.env.local" || -n "${SECRET:-}" ]]; then exit 91; fi
+for root in "$clone" "$clone-worktree"; do
+  for name in .env.local "${SSH_TEST_PRIVATE_RELATIVE:-.env.local}"; do
+    if [[ -e "$root/$name" || -L "$root/$name" ]]; then exit 91; fi
+  done
+done
+if [[ -n "${SECRET:-}" ]]; then exit 91; fi
 rm -rf node_modules
 mkdir node_modules
 [[ "${SSH_TEST_NPM_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_NPM_FAIL"
@@ -1035,18 +1040,123 @@ touch node_modules/dep
 
     def test_control_install_can_read_a_private_env_left_in_the_clone(self):
         original = self.script.read_text()
-        fragment = '  mv -- "$1/.env.local" "$private/env"'
+        fragment = 'if test -e "$path" || test -L "$path"; then'
         self.assertEqual(original.count(fragment), 1)
         # Mutate only a disposable executable outside the worktree.
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "lane-host-ssh"
-            self.executable(self.script, original.replace(fragment, ":"))
+            self.executable(self.script, original.replace(fragment, 'if false && { test -e "$path" || test -L "$path"; }; then'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
                 self.test_create_installs_a_linked_node_modules_once_per_lockfile()
             exposed = self.create("--reuse")
             self.assertEqual(exposed.returncode, 91, exposed.stderr)
             self.assertFalse((Path(self.row["clone"]) / "ui/node_modules/.lane-host-install").exists())
+
+    def private_install_cases(self):
+        """Exercise files present in reused clones, including copies made by
+        the first worktree setup pass before npm starts."""
+        self.fake_npm()
+        relative = "config/private file.env"
+        wt = self.source / ".agents/skills/worktree/scripts/worktree"
+        original = wt.read_text()
+        fragment = '  printf \'%s\\n\' "$path" ;;'
+        self.assertEqual(original.count(fragment), 1)
+        provisioning = '''  if [[ "${SSH_TEST_PROVISION_PRIVATE:-}" == copy ]]; then
+    for name in .env.local "$SSH_TEST_PRIVATE_RELATIVE"; do
+      if [[ -f "$PWD/$name" ]]; then
+        mkdir -p -- "$(dirname -- "$path/$name")"
+        cp -p -- "$PWD/$name" "$path/$name"
+      fi
+    done
+  fi
+'''
+        self.seed_source(str(wt.relative_to(self.source)), original.replace(fragment, provisioning + fragment))
+        self.seed_source(".gitignore", ".env.local\nconfig/\n.cache/\ntmp/\n")
+        rows = (
+            ("root settings", "root", "none", 0, False),
+            ("nested settings with copies", "nested", "copy", 0, False),
+            ("parent selector with copies and failed npm", "parent", "copy", 7, False),
+            ("linked private files", "root", "link", 0, False),
+            ("private file changes the selector", "root", "copy", 0, True),
+        )
+        for index, (name, selector, provision, status, changes_selector) in enumerate(rows):
+            settings = f'[env]\nWORKTREE_SYMLINKS = ".env.local ui/node_modules"\nINSTALL_CASE = "{index}"\n'
+            selection = f'KENDEX_ENV_FILE = "{relative}"\n'
+            self.seed_source("kendex.settings.toml", settings + (selection if selector == "root" else ""))
+            self.seed_source(".kendex/settings.toml", f'[env]\nINSTALL_CASE = "{index}"\n' + (selection if selector == "nested" else ""))
+            self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
+            self.row["clone"] = str(self.root / f"private-clone-{index}")
+            self.inventory.write_text(json.dumps([self.row]))
+            env = {"SSH_TEST_PRIVATE_RELATIVE": relative, "SSH_TEST_PROVISION_PRIVATE": provision}
+            if selector == "parent":
+                env["KENDEX_ENV_FILE"] = relative
+            made = self.create(**env)
+            self.assertEqual(made.returncode, 0, (name, made.stderr))
+            clone = Path(self.row["clone"])
+            tree = Path(str(clone) + "-worktree")
+            chosen = clone / relative
+            chosen.parent.mkdir()
+            contents = b"SECRET=named-private-fixture\n"
+            if changes_selector:
+                contents += b"KENDEX_ENV_FILE=config/changed.env\n"
+            chosen.write_bytes(contents)
+            chosen.chmod(0o600)
+            if provision == "link":
+                for private_name in (".env.local", relative):
+                    link = tree / private_name
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    link.symlink_to(clone / private_name)
+            self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3, "changed": 1}\n')
+            mark = len(self.log_since(0))
+            installed = self.create("--reuse", **env, SSH_TEST_NPM_FAIL=str(status))
+            self.assertEqual(installed.returncode, status, (name, installed.stderr))
+            calls = [line for line in self.log_since(mark) if line.startswith("npm ")]
+            self.assertEqual(calls, [f"npm ci --no-audit --no-fund in {clone / 'ui'}"])
+            for private_name in (".env.local", relative):
+                original_file = clone / private_name
+                self.assertEqual(original_file.read_bytes(), contents if private_name == relative else (self.source / ".env.local").read_bytes())
+                if provision != "none":
+                    restored = tree / private_name
+                    self.assertEqual(restored.read_bytes(), original_file.read_bytes())
+                    self.assertEqual(restored.is_symlink(), provision == "link")
+                    if provision == "link":
+                        self.assertEqual(os.readlink(restored), str(original_file))
+                    else:
+                        self.assertEqual(restored.stat().st_mode, original_file.stat().st_mode)
+            self.assertEqual(chosen.stat().st_mode & 0o777, 0o600)
+            self.assertEqual((clone / "ui/node_modules/.lane-host-install").exists(), status == 0)
+
+    def test_install_hides_selected_private_files_and_worktree_copies(self):
+        self.private_install_cases()
+
+    def test_control_install_hiding_only_default_private_names_exposes_the_selected_file(self):
+        original = self.script.read_text()
+        fragment = 'if test -e "$path" || test -L "$path"; then'
+        self.assertEqual(original.count(fragment), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(fragment,
+                'if [[ "$path" == */.env.local ]] && { test -e "$path" || test -L "$path"; }; then'))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.test_install_hides_selected_private_files_and_worktree_copies()
+            exposed = self.create("--reuse", SSH_TEST_PRIVATE_RELATIVE="config/private file.env")
+            self.assertEqual(exposed.returncode, 91, exposed.stderr)
+
+    def test_control_install_hiding_only_clone_files_exposes_worktree_copies(self):
+        original = self.script.read_text()
+        fragment = '  private_paths+=("$tree/.env.local" "$tree/${settings[1]}" "$tree/${selected[0]}")'
+        self.assertEqual(original.count(fragment), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(fragment, ': # ' + fragment.strip()))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.test_install_hides_selected_private_files_and_worktree_copies()
+            exposed = self.create("--reuse", SSH_TEST_PRIVATE_RELATIVE="config/private file.env",
+                                  SSH_TEST_PROVISION_PRIVATE="copy")
+            self.assertEqual(exposed.returncode, 91, exposed.stderr)
 
     def test_control_install_without_its_lockfile_marker_runs_every_create(self):
         original = self.script.read_text()

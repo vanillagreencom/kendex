@@ -1,0 +1,1 @@
+- Hosted SSH lanes hide the selected private settings file, `.env.local`, and worktree copies during dependency installation. Files and links are restored on success or failure.

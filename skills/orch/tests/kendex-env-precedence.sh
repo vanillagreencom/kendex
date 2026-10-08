@@ -444,6 +444,39 @@ s10_parent=$(
 )
 assert_eq "$s10_parent" "kept-local" "scenario 10: an exported KENDEX_ENV_FILE outranks the project's"
 
+# The install caller needs the path read, even when that file changes the selector.
+PROJ_SELECTED="$TMP_ROOT/selected-private"
+mkdir -p "$PROJ_SELECTED"
+printf '[env]\nKENDEX_ENV_FILE = "selected.env"\n' > "$PROJ_SELECTED/kendex.settings.toml"
+printf '%s\n' 'SECRET=selected-secret' 'KENDEX_ENV_FILE=other.env' > "$PROJ_SELECTED/selected.env"
+SELECTED_SCRIPTS="$(mutant_scripts selected-path lib/kendex-env.sh)" || exit 1
+mutate_file "$SELECTED_SCRIPTS/lib/kendex-env.sh" \
+  '    printf -v "$2" '\''%s'\'' "$_kendex_private_file"' \
+  '    printf -v "$2" '\''%s'\'' "$KENDEX_ENV_FILE"'
+for variant in production mutant; do
+  selected_lib="$LIB"
+  [[ "$variant" != mutant ]] || selected_lib="$SELECTED_SCRIPTS/lib/kendex-env.sh"
+  for form in legacy output-variable; do
+    selected_result=$(
+      unset SECRET KENDEX_ENV_FILE
+      source "$selected_lib"
+      selected_path=unchanged
+      if [[ "$form" == legacy ]]; then
+        kendex_load_project_env "$PROJ_SELECTED"
+      else
+        kendex_load_project_env "$PROJ_SELECTED" selected_path
+      fi
+      printf '%s|%s\n' "$SECRET" "$selected_path"
+    )
+    expected_path=unchanged
+    if [[ "$form" == output-variable ]]; then
+      expected_path=selected.env
+      [[ "$variant" != mutant ]] || expected_path=other.env
+    fi
+    assert_eq "$selected_result" "selected-secret|$expected_path" "$variant: $form preserves loaded values and reports the path read"
+  done
+done
+
 # A project can print while its private env file loads. Consumers parse stdout.
 PROJ11="$TMP_ROOT/proj11"
 mkdir -p "$PROJ11/accounts"

@@ -1,0 +1,1 @@
+- Settings loading can report the private file it read so callers can protect credentials during dependency installation.

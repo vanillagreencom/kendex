@@ -306,31 +306,58 @@ def require_render(row):
 done''', row["clone"])
 
 
-def install_dependencies(row):
+def install_dependencies(row, item):
     """Install each node_modules a WORKTREE_SYMLINKS entry links, in the clone.
 
     The clone is the main checkout, the one place worktree --help lets an
     install run; a worktree links its node_modules from here. The settings
     come through the clone's own loader, so this reads what the worktree
     command reads, in a subshell: npm ci and the dependencies' install scripts
-    run with the SSH session's environment. The private env file is moved out
-    of the clone after settings resolution and restored when this call exits,
-    so install scripts cannot read it through the clone or its worktree links.
+    run with the SSH session's environment. The selected private env files and
+    .env.local are moved out of the clone and any standing worktree after
+    settings resolution and restored when this call exits, so install scripts
+    cannot read those paths or provisioned copies.
     npm ci empties node_modules first, so the marker of the
     committed lockfile blob it was installed from lives inside it and survives
     only a finished install: an unchanged lockfile installs nothing. An entry
     climbing out of the clone is the worktree command's to refuse, never a
     directory to install in.
     """
-    remote(row, '''symlinks=$(. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh" &&
-  kendex_load_project_env "$1" >&2 && printf '%s' "${WORKTREE_SYMLINKS:-}") || exit 1
-# A reused clone already holds the private file, so delaying its upload alone
-# would still expose it to dependency lifecycle scripts.
-private=$(mktemp -d) || exit 1
-trap 'if test -e "$private/env" || test -L "$private/env"; then mv -- "$private/env" "$1/.env.local"; fi; rmdir -- "$private"' EXIT
-if test -e "$1/.env.local" || test -L "$1/.env.local"; then
-  mv -- "$1/.env.local" "$private/env"
+    remote(row, '''settings=$(. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh" &&
+  kendex_load_project_env "$1" selected_private >&2 &&
+  printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private") || exit 1
+# Only printf %q's shell-quoted values enter eval, including paths with spaces.
+eval "settings=($settings)"
+symlinks=${settings[0]}
+private_paths=("$1/.env.local" "$1/${settings[1]}")
+tree=$(cd -- "$1" && .agents/skills/worktree/scripts/worktree path "$2") || exit 1
+if test -d "$tree"; then
+  selected=$(. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh" &&
+    kendex_load_project_env "$tree" selected_private >&2 &&
+    printf '%q' "$selected_private") || exit 1
+  eval "selected=($selected)"
+  private_paths+=("$tree/.env.local" "$tree/${settings[1]}" "$tree/${selected[0]}")
 fi
+# A reused clone already holds the private file, so delaying its upload alone
+# would still expose it and worktree copies to dependency lifecycle scripts.
+private=$(mktemp -d) || exit 1
+saved_paths=()
+restore_private() {
+  local status=$? index=0 path
+  for path in ${saved_paths[@]+"${saved_paths[@]}"}; do
+    mv -- "$private/$index" "$path" || status=1
+    index=$((index + 1))
+  done
+  rmdir -- "$private" || status=1
+  return "$status"
+}
+trap restore_private EXIT
+for path in "${private_paths[@]}"; do
+  if test -e "$path" || test -L "$path"; then
+    mv -- "$path" "$private/${#saved_paths[@]}"
+    saved_paths+=("$path")
+  fi
+done
 read -r -a entries <<<"$symlinks"
 for entry in ${entries[@]+"${entries[@]}"}; do
   case "/$entry/" in */../*|*/./*|//*) continue ;; esac
@@ -347,7 +374,7 @@ for entry in ${entries[@]+"${entries[@]}"}; do
   printf 'lane-host-ssh: dependency-install path=%s\\n' "$lockfile" >&2
   (cd -- "$1/${entry%node_modules}" && npm ci --no-audit --no-fund) >&2
   printf '%s\\n' "$blob" >"$marker"
-done''', row["clone"])
+done''', row["clone"], item)
 
 
 def create(row, args, source):
@@ -428,7 +455,7 @@ fi''', row["clone"])
     # The install changes the shared node_modules, so it waits for that
     # ownership too, and precedes the final setup pass that links it.
     flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
-    install_dependencies(row)
+    install_dependencies(row, args.item)
     create_worktree(row, args.item, flags)
     path = worktree(row, "path", args.item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
@@ -616,8 +643,9 @@ path), account (absolute remote harness config directory). Each target/clone
 pair and each item occurs once. SSH keys and host verification use your SSH config.
 LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local.
-Dependency installation temporarily removes that file from the clone after
-resolving WORKTREE_SYMLINKS and restores it on success or failure.
+Dependency installation temporarily removes .env.local and the loader-selected
+private files from the clone and any standing worktree after resolving settings.
+It restores each file or link on success or failure.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 create renders nothing and installs no Pi package: the worktree carries the
