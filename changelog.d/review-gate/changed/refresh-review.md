@@ -1,1 +1,0 @@
-- Consumer refreshes waive product CI after render proof. The watcher reports green refresh heads for app approval. The central workflow requests Copilot for other PRs and warns on request failure.

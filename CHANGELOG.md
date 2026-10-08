@@ -6,6 +6,54 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-10-08
+
+### Removed
+
+- The `skill-load-check` and `skill-load-record` hooks are retired and leave the `workflow` bundle. Edits and Linear commands are no longer held until a transcript shows a skill loaded, and a session is no longer refused when the load rule, the transcript or the payload cannot be read. `kendex refresh --prune` removes both hooks and their entries; `KENDEX_SKILL_LOAD_RULES` and `KENDEX_SKILL_LOAD_HOOK` are no longer read.
+
+### Fixed
+
+- `kendex check --catalog` reports, as an advisory, a link in a file the render ships that points at a skill's top-level `tests/`, `evals/` or `DEVELOPMENT.md`, which no install receives, and a `github.com` link to the catalog's own source whose file is gone or whose `#heading` anchor names no heading, reading a branch name with `/` through the checkout's own refs and decoding escaped paths and anchors.
+- Remove the safety allowance for the installer command retired from harness-ci.
+- `kendex verify` on a kept retired item whose installed files are gone or edited now names the item's kind, and `--global` for a personal-setup item, in the removal it suggests, as it does for a left-over item, so following it no longer also removes a live item of another kind with the same name.
+- `apply`, `refresh` and `updates --apply` with `--project-path` no longer add a linked git worktree, or a repository nested in one, to your projects, so removing the worktree leaves no stale entry in the app's Projects list or `kendex project list`; the run prints a `worktree-not-listed=PATH` line instead, and `kendex project add PATH` still lists a worktree you want to keep.
+
+### Packages
+
+#### commit-guards
+
+- The commit guards block only what the committer can fix. conflict-markers and md-format no longer judge a render `.kendex-generated.json` lists. Outside CI, an inventory the lanes cannot read turns their findings into `owner-unknown` warnings. md-format fails a fence or block left open. md-refs names a file it cannot read `unjudged` and refuses it only under `--strict`. py-names prints a `gap` notice when no ruff or pyflakes is usable, and a CI range or `--all` scan still refuses. The batch and the pre-commit chain name a check or companion script the package lacks as `package-incomplete` and skip it. In a linked worktree, `install-git-hooks` writes nothing and reports whether the main checkout armed the hooks, exiting 1 when it has not. The `core.hooksPath` notice points to the setting's owner.
+
+#### harness-ci
+
+- Consumer refresh CI publishes the measured change class and skips product jobs after render proof. New generated files reach that proof through a prerequisite-only candidate. CI installs the latest released engine instead of a fixed older build.
+
+#### orch
+
+- A scope directive that reaches a lane while a dev or fix round runs now goes into the round's durable brief and counts as delivered only once the dev agent's transcript shows it. One still unconfirmed at the next watchdog return stops that agent and re-delegates the round through the new `round-recover --directive-unconfirmed`, which ends the worktree's validation runs, then always mints a fresh round id, whatever the agent reported or is still running, and spends no stall recovery; a run it cannot end refuses the re-delegation. A re-delegated fix round records the updated scope's items and protected additions, not the earlier round's. The lane's notice to the overseer says "confirmed in the dev agent's transcript at [TIME]" or "unconfirmed, re-delegating" instead of "reached" on a send.
+- Route green lanes-app refresh heads to overseer app approval without an owning lane, repeated agent reviews or a Copilot wait. Render proof and same-head CI remain required.
+- A lane claim store several fleet users share on one host now works across homes: claims are written group-readable, a claim whose tmux server another account owns is kept and counted instead of deleted, and `lanes` counts claims by account name, so one account reached from two homes is charged once with every claim on it.
+- oversee-watch prints an open security alert again, with `report=repeat`, on every long pass that reads `alerts_triaged` and the alert's own list, until `alerts_triaged` records its verdict or the alert closes, so an alert whose first line fell to an overseer succession or lost context is no longer left silent; a failed read or a scanning feature turned off prints no repeat for that source, and a repeat does not itself end the watch run.
+
+#### preflight
+
+- The `mktemp-trap` lane reads an EXIT trap whose quoted action spans several lines, so a script with such a trap is no longer reported as leaving its scratch behind.
+
+#### review-gate
+
+- Consumer refreshes waive product CI after render proof. The watcher reports green refresh heads for app approval. The central workflow requests Copilot for other PRs and warns on request failure.
+- The organization-standard report accepts the pinned kendex Copilot workflow after migration and retains native Copilot rule support.
+
+#### reviewer-stop-check
+
+- `reviewer-stop-check` now holds a reviewer whose named review artifact does not exist or is not JSON (`artifact=unreadable`), where a mere mention of the path used to pass, and holds a reviewer only for paths changed since the review started rather than for every dirty path. The start is the timestamp of the subagent transcript's first entry when that entry is the launch record (Codex's `session_meta` or Claude Code's prompt). A path counts as changed when its change time, a deleted path's directory's change time, or for a staged change the index's change time is not before the start. A submodule row, a quoted path and a path whose time cannot be read always block, as does every dirty path where no start can be read, Copilot among them. The author's deletion beside a file the reviewer created and removed, and the author's staged changes after a reviewer's `git status` refreshed the index, can still hold the reviewer for one stop.
+
+#### worktree
+
+- `worktree push` of a branch other than the default refuses with `worktree-push-base-fetch-failed` when its fetch of origin's default branch fails, instead of judging the branch contained or merging cleanly against a stale base and pushing it unrebased.
+- A paused restack now holds a conflicted script a declared harness hook executes, such as the lane-mail script the lane-mail-check hook runs, as it holds the libraries a hook sources, so the hook keeps running until the restack continues, skips or aborts.
+
 ## [1.12.0] - 2026-10-07
 
 ### Added
@@ -1960,7 +2008,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.12.1...HEAD
+[1.12.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.1
 [1.12.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.0
 [1.11.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.11.0
 [1.10.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.10.1
