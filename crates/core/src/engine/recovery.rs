@@ -39,6 +39,7 @@ pub fn audit_without_record(
         scope,
         manifest,
         &mut seed,
+        None,
         crate::pi_ext::RecordBasis::MatchedBytes,
         None,
     )?;

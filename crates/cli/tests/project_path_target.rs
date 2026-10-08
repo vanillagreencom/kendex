@@ -93,6 +93,7 @@ fn combined_apply_refreshes_global_instructions_and_keeps_project_refusals() {
                 &Scope::Global,
                 &manifest::load_current(&global_manifest).unwrap().unwrap(),
                 &mut record,
+                None,
                 kendex_core::pi_ext::RecordBasis::MatchedBytes,
                 None
             )

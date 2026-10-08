@@ -217,6 +217,7 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
             &scope,
             &declared,
             &mut previous,
+            None,
             pi_ext::RecordBasis::MatchedBytes,
             None,
         )
@@ -328,6 +329,7 @@ fn record_installed_packages(w: &World, scope: &Scope) {
         scope,
         &declared,
         &mut record,
+        None,
         pi_ext::RecordBasis::MatchedBytes,
         None,
     )
@@ -499,6 +501,7 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
             &scope,
             &declared,
             &mut record,
+            None,
             pi_ext::RecordBasis::MatchedBytes,
             None,
         )
@@ -862,6 +865,7 @@ fn saved_pi_config_selection_refuses_native_disable_and_disabled_update() {
                 &scope,
                 &declared,
                 &mut record,
+                None,
                 pi_ext::RecordBasis::MatchedBytes,
                 None
             )

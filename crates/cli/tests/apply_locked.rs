@@ -468,52 +468,152 @@ fn an_apply_after_a_removed_package_revision_follows_the_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_apply_discards_an_edit_at_the_changed_source_selector() {
-    let world = world();
-    let installed = catalog_head(&world);
-    let agent = world.project.join(".claude/agents/review.md");
-    let original = fs::read_to_string(&agent).unwrap();
-    let edited = format!("{original}\nA local edit.\n");
-    write(&agent, &edited);
-    move_the_catalog(&world);
-    let moved = catalog_head(&world);
+    for changes_tool in [false, true] {
+        let world = world();
+        let installed = catalog_head(&world);
+        let (key, agent) = if changes_tool {
+            held_agent_on_codex(&world)
+        } else {
+            (
+                "agent:review:claude",
+                world.project.join(".claude/agents/review.md"),
+            )
+        };
+        let original = fs::read_to_string(&agent).unwrap();
+        let edited = format!("{original}\nA local edit.\n");
+        write(&agent, &edited);
+        move_the_catalog(&world);
+        let moved = catalog_head(&world);
+        let manifest = world.project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        let heading = "[sources.cat]\n";
+        assert_eq!(declared.matches(heading).count(), 1);
+        write(
+            &manifest,
+            &declared.replacen(heading, &format!("{heading}rev = \"{moved}\"\n"), 1),
+        );
+        commit(&world.project, "source revision and local edit");
+
+        let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+        assert!(applied.status.success(), "{}", said(&applied));
+        assert_eq!(fs::read_to_string(&agent).unwrap(), edited);
+        let held = record(&world);
+        assert_eq!(held["sources"]["cat"]["rev"], moved.as_str());
+        assert_eq!(held["entries"][key]["sourceCommit"], installed.as_str());
+        assert!(held["entries"][key]["selector"]["sourceRev"].is_null());
+        commit(&world.project, "applied with the edited agent held");
+
+        let applied = kendex(
+            &world.home,
+            &world.project,
+            &["apply", "--discard-edits", "-y", "--leave"],
+        );
+        assert!(applied.status.success(), "{}", said(&applied));
+        let after = fs::read_to_string(&agent).unwrap();
+        assert!(after.contains("Also read the tests."), "{after}");
+        assert!(!after.contains("A local edit."));
+        let after_record = record(&world);
+        assert_eq!(after_record["entries"][key]["sourceCommit"], moved.as_str());
+        assert_eq!(
+            after_record["entries"][key]["selector"]["sourceRev"],
+            moved.as_str()
+        );
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn held_agent_on_codex(world: &World) -> (&'static str, std::path::PathBuf) {
+    let before = record(world);
     let manifest = world.project.join("kendex.toml");
     let declared = fs::read_to_string(&manifest).unwrap();
-    let heading = "[sources.cat]\n";
-    assert_eq!(declared.matches(heading).count(), 1);
-    write(
-        &manifest,
-        &declared.replacen(heading, &format!("{heading}rev = \"{moved}\"\n"), 1),
-    );
-    commit(&world.project, "source revision and local edit");
-
+    let old = "[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]";
+    let new = "[agents.review]\nsource = \"cat\"\nharnesses = [\"codex\"]";
+    assert_eq!(declared.matches(old).count(), 1);
+    write(&manifest, &declared.replacen(old, new, 1));
     let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
     assert!(applied.status.success(), "{}", said(&applied));
-    assert_eq!(fs::read_to_string(&agent).unwrap(), edited);
-    let held = record(&world);
-    assert_eq!(held["sources"]["cat"]["rev"], moved.as_str());
+    let held = record(world);
+    let key = "agent:review:codex";
     assert_eq!(
-        held["entries"]["agent:review:claude"]["sourceCommit"],
-        installed.as_str()
+        held["entries"][key]["selector"],
+        before["entries"]["agent:review:claude"]["selector"]
     );
-    assert!(held["entries"]["agent:review:claude"]["selector"]["sourceRev"].is_null());
-    commit(&world.project, "applied with the edited agent held");
+    assert!(held["entries"][key]["selector"].is_object());
+    assert_eq!(
+        held["entries"][key]["sourceCommit"],
+        before["entries"]["agent:review:claude"]["sourceCommit"]
+    );
+    commit(&world.project, "held agent moved to Codex");
+    let path = held["entries"][key]["emitted"]["paths"][0]
+        .as_str()
+        .unwrap();
+    (key, world.project.join(path))
+}
 
-    let applied = kendex(
-        &world.home,
-        &world.project,
-        &["apply", "--discard-edits", "-y", "--leave"],
-    );
-    assert!(applied.status.success(), "{}", said(&applied));
-    let after = fs::read_to_string(&agent).unwrap();
-    assert!(after.contains("Also read the tests."), "{after}");
-    assert!(!after.contains("A local edit."));
-    let after_record = record(&world);
-    assert_eq!(
-        after_record["entries"]["agent:review:claude"]["sourceCommit"],
-        moved.as_str()
-    );
-    assert_eq!(
-        after_record["entries"]["agent:review:claude"]["selector"]["sourceRev"],
-        moved.as_str()
-    );
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_legacy_pi_reading_stays_unknown_through_apply_and_locked_refresh() {
+    for loses_registration in [false, true] {
+        let world = world();
+        let key = "pi-extension:@scope/widgets:pi";
+        let mut legacy = record(&world);
+        let before = legacy["entries"][key].clone();
+        assert!(
+            legacy["entries"][key]
+                .as_object_mut()
+                .unwrap()
+                .remove("selector")
+                .is_some()
+        );
+        write(
+            &world.project.join(".kendex-lock.json"),
+            &serde_json::to_string_pretty(&legacy).unwrap(),
+        );
+        commit(&world.project, "legacy Pi record");
+        let package = world.project.join(".pi/packages/@scope/widgets/index.js");
+        let original = fs::read_to_string(&package).unwrap();
+        move_the_catalog(&world);
+        let moved = catalog_head(&world);
+        let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+        assert!(fetched.status.success(), "{}", said(&fetched));
+        for (args, unregisters) in [
+            (&["apply", "-y", "--leave"][..], false),
+            (&["apply", "-y", "--leave"][..], false),
+            (
+                &["refresh", "--locked", "-y", "--leave"][..],
+                loses_registration,
+            ),
+        ] {
+            if unregisters {
+                write(
+                    &world.project.join(".pi/settings.json"),
+                    "{\"packages\": []}\n",
+                );
+            }
+            let applied = kendex(&world.home, &world.project, args);
+            assert!(applied.status.success(), "{}", said(&applied));
+            assert_eq!(fs::read_to_string(&package).unwrap(), original);
+            let held = record(&world);
+            for field in ["sourceCommit", "sourceHash", "renderedHash"] {
+                assert_eq!(
+                    held["entries"][key][field], before[field],
+                    "{args:?}: {field}"
+                );
+            }
+            assert!(
+                !held["entries"][key]
+                    .as_object()
+                    .unwrap()
+                    .contains_key("selector")
+            );
+        }
+        let refreshed = kendex(&world.home, &world.project, &["refresh", "-y", "--leave"]);
+        assert!(refreshed.status.success(), "{}", said(&refreshed));
+        assert!(fs::read_to_string(&package).unwrap().contains("later"));
+        let current = record(&world);
+        assert_eq!(current["entries"][key]["sourceCommit"], moved.as_str());
+        assert!(current["entries"][key]["selector"].is_object());
+        assert!(current["entries"][key]["selector"]["rev"].is_null());
+        assert!(current["entries"][key]["selector"]["sourceRev"].is_null());
+    }
 }

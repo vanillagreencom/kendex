@@ -174,6 +174,7 @@ fn installed_as(kind: ItemKind, name: &str, wanted: Wanted) -> Fixture {
             &f.scope,
             &declared,
             &mut record,
+            None,
             pi_ext::RecordBasis::MatchedBytes,
             None,
         )

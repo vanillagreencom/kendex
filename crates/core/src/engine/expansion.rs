@@ -70,7 +70,7 @@ pub(super) struct Planned {
     derived_from: Option<Reason>,
     /// The synthetic declaration that supplied this reading, inherited
     /// by dependencies when their parent owns the revision.
-    held_by: Option<super::Held>,
+    held_by: Option<SelectorBasis>,
 }
 
 #[derive(Default, Clone)]
@@ -85,7 +85,7 @@ pub(super) struct Expansion {
     /// still, by source and commit: read revisions, never a person's
     /// choice.
     invented: BTreeSet<(String, String)>,
-    held_owners: BTreeSet<(String, super::Held)>,
+    held_owners: BTreeMap<(String, super::Held), Option<crate::lock::DeclaredSelector>>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -112,7 +112,7 @@ impl Expansion {
             .iter()
             .map(|(key, planned)| {
                 let basis = match &planned.held_by {
-                    Some(_) => SelectorBasis::Held,
+                    Some(basis) => basis.clone(),
                     None => SelectorBasis::Declared(crate::lock::DeclaredSelector::of(
                         manifest,
                         &planned.decl.source,
@@ -359,10 +359,10 @@ impl Expansion {
         fresh || turned_on
     }
 
-    fn held_owner(&self, source: &str, owner: super::Held) -> Option<super::Held> {
+    fn held_owner(&self, source: &str, owner: super::Held) -> Option<SelectorBasis> {
         self.held_owners
-            .contains(&(source.to_owned(), owner.clone()))
-            .then_some(owner)
+            .get(&(source.to_owned(), owner))
+            .map(|selector| SelectorBasis::Held(selector.clone()))
     }
 
     /// Report every revision disagreement as a warning on the item, once
@@ -671,12 +671,7 @@ fn expand_read<'a>(
 ) -> Expansion {
     let mut expansion = Expansion {
         held_owners: held
-            .map(|pins| {
-                pins.pins()
-                    .iter()
-                    .map(|pin| (pin.source.clone(), pin.held.clone()))
-                    .collect()
-            })
+            .map(|pins| pins.selectors().clone())
             .unwrap_or_default(),
         invented: held
             .map(|pins| {

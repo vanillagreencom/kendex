@@ -127,11 +127,30 @@ fn owners_of(
 
 /// The synthetic pins one held plan wrote — exactly these and nothing else
 /// are taken back out, so a revision the user pinned is never touched.
+#[derive(Default)]
 pub(crate) struct HeldPins {
     pins: Vec<HeldPin>,
+    selectors: BTreeMap<(String, Held), Option<crate::lock::DeclaredSelector>>,
+}
+
+struct HeldReading {
+    commit: String,
+    selector: Option<crate::lock::DeclaredSelector>,
 }
 
 impl HeldPins {
+    fn insert(&mut self, pin: HeldPin, selector: Option<crate::lock::DeclaredSelector>) {
+        self.selectors
+            .insert((pin.source.clone(), pin.held.clone()), selector);
+        self.pins.push(pin);
+    }
+
+    pub(crate) fn selectors(
+        &self,
+    ) -> &BTreeMap<(String, Held), Option<crate::lock::DeclaredSelector>> {
+        &self.selectors
+    }
+
     /// Whether the revision this declaration now reads is one this pass
     /// invented. A member of a set consults it to tell a hold the person
     /// chose from a hold that only exists to keep the rest of the scope
@@ -176,8 +195,12 @@ impl HeldPin {
     /// held plan reads it: `None` where that record could not place it.
     pub(crate) fn recorded_in(&self, lock: &Lock) -> Option<String> {
         match &self.held {
-            Held::Item { kind, name } => held_at(lock, *kind, name, &self.source, &self.repo),
-            Held::Set { name } => held_commit(lock, name, &self.source, &self.repo),
+            Held::Item { kind, name } => {
+                held_at(lock, *kind, name, &self.source, &self.repo).map(|reading| reading.commit)
+            }
+            Held::Set { name } => {
+                held_commit(lock, name, &self.source, &self.repo).map(|reading| reading.commit)
+            }
         }
     }
 }
@@ -299,7 +322,15 @@ fn release(
             .copied()
             .unwrap_or(true)
     });
-    HeldPins { pins: gone }.unpin(held);
+    HeldPins {
+        pins: gone,
+        selectors: BTreeMap::new(),
+    }
+    .unpin(held);
+    pins.selectors.retain(|(source, owner), _| {
+        kept.iter()
+            .any(|pin| &pin.source == source && &pin.held == owner)
+    });
     pins.pins = kept;
     Ok(())
 }
@@ -343,9 +374,9 @@ fn held_manifest(
         exempt.extend(exempted_by(manifest, lock, target, targets.reach));
     }
     let mut held = manifest.clone();
-    let mut pins = HeldPins { pins: Vec::new() };
+    let mut pins = HeldPins::default();
     for kind in PLANNED_KINDS.into_iter().chain([ItemKind::PiExtension]) {
-        let pinnable: Vec<(String, String, String, String)> = held
+        let pinnable: Vec<_> = held
             .declared(kind)
             .iter()
             .filter(|(name, decl)| {
@@ -372,19 +403,22 @@ fn held_manifest(
                         return None;
                     }
                 }
-                let commit = held_at(lock, kind, name, &decl.source, repo)?;
-                Some((name.clone(), decl.source.clone(), repo.to_owned(), commit))
+                let reading = held_at(lock, kind, name, &decl.source, repo)?;
+                Some((name.clone(), decl.source.clone(), repo.to_owned(), reading))
             })
             .collect();
-        for (name, source, repo, commit) in pinnable {
+        for (name, source, repo, HeldReading { commit, selector }) in pinnable {
             if let Some(decl) = held.declared_mut(kind).get_mut(&name) {
                 decl.rev = Some(commit.clone());
-                pins.pins.push(HeldPin {
-                    held: Held::Item { kind, name },
-                    source,
-                    repo,
-                    commit,
-                });
+                pins.insert(
+                    HeldPin {
+                        held: Held::Item { kind, name },
+                        source,
+                        repo,
+                        commit,
+                    },
+                    selector,
+                );
             }
         }
     }
@@ -412,16 +446,20 @@ fn held_manifest(
         {
             continue;
         }
-        let Some(commit) = held_commit(lock, name, &decl.source, repo) else {
+        let Some(HeldReading { commit, selector }) = held_commit(lock, name, &decl.source, repo)
+        else {
             continue;
         };
         decl.rev = Some(commit.clone());
-        pins.pins.push(HeldPin {
-            held: Held::Set { name: name.clone() },
-            source: decl.source.clone(),
-            repo: repo.to_owned(),
-            commit,
-        });
+        pins.insert(
+            HeldPin {
+                held: Held::Set { name: name.clone() },
+                source: decl.source.clone(),
+                repo: repo.to_owned(),
+                commit,
+            },
+            selector,
+        );
     }
     (held, pins)
 }
@@ -502,17 +540,17 @@ pub(crate) fn installed_manifest(manifest: &Manifest, lock: &Lock) -> Manifest {
     for kind in PLANNED_KINDS {
         for (name, decl) in installed.declared_mut(kind) {
             if let Some(repo) = source_repo(manifest, &decl.source)
-                && let Some(commit) = held_at(lock, kind, name, &decl.source, repo)
+                && let Some(reading) = held_at(lock, kind, name, &decl.source, repo)
             {
-                decl.rev = Some(commit);
+                decl.rev = Some(reading.commit);
             }
         }
     }
     for (name, decl) in &mut installed.bundles {
         if let Some(repo) = source_repo(manifest, &decl.source)
-            && let Some(commit) = held_commit(lock, name, &decl.source, repo)
+            && let Some(reading) = held_commit(lock, name, &decl.source, repo)
         {
-            decl.rev = Some(commit);
+            decl.rev = Some(reading.commit);
         }
     }
     installed
@@ -580,8 +618,14 @@ fn from_source(entry: &LockEntry, source: &str, repo: &str) -> bool {
 /// match the source. Filtering first reads the survivors as agreement and
 /// pins the declaration on their commit, which moves the other copy into a
 /// history it was never installed from.
-fn held_at(lock: &Lock, kind: ItemKind, name: &str, source: &str, repo: &str) -> Option<String> {
-    let mut agreed: Option<String> = None;
+fn held_at(
+    lock: &Lock,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+    repo: &str,
+) -> Option<HeldReading> {
+    let mut agreed: Option<HeldReading> = None;
     for entry in lock
         .entries
         .values()
@@ -592,8 +636,14 @@ fn held_at(lock: &Lock, kind: ItemKind, name: &str, source: &str, repo: &str) ->
         }
         let commit = entry.source_commit.as_ref()?;
         match &agreed {
-            Some(seen) if seen != commit => return None,
-            _ => agreed = Some(commit.clone()),
+            Some(seen) if &seen.commit != commit => return None,
+            Some(_) => {}
+            None => {
+                agreed = Some(HeldReading {
+                    commit: commit.clone(),
+                    selector: entry.selector.clone(),
+                })
+            }
         }
     }
     agreed
@@ -605,9 +655,12 @@ fn held_at(lock: &Lock, kind: ItemKind, name: &str, source: &str, repo: &str) ->
 /// where it sits that survives its members moving. Read back only where
 /// the declaration still reads from what the record names — a rebind
 /// leaves it describing a set this scope does not install.
-fn held_commit(lock: &Lock, bundle: &str, source: &str, repo: &str) -> Option<String> {
+fn held_commit(lock: &Lock, bundle: &str, source: &str, repo: &str) -> Option<HeldReading> {
     let recorded = lock.bundles.get(bundle)?;
-    (recorded.source == source && recorded.source_repo == repo).then(|| recorded.commit.clone())
+    (recorded.source == source && recorded.source_repo == repo).then(|| HeldReading {
+        commit: recorded.commit.clone(),
+        selector: recorded.selector.clone(),
+    })
 }
 
 #[cfg(test)]

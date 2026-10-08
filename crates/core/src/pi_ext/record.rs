@@ -15,7 +15,7 @@ pub struct DeclaredPackage {
     pub source: String,
     pub source_repo: String,
     pub source_commit: Option<String>,
-    pub selector: crate::lock::DeclaredSelector,
+    pub selector: Option<crate::lock::DeclaredSelector>,
 }
 
 /// Preserve provenance but clear completion before replacement destroys the
@@ -85,7 +85,11 @@ pub fn resolve_declared(
         source: decl.source.clone(),
         source_repo: ready.provenance,
         source_commit: ready.commit,
-        selector: crate::lock::DeclaredSelector::of(manifest, &decl.source, decl.rev.as_deref()),
+        selector: Some(crate::lock::DeclaredSelector::of(
+            manifest,
+            &decl.source,
+            decl.rev.as_deref(),
+        )),
     }))
 }
 
@@ -126,7 +130,7 @@ pub fn matching_lock_entry(
         }),
         source_hash,
         source_commit: package.source_commit.clone(),
-        selector: Some(package.selector.clone()),
+        selector: package.selector.clone(),
         rendered_hash: Some(rendered_hash),
         enabled: super::settings::package_enabled(&super::settings_path(scope_root), name)?
             .ok_or_else(|| CoreError::PiPackage {
@@ -163,6 +167,7 @@ pub fn record_matching_manifest(
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
+    selectors: Option<&std::collections::BTreeMap<String, Option<crate::lock::DeclaredSelector>>>,
     basis: RecordBasis,
     plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
@@ -172,6 +177,7 @@ pub fn record_matching_manifest(
         manifest,
         lock,
         manifest.pi_extensions.iter(),
+        selectors,
         basis,
         plan,
     )
@@ -183,6 +189,7 @@ pub fn record_matching_name(
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
+    selectors: Option<&std::collections::BTreeMap<String, Option<crate::lock::DeclaredSelector>>>,
     name: &str,
 ) -> Result<Vec<crate::engine::DriftRow>> {
     record_matching(
@@ -191,17 +198,20 @@ pub fn record_matching_name(
         manifest,
         lock,
         manifest.pi_extensions.get_key_value(name).into_iter(),
+        selectors,
         RecordBasis::MatchedBytes,
         None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_matching<'a>(
     env: &Env,
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
     declarations: impl Iterator<Item = (&'a String, &'a crate::manifest::ItemDecl)>,
+    selectors: Option<&std::collections::BTreeMap<String, Option<crate::lock::DeclaredSelector>>>,
     basis: RecordBasis,
     mut plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
@@ -212,18 +222,21 @@ fn record_matching<'a>(
     let mut switches = Vec::new();
     for (name, decl) in declarations {
         let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
-        let result = resolve_declared(env, scope, manifest, name, decl).and_then(|resolved| {
-            Ok(match resolved {
-                Resolved::Ships(package) => Some(matching_lock_entry(
-                    &root,
-                    name,
-                    &package,
-                    lock.entries.get(&key),
-                    basis,
-                )?),
-                Resolved::Retired { .. } => None,
-            })
-        });
+        let result =
+            resolve_declared(env, scope, manifest, name, decl).and_then(
+                |resolved| match resolved {
+                    Resolved::Ships(mut package) => {
+                        if let Some(selectors) = selectors {
+                            package.selector = selectors.get(name).cloned().unwrap_or_else(|| {
+                                unreachable!("a planned Pi reading has its selector basis")
+                            });
+                        }
+                        matching_lock_entry(&root, name, &package, lock.entries.get(&key), basis)
+                            .map(Some)
+                    }
+                    Resolved::Retired { .. } => Ok(None),
+                },
+            );
         let Some(result) = result.transpose() else {
             continue;
         };

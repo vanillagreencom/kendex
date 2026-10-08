@@ -84,7 +84,7 @@ pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
 pub use observed::observed_rows;
 pub use planned::{
-    PlannedDeclaration, held_declarations, planned_closure, planned_closure_held,
+    HeldDeclarations, PlannedDeclaration, held_declarations, planned_closure, planned_closure_held,
     planned_declarations,
 };
 pub use scoring::{ItemSafety, SafetyTarget};
@@ -262,7 +262,7 @@ fn plan_scope_with_lock_base(
         &mut kept,
         &mut scope_notes,
     )?;
-    scope_writes::record_entry_selectors(&state, lock, &mut new_lock, &item_pass, &kept);
+    scope_writes::record_entry_selectors(&state, &mut new_lock, &item_pass, &kept);
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock, &said, &state.retired);
@@ -408,16 +408,24 @@ fn plan_pi_switches(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    state: &desired::DesiredState,
     new_lock: &mut Lock,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
 ) -> Result<Vec<DriftRow>> {
     let mut edits = Vec::new();
+    let selectors = state
+        .selector_bases
+        .iter()
+        .filter(|((kind, _), _)| *kind == crate::model::ItemKind::PiExtension)
+        .map(|((_, name), basis)| (name.clone(), basis.recorded()))
+        .collect();
     let drift = crate::pi_ext::record_matching_manifest(
         env,
         scope,
         manifest,
         new_lock,
+        Some(&selectors),
         crate::pi_ext::RecordBasis::Recorded,
         Some(crate::pi_ext::SwitchPlan {
             ops,
@@ -516,6 +524,7 @@ fn plan_removals(
             env,
             scope,
             manifest,
+            state,
             new_lock,
             ops,
             config_edits,

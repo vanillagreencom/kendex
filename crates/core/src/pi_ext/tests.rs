@@ -102,10 +102,10 @@ fn a_carrier_record_keeps_its_install_time_with_the_machine_half_and_takes_a_fre
         source: "cat".to_owned(),
         source_repo: "owner/repo".to_owned(),
         source_commit: None,
-        selector: crate::lock::DeclaredSelector {
+        selector: Some(crate::lock::DeclaredSelector {
             source_rev: None,
             rev: None,
-        },
+        }),
     };
     let mut recorded = matching_lock_entry(
         &f.scope,
@@ -197,10 +197,10 @@ fn a_disabled_declaration_installs_with_no_extensions_and_records_the_native_swi
         source: "cat".to_owned(),
         source_repo: "owner/repo".to_owned(),
         source_commit: None,
-        selector: crate::lock::DeclaredSelector {
+        selector: Some(crate::lock::DeclaredSelector {
             source_rev: None,
             rev: None,
-        },
+        }),
     };
     let record = matching_lock_entry(
         &f.scope,

@@ -132,13 +132,27 @@ pub fn planned_closure_held(
 /// outside the plan that resolves a declaration itself, the Pi settle,
 /// reads it here so it reads the commit the plan read. Without a hold this
 /// is `manifest`.
+pub struct HeldDeclarations<'a> {
+    pub manifest: std::borrow::Cow<'a, Manifest>,
+    /// Pi's successful record builder consumes the selector of this reading.
+    pub selectors: std::collections::BTreeMap<String, Option<crate::lock::DeclaredSelector>>,
+}
+
 pub fn held_declarations<'a>(
     env: &Env,
     manifest: &'a Manifest,
     lock: &crate::lock::Lock,
     options: &super::PlanOptions,
-) -> crate::error::Result<std::borrow::Cow<'a, Manifest>> {
-    Ok(desired::hold::held_planning(env, manifest, lock, options)?.0)
+) -> crate::error::Result<HeldDeclarations<'a>> {
+    let (planning, held) = desired::hold::held_planning(env, manifest, lock, options)?;
+    let selectors = desired::pi_selector_bases(&planning, held.as_ref())
+        .into_iter()
+        .map(|((_, name), basis)| (name, basis.recorded()))
+        .collect();
+    Ok(HeldDeclarations {
+        manifest: planning,
+        selectors,
+    })
 }
 
 /// The closure `manifest` expands to, `held` naming the declarations a

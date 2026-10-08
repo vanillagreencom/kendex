@@ -425,7 +425,16 @@ pub struct DesiredState {
 #[derive(Debug, Clone)]
 pub(super) enum SelectorBasis {
     Declared(crate::lock::DeclaredSelector),
-    Held,
+    Held(Option<crate::lock::DeclaredSelector>),
+}
+
+impl SelectorBasis {
+    pub(super) fn recorded(&self) -> Option<crate::lock::DeclaredSelector> {
+        match self {
+            Self::Declared(selector) => Some(selector.clone()),
+            Self::Held(selector) => selector.clone(),
+        }
+    }
 }
 
 /// Why a declared set's installed members stay as recorded, each with
@@ -740,7 +749,7 @@ fn compute(
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
-    state.selector_bases = expansion.selector_bases(manifest);
+    state.selector_bases = selector_bases(&expansion, manifest, held);
     state.kept_members =
         super::bundles::kept_members(lock, manifest, &state.kept_bundles, &expansion);
     let model_classes = if expansion.of(ItemKind::Agent).is_empty() {
@@ -832,6 +841,42 @@ fn compute(
         state.manifest_update = Some(updated_manifest);
     }
     Ok(state)
+}
+
+fn selector_bases(
+    expansion: &super::expansion::Expansion,
+    manifest: &Manifest,
+    held: Option<&hold::HeldPins>,
+) -> BTreeMap<(ItemKind, String), SelectorBasis> {
+    let mut bases = expansion.selector_bases(manifest);
+    bases.extend(pi_selector_bases(manifest, held));
+    bases
+}
+
+pub(super) fn pi_selector_bases(
+    manifest: &Manifest,
+    held: Option<&hold::HeldPins>,
+) -> BTreeMap<(ItemKind, String), SelectorBasis> {
+    let mut bases = BTreeMap::new();
+    for (name, decl) in &manifest.pi_extensions {
+        let owner = (
+            decl.source.clone(),
+            super::Held::Item {
+                kind: ItemKind::PiExtension,
+                name: name.clone(),
+            },
+        );
+        let basis = match held.and_then(|pins| pins.selectors().get(&owner)) {
+            Some(selector) => SelectorBasis::Held(selector.clone()),
+            None => SelectorBasis::Declared(crate::lock::DeclaredSelector::of(
+                manifest,
+                &decl.source,
+                decl.rev.as_deref(),
+            )),
+        };
+        bases.insert((ItemKind::PiExtension, name.clone()), basis);
+    }
+    bases
 }
 
 fn inline(env: &Env, scope: &Scope, manifest: &Manifest, state: &mut DesiredState) {

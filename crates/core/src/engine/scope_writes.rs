@@ -178,7 +178,6 @@ pub(super) struct RecordReadings {
 /// beside a targeted update; recording the new one would apply no edit.
 pub(super) fn record_entry_selectors(
     state: &DesiredState,
-    lock: &Lock,
     new_lock: &mut Lock,
     pass: &super::plan_pass::ItemPass,
     kept: &super::item_plan::KeptAsIs,
@@ -193,14 +192,7 @@ pub(super) fn record_entry_selectors(
             let Some(basis) = state.selector_bases.get(&(entry.kind, entry.name.clone())) else {
                 unreachable!("a successfully planned item has its reading owner's selector basis");
             };
-            match basis {
-                super::desired::SelectorBasis::Held => {
-                    entry.selector = lock.entries.get(key).and_then(|old| old.selector.clone());
-                }
-                super::desired::SelectorBasis::Declared(selector) => {
-                    entry.selector = Some(selector.clone());
-                }
-            }
+            entry.selector = basis.recorded();
         }
     }
 }

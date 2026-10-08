@@ -248,7 +248,7 @@ fn settleable(
         return Ok(Vec::new());
     }
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
-    let manifest = kendex_core::engine::held_declarations(env, &manifest, &lock, options)?;
+    let manifest = kendex_core::engine::held_declarations(env, &manifest, &lock, options)?.manifest;
     let mut found = Vec::new();
     for (name, decl) in &manifest.pi_extensions {
         let key = kendex_core::lock::entry_key(
@@ -655,7 +655,8 @@ fn install_rows(
     };
     let declared = kendex_core::engine::ops::manifest_for_reading(env, &plan.scope)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
-    let manifest = kendex_core::engine::held_declarations(env, &declared, &lock, options)?;
+    let readings = kendex_core::engine::held_declarations(env, &declared, &lock, options)?;
+    let manifest = &readings.manifest;
     for row in &plan.rows {
         let (source_dir, verb) = match &row.status {
             Status::Stale { source_dir } => (source_dir, "updated"),
@@ -669,7 +670,7 @@ fn install_rows(
         pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
-                record_pi_installs(env, plan, &manifest, Some(&row.name))?;
+                record_pi_installs(env, plan, &readings, Some(&row.name))?;
                 installed.count += 1;
                 out(&format!(
                     "  {verb} {} -> {}",
@@ -690,7 +691,7 @@ fn install_rows(
         }
     }
     if installed.failed.is_empty() {
-        record_pi_installs(env, plan, &manifest, None)?;
+        record_pi_installs(env, plan, &readings, None)?;
     }
     Ok(installed)
 }
@@ -729,19 +730,27 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
 fn record_pi_installs(
     env: &Env,
     plan: &ScopePlan,
-    manifest: &manifest::Manifest,
+    readings: &kendex_core::engine::HeldDeclarations<'_>,
     completed: Option<&str>,
 ) -> CliResult {
     let path = kendex_core::lock::lock_path(env, &plan.scope);
     let mut lock = kendex_core::lock::load(&path)?;
     let before = lock.clone();
     let drift = match completed {
-        Some(name) => pi_ext::record_matching_name(env, &plan.scope, manifest, &mut lock, name)?,
+        Some(name) => pi_ext::record_matching_name(
+            env,
+            &plan.scope,
+            &readings.manifest,
+            &mut lock,
+            Some(&readings.selectors),
+            name,
+        )?,
         None => pi_ext::record_matching_manifest(
             env,
             &plan.scope,
-            manifest,
+            &readings.manifest,
             &mut lock,
+            Some(&readings.selectors),
             pi_ext::RecordBasis::Recorded,
             None,
         )?,
