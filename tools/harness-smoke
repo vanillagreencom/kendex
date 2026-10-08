@@ -1892,8 +1892,8 @@ pkg_world() { # — sets PKG and PKG_RECORDER, exits 2 when kendex cannot instal
     refused verify copilot "$LOGS/copilot-packages-kendex-verify.log"
   fi
   note verified copilot "$PKG"
-  # CLAUDE.md is the one-line import kendex writes beside AGENTS.md, which is
-  # what the duplicate row asks about.
+  # A project-owned CLAUDE.md import can duplicate AGENTS.md instructions,
+  # which is what the duplicate row asks about.
   setup 'the package instruction directories' mkdir -p "$PKG/sub" "$PKG/.github/instructions" \
     "$PKG/smoke-payloads" "$PKG/smoke-triggers" "$PKG_RECORDER"
   printf '# Harness smoke\n\n%s\n' "$PKG_RULES" >"$PKG/AGENTS.md"
