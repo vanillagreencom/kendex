@@ -82,8 +82,8 @@
 # stamped at delegation, PATH/tmp/dev-round-ID-RID.json, names the round's
 # base_sha and delegated_at, and a fix receipt names a run only when the HEAD
 # --record reports for it contains that base, or the run records that base as
-# the one a rebase left off the branch, or the worktree-private restack map
-# rewrites that base to the run's exact HEAD, and the run started no earlier
+# the one a rebase left off the branch, or the HEAD contains that base's
+# rewritten SHA from the worktree-private restack map, and the run started no earlier
 # than delegated_at. A rebase mid-round moves HEAD off the base, and the round's
 # own run then records the base as orphaned. An earlier round's run, still on
 # disk and in the dev agent's context, fails one or the other: the implement
@@ -266,7 +266,7 @@ battery. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD
 that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
-base as the one a rebase left off the branch, or equal that base's rewritten
+base as the one a rebase left off the branch, or contain that base's rewritten
 SHA from the worktree-private kendex-rebase-map. The run must start no earlier
 than delegated_at, so a run from an earlier round is refused.
 --validate-record FILE takes the place of --validate-run-dir, never beside it,
