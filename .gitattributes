@@ -23,3 +23,5 @@ kendex.toml text eol=lf
 refresh/kendex-refresh.yml text eol=lf
 skills/review-gate/templates/kendex-refresh.yml text eol=lf
 .agents/skills/review-gate/templates/kendex-refresh.yml text eol=lf
+skills/orch/tests/fixtures/ci-wait/request-only-checks.json text eol=lf
+skills/orch/tests/fixtures/ci-wait/runs-request-only-active.json text eol=lf

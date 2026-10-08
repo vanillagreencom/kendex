@@ -219,6 +219,11 @@ that completed successfully discards the stale failures; a failed newest
 run, or a cancelled run with no newer or fresher sibling, stays terminal.
 A missing replacement reaches the timeout rather than passing.
 
+Before a settled green rollup can pass, the head's Actions run list must
+also show no active substantive-event run. An active run or an unreadable
+head/run lookup keeps the verdict pending, even if the only visible check
+is a completed review-request check or earlier polls saw checks in progress.
+
 A rollup of settled checks with at least one passed, none ever seen in
 progress, is either the prior run's leftovers or CI that finished before the
 wait started. It completes once the stale window has measured consecutive
@@ -630,7 +635,7 @@ get_failed_run_id() {
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
 }
 
-# Decide whether a settled failure verdict is terminal. `gh pr checks` can omit
+# Decide whether a settled verdict is terminal. `gh pr checks` can omit
 # dispatch-event suites from the head rollup, so correlate failing checks
 # against the Actions run list for the current head:
 #   active     - the failing run is re-running, or ANY substantive-event run
@@ -643,6 +648,11 @@ get_failed_run_id() {
 #                them and let the surviving statuses decide.
 #   terminal   - no such newer run, the newest one itself failed or was
 #                cancelled, or a failure cannot be attributed to a run.
+#   settled    - no failures and no substantive-event run remains active.
+#   unavailable - the head or its run list could not be read. A pass waits;
+#                 a failure remains terminal, as with unattributable failures.
+# A green rollup with no failures still needs this read: after a head push,
+# GitHub can expose only a completed review-request check while CI is active.
 # Substantive events are the PR-driving dispatches: pull_request,
 # pull_request_review, pull_request_review_comment, merge_group. Anything
 # unattributable stays terminal so the waiter still fails closed, and a
@@ -663,21 +673,23 @@ get_failed_run_id() {
 # overwrote the frozen ones rather than preceding them.
 superseding_run_state() {
   local classes="$1" head_sha runs_json
-  head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
+  head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null) || { echo "unavailable"; return 0; }
   if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
-    echo "terminal"
+    echo "unavailable"
     return 0
   fi
-  runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>/dev/null || true)
+  runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>/dev/null) || { echo "unavailable"; return 0; }
   if ! jq -e '(.workflow_runs? | type) == "array"' >/dev/null 2>&1 <<<"$runs_json"; then
-    echo "terminal"
+    echo "unavailable"
     return 0
   fi
   jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]' <<<"$runs_json")" "$CI_RUN_JQ_DEFS"'
     def substantive:
       ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
     ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
-    | [ .failed[]
+    | if (.failed | length) == 0 then
+        if $head_in_flight then "active" else "settled" end
+      else [ .failed[]
       | runid as $rid
       | if $rid == null then "terminal"
         else
@@ -703,6 +715,7 @@ superseding_run_state() {
     | if any(.[]; . == "terminal") then "terminal"
       elif any(.[]; . == "active") then "active"
       else "superseded"
+      end
       end
   ' <<<"$classes"
 }
@@ -937,6 +950,15 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
 
   # Check if all complete (no pending)
   if [ "$pending_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
+    # The rollup can lag a head push or a dispatch. Neither an unchanged
+    # green rollup nor progress seen on an earlier head proves CI has ended.
+    supersede_state=$(superseding_run_state "$check_classes" || echo "unavailable")
+    if [ "$supersede_state" != "settled" ]; then
+      check_classes=$(jq -c '.pending += [{name: "current-head Actions", state: "EXPECTED", bucket: "pending"}]' <<<"$check_classes")
+      last_check_classes="$check_classes"
+      poll_sleep "$POLL_INTERVAL"
+      continue
+    fi
     if [ "$seen_in_progress" = true ]; then
       # We watched checks go from in-progress to complete — reliable
       emit_result "complete" "$check_classes"

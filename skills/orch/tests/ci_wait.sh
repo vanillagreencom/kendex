@@ -2,7 +2,8 @@
 # Tests for orch/scripts/ci-wait: the auth ladder (env token, keyring, bot
 # token), the deterministic result contract (pass, fail, timeout, error, on
 # stdout in both modes, pending at the deadline never silent), the no-checks
-# registration grace, and the run correlations that keep a stale or
+# registration grace, and the run correlations that keep an active run or
+# unreadable head-run evidence from passing and keep a stale or
 # superseded failure from ending a wait: latest run per workflow,
 # approval-gated status replacement, superseded same-head runs the rollup
 # omits, rerun attempts under an older run id, and the transient-failure
@@ -75,12 +76,20 @@ case "${1:-}" in
     if [[ "${2:-}" == repos/*/actions/workflows && -n "${STUB_PROBE_COST:-}" ]]; then
       sleep "$STUB_PROBE_COST"
     fi
-    # superseded-failure correlation queries the head's Actions
+    # Settled-verdict correlation queries the head's Actions
     # runs. Record the query when asked so tests can prove head-sha scoping.
     if [[ "${2:-}" == repos/*/actions/runs* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       if [[ -n "${STUB_ACTIONS_RUNS_QUERY_FILE:-}" ]]; then
         printf '%s' "$2" > "$STUB_ACTIONS_RUNS_QUERY_FILE"
+      fi
+      if [[ "${STUB_ACTIONS_RUNS_EXIT:-0}" != 0 ]]; then
+        echo '{"workflow_runs":[]}'
+        exit "$STUB_ACTIONS_RUNS_EXIT"
+      fi
+      if [[ -n "${STUB_ACTIONS_RUNS_RELEASE_AFTER:-}" ]] && [[ "$(cat "$STUB_PR_CHECKS_COUNT_FILE")" -gt "$STUB_ACTIONS_RUNS_RELEASE_AFTER" ]]; then
+        cat "$STUB_ACTIONS_RUNS_RELEASE_FIXTURE"
+        exit 0
       fi
       if [[ -n "${STUB_ACTIONS_RUNS_FIXTURE:-}" ]]; then
         cat "$STUB_ACTIONS_RUNS_FIXTURE"
@@ -123,10 +132,14 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      # `--json headRefOid` asks for the head sha the superseded-
-      # failure correlation scopes its Actions-runs query to.
+      # A checks sequence can move to another head after the first poll,
+      # as GitHub does when a push lands while a waiter remains active.
       for _a in "$@"; do
         if [[ "$_a" == "headRefOid" ]]; then
+          if [[ -n "${STUB_NEXT_HEAD_SHA:-}" ]] && [[ "$(cat "$STUB_PR_CHECKS_COUNT_FILE")" -gt 1 ]]; then
+            echo "$STUB_NEXT_HEAD_SHA"
+            exit 0
+          fi
           echo "${STUB_HEAD_SHA:-737bce791577e140436490e0fed5751bb5144a61}"
           exit 0
         fi
@@ -185,6 +198,7 @@ case "${1:-}" in
           mixed)   echo '[{"name":"build","state":"SUCCESS"},{"name":"docs","state":"SKIPPED"}]'; exit 0 ;;
           skipped) echo '[{"name":"build","state":"SKIPPED"}]'; exit 0 ;;
           pending) echo '[{"name":"build","state":"IN_PROGRESS"}]'; exit 8 ;;
+          request) cat "$STUB_REQUEST_CHECK_FIXTURE"; exit 0 ;;
           empty)   echo '[]'; exit 0 ;;
           fail_rerun)
             [[ ! -s "${STUB_RERUN_CALLS_FILE:-/dev/null}" ]] || { echo '[{"name":"build","state":"SUCCESS"}]'; exit 0; }
@@ -569,6 +583,27 @@ table "$JSON" \
   "a failed approved run fails at once|||STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-fresh-failed.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=complete verdict=fail check.Build=FAILURE" \
   "approved jobs passed but the aggregate lags: pending to the bounded timeout||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-status-lag.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=timeout verdict=pending check.CI+Required=EXPECTED" \
   "the replacement status published against the approved run passes|||STUB_PR_CHECKS_FIXTURE=$FX/approved-status-replaced.json|rc=0 status=complete verdict=pass check.CI+Required=SUCCESS failed=0"
+
+echo "=== a completed review-request check cannot pass while substantive CI is active ==="
+# GitHub can register only request-copilot-review's successful check while
+# the new head's pull_request workflow is active. The budget exceeds the
+# stale window, both without visible progress and after an older head showed
+# progress. Completed CI releases the hold; an unreadable read cannot do so.
+NEXT_HEAD=d049a699ebe08c6b639fdc19855a7152ae768084
+REQUEST="STUB_PR_CHECKS_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$NEXT_HEAD"
+ACTIVE="STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-request-only-active.json"
+jq '.workflow_runs[0].status = "queued"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-queued.json"
+jq '.workflow_runs[0].status = "completed" | .workflow_runs[0].conclusion = "success"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-completed.json"
+printf '{"workflow_runs":null}\n' > "$TMP_ROOT/runs-unreadable.json"
+table "$JSON" \
+  "an unchanged request-only rollup stays pending beyond the stale window|||$REQUEST,$ACTIVE|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED failed=0 elapsed_seconds=300 runs_head=$NEXT_HEAD" \
+  "a queued substantive run also holds the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-queued.json|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED" \
+  "progress on the old head cannot pass request-only checks on the new head|||STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$DEFAULT_HEAD,STUB_NEXT_HEAD_SHA=$NEXT_HEAD,$ACTIVE|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300 runs_head=$NEXT_HEAD" \
+  "completed substantive CI releases the request-only rollup after confirmation|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-completed.json|rc=0 status=complete verdict=pass check.request=SUCCESS pending=0" \
+  "CI completing during the wait starts a fresh confirmation window|||STUB_PR_CHECKS_SEQUENCE=request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$NEXT_HEAD,$ACTIVE,STUB_ACTIONS_RUNS_RELEASE_AFTER=2,STUB_ACTIONS_RUNS_RELEASE_FIXTURE=$TMP_ROOT/runs-request-only-completed.json|rc=0 status=complete verdict=pass pending=0 elapsed_seconds=150" \
+  "a failed Actions read with a green-looking response stays pending|||$REQUEST,STUB_ACTIONS_RUNS_EXIT=1|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED" \
+  "an unreadable Actions array stays pending|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-unreadable.json|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED" \
+  "an unreadable head stays pending|||STUB_PR_CHECKS_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=unknown|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED runs_head=none"
 
 echo "=== a settled failure attributable only to superseded runs is correlated against the head's Actions runs ==="
 # The rollup can omit a newer same-head run entirely; an active newer
