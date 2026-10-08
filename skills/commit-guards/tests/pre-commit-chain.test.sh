@@ -164,6 +164,55 @@ run_rows \
   "a violation and a step that did not complete both print, every later lane still runs, and the verdict is the error's|fx_both||$BARE||rc=2 $DL;fixture=doc-limits-violation --staged;$PF;fixture=preflight-error --staged;$(incomplete preflight 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
   "a status past 1 is a step that did not complete, with its status|fx_bot_dies||$BARE||rc=2 $BOT;fixture=bot-error check --staged;$(incomplete 'bot-instructions check --staged' 3);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 
+echo "=== a bot-instructions install the manifest never configured blocks nothing; every other refusal blocks ==="
+# The real package, so the record the lane reads is the one it prints. It is
+# committed with the seed; the commit stages the manifest alone.
+bot_real() { # MANIFEST
+  mkdir -p "$R/.agents/skills"
+  cp -R "$SKILL_DIR/../bot-instructions" "$R/.agents/skills/bot-instructions"
+  rm -rf -- "${R:?}/.agents/skills/bot-instructions/tests"
+  git -C "$R" add -A && git -C "$R" commit -qm 'chore: install bot-instructions'
+  printf '# fixture\n\n## Code Review Rules\n\nx\n' >"$R/AGENTS.md"
+  printf '%b' "$1" >"$R/kendex.toml"
+  git -C "$R" add -A
+}
+fx_bot_unadopted() { repo bot-unadopted; bot_real '[skills.orch]\n'; }
+fx_bot_stale() { repo bot-stale; bot_real '[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = "fixture"\nsummary = "A fixture."\n\n[bot-instructions.bots]\ncodex = true\n'; }
+fx_bot_refuses() { repo bot-refuses; tree bot-instructions "bot-instructions: source=<repo>" 2; }
+UNADOPTED="rc=0 $BOT;pre-commit: not-adopted=bot-instructions:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
+REFUSED="rc=2 $BOT;bot-instructions: source=<repo> check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
+run_rows \
+  "an installed package with no [bot-instructions] table is not adopted: one line, and the chain passes|fx_bot_unadopted||$BARE||$UNADOPTED" \
+  "any other exit-2 refusal is a step that did not complete, and blocks|fx_bot_refuses||$BARE||$REFUSED"
+fx_bot_stale
+stale="$(run "" "$BARE" "")"
+case "$stale" in
+  "rc=1 $BOT;bot-instructions: findings="*";$BATCH_OK;$LOCAL_NONE;$BLOCKED") stale=blocked ;;
+esac
+assert_eq "a configured repository whose rendered bot files are stale still blocks" blocked "$stale"
+
+# Controls, each on a private install: without the not-adopted branch the
+# unconfigured install blocks, and with the record's key unread every exit-2
+# refusal passes.
+bot_mutant() { # NAME OLD NEW
+  install "$TMP/bot-mutant-$1"
+  python3 - "$TMP/bot-mutant-$1/commit-guards/scripts/pre-commit" "$2" "$3" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+assert s.count(sys.argv[2]) == 1
+p.write_text(s.replace(sys.argv[2], sys.argv[3]))
+EDIT
+}
+bot_mutant unread '"$status" -eq 2 ] && [[' '"$status" -eq 99 ] && [['
+bot_mutant keyless '"bot-instructions: unconfigured="*' '"bot-instructions: "*'
+fx_bot_unadopted_control() { repo bot-unadopted-control; bot_real '[skills.orch]\n'; }
+fx_bot_refuses_control() { repo bot-refuses-control; tree bot-instructions "bot-instructions: source=<repo>" 2; }
+fx_bot_unadopted_control
+assert_eq "control: a lane that ignores the unconfigured record blocks the unconfigured install" "rc=2" "$(run "" bot-mutant-unread "" | cut -d' ' -f1)"
+fx_bot_refuses_control
+assert_eq "control: a lane that matches any refusal passes the source refusal" "rc=0" "$(run "" bot-mutant-keyless "" | cut -d' ' -f1)"
+
 echo "=== the repo-local entry: announced, run last, and its status folded like every lane's ==="
 fx_local_ran() { repo local-ran; local_entry '#!/bin/sh\necho "fixture=local-clean"\nexit 0\n'; }
 fx_local_fails() { repo local-fails; local_entry '#!/bin/sh\necho "fixture=local-violation"\nexit 1\n'; }

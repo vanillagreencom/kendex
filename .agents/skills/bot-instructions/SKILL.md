@@ -50,7 +50,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
 
-Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks on both nonzero codes; the `commit-guards` chain runs `check --staged` itself where this package is installed.
+Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks on both nonzero codes, except the `unconfigured` refusal of a repo that never adopted this package; the `commit-guards` chain runs `check --staged` itself where this package is installed.
 
 ## What reads what
 

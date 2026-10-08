@@ -121,10 +121,25 @@ fi
 # Same sibling contract for the bot-instructions check: the rendered review
 # bot instruction files are judged against the staged doctrine and manifest,
 # one coherent staged state, so no consumer wires a wrapper of its own.
+# A repo whose manifest carries no [bot-instructions] table has not adopted
+# the package, which arrives as another package's dependency too: its
+# `unconfigured` refusal record, the first line on exit 2, passes the lane.
+# Every other refusal blocks.
+bot_instructions_check() {
+  local out="" status=0 record
+  out="$("$BOT_CHECK" check --staged 2>&1)" || status=$?
+  record="${out%%$'\n'*}"
+  if [ "$status" -eq 2 ] && [[ "$record" == "bot-instructions: unconfigured="* ]]; then
+    gg_message not-adopted "bot-instructions:${record#*=}" "=== pre-commit: bot-instructions is installed but ${record#*=} declares no [bot-instructions] table; nothing to check"
+    return 0
+  fi
+  [ -z "$out" ] || printf '%s\n' "$out"
+  return "$status"
+}
 if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
   BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
   if [ -x "$BOT_CHECK" ]; then
-    run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
+    run_step "bot-instructions check --staged" bot_instructions_check
   else
     gg_lane_incomplete "$BOT_CHECK" "$BOT_SKILL"
   fi
