@@ -42,7 +42,7 @@ An item asking for a test takes the fix-round rule there.
 
 Update a principle doc or a decision record when a fix makes a claim in it false; the `docs-writing` skill says what each holds. For **UI lifecycle or cache fixes** — cached or mirrored UI state, changed window or event handling — trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
 
-Before a fix returns, grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one; name the sweep in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
+Before a fix returns, name the finding's defect class: the assumption that failed, not the cited line. Grep for the verb or pattern to find every other site, input form or copy that makes that assumption. Fix each one, or close the class at its generator. Also grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one. Name the class and the sites swept in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
 
 Note anything a fix revealed about deeper problems, and cite the decision ID or rule behind every skip.
 
