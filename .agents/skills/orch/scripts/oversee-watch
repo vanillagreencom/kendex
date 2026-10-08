@@ -444,7 +444,7 @@ LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 [[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
 # Age threshold in seconds for lane-long on a running or parked lane.
 # Repeat schedule: oversee-watch --help, event lane-long.
-LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-14400}"
+LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-12600}"
 [[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-age-secs-invalid "" "value=$LANE_AGE_SECS"
 # The state's records the pane never judges and the start-stall check reads,
 # rebuilt by every fleet read: `<window>=<item>` for each Pi lane, judged from

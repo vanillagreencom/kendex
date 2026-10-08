@@ -636,6 +636,7 @@ if [[ "$id" == oversee ]]; then
 fi
 file="$state_dir/workflow-state-$id.json"
 case "$cmd" in
+  path) exec "$REAL_WORKFLOW_STATE" ${state_dir:+--state-dir "$state_dir"} "$@" ;;
   exists) [[ -f "$file" ]] ;;
   handoff-standing) shift; exec "$REAL_WORKFLOW_STATE" --state-dir "${state_dir:-tmp}" handoff-standing "$@" ;;
   get)
@@ -780,7 +781,7 @@ shortened_ceiling_watch() {
 # token, stripped before the watch runs: it asks for no --repo at all, the
 # default path where the watch resolves the repository from `gh repo view`.
 run_watch() {
-  local env_args=() repo_args=(--repo owner/repo) team_args=(LINEAR_TEAM=kendex) watch_args=() arg
+  local env_args=() repo_args=(--repo owner/repo) team_args=(LINEAR_TEAM=kendex) age_args=(ORCH_WATCH_LANE_AGE_SECS=999999999) watch_args=() arg
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     # A bare LINEAR_TEAM, no `=`, drops the name from the child environment
     # altogether — the shape `LINEAR_TEAM=` cannot express, since that exports
@@ -788,6 +789,7 @@ run_watch() {
     # bare form is the one the Done-when names: no LINEAR_TEAM anywhere.
     case "$1" in
       LINEAR_TEAM) team_args=() ;;
+      ORCH_WATCH_LANE_AGE_SECS) age_args=() ;;
       *) env_args+=("$1") ;;
     esac
     shift
@@ -803,7 +805,7 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
-           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_WATCH_LANE_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
+           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_WATCH_LANE_STALL_SECS -u ORCH_WATCH_LANE_AGE_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
            -u ORCH_SECURITY_ALERT_TOKEN_FILE -u ORCH_CONNECTED_REPOS \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
@@ -812,7 +814,7 @@ run_watch() {
            ORCH_SECURITY_ALERT_TOKEN_FILE="$STUB_DIR/alert-token" \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            ORCH_WATCH_MAIL_INTERVAL=0 \
-           ORCH_WATCH_LANE_AGE_SECS=999999999 \
+           ${age_args[@]+"${age_args[@]}"} \
            ${team_args[@]+"${team_args[@]}"} \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \

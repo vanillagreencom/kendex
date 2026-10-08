@@ -286,7 +286,8 @@ check_lane_long() {
     [[ "$prior" != "$launched" ]] || prior="$launched|1"
     [[ "$prior" != "$launched|$interval" ]] || continue
     lane_step "$item"
-    echo "EVENT lane-long $item age=$age stage=$LANE_STEP"
+    lane_long_rounds "$item"
+    echo "EVENT lane-long $item age=$age review_rounds=$LANE_REVIEW_ROUNDS repeated_class_rounds=$LANE_REPEATED_CLASS_ROUNDS stage=$LANE_STEP"
     PASS_EVENT=1
     rows="$(lane_row_set lane-long "$rows" "$item" "$launched|$interval")"
   done
@@ -294,6 +295,42 @@ check_lane_long() {
   # handoff leaves between running records keeps the reported interval.
   rows="$(lane_row_prune lane-long "$rows" ${RECORDED_ITEMS[@]+"${RECORDED_ITEMS[@]}"})"
   lane_row_commit "$rows"
+}
+
+# The fix workflows append one patched_causes entry per finding. Distinct
+# commits distinguish patch rounds; several findings in one commit do not.
+# No class history can establish rounds that raised a cause but patched none.
+lane_long_rounds() { # ITEM
+  local root host counts
+  LANE_REVIEW_ROUNDS=-
+  LANE_REPEATED_CLASS_ROUNDS=-
+  ! item_parked "$1" || return 0
+  ! item_in "$1" ${FILELESS[@]+"${FILELESS[@]}"} || return 0
+  hosted_root "$1"
+  local_root "$1"
+  root="${HOSTED_ROOT:-$LOCAL_ROOT}"
+  host=""
+  [[ -z "$HOSTED_ROOT" ]] || host="$HOSTED_HOST"
+  if ! lane_item_state "$WORKFLOW_STATE" "$SCRIPT_DIR/lane-host" "$STATE_DIR_SETTING" "$1" "$host" "$root" "$WORK_DIR"; then
+    ow_message lane-long-rounds-unread "item=$1" >&2
+    cat -- "$WORK_DIR/state.err" >&2
+    return 0
+  fi
+  [[ -n "$LANE_ITEM_STATE" ]] || return 0
+  if ! counts="$(jq -r '
+    ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0) + (.pr_comment_review.iterations // 0)) as $rounds
+    | (.pr_comment_review.patched_causes // []) as $patches
+    | (reduce $patches[] as $patch ({seen: {}, repeated: []};
+        if .seen[$patch.cause] == null then .seen[$patch.cause] = [$patch.commit]
+        elif (.seen[$patch.cause] | index($patch.commit)) != null then .
+        else .seen[$patch.cause] += [$patch.commit] | .repeated += [$patch.commit] end)) as $history
+    | [$rounds, (if ($patches | length) == 0 then "-" else ($history.repeated | unique | length) end)] | @tsv
+  ' <<<"$LANE_ITEM_STATE" 2>"$WORK_DIR/state.err")"; then
+    ow_message lane-long-rounds-unread "item=$1" >&2
+    cat -- "$WORK_DIR/state.err" >&2
+    return 0
+  fi
+  IFS=$'\t' read -r LANE_REVIEW_ROUNDS LANE_REPEATED_CLASS_ROUNDS <<<"$counts"
 }
 
 # The Step line of ITEM's status file as LANE_STEP: `parked` for a parked lane,
