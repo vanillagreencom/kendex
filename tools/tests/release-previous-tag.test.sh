@@ -75,8 +75,8 @@ run_tool() {
   OUT=$(cat "$TMP_ROOT/out")
 }
 
-# The newest stable release is on a later API page. Neither API order nor
-# version order is the publication order that the release-cut comparison uses.
+# The newest stable release is on a later API page, so API order alone cannot
+# select the previous stable release.
 cat >"$TMP_ROOT/releases.json" <<'JSON'
 [
  [{"tag_name":"main-build-99","draft":false,"prerelease":true,"published_at":"2026-10-08T10:00:00Z"},
@@ -91,10 +91,6 @@ cat >"$TMP_ROOT/releases.json" <<'JSON'
 JSON
 cp "$TMP_ROOT/releases.json" "$TMP_ROOT/mixed.json"
 
-fresh_clone stable
-run_tool "$TOOL"
-assert_eq "$RC:$OUT" '0:v1.2.3' 'newer main build does not replace the stable release'
-
 fresh_clone missing-tag
 if git -C "$CLONE" rev-parse --verify 'v1.2.3^{commit}' >/dev/null 2>&1; then
   echo 'FAIL: clone already has the release tag' >&2
@@ -105,7 +101,7 @@ if git -C "$CLONE" cat-file -e "$PR_HEAD" 2>/dev/null; then
   exit 1
 fi
 run_tool "$TOOL"
-assert_eq "$RC:$OUT" '0:v1.2.3' 'missing release tag is retrieved'
+assert_eq "$RC:$OUT" '0:v1.2.3' 'stable release is selected and its missing tag is retrieved'
 RESOLVED=$(git -C "$CLONE" rev-parse "$OUT^{commit}")
 assert_eq "$RESOLVED" "$PR_HEAD" 'retrieved tag names the release PR head'
 DIFF=$(git -C "$CLONE" diff --name-only "$OUT" HEAD)
