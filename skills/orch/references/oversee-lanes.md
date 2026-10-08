@@ -17,7 +17,7 @@ What ends a park, each per [oversee-events.md § Event kinds](oversee-events.md#
 
 ## Talking to a lane
 
-A mailbox lane whose host declares `files=verb` needs `--root [MAIL_ROOT] --host` on the sends below. Use the lane record's `mail_root` as `[MAIL_ROOT]`. A send that reads such a record without `--host` refuses as `host-root-required` before it writes mail or prints a sent receipt.
+A mailbox lane whose host declares `files=verb` needs `--root [MAIL_ROOT] --host` on the sends below. Use the lane record's `mail_root` as `[MAIL_ROOT]`. The send uses the record's `host` instead of the configured provider. A different root refuses as `host-root-mismatch`. A send that reads such a record without `--host` refuses as `host-root-required` before it writes mail or prints a sent receipt.
 
 Answering and directing are the same two commands on every harness and every surface, inside tmux or not. Add `--root [MAIL_ROOT] --host` for a lane whose record puts it on another host, and `--root [MAIL_ROOT]` alone, run from a checkout of that repository, for a local lane whose `mail_root` is another repository's worktree.
 

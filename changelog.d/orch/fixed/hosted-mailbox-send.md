@@ -1,1 +1,1 @@
-- Refuse a send to a recorded hosted mailbox when it lacks `--root MAIL_ROOT --host`, so a local write cannot report delivery to a lane on another host.
+- Send mail through the hosted lane's recorded provider and require its recorded mailbox root, so a different provider or root cannot receive mail with a false sent receipt.
