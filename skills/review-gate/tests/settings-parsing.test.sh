@@ -104,9 +104,8 @@ echo "=== a file named by REVIEW_GATE_SETTINGS_FILE ==="
 # file the handle names. The name reaches indirect expansion and is
 # interpolated into ERE and sed patterns, so the identifier-shape rejection
 # is what stands between a metacharacter name and pattern injection. Values
-# are single-line basic strings with no double quote and no backslash, a
-# trailing comment accepted; a backslash cannot mean an escape in one reader
-# and a literal in another, so it is refused. The whole [env] table is
+# are single-line basic strings with no double quote or backslash, or
+# literal strings with no apostrophe inside. A trailing comment is accepted. The whole [env] table is
 # validated, not only the requested key, and an exported value never masks a
 # malformed file: kendex-env refuses the same files before its parent-env
 # skip, so a per-key extractor would split the family contract.

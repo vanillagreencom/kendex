@@ -23,8 +23,8 @@
 # environment variables and the built-in defaults.
 #
 # The parser reads the [env] table only, and inside it accepts flat
-# single-line basic-string assignments whose value contains no `"` and no
-# `\` — exactly the kendex settings contract, decoded identically by every
+# single-line basic strings with no `"` or `\`, or literal strings with no
+# apostrophe inside — the kendex settings contract, read identically by every
 # kendex resolver. An assignment outside [env] belongs to another tool and
 # is ignored; a key re-assigned inside [env], or a value in any other
 # shape, fails loud below.
@@ -344,8 +344,9 @@ sr_env_table() { # FILE [LABEL] — [env]-table lines on stdout; 1 + ::error on 
       value = l
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+$/, "", value)
-      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "doc-limits-error=settings-syntax value=%s\n::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", key, src, key, key > "/dev/stderr"
+      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/ &&
+          value !~ /^\047[^\047]*\047[[:space:]]*(#.*)?$/) {
+        printf "doc-limits-error=settings-syntax value=%s\n::error::%s: unsupported syntax for %s (expected a single-line basic string with no double quote or backslash, or a literal string with no apostrophe inside)\n", key, src, key > "/dev/stderr"
         exit 3
       }
       print
@@ -435,11 +436,11 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # pipefail turns into a 141 the sourcing caller's errexit acts on. This
       # file sets no mode of its own; it runs in the caller's, which does.
       line="${matches%%$'\n'*}"
-      if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
-        sr_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
+      if ! grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*(\"[^\"\\\\]*\"|'[^']*')[[:space:]]*(#.*)?\$" <<<"$line"; then
+        sr_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside)" >&2
         return 1
       fi
-      val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
+      val="$(printf '%s\n' "$line" | sed -n -e "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p;t" -e "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*'\([^']*\)'.*\$/\1/p")"
       printf '%s' "$val"
       return 0
     fi

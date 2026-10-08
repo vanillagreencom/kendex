@@ -2,7 +2,7 @@
 # Pins for lib/settings.sh's gg_setting contract: explicit env > .env.local
 # > .kendex/settings.toml > kendex.settings.toml > built-in default, with
 # `.env` read by nothing, only the [env] table consulted, the contract value
-# grammar (single-line double-quoted, no `"`, no `\`) enforced loudly over
+# grammar (single-line basic with no `"` or `\`, or literal with no apostrophe) enforced loudly over
 # the whole table, a malformed lower source failing under a higher override,
 # and a source skipped only when it is ABSENT: a directory, a dangling or
 # cyclic symlink, or an unreadable file at a source path is a loud refusal,

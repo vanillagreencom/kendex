@@ -26,9 +26,9 @@
 #   ORCH_STATE_DIR = "tmp"
 #
 # Assignments outside [env] belong to other tools and are ignored. Inside
-# [env], a duplicate key or a value in any shape other than a single-line
-# double-quoted string with no `"` and no `\` (an optional trailing `#`
-# comment allowed) is a configuration error that fails the load — both
+# [env], a duplicate key fails the load. Values are single-line basic
+# strings with no `"` or `\`, or literal strings with no apostrophe inside. An optional trailing `#`
+# comment is allowed. Other shapes fail the load — both
 # resolver families read exactly this shape, so a value either decodes
 # identically everywhere or fails loud here. Headers are held to the same
 # standard: a line starting with `[` must be a lone `[name]` header, and
@@ -92,7 +92,7 @@ kendex_env_message() {
       ;;
     value-syntax)
       printf 'kendex-env: value-syntax file=%s key=%s\n' "$file" "$key"
-      printf '%s\n' "::error::$file: unsupported syntax for $key (expected a single-line basic string with no '\"' and no '\\': $key = \"value\")"
+      printf '%s\n' "::error::$file: unsupported syntax for $key (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside)"
       ;;
   esac
 }
@@ -168,12 +168,15 @@ kendex_trim() { # OUT_VAR RAW — RAW without leading or trailing whitespace, as
   printf -v "$1" '%s' "$_kendex_trimmed"
 }
 
-# Decode one [env] value per the settings contract: a single-line basic
-# string containing no `"` and no `\`, optionally followed by a `#`
-# comment. Anything else is a shape the contract does not carry.
+# Basic strings need no decoding under this contract. Literal strings
+# preserve backslashes and double quotes as text. Both end at the first
+# closing delimiter, so a quote in a trailing comment stays outside.
 kendex_decode_value() { # OUT_VAR RAW — decoded value assigned to OUT_VAR; 1 = not contract shape, OUT_VAR untouched; overwrites the caller's BASH_REMATCH, since the match runs in the caller's shell rather than a subshell
   local _kendex_decode_raw _kendex_decode_regex='^"([^"\]*)"[[:space:]]*(#.*)?$'
   kendex_trim _kendex_decode_raw "$2"
+  if [[ "$_kendex_decode_raw" == \'* ]]; then
+    _kendex_decode_regex="^'([^']*)'[[:space:]]*(#.*)?$"
+  fi
   [[ "$_kendex_decode_raw" =~ $_kendex_decode_regex ]] || return 1
   printf -v "$1" '%s' "${BASH_REMATCH[1]}"
 }

@@ -36,7 +36,7 @@ Requires Git, awk, jq 1.7 or newer (jq 1.6 refuses every generated-path inventor
 
 Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Each resolves environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; a `.env` file is never read. Per-check flags (`--excludes`, `--baseline`) override every source; relative paths are repo-root-relative.
 
-A settings file is read whole. Each `[env]` value is a single-line double-quoted string with no `"` and no `\` inside. One value in another shape, or one key assigned twice, fails every read from that file, on any key, because every kendex settings reader refuses the same file. The error for a value in another shape names the file, the line and the key: `settings-string=kendex.settings.toml:3:OTHER`.
+A settings file is read whole. Each `[env]` value is a single-line basic string with no `"` or `\` inside, or a literal string with no apostrophe inside. Literal strings preserve backslashes and double quotes as text. One value in another shape, or one key assigned twice, fails every read from that file, on any key, because every kendex settings reader refuses the same file. The error for a value in another shape names the file, the line and the key: `settings-string=kendex.settings.toml:3:OTHER`.
 
 ```toml
 [env]

@@ -6,7 +6,7 @@
 #   kendex.settings.toml > default
 # A `.env` file is never read. The TOML reader loads the [env] table only;
 # a duplicate key inside [env], a value outside the contract grammar
-# (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
+# (single-line basic with no `"` or `\`, or literal with no apostrophe), or a `[`-leading line that
 # is not a lone [name] header, fails the load.
 #
 # Parent values win over every project file. For other keys, `.env.local` stays
@@ -186,7 +186,7 @@ s6_case "a duplicate key the parent also exports" $'[env]\nDUP = "a"\nDUP = "b"'
 # `seen` spans the whole file, not one section run: re-entering [env]
 # through another table is the same ambiguity as two adjacent lines.
 s6_case "a duplicate split across re-entered [env] sections" $'[env]\nDUP = "a"\n[other]\nX = "x"\n[env]\nDUP = "b"' "kendex-env: duplicate-key file=$PROJ6/kendex.settings.toml key=DUP"
-s6_case "a single-quoted value" $'[env]\nSQ = \x27sv\x27' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=SQ"
+s6_case "an apostrophe inside a literal value" $'[env]\nSQ = \x27can\x27t\x27' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=SQ"
 s6_case "an array value" $'[env]\nARR = ["a", "b"]' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=ARR"
 s6_case "a backslash in the value" $'[env]\nBS = "a\\b"' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=BS"
 s6_case "an unquoted value" $'[env]\nUNQ = bare' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=UNQ"

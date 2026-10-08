@@ -22,8 +22,8 @@
 # environment variables and the built-in defaults.
 #
 # The parser reads the [env] table only, and inside it accepts flat
-# single-line basic-string assignments whose value contains no `"` and no
-# `\` — exactly the kendex settings contract, decoded identically by every
+# single-line basic strings with no `"` or `\`, or literal strings with no
+# apostrophe inside — the kendex settings contract, read identically by every
 # kendex resolver. An assignment outside [env] belongs to another tool and
 # is ignored; a key re-assigned inside [env], or a value in any other
 # shape, fails loud below. It fails every read from that file, whichever key
@@ -334,8 +334,9 @@ gg_env_table() { # FILE [LABEL] — [env]-table lines on stdout; 1 + ::error on 
       # The value is FILE:LINE:KEY: the table is refused whole, so the key
       # that fails can be one the caller never asked for, and the line is
       # what the person fixing the file needs to find it.
-      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "%s: settings-string=%s:%d:%s\n  %s on line %d is not a single-line basic string with no \" and no \\ inside (%s = \"value\"); every read of this file fails until it is rewritten.\n", check, src, NR, key, key, NR, key > "/dev/stderr"
+      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/ &&
+          value !~ /^\047[^\047]*\047[[:space:]]*(#.*)?$/) {
+        printf "%s: settings-string=%s:%d:%s\n  %s on line %d is not a supported single-line basic or literal string; every read of this file fails until it is rewritten.\n", check, src, NR, key, key, NR > "/dev/stderr"
         exit 3
       }
       print
@@ -464,14 +465,13 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       fi
       line="$(printf '%s\n' "$matches" | head -n 1)"
       # A PRESENT assignment this parser cannot read fails LOUDLY, never
-      # collapses to empty. Only the contract shape is supported: a
-      # quote-free, backslash-free value ([^"\]*) makes the extraction exact
-      # even with a trailing TOML comment.
-      if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
-        gg_message settings-string "$file:$name" "unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
+      # collapses to empty. Each supported string ends at its first
+      # closing delimiter; a quote in a trailing comment stays outside.
+      if ! grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*(\"[^\"\\\\]*\"|'[^']*')[[:space:]]*(#.*)?\$" <<<"$line"; then
+        gg_message settings-string "$file:$name" "unsupported syntax for $name (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside)" >&2
         return 1
       fi
-      val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
+      val="$(printf '%s\n' "$line" | sed -n -e "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p;t" -e "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*'\([^']*\)'.*\$/\1/p")"
       printf '%s' "$val"
       return 0
     fi

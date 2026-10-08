@@ -17,8 +17,8 @@
 # environment variables and the built-in defaults.
 #
 # The parser reads the [env] table only, and inside it accepts flat
-# single-line basic-string assignments whose value contains no `"` and no
-# `\` — exactly the kendex settings contract, decoded identically by every
+# single-line basic strings with no `"` or `\`, or literal strings with no
+# apostrophe inside — the kendex settings contract, read identically by every
 # kendex resolver. An assignment outside [env] belongs to another tool and
 # is ignored; a key re-assigned inside [env], or a value in any other
 # shape, fails loud below.
@@ -145,8 +145,9 @@ rg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       value = l
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+$/, "", value)
-      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "review-gate-error=settings-syntax value=%s\n::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", key, src, key, key > "/dev/stderr"
+      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/ &&
+          value !~ /^\047[^\047]*\047[[:space:]]*(#.*)?$/) {
+        printf "review-gate-error=settings-syntax value=%s\n::error::%s: unsupported syntax for %s (expected a single-line basic string with no double quote or backslash, or a literal string with no apostrophe inside)\n", key, src, key > "/dev/stderr"
         exit 3
       }
       print
@@ -315,15 +316,13 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
       # A PRESENT assignment this parser cannot read (e.g. TOML array syntax
       # for a list key) must fail LOUDLY, never collapse to empty: an empty
       # value can silently widen the gate (empty trusted-logins = any
-      # non-author). Only the contract shape is supported — the value is
-      # quote-free and backslash-free ([^"\]*), which makes the extraction
-      # exact even with a trailing TOML comment (accepted); anything else is
-      # a configuration error.
-      if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
-        rg_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\"; list keys pack items with ';' separators)" >&2
+      # non-author). Each supported string ends at its first closing
+      # delimiter; a quote in a trailing comment stays outside.
+      if ! grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*(\"[^\"\\\\]*\"|'[^']*')[[:space:]]*(#.*)?\$" <<<"$line"; then
+        rg_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside; list keys pack items with ';' separators)" >&2
         return 1
       fi
-      val="$(printf '%s\n' "$line" | rg_settings_extract "$file" sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")" || return 1
+      val="$(printf '%s\n' "$line" | rg_settings_extract "$file" sed -n -e "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p;t" -e "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*'\([^']*\)'.*\$/\1/p")" || return 1
       printf '%s' "$val"
       return 0
     fi
