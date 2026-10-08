@@ -272,6 +272,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
+#   main-push-failing<TAB><repo><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last unmeasured reading, or ->
@@ -1650,8 +1651,18 @@ REFRESH_RUN='def run: [.createdAt, .databaseId, .attempt];
     (.createdAt | type) == "string" and (.createdAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"));'
 REFRESH_ROW='^(\["[0-9TZ:-]{20}",([0-9]+),[0-9]+\])\|(unjudged|[0-9]+\|.+)?$'
 REFRESH_ROW_UNRECORDED='^[0-9]+\|.+$'
+workflow_absent() { # REPO WORKFLOW ERROR_FILE
+  local workflows workflow_pattern="${2//./\\.}"
+  # gh rewrites every workflow-endpoint 404, including access failures.
+  # Only a complete successful workflow list can prove absence.
+  grep -q "^HTTP 404: workflow $workflow_pattern not found on the default branch (" "$3" \
+    && workflows="$(gh api --paginate "repos/$1/actions/workflows" \
+      --jq '.workflows[].path' 2>"$3")" \
+    && ! grep -qxF ".github/workflows/$2" <<<"$workflows"
+}
+
 check_main_push() {
-  local repo runs run conclusion jobs log cause key prior rc
+  local repo runs run conclusion jobs log cause failures key prior changed rc
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err"
   for repo in "${REPOS[@]}"; do
     rc=0
@@ -1665,6 +1676,11 @@ check_main_push() {
         else error("invalid completed main-push runs") end' <<<"$runs" 2>"$errf")" || rc=$?
     fi
     if (( rc != 0 )); then
+      if workflow_absent "$repo" skill-tests.yml "$errf"; then
+        rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
+          || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+        continue
+      fi
       ow_message main-push-unread "repo=$repo" "read=runs" "exit=$rc" >&2
       continue
     fi
@@ -1689,53 +1705,55 @@ check_main_push() {
     fi
     rc=0
     log="$(gh run view "$run" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
-    cause=unread
+    cause=unread failures=null
     if (( rc == 0 )); then
       # run-all.sh emits suite=... fail=N; the workflow's other suite loops
       # emit FAILED: paths. Keep the first failure, without gh's log prefix.
-      cause="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
-        !found && (/^suite=.* fail=[1-9][0-9]*($| )/ || /^FAILED: / || /^FAIL[ :]/ || /^run-all.sh: (suite-timeout|run-deadline) /) {
-          gsub("\t", " "); print; found=1
+      log="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
+        /^suite=.* fail=[1-9][0-9]*($| )/ || /^FAILED: / || /^FAIL[ :]/ || /^run-all.sh: (suite-timeout|run-deadline) / {
+          gsub("\t", " "); print
         }' <<<"$log")" || rc=$?
-      [[ -n "$cause" ]] || cause=unread
+      if (( rc == 0 )); then
+        [[ -z "$log" ]] || cause="${log%%$'\n'*}"
+        failures="$(jq -Rsc 'split("\n") | map(select(length > 0) |
+          if startswith("suite=") then split(" ")[0] else . end) | unique' <<<"$log")" || rc=$?
+      fi
     fi
     if (( rc != 0 )); then
       ow_message main-push-unread "repo=$repo" "read=log" "run=$run" "exit=$rc" >&2
     fi
-    # A later run of the same failed jobs and suite is the same incident.
-    key="$(jq -cn --argjson jobs "$jobs" --arg cause "$cause" '
-      [$jobs, ($cause | if startswith("suite=") then split(" ")[0] else . end)]')" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
     prior="$(lane_row_get main-push-failing "$rows" "$repo")" \
       || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-    if [[ "$key" != "$prior" ]]; then
+    # Missing logs cannot change known failures. Recovery fills missing
+    # evidence quietly; later reads still compare it, including rerun attempts.
+    key="$(jq -cn --argjson jobs "$jobs" --argjson failures "$failures" --argjson prior "${prior:-null}" '
+      [$jobs, (if $failures == null and $prior[0] == $jobs then $prior[1] else $failures end)]')" \
+      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+    changed="$(jq -nr --argjson key "$key" --argjson prior "${prior:-null}" '
+      $prior == null or $key[0] != $prior[0] or ($prior[1] != null and $key[1] != $prior[1])')" \
+      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+    if [[ "$changed" == true ]]; then
       printf 'EVENT main-push-failing %s workflow=skill-tests.yml run=%s jobs=%s cause=%s\n' "$repo" "$run" "$jobs" "$cause"
       PASS_EVENT=1
-      rows="$(lane_row_set main-push-failing "$rows" "$repo" "$key")" \
-        || die state-read-failed "" "repo=$repo" "row=main-push-failing"
     fi
+    rows="$(lane_row_set main-push-failing "$rows" "$repo" "$key")" \
+      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
   done
   lane_row_commit "$rows"
 }
 
 check_refresh() {
-  local repo runs order newest run since recent log cause prior rec rec_id standing passes rc workflows report
+  local repo runs order newest run since recent log cause prior rec rec_id standing passes rc report
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/refresh.err"
   for repo in "${REPOS[@]}"; do
     rc=0
     runs="$(gh run list --repo "$repo" --workflow kendex-refresh.yml --status completed --limit 2 \
       --json databaseId,attempt,conclusion,createdAt 2>"$errf")" || rc=$?
     if (( rc != 0 )); then
-      # gh rewrites every workflow-endpoint 404, including access failures.
-      # Only a complete successful workflow list can prove absence.
-      if grep -q '^HTTP 404: workflow kendex-refresh\.yml not found on the default branch (' "$errf"; then
-        if workflows="$(gh api --paginate "repos/$repo/actions/workflows" \
-          --jq '.workflows[].path' 2>"$errf")" \
-          && ! grep -qxF '.github/workflows/kendex-refresh.yml' <<<"$workflows"; then
-          rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
-            || die state-read-failed "" "repo=$repo" "row=refresh-failing"
-          continue
-        fi
+      if workflow_absent "$repo" kendex-refresh.yml "$errf"; then
+        rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
+          || die state-read-failed "" "repo=$repo" "row=refresh-failing"
+        continue
       fi
       ow_message refresh-unread "repo=$repo" "read=runs" "exit=$rc" >&2
       continue

@@ -260,14 +260,17 @@ The long pass's events, checked and reported in this order:
                              without gh's job, step and timestamp prefix;
                              unread means no such line was available.
                              Reported in the long pass that reads it, once
-                             per changed jobs or failing suite. Suite timing
+                             per changed jobs or set of failing suites. Suite timing
                              and passing-test counts do not change that key.
                              A later run with the same failures stays quiet.
-                             A completed run with
-                             no failure clears the incident. A failed run or
+                             A completed run with no failure or a proven
+                             absent workflow clears the incident. A failed run or
                              jobs read prints main-push-unread on stderr and
                              keeps the incident intact. A failed log read
-                             prints that notice and reports cause=unread
+                             prints that notice and keeps known failures when
+                             jobs are unchanged. A first unread log reports
+                             cause=unread. Recovered logs update the recorded
+                             failures without repeating the event
   EVENT security-alert <repo> kind=<dependabot|code-scanning|secret-scanning>
         number=<N> [severity=<s>] <package|rule>=<name> [manifest=<path>]
         [scope=<scope>] [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]

@@ -206,7 +206,7 @@ done
 # A failed workflow list must not become a successful absence read.
 GUARD_WATCH="$(mutant_scripts refresh-guard/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-guard/github"
-mutate_file "$GUARD_WATCH" "          --jq '.workflows[].path' 2>\"\$errf\")\"" "          --jq '.workflows[].path' 2>\"\$errf\" || true)\""
+mutate_file "$GUARD_WATCH" "      --jq '.workflows[].path' 2>\"\$3\")\"" "      --jq '.workflows[].path' 2>\"\$3\" || true)\""
 new_case refresh_guard_control
 printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
