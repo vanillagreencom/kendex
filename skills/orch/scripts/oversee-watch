@@ -259,7 +259,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # Per-lane rows in the first repository's baseline, never a file of their own,
 # beside the reducer's `<pr>\t<kind>` and triage's `triage\t<id>`:
 #   lane-asking<TAB><lane><TAB><pane key>|<turn identity>|<copilot note>|<slice cksum>
-#   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<reset key>
+#   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<wall kind>|<reset key>
 #   model-capacity<TAB><lane><TAB><pane key>|<turn identity>|model-capacity
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   terminal-close<TAB><item><TAB><terminal state>|<lane record JSON>
@@ -2448,7 +2448,7 @@ observe_lanes() {
   # No early return for an empty fleet: the rows of the last lanes to leave
   # still end their walls and are pruned below.
   local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
-  local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
+  local banner banner_rc reset_key seen_at seen_pane seen_reported seen_kind seen_key
   for lane in ${LANES[@]+"${LANES[@]}"}; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
@@ -2518,10 +2518,10 @@ observe_lanes() {
     prior="$(lane_row_get usage-limit "$state" "$lane")"
     if [[ -n "$banner" ]]; then
       seen_at=""; seen_pane=""; seen_key=""
-      [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$prior"
+      [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_kind seen_key <<<"$prior"
       if [[ "$seen_pane" != "$key" || "$seen_key" != "$reset_key" ]]; then
         [[ -z "$prior" ]] || wall_pause "$lane" "$seen_at"
-        state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
+        state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key|||$reset_key")"
       fi
     else
       [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
@@ -3434,7 +3434,7 @@ check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
   local lane pane below cmd pid state window i states="" claims="" claimed pane_key
-  local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event quiet
+  local seen seen_at seen_pane seen_reported seen_kind seen_key reset_at reset_utc reset_note event quiet
   local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
   local banner banner_rc turn hosted_item hosted_harness wall_kind
   # One liveness read and one pane capture per lane per pass: a lane's kind is
@@ -3573,11 +3573,17 @@ check_lanes() {
     if ! seen="$(lane_row_get usage-limit "$asking_state" "$lane")"; then
       die state-read-failed "" "lane=$lane" "row=usage-limit"
     fi
-    seen_at=""; seen_pane=""; seen_reported=""; seen_key=""
-    [[ -z "$seen" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$seen"
+    seen_at=""; seen_pane=""; seen_reported=""; seen_kind=""; seen_key=""
+    [[ -z "$seen" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_kind seen_key <<<"$seen"
+    wall_kind="$(lane_field "$states" "$i" 4)" || die state-read-failed "" "lane=$lane" "field=wall-kind"
+    # A retry can change a no-reset usage wall into a failed login in the
+    # same pane. The judge's kind makes that a new wall to report.
+    if [[ "$seen_kind" != "$wall_kind" ]]; then
+      [[ -z "$seen_kind" ]] || wall_pause "$lane" "$seen_at"
+      seen_at="$PASS_NOW"; seen_reported=""; seen_kind="$wall_kind"
+    fi
     reset_at=""
     [[ -z "$seen_key" ]] || reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
-    wall_kind="$(lane_field "$states" "$i" 4)" || die state-read-failed "" "lane=$lane" "field=wall-kind"
     [[ "$wall_kind" != auth ]] || reset_at=""
     event=usage-limit
     reset_note=""
@@ -3630,7 +3636,7 @@ check_lanes() {
     echo "EVENT $event $lane${claimed:+ $claimed}$reset_note${wall_kind:+ wall_kind=$wall_kind}"
     banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
     PASS_EVENT=1
-    asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$event|$seen_key")"
+    asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$event|$seen_kind|$seen_key")"
   done
   # A pane keeps its last screen, so neither a stale prompt under a bare shell
   # nor a dialog answered passes ago is a live question. A current prompt is

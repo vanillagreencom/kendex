@@ -68,5 +68,35 @@ new_case auth_lane
 printf '%s\n' '❯ continue the issue' "$CLAUDE_AUTH" "$COMPOSER" > "$STUB_DIR/pane-gh-2.txt"
 OUT="$(run_watch -- --max-loops 1 gh-2 2>"$STUB_DIR/err")"
 assert_contains "$OUT" 'EVENT usage-limit gh-2 wall_kind=auth' "lane login failure reaches recovery with the shared wall kind on the first pass" "$STUB_DIR/err"
+
+# Codex can retry an out-of-credits turn before the watch captures a clear
+# state, then report a permanent refresh failure in the same pane.
+lane_wall_sequence() { # NAME
+  new_case "$1"
+  printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+  local shape message events rc
+  while IFS='|' read -r shape message; do
+    printf '%s\n' '› continue the issue' "$message" '› Ask Codex to do anything' > "$STUB_DIR/pane-gh-2.txt"
+    rc=0
+    OUT="$(run_watch -- --max-loops 1 gh-2 2>"$STUB_DIR/err")" || rc=$?
+    events="$(awk '/^EVENT usage-limit /' <<<"$OUT")"
+    printf '%s|%s|%s\n' "$shape" "$rc" "${events:-quiet}"
+  done <<'ROWS'
+usage|■ Your workspace is out of credits.
+auth|■ Your access token could not be refreshed because your refresh token has expired.
+auth_repeat|■ Your access token could not be refreshed because your refresh token has expired.
+usage_again|■ Your workspace is out of credits.
+usage_repeat|■ Your workspace is out of credits.
+ROWS
+}
+WALL_SEQUENCE=$'usage|0|EVENT usage-limit gh-2\nauth|0|EVENT usage-limit gh-2 wall_kind=auth\nauth_repeat|0|quiet\nusage_again|0|EVENT usage-limit gh-2\nusage_repeat|0|quiet'
+assert_eq "$(lane_wall_sequence wall_kind_transition)" "$WALL_SEQUENCE" \
+  "a same-pane wall kind change reports once and an unchanged wall stays quiet" "$STUB_DIR/err"
+IDENTITY_CONTROL="$(mutant_scripts auth-identity/orch oversee-watch)"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-identity/github"
+mutate_file "$IDENTITY_CONTROL/oversee-watch" 'if [[ "$seen_kind" != "$wall_kind" ]]; then' 'if false; then'
+assert_eq "$(WATCH_BIN="$IDENTITY_CONTROL/oversee-watch" lane_wall_sequence wall_kind_control)" \
+  $'usage|0|EVENT usage-limit gh-2\nauth|0|quiet\nauth_repeat|0|quiet\nusage_again|0|quiet\nusage_repeat|0|quiet' \
+  "must-fail: ignoring the judge wall kind suppresses a later login failure" "$STUB_DIR/err"
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
