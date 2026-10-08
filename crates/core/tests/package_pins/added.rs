@@ -447,6 +447,84 @@ fn a_new_tool_dependency_keeps_installed_shared_bytes() {
     }
 }
 
+/// `desired_command::as_skill` installs a Codex command in the shared
+/// skills directory. A later skill request, direct or required, cannot
+/// claim that command's bytes or record them under the skill's source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_refuses_a_different_package_at_a_retained_position() {
+    use kendex_core::error::CoreError;
+    use kendex_core::model::{HarnessId, ItemKind};
+
+    for (dependency, harness) in [
+        (false, HarnessId::Codex),
+        (true, HarnessId::Codex),
+        (false, HarnessId::Gemini),
+        (true, HarnessId::Pi),
+    ] {
+        let w = world();
+        let commands = w.home.join("commands-cat");
+        let skills = w.home.join("skills-cat");
+        std::fs::create_dir_all(commands.join("commands")).unwrap();
+        std::fs::write(commands.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        std::fs::write(
+            commands.join("commands/shared.md"),
+            "---\ndescription: command description\n---\nCOMMAND BODY.\n",
+        )
+        .unwrap();
+        write_skill(&skills, "shared", "", "SKILL BODY.");
+        write_skill(
+            &skills,
+            "parent",
+            "dependencies:\n  required: [shared]\n",
+            "PARENT BODY.",
+        );
+        std::fs::write(skills.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        super::write_manifest(
+            &w,
+            &format!(
+                "schema = 6\n[sources.commands-cat]\npath = {commands:?}\n[sources.skills-cat]\npath = {skills:?}\n[install]\nharnesses = [\"codex\"]\n[commands.shared]\nsource = \"commands-cat\"\n"
+            ),
+        );
+        let installed = kendex_core::engine::audit(&w.env, &w.scope).unwrap();
+        apply::execute(&w.env, &installed.plan).unwrap();
+        let tree = w.home.join("app/.agents/skills/shared");
+        assert!(installed_body(&w, "shared").contains("COMMAND BODY."));
+        let before = kendex_core::hash::hash_tree(&w.home.join("app")).unwrap();
+        let request = AddRequest {
+            source: Some("skills-cat".into()),
+            skills: vec![if dependency { "parent" } else { "shared" }.into()],
+            harnesses: Some(vec![harness]),
+            ..AddRequest::default()
+        };
+        match ops::add(&w.env, &w.scope, &request) {
+            Err(CoreError::AddPositionConflict {
+                kind,
+                name,
+                installed_kind,
+                installed_name,
+                path,
+                existing,
+                requested,
+            }) => {
+                assert_eq!(kind, ItemKind::Skill);
+                assert_eq!(name, "shared");
+                assert_eq!(installed_kind, ItemKind::Command);
+                assert_eq!(installed_name, "shared");
+                assert_eq!(path, tree);
+                assert_eq!(existing.as_ref(), commands.to_string_lossy().as_ref());
+                assert_eq!(requested.as_ref(), skills.to_string_lossy().as_ref());
+            }
+            Err(other) => panic!("unexpected error category: {other}"),
+            Ok(_) => panic!("a skill must not claim an installed command's tree"),
+        }
+        assert_eq!(
+            kendex_core::hash::hash_tree(&w.home.join("app")).unwrap(),
+            before
+        );
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn write_hook(root: &std::path::Path, name: &str, requires: &[&str], body: &str) {
     std::fs::create_dir_all(root.join("hooks")).unwrap();

@@ -10,6 +10,7 @@ use super::targets::{
 };
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
+use crate::error::{CoreError, Result};
 use crate::lock::{Lock, LockEntry};
 use crate::model::{ItemKind, Scope};
 use crate::render::agent::file_name;
@@ -25,6 +26,214 @@ pub(super) fn paths(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<PathBuf> 
         .values()
         .flat_map(|entry| installed(env, scope, entry).files)
         .collect()
+}
+
+struct RetainedInstall<'a> {
+    entry: &'a LockEntry,
+    paths: Vec<PathBuf>,
+}
+
+/// An add may reuse a retained position only for its recorded package and
+/// source revision. Codex commands can occupy skill directories through
+/// `desired_command::as_skill`, so a path alone cannot authorize reuse.
+pub(crate) struct Retained<'a> {
+    installs: Vec<RetainedInstall<'a>>,
+}
+
+impl<'a> Retained<'a> {
+    pub(crate) fn new(env: &Env, scope: &Scope, lock: &'a Lock, keys: &BTreeSet<String>) -> Self {
+        let installs = keys
+            .iter()
+            .map(|key| {
+                let entry = &lock.entries[key];
+                let mut paths = installed(env, scope, entry).files;
+                paths.extend(in_place_source(
+                    env,
+                    scope,
+                    (entry.kind, &entry.source, &entry.name),
+                ));
+                RetainedInstall { entry, paths }
+            })
+            .collect();
+        Self { installs }
+    }
+
+    pub(crate) fn prepare(&self, state: &mut super::desired::DesiredState) -> Result<()> {
+        let mut refused = BTreeSet::new();
+        for item in &mut state.items {
+            self.check(item)?;
+            if state.addition_kept.contains(&item.key) {
+                continue;
+            }
+            if let Some(refusal) = self.reuse_tree(item)? {
+                state.refused.push(refusal);
+                refused.insert(item.key.clone());
+            }
+        }
+        state.items.retain(|item| !refused.contains(&item.key));
+        Ok(())
+    }
+
+    fn check(&self, item: &super::desired::Desired) -> Result<()> {
+        use super::desired::Owns;
+        let mut positions = item.artifact.positions();
+        if let super::desired::Artifact::Tree { canonical, .. } = &item.artifact
+            && canonical.is_symlink()
+            && self.at(canonical).is_some()
+        {
+            let resolved = crate::paths::canonical(canonical)
+                .map_err(|error| CoreError::io(canonical, error))?;
+            if self.at(&resolved).is_none() {
+                return Err(CoreError::ForeignSymlink {
+                    target: canonical.clone(),
+                    points_to: resolved,
+                });
+            }
+            positions.push(super::desired::Position {
+                path: resolved,
+                owns: Owns::Tree,
+            });
+        }
+        for install in &self.installs {
+            let entry = install.entry;
+            let same_package = entry.kind == item.kind && entry.name == item.name;
+            if same_package
+                && (entry.source_repo != item.provenance
+                    || entry.source_commit != item.source_commit)
+            {
+                return Err(CoreError::AddRevisionConflict {
+                    kind: item.kind,
+                    name: item.name.clone(),
+                    existing: entry
+                        .source_commit
+                        .clone()
+                        .unwrap_or_else(|| entry.source_repo.clone()),
+                    requested: item
+                        .source_commit
+                        .clone()
+                        .unwrap_or_else(|| item.provenance.clone()),
+                });
+            }
+            for position in positions
+                .iter()
+                .filter(|position| position.owns != Owns::Keys)
+            {
+                for path in &install.paths {
+                    if (position.path.starts_with(path) || path.starts_with(&position.path))
+                        && !same_package
+                    {
+                        return Err(CoreError::AddPositionConflict {
+                            kind: item.kind,
+                            name: item.name.clone(),
+                            installed_kind: entry.kind,
+                            installed_name: entry.name.clone(),
+                            path: position.path.clone(),
+                            existing: source_revision(
+                                &entry.source_repo,
+                                entry.source_commit.as_deref(),
+                            ),
+                            requested: source_revision(
+                                &item.provenance,
+                                item.source_commit.as_deref(),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn at(&self, path: &std::path::Path) -> Option<&LockEntry> {
+        self.installs
+            .iter()
+            .find(|install| install.paths.iter().any(|owned| owned == path))
+            .map(|install| install.entry)
+    }
+
+    fn reuse_tree(
+        &self,
+        item: &mut super::desired::Desired,
+    ) -> Result<Option<super::desired::Refused>> {
+        use super::desired::{Artifact, RefusalKind, Refused};
+        let Artifact::Tree {
+            canonical,
+            files,
+            link,
+            in_place,
+        } = &mut item.artifact
+        else {
+            return Ok(None);
+        };
+        let Some(entry) = self.at(canonical) else {
+            return Ok(None);
+        };
+        // Keep a recorded link as a link. Converting it to a tree would
+        // replace a position the add did not name.
+        let native = link.clone().unwrap_or_else(|| canonical.clone());
+        if canonical.is_symlink() {
+            let resolved = crate::paths::canonical(canonical)
+                .map_err(|error| CoreError::io(&*canonical, error))?;
+            *canonical = resolved;
+            *link = (native != *canonical).then_some(native);
+        }
+        let sealed = crate::source_read::SealedSource::open(canonical)?;
+        let installed = sealed.collect_tree(canonical, &crate::source_read::TOOL_CACHES)?;
+        let name = crate::harness::rendered_name(item.harness, &item.name);
+        let findings = crate::render::validate::validate_skill_tree(
+            item.harness,
+            &item.name,
+            &name,
+            &installed,
+        );
+        if let Some(reason) = super::desired::refusal_reason(&findings) {
+            return Ok(Some(Refused {
+                kind: item.kind,
+                name: item.name.clone(),
+                harness: item.harness,
+                refusal: RefusalKind::Render,
+                reason,
+            }));
+        }
+        // A new record must not attest the person's edited bytes. The
+        // shared edit hold reports this without creating that record.
+        let identity = crate::hash::RenderedIdentity::rendered(canonical, &installed);
+        if entry
+            .rendered_hash
+            .as_ref()
+            .is_some_and(|recorded| !identity.matches(recorded))
+        {
+            return Ok(None);
+        }
+        if let Some(source) = &mut item.source {
+            source.verbatim &= installed == *files;
+        }
+        *files = installed;
+        let authored = *in_place;
+        let authored_path = authored.then(|| canonical.clone());
+        item.enabled = entry.enabled;
+        item.hash = entry.source_hash.clone();
+        item.rendered_hash = match authored {
+            true => None,
+            false => item.artifact.rendered_hash(),
+        };
+        if let Some(emitted) = &mut item.emitted {
+            emitted.paths = item
+                .artifact
+                .paths()
+                .into_iter()
+                .filter(|path| authored_path.as_ref() != Some(path))
+                .collect();
+        }
+        Ok(None)
+    }
+}
+
+fn source_revision(provenance: &str, commit: Option<&str>) -> Box<str> {
+    match commit {
+        Some(commit) => format!("{provenance} at {commit}").into_boxed_str(),
+        None => provenance.into(),
+    }
 }
 
 pub(crate) struct Owned {

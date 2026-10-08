@@ -441,27 +441,6 @@ pub(crate) fn protect_installed(
         if named {
             continue;
         }
-        if reached.contains(&(entry.kind, entry.name.clone()))
-            && let Some(item) = state.items.iter().find(|item| {
-                item.kind == entry.kind
-                    && item.name == entry.name
-                    && (entry.source_commit != item.source_commit
-                        || entry.source_repo != item.provenance)
-            })
-        {
-            return Err(CoreError::AddRevisionConflict {
-                kind: entry.kind,
-                name: entry.name.clone(),
-                existing: entry
-                    .source_commit
-                    .clone()
-                    .unwrap_or_else(|| entry.source_repo.clone()),
-                requested: item
-                    .source_commit
-                    .clone()
-                    .unwrap_or_else(|| item.provenance.clone()),
-            });
-        }
         state.addition_kept.insert(key.clone());
     }
     state
@@ -474,125 +453,8 @@ pub(crate) fn protect_installed(
         .refused
         .retain(|item| reached.contains(&(item.kind, item.name.clone())));
     state.additions = Some(reached);
-    reuse_kept_trees(env, scope, lock, state)?;
+    crate::engine::owned::Retained::new(env, scope, lock, &state.addition_kept).prepare(state)?;
     Ok(())
-}
-
-/// A dependency added on another harness can land in a retained installation's
-/// directory. Reuse that tree, not a fresh render of pending instructions.
-fn reuse_kept_trees(
-    env: &Env,
-    scope: &Scope,
-    lock: &Lock,
-    state: &mut crate::engine::desired::DesiredState,
-) -> Result<()> {
-    let retained = state
-        .addition_kept
-        .iter()
-        .map(|key| &lock.entries[key])
-        .flat_map(|entry| {
-            crate::engine::owned::installed(env, scope, entry)
-                .files
-                .into_iter()
-                .chain(crate::engine::desired::in_place_source(
-                    env,
-                    scope,
-                    (entry.kind, &entry.source, &entry.name),
-                ))
-                .map(move |path| (path, entry))
-        })
-        .collect::<Vec<_>>();
-    let mut refused = BTreeSet::new();
-    for item in &mut state.items {
-        if state.addition_kept.contains(&item.key) {
-            continue;
-        }
-        if let Some(refusal) = reuse_kept_tree(item, &retained)? {
-            state.refused.push(refusal);
-            refused.insert(item.key.clone());
-        }
-    }
-    state.items.retain(|item| !refused.contains(&item.key));
-    Ok(())
-}
-
-fn reuse_kept_tree(
-    item: &mut crate::engine::desired::Desired,
-    retained: &[(std::path::PathBuf, &crate::lock::LockEntry)],
-) -> Result<Option<crate::engine::desired::Refused>> {
-    use crate::engine::desired::{Artifact, RefusalKind, Refused};
-    let Artifact::Tree {
-        canonical,
-        files,
-        link,
-        in_place,
-    } = &mut item.artifact
-    else {
-        return Ok(None);
-    };
-    let Some((_, entry)) = retained.iter().find(|(path, _)| path == canonical) else {
-        return Ok(None);
-    };
-    // A recorded link is retained too: collapsing it into a real tree
-    // would replace a position the add did not name.
-    let native = link.clone().unwrap_or_else(|| canonical.clone());
-    if canonical.is_symlink() {
-        let resolved = crate::paths::canonical(canonical)
-            .map_err(|error| CoreError::io(&*canonical, error))?;
-        if !retained.iter().any(|(path, _)| *path == resolved) {
-            return Err(CoreError::ForeignSymlink {
-                target: canonical.clone(),
-                points_to: resolved,
-            });
-        }
-        *canonical = resolved;
-        *link = (native != *canonical).then_some(native);
-    }
-    let sealed = crate::source_read::SealedSource::open(canonical)?;
-    let installed = sealed.collect_tree(canonical, &crate::source_read::TOOL_CACHES)?;
-    let name = crate::harness::rendered_name(item.harness, &item.name);
-    let findings =
-        crate::render::validate::validate_skill_tree(item.harness, &item.name, &name, &installed);
-    if let Some(reason) = crate::engine::desired::refusal_reason(&findings) {
-        return Ok(Some(Refused {
-            kind: item.kind,
-            name: item.name.clone(),
-            harness: item.harness,
-            refusal: RefusalKind::Render,
-            reason,
-        }));
-    }
-    // Reusing an edit would give the new record an ownership hash for
-    // the person's bytes. Leave that case to the shared edit hold.
-    let identity = crate::hash::RenderedIdentity::rendered(canonical, &installed);
-    if entry
-        .rendered_hash
-        .as_ref()
-        .is_some_and(|recorded| !identity.matches(recorded))
-    {
-        return Ok(None);
-    }
-    if let Some(source) = &mut item.source {
-        source.verbatim &= installed == *files;
-    }
-    *files = installed;
-    let authored = *in_place;
-    let authored_path = authored.then(|| canonical.clone());
-    item.enabled = entry.enabled;
-    item.hash = entry.source_hash.clone();
-    item.rendered_hash = match authored {
-        true => None,
-        false => item.artifact.rendered_hash(),
-    };
-    if let Some(emitted) = &mut item.emitted {
-        emitted.paths = item
-            .artifact
-            .paths()
-            .into_iter()
-            .filter(|path| authored_path.as_ref() != Some(path))
-            .collect();
-    }
-    Ok(None)
 }
 
 // Writing one item's declaration into the manifest: the invariant-4
