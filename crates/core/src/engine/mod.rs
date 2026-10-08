@@ -196,12 +196,20 @@ fn plan_scope_with_lock_base(
     // update reads from a copy with every other follower pinned at its
     // installed commit — the pins steer this pass and never reach the file.
     let (manifest, mut state, held) = desired_pass(env, scope, declared, lock, options)?;
+    if let Some(targets) = &options.update_only
+        && targets.reach == Reach::Declared
+    {
+        ops::protect_installed(&manifest, lock, &mut state, &targets.declarations)?;
+    }
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
     let (mut drift, mut ops) = (Vec::new(), Vec::<PlannedOp>::new());
     let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state, options, &held);
     let (mut written, mut kept) = (written::Written::default(), item_plan::KeptAsIs::default());
+    for key in &state.addition_kept {
+        kept.keep(&mut new_lock, key, &lock.entries[key]);
+    }
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
@@ -451,7 +459,7 @@ fn plan_removals(
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, new_lock));
     stale::stale_emitted(lock, new_lock, &mut guard, ops)?;
-    let decided_keys = plan_pass::plan_not_written(
+    let mut decided_keys = plan_pass::plan_not_written(
         env,
         scope,
         manifest,
@@ -464,6 +472,7 @@ fn plan_removals(
         new_lock,
         kept,
     )?;
+    decided_keys.extend(state.addition_kept.iter().cloned());
     let removed = removal::orphans(
         env,
         scope,
@@ -483,14 +492,16 @@ fn plan_removals(
     )?;
     // Orphan retention copies old entries; carrier comparison must finalize
     // the retained Pi records after that pass, including native enablement.
-    drift.extend(plan_pi_switches(
-        env,
-        scope,
-        manifest,
-        new_lock,
-        ops,
-        config_edits,
-    )?);
+    if state.additions.is_none() {
+        drift.extend(plan_pi_switches(
+            env,
+            scope,
+            manifest,
+            new_lock,
+            ops,
+            config_edits,
+        )?);
+    }
     Ok(removed)
 }
 

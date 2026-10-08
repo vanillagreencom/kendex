@@ -379,6 +379,14 @@ pub struct DesiredState {
     /// identity exists, so nothing is written for these: the plan reports
     /// the conflict and leaves what is installed alone.
     pub rev_conflicts: BTreeSet<(ItemKind, String)>,
+    /// The resolved revisions behind the conflict index. An add refuses
+    /// the whole transaction with these fields before hook withholding
+    /// can remove an installed requirer.
+    pub(super) rev_disagreements: Vec<(ItemKind, String, String, String)>,
+    /// Installed packages an add did not name. Their files stay as recorded.
+    pub(super) addition_kept: BTreeSet<String>,
+    /// The request's dependency closure, also used to admit new reason edges.
+    pub(super) additions: Option<BTreeSet<(ItemKind, String)>>,
     /// Hooks not written on a tool because a hook they run with will not
     /// run there, for any reason `desired_kinds::not_written` names: a
     /// companion the hook requires, or every requirer a derived companion

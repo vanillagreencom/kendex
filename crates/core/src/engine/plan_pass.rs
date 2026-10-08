@@ -52,6 +52,24 @@ pub(super) fn plan_items(
     let mut recorded_gone = Vec::new();
     let mut own_edit_rows = BTreeSet::new();
     for item in &state.items {
+        if state.addition_kept.contains(&item.key) {
+            if let Some(entry) = new_lock.entries.get_mut(&item.key) {
+                entry.reasons.extend(
+                    item.reasons
+                        .iter()
+                        .filter(|reason| match reason {
+                            Reason::RequiredBy { by } => {
+                                state.additions.as_ref().is_some_and(|reached| {
+                                    reached.contains(&(by.kind, by.name.clone()))
+                                })
+                            }
+                            Reason::Requested | Reason::MemberOf { .. } => false,
+                        })
+                        .cloned(),
+                );
+            }
+            continue;
+        }
         let before = drift.len();
         let mut sink = item_plan::PlanSink {
             drift,
@@ -163,7 +181,7 @@ fn plan_refusals(
         .collect();
     for refusal in &state.refused {
         let key = crate::lock::entry_key(refusal.kind, &refusal.name, refusal.harness);
-        if rebound.contains(&key) {
+        if rebound.contains(&key) || state.addition_kept.contains(&key) {
             continue;
         }
         let mut removals = Vec::new();
@@ -257,6 +275,9 @@ pub(super) fn plan_kept_members(
         .collect();
     let mut decided = BTreeSet::new();
     for (key, edges) in &state.kept_members {
+        if state.addition_kept.contains(key) {
+            continue;
+        }
         let Some(entry) = lock.entries.get(key).filter(|_| !planned.contains(key)) else {
             continue;
         };
@@ -333,6 +354,9 @@ fn plan_rebound(
         .collect();
     let mut decided = BTreeSet::new();
     for (key, entry) in &lock.entries {
+        if state.addition_kept.contains(key) {
+            continue;
+        }
         let declared = state.processed.get(&(entry.kind, entry.name.clone()));
         let Some(provenance) = declared.filter(|_| !planned.contains(key)) else {
             continue;
@@ -390,7 +414,7 @@ fn plan_withheld(
         let Some(entry) = lock.entries.get(&key) else {
             continue;
         };
-        if rebound.contains(&key) || because.takes() {
+        if rebound.contains(&key) || state.addition_kept.contains(&key) || because.takes() {
             continue;
         }
         kept.keep(new_lock, &key, entry);

@@ -355,6 +355,7 @@ impl Expansion {
             name,
             kept,
             refused,
+            source,
             ..
         } in &self.rev_disagreements
         {
@@ -362,7 +363,14 @@ impl Expansion {
                 Some(rev) => format!("revision {}", rev.chars().take(7).collect::<String>()),
                 None => "the source's own revision".to_owned(),
             };
+            let resolved = |rev: &Option<String>| {
+                commit_of(source, rev)
+                    .or_else(|| rev.clone())
+                    .unwrap_or_else(|| "the source's own revision".to_owned())
+            };
+            let disagreement = (*kind, name.clone(), resolved(kept), resolved(refused));
             state.rev_conflicts.insert((*kind, name.clone()));
+            state.rev_disagreements.push(disagreement);
             state.warnings.push(super::ItemWarning {
                 kind: *kind,
                 name: name.clone(),

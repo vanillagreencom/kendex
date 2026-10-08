@@ -400,6 +400,77 @@ use lands::lands_nowhere;
 pub use lands::{requested_kinds, targets_for};
 use optional::optional_choices;
 
+/// Add is not a scope refresh. The complete dependency walk is still needed
+/// to detect incompatible requirements before its hook removals can run.
+pub(crate) fn protect_installed(
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &mut crate::engine::desired::DesiredState,
+    declaring: &BTreeSet<Held>,
+) -> Result<()> {
+    let wanted = crate::engine::wanted(manifest, state);
+    let reached = crate::engine::report_types::named_requirements(&wanted, declaring);
+    for (kind, name, existing, requested) in &state.rev_disagreements {
+        if reached.contains(&(*kind, name.clone())) {
+            return Err(CoreError::AddRevisionConflict {
+                kind: *kind,
+                name: name.clone(),
+                existing: existing.clone(),
+                requested: requested.clone(),
+            });
+        }
+    }
+    for (key, entry) in &lock.entries {
+        let named = declaring.contains(&Held::Item {
+            kind: entry.kind,
+            name: entry.name.clone(),
+        }) || wanted
+            .get(&(entry.kind, entry.name.clone()))
+            .is_some_and(|reasons| {
+                reasons.iter().any(|reason| match reason {
+                    crate::lock::Reason::MemberOf { bundle } => declaring.contains(&Held::Set {
+                        name: bundle.name.clone(),
+                    }),
+                    crate::lock::Reason::Requested | crate::lock::Reason::RequiredBy { .. } => {
+                        false
+                    }
+                })
+            });
+        if named {
+            continue;
+        }
+        if reached.contains(&(entry.kind, entry.name.clone()))
+            && let Some(item) = state.items.iter().find(|item| item.key == *key)
+            && (entry.source_commit != item.source_commit || entry.source_repo != item.provenance)
+        {
+            return Err(CoreError::AddRevisionConflict {
+                kind: entry.kind,
+                name: entry.name.clone(),
+                existing: entry
+                    .source_commit
+                    .clone()
+                    .unwrap_or_else(|| entry.source_repo.clone()),
+                requested: item
+                    .source_commit
+                    .clone()
+                    .unwrap_or_else(|| item.provenance.clone()),
+            });
+        }
+        state.addition_kept.insert(key.clone());
+    }
+    state
+        .settings_env
+        .retain(|seed| reached.contains(&(ItemKind::Skill, seed.owner.clone())));
+    state
+        .items
+        .retain(|item| reached.contains(&(item.kind, item.name.clone())));
+    state
+        .refused
+        .retain(|item| reached.contains(&(item.kind, item.name.clone())));
+    state.additions = Some(reached);
+    Ok(())
+}
+
 // Writing one item's declaration into the manifest: the invariant-4
 // collision refusal (installed or merely declared), the `--hold` commit, and
 // the source label a collision names.

@@ -515,6 +515,48 @@ pub enum StoodIn {
     Unserved,
 }
 
+/// The requested packages, set members and their transitive requirements.
+pub(super) fn named_requirements(
+    wanted: &BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
+    named: &BTreeSet<Held>,
+) -> BTreeSet<(ItemKind, String)> {
+    use crate::lock::Reason;
+    let mut reached: BTreeSet<&(ItemKind, String)> = wanted
+        .iter()
+        .filter(|((kind, name), why)| {
+            named.contains(&Held::Item {
+                kind: *kind,
+                name: name.clone(),
+            }) || why.iter().any(|reason| match reason {
+                Reason::MemberOf { bundle } => named.contains(&Held::Set {
+                    name: bundle.name.clone(),
+                }),
+                Reason::Requested | Reason::RequiredBy { .. } => false,
+            })
+        })
+        .map(|(item, _)| item)
+        .collect();
+    // A requirement can point at a requirer found later in the walk, so
+    // the set grows until a pass adds nothing.
+    loop {
+        let grew: Vec<&(ItemKind, String)> = wanted
+            .iter()
+            .filter(|(item, why)| {
+                !reached.contains(item)
+                    && why.iter().any(|reason| match reason {
+                        Reason::RequiredBy { by } => reached.contains(&(by.kind, by.name.clone())),
+                        Reason::Requested | Reason::MemberOf { .. } => false,
+                    })
+            })
+            .map(|(item, _)| item)
+            .collect();
+        if grew.is_empty() {
+            return reached.into_iter().cloned().collect();
+        }
+        reached.extend(grew);
+    }
+}
+
 impl EngineReport {
     /// Hook deliveries that fail because a declared harness cannot run
     /// their event. Render refusals, exclusions and advisory notices are
@@ -613,49 +655,11 @@ impl EngineReport {
     /// request reaches only through a declaration it did not name is not
     /// in it, and neither is one its catalog retired.
     pub fn asked_for(&self) -> BTreeSet<(ItemKind, String)> {
-        use crate::lock::Reason;
         let named = match &self.asked {
             Asked::Declared => return self.wanted.keys().cloned().collect(),
             Asked::Named(named) => named,
         };
-        let mut reached: BTreeSet<&(ItemKind, String)> = self
-            .wanted
-            .iter()
-            .filter(|((kind, name), why)| {
-                named.contains(&Held::Item {
-                    kind: *kind,
-                    name: name.clone(),
-                }) || why.iter().any(|reason| match reason {
-                    Reason::MemberOf { bundle } => named.contains(&Held::Set {
-                        name: bundle.name.clone(),
-                    }),
-                    Reason::Requested | Reason::RequiredBy { .. } => false,
-                })
-            })
-            .map(|(item, _)| item)
-            .collect();
-        // A requirement can point at a requirer found later in the walk, so
-        // the set grows until a pass adds nothing.
-        loop {
-            let grew: Vec<&(ItemKind, String)> = self
-                .wanted
-                .iter()
-                .filter(|(item, why)| {
-                    !reached.contains(item)
-                        && why.iter().any(|reason| match reason {
-                            Reason::RequiredBy { by } => {
-                                reached.contains(&(by.kind, by.name.clone()))
-                            }
-                            Reason::Requested | Reason::MemberOf { .. } => false,
-                        })
-                })
-                .map(|(item, _)| item)
-                .collect();
-            if grew.is_empty() {
-                return reached.into_iter().cloned().collect();
-            }
-            reached.extend(grew);
-        }
+        named_requirements(&self.wanted, named)
     }
 
     /// What the plan says of an item it writes on no tool and withholds
@@ -918,8 +922,8 @@ pub enum Reach {
     /// An add: only the declarations it writes are exempt from holding.
     /// A package that required the item before the add is not what the
     /// person named, and
-    /// stays at the commit its record names unless its source declaration
-    /// changed or the source no longer serves that commit.
+    /// keeps its installed files and record. A shared dependency can gain
+    /// the new package's requirement edge but cannot change revision.
     Declared,
 }
 
@@ -1009,9 +1013,9 @@ impl PlanOptions {
     }
 
     /// The plan an add makes: the items and the sets it declares come
-    /// current ([`Reach::Declared`]). Other packages keep their recorded
-    /// revisions unless their source declaration changed or their recorded
-    /// commit is no longer served ([`PlanOptions::keep_source_records`]).
+    /// current ([`Reach::Declared`]). Other installed packages keep their
+    /// files and records, even if the source declaration changed. A
+    /// dependency required at another commit refuses the complete add.
     /// Unread source records retain the installed revision.
     pub fn for_additions(declarations: impl IntoIterator<Item = Held>) -> Self {
         PlanOptions {
