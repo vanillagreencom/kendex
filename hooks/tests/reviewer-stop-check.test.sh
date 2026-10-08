@@ -26,6 +26,7 @@
 # (a no-op hook, an always-block hook) can be run against these same
 # assertions.
 set -euo pipefail
+export MSYS=winsymlinks:nativestrict
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
 # GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
@@ -768,7 +769,7 @@ rows_control actor_rows display-path-decoded \
   "a completed Codex move with final newlines blocks" \
   "a completed Codex move with Git control escapes blocks"
 rows_control actor_rows every-tracked-path \
-  'jq -e --arg path "$p" '\''index($path) != null'\'' <<<"$EDIT_PATHS" >/dev/null' 'true' \
+  'any(.[]; . == $path or ($row.submodule and startswith($path + "/")))' 'true' \
   "a concurrent tracked edit passes for a read-only reviewer" \
   "a concurrent tracked edit passes when the reviewer edited a different path" \
   "a failed edit cannot attribute another agent's tracked edit" \
@@ -778,7 +779,7 @@ rows_control actor_rows every-tracked-path \
   "writing the required report cannot attribute another agent's edit" \
   "the required report passes even when Git does not ignore it"
 rows_control actor_rows report-counts-as-probe \
-  '[ "$p" != "$ARTIFACT" ] || return 1' ':' \
+  '[ "$identity" != "$ARTIFACT_ID" ] || return 1' ':' \
   "the required report passes even when Git does not ignore it"
 rows_control actor_rows failed-edit-counts \
   '.type == "tool_result" and .is_error != true' '.type == "tool_result"' \
@@ -791,7 +792,7 @@ rows_control actor_rows read-counts-as-edit \
   'select(.name == "Write" or .name == "Edit" or .name == "MultiEdit" or .name == "NotebookEdit")' 'select(true)' \
   "a concurrent tracked edit passes for a read-only reviewer"
 rows_control actor_rows own-edit-ignored \
-  'jq -e --arg path "$p" '\''index($path) != null'\'' <<<"$EDIT_PATHS" >/dev/null' 'false' \
+  'any(.[]; . == $path or ($row.submodule and startswith($path + "/")))' 'false' \
   "a successful reviewer Edit blocks its tracked path" \
   "a successful reviewer Write blocks its tracked path" \
   "a successful reviewer MultiEdit blocks its tracked path" \
@@ -809,6 +810,120 @@ rows_control actor_rows own-edit-ignored \
 rows_control actor_rows failed-codex-counts \
   '.type == "FileChange" and .status == "completed"' '.type == "FileChange"' \
   "a failed Codex file change cannot attribute another agent's edit"
+
+# Codex FileChange names the file it changed. Git names physical checkout
+# paths and collapses submodule descendants to the tracked gitlink entry.
+path_rows() { # TAG
+  local tag="$1" label kind want repo t path alias seed artifact n=0 before=$((PASS + FAIL))
+  while IFS='|' read -r label kind want; do
+    n=$((n + 1))
+    repo="$(new_repo "paths-$tag$n")"
+    path="$repo/src/lib.rs"
+    t="$(transcript_for "$repo")"
+    artifact="$repo/tmp/review-reviewer-test-20260903-101010.json"
+    case "$kind" in
+      alias*)
+        alias="$TMP_ROOT/alias-$tag$n"
+        if [ "$kind" = alias-dot-parent ]; then ln -s -- "$repo/src" "$alias"
+        else ln -s -- "$repo" "$alias"; fi
+        [ -L "$alias" ] || { echo "path rows: symlink=not-created" >&2; exit 2; }
+        path="$alias/src/lib.rs"
+        case "$kind" in
+          alias-artifact) t="$(transcript_for "$alias")"; path="$repo/src/lib.rs" ;;
+          alias-other) path="$alias/src/other.rs" ;;
+          alias-dot-parent) path="$alias/../src/lib.rs" ;;
+        esac
+        ;;
+      module*)
+        seed="$(new_repo "seed-$tag$n")"
+        fgit -C "$repo" -c protocol.file.allow=always submodule add -q "$seed" module
+        printf 'module-extra/\n' >>"$repo/.gitignore"
+        fgit -C "$repo" add -A
+        fgit -C "$repo" commit -q -m module
+        path="$repo/module/src/lib.rs"
+        case "$kind" in
+          module-other) path="$repo/src/other.rs" ;;
+          module-prefix)
+            mkdir -p "$repo/module-extra/src"
+            path="$repo/module-extra/src/lib.rs"
+            printf 'changed\n' >"$path"
+            ;;
+          module-alias)
+            alias="$TMP_ROOT/alias-$tag$n"
+            ln -s -- "$repo" "$alias"
+            [ -L "$alias" ] || { echo "path rows: symlink=not-created" >&2; exit 2; }
+            path="$alias/module/src/lib.rs"
+            ;;
+        esac
+        ;;
+      ordinary-parent) path="$repo/src" ;;
+      ordinary-child)
+        rm -- "$repo/src/lib.rs"
+        mkdir -p "$repo/src/lib.rs"
+        printf 'src/lib.rs/\n' >>"$repo/.gitignore"
+        fgit -C "$repo" add .gitignore
+        fgit -C "$repo" commit -q -m ignore-probe
+        path="$repo/src/lib.rs/probe"
+        printf 'changed\n' >"$path"
+        ;;
+      *) echo "path rows: unknown kind=$kind" >&2; exit 2 ;;
+    esac
+    jq -nc --arg path "$path" \
+      '{type:"event_msg",payload:{type:"item_completed",item:{type:"FileChange",id:"patch-1",status:"completed",
+        changes:{($path):{type:"update",unified_diff:"",move_path:null}}}}}' >>"$t"
+    case "$kind" in
+      alias-deleted) rm -- "$repo/src/lib.rs" ;;
+      alias-deleted-directory) rm -rf -- "$repo/src" ;;
+      module-deleted) rm -- "$repo/module/src/lib.rs" ;;
+      module-removed)
+        fgit -C "$repo" rm -q -f module
+        ;;
+      module*) printf 'changed\n' >>"$repo/module/src/lib.rs" ;;
+      ordinary-child) ;;
+      *) printf 'changed\n' >>"$repo/src/lib.rs" ;;
+    esac
+    run_hook "$t" reviewer-test "$tag$n"
+    assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
+    assert_eq "$(cat -- "$artifact")" '{}' "$label keeps the required report"
+  done <<'ROWS'
+a checkout alias identifies the same tracked file|alias|rc=2 first=reviewer-stop-check: worktree=@REPO@
+an artifact through a checkout alias identifies the same tracked file|alias-artifact|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a checkout alias retains a deleted tracked file|alias-deleted|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a checkout alias retains a deleted parent directory|alias-deleted-directory|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a parent component after a directory alias keeps physical meaning|alias-dot-parent|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a checkout alias keeps another tracked file distinct|alias-other|rc=0 first=-
+a submodule descendant identifies the tracked submodule|module|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a deleted submodule descendant identifies the tracked submodule|module-deleted|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a removed submodule retains descendant attribution|module-removed|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a checkout alias identifies a submodule descendant|module-alias|rc=2 first=reviewer-stop-check: worktree=@REPO@
+another path does not identify a dirty submodule|module-other|rc=0 first=-
+a shared name prefix does not identify a dirty submodule|module-prefix|rc=0 first=-
+an ordinary parent directory does not identify a dirty file|ordinary-parent|rc=0 first=-
+an ordinary child path does not identify a deleted tracked file|ordinary-child|rc=0 first=-
+ROWS
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "path rows: no row was asserted" >&2; exit 2; }
+}
+path_rows paths
+rows_control path_rows logical-ancestors \
+  'physical=$(cd -P -- "$ancestor" 2>/dev/null && printf '\''%s/'\'' "$PWD") || return 1' \
+  'physical="${ancestor%/}/"' \
+  "a checkout alias identifies the same tracked file" \
+  "a checkout alias retains a deleted tracked file" \
+  "a checkout alias retains a deleted parent directory" \
+  "a parent component after a directory alias keeps physical meaning" \
+  "a checkout alias identifies a submodule descendant"
+rows_control path_rows submodule-descendant-ignored \
+  '$row.submodule and startswith($path + "/")' 'false' \
+  "a submodule descendant identifies the tracked submodule" \
+  "a deleted submodule descendant identifies the tracked submodule" \
+  "a removed submodule retains descendant attribution" \
+  "a checkout alias identifies a submodule descendant"
+rows_control path_rows ordinary-descendant-counts \
+  '$row.submodule and startswith($path + "/")' 'startswith($path + "/")' \
+  "an ordinary child path does not identify a deleted tracked file"
+rows_control path_rows submodule-prefix-counts \
+  'startswith($path + "/")' 'startswith($path)' \
+  "a shared name prefix does not identify a dirty submodule"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not

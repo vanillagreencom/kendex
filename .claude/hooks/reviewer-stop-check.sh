@@ -3,7 +3,7 @@
 # name: reviewer-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a reviewer subagent's stop once when it leaves no readable review artifact or leaves files behind in the worktree it reviewed. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not. The review contract is the artifact, not its mention: a transcript naming no artifact path, or naming one that does not exist or does not parse as JSON, blocks. A tracked dirty path blocks only when the subagent's own transcript records a successful mutation of that path: a Claude Code Write, Edit, MultiEdit or NotebookEdit with a matching tool result that is not an error, or a completed Codex FileChange event. A file or index change time cannot identify the agent that made a tracked edit. Shell commands provide no per-path actor evidence. Copilot supplies no subagent transcript, so its tracked dirty paths do not block. Untracked paths retain the start-time check: their ctime, or their nearest existing directory's ctime if deleted, is not before the first launch record's timestamp (Codex session_meta or Claude Code's prompt); a quoted untracked path or unreadable time counts, and every untracked path counts where the start is unknown. The required review artifact is retained, including on refusal. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for: there a refusal once the agent id is read is recorded under that marker wherever the hook finds and can write a git common dir, so the same subagent's next stop passes as Claude Code's continued stop does at the flag. It names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, built without jq so a missing jq still holds the subagent, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a reviewer subagent's stop once when it leaves no readable review artifact or leaves files behind in the worktree it reviewed. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not. The review contract is the artifact, not its mention: a transcript naming no artifact path, or naming one that does not exist or does not parse as JSON, blocks. Directory aliases use physical paths, and a deleted path keeps its name under its nearest surviving physical directory. A tracked dirty path blocks only when the subagent's own transcript records a successful mutation of that path or a descendant of a tracked submodule: a Claude Code Write, Edit, MultiEdit or NotebookEdit with a matching tool result that is not an error, or a completed Codex FileChange event. A file or index change time cannot identify the agent that made a tracked edit. Shell commands provide no per-path actor evidence. Copilot supplies no subagent transcript, so its tracked dirty paths do not block. Untracked paths retain the start-time check: their ctime, or their nearest existing directory's ctime if deleted, is not before the first launch record's timestamp (Codex session_meta or Claude Code's prompt); a quoted untracked path or unreadable time counts, and every untracked path counts where the start is unknown. The required review artifact is retained, including on refusal. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for: there a refusal once the agent id is read is recorded under that marker wherever the hook finds and can write a git common dir, so the same subagent's next stop passes as Claude Code's continued stop does at the flag. It names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, built without jq so a missing jq still holds the subagent, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 # safety: Reads the payload, the transcript or on Copilot the subagent's reply, the review artifact, git status, successful mutation records and untracked paths' change times; the only write is the per-agent marker under the reviewed repository's git common dir. A refusal keeps the required report, asks the reviewer to remove only disposable probes and report its tracked edits, and keeps other agents' edits. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
@@ -69,6 +69,9 @@ message() { # KEY VALUE [DETAIL]
         ;;
       transcript=unread)
         echo "the transcript $TRANSCRIPT could not be read; refusing"
+        ;;
+      path=unreadable)
+        echo "a path from the transcript or git status could not be resolved; refusing"
         ;;
       artifact=unreadable)
         echo "the review artifact $ARTIFACT the $ARTIFACT_SOURCE names does not exist or does not parse as JSON, so the review it reports cannot be read. Write the review as JSON to that path, keep it, remove only your disposable probes, and finish."
@@ -294,13 +297,13 @@ MARKER_REPO=$WORKTREE
 if ! ARTIFACT_ERR=$(jq -s 'if length == 0 then error("no JSON value") else empty end' "$ARTIFACT" 2>&1); then
   record_and_block artifact unreadable "$ARTIFACT_ERR"
 fi
-# A read-only stop check must not refresh the shared index. Git's NUL format
-# supplies literal paths and puts a rename's destination before its source.
+# A read-only stop check must not refresh the shared index. Git's v2 NUL
+# format identifies submodules even when deleted and supplies literal paths.
 # Encode each row as JSON before Bash stores it: display quoting and arrows
 # inside names must never determine which path the reviewer changed.
 STATUS=$(
   {
-    cause=$( { git --no-optional-locks -C "$WORKTREE" status --porcelain -z --untracked-files=all |
+    cause=$( { git --no-optional-locks -C "$WORKTREE" status --porcelain=v2 -z --untracked-files=all |
       jq -Rsc '
         def displayed:
           if test("[\u0000-\u001f\\\\\"]") then @json else . end;
@@ -309,9 +312,17 @@ STATUS=$(
             if .rename != null then
               .rows += [.rename + {source: $entry}] | .rename = null
             else
-              {status: $entry[0:2], path: $entry[3:]} as $row |
-              if ($row.status | test("[RC]")) then .rename = $row
-              else .rows += [$row] end
+              ($entry | split(" ")) as $fields |
+              if $fields[0] == "?" then
+                .rows += [{status: "??", path: $entry[2:], submodule: false}]
+              elif (["1", "2", "u"] | index($fields[0])) != null then
+                (if $fields[0] == "u" then 10 elif $fields[0] == "2" then 9 else 8 end) as $start |
+                {status: ($fields[1] | gsub("\\."; " ")),
+                 path: ($fields[$start:] | join(" ")),
+                 submodule: ($fields[3:(if $fields[0] == "u" then 7 else 6 end)] | index("160000") != null)} as $row |
+                if $fields[0] == "2" then .rename = $row else .rows += [$row] end
+              elif $fields[0] == "#" then .
+              else error("unknown git status entry") end
             end) |
         .rows[] | . + {line: (.status + " " +
           (if .source != null then (.source | displayed) + " -> " else "" end) +
@@ -332,11 +343,6 @@ STATUS=$(
 EDIT_PATHS='[]'
 if [ "$INSTALL" != copilot ]; then
   EDIT_PATHS=$(jq -sc '
-    def normalized:
-      split("/") | reduce .[] as $part ([];
-        if $part == "" or $part == "." then .
-        elif $part == ".." then .[:-1]
-        else . + [$part] end) | "/" + join("/");
     . as $entries |
     [$entries[] | select(.type == "user") | .message.content[]? |
       select(.type == "tool_result" and .is_error != true) | .tool_use_id | strings] as $claude_ok |
@@ -349,9 +355,38 @@ if [ "$INSTALL" != copilot ]; then
       ($entries[] | select(.type == "event_msg" and .payload.type == "item_completed") |
         .payload.item | select(.type == "FileChange" and .status == "completed") |
         .changes | to_entries[] | (.key, .value.move_path) | strings | select(startswith("/")))
-    ] | map(normalized) | unique' "$TRANSCRIPT" 2>&1) ||
+    ] | unique' "$TRANSCRIPT" 2>&1) ||
     refuse transcript unread "$EDIT_PATHS"
 fi
+
+# Resolve directory aliases before reducing dot components. A deleted leaf
+# keeps its name under the nearest surviving directory. The leaf itself is
+# retained: a tracked symlink is a different Git entry from its target.
+path_identity() { # ABSOLUTE PATH -> JSON STRING
+  local ancestor="${1%/*}" suffix="/${1##*/}" physical
+  [ -n "$ancestor" ] || ancestor=/
+  while [ ! -d "$ancestor" ]; do
+    suffix="/${ancestor##*/}$suffix"
+    ancestor=${ancestor%/*}
+    [ -n "$ancestor" ] || ancestor=/
+  done
+  physical=$(cd -P -- "$ancestor" 2>/dev/null && printf '%s/' "$PWD") || return 1
+  jq -nc --arg path "${physical%/}$suffix" '
+    $path | split("/") | reduce .[] as $part ([];
+      if $part == "" or $part == "." then .
+      elif $part == ".." then .[:-1]
+      else . + [$part] end) | "/" + join("/")'
+}
+ARTIFACT_ID=$(path_identity "$ARTIFACT" 2>&1) || refuse path unreadable "$ARTIFACT_ID"
+EDIT_ROWS=$(jq -c '.[]' <<<"$EDIT_PATHS" 2>&1) || refuse transcript unread "$EDIT_ROWS"
+IDENTITIES=""
+while IFS= read -r edit; do
+  [ -n "$edit" ] || continue
+  edit=$(jq -r '. + "/"' <<<"$edit" 2>&1) || refuse transcript unread "$edit"
+  identity=$(path_identity "${edit%/}" 2>&1) || refuse path unreadable "$identity"
+  IDENTITIES="$IDENTITIES$identity"$'\n'
+done <<<"$EDIT_ROWS"
+EDIT_PATHS=$(jq -sc 'unique' <<<"$IDENTITIES" 2>&1) || refuse transcript unread "$EDIT_PATHS"
 
 # When the review started: the `timestamp` of the subagent transcript's first
 # entry, taken only when that entry is a launch record written before any tool
@@ -377,15 +412,17 @@ ctime() { # PATH
 # times. Untracked probes retain the start-time check. Unknown untracked times
 # still block, but never make another agent's tracked edit the reviewer's.
 reviewers() { # JSON ROW
-  local state path p t
+  local state path p t identity
   state=$(jq -r '.status' <<<"$1") || git_failed status "$state"
   # The suffix keeps command substitution from removing a name's final LF.
   path=$(jq -r '.path + "/"' <<<"$1") || git_failed status "$path"
   path=${path%/}
   p="$TOPLEVEL/$path"
-  [ "$p" != "$ARTIFACT" ] || return 1
+  identity=$(path_identity "$p" 2>&1) || refuse path unreadable "$identity"
+  [ "$identity" != "$ARTIFACT_ID" ] || return 1
   if [ "$state" != '??' ]; then
-    jq -e --arg path "$p" 'index($path) != null' <<<"$EDIT_PATHS" >/dev/null
+    jq -e --argjson path "$identity" --argjson row "$1" '
+      any(.[]; . == $path or ($row.submodule and startswith($path + "/")))' <<<"$EDIT_PATHS" >/dev/null
     return $?
   fi
   [ -n "$START" ] || return 0
