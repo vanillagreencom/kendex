@@ -1,0 +1,1 @@
+- The session guard reference distinguishes the session-start hook's default advisory mode from its optional required-claim mode.

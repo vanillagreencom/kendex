@@ -1,0 +1,1 @@
+- Set `KENDEX_WORKTREE_CLAIM=required` in the session environment to stop Claude and Codex when the worktree lease cannot be claimed. Pi, Gemini and Copilot receive a notice. The hook clears inherited Git repository overrides and limits claim diagnostics to their first 4096 bytes.
