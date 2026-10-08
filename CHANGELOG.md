@@ -8,12 +8,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [1.12.1] - 2026-10-08
 
+### Changed
+
+- The session-start drift report now gives each section's item count with one example, then one outcome line, and the next step where a refresh applies. It no longer shows a package check that the next background refresh repeats, and it shows no git commands, commit hashes or git error output. `kendex check --verbose` and `--json` keep those details, and `kendex updates --verbose` shows the technical cause under each warning. `kendex check` no longer says "all clear" while a check still waits on that refresh, and comparisons saved by an older kendex are made again after the upgrade.
+
 ### Removed
 
 - The `skill-load-check` and `skill-load-record` hooks are retired and leave the `workflow` bundle. Edits and Linear commands are no longer held until a transcript shows a skill loaded, and a session is no longer refused when the load rule, the transcript or the payload cannot be read. `kendex refresh --prune` removes both hooks and their entries; `KENDEX_SKILL_LOAD_RULES` and `KENDEX_SKILL_LOAD_HOOK` are no longer read.
 
 ### Fixed
 
+- Refresh keeps existing root and nested `CLAUDE.md` imports when it drops their generated-path records, so Claude Code sessions that need the imports can still read the project's instructions.
 - `kendex check --catalog` reports, as an advisory, a link in a file the render ships that points at a skill's top-level `tests/`, `evals/` or `DEVELOPMENT.md`, which no install receives, and a `github.com` link to the catalog's own source whose file is gone or whose `#heading` anchor names no heading, reading a branch name with `/` through the checkout's own refs and decoding escaped paths and anchors.
 - Remove the safety allowance for the installer command retired from harness-ci.
 - `kendex verify` on a kept retired item whose installed files are gone or edited now names the item's kind, and `--global` for a personal-setup item, in the removal it suggests, as it does for a left-over item, so following it no longer also removes a live item of another kind with the same name.
@@ -25,9 +30,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - The commit guards block only what the committer can fix. conflict-markers and md-format no longer judge a render `.kendex-generated.json` lists. Outside CI, an inventory the lanes cannot read turns their findings into `owner-unknown` warnings. md-format fails a fence or block left open. md-refs names a file it cannot read `unjudged` and refuses it only under `--strict`. py-names prints a `gap` notice when no ruff or pyflakes is usable, and a CI range or `--all` scan still refuses. The batch and the pre-commit chain name a check or companion script the package lacks as `package-incomplete` and skip it. In a linked worktree, `install-git-hooks` writes nothing and reports whether the main checkout armed the hooks, exiting 1 when it has not. The `core.hooksPath` notice points to the setting's owner.
 
+#### decider
+
+- `decisions check` judges a missing Revisit When condition only on INDEX rows the change adds or edits against the base branch, including Date and Link text edits. Untouched legacy rows whose cell reads `None` pass; with no readable base every row is still judged.
+
 #### harness-ci
 
 - Consumer refresh CI publishes the measured change class and skips product jobs after render proof. New generated files reach that proof through a prerequisite-only candidate. CI installs the latest released engine instead of a fixed older build.
+
+#### linear
+
+- Issue lookup hints omit ignored arguments from bulk reads and name `--with-bundle` for bundle reads.
 
 #### orch
 
@@ -35,6 +48,12 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Route green lanes-app refresh heads to overseer app approval without an owning lane, repeated agent reviews or a Copilot wait. Render proof and same-head CI remain required.
 - A lane claim store several fleet users share on one host now works across homes: claims are written group-readable, a claim whose tmux server another account owns is kept and counted instead of deleted, and `lanes` counts claims by account name, so one account reached from two homes is charged once with every claim on it.
 - oversee-watch prints an open security alert again, with `report=repeat`, on every long pass that reads `alerts_triaged` and the alert's own list, until `alerts_triaged` records its verdict or the alert closes, so an alert whose first line fell to an overseer succession or lost context is no longer left silent; a failed read or a scanning feature turned off prints no repeat for that source, and a repeat does not itself end the watch run.
+- oversee-watch repeats `directive-unread` every `ORCH_OVERSEER_MARK_REPEAT` mail passes while a reported directive stands unread, with its age counted from the send; `directive-read` still ends the repeats.
+- The `CI_WAIT_NO_CHECKS_GRACE` default the orch settings template declares is now `600`, the grace `ci-wait` waits when the key is unset, instead of `180`, so saving the template's defaults no longer shortens the no-checks grace. `ci-wait` now waits the full grace in seconds from the start of the wait (or from the first empty poll after checks vanish) rather than ending it up to one poll interval early, reports the no-checks error rather than a pending timeout when the grace ends on its `max_wait` deadline, reads a leading-zero value such as `090` as 90 instead of aborting, and its help and the template state that an empty or non-numeric value waits the default.
+- `oversee-succeed` at the context mark keeps an overseer's own account when the account policy admits it, it remains unmeasured and no account with room is found, so a Copilot overseer with an unreadable login opens its successor on its own pool instead of refusing `no-lane-qualifies` or moving to Claude; the run prints `successor-account-unmeasured` and writes one fleet-log row.
+- All-suite validation uses PR CI or scoped suites. CI checks decision ID collisions. Reused timeout evidence requires the current finding prefix.
+- Keep review and CI time out of the armed phase when a pull request arms before both checks are green. Ignore green stamps outside the pull request's open-to-merge span when placing the arm.
+- SSH lane close archives workflow state on macOS without a BSD tar error.
 
 #### preflight
 
@@ -44,10 +63,19 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - Consumer refreshes waive product CI after render proof. The watcher reports green refresh heads for app approval. The central workflow requests Copilot for other PRs and warns on request failure.
 - The organization-standard report accepts the pinned kendex Copilot workflow after migration and retains native Copilot rule support.
+- Consumer refresh disarms an armed rolling pull request before it pushes a new head, so the old arm cannot merge that head before its review; a disarm GitHub refuses stops the run.
 
 #### reviewer-stop-check
 
 - `reviewer-stop-check` now holds a reviewer whose named review artifact does not exist or is not JSON (`artifact=unreadable`), where a mere mention of the path used to pass, and holds a reviewer only for paths changed since the review started rather than for every dirty path. The start is the timestamp of the subagent transcript's first entry when that entry is the launch record (Codex's `session_meta` or Claude Code's prompt). A path counts as changed when its change time, a deleted path's directory's change time, or for a staged change the index's change time is not before the start. A submodule row, a quoted path and a path whose time cannot be read always block, as does every dirty path where no start can be read, Copilot among them. The author's deletion beside a file the reviewer created and removed, and the author's staged changes after a reviewer's `git status` refreshed the index, can still hold the reviewer for one stop.
+
+#### slack
+
+- `slack setup` without `--name` now names the channel `<person>-<repo>-<side>`, such as `bradm-kendex-vm`: the person from the new `KENDEX_USER_HANDLE` (else the local part of `KENDEX_USER_EMAIL`, said once on stderr), the repository from `origin`, and `vm` or `local` from the orch lane host, so two people's overseers of one repository no longer collide. Setup also writes the channel's purpose where it is empty (who oversees what and where, the GitHub description's first sentence, the repository and the Linear board), never over one already set. A checkout already bound keeps its channel and the channel's current name.
+
+#### task-completed-check
+
+- `task-completed-check` lints only the workspace members that own the changed Rust files and the members that depend on them, not the whole workspace. A file moved between members counts for both, and a Rust file outside every member's source directories lints the whole workspace. Only compile errors and deny-by-default lints refuse the completion; warnings complete the task and show under a `warnings=<count>` notice. A missing `cargo` or `jq`, or a git that cannot list the changed set, no longer blocks the task: it completes with one `missing-tools=` or `git=` notice saying the change was not checked.
 
 #### worktree
 

@@ -1,1 +1,0 @@
-- oversee-watch repeats `directive-unread` every `ORCH_OVERSEER_MARK_REPEAT` mail passes while a reported directive stands unread, with its age counted from the send; `directive-read` still ends the repeats.

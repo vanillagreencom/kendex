@@ -1,1 +1,0 @@
-- Issue lookup hints omit ignored arguments from bulk reads and name `--with-bundle` for bundle reads.
