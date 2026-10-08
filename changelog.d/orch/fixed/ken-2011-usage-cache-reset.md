@@ -1,0 +1,1 @@
+- Refetch cached account usage when a consumed bucket resets, so account selection and overseer succession use the reset capacity.

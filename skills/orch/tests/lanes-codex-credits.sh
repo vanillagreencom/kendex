@@ -83,8 +83,8 @@ cloud_body() {
   local remaining="" limit="" resets="" locked=""
   [[ -z "${2:-}" ]] || IFS=':' read -r remaining limit resets locked <<<"$2"
   jq -n --argjson w "$1" --arg rem "$remaining" --arg lim "$limit" --arg at "$resets" --arg locked "$locked" '{
-    five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
-    seven_day: {utilization: $w, resets_at: "2026-08-01T06:00:00Z"}}
+    five_hour: {utilization: 10, resets_at: "2099-07-27T06:00:00Z"},
+    seven_day: {utilization: $w, resets_at: "2099-08-01T06:00:00Z"}}
     + if $rem == "" then {} else {iguana_necktie: {limit_dollars: ($lim | tonumber), remaining_dollars: ($rem | tonumber),
         used_dollars: (($lim | tonumber) - ($rem | tonumber)), resets_at: ($at | sub("_"; ":"; "g")),
         locked_reason: (if $locked == "" then null else $locked end)}} end'

@@ -300,7 +300,7 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 # this row builds it back: one scoped window for Opus and nothing else, which
 # has binding-bucket room and measures nothing for sonnet.
 make_lane "$H" uclaude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2099-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
 run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" KEN-80
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows")" \

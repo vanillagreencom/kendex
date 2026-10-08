@@ -30,12 +30,13 @@
 # naming a model would then be more permissive than not naming one.
 
 parse_claude_usage() {
-	jq -c '
+	jq -c --arg rounding "${1:-rounded}" '
 		# A missing, non-number or out-of-range percentage is null, the unmeasured
 		# reading lib/lane-model.sh refuses; 0 would read as an empty window.
 		# The range is judged before rounding: -0.4 rounds to -0, which no
 		# range check rejects.
-		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12 then round else null end;
+		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12
+		                 then if $rounding == "unrounded" then . else round end else null end;
 		(.five_hour  // null) as $s
 		| (.seven_day // null) as $w
 		# The parentheses around the whole `//` are LOAD-BEARING, not style.
@@ -109,8 +110,9 @@ parse_claude_usage() {
 # per account for ORCH_LANES_USAGE_TTL.
 parse_codex_usage() {
 	local session_window="$1"
-	jq -c --argjson sw "$session_window" '
-		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12 then floor else null end;
+	jq -c --argjson sw "$session_window" --arg rounding "${2:-rounded}" '
+		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12
+		                 then if $rounding == "unrounded" then . else floor end else null end;
 		def flag: if type == "boolean" then . else null end;
 		def credits:
 			if type != "object" then null
@@ -159,11 +161,13 @@ parse_codex_usage() {
 # The buckets one usage body answers, by the harness that measured it: the one
 # dispatch, so the current sample and the prior it is compared with parse
 # through the same reader.
-parse_usage_body() { # HARNESS
+# A reset check reads the unrounded share: a positive fraction is consumed
+# capacity even when the displayed whole percentage is zero.
+parse_usage_body() { # HARNESS [ROUNDING]
 	case "$1" in
-		claude) parse_claude_usage ;;
+		claude) parse_claude_usage "${2:-rounded}" ;;
 		copilot) copilot_credits_parse ;;
-		*) parse_codex_usage "$SESSION_WINDOW_S" ;;
+		*) parse_codex_usage "$SESSION_WINDOW_S" "${2:-rounded}" ;;
 	esac
 }
 

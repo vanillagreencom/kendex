@@ -86,11 +86,11 @@ printf 'payload.context_window = usage.contextWindow;\n' > "$H/.pi/agent/package
 # Fable and Opus windows, each of which walls its own model alone.
 seat() {
   jq -n --argjson s "$2" --argjson f "$3" --argjson o "$4" '{
-    five_hour: {utilization: $s, resets_at: "2026-07-27T06:00:00Z"},
-    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-    limits: [{kind: "weekly_scoped", percent: $f, resets_at: "2026-08-01T06:00:00Z",
+    five_hour: {utilization: $s, resets_at: "2099-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $f, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: "Fable 5.1"}}},
-             {kind: "weekly_scoped", percent: $o, resets_at: "2026-08-01T06:00:00Z",
+             {kind: "weekly_scoped", percent: $o, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: "Opus"}}}]
   }' > "$FIXTURE_DIR/.$1.json"
 }

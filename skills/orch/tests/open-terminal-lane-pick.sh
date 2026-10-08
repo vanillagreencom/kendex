@@ -474,7 +474,7 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 # operator the allowance is gone would send them to wait for a reset that is
 # not coming.
 make_lane "$H" uclaude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2099-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
 run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" KEN-69
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows walled=none")" \

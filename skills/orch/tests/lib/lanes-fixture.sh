@@ -139,9 +139,9 @@ STUB
 # claude_usage SESSION_PCT WEEKLY_PCT MODEL_PCT MODEL_LABEL — a usage body.
 claude_usage() {
   jq -n --argjson s "$1" --argjson w "$2" --argjson m "$3" --arg lbl "$4" '{
-    five_hour: {utilization: $s, resets_at: "2026-07-27T06:00:00Z"},
-    seven_day: {utilization: $w, resets_at: "2026-08-01T06:00:00Z"},
-    limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2026-08-01T06:00:00Z",
+    five_hour: {utilization: $s, resets_at: "2099-07-27T06:00:00Z"},
+    seven_day: {utilization: $w, resets_at: "2099-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: $lbl}}}]
   }'
 }

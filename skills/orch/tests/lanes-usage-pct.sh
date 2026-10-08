@@ -77,8 +77,8 @@ new_home invalid-pct
 for lane in sclaude mclaude nclaude oclaude lclaude aclaude; do make_lane "$H" "$lane" 3600; done
 for lane in scodex mcodex ncodex ocodex; do make_codex_lane "$H/.$lane"; done
 claude_body() { # LANE FILTER
-  jq -n '{five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
-          seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  jq -n '{five_hour: {utilization: 10, resets_at: "2099-07-27T06:00:00Z"},
+          seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
           limits: [{kind: "weekly_scoped", percent: 30, scope: {model: {display_name: "Opus"}}},
                    {kind: "weekly_scoped", percent: 40, scope: {model: {display_name: "Fable"}}}]} | '"$2" \
     > "$FIXTURE_DIR/.$1.json" || exit 1

@@ -1470,9 +1470,9 @@ for f in "$CACHE_STATE"/usage/*.json; do
     && mv "$f.tmp" "$f"
 done
 assert_eq "$(jq -r 'select(.config_dir == "'"$H/.claude"'") | .usage.five_hour.resets_at + " " + .prior.usage.five_hour.resets_at' "$CACHE_STATE"/usage/*.json)" \
-  "2026-07-27T06:00:00.123456+00:00 2026-07-27T06:00:00.123456+00:00" \
+  "2099-07-27T06:00:00.123456+00:00 2099-07-27T06:00:00.123456+00:00" \
   "the staged samples carry the endpoint's fractional spelling"
-table "fractional +00:00 resets on both samples still expose the rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.binding_resets_at=2026-07-27T06:00:00Z"
+table "fractional +00:00 resets on both samples still expose the rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.binding_resets_at=2099-07-27T06:00:00Z"
 stage_cache 0
 table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
@@ -1928,8 +1928,8 @@ echo "=== pick --json names the binding bucket and its reset ==="
 # claude's largest bucket is weekly, eclaude's the 5-hour session.
 standard_home home
 table \
-  "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z" \
-  "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=2026-07-27T06:00:00Z nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
+  "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2099-08-01T06:00:00Z" \
+  "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=2099-07-27T06:00:00Z nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
 
 # The Claude endpoint writes fractional seconds and +00:00; every reset a
 # record carries is whole-second UTC with a Z, the spelling Codex resets
@@ -1940,7 +1940,7 @@ claude_usage 10 20 5 Opus \
   | jq 'walk(if type == "object" and (.resets_at | type) == "string"
              then .resets_at |= sub("Z$"; ".123456+00:00") else . end)' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a fractional +00:00 reset from the endpoint is listed as whole-second UTC||$LIST|claude.binding_resets_at=2026-08-01T06:00:00Z claude.resets.session=2026-07-27T06:00:00Z claude.model_buckets[0].resets_at=2026-08-01T06:00:00Z"
+  "a fractional +00:00 reset from the endpoint is listed as whole-second UTC||$LIST|claude.binding_resets_at=2099-08-01T06:00:00Z claude.resets.session=2099-07-27T06:00:00Z claude.model_buckets[0].resets_at=2099-08-01T06:00:00Z"
 
 echo "=== pick --model judges the window that walls THAT model ==="
 # An account with plan-wide weekly room can still have none left for ONE model,
@@ -1951,11 +1951,11 @@ echo "=== pick --model judges the window that walls THAT model ==="
 new_home model-wall
 make_lane "$H" claude 3600
 jq -n '{
-  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+  five_hour: {utilization: 5, resets_at: "2099-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2099-08-01T06:00:00Z",
             scope: {model: {display_name: "Fable 5.1"}}},
-           {kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+           {kind: "weekly_scoped", percent: 10, resets_at: "2099-08-01T06:00:00Z",
             scope: {model: {display_name: "Opus"}}}]
 }' > "$FIXTURE_DIR/.claude.json"
 MODELPICK='pick --harness claude --max-pct 90'
@@ -1968,15 +1968,15 @@ table \
   "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
-  "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z haswall=false"
+  "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2099-08-01T06:00:00Z haswall=false"
 
 model_usage() { # FABLE OPUS
   jq -nc --argjson f "$1" --argjson o "$2" '{
-    five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-    limits: [{kind: "weekly_scoped", percent: $f, resets_at: "2026-08-01T06:00:00Z",
+    five_hour: {utilization: 5, resets_at: "2099-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $f, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: "Fable 5.1"}}},
-             {kind: "weekly_scoped", percent: $o, resets_at: "2026-08-01T06:00:00Z",
+             {kind: "weekly_scoped", percent: $o, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: "Opus"}}}]}'
 }
 stage_model_rate() { # CURRENT_FABLE CURRENT_OPUS PRIOR_FABLE PRIOR_OPUS
@@ -2014,8 +2014,8 @@ stage_raw_rate() { # NAME CURRENT PRIOR
 }
 unlabeled_usage() { # PERCENT RESET
   jq -nc --argjson pct "$1" --arg reset "$2" '{
-    five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+    five_hour: {utilization: 5, resets_at: "2099-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
     limits: [{kind: "weekly_scoped", percent: $pct, resets_at: $reset,
               scope: {model: {}}}]}'
 }
@@ -2037,22 +2037,22 @@ table "an unlabeled model bucket matches its prior raw null identity|ORCH_LANE_D
 # a stamp that does not parse.
 fable_usage() { # PERCENT RESET LABEL
   jq -nc --argjson pct "$1" --arg reset "$2" --arg label "$3" '{
-    five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+    five_hour: {utilization: 5, resets_at: "2099-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
     limits: [{kind: "weekly_scoped", percent: $pct, resets_at: $reset,
               scope: {model: {display_name: $label}}}]}'
 }
 FABLE_RATE="pick --lane $H/.claude --harness claude --model claude-fable-5-1 --json"
 fable_env() { printf 'ORCH_LANE_DIRS=%s;OVERSEE_WATCH_STATE_DIR=%s' "$H/.claude" "$TMP_ROOT/model-identity-$1"; }
 stage_raw_rate fable-drift \
-  "$(fable_usage 45 2026-08-01T06:00:00.100000+00:00 'Fable 5.1')" \
+  "$(fable_usage 45 2099-08-01T06:00:00.100000+00:00 'Fable 5.1')" \
   "$(fable_usage 40 2026-08-01T05:59:59.900000+00:00 'Fable 5.1')"
 stage_raw_rate fable-reset \
-  "$(fable_usage 45 2026-08-01T06:00:00Z 'Fable 5.1')" \
+  "$(fable_usage 45 2099-08-01T06:00:00Z 'Fable 5.1')" \
   "$(fable_usage 30 2026-07-25T06:00:00Z 'Fable 5.1')"
 stage_raw_rate fable-label \
-  "$(fable_usage 45 2026-08-01T06:00:00Z 'Fable 5.1')" \
-  "$(fable_usage 40 2026-08-01T06:00:00Z 'fable-5.1')"
+  "$(fable_usage 45 2099-08-01T06:00:00Z 'Fable 5.1')" \
+  "$(fable_usage 40 2099-08-01T06:00:00Z 'fable-5.1')"
 stage_raw_rate fable-unparsed \
   "$(fable_usage 45 next-week 'Fable 5.1')" \
   "$(fable_usage 40 next-week 'Fable 5.1')"
@@ -2078,19 +2078,19 @@ new_home shared-model-wall
 make_lane "$H" claude 3600
 SHARED_PICK="pick --lane $H/.claude --harness claude --max-pct 80 --model fable --json"
 jq -n '{
-  five_hour: {utilization: 85, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  five_hour: {utilization: 85, resets_at: "2099-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
   limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-02T06:00:00Z",
             scope: {model: {display_name: "Fable"}}},
            {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
             scope: {model: {display_name: "Opus"}}}]
 }' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a shared 5-hour wall outranks the named model bucket and names itself||$SHARED_PICK|rc=3 binding_bucket=session binding_resets_at=2026-07-27T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80,projected-headroom=15"
+  "a shared 5-hour wall outranks the named model bucket and names itself||$SHARED_PICK|rc=3 binding_bucket=session binding_resets_at=2099-07-27T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80,projected-headroom=15"
 
 jq -n '{
-  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  five_hour: {utilization: 10, resets_at: "2099-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
   limits: [{kind: "weekly_scoped", percent: 85, resets_at: "2026-08-02T06:00:00Z",
             scope: {model: {display_name: "Fable"}}},
            {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
@@ -2100,8 +2100,8 @@ table \
   "the named model wall outranks both shared buckets and names itself||$SHARED_PICK|rc=3 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80,projected-headroom=15"
 
 jq -n '{
-  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  five_hour: {utilization: 10, resets_at: "2099-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
   limits: [{kind: "weekly_scoped", percent: 70, resets_at: "2026-08-02T06:00:00Z",
             scope: {model: {display_name: "Fable"}}}]
 }' > "$FIXTURE_DIR/.claude.json"
@@ -2112,7 +2112,7 @@ table \
 # window does not name, and an unanswered question is never read as "it is free".
 new_home model-only
 make_lane "$H" claude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2099-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
 table \
   "a lane whose windows answer nothing for the model is refused, and the refusal names the unmeasured cause rather than the usage limit||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
@@ -2127,9 +2127,9 @@ table \
 new_home model-unnamed
 make_lane "$H" claude 3600
 jq -n '{
-  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2026-08-01T06:00:00Z",
+  five_hour: {utilization: 10, resets_at: "2099-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2099-08-01T06:00:00Z",
             scope: {model: {}}}]
 }' > "$FIXTURE_DIR/.claude.json"
 table \
@@ -2144,10 +2144,10 @@ table \
 new_home legacy-model
 make_lane "$H" claude 3600
 jq -n '{
-  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  seven_day_sonnet: {utilization: 10, resets_at: "2026-08-01T06:00:00Z"},
-  seven_day_opus: {utilization: 97, resets_at: "2026-08-01T06:00:00Z"}
+  five_hour: {utilization: 5, resets_at: "2099-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2099-08-01T06:00:00Z"},
+  seven_day_sonnet: {utilization: 10, resets_at: "2099-08-01T06:00:00Z"},
+  seven_day_opus: {utilization: 97, resets_at: "2099-08-01T06:00:00Z"}
 }' > "$FIXTURE_DIR/.claude.json"
 table \
   "both legacy model fields are kept, and the MODEL column reports the most-consumed of the two||$LIST|first.buckets=Sonnet:10,Opus:97 first.model_pct=97 first.model_label=Opus" \
@@ -2166,7 +2166,7 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 claude_usage 10 20 10 Opus      > "$FIXTURE_DIR/.eclaude.json"
 # A lane whose only window names one model, so another model measures nothing.
 make_lane "$H" uclaude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2099-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
 jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000,
                                       limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"

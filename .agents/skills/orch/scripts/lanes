@@ -924,6 +924,10 @@ message() {
       printf 'lanes: invalid-usage-max-age value=%s\n' "$1"
       printf '%s\n' "--max-age and ORCH_LANES_USAGE_MAX_AGE must be a whole number of seconds; it widens ORCH_LANES_USAGE_TTL for this caller and never narrows it"
       ;;
+    usage-cache-reset)
+      printf 'lanes: usage-cache-reset account=%s resets-at=%s\n' "$1" "$2"
+      printf '%s\n' "A consumed usage bucket reset. The cached figure cannot be served."
+      ;;
     usage-lock-timeout)
       printf 'lanes: usage-lock-timeout lock-file=%s wait-s=%s\n' "$1" "$2"
       if [[ -d "$1.d" ]]; then
@@ -1767,7 +1771,7 @@ prune_usage_cache() {
 # dir $2 at epoch $3 whose age is under $4 seconds; an EMPTY $4 accepts any
 # age. `fetched_at` and `age` are the figure's own. Fails on a miss: an
 # unreadable or malformed record, one naming another lane, one holding no
-# figure, and one stamped in the future.
+# figure, one stamped in the future, and a consumed bucket whose reset arrived.
 #
 # The bound is the caller's argument and not $USAGE_TTL, because the two
 # questions this cache answers take different ones: a measurement asks for a
@@ -1776,17 +1780,42 @@ prune_usage_cache() {
 # declines a figure it could refresh, not the figure that stands in for one the
 # endpoint refused.
 read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
-	local file
+	local file cached usage buckets expired
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	[[ -f "$file" ]] || return 1
 	usage_cache_permitted "$file" "$1" || return 1
-	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson max "${4:-null}" '
+	cached="$(jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson max "${4:-null}" '
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
 		       and ($at | type) == "number" and (.usage | type) == "object")
 		| ($now - $at) as $age
 		| select($age >= 0 and ($max == null or $age < $max))
-		| {fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null), sample_claims: (.sample_claims // 1)}' "$file" 2>/dev/null
+		| {fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null), sample_claims: (.sample_claims // 1)}' "$file" 2>/dev/null)" || return 1
+	# The cache stores endpoint bodies and provider rows, so the same parsers
+	# that measure them expose every window, including a non-binding model.
+	if [[ "$1" == host-accounts ]]; then
+		usage="$(jq -r '.usage.rows // empty' <<<"$cached")" || return 1
+		buckets="$(host_account_rows "$usage" all buckets)" || return 1
+	else
+		usage="$(jq -c '.usage' <<<"$cached")" || return 1
+		buckets="$(parse_usage_body "$1" unrounded <<<"$usage")" || return 1
+	fi
+	expired="$(jq -sr --argjson now "$3" "$LANE_MODEL_JQ"'
+		[.[] | utc_resets
+		 | [{pct: .session_5h_pct, resets_at: .resets.session},
+		    {pct: .weekly_pct, resets_at: .resets.weekly},
+		    {pct: .model_pct, resets_at: .resets.model},
+		    {pct: .monthly_pct, resets_at: .resets.monthly}]
+		   + (.model_buckets // [])
+		 | .[] | select((.pct | type) == "number" and .pct > 0)
+		 | (.resets_at | reset_epoch) as $reset
+		 | select($reset != null and $reset <= $now) | .resets_at]
+		| first // empty' <<<"$buckets")" || return 1
+	if [[ -n "$expired" ]]; then
+		message usage-cache-reset "$2" "$expired" >&2
+		return 1
+	fi
+	printf '%s\n' "$cached"
 }
 
 # The age a cached figure is served within: the TTL, or the caller's own pass
@@ -2525,7 +2554,7 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # policy that does not retire the account, since the record it sits in is
 # stamped with every setting the retirement was matched through, the alias
 # map included, and the day, and is a miss under any other.
-host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
+host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said
 	local account harness status detail s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets
@@ -2581,7 +2610,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 		[[ "$want" == all || "$harness" == "$want" ]] || continue
 		# The cache holds the whole answer, Pi rows included, for every harness
 		# a later read asks for.
-		[[ "$want:$harness" != all:pi || "$mode" == cache ]] || continue
+		[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue
 		[[ "$mode" != readings || -n "$said" ]] || continue
 		# The same two settings that remove a local lane remove a hosted row, and
 		# for the same reason: they are the operator saying the account is not
@@ -2617,6 +2646,10 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE]
 			message host-account-invalid "$account" buckets >&2
 			continue
 		}
+		if [[ "$mode" == buckets ]]; then
+			printf '%s\n' "$buckets"
+			continue
+		fi
 		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "$detail" "" "$buckets" null false host
 	done <<<"$rows"
 }

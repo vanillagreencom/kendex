@@ -266,7 +266,7 @@ fi
 # own mark still has to hand over, by hand.
 overseer_case mark_succession_off idle
 state_with "$LINE"
-printf '%s\n' "oversee-succeed: mark-reached kind=headroom value=20 mark=20 succession=off account=claude resets=2026-07-27T06:00:00Z" \
+printf '%s\n' "oversee-succeed: mark-reached kind=headroom value=20 mark=20 succession=off account=claude resets=2099-07-27T06:00:00Z" \
   > "$STUB_DIR/succeed.check"
 run ORCH_OVERSEER_SUCCESSION=off TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" \

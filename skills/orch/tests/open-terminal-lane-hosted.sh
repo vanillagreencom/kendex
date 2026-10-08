@@ -388,7 +388,7 @@ assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=0 credential
 # is the unread window it always was. Its own lane, whose one window names a
 # model no other row launches, so a pick asking for another model drops it.
 make_lane "$H" vclaude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2099-08-01T06:00:00Z",
                   scope: {model: {display_name: "Haiku"}}}]}' > "$FIXTURE_DIR/.vclaude.json"
 printf 'account=%s\tharness=claude\n' "$H/.vclaude" > "$TMP_ROOT/hosted-accounts-vclaude.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-vclaude.tsv;cmd=true --model sonnet --effort high" \
