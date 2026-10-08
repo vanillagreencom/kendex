@@ -124,13 +124,14 @@ enum Command {
     /// Bring an existing agent, skill or hook under kendex management
     ///
     /// In a project, a skill's real directory moves to .agents/skills/<name>.
-    /// Harness positions become managed links, including links made by hand.
+    /// With symlink delivery, separate harness positions become managed links,
+    /// including links made by hand. With copy delivery, they become copies.
     Adopt {
         /// agent | skill | hook
         kind: String,
         name: String,
         /// Keep files for this harness; repeat to select several.
-        /// Defaults to every harness enabled in the scope's [install].harnesses
+        /// Defaults to enabled harnesses that support this kind in this scope
         #[arg(long)]
         harness: Vec<String>,
         #[arg(short = 'g', long)]
