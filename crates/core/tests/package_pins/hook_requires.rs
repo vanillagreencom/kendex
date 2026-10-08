@@ -107,87 +107,163 @@ fn wrappers_pinning_two_revisions_of_their_judge_are_withheld() {
     }
 }
 
-/// Applying a second pin must preserve the recorded judge and every
-/// wrapper's bytes, registrations, and provenance, including a wrapper
-/// that requires the judge through another wrapper.
-#[test]
+/// The recorded world before its judge is wanted at different revisions.
 #[allow(clippy::unwrap_used)]
-fn recorded_wrappers_stay_armed_with_their_revision_conflicted_judge() {
+fn recorded_world(initial: &[&str], judge_requires: &str) -> (World, String) {
     let w = world();
     fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    write_hook(&w.upstream, "judge", "Stop", "deliver, halt", "exit 0");
-    write_hook(&w.upstream, "deliver", "PostToolUse", "judge", "exit 0");
+    write_hook(&w.upstream, "judge", "Stop", judge_requires, "exit 0");
+    write_hook(
+        &w.upstream,
+        "deliver",
+        "PostToolUse",
+        "judge, extra",
+        "exit 0",
+    );
     write_hook(&w.upstream, "halt", "PreToolUse", "judge", "exit 0");
-    write_hook(&w.upstream, "outer", "PreToolUse", "deliver", "exit 0");
+    write_hook(
+        &w.upstream,
+        "outer",
+        "PreToolUse",
+        "deliver, outer-extra",
+        "exit 0",
+    );
+    write_hook(&w.upstream, "extra", "PostToolUse", "", "exit 0");
+    write_hook(&w.upstream, "outer-extra", "PostToolUse", "", "exit 0");
     let first = commit(&w.upstream, "one");
-    let declaration = |halt_rev: &str| {
-        format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.deliver]\nsource = \"cat\"\nrev = \"{first}\"\n\n[hooks.halt]\nsource = \"cat\"\nrev = \"{halt_rev}\"\n\n[hooks.outer]\nsource = \"cat\"\nrev = \"{first}\"\n"
-        )
-    };
-    write_manifest(&w, &declaration(&first));
+    sync_hook_manifest(&w, initial, &first, &first);
+    apply::execute(&w.env, &audit(&w.env, &w.scope).unwrap().plan).unwrap();
+    (w, first)
+}
+
+#[allow(clippy::unwrap_used)]
+fn sync_hook_manifest(w: &World, hooks: &[&str], first: &str, halt_rev: &str) {
+    let mut text = format!(
+        "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n"
+    );
+    for name in hooks {
+        let rev = if *name == "halt" { halt_rev } else { first };
+        text.push_str(&format!(
+            "\n[hooks.{name}]\nsource = \"cat\"\nrev = \"{rev}\"\n"
+        ));
+    }
+    write_manifest(w, &text);
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
-    apply::execute(&w.env, &audit(&w.env, &w.scope).unwrap().plan).unwrap();
-    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
-    let before = kendex_core::lock::load(&lock_path).unwrap();
-    let settings = w.home.join("app/.claude/settings.json");
-    let registrations = fs::read(&settings).unwrap();
-    let scripts: Vec<_> = ["judge", "deliver", "halt", "outer"]
-        .into_iter()
-        .map(|name| {
-            let path = w.home.join(format!("app/.claude/hooks/{name}.sh"));
-            (path.clone(), fs::read(path).unwrap())
-        })
-        .collect();
+}
 
+#[allow(clippy::unwrap_used)]
+fn conflict_judge_revision(w: &World, hooks: &[&str], first: &str, judge_requires: &str) {
     write_hook(
         &w.upstream,
         "judge",
         "Stop",
-        "deliver, halt",
+        judge_requires,
         "exit 0 # second",
     );
     let second = commit(&w.upstream, "two");
-    write_manifest(&w, &declaration(&second));
-    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-        .unwrap()
-        .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
-    let report = audit(&w.env, &w.scope).unwrap();
-    assert!(
-        report
-            .drift
-            .iter()
-            .any(|row| row.name == "judge" && row.state == DriftState::Conflict)
-    );
-    assert!(
-        !report
-            .plan
-            .ops
-            .iter()
-            .any(|op| matches!(op.op, apply::Op::Trash { .. }))
-    );
-    assert_eq!(report.declaration_status, DeclarationStatus::Incomplete);
-    apply::execute(&w.env, &report.plan).unwrap();
+    sync_hook_manifest(w, hooks, first, &second);
+}
 
-    let after = kendex_core::lock::load(&lock_path).unwrap();
-    for name in ["judge", "deliver", "halt", "outer"] {
-        let key = kendex_core::lock::entry_key(
-            kendex_core::model::ItemKind::Hook,
-            name,
-            kendex_core::model::HarnessId::Claude,
+/// Revision holds preserve available recorded wrappers, including a
+/// transitive wrapper. Missing files and new wrappers instead withhold
+/// their dependants and orphan each companion unique to an absent wrapper.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn recorded_wrappers_stay_armed_with_their_revision_conflicted_judge() {
+    let all = ["judge", "deliver", "halt", "outer"];
+    for (initial, removed, held, absent) in [
+        (all.as_slice(), None, all.as_slice(), &[][..]),
+        (
+            all.as_slice(),
+            Some("judge"),
+            &[][..],
+            &["deliver", "halt", "outer"][..],
+        ),
+        (
+            all.as_slice(),
+            Some("deliver"),
+            &["judge", "halt"][..],
+            &["deliver", "outer"][..],
+        ),
+        (
+            &["judge"][..],
+            None,
+            &["judge"][..],
+            &["deliver", "halt", "outer", "extra", "outer-extra"][..],
+        ),
+        (
+            &["judge", "deliver", "halt"][..],
+            None,
+            &["judge", "deliver", "halt"][..],
+            &["outer", "outer-extra"][..],
+        ),
+    ] {
+        let judge_requires = if absent.is_empty() {
+            "deliver, halt"
+        } else {
+            ""
+        };
+        let (w, first) = recorded_world(initial, judge_requires);
+        let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+        let before = kendex_core::lock::load(&lock_path).unwrap();
+        let settings = w.home.join("app/.claude/settings.json");
+        let registrations = fs::read(&settings).unwrap();
+        let scripts: Vec<_> = held
+            .iter()
+            .map(|name| {
+                let path = w.home.join(format!("app/.claude/hooks/{name}.sh"));
+                (path.clone(), fs::read(path).unwrap())
+            })
+            .collect();
+        if let Some(name) = removed {
+            fs::remove_file(w.home.join(format!("app/.claude/hooks/{name}.sh"))).unwrap();
+        }
+        conflict_judge_revision(&w, &all, &first, judge_requires);
+        let report = audit(&w.env, &w.scope).unwrap();
+        assert!(
+            report
+                .drift
+                .iter()
+                .any(|row| row.name == "judge" && row.state == DriftState::Conflict)
         );
-        assert_eq!(
-            serde_json::to_value(after.entries.get(&key).unwrap()).unwrap(),
-            serde_json::to_value(before.entries.get(&key).unwrap()).unwrap()
-        );
-        assert!(String::from_utf8_lossy(&registrations).contains(&format!("{name}.sh")));
-    }
-    assert_eq!(fs::read(settings).unwrap(), registrations);
-    for (path, bytes) in scripts {
-        assert_eq!(fs::read(path).unwrap(), bytes);
+        if absent.is_empty() {
+            assert!(
+                !report
+                    .plan
+                    .ops
+                    .iter()
+                    .any(|op| matches!(op.op, apply::Op::Trash { .. }))
+            );
+        }
+        assert_eq!(report.declaration_status, DeclarationStatus::Incomplete);
+        apply::execute(&w.env, &report.plan).unwrap();
+        let after = kendex_core::lock::load(&lock_path).unwrap();
+        for name in held {
+            let key = kendex_core::lock::entry_key(
+                kendex_core::model::ItemKind::Hook,
+                name,
+                kendex_core::model::HarnessId::Claude,
+            );
+            assert_eq!(
+                after.entries.get(&key).unwrap(),
+                before.entries.get(&key).unwrap()
+            );
+            assert!(armed(&w, name), "{name} lost its recorded installation");
+        }
+        for name in absent {
+            assert!(
+                !armed(&w, name),
+                "{name} is armed without its required installation"
+            );
+        }
+        if removed.is_none() {
+            assert_eq!(fs::read(settings).unwrap(), registrations);
+        }
+        for (path, bytes) in scripts {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
     }
 }

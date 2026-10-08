@@ -607,13 +607,9 @@ fn spread_upward(manifest_file: &str, wanted: &mut BTreeMap<Node, Wanted>, state
                         Some(Withholding::Requires) => Withholding::Requires,
                         Some(Withholding::Retired) => Withholding::Retired,
                         Some(Withholding::Unanswered) => Withholding::Unanswered,
-                        Some(Withholding::RevConflict) => match state
-                            .recorded_enabled
-                            .contains(&crate::lock::entry_key(*dep_kind, dep, *harness))
-                        {
-                            true => Withholding::RevConflict,
-                            false => Withholding::Requires,
-                        },
+                        Some(Withholding::RevConflict) => NotWritten::HeldRevConflict
+                            .for_requirer(state, *kind, parent, *harness)
+                            .withholding(),
                         Some(Withholding::Orphaned) | None => continue,
                     };
                     if found.withheld.get(harness) < Some(&because) {
@@ -1299,7 +1295,10 @@ fn companion(
         );
         match answer {
             None => on.push(*harness),
-            Some(reason) => refused.entry(reason).or_default().push(*harness),
+            Some(reason) => refused
+                .entry(reason.for_requirer(state, kind, parent, *harness))
+                .or_default()
+                .push(*harness),
         }
     }
     for (reason, tools) in refused {
@@ -1446,7 +1445,10 @@ fn settle_after_walk(
                     *harness,
                 );
                 if let Some(reason) = answer {
-                    refused.entry(reason).or_default().push(*harness);
+                    refused
+                        .entry(reason.for_requirer(state, *kind, parent, *harness))
+                        .or_default()
+                        .push(*harness);
                 }
             }
             settled.push((refused, dep.kind, dep.name.clone(), dep.source.clone()));

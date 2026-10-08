@@ -111,6 +111,26 @@ pub(super) enum NotWritten {
 }
 
 impl NotWritten {
+    /// A revision hold preserves only an available recorded requirer.
+    /// A new or absent wrapper cannot keep its unique companions armed.
+    pub(super) fn for_requirer(
+        self,
+        state: &DesiredState,
+        kind: ItemKind,
+        name: &str,
+        harness: HarnessId,
+    ) -> Self {
+        if self == Self::HeldRevConflict
+            && !state
+                .recorded_available
+                .contains(&entry_key(kind, name, harness))
+        {
+            Self::RevConflict
+        } else {
+            self
+        }
+    }
+
     pub(super) fn withholding(&self) -> super::desired::Withholding {
         match self {
             Self::HeldRevConflict => super::desired::Withholding::RevConflict,
@@ -219,7 +239,7 @@ fn past_pin(
     if state.rev_conflicts.contains(&(kind, name.to_owned())) {
         return Some(
             match state
-                .recorded_enabled
+                .recorded_available
                 .contains(&entry_key(kind, name, harness))
             {
                 true => NotWritten::HeldRevConflict,

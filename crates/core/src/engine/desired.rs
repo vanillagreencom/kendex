@@ -338,9 +338,9 @@ pub struct DesiredState {
     /// The entry keys of the record this pass read: where a retired item
     /// is kept ([`Retirement::kept`]).
     pub(super) recorded: BTreeSet<String>,
-    /// Recorded installations that still run when a revision conflict
-    /// holds their files and registrations unchanged.
-    pub(super) recorded_enabled: BTreeSet<String>,
+    /// Enabled recorded installations whose files remain available when
+    /// a revision conflict holds them unchanged.
+    pub(super) recorded_available: BTreeSet<String>,
     /// What each switched-on installation in that record required on its
     /// tool when it was written, read off its companions' `RequiredBy`
     /// reasons: what a retired hook kept as recorded still runs with,
@@ -746,7 +746,7 @@ fn compute(
         prune_retired,
         removal_filter: removal_filter.map(<[_]>::to_vec),
         recorded: lock.entries.keys().cloned().collect(),
-        recorded_enabled: recorded_enabled(lock),
+        recorded_available: recorded_available(env, scope, lock),
         recorded_requires: recorded_requires(lock),
         ..DesiredState::default()
     };
@@ -902,10 +902,21 @@ fn inline(env: &Env, scope: &Scope, manifest: &Manifest, state: &mut DesiredStat
     }
 }
 
-fn recorded_enabled(lock: &Lock) -> BTreeSet<String> {
+fn recorded_available(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<String> {
     lock.entries
         .iter()
-        .filter(|(_, entry)| entry.enabled)
+        .filter(|(_, entry)| {
+            entry.enabled
+                && super::owned::installed(env, scope, entry)
+                    .files
+                    .into_iter()
+                    .chain(in_place_source(
+                        env,
+                        scope,
+                        (entry.kind, &entry.source, &entry.name),
+                    ))
+                    .all(|path| path.exists())
+        })
         .map(|(key, _)| key.clone())
         .collect()
 }
