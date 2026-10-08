@@ -57,7 +57,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | Check | Verdict |
 |---|---|
 | **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. |
-| **byte-ceiling** | A new tracked binary file over the configured ceiling fails; an existing oversized binary file may hold or shrink but may not grow; text files and lockfiles are exempt. |
+| **byte-ceiling** | Optional binary-size check. Add `byte-ceiling` to `COMMIT_GUARDS_CHECKS` to enable it. A new tracked binary file over the configured ceiling fails; an existing oversized binary file may hold or shrink but may not grow; text files and lockfiles are exempt. |
 | **suppression-ban** | Blanket lint suppressions fail; reasonless Rust dead or unused allows may only tighten against the baseline. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails; a render is not judged. |
 | **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section. |
@@ -97,7 +97,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 
 | Key | Default | Meaning |
 |---|---|---|
-| `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff, and `secrets`. |
+| `COMMIT_GUARDS_CHECKS` | `todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff, and `secrets`. |
 | `COMMIT_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
 | `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Binary blob ceiling in KB. |
 | `COMMIT_GUARDS_BYTE_WARN_PCT` | `90` | Percent of the binary blob ceiling at which byte-ceiling prints a `near-ceiling` notice, 1-100; the exit status is unchanged. |

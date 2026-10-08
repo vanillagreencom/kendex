@@ -68,7 +68,7 @@ single() { # ENVS ARGS [STDIN]
 }
 
 # Stable dispatcher records and scope values.
-DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
+DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
 STAGED_SCOPED="todo-ban byte-ceiling md-format md-refs py-names secrets comments"
 ERR="commit-guards: "
 steps() { # MODE CHECKS [INCOMPLETE]
@@ -103,6 +103,16 @@ repo() { # NAME
 put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" add -A; } # PATH CONTENT (printf %b), staged
 commit() { git -C "$R" commit -qm "${1:-seed}"; }
 clean() { repo "$1"; put ok.rs 'fn main() {}\n'; } # NAME — one clean staged file
+large_binary() { # NAME [CHECKS]: a new 300 KB binary staged after the seed
+  clean "$1"
+  commit
+  shift
+  if [ -n "${1-}" ]; then
+    put kendex.settings.toml "[env]\nCOMMIT_GUARDS_CHECKS = \"$*\"\n"
+  fi
+  head -c 307200 /dev/zero >"$R/large.bin"
+  git -C "$R" add large.bin
+}
 planted() { clean "$1"; put planted.rs "// $TD: planted for the dispatcher\n"; } # NAME — a staged work marker
 fx_settings_checks() { clean settings-checks; put kendex.settings.toml '[env]\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n'; }
 fx_settings_bad() { clean settings-bad; put kendex.settings.toml '[env\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n'; } # an unclosed table header
@@ -181,7 +191,7 @@ assert_eq "must-fail: a batch that withholds nothing from the push hook hands se
 echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
 BC=COMMIT_GUARDS_BYTE_CEILING_KB
 run_rows \
-  "a clean repository runs the default checks, byte-ceiling, py-names and secrets with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
+  "a clean repository runs the default checks, py-names and secrets with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
   "'all' is the same batch|clean clean-2||all|rc=0 $(steps all "$DEFAULT")$(ok)" \
   "one violating check makes the batch exit 1 after every check ran|planted planted-1|||rc=1 $(steps all "$DEFAULT")$VIOLATIONS" \
   "COMMIT_GUARDS_CHECKS narrows the batch: with byte-ceiling alone the planted marker is not judged|planted planted-2|COMMIT_GUARDS_CHECKS=byte-ceiling||rc=0 $(steps all byte-ceiling)$(ok byte-ceiling)" \
@@ -191,9 +201,30 @@ run_rows \
   "commit-msg in the batch list is exit 2 with the hook pointer|clean list-commit-msg|COMMIT_GUARDS_CHECKS=conflict-markers commit-msg||rc=2 ${ERR}check-interactive=commit-msg" \
   "an unknown name in the check list is exit 2 naming the known set|clean list-unknown|COMMIT_GUARDS_CHECKS=conflict-markers no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
   "a blank check list is exit 2|clean list-blank|COMMIT_GUARDS_CHECKS= ||rc=2 ${ERR}checks-empty=COMMIT_GUARDS_CHECKS" \
-  "a check that exits 2 is named as incomplete, the batch still runs the rest and exits 2|clean incomplete|$BC=abc||rc=2 $(steps all "$DEFAULT" byte-ceiling)$INCOMPLETE" \
-  "a batch carrying a violation and an incomplete check reports the incompletion, not the violations|planted planted-3|$BC=abc||rc=2 $(steps all "$DEFAULT" byte-ceiling)$INCOMPLETE" \
+  "a check that exits 2 is named as incomplete, the batch still runs the rest and exits 2|clean incomplete|$BC=abc,COMMIT_GUARDS_CHECKS=byte-ceiling $DEFAULT||rc=2 $(steps all "byte-ceiling $DEFAULT" byte-ceiling)$INCOMPLETE" \
+  "a batch carrying a violation and an incomplete check reports the incompletion, not the violations|planted planted-3|$BC=abc,COMMIT_GUARDS_CHECKS=byte-ceiling $DEFAULT||rc=2 $(steps all "byte-ceiling $DEFAULT" byte-ceiling)$INCOMPLETE" \
   "'all' with a flag a check would take is exit 2: flags go to a single check|clean all-extra||all --extra|rc=2 ${ERR}argument-unknown=--extra"
+
+echo "=== binary size is opt-in at commit scope ==="
+binary_batch() {
+  local rc=0 out=""
+  out="$(run_raw '' 'all --staged')" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^byte-ceiling: oversized=/ { print }')"
+  printf 'rc=%s%s' "$rc" "${out:+ $out}"
+}
+for row in \
+  "the default batch accepts a new 300 KB staged binary|binary-default||rc=0" \
+  "the batch setting enables byte-ceiling and rejects the same binary|binary-enabled|byte-ceiling $DEFAULT|rc=1 byte-ceiling: oversized=large.bin:307200:300:200"; do
+  IFS='|' read -r label name checks expect <<<"$row"
+  large_binary "$name" "$checks"
+  assert_eq "$label" "$expect" "$(binary_batch)"
+done
+
+gg_mutant SIZE_LIMITED_GG commit-guards "BATCH_DEFAULT=\"$DEFAULT\"" "BATCH_DEFAULT=\"byte-ceiling $DEFAULT\""
+large_binary binary-control
+assert_eq "control: restoring the default size limit rejects the staged binary" \
+  "rc=1 byte-ceiling: oversized=large.bin:307200:300:200" \
+  "$(GG="$SIZE_LIMITED_GG" binary_batch)"
 
 echo "=== --staged, --base REF and --against REF name the batch's scope; each check gets the flag it takes ==="
 versioned() { # NAME — a committed major bump after base
@@ -267,7 +298,7 @@ python3 - "$R/.agents/skills/commit-guards/scripts/commit-guards" <<'EDIT'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
-needle = 'BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"'
+needle = 'BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"'
 assert s.count(needle) == 1
 p.write_text(s.replace(needle, needle.replace('changelog-entries md-format', 'changelog-entries prose md-format')))
 EDIT
