@@ -123,12 +123,18 @@ fi
 # one coherent staged state, so no consumer wires a wrapper of its own.
 # The package arrives as another package's dependency too, so its
 # `unconfigured` refusal record, the first line on exit 2, is the one refusal
-# the lane passes, as not adopted. Every other refusal blocks.
+# the lane passes, as not adopted, and only with the `renders=none`
+# attestation on the second line: a copy older than its orphan scan prints
+# the record bare whatever renders the tree still holds, and that blocks.
+# Every other refusal blocks.
 bot_instructions_check() {
-  local out="" status=0 record
+  local out="" status=0 record rest
   out="$("$BOT_CHECK" check --staged 2>&1)" || status=$?
   record="${out%%$'\n'*}"
-  if [ "$status" -eq 2 ] && [[ "$record" == "bot-instructions: unconfigured="* ]]; then
+  rest="${out#"$record"}"
+  rest="${rest#$'\n'}"
+  if [ "$status" -eq 2 ] && [[ "$record" == "bot-instructions: unconfigured="* ]] &&
+    [ "${rest%%$'\n'*}" = "bot-instructions: renders=none" ]; then
     gg_message not-adopted "bot-instructions:${record#*=}" "=== pre-commit: bot-instructions is installed but ${record#*=} declares no [bot-instructions] table; nothing to check"
     return 0
   fi

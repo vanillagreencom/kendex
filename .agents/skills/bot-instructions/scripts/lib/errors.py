@@ -23,6 +23,8 @@ class BotInstructionsError(Exception):
     # family and from `from_spec`, which the spec reader sets on its way out.
     subject = None
     from_spec = False
+    # A second record the command line prints under the first, or None.
+    attestation = None
 
 
 class SpecError(BotInstructionsError):
@@ -68,10 +70,13 @@ class Unconfigured(InputError):
     nothing to render or judge, and a caller that runs every installed
     package's render or check reads this key to leave that repo alone: a
     consumer refresh, the commit-guards pre-commit lane and `kendex verify`.
-    The subject is the manifest that was read.
+    The subject is the manifest that was read. The attestation says the
+    orphan scan ran and found nothing; a copy older than that scan raises
+    this refusal without it.
     """
 
     key = "unconfigured"
+    attestation = "renders=none"
 
     def __init__(self, manifest):
         super().__init__(

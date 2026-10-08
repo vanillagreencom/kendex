@@ -4,6 +4,7 @@ Output protocol, which the commit-guards pre-commit lane and this package's
 suites read:
 
     refusal   bot-instructions: key=value   first line, on stderr, exit 2
+              bot-instructions: renders=none  second line, `unconfigured` only
     findings  bot-instructions: findings=N  first line, on stderr, exit 1
               then one line per finding
     bounds    region bounds<TAB>start<TAB>end   `region-bounds`, stdout, exit 0
@@ -18,7 +19,8 @@ refusal, the interpreter for a launcher refusal, the count for findings, and
 the `--input` path for `region-bounds`. It is not always a path.
 
 `unconfigured` names the manifest read; `errors.Unconfigured` says when it is
-raised and which callers read it.
+raised and which callers read it. Its `renders=none` line is the attestation
+`validators.md` § `orphan` defines.
 
 `region-input` is the one subject a person cannot open: the host writes the
 snapshot to a temporary file and unlinks it as soon as the child returns. The
@@ -205,6 +207,8 @@ def main(argv=None):
             from_spec = isinstance(exc, SpecError) or getattr(exc, "from_spec", False)
             subject = spec_root if from_spec else repo
         print(f"bot-instructions: {exc.key}={subject}", file=sys.stderr)
+        if exc.attestation is not None:
+            print(f"bot-instructions: {exc.attestation}", file=sys.stderr)
         print(str(exc), file=sys.stderr)
         return 2
     except Exception:  # a crash is not a finding either

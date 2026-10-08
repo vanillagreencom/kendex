@@ -77,8 +77,12 @@ def _marked_files(tree, produced):
 
 
 def _marked_region(tree):
+    """Does any `## Code Review Rules` section of AGENTS.md open with the
+    marker? Every one is read, not only a region `bounds` would splice: a
+    second heading beside the marked one leaves the doctrine loaded."""
     text = tree.read("AGENTS.md")
-    return text is not None and marker.owns("AGENTS.md", render.region_of(text))
+    return text is not None and any(
+        marker.owns("AGENTS.md", body) for body in render.section_bodies(text))
 
 
 def orphan_files(ctx):

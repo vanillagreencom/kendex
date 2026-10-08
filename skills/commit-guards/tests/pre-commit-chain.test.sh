@@ -181,11 +181,16 @@ fx_bot_unadopted() { repo bot-unadopted; bot_real '[skills.orch]\n'; }
 BOT_CONFIGURED='[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = "fixture"\nsummary = "A fixture."\n\n[bot-instructions.bots]\ncodex = true\n'
 fx_bot_stale() { repo bot-stale; bot_real "$BOT_CONFIGURED"; }
 fx_bot_refuses() { repo bot-refuses; tree bot-instructions "bot-instructions: source=<repo>" 2; }
+# A copy older than the package's orphan scan: the record with no
+# `renders=none` attestation under it, whatever renders the tree holds.
+fx_bot_bare() { repo bot-bare; tree bot-instructions "bot-instructions: unconfigured=kendex.toml" 2; }
 UNADOPTED="rc=0 $BOT;pre-commit: not-adopted=bot-instructions:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
 REFUSED="rc=2 $BOT;bot-instructions: source=<repo> check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
+BARE_REFUSED="rc=2 $BOT;bot-instructions: unconfigured=kendex.toml check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 run_rows \
   "an installed package with no [bot-instructions] table is not adopted: one line, and the chain passes|fx_bot_unadopted||$BARE||$UNADOPTED" \
-  "any other exit-2 refusal is a step that did not complete, and blocks|fx_bot_refuses||$BARE||$REFUSED"
+  "any other exit-2 refusal is a step that did not complete, and blocks|fx_bot_refuses||$BARE||$REFUSED" \
+  "an unconfigured record without its renders=none attestation blocks|fx_bot_bare||$BARE||$BARE_REFUSED"
 fx_bot_stale
 stale="$(run "" "$BARE" "")"
 case "$stale" in
@@ -226,8 +231,8 @@ EDIT
 assert_eq "control: a package that never looks for marked renders passes the removed table as not adopted" "rc=0" "$(run "" "$BARE" "" | cut -d' ' -f1)"
 
 # Controls, each on a private install: without the not-adopted branch the
-# unconfigured install blocks, and with the record's key unread every exit-2
-# refusal passes.
+# unconfigured install blocks, with the record's key unread every exit-2
+# refusal passes, and with the attestation unread the bare record passes.
 bot_mutant() { # NAME OLD NEW
   install "$TMP/bot-mutant-$1"
   python3 - "$TMP/bot-mutant-$1/commit-guards/scripts/pre-commit" "$2" "$3" <<'EDIT'
@@ -240,12 +245,19 @@ EDIT
 }
 bot_mutant unread '"$status" -eq 2 ] && [[' '"$status" -eq 99 ] && [['
 bot_mutant keyless '"bot-instructions: unconfigured="*' '"bot-instructions: "*'
+bot_mutant unattested $'&&\n    [ "${rest' '|| [ "${rest'
 fx_bot_unadopted_control() { repo bot-unadopted-control; bot_real '[skills.orch]\n'; }
-fx_bot_refuses_control() { repo bot-refuses-control; tree bot-instructions "bot-instructions: source=<repo>" 2; }
+# The attestation under another key, so only the key match stands between it
+# and a pass.
+fx_bot_refuses_control() { repo bot-refuses-control; tree bot-instructions $'bot-instructions: source=<repo>\nbot-instructions: renders=none\nfixture=attested' 2; }
+fx_bot_bare_control() { repo bot-bare-control; tree bot-instructions "bot-instructions: unconfigured=kendex.toml" 2; }
 fx_bot_unadopted_control
 assert_eq "control: a lane that ignores the unconfigured record blocks the unconfigured install" "rc=2" "$(run "" bot-mutant-unread "" | cut -d' ' -f1)"
 fx_bot_refuses_control
-assert_eq "control: a lane that matches any refusal passes the source refusal" "rc=0" "$(run "" bot-mutant-keyless "" | cut -d' ' -f1)"
+assert_eq "control: a lane that matches any refusal key passes an attested source refusal" "rc=0" "$(run "" bot-mutant-keyless "" | cut -d' ' -f1)"
+assert_eq "the real lane blocks the attested source refusal" "rc=2" "$(run "" "$BARE" "" | cut -d' ' -f1)"
+fx_bot_bare_control
+assert_eq "control: a lane that reads no attestation passes the bare record" "rc=0" "$(run "" bot-mutant-unattested "" | cut -d' ' -f1)"
 
 echo "=== the repo-local entry: announced, run last, and its status folded like every lane's ==="
 fx_local_ran() { repo local-ran; local_entry '#!/bin/sh\necho "fixture=local-clean"\nexit 0\n'; }

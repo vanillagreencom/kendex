@@ -137,11 +137,14 @@ def bounds(existing):
     heading, and a narrower terminator lets the splice swallow that section
     and everything below it.
     """
-    lines = existing.split("\n")
     opens = headings(existing)
     if len(opens) != 1:
         return None
-    start = opens[0]
+    return _section(existing.split("\n"), opens[0])
+
+
+def _section(lines, start):
+    """`(start, end)` of the section `lines[start]` opens: `bounds`' terminator."""
     end = len(lines)
     for i in range(start + 1, len(lines)):
         if _is_heading_1_or_2(lines[i]):
@@ -210,5 +213,18 @@ def region_of(existing, path="AGENTS.md"):
     span = bounds(existing)
     if span is None:
         return None
-    start, end = span
-    return "\n".join(existing.split("\n")[start + 1 : end]).strip("\n")
+    return _body(existing.split("\n"), *span)
+
+
+def section_bodies(existing):
+    """The body under every opening line `headings` finds, whatever their count.
+
+    The orphan scan's reading: a marked body under one of two headings is
+    still doctrine a bot loads, though `bounds` locates no region to splice.
+    """
+    lines = existing.split("\n")
+    return [_body(lines, *_section(lines, start)) for start in headings(existing)]
+
+
+def _body(lines, start, end):
+    return "\n".join(lines[start + 1 : end]).strip("\n")
