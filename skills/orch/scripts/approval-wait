@@ -37,14 +37,6 @@ approval_message() {
       printf 'approval-wait: author-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "could not resolve the author login of PR #$PR_NUM in $REPO"
       ;;
-    request-identity-unreadable)
-      printf 'approval-wait: request-identity-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
-      printf '%s\n' 'Could not read the pull request branch and author before requesting review.'
-      ;;
-    refresh-identity-load)
-      printf 'approval-wait: refresh-identity-load path=%q\n' "$refresh_identity_lib"
-      printf '%s\n' 'Could not load the refresh identity rule.'
-      ;;
     base-unreadable)
       printf 'approval-wait: base-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "approval-wait: could not read the base branch and review decision of PR #$PR_NUM in $REPO, so no gate mode is available"
@@ -211,22 +203,18 @@ stop: stdout stays empty and stderr says why.
                  Read committed policy with the caller's trusted settings reader, not PATH's code or private env.
                  Authentication stays with the caller's project.
   --request-review
-                 Resolve through --base-checkout each time. An off gate prints
-                 off and sends no request. An approval gate requests Copilot and
-                 prints approval, or prints a fallback line when no request went
-                 out (below). A resolution or PR_COPILOT_REQUESTS failure is
-                 nonzero and authorizes no wait or retry.
+                 resolve through --base-checkout each time. An off gate prints off
+                 and sends no request. An approval gate requests Copilot and prints
+                 approval, or prints a fallback line when no request went out
+                 (below). A resolution or PR_COPILOT_REQUESTS failure is nonzero
+                 and authorizes no wait or retry.
                  Print a fallback line, exit 0, when an approval gate sends no
                  request, its first word fallback and then its cause:
-                   fallback cause=refresh-identity the exact kendex/refresh branch,
-                                                   lanes-app author and Bot type
                    fallback cause=off              PR_COPILOT_REQUESTS is off
                    fallback cause=refused exit=N   the request exited N, nonzero
                                                    (copilot-request-refused on stderr)
-                 Route refresh-identity through references/copilot-head-notices.md
-                 section Consumer refresh approval. It requests no Copilot review.
-                 For other causes, ask the overseer for the head approval, naming
-                 the cause, and wait for no Copilot review.
+                 The caller then asks the overseer for the head approval, naming
+                 the cause, and waits for no Copilot review.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -265,8 +253,7 @@ After a successful request or fallback, mail exits, timeouts and later waits
 on that head cannot issue another retry.
 After copilot-error, later waits wait for approval without repeating that result.
 Without --item the record lasts only for this invocation.
-Callers route a refresh-identity copilot-error through Consumer refresh approval.
-Other copilot-error causes route as copilot-fallback and wait for app approval.
+Callers route copilot-error as copilot-fallback and wait for app approval.
 
 Mode resolution requires --base-checkout; waits require --mode approval.
 Committed REVIEW_GATE_MODE=off prints off before native resolution; enforce (default) uses it.
@@ -373,7 +360,7 @@ JSON output (always when --json):
                                   # repo-unresolved, repo-shape
     "head_sha": <string>,         # head read by the poll
     "copilot_fallback_cause": <string>, # only for copilot-error: error, off,
-                                        # refresh-identity, or refused exit=N
+                                        # or refused exit=N
     "review_decision": <string>,  # raw reviewDecision ("" when unset)
     "approvals": <int>,           # reviewers whose latest review is APPROVED
     "changes_requested": <int>,   # reviewers at CHANGES_REQUESTED
@@ -858,26 +845,6 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
     if [[ "$COPILOT_REQUESTS" == off ]]; then
       answer='fallback cause=off'
     else
-      identity=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE") || {
-        cat "$GH_ERR_FILE" >&2
-        approval_message request-identity-unreadable >&2; exit 2;
-      }
-      if ! jq -e '(.head.ref | type) == "string" and
-          (.user.login | type) == "string" and (.user.type | type) == "string"' \
-          >/dev/null 2>&1 <<<"$identity"; then
-        approval_message request-identity-unreadable >&2; exit 2
-      fi
-      refresh_identity_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/refresh-identity.sh"
-      if [[ ! -r "$refresh_identity_lib" ]] || ! source "$refresh_identity_lib"; then
-        approval_message refresh-identity-load >&2; exit 2
-      fi
-      refresh_identity=$(jq -r "$REFRESH_IDENTITY_JQ" <<<"$identity") || {
-        approval_message request-identity-unreadable >&2; exit 2;
-      }
-      if [[ "$refresh_identity" == true ]]; then
-        printf '%s\n' 'fallback cause=refresh-identity'
-        exit 0
-      fi
       request_rc=0
       gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
       if [[ "$request_rc" -ne 0 ]]; then

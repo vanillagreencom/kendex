@@ -1,1 +1,1 @@
-- Prime source mirrors before refresh approval and route non-render refreshes to the overseer review without a Copilot request.
+- Prime source mirrors before the consumer refresh approval classifier runs.

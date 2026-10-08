@@ -35,9 +35,6 @@ case "$1 $2" in
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
     echo '[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]'
     ;;
-  'api repos/consumer/repo/pulls/42')
-    cat "$IDENTITY_FILE"
-    ;;
   'pr edit')
     printf '%s\n' "$PWD|$*" >> "$REQUEST_LOG"
     [[ "$REQUEST_EXIT" == 0 ]] || exit "$REQUEST_EXIT"
@@ -53,8 +50,6 @@ ERR="$TMP_ROOT/err"
 REQUEST_LOG="$TMP_ROOT/requests"
 QUERY_LOG="$TMP_ROOT/queries"
 EXECUTION_LOG="$TMP_ROOT/executions"
-IDENTITY_FILE="$TMP_ROOT/identity.json"
-printf '%s\n' '{"head":{"ref":"feature/work"},"user":{"login":"vanillagreen-fleet-lanes[bot]","type":"Bot"}}' > "$IDENTITY_FILE"
 
 # write_settings FILE GATE COPILOT: COPILOT empty leaves PR_COPILOT_REQUESTS unset.
 write_settings() {
@@ -73,7 +68,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
     GH_TOKEN=github_pat_fixture GH_REPO=catalog/repo GITHUB_REPOSITORY=catalog/repo \
     REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review REVIEW_GATE_SETTINGS_FILE=/dev/null \
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
-    REQUEST_EXIT="$request_exit" IDENTITY_FILE="$IDENTITY_FILE" \
+    REQUEST_EXIT="$request_exit" \
     bash "$script" 42 "$@" > "$OUT" 2> "$ERR") || RC=$?
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
 }
@@ -109,39 +104,6 @@ assert_eq "$(cat "$REQUEST_LOG")" "$BASE|pr edit 42 --repo consumer/repo --add-r
   'the request names the consumer repository, not the inherited catalog' "$ERR"
 assert_contains "$(cat "$QUERY_LOG")" "$BASE|api repos/consumer/repo/rules/branches/feature%2Fbase --paginate" \
   'the trusted native owner reads stacked-base rules from the consumer directory' "$ERR"
-
-# Branch and app identity jointly exclude catalog refreshes from Copilot.
-for row in \
-  'catalog refresh|kendex/refresh|vanillagreen-fleet-lanes[bot]|Bot|fallback cause=refresh-identity|0' \
-  'ordinary lanes head|feature/work|vanillagreen-fleet-lanes[bot]|Bot|approval|1' \
-  'another refresh author|kendex/refresh|another-app[bot]|Bot|approval|1' \
-  'human refresh author|kendex/refresh|vanillagreen-fleet-lanes[bot]|User|approval|1'; do
-  IFS='|' read -r label head login kind want_out want_requests <<< "$row"
-  jq -n --arg head "$head" --arg login "$login" --arg kind "$kind" \
-    '{head:{ref:$head},user:{login:$login,type:$kind}}' > "$IDENTITY_FILE"
-  run_action "$RUN" 0 --request-review --base-checkout "$BASE"
-  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "0|$want_out|$want_requests" "$label request route" "$ERR"
-done
-printf '%s\n' '{"head":{"ref":"kendex/refresh"},"user":{"login":"vanillagreen-fleet-lanes[bot]","type":"Bot"}}' > "$IDENTITY_FILE"
-scripts="$(mutant_scripts refresh-identity/orch approval-wait)"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-identity/github"
-ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/refresh-identity/review-gate"
-mutate_file "$scripts/approval-wait" '      if [[ "$refresh_identity" == true ]]; then' '      if false; then'
-run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
-assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|approval|1' 'control: removing refresh exclusion requests Copilot' "$ERR"
-printf '%s\n' '{}' > "$IDENTITY_FILE"
-run_action "$RUN" 0 --request-review --base-checkout "$BASE"
-assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '2||0' 'an unreadable identity refuses the request' "$ERR"
-printf '%s\n' '{"head":{"ref":"feature/work"},"user":{"login":"vanillagreen-fleet-lanes[bot]","type":"Bot"}}' > "$IDENTITY_FILE"
-scripts="$(mutant_scripts missing-identity/orch approval-wait)"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/missing-identity/github"
-mkdir -p "$TMP_ROOT/missing-identity/review-gate/scripts/lib"
-ln -s "$REPO_ROOT/skills/review-gate/scripts/lib/settings.sh" \
-  "$TMP_ROOT/missing-identity/review-gate/scripts/lib/settings.sh"
-ln -s "$REPO_ROOT/skills/review-gate/scripts/lib/diagnostics.sh" \
-  "$TMP_ROOT/missing-identity/review-gate/scripts/lib/diagnostics.sh"
-run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
-assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '2||0' 'a missing identity owner refuses the request' "$ERR"
 
 for action in --request-review --resolve-mode; do
   for context in '' "$TMP_ROOT/missing"; do
