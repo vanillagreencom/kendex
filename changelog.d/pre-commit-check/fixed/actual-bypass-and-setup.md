@@ -1,1 +1,1 @@
-- Commit checks distinguish bypass options from messages and Git data. Missing setup names the consent or main checkout owner route. Reader failures report an unavailable check and allow the command.
+- Commit checks distinguish bypass options from messages and Git data. A hook-path change before a bypass commit in the same command requires separate commands. Missing setup names the consent or main checkout owner route. Reader failures report an unavailable check and allow the command.

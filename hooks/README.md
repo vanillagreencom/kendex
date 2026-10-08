@@ -18,7 +18,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `lane-mail-halt`: Stops a lane at its next tool call when its overseer sends a halt, until the lane reads it, and refuses the harness question tool in a lane, naming lane mail as the route.
 - `lane-mail-prompt`: Hands a Copilot lane the messages its overseer sent with each prompt it is handed, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `lane-mail-start`: Hands a Copilot lane the messages its overseer sent as soon as its session starts, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
-- `pre-commit-check`: Stops explicit options that skip armed commit checks. Missing setup or an unavailable reader produces a notice with the responsible owner.
+- `pre-commit-check`: Stops options that skip armed commit checks and bypass commits after a hook-path change in the same command. Missing setup or an unavailable reader produces a notice with the responsible owner.
 - `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice, and a lane launched to refresh gets the whole report.

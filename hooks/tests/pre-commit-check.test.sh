@@ -127,7 +127,7 @@ command_rows() {
 2|pre-commit-check: bypass=-ccore.hooksPath=/dev/null|git -ccore.hooksPath=/dev/null commit -m x
 2|pre-commit-check: bypass=--config-env=core.hooksPath=HP|git --config-env=core.hooksPath=HP commit -m x
 2|pre-commit-check: bypass=GIT_CONFIG_KEY_0=Core.HooksPath|GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x
-2|pre-commit-check: bypass=core.hooksPath|git config --local core.hooksPath /dev/null; git commit -m x
+0|-|git config --local core.hooksPath /dev/null; git commit -m x
 0|pre-commit-check: command=unresolved|GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="core.hooksPath$SUFFIX" GIT_CONFIG_VALUE_0=/dev/null git commit -m x
 0|pre-commit-check: command=unresolved|GIT_CONFIG_COUNT="1$SUFFIX" GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x
 0|pre-commit-check: command=unresolved|GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$HOOKS" git commit -m x
@@ -137,8 +137,8 @@ command_rows() {
 0|pre-commit-check: command=unresolved|git --config-env "core.hooksPath$SUFFIX=HP" commit -m x
 0|pre-commit-check: command=unresolved|git -ccore.hooksPath"$SUFFIX"=/dev/null commit -m x
 0|pre-commit-check: command=unresolved|git --config-env=core.hooksPath"$SUFFIX"=HP commit -m x
-0|pre-commit-check: command=unresolved|git config --local "core.hooksPath$SUFFIX" /dev/null; git commit -m x
-0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -m x
+0|-|git config --local "core.hooksPath$SUFFIX" /dev/null; git commit -m x
+0|-|git config --local core.hooksPath "$HOOKS"; git commit -m x
 2|pre-commit-check: bypass=-n|git config --local core.hooksPath "$HOOKS"; git commit -n -m x
 2|pre-commit-check: bypass=NOVERIFY|git config --local "core.hooksPath$SUFFIX" /dev/null; git commit NOVERIFY -m x
 2|pre-commit-check: bypass=-nm"$TEXT"|git config --local core.hooksPath "$HOOKS"; git commit -nm"$TEXT"
@@ -146,16 +146,21 @@ command_rows() {
 2|pre-commit-check: bypass=GIT_CONFIG_KEY_0=core.hooksPath|git config --local core.hooksPath "$HOOKS"; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x
 2|pre-commit-check: bypass=-n|git config --local core.hooksPath "$HOOKS"; git commit -n -m x; echo {a,b}
 2|pre-commit-check: bypass=-n|git config --local core.hooksPath "$HOOKS"; git commit -m $TEXT -n; git commit -n -m x
-0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -m NOVERIFY
-0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -F -n
-0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -- -n
-0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -n --verify -m x
+0|-|git config --local core.hooksPath "$HOOKS"; git commit -m NOVERIFY
+0|-|git config --local core.hooksPath "$HOOKS"; git commit -F -n
+0|-|git config --local core.hooksPath "$HOOKS"; git commit -- -n
+0|-|git config --local core.hooksPath "$HOOKS"; git commit -n --verify -m x
 0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit "-$OPTION"nm -m x
 0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -m $TEXT -n
 0|-|git config --local core.hooksPath "$HOOKS"; git commit --dry-run -n
 0|-|git config --local core.hooksPath "$HOOKS"; git commit --help -n
-2|pre-commit-check: bypass=core.hooksPath|git config --local core.hooksPath "$HOOKS"; git config --local core.hooksPath /dev/null; git commit -m x
-0|pre-commit-check: command=unresolved|git config --local core.hooksPath /dev/null; git config --local core.hooksPath "$HOOKS"; git commit -m x
+0|-|git config --local core.hooksPath "$HOOKS"; git config --local core.hooksPath /dev/null; git commit -m x
+0|-|git config --local core.hooksPath /dev/null; git config --local core.hooksPath "$HOOKS"; git commit -m x
+0|-|git config core.hooksPath /dev/null; git config --unset core.hooksPath; git commit -m x
+2|pre-commit-check: bypass=-n|git config core.hooksPath /dev/null; git config --unset core.hooksPath; git commit -n -m x
+0|-|git config --unset core.hooksPath; git commit -m NOVERIFY
+0|-|git config --unset core.hooksPath; git commit -F -n
+0|-|git config --unset core.hooksPath; git commit -- -n
 0|-|git commit -m x; git config --local core.hooksPath /dev/null
 2|pre-commit-check: bypass=-n|git commit -m "$TEXT" -n
 0|pre-commit-check: command=unresolved|HEREDOC_COMMIT
@@ -316,8 +321,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     'if [ "$READER_STATE" = incomplete ]; then BYPASS=""; fi' HOOK command_rows \
     'git commit -n -m x; echo {a,b}'
   skill_load_control config-discards-refusal "$HOOK" '        commit-refusal)' \
-    '[ "$CONFIG_STATE" != unavailable ] || CALL_BYPASS=""' HOOK command_rows \
+    'if [ -n "$CONFIG_MUTATION" ]; then CALL_BYPASS=""; CALL_FLAG=""; fi' HOOK command_rows \
     'git config --local core.hooksPath "$HOOKS"; git commit -n -m x'
+  skill_load_control config-is-bypass "$HOOK" '      read_call' \
+    '[ "$CALL_RESULT" != config-change ] || BYPASS=core.hooksPath' HOOK command_rows \
+    'git config --local core.hooksPath /dev/null; git commit -m x'
   skill_load_control incomplete-is-complete "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' \
     'if [ "$READER_STATE" = incomplete ]; then TOKENS[${#TOKENS[@]}]=""; KINDS[${#KINDS[@]}]=separator; RAW[${#RAW[@]}]=""; fi' HOOK command_rows \
     'git commit -n -m x ${X:-y}' 'git commit -n -m "${TEXT:-x}"'

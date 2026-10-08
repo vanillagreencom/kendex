@@ -29,6 +29,9 @@ SCOPED="$(new_repo scoped)"; arm "$SCOPED" pre-commit commit-msg
 git -C "$SCOPED" config extensions.worktreeConfig true
 git -C "$SCOPED" config --local core.hooksPath /dev/null
 git -C "$SCOPED" config --worktree core.hooksPath /dev/null
+REPEATED="$(new_repo repeated)"; arm "$REPEATED" pre-commit commit-msg
+git -C "$REPEATED" config core.hooksPath /dev/null
+git -C "$REPEATED" config --add core.hooksPath /dev/null
 INCLUDED="$(new_repo included)"; arm "$INCLUDED" pre-commit commit-msg
 git -C "$INCLUDED" config core.hooksPath /dev/null
 git -C "$INCLUDED" config include.path "$TMP_ROOT/include.gitconfig"
@@ -39,6 +42,7 @@ arming_rows() {
   local row directory want status form name
   while IFS='|' read -r directory want status form; do
     [ -n "$directory" ] || continue
+    form=${form//NOVERIFY/$NV}; want=${want//NOVERIFY/$NV}
     name="arming: $directory${form:+: $form}"
     [ "${status:-0}" != 2 ] || name="defensive guard refusal: $directory: $form"
     form=${form:-git commit -m test}
@@ -62,22 +66,32 @@ $RESTORED|pre-commit-check: bypass=-n|2|git config --local --unset-all core.hook
 $RESTORED|pre-commit-check: bypass=-n|2|git config unset --local --all core.hooksPath; git commit -n -m fixture
 $RESTORED|pre-commit-check: bypass=-n|2|git config --unset core.hooksPath; git config core.hooksPath "\$HOOKS"; git commit -n -m fixture
 $RESTORED|pre-commit-check: bypass=-n|2|git config --unset core.hooksPath; git commit -n -m fixture; echo {a,b}
-$RESTORED|-|0|git config --unset core.hooksPath; git commit -m '-n'
-$RESTORED|-|0|git config --unset core.hooksPath; git commit -F -n
-$RESTORED|-|0|git config --unset core.hooksPath; git commit -- -n
-$RESTORED|-|0|git config --unset core.hooksPath; git commit -n --verify -m fixture
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --unset core.hooksPath; git commit -m '-n'
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --unset core.hooksPath; git commit -F -n
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --unset core.hooksPath; git commit -- -n
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --unset core.hooksPath; git commit -n --verify -m fixture
 $RESTORED|pre-commit-check: unarmed=$RESTORED|0|git commit -n -m fixture; git config --unset core.hooksPath
 $RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --get core.hooksPath; git commit -n -m fixture
-$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --global --unset core.hooksPath; git commit -n -m fixture
-$SCOPED|pre-commit-check: unarmed=$SCOPED|0|git config --local --unset core.hooksPath; git commit -n -m fixture
-$INCLUDED|pre-commit-check: unarmed=$INCLUDED|0|git config --local --unset core.hooksPath; git commit -n -m fixture
-$RESTORED|pre-commit-check: command=unresolved|0|git config core.hooksPath "\$HOOKS"; git config --unset core.hooksPath; git commit -n -m fixture
-$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --unset core.hooksPath /another/path; git commit -n -m fixture
+$RESTORED|pre-commit-check: bypass=-n|2|git config --global --unset core.hooksPath; git commit -n -m fixture
+$SCOPED|pre-commit-check: bypass=-n|2|git config --local --unset core.hooksPath; git commit -n -m fixture
+$INCLUDED|pre-commit-check: bypass=-n|2|git config --local --unset core.hooksPath; git commit -n -m fixture
+$RESTORED|pre-commit-check: bypass=-n|2|git config core.hooksPath "\$HOOKS"; git config --unset core.hooksPath; git commit -n -m fixture
+$RESTORED|pre-commit-check: bypass=-n|2|git config --unset core.hooksPath /another/path; git commit -n -m fixture
 $RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --type=path core.hooksPath /dev/null; git commit -m fixture
-$UNARMED|pre-commit-check: unarmed=$UNARMED|0|git config --unset core.hooksPath; git commit -n -m fixture
-$DISARMED|pre-commit-check: unarmed=$DISARMED|0|git config --unset core.hooksPath; git commit -n -m fixture
-$HALF_ARMED|pre-commit-check: unarmed=$HALF_ARMED|0|git config --unset core.hooksPath; git commit -n -m fixture
-$ARMED|pre-commit-check: command=unresolved|0|git config core.hooksPath /dev/null; git config --unset core.hooksPath; git commit -m fixture
+$UNARMED|pre-commit-check: bypass=-n|2|git config --unset core.hooksPath; git commit -n -m fixture
+$DISARMED|pre-commit-check: bypass=-n|2|git config --unset core.hooksPath; git commit -n -m fixture
+$HALF_ARMED|pre-commit-check: bypass=-n|2|git config --unset core.hooksPath; git commit -n -m fixture
+$RESTORED|pre-commit-check: bypass=-n|2|git config core.hooksPath /dev/null; git config --unset core.hooksPath; git commit -n --allow-empty -m fixture
+$REPEATED|pre-commit-check: bypass=-n|2|git config --unset-all core.hooksPath && git commit -n --allow-empty -m fixture
+$SCOPED|pre-commit-check: bypass=-n|2|git config --local --unset core.hooksPath; git config --worktree --unset core.hooksPath; git commit -n --allow-empty -m fixture
+$RESTORED|pre-commit-check: bypass=NOVERIFY|2|git config --replace-all core.hooksPath /dev/null; git commit NOVERIFY -m fixture
+$RESTORED|pre-commit-check: bypass=-anm|2|git config --add core.hooksPath /dev/null; git commit -anm fixture
+$RESTORED|pre-commit-check: bypass=-n|2|git config set --local core.hooksPath /dev/null; git commit -n -m fixture
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|printf %s 'git config --unset core.hooksPath'; git commit -n -m fixture
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config --get user.name core.hooksPath; git commit -n -m fixture
+$RESTORED|pre-commit-check: unarmed=$RESTORED|0|git config user.name core.hooksPath; git commit -n -m fixture
+$RESTORED|pre-commit-check: command=unresolved|0|git config --unset core.hooksPath; git commit -m \$TEXT -n
+$ARMED|-|0|git config core.hooksPath /dev/null; git config --unset core.hooksPath; git commit -m fixture
 ROWS
 }
 arming_rows
@@ -89,6 +103,31 @@ status=0
 assert_eq "$status" 1 'real restored hook refuses an ordinary commit'
 assert_eq "$(cat "$TMP_ROOT/reset-check.log")" pre-commit 'the restored refusing hook runs'
 git -C "$RESTORED" config core.hooksPath /dev/null
+
+# Separate tool commands read current setup instead of a prior payload's
+# configuration operations. Ordinary commits remain Git's responsibility.
+split_command_rows() {
+  local directory reset status want form name
+  while IFS='|' read -r directory reset status want form; do
+    [ -n "$directory" ] || continue
+    git -C "$directory" config core.hooksPath /dev/null
+    run_hook "$directory" "$(payload 'git config --unset core.hooksPath')"
+    assert_eq "rc=$rc first=$(first_line)" 'rc=0 first=-' 'a separate configuration command has no commit verdict'
+    if [ "$reset" = reset ]; then git -C "$directory" config --unset core.hooksPath; fi
+    name="split command: $reset: $form"
+    run_hook "$directory" "$(payload "$form")"
+    assert_eq "rc=$rc first=$(first_line)" "rc=$status first=$want" "$name"
+  done <<ROWS
+$RESTORED|reset|2|pre-commit-check: bypass=-n|git commit -n -m fixture
+$RESTORED|reset|0|-|git commit -m fixture
+$RESTORED|reset|0|pre-commit-check: command=unresolved|git commit -m \$TEXT -n
+$RESTORED|redirect|0|pre-commit-check: unarmed=$RESTORED|git commit -n -m fixture
+$SCOPED|reset|0|pre-commit-check: unarmed=$SCOPED|git commit -n -m fixture
+$INCLUDED|reset|0|pre-commit-check: unarmed=$INCLUDED|git commit -n -m fixture
+ROWS
+  git -C "$RESTORED" config core.hooksPath /dev/null
+}
+split_command_rows
 run_hook "$RESTORED" "$(payload 'git config --unset core.hooksPath && git commit -n --allow-empty -m fixture')"
 assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=pre-commit-check: bypass=-n' 'defensive guard refusal after a known reset'
 status=0
@@ -116,13 +155,12 @@ run_hook "$NOT_A_REPO" "$(payload 'git commit -m x')"
 assert_eq "rc=$rc first=$(first_line)" 'rc=0 first=-' "a non-repository with no move has no verdict"
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  skill_load_control reset-loses-consent "$HOOK" '[ -n "$CONFIG_ENTRIES" ] || CONFIG_ARMED=$RESET_ARMED' \
-    'CONFIG_ARMED=$ARMED' HOOK arming_rows \
+  skill_load_control no-same-command-refusal "$HOOK" '      read_call' \
+    'CONFIG_MUTATION=""' HOOK arming_rows \
     "defensive guard refusal: $RESTORED: git config --unset core.hooksPath && git commit -n --allow-empty -m fixture"
-  skill_load_control reset-ignores-survivors "$HOOK" 'CONFIG_ENTRIES=$SURVIVING_ENTRIES' \
-    'CONFIG_ENTRIES=""' HOOK arming_rows \
-    "arming: $SCOPED: git config --local --unset core.hooksPath; git commit -n -m fixture" \
-    "arming: $INCLUDED: git config --local --unset core.hooksPath; git commit -n -m fixture"
+  skill_load_control split-ignores-current-state "$HOOK" 'else HOOKS_DIR=""; fi' \
+    'ARMED=""' HOOK split_command_rows \
+    'split command: reset: git commit -n -m fixture'
   skill_load_control no-consent "$HOOK" 'message unarmed "$PWD"' 'exit 2' HOOK arming_rows \
     "arming: $UNARMED"
   skill_load_control relative-owner "$HOOK" 'COMMON=$(cd -- "$COMMON" && pwd -P) || { message setup consent; exit 0; }' 'COMMON=$(git rev-parse --git-common-dir)' HOOK arming_rows \

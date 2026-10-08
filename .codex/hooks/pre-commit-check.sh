@@ -3,8 +3,8 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: Defers commits to executable, marked pre-commit and commit-msg hooks in the working repository. Refuses a literal bypass option in a direct git commit call or a literal core.hooksPath override applied to that call. Reads quoted words, comments, command boundaries and option values without executing shell text. Messages, path operands and other programs' arguments are not options. Unarmed repositories get a consent notice; linked worktrees get a main-owner setup route. Unavailable tools, unreadable payloads and commands this reader cannot resolve get a notice as harness context and allow the command. This hook never runs repository setup or check scripts.
-# summary: Stops explicit options that skip armed commit checks. Missing setup or an unavailable reader produces a notice with the responsible owner.
+# description: Defers commits to executable, marked pre-commit and commit-msg hooks in the working repository. Refuses a literal bypass option or core.hooksPath override on a direct git commit call. Also refuses the commit's own literal bypass flag after a core.hooksPath write or unset in the same command, and names the separate-command remedy. Reads quoted words, comments, command boundaries and option values without executing shell text. Messages, path operands and other programs' arguments are not options. Unarmed repositories get a consent notice; linked worktrees get a main-owner setup route. Unavailable tools, unreadable payloads and commands this reader cannot resolve get a notice as harness context and allow the command. This hook never runs repository setup or check scripts.
+# summary: Stops options that skip armed commit checks and bypass commits after a hook-path change in the same command. Missing setup or an unavailable reader produces a notice with the responsible owner.
 # safety: Reads JSON, literal shell words and Git hook files. Executes no command from the payload and no repository script. Quoted message and file expansions are kept as single argument values without execution. Unresolved argument boundaries and unclosed quotes are reported and allowed; indirect launches are outside the literal direct-call check. Git's installed hooks enforce checks when the hook cannot read a command. The working repository alone is judged; repository-moving commits get a notice when the working directory has no readable Git hook directory. Every diagnostic starts with pre-commit-check: key=value.
 # timeout: 60
 # ---
@@ -25,7 +25,11 @@ message_text() { # KEY VALUE [CAUSE]
     command)
       echo "The hook cannot resolve this shell form without execution. This command is allowed; Git's installed hooks remain responsible for commit checks." ;;
     bypass)
-      echo "This option skips the repository's armed commit checks. Remove the option and commit with the installed hooks." ;;
+      if [ -n "${SAME_COMMAND:-}" ]; then
+        echo "Run the configuration change and the commit as separate commands. This command changes core.hooksPath before a commit that skips checks."
+      else
+        echo "This option skips the repository's armed commit checks. Remove the option and commit with the installed hooks."
+      fi ;;
     unarmed)
       echo "Commit checks are not armed in $2. This command is allowed. Repository setup requires a person's consent before repository scripts run." ;;
     setup)
@@ -276,7 +280,7 @@ tokenize() {
 read_call() {
   local i=0 word rest letter value config="" env_config="" verb="" flag="" config_action=set
   local env_count="" prefix_end candidate key_index value_word present word_kind owns_value uncertain="" value_kind unresolved=""
-  CALL_RESULT=other; CALL_BYPASS=""; CALL_CONFIG=""; CALL_CONFIG_SCOPE=local
+  CALL_RESULT=other; CALL_BYPASS=""; CALL_FLAG=""
   while [ "$i" -lt "${#ARGS[@]}" ]; do
     word=${ARGS[$i]}; word_kind=${ARG_KINDS[$i]}; i=$((i + 1))
     case "$word" in GIT_CONFIG_*) [ "$word_kind" = word ] || uncertain=1 ;; esac
@@ -336,13 +340,13 @@ read_call() {
     esac
   done
   if [ "$verb" = config ]; then
-    # A config query returns data. Writes and resets change the configuration
-    # state used by a later completed commit, without running the command.
+    # Git config writes and unsets are command operations, not evidence of
+    # the resulting hook setup. Queries and option values remain data.
     while [ "$i" -lt "${#ARGS[@]}" ]; do
-      word=${ARGS[$i]}; value=${ORIGINAL[$i]}; i=$((i + 1))
-      [ "${ARG_KINDS[$((i - 1))]}" = word ] || { CALL_RESULT=config-unavailable; return 0; }
+      word=${ARGS[$i]}; i=$((i + 1))
+      [ "${ARG_KINDS[$((i - 1))]}" = word ] || return 0
       case "$word" in
-        --local | --global | --worktree | --system) CALL_CONFIG_SCOPE=${word#--}; continue ;;
+        --local | --global | --worktree | --system) continue ;;
         --add | --replace-all | set) continue ;;
         --unset | --unset-all | unset) config_action=reset; continue ;;
         --all) [ "$config_action" != reset ] || continue; return 0 ;;
@@ -350,13 +354,8 @@ read_call() {
       esac
       case "$word" in
         [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh])
-          if [ "$config_action" = reset ]; then
-            # A value pattern cannot prove the setting is removed.
-            [ "$i" -ne "${#ARGS[@]}" ] || CALL_RESULT=config-reset
-          elif [ "$i" -lt "${#ARGS[@]}" ]; then
-            if [ "${ARG_KINDS[$i]}" = word ]; then
-              CALL_CONFIG=$value; CALL_RESULT=config
-            else CALL_RESULT=config-unavailable; fi
+          if [ "$config_action" = reset ] || [ "$i" -lt "${#ARGS[@]}" ]; then
+            CALL_RESULT=config-change
           fi ;;
       esac
       return 0
@@ -409,6 +408,7 @@ read_call() {
       *) continue ;;
     esac
   done
+  CALL_FLAG=$flag
   [ -n "$CALL_BYPASS" ] || CALL_BYPASS=$flag
   # A completed call owns its refusal, independent of prior configuration.
   # Unknown option identity or argument boundaries still withhold a refusal.
@@ -417,33 +417,19 @@ read_call() {
 }
 
 tokenize || [ "$READER_STATE" = incomplete ]
-# The default directory carries repository consent even while hooksPath
-# redirects Git elsewhere. A known reset restores that consent for a later
-# call's own bypass option. Reading hook files never runs their checks.
-ARMED=""; RESET_ARMED=""; HOOKS_DIR=""
+# Consent is read from the repository before this tool command. A combined
+# config mutation and bypass commit must be split so Git can show real setup.
+ARMED=""; HOOKS_DIR=""
 if HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null); then
   HOOKS_PATH_STATUS=0
   git config --get core.hooksPath >/dev/null 2>&1 || HOOKS_PATH_STATUS=$?
-  if DEFAULT_HOOKS=$(git rev-parse --git-common-dir 2>/dev/null); then
-    DEFAULT_HOOKS="$DEFAULT_HOOKS/hooks"
-    if [ -x "$DEFAULT_HOOKS/pre-commit" ] && [ -x "$DEFAULT_HOOKS/commit-msg" ] \
-      && grep -qF -- "$MARKER" "$DEFAULT_HOOKS/pre-commit" 2>/dev/null \
-      && grep -qF -- "$MARKER" "$DEFAULT_HOOKS/commit-msg" 2>/dev/null; then
-      RESET_ARMED=1
-      [ "$HOOKS_PATH_STATUS" -ne 1 ] || ARMED=1
-    fi
+  if [ "$HOOKS_PATH_STATUS" -eq 1 ] && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
+    && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
+    && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
+    ARMED=1
   fi
 else HOOKS_DIR=""; fi
-COMMIT=""; BYPASS=""; CONFIG_BYPASS=""; CONFIG_STATE=clear; CONFIG_ARMED=$ARMED; UNARMED=""; MOVES=""; UNAVAILABLE=""; ARGS=(); ORIGINAL=(); ARG_KINDS=(); target=""
-# Git reports each effective setting's scope and origin. A scoped read with
-# includes disabled names the primary file a reset can change. Included-file
-# entries remain effective even when their scope matches the primary file.
-CONFIG_ENTRIES_STATUS=0
-CONFIG_ENTRIES=""
-if [ -n "$HOOKS_DIR" ]; then
-  CONFIG_ENTRIES=$(git config --show-scope --show-origin --name-only --get-regexp '^core[.]hookspath$' 2>/dev/null) || CONFIG_ENTRIES_STATUS=$?
-fi
-case "$CONFIG_ENTRIES_STATUS" in 0 | 1) ;; *) CONFIG_STATE=unavailable ;; esac
+COMMIT=""; BYPASS=""; SAME_COMMAND=""; CONFIG_MUTATION=""; UNARMED=""; MOVES=""; UNAVAILABLE=""; ARGS=(); ORIGINAL=(); ARG_KINDS=(); target=""
 for ((index=0; index<${#TOKENS[@]}; index++)); do
   token=${TOKENS[$index]}
   if [ "${KINDS[$index]}" = redirect ]; then
@@ -454,36 +440,16 @@ for ((index=0; index<${#TOKENS[@]}; index++)); do
       case "$CALL_RESULT" in
         commit-refusal)
           COMMIT=1
-          if [ -n "$CONFIG_ARMED" ]; then
+          if [ -n "$CONFIG_MUTATION" ] && [ -n "$CALL_FLAG" ]; then
+            if [ -z "$BYPASS" ]; then BYPASS=$CALL_FLAG; SAME_COMMAND=1; fi
+          elif [ -n "$ARMED" ]; then
             [ -n "$BYPASS" ] || BYPASS=$CALL_BYPASS
           else UNARMED=1; fi ;;
         commit)
           COMMIT=1
-          [ -n "$CONFIG_ARMED" ] || UNARMED=1
-          if [ "$CONFIG_STATE" = unavailable ]; then UNAVAILABLE=1
-          elif [ -n "$ARMED" ] && [ -z "$BYPASS" ]; then BYPASS=$CONFIG_BYPASS; fi ;;
+          [ -n "$ARMED" ] || UNARMED=1 ;;
         commit-unavailable) COMMIT=1; UNAVAILABLE=1 ;;
-        config) CONFIG_BYPASS=$CALL_CONFIG; CONFIG_STATE=set ;;
-        config-reset)
-          CONFIG_BYPASS=""
-          RESET_ENTRIES_STATUS=0
-          RESET_ENTRIES=$(git config "--$CALL_CONFIG_SCOPE" --no-includes --show-scope --show-origin --name-only --get-regexp '^core[.]hookspath$' 2>/dev/null) || RESET_ENTRIES_STATUS=$?
-          # An unknown preceding write, or multiple primary entries whose
-          # removal depends on Git's reset mode, withholds restoration proof.
-          if [ "$CONFIG_STATE" != clear ] || [[ $RESET_ENTRIES == *$'\n'* ]] \
-            || { [ "$RESET_ENTRIES_STATUS" -ne 0 ] && [ "$RESET_ENTRIES_STATUS" -ne 1 ]; }; then
-            CONFIG_STATE=unavailable; UNAVAILABLE=1
-          else
-            SURVIVING_ENTRIES=""
-            while IFS= read -r entry; do
-              [ -n "$entry" ] || continue
-              [ "$entry" != "$RESET_ENTRIES" ] || continue
-              SURVIVING_ENTRIES="${SURVIVING_ENTRIES:+$SURVIVING_ENTRIES$'\n'}$entry"
-            done <<<"$CONFIG_ENTRIES"
-            CONFIG_ENTRIES=$SURVIVING_ENTRIES
-            [ -n "$CONFIG_ENTRIES" ] || CONFIG_ARMED=$RESET_ARMED
-          fi ;;
-        config-unavailable) CONFIG_STATE=unavailable ;;
+        config-change) CONFIG_MUTATION=1 ;;
         other) ;;
         *) exit 1 ;;
       esac
