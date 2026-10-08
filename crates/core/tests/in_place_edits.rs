@@ -137,6 +137,49 @@ fn world() -> World {
     world
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_new_tool_dependency_keeps_an_in_place_instruction_block() {
+    use kendex_core::engine::ops::{self, AddRequest};
+    use kendex_core::lock::{entry_key, load};
+    use kendex_core::model::{HarnessId, ItemKind};
+    let w = world();
+    w.declare_as("deploy", "\"claude\"", "symlink", Some("installed rule"));
+    w.apply();
+    let before = fs::read(w.skill_file()).unwrap();
+    let lock_before = load(&w.lock_path()).unwrap();
+    w.declare_as("deploy", "\"claude\"", "symlink", Some("pending rule"));
+    let source = w.project.join(".agents/skills/new-package");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: new-package\ndescription: requires deploy\ndependencies:\n  required: [deploy]\n---\nNew package.\n",
+    )
+    .unwrap();
+    let report = ops::add(
+        &w.env,
+        &w.scope,
+        &AddRequest {
+            source: Some("in-place".into()),
+            skills: vec!["new-package".into()],
+            harnesses: Some(vec![HarnessId::Codex]),
+            ..AddRequest::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read(w.skill_file()).unwrap(), before);
+    let after = load(&w.lock_path()).unwrap();
+    let old_key = entry_key(ItemKind::Skill, "deploy", HarnessId::Claude);
+    assert_eq!(
+        serde_json::to_value(&after.entries[&old_key]).unwrap(),
+        serde_json::to_value(&lock_before.entries[&old_key]).unwrap()
+    );
+    let added = &after.entries[&entry_key(ItemKind::Skill, "deploy", HarnessId::Codex)];
+    assert!(added.rendered_hash.is_none());
+    assert!(!added.emitted.as_ref().unwrap().paths.contains(&w.source()));
+}
+
 fn deploy_rows(report: &kendex_core::engine::EngineReport) -> Vec<(DriftState, String)> {
     report
         .drift

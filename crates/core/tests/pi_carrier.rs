@@ -335,6 +335,124 @@ fn record_installed_packages(w: &World, scope: &Scope) {
     lock::save(&path, &record).unwrap();
 }
 
+/// A pending enablement edit belongs to apply, not an unrelated package add.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unrelated_add_keeps_pending_pi_switches_unchanged() {
+    use kendex_core::{apply, engine, lock, manifest, pi_ext};
+
+    for (global, enabled) in [(true, true), (true, false), (false, true), (false, false)] {
+        let w = world();
+        let (catalog, source) = widgets_catalog(&w);
+        let scope = if global { Scope::Global } else { scope(&w) };
+        let manifest_path = manifest::manifest_path(&w.env, &scope);
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        let declaration = format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = {enabled}\n",
+            source_path(&catalog)
+        );
+        fs::write(&manifest_path, &declaration).unwrap();
+        let root = pi_ext::scope_root(&w.env, &scope).unwrap();
+        pi_ext::install(&w.env, &root, &source, enabled).unwrap();
+        record_installed_packages(&w, &scope);
+        let key = lock::entry_key(ItemKind::PiExtension, "pi-widgets", HarnessId::Pi);
+        let before = lock::load(&lock::lock_path(&w.env, &scope)).unwrap();
+        let settings = fs::read(pi_ext::settings_path(&root)).unwrap();
+        let instructions = fs::read(pi_ext::append_system_path(&root)).ok();
+        fs::write(
+            &manifest_path,
+            declaration.replace(
+                &format!("enabled = {enabled}"),
+                &format!("enabled = {}", !enabled),
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(catalog.join("skills/unrelated")).unwrap();
+        fs::write(
+            catalog.join("skills/unrelated/SKILL.md"),
+            "---\nname: unrelated\ndescription: an unrelated skill\n---\nUnrelated skill.\n",
+        )
+        .unwrap();
+        let report = engine::ops::add(
+            &w.env,
+            &scope,
+            &engine::ops::AddRequest {
+                source: Some("cat".into()),
+                skills: vec!["unrelated".into()],
+                ..engine::ops::AddRequest::default()
+            },
+        )
+        .unwrap();
+        apply::execute(&w.env, &report.plan).unwrap();
+        let after = lock::load(&lock::lock_path(&w.env, &scope)).unwrap();
+        assert_eq!(
+            serde_json::to_value(&after.entries[&key]).unwrap(),
+            serde_json::to_value(&before.entries[&key]).unwrap()
+        );
+        assert_eq!(fs::read(pi_ext::settings_path(&root)).unwrap(), settings);
+        assert_eq!(
+            fs::read(pi_ext::append_system_path(&root)).ok(),
+            instructions
+        );
+        assert!(after.entries.contains_key(&lock::entry_key(
+            ItemKind::Skill,
+            "unrelated",
+            HarnessId::Pi
+        )));
+    }
+}
+
+/// Pi uses the new project append file instead of its global append file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_first_project_style_add_keeps_global_pi_instructions() {
+    use kendex_core::{apply, engine, manifest, pi_ext};
+    let w = world();
+    let (catalog, source) = widgets_catalog(&w);
+    let path = manifest::manifest_path(&w.env, &Scope::Global);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, format!(
+        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        source_path(&catalog)
+    )).unwrap();
+    let root = pi_ext::scope_root(&w.env, &Scope::Global).unwrap();
+    pi_ext::install(&w.env, &root, &source, true).unwrap();
+    record_installed_packages(&w, &Scope::Global);
+    let global = fs::read(pi_ext::append_system_path(&root)).unwrap();
+    fs::create_dir_all(catalog.join("output-styles")).unwrap();
+    fs::write(
+        catalog.join("output-styles/short.md"),
+        "---\nname: short\ndescription: Short sentences\nkeep-coding-instructions: true\n---\nWrite short sentences.\n",
+    )
+    .unwrap();
+    let scope = scope(&w);
+    fs::write(
+        manifest::manifest_path(&w.env, &scope),
+        format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    let append = pi_ext::append_system_path(&w.project.join(".pi"));
+    assert!(!append.exists());
+    let report = engine::ops::add(
+        &w.env,
+        &scope,
+        &engine::ops::AddRequest {
+            source: Some("cat".into()),
+            output_styles: vec!["short".into()],
+            ..engine::ops::AddRequest::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    let instructions = fs::read_to_string(append).unwrap();
+    assert!(instructions.contains("Write short sentences."));
+    assert!(instructions.contains("Use the widget tool."));
+    assert_eq!(fs::read(pi_ext::append_system_path(&root)).unwrap(), global);
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 #[allow(

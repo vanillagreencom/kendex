@@ -215,11 +215,13 @@ fn an_add_refuses_dependency_revision_conflicts_before_any_write() {
     use kendex_core::error::CoreError;
     use kendex_core::model::ItemKind;
 
-    for (kind, retired, orphaned) in [
-        (ItemKind::Skill, false, false),
-        (ItemKind::Hook, false, false),
-        (ItemKind::Hook, true, false),
-        (ItemKind::Skill, false, true),
+    for (kind, retired, orphaned, harness) in [
+        (ItemKind::Skill, false, false, super::HarnessId::Claude),
+        (ItemKind::Hook, false, false, super::HarnessId::Claude),
+        (ItemKind::Hook, true, false, super::HarnessId::Claude),
+        (ItemKind::Skill, false, true, super::HarnessId::Claude),
+        (ItemKind::Skill, false, false, super::HarnessId::Gemini),
+        (ItemKind::Skill, false, true, super::HarnessId::Gemini),
     ] {
         let w = world();
         let write_companion = |body: &str| match kind {
@@ -266,6 +268,7 @@ fn an_add_refuses_dependency_revision_conflicts_before_any_write() {
         let before = kendex_core::hash::hash_tree(&w.home.join("app")).unwrap();
         let mut request = AddRequest {
             source: Some("cat".into()),
+            harnesses: Some(vec![harness]),
             ..AddRequest::default()
         };
         match kind {
@@ -300,11 +303,195 @@ fn an_add_refuses_dependency_revision_conflicts_before_any_write() {
     }
 }
 
+/// A second harness reads the existing dependency's bytes even when its
+/// declaration was removed or its project instructions changed without apply.
+#[test]
+#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one contract table: retained bytes, positions and provenance across tools and pending edits"
+)]
+fn a_new_tool_dependency_keeps_installed_shared_bytes() {
+    use kendex_core::lock::{entry_key, load, lock_path};
+    use kendex_core::model::{HarnessId, ItemKind};
+
+    enum Change {
+        None,
+        Invalid,
+        Edit,
+        Cache,
+    }
+    for (installed, added, orphaned, change) in [
+        (HarnessId::Claude, HarnessId::Gemini, false, Change::None),
+        (HarnessId::Claude, HarnessId::Gemini, true, Change::None),
+        (HarnessId::Gemini, HarnessId::Claude, false, Change::None),
+        (HarnessId::Codex, HarnessId::Pi, true, Change::None),
+        (HarnessId::Claude, HarnessId::Gemini, true, Change::Invalid),
+        (HarnessId::Claude, HarnessId::Gemini, true, Change::Edit),
+        (HarnessId::Claude, HarnessId::Gemini, true, Change::Cache),
+    ] {
+        let w = world();
+        write_skill(&w.upstream, "shared", "", "shared installed bytes.");
+        write_skill(
+            &w.upstream,
+            "b",
+            "dependencies:\n  required: [shared]\n",
+            "b.",
+        );
+        commit(&w.upstream, "one");
+        let manifest = |declaration: &str| {
+            format!(
+                "schema = 6\n[sources.cat]\nrepo = \"{}\"\n[install]\nharnesses = [\"{}\"]\nmethod = \"symlink\"\n{declaration}",
+                super::REPO,
+                installed.name()
+            )
+        };
+        super::write_manifest(&w, &manifest("[skills.shared]\nsource = \"cat\"\n"));
+        sync_and_apply(&w);
+        let before = load(&lock_path(&w.env, &w.scope)).unwrap();
+        let old_key = entry_key(ItemKind::Skill, "shared", installed);
+        let tree = w.home.join("app/.agents/skills/shared");
+        match change {
+            Change::None => (),
+            Change::Invalid => {
+                std::fs::write(tree.join("SKILL.md"), "an edit with no skill header\n").unwrap();
+            }
+            Change::Edit => {
+                let original = std::fs::read_to_string(tree.join("SKILL.md")).unwrap();
+                std::fs::write(tree.join("SKILL.md"), format!("{original}\nOwn edit.\n")).unwrap();
+            }
+            Change::Cache => {
+                let cache = tree.join("references/__pycache__");
+                std::fs::create_dir_all(&cache).unwrap();
+                std::os::unix::fs::symlink(tree.join("SKILL.md"), cache.join("cached")).unwrap();
+            }
+        }
+        let bytes = std::fs::read(tree.join("SKILL.md")).unwrap();
+        let positions = before.entries[&old_key].emitted.as_ref().unwrap();
+        let links = positions
+            .paths
+            .iter()
+            .filter(|path| path.is_symlink())
+            .map(|path| (path.clone(), std::fs::read_link(path).unwrap()))
+            .collect::<Vec<_>>();
+        let declaration = if orphaned {
+            String::new()
+        } else {
+            "[skills.shared]\nsource = \"cat\"\n".to_owned()
+        };
+        super::write_manifest(
+            &w,
+            &manifest(&format!(
+                "{declaration}\n[skill-instructions]\nshared = \"pending instructions\"\n"
+            )),
+        );
+        let request = AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["b".into()],
+            harnesses: Some(vec![added]),
+            ..AddRequest::default()
+        };
+        let report = ops::add(&w.env, &w.scope, &request).unwrap();
+        assert_eq!(
+            report
+                .refused
+                .iter()
+                .any(|item| item.name == "shared" && item.harness == added),
+            matches!(change, Change::Invalid)
+        );
+        assert!(
+            !report
+                .plan
+                .ops
+                .iter()
+                .any(|op| matches!(&op.op, apply::Op::WriteTree { root, .. } if root == &tree))
+        );
+        if matches!(change, Change::Edit) {
+            assert!(report.drift.iter().any(|row| row.name == "shared"
+                && row.harness == added
+                && row.cause == Some(kendex_core::engine::DriftCause::LocalEdit)));
+        }
+        apply::execute(&w.env, &report.plan).unwrap();
+        let after = load(&lock_path(&w.env, &w.scope)).unwrap();
+        assert_eq!(std::fs::read(tree.join("SKILL.md")).unwrap(), bytes);
+        for (path, target) in links {
+            assert_eq!(std::fs::read_link(path).unwrap(), target);
+        }
+        assert_eq!(
+            serde_json::to_value(&after.entries[&old_key]).unwrap(),
+            serde_json::to_value(&before.entries[&old_key]).unwrap()
+        );
+        let new_key = entry_key(ItemKind::Skill, "shared", added);
+        if matches!(change, Change::Invalid | Change::Edit) {
+            assert!(!after.entries.contains_key(&new_key));
+        } else {
+            assert!(
+                after.entries.contains_key(&new_key),
+                "{installed:?} to {added:?}, orphaned={orphaned}: {:?}",
+                report
+                    .drift
+                    .iter()
+                    .map(|row| (&row.name, row.harness, row.state, row.cause, &row.detail))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                after.entries[&new_key].rendered_hash,
+                before.entries[&old_key].rendered_hash
+            );
+        }
+        assert!(
+            after
+                .entries
+                .contains_key(&entry_key(ItemKind::Skill, "b", added))
+        );
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn write_hook(root: &std::path::Path, name: &str, requires: &[&str], body: &str) {
     std::fs::create_dir_all(root.join("hooks")).unwrap();
     let requires = requires.join(", ");
     std::fs::write(root.join("hooks").join(format!("{name}.sh")), format!("#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse\n# description: {body}\n# requires: [{requires}]\n# ---\nexit 0\n")).unwrap();
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_new_tool_dependency_refuses_an_unrecorded_shared_target() {
+    use kendex_core::{error::CoreError, lock, manifest};
+    let w = world();
+    write_skill(&w.upstream, "shared", "", "shared bytes.");
+    write_skill(
+        &w.upstream,
+        "b",
+        "dependencies:\n  required: [shared]\n",
+        "b.",
+    );
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.shared]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    declare(&w, "");
+    let shared = w.home.join("app/.agents/skills/shared");
+    let foreign = w.home.join("unrecorded");
+    std::fs::rename(&shared, &foreign).unwrap();
+    std::os::unix::fs::symlink(&foreign, &shared).unwrap();
+    let manifest_path = manifest::manifest_path(&w.env, &w.scope);
+    let lock_path = lock::lock_path(&w.env, &w.scope);
+    let manifest_bytes = std::fs::read(&manifest_path).unwrap();
+    let lock_bytes = std::fs::read(&lock_path).unwrap();
+    let installed = std::fs::read(foreign.join("SKILL.md")).unwrap();
+    let request = AddRequest {
+        source: Some("cat".into()),
+        skills: vec!["b".into()],
+        harnesses: Some(vec![super::HarnessId::Gemini]),
+        ..AddRequest::default()
+    };
+    assert!(
+        matches!(ops::add(&w.env, &w.scope, &request), Err(CoreError::ForeignSymlink { target, .. }) if target == shared)
+    );
+    assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest_bytes);
+    assert_eq!(std::fs::read(&lock_path).unwrap(), lock_bytes);
+    assert_eq!(std::fs::read_link(shared).unwrap(), foreign);
+    assert_eq!(std::fs::read(foreign.join("SKILL.md")).unwrap(), installed);
 }
 
 /// Naming a required skill alone cannot move the package that requires it.

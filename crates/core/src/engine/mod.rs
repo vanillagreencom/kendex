@@ -199,7 +199,14 @@ fn plan_scope_with_lock_base(
     if let Some(targets) = &options.update_only
         && targets.reach == Reach::Declared
     {
-        ops::protect_installed(&manifest, lock, &mut state, &targets.declarations)?;
+        ops::protect_installed(
+            env,
+            scope,
+            &manifest,
+            lock,
+            &mut state,
+            &targets.declarations,
+        )?;
     }
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
@@ -395,8 +402,7 @@ fn report(
 }
 
 /// Finalize the kept Pi records and plan the native switches a declaration
-/// changed and the project's inherited instructions. Each append-file edit
-/// joins that file's other config edits.
+/// changed. Each append-file edit joins that file's other config edits.
 fn plan_pi_switches(
     env: &Env,
     scope: &Scope,
@@ -420,16 +426,28 @@ fn plan_pi_switches(
     for (path, label, edit) in edits {
         config_edits.push(path, label, edit);
     }
+    Ok(drift)
+}
+
+/// Pi prefers a project's append file over the global file. A first project
+/// style must therefore carry global instructions alongside its own edits.
+fn plan_pi_inheritance(
+    env: &Env,
+    scope: &Scope,
+    reconcile: bool,
+    config_edits: &mut config_edits::ConfigEditPlan,
+) -> Result<()> {
     if let Scope::Project { root } = scope {
         let pi_root = root.join(".pi");
         let path = crate::pi_ext::append_system_path(&pi_root);
-        if let Some(edit) =
-            crate::pi_ext::inherited_edit(env, &pi_root, config_edits.by_file.contains_key(&path))?
+        let updating = config_edits.by_file.contains_key(&path);
+        if (reconcile || updating)
+            && let Some(edit) = crate::pi_ext::inherited_edit(env, &pi_root, updating)?
         {
             config_edits.push(path, "global Pi instructions".into(), edit);
         }
     }
-    Ok(drift)
+    Ok(())
 }
 
 /// Everything a plan takes away, after every write is planned: what a
@@ -502,6 +520,7 @@ fn plan_removals(
             config_edits,
         )?);
     }
+    plan_pi_inheritance(env, scope, state.additions.is_none(), config_edits)?;
     Ok(removed)
 }
 
