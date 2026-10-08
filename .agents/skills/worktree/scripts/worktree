@@ -1416,7 +1416,7 @@ configure_worktree_git() {
   local wt="$1"
 
   # Required before writing per-worktree git config. Safe to repeat.
-  git -C "$PROJECT_ROOT" config extensions.worktreeConfig true 2>/dev/null || true
+  git -C "$PROJECT_ROOT" config extensions.worktreeConfig true || return 1
 
   # Add bot remote for agent pushes (if configured).
   if [[ -n "${BOT_REMOTE_NAME:-}" && -n "${BOT_REMOTE_URL:-}" ]]; then
@@ -1435,6 +1435,28 @@ configure_worktree_git() {
   fi
 }
 
+worktree_checkout_mode() {
+  local wt="$1" mode status=0
+  mode="$(git -C "$wt" config --get kendex-worktree.checkoutMode)" || status=$?
+  if [[ "$status" == 1 ]]; then mode=checkout; elif [[ "$status" != 0 ]]; then return "$status"; fi
+  case "$mode" in
+    claim | checkout) printf '%s\n' "$mode" ;;
+    *) worktree_message checkout-state-invalid "$wt" "Error: Unknown worktree checkout state: $mode" >&2; return 1 ;;
+  esac
+}
+
+materialize_worktree_claim() {
+  local wt="$1" mode path
+  mode="$(worktree_checkout_mode "$wt")" || return 1
+  [[ "$mode" == claim ]] || return 0
+  # The claim's missing files were never checked out. Restore only absent
+  # index entries: existing edits, staged deletions and untracked files stay.
+  git -C "$wt" ls-files -z | while IFS= read -r -d '' path; do
+    if [[ ! -e "$wt/$path" && ! -L "$wt/$path" ]]; then printf '%s\0' "$path"; fi
+  done | git -C "$wt" checkout-index --stdin -z || return 1
+  git -C "$wt" config --worktree kendex-worktree.checkoutMode checkout
+}
+
 # Provisioning applied to a worktree that some OTHER tool created — Codex
 # Desktop Environments, or Claude Code's WorktreeCreate hook. Nothing here is
 # app-specific; it is the same setup `create` applies once git has made the
@@ -1445,11 +1467,14 @@ setup_app_worktree() {
   # Push guards read the index; --no-checkout leaves it empty. Initialize
   # that metadata without writing the source files a cloud claim never uses.
   if [[ "$checkout" == true ]]; then
+    materialize_worktree_claim "$wt" || return 1
     setup_worktree_links "$wt" || return 1
+    configure_worktree_git "$wt" || return 1
   else
+    configure_worktree_git "$wt" || return 1
     git -C "$wt" read-tree HEAD || return 1
+    git -C "$wt" config --worktree kendex-worktree.checkoutMode claim || return 1
   fi
-  configure_worktree_git "$wt" || return 1
   # Best-effort by contract: a repo where the hooks cannot be written
   # still gets a fully provisioned worktree.
   if [[ "$checkout" == true ]]; then install_worktree_autorepair_hooks; fi
@@ -2636,8 +2661,8 @@ case "${1:-}" in
         *) BRANCH="$1"; shift ;;
       esac
     done
-    if [[ "$CHECKOUT" == false && ( "$REUSE" == true || "$RESTACK" == true || -n "$TRANSFER" ) ]]; then
-      worktree_message checkout-mode-invalid "--no-checkout" "Error: --no-checkout creates a new tree; it cannot reuse, restack, or transfer existing work." >&2
+    if [[ "$CHECKOUT" == false && ( "$REUSE" == true || "$RESTACK" == true || -n "$TRANSFER" || -n "$BASE" || -n "$PR" ) ]]; then
+      worktree_message checkout-mode-invalid "--no-checkout" "Error: --no-checkout creates a fresh claim; it cannot reuse, restack, transfer, or inspect existing work." >&2
       exit 1
     fi
     if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
@@ -2697,21 +2722,32 @@ case "${1:-}" in
       reuse_respects_session_lease "$WT_PATH" "$(issue_session_owner "$ISSUE")" \
         || exit "$ACTIVE_WORK_EXIT"
 
+      REUSE_CHECKOUT_MODE="$(worktree_checkout_mode "$WT_PATH")" || exit 1
+      if [[ "$REUSE_CHECKOUT_MODE" == claim ]]; then
+        discover_ownership_remote_heads || exit 1
+        acquire_issue_claim_lock "$ISSUE" || exit 1
+        require_registered_project_worktree "$WT_PATH" "materialize it" || exit 1
+        fetch_origin || exit 1
+        materialize_worktree_claim "$WT_PATH" || exit 1
+      fi
       REUSE_STATUS=""
       REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
+        if [[ "$REUSE_CHECKOUT_MODE" == claim ]]; then setup_app_worktree "$WT_PATH" || exit 1; fi
         worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
         report_created_worktree; exit 0
       fi
 
       # Network/ref discovery must succeed before the claim lock or any setup
       # mutation. Repeat it under the per-issue lock immediately before reuse.
-      discover_ownership_remote_heads || exit 1
-      acquire_issue_claim_lock "$ISSUE" || exit 1
+      if [[ "$REUSE_CHECKOUT_MODE" != claim ]]; then
+        discover_ownership_remote_heads || exit 1
+        acquire_issue_claim_lock "$ISSUE" || exit 1
+      fi
       if ! is_registered_project_worktree "$WT_PATH"; then
         refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fi
-      fetch_origin || exit 1
+      if [[ "$REUSE_CHECKOUT_MODE" != claim ]]; then fetch_origin || exit 1; fi
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" ]]; then
         resolve_default_branch || exit 1
@@ -3659,6 +3695,10 @@ case "${1:-}" in
     if ! require_registered_project_worktree "$WT_PATH" "push it"; then
       exit 1
     fi
+    PUSH_CHECKOUT_MODE="$(worktree_checkout_mode "$WT_PATH")" || exit 1
+    # A remote-work claim publishes its creation snapshot. Rebasing it needs
+    # a local checkout, which create --reuse/--restack materializes first.
+    if [[ "$PUSH_CHECKOUT_MODE" == claim ]]; then AUTO_REBASE=false; fi
     # Push is the usual first command after a MANUAL rebase — the case the
     # script never sees, and so the case nothing repairs. `create --reuse` and
     # the restack controls re-run setup themselves, so they self-heal and do
@@ -3901,6 +3941,8 @@ case "${1:-}" in
        same_canonical_dir "$WT_PATH" "$PROJECT_ROOT"; then
       exit 0
     fi
+    REPAIR_CHECKOUT_MODE="$(worktree_checkout_mode "$WT_PATH")" || exit 1
+    if [[ "$REPAIR_CHECKOUT_MODE" == claim ]]; then exit 0; fi
     repair_worktree_links "$WT_PATH"
     ;;
 

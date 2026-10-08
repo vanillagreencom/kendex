@@ -1,1 +1,1 @@
-- `worktree create --no-checkout` creates a Git worktree and issue record without source files or file setup for work that runs elsewhere.
+- `worktree create --no-checkout` creates a fresh remote-work claim without source files. Push keeps its creation snapshot. Local reuse checks out its files, gets cloud commits, and applies project setup. Existing-branch and PR inspection require a full checkout.

@@ -239,8 +239,10 @@ Options:
   --no-checkout  Create the Git worktree and issue record without source files
                   or file setup (links, copies, directories, dependencies,
                   auto-repair hooks). Git identity and remotes are configured.
-                  For a claim whose work runs elsewhere. Cannot combine with
-                  --reuse, --restack, or --transfer
+                  For a fresh claim whose work runs elsewhere. Push preserves
+                  its creation snapshot. --reuse and --restack materialize it
+                  for local work and apply file setup. Cannot combine with
+                  --base, --pr, --reuse, --restack, or --transfer
   --base BRANCH   Checkout an existing branch into the worktree; a BRANCH
                   other than the default must be on origin. One that is not
                   is refused: fetch it if it is only on another remote, then

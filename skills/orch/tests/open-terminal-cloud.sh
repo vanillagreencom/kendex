@@ -210,7 +210,7 @@ made() { [[ -e "$WT_LOG" ]] && echo yes || echo no; }
 
 echo "=== a cloud session is launched from the item's pushed branch and recorded ==="
 run_ot -- "${CLOUD[@]}" CC-1
-assert_eq "rc=$RC worktree=$(paste -sd, "$WT_LOG")" "rc=0 worktree=create CC-1 --no-checkout,push CC-1 --set-upstream --no-rebase" \
+assert_eq "rc=$RC worktree=$(paste -sd, "$WT_LOG")" "rc=0 worktree=create CC-1 --no-checkout,push CC-1 --set-upstream" \
   "the launch creates the item worktree and pushes its branch before the session" "$TMP_ROOT/err"
 assert_eq "$(grep -c -- "^new-window .* -n CC-1 -c $TMP_ROOT/wt/CC-1 " "$TMUX_LOG" || true)" 1 \
   "the item's window opens in the item worktree"
@@ -497,11 +497,11 @@ echo "=== a failed push, branch read, composer or capture stops with no record =
 # composer wait's capture before it having succeeded.
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 FAILURE_ROWS=(
-  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none|create CC-20 --no-checkout,push CC-20 --set-upstream --no-rebase||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
+  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none|create CC-20 --no-checkout,push CC-20 --set-upstream||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
   'STUB_WT_PLAIN=1|cloud-branch-unread item=CC-25|none|create CC-25 --no-checkout||| { ot_message cloud-branch-unread -> || true || { ot_message cloud-branch-unread'
   'STUB_WT_PROMPT_DIR=1|cloud-prompt-failed item=CC-28|none|create CC-28 --no-checkout||| { ot_message cloud-prompt-failed -> || true || { ot_message cloud-prompt-failed'
-  'OT_COMPOSER_ON_ENTER=99|cloud-composer-stuck item=CC-26|ran|create CC-26 --no-checkout,push CC-26 --set-upstream --no-rebase|    1 | 3) ->     1 | 3) ;; 9)'
-  'OT_TMUX_FAIL_NTH=capture-pane:2|tmux-failed operation=capture-pane item=CC-27|ran|create CC-27 --no-checkout,push CC-27 --set-upstream --no-rebase|capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2 -> capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 1'
+  'OT_COMPOSER_ON_ENTER=99|cloud-composer-stuck item=CC-26|ran|create CC-26 --no-checkout,push CC-26 --set-upstream|    1 | 3) ->     1 | 3) ;; 9)'
+  'OT_TMUX_FAIL_NTH=capture-pane:2|tmux-failed operation=capture-pane item=CC-27|ran|create CC-27 --no-checkout,push CC-27 --set-upstream|capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 2 -> capture-pane -pJ -S - -t "$1" 2>/dev/null)" || return 1'
 )
 failure_row() { # SCRIPT ROW — the launch, with RC and ERR set
   local env line item
@@ -668,7 +668,7 @@ done
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 BRANCH_READ='  branch="$(git -C "$wt" symbolic-ref --short HEAD)" || { ot_message cloud-branch-unread "item=$item" >&2; return 1; }'
 # shellcheck disable=SC2016
-PUSH='  "$WORKTREE_CLI" push "$wt_id" --set-upstream --no-rebase >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }'
+PUSH='  "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }'
 mutant branch-after-push "$BRANCH_READ"$'\n' ""
 mutate_file "$MUTANT" "$PUSH" "$PUSH"$'\n'"$BRANCH_READ"
 failure_row "$MUTANT" "${FAILURE_ROWS[1]}"
@@ -899,6 +899,7 @@ cat > "$BIN/claim-worktree" <<EOF
 set -euo pipefail
 if [[ "\${1:-}" != create ]]; then exec "\$CLAIM_WORKTREE" "\$@"; fi
 claim="\$("\$CLAIM_WORKTREE" "\$@")"
+"\$CLAIM_WORKTREE" repair-links "\$claim"
 git -C "\$claim" rev-parse HEAD > "$TMP_ROOT/claim-head"
 if [[ "\${CLAIM_ADVANCE_BASE:-false}" == true ]]; then
   previous="\$(git -C "$TMP_ROOT/origin.git" rev-parse refs/heads/main)"
@@ -949,16 +950,50 @@ for row in "${CLAIM_ROWS[@]}"; do
   claim_row "$OT" "$REAL_WORKTREE" "$item" "$advance"
   assert_eq "$CLAIM_RESULT" "launch=0 files=0 source=no branch=$branch claim=$branch pushed=$CLAIM_HEAD prompt=yes mail=0 base=$base" \
     "with a $base remote base, the cloud launch keeps the claim source-free, retains its prompt, pushes its snapshot and permits a directive" "$TMP_ROOT/err"
+  claim="$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$item"'") | .mail_root')"
+  git clone -q -b "$branch" "$TMP_ROOT/origin.git" "$TMP_ROOT/cloud-$branch"
+  git -C "$TMP_ROOT/cloud-$branch" config user.name Test
+  git -C "$TMP_ROOT/cloud-$branch" config user.email test@example.com
+  git -C "$TMP_ROOT/cloud-$branch" config commit.gpgsign false
+  git -C "$TMP_ROOT/cloud-$branch" config gc.auto 0
+  git -C "$TMP_ROOT/cloud-$branch" config maintenance.auto false
+  printf 'cloud work\n' > "$TMP_ROOT/cloud-$branch/cloud.txt"
+  git -C "$TMP_ROOT/cloud-$branch" add cloud.txt
+  git -C "$TMP_ROOT/cloud-$branch" commit -qm cloud
+  git -C "$TMP_ROOT/cloud-$branch" push -q origin "$branch"
+  cloud_head="$(git -C "$TMP_ROOT/cloud-$branch" rev-parse HEAD)"
+  stale_push_rc=0
+  (cd "$REPO" && env PATH="$BIN:$OT_BIN:$PATH" WORKTREE_DEFAULT_BRANCH=main COMMIT_GUARDS_CHECKS=byte-ceiling \
+    WORKTREE_BASE_DIR="$TMP_ROOT/claims-real" "$REAL_WORKTREE" push "$item" > "$TMP_ROOT/stale-push.out" 2> "$TMP_ROOT/stale-push.err") || stale_push_rc=$?
+  assert_eq "rc=$stale_push_rc local=$(git -C "$claim" rev-parse HEAD) remote=$(git -C "$TMP_ROOT/origin.git" rev-parse "refs/heads/$branch") files=$(find "$claim" -mindepth 1 -maxdepth 1 ! -name .git -print | wc -l | tr -d ' ')" \
+    "rc=1 local=$CLAIM_HEAD remote=$cloud_head files=0" \
+    "a stale claim publication preserves cloud commits and leaves the claim source-free" "$TMP_ROOT/stale-push.err"
+  landing_rc=0
+  (cd "$REPO" && env PATH="$BIN:$OT_BIN:$PATH" STUB_GH_OK=1 WORKTREE_DEFAULT_BRANCH=main \
+    WORKTREE_BASE_DIR="$TMP_ROOT/claims-real" WORKTREE_SYMLINKS="private.txt" WORKTREE_COPIES="copy.txt" \
+    WORKTREE_MKDIRS="scratch" "$REAL_WORKTREE" create "$item" --reuse > "$TMP_ROOT/landing.out" 2> "$TMP_ROOT/landing.err") || landing_rc=$?
+  assert_eq "rc=$landing_rc head=$(git -C "$claim" rev-parse HEAD) source=$([[ -f "$claim/payload.txt" ]] && echo yes || echo no) cloud=$(cat "$claim/cloud.txt" 2>/dev/null || true) link=$([[ -L "$claim/private.txt" ]] && echo yes || echo no) copy=$(cat "$claim/copy.txt" 2>/dev/null || true) dir=$([[ -d "$claim/scratch" ]] && echo yes || echo no)" \
+    "rc=0 head=$cloud_head source=yes cloud=cloud work link=yes copy=copied setup dir=yes" \
+    "local landing gets cloud commits and project setup from the real launched claim" "$TMP_ROOT/landing.err"
 done
 
-# Automatic rebase sees the claim's absent tracked files as local deletions.
+# A publication consumer must use the owner's persisted claim state.
+mkdir -p "$TMP_ROOT/publication-mutant/worktree"
+cp -R "$TEST_DIR/../../worktree/scripts" "$TMP_ROOT/publication-mutant/worktree/scripts"
 # shellcheck disable=SC2016
-mutant claim-rebase 'push "$wt_id" --set-upstream --no-rebase' 'push "$wt_id" --set-upstream'
-claim_row "$MUTANT" "$REAL_WORKTREE" CC-106 true
+mutate_file "$TMP_ROOT/publication-mutant/worktree/scripts/worktree" 'if [[ "$PUSH_CHECKOUT_MODE" == claim ]]; then AUTO_REBASE=false; fi' 'if [[ "$PUSH_CHECKOUT_MODE" == claim ]]; then AUTO_REBASE=true; fi'
+claim_row "$OT" "$TMP_ROOT/publication-mutant/worktree/scripts/worktree" CC-106 true
 assert_eq "$CLAIM_RESULT" "launch=1" \
-  "control: automatic rebase fails the advanced-base cloud claim row" "$TMP_ROOT/err"
+  "control: ignoring the claim state fails advanced-base publication" "$TMP_ROOT/err"
 assert_contains "$ERR" "worktree-push-rebase-failed:" \
   "control: the advanced-base row reaches the real rebase failure" "$TMP_ROOT/err"
+
+# Shared checkout hooks must leave remote-work claims without file setup.
+mutate_file "$TMP_ROOT/publication-mutant/worktree/scripts/worktree" 'if [[ "$PUSH_CHECKOUT_MODE" == claim ]]; then AUTO_REBASE=true; fi' 'if [[ "$PUSH_CHECKOUT_MODE" == claim ]]; then AUTO_REBASE=false; fi'
+mutate_file "$TMP_ROOT/publication-mutant/worktree/scripts/worktree" 'if [[ "$REPAIR_CHECKOUT_MODE" == claim ]]; then exit 0; fi' 'if [[ "$REPAIR_CHECKOUT_MODE" == claim ]]; then :; fi'
+claim_row "$OT" "$TMP_ROOT/publication-mutant/worktree/scripts/worktree" CC-107
+assert_eq "launch=$([[ "$CLAIM_RESULT" == 'launch=0 '* ]] && echo yes || echo no) setup=$([[ "$CLAIM_RESULT" == 'launch=0 files=0 '* ]] && echo absent || echo present)" "launch=yes setup=present" \
+  "control: hook repair that ignores claim state writes file setup"
 
 # Each producer of a checkout can break this contract: the launcher omitting
 # the option, and worktree create ignoring it. Both leave source files.

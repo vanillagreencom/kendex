@@ -45,12 +45,16 @@ make_repo() {
   git -C "$root/main" config user.email test@example.com
   git -C "$root/main" config user.name Test
   git -C "$root/main" config commit.gpgsign false
+  git -C "$root/main" config gc.auto 0
+  git -C "$root/main" config maintenance.auto false
   printf 'base\n' >"$root/main/base.txt"
   git -C "$root/main" add base.txt
   git -C "$root/main" commit -q -m base
   printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env.local"
   printf '.env.local\n' >>"$root/main/.git/info/exclude"
   git init -q --bare "$root/origin.git"
+  git -C "$root/origin.git" config gc.auto 0
+  git -C "$root/origin.git" config maintenance.auto false
   git -C "$root/main" remote add origin "$root/origin.git"
   git -C "$root/main" push -q -u origin main
 
@@ -148,6 +152,18 @@ step() {
       git -C "$MAIN" add main-advance.txt
       git -C "$MAIN" commit -q -m 'advance main'
       git -C "$MAIN" push -q origin main
+      ;;
+    remote-advance:*)
+      git clone -q -b "${1#remote-advance:}" "$ROOT/origin.git" "$ROOT/remote-work"
+      git -C "$ROOT/remote-work" config user.name Test
+      git -C "$ROOT/remote-work" config user.email test@example.com
+      git -C "$ROOT/remote-work" config commit.gpgsign false
+      git -C "$ROOT/remote-work" config gc.auto 0
+      git -C "$ROOT/remote-work" config maintenance.auto false
+      printf 'remote source\n' > "$ROOT/remote-work/added.txt"
+      git -C "$ROOT/remote-work" add added.txt
+      git -C "$ROOT/remote-work" commit -qm remote
+      git -C "$ROOT/remote-work" push -q origin "${1#remote-advance:}"
       ;;
     open-pr) touch "$ROOT/gh-state/open-pr" ;;
     pr-json)
@@ -384,6 +400,7 @@ the topic branch checked out in the main checkout blocks the id without offering
 a local branch literally named origin/<default> keeps its ownership checks|local:origin/main|create topic origin/main|75|-|dup:origin/main:local|main=main@end/clean cfg=- trees= branches=origin/main dirty=-
 a non-default --base with a live worktree refuses with that worktree|wt push|create other --base topic|75|-|implicit:other:clean,up|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 a non-default --base of an unclaimed remote branch checks that branch out|remote:feature|create other --base feature|0|other|-|main=main@end/clean cfg=true trees=other:reg@feature@end branches=feature dirty=-
+a non-default --base fast-forwards a stale local inspection branch with its full source|local:feature publish:feature remote-advance:feature|create topic --base feature|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@feature@other branches=feature dirty=-
 '
 
 echo "=== create against active work ==="
@@ -460,9 +477,7 @@ assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=m
 echo "=== checkout-free create ==="
 for row in \
   'claim|-|create topic --no-checkout|topic' \
-  'from|-|create topic --from main --no-checkout|topic' \
-  'base|remote:feature|create topic --base feature --no-checkout|feature' \
-  'pr|wt push dropped pr-json|create topic --pr 42 --no-checkout|topic'; do
+  'from|-|create topic --from main --no-checkout|topic'; do
   IFS='|' read -r name fixture command branch <<<"$row"
   # shellcheck disable=SC2086
   build "checkout-$name" $fixture
@@ -474,9 +489,12 @@ done
 for row in \
   'reuse|wt|--reuse' \
   'restack|wt|--restack' \
-  'transfer|main-checkout|--transfer topic'; do
+  'transfer|main-checkout|--transfer topic' \
+  'base|local:feature publish:feature remote-advance:feature|--base feature' \
+  'pr|wt push dropped pr-json|--pr 42'; do
   IFS='|' read -r name fixture options <<<"$row"
-  build "checkout-invalid-$name" "$fixture"
+  # shellcheck disable=SC2086
+  build "checkout-invalid-$name" $fixture
   before="$(state)"
   assert_eq "$(run "create topic --no-checkout $options")" \
     "rc=1 out= err=worktree-checkout-mode-invalid: --no-checkout $before" \
@@ -490,7 +508,7 @@ python3 - "$TMP_ROOT/checkout-mutant/scripts/worktree" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
-old = 'if [[ "$CHECKOUT" == false && ( "$REUSE" == true || "$RESTACK" == true || -n "$TRANSFER" ) ]]; then'
+old = 'if [[ "$CHECKOUT" == false && ( "$REUSE" == true || "$RESTACK" == true || -n "$TRANSFER" || -n "$BASE" || -n "$PR" ) ]]; then'
 text = path.read_text()
 assert text.count(old) == 1
 path.write_text(text.replace(old, 'if false; then'))
@@ -500,6 +518,88 @@ WORKTREE_ORIGINAL="$WORKTREE_SCRIPT"
 WORKTREE_SCRIPT="$TMP_ROOT/checkout-mutant/scripts/worktree"
 assert_eq "$(run 'create topic --no-checkout --reuse' | sed 's/ out=.*//')" "rc=0" \
   "control: without the existing-work guard a checkout-free create accepts reuse"
+WORKTREE_SCRIPT="$WORKTREE_ORIGINAL"
+
+echo "=== a remote-work claim becomes a local checkout ==="
+claim_landing_row() { # NAME OPTIONS WORK
+  local name="$1" options="$2" work="$3" local_head="" cloud_head="" result
+  build "landing-$name"
+  printf 'WORKTREE_SYMLINKS=".env.local"\n' >> "$MAIN/.env.local"
+  fixture_create topic --no-checkout
+  git -C "$WT" push -qu origin topic
+  case "$work" in
+    cloud)
+      git clone -q -b topic "$ROOT/origin.git" "$ROOT/cloud"
+      git -C "$ROOT/cloud" config user.name Test
+      git -C "$ROOT/cloud" config user.email test@example.com
+      git -C "$ROOT/cloud" config commit.gpgsign false
+      git -C "$ROOT/cloud" config gc.auto 0
+      git -C "$ROOT/cloud" config maintenance.auto false
+      printf 'cloud work\n' > "$ROOT/cloud/cloud.txt"
+      git -C "$ROOT/cloud" add cloud.txt
+      git -C "$ROOT/cloud" commit -qm cloud
+      git -C "$ROOT/cloud" push -q origin topic
+      cloud_head="$(git -C "$ROOT/cloud" rev-parse HEAD)"
+      ;;
+    local | restack)
+      printf 'local commit\n' > "$WT/local.txt"
+      git -C "$WT" add local.txt
+      git -C "$WT" commit -qm local
+      local_head="$(git -C "$WT" rev-parse HEAD)"
+      if [[ "$work" == restack ]]; then step advance; fi
+      ;;
+    dirty)
+      printf 'user base\n' > "$WT/base.txt"
+      printf 'staged\n' > "$WT/staged.txt"
+      git -C "$WT" add staged.txt
+      printf 'unstaged\n' >> "$WT/staged.txt"
+      printf 'untracked\n' > "$WT/untracked.txt"
+      ;;
+    staged-delete) git -C "$WT" rm -q --cached base.txt ;;
+    checkout-delete)
+      run 'create topic --reuse' > "$ROOT/first"
+      rm "$WT/base.txt"
+      ;;
+  esac
+  result="$(run "create topic $options")"
+  LANDING_RESULT="$(sed 's/ out=.*//' <<<"$result") mode=$(git -C "$WT" config --worktree --get kendex-worktree.checkoutMode) setup=$([[ -L "$WT/.env.local" ]] && echo yes || echo no)"
+  case "$work" in
+    cloud) LANDING_RESULT+=" head=$([[ "$(git -C "$WT" rev-parse HEAD)" == "$cloud_head" ]] && echo cloud || echo stale) source=$(cat "$WT/base.txt" 2>/dev/null || true) cloud=$(cat "$WT/cloud.txt" 2>/dev/null || true)" ;;
+    local) LANDING_RESULT+=" head=$([[ "$(git -C "$WT" rev-parse HEAD)" == "$local_head" ]] && echo local || echo changed) source=$(cat "$WT/base.txt" 2>/dev/null || true) local=$(cat "$WT/local.txt")" ;;
+    restack) LANDING_RESULT+=" base=$(git -C "$WT" merge-base --is-ancestor origin/main HEAD && echo contained || echo stale) source=$(cat "$WT/base.txt" 2>/dev/null || true) local=$(cat "$WT/local.txt") advanced=$(cat "$WT/main-advance.txt" 2>/dev/null || true)" ;;
+    dirty) LANDING_RESULT+=" base=$(cat "$WT/base.txt") staged=$(git -C "$WT" show :staged.txt) working=$(paste -sd, "$WT/staged.txt") untracked=$(cat "$WT/untracked.txt")" ;;
+    staged-delete) LANDING_RESULT+=" source=$([[ -e "$WT/base.txt" ]] && echo yes || echo no) deletion=$(git -C "$WT" diff --cached --name-status)" ;;
+    checkout-delete) LANDING_RESULT+=" source=$([[ -e "$WT/base.txt" ]] && echo yes || echo no) deletion=$(git -C "$WT" diff --name-status)" ;;
+  esac
+}
+
+for row in \
+  'cloud|--reuse|cloud|head=cloud source=base cloud=cloud work' \
+  'local|--reuse|local|head=local source=base local=local commit' \
+  'dirty|--reuse|dirty|base=user base staged=staged working=staged,unstaged untracked=untracked' \
+  'staged-delete|--reuse|staged-delete|source=no deletion=D\tbase.txt' \
+  'checkout-delete|--reuse|checkout-delete|source=no deletion=D\tbase.txt' \
+  'restack|--restack|restack|base=contained source=base local=local commit advanced=main advance' \
+  'replay|--restack --replay|restack|base=contained source=base local=local commit advanced=main advance'; do
+  IFS='|' read -r name options work expected <<< "$row"
+  claim_landing_row "$name" "$options" "$work"
+  assert_eq "$LANDING_RESULT" "rc=0 mode=checkout setup=yes $(printf '%b' "$expected")" \
+    "$name materializes and provisions the claim while preserving user work"
+done
+
+python3 - "$TMP_ROOT/checkout-mutant/scripts/worktree" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+old = 'materialize_worktree_claim "$WT_PATH" || exit 1'
+text = path.read_text()
+assert text.count(old) == 1
+path.write_text(text.replace(old, ': # materialization disabled'))
+PY
+WORKTREE_SCRIPT="$TMP_ROOT/checkout-mutant/scripts/worktree"
+claim_landing_row control --reuse cloud
+assert_eq "$LANDING_RESULT" "rc=0 mode=checkout setup=yes head=stale source=base cloud=" \
+  "control: skipping claim materialization misses the remote cloud commit"
 WORKTREE_SCRIPT="$WORKTREE_ORIGINAL"
 
 # --- the concurrent claim -------------------------------------------------------

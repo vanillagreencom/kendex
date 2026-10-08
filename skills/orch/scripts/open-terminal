@@ -3096,8 +3096,7 @@ cloud_session_launch() {
   prompt+="$words"
   prompt_file="$(git -C "$wt" rev-parse --absolute-git-dir)/cloud-prompt" && printf '%s' "$prompt" > "$prompt_file" \
     || { ot_message cloud-prompt-failed "item=$item" >&2; return 1; }
-  # Rebasing an advanced base needs source files that this claim never checks out.
-  "$WORKTREE_CLI" push "$wt_id" --set-upstream --no-rebase >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
+  "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
   model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" || return 1
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   tmux_window_open "$wt" "$title" || return 1
