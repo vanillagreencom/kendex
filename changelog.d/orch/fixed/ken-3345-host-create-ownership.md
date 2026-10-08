@@ -1,0 +1,1 @@
+- SSH lane hosts refuse overlapping lifecycle calls while creation is unfinished, so status, stop and close cannot report an absent sandbox that creation later leaves running.

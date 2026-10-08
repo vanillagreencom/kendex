@@ -153,12 +153,16 @@ exec git "$@"
         self.inventory.write_text(json.dumps([self.row]))
         self.env.update(LANE_HOST_SSH_INVENTORY=str(self.inventory), LANE_HOST_SSH_SOURCE=str(self.source))
         self.script = self.root / "lane-host-ssh"
-        shutil.copy2(PACKAGE / "scripts/lane-host-ssh", self.script)
+        self.executable(self.script, (PACKAGE / "scripts/lane-host-ssh").read_text())
 
     def executable(self, path, text):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         path.chmod(0o755)
+        if path.name == "lane-host-ssh":
+            library = path.parent / "lib/file-lock.sh"
+            library.parent.mkdir(exist_ok=True)
+            shutil.copy2(PACKAGE / "scripts/lib/file-lock.sh", library)
 
     def call(self, *args, data=b"", **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=data, capture_output=True)
@@ -2443,6 +2447,95 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                 result, _ = ask(verb, extra)
                 self.assertEqual((result.returncode, result.stdout), (75, b""), result.stderr)
         self.script.write_text(original)
+
+    def creation_overlap(self, expect_busy):
+        """An installer acknowledgement fixes the pre-worktree interval.
+
+        Every child has a parent deadline. The pipe releases create even when
+        an assertion rejects the unlocked control, before scratch is removed.
+        """
+        self.fake_npm()
+        self.seed_source(".gitignore", (self.source / ".gitignore").read_text() + "ui/node_modules/\n")
+        self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = "ui/node_modules"\n')
+        self.seed_source("ui/package-lock.json", '{"lockfileVersion":3}\n')
+        entered = self.root / "install-entered"
+        release = self.root / "install-release"
+        # Opening both ends here lets cleanup release a child even if its
+        # installer failed before it opened the pipe for reading.
+        os.mkfifo(release)
+        descriptor = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+        npm = self.bin / "npm"
+        source = npm.read_text()
+        anchor = "rm -rf node_modules"
+        self.assertEqual(source.count(anchor), 1)
+        npm.write_text(source.replace(anchor, 'printf ready > "$SSH_TEST_ENTERED"\n'
+                                      'read -r _ < "$SSH_TEST_RELEASE"\n' + anchor))
+        command = [str(self.script), "create", "--item", "TEST-1", "--repo", "owner/repo",
+                   "--harness", "claude", "--account", str(self.account)]
+        environment = {**self.env, "SSH_TEST_ENTERED": str(entered), "SSH_TEST_RELEASE": str(release)}
+        child = subprocess.Popen(command, cwd=self.root, env=environment,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 10
+            while not entered.exists():
+                self.assertIsNone(child.poll(), "create exited before installer acknowledgement")
+                self.assertLess(time.monotonic(), deadline, "installer never acknowledged entry")
+                time.sleep(0.01)
+            clone = Path(self.row["clone"])
+            self.assertFalse((clone / ".git/lane-host-item").exists())
+            self.assertFalse(Path(str(clone) + "-worktree").exists())
+            answers = (("status", ("--harness", "claude"), b"exited\n"),
+                       ("stop", ("--harness", "claude"), b"stopped item=TEST-1 processes=0\n"),
+                       ("close", (), b"closed=absent item=TEST-1\n"))
+            results = []
+            for verb, extra, absent in answers:
+                result = subprocess.run([str(self.script), verb, "--item", "TEST-1", *extra],
+                                        cwd=self.root, env=self.env, capture_output=True, timeout=10)
+                results.append(result)
+                expected = (75, b"") if expect_busy else (0, absent)
+                self.assertEqual((result.returncode, result.stdout), expected, result.stderr)
+            if expect_busy:
+                competing = subprocess.run(command, cwd=self.root, env=self.env,
+                                           capture_output=True, timeout=10)
+                self.assertEqual((competing.returncode, competing.stdout), (75, b""), competing.stderr)
+            return results
+        finally:
+            os.write(descriptor, b"continue\n")
+            os.close(descriptor)
+            try:
+                output, error = child.communicate(timeout=20)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.communicate()
+                raise
+            self.assertEqual(child.returncode, 0, error)
+            self.assertTrue(Path(self.row["clone"] + "-worktree").is_dir())
+
+    def test_unfinished_create_refuses_lifecycle_calls_and_releases_ownership(self):
+        self.creation_overlap(expect_busy=True)
+        # Successful completion released the lock: the same lifecycle calls
+        # can operate on the actual sandbox, then preserve the absent contract.
+        for verb in ("status", "stop"):
+            result = self.call(verb, "--item", "TEST-1", "--harness", "claude")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+        absent = self.call("close", "--item", "TEST-1")
+        self.assertEqual((absent.returncode, absent.stdout), (0, b"closed=absent item=TEST-1\n"), absent.stderr)
+
+    def test_control_unlocked_create_returns_absent_while_install_is_unfinished(self):
+        original = self.script.read_text()
+        rule = 'if args.verb in ("create", "status", "stop", "close"):'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(rule, "if False:"))
+            self.assertNotEqual(self.script.read_text(), original)
+            results = self.creation_overlap(expect_busy=False)
+            with self.assertRaises(AssertionError):
+                self.assertEqual([(result.returncode, result.stdout) for result in results],
+                                 [(75, b"")] * len(results))
 
     def test_close_requires_provider_marker_before_worktree_lookup(self):
         self.assertEqual(self.create().returncode, 0)

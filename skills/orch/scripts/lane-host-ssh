@@ -2,6 +2,7 @@
 """Static SSH lane hosts. Use --help for configuration and the command contract."""
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -30,21 +31,53 @@ def notice(key, **values):
     print("lane-host-ssh: " + key + "".join(f" {k}={v}" for k, v in values.items()), file=sys.stderr)
 
 
-def remote(row, script, *args, data=None, accept=()):
-    """Run Bash through SSH; quote every argument for the remote login shell."""
+def remote_command(row, script, *args):
+    """Build the SSH command shared by requests and their ownership holder."""
     control_dir = Path.home() / ".cache" / "kendex-ssh"
     control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     control_dir.chmod(0o700)
     command = shlex.join(["bash", "-c", "set -euo pipefail\n" + script, "lane-host-ssh", *args])
     # Keep the master past the mail interval; OpenSSH reconnects if it is gone.
-    result = subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlMaster=auto",
-                             "-o", "ControlPersist=60", "-o", f"ControlPath={control_dir}/%C",
-                             "--", row["target"], command],
+    return ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlMaster=auto",
+            "-o", "ControlPersist=60", "-o", f"ControlPath={control_dir}/%C",
+            "--", row["target"], command]
+
+
+def remote(row, script, *args, data=None, accept=()):
+    """Run Bash through SSH; quote every argument for the remote login shell."""
+    result = subprocess.run(remote_command(row, script, *args),
                             input=data if data is not None else b"", stdout=subprocess.PIPE)
     if result.returncode != 0 and result.returncode not in accept:
         notice("remote-failed", target=row["target"], exit=result.returncode)
         raise SystemExit(result.returncode if result.returncode > 0 else 1)
     return result
+
+
+@contextmanager
+def ownership_lock(row):
+    """Keep lifecycle calls exclusive on the host until their remote work ends."""
+    # create can spend an install with neither clone marker nor worktree yet.
+    # The lock sits beside the clone so even the first clone takes it. Ship
+    # the installed library to that shell because the clone may not exist.
+    library = Path(__file__).with_name("lib").joinpath("file-lock.sh").read_text()
+    script = library + '\n' + '''mkdir -p -- "$(dirname -- "$1")"
+exec 9>>"$1"
+orch_take_lock 9 "$1" 0 || exit 75
+printf 'owned\\n'
+cat >/dev/null
+'''
+    with subprocess.Popen(remote_command(row, script, row["clone"] + ".lane-host.lock"),
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE) as holder:
+        try:
+            if holder.stdout.readline() != b"owned\n":
+                code = holder.wait()
+                notice("ownership-busy" if code == 75 else "ownership-lock-failed",
+                       target=row["target"], clone=row["clone"], exit=code)
+                raise SystemExit(code if code > 0 else 1)
+            yield
+        finally:
+            holder.stdin.close()
+            holder.wait()
 
 
 # Run first by `read`, which `cat` and the Claude state merge use, and by
@@ -819,6 +852,9 @@ the harness starts, through the clone's lib/lane-state.sh; a clone whose
 library predates that recorder refuses create as identity-recorder-missing,
 and a record that fails ends the prefix with identity-record-failed before the
 harness starts.
+create, status, stop and close hold one exclusive remote lock beside the clone
+for the whole call. An overlapping lifecycle call exits 75 as ownership-busy,
+so unfinished creation cannot be reported as an absent sandbox.
 stop --item ID --harness claude|codex|pi|copilot reads that identity after
 confirming the clone's item owner and signals only the matching harness
 processes at or below its pid, where that pid still runs and started at the
@@ -921,6 +957,14 @@ capabilities prints the static ssh host kind's one capability line
         notice("item-unconfigured", item=args.item)
         raise SystemExit(2)
     row = matches[0]
+    if args.verb in ("create", "status", "stop", "close"):
+        with ownership_lock(row):
+            dispatch(row, args)
+    else:
+        dispatch(row, args)
+
+
+def dispatch(row, args):
     if args.verb == "create":
         if row["repo"] != args.repo:
             notice("repo-mismatch", item=args.item, repo=args.repo)
