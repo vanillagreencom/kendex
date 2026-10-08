@@ -119,7 +119,7 @@
 #            released-template fallback requires byte equality at the exact
 #            release tag its shared workflow pins. A commit pin, unavailable
 #            release or edited caller grants no fallback ownership. Caller
-#            ownership contract: SKILL.md § Shared refresh caller ownership.
+#            ownership contract: ../SKILL.md § Shared refresh caller ownership.
 #            Any other
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
