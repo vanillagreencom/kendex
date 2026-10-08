@@ -8,7 +8,7 @@
 # alone, and the rolling main build, which also knows `v2`. Each refuses a
 # record whose shape it does not know, as `kendex verify` does a registration
 # written by a newer kendex, and passes one it knows. Each answers `--version`
-# from its own directory and records its name for every other call. A third,
+# from its own directory, answers `verify --help`, and records proof calls. A third,
 # a lock kendex whose `--version` exits non-zero, is named unreadable.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
@@ -34,6 +34,10 @@ if [ "$*" = --version ]; then
   version="$(cat "$here/version")"
   [ -n "$version" ] || exit 1
   printf 'kendex %s\n' "$version"
+  exit 0
+fi
+if [ "$*" = 'verify --help' ]; then
+  printf '%s\n' '  --scope <SCOPE> --json'
   exit 0
 fi
 printf '%s\n' "${here##*/}" >>"$VERIFIER_CALLS"
