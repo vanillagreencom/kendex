@@ -294,9 +294,33 @@ MARKER_REPO=$WORKTREE
 if ! ARTIFACT_ERR=$(jq -s 'if length == 0 then error("no JSON value") else empty end' "$ARTIFACT" 2>&1); then
   record_and_block artifact unreadable "$ARTIFACT_ERR"
 fi
-# A read-only stop check must not refresh the shared index.
-STATUS=$(git --no-optional-locks -c core.quotePath=false -C "$WORKTREE" status --porcelain --untracked-files=all 2>&1) ||
-  git_failed status "$STATUS"
+# A read-only stop check must not refresh the shared index. Git's NUL format
+# supplies literal paths and puts a rename's destination before its source.
+# Encode each row as JSON before Bash stores it: display quoting and arrows
+# inside names must never determine which path the reviewer changed.
+STATUS=$(
+  {
+    cause=$( { git --no-optional-locks -C "$WORKTREE" status --porcelain -z --untracked-files=all |
+      jq -Rsc '
+        def displayed:
+          if test("[\u0000-\u001f\\\\\"]") then @json else . end;
+        reduce (split("\u0000") | .[:-1])[] as $entry
+          ({rows: [], rename: null};
+            if .rename != null then
+              .rows += [.rename + {source: $entry}] | .rename = null
+            else
+              {status: $entry[0:2], path: $entry[3:]} as $row |
+              if ($row.status | test("[RC]")) then .rename = $row
+              else .rows += [$row] end
+            end) |
+        .rows[] | . + {line: (.status + " " +
+          (if .source != null then (.source | displayed) + " -> " else "" end) +
+          (.path | displayed))}' >&3; } 2>&1) || {
+      printf '%s\n' "$cause"
+      exit 1
+    }
+  } 3>&1
+) || git_failed status "$STATUS"
 
 # Git records no actor. The subagent's transcript is the only available
 # per-call evidence: the stop payload has no changed-path field and Copilot
@@ -352,18 +376,15 @@ ctime() { # PATH
 # A tracked path requires actor evidence, independent of filesystem and index
 # times. Untracked probes retain the start-time check. Unknown untracked times
 # still block, but never make another agent's tracked edit the reviewer's.
-reviewers() { # LINE
-  local x=${1:0:1} y=${1:1:1} path=${1:3} p t
-  case "$path" in
-    \"*)
-      [ "$x$y" != '??' ] || return 0
-      path=$(jq -nr --arg path "$path" '$path | fromjson' 2>/dev/null) || return 1
-      ;;
-  esac
-  case "$x$y" in *R* | *C*) path=${path##* -> } ;; esac
+reviewers() { # JSON ROW
+  local state path p t
+  state=$(jq -r '.status' <<<"$1") || git_failed status "$state"
+  # The suffix keeps command substitution from removing a name's final LF.
+  path=$(jq -r '.path + "/"' <<<"$1") || git_failed status "$path"
+  path=${path%/}
   p="$TOPLEVEL/$path"
   [ "$p" != "$ARTIFACT" ] || return 1
-  if [ "$x$y" != '??' ]; then
+  if [ "$state" != '??' ]; then
     jq -e --arg path "$p" 'index($path) != null' <<<"$EDIT_PATHS" >/dev/null
     return $?
   fi
@@ -376,7 +397,8 @@ OWN=""
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   reviewers "$line" || continue
-  OWN="$OWN$line"$'\n'
+  display=$(jq -r '.line' <<<"$line") || git_failed status "$display"
+  OWN="$OWN$display"$'\n'
 done <<<"$STATUS"
 STATUS=${OWN%$'\n'}
 if [ -z "$STATUS" ]; then

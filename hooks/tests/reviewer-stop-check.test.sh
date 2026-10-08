@@ -696,11 +696,22 @@ actor_rows() { # TAG
         fgit -C "$repo" commit -q -m quoted
         edit_in "$t" "$path"
         ;;
-      codex | codex-failed | codex-pending | codex-move)
+      codex | codex-failed | codex-pending | codex-move*)
         state=completed event=item_completed move=""
         [ "$kind" != codex-failed ] || state=failed
         if [ "$kind" = codex-pending ]; then event=item_started; state=""; fi
-        [ "$kind" != codex-move ] || move="$repo/src/moved.rs"
+        case "$kind" in
+          codex-move) move="$repo/src/moved.rs" ;;
+          codex-move-quoted) path="$repo/src/quote\"old.rs"; move="$repo/src/quote\"new.rs" ;;
+          codex-move-backslash) path="$repo/src/back\\old.rs"; move="$repo/src/back\\new.rs" ;;
+          codex-move-arrow) move="$repo/src/name -> moved.rs" ;;
+          codex-move-newline) path="$repo/src/old"$'\n'; move="$repo/src/new"$'\n' ;;
+          codex-move-control) path="$repo/src/old"$'\a'; move="$repo/src/new"$'\a' ;;
+        esac
+        if [ "$path" != "$repo/src/lib.rs" ]; then
+          fgit -C "$repo" mv -- src/lib.rs "${path#"$repo/"}"
+          fgit -C "$repo" commit -q -m rename-input
+        fi
         jq -nc --arg path "$path" --arg state "$state" --arg event "$event" --arg move "$move" \
           '{type:"event_msg",payload:{type:$event,item:{type:"FileChange",id:"patch-1",status:(if $state == "" then null else $state end),
             changes:{($path):{type:"update",unified_diff:"",move_path:(if $move == "" then null else $move end)}}}}}' >>"$t"
@@ -710,7 +721,13 @@ actor_rows() { # TAG
     esac
     if [ "$kind" = deleted ]; then rm -- "$path"; else printf 'changed\n' >>"$path"; fi
     if [ "$kind" = staged ]; then fgit -C "$repo" add src/lib.rs; fi
-    if [ "$kind" = codex-move ]; then fgit -C "$repo" add -A; fi
+    case "$kind" in
+      codex-move*)
+        fgit -C "$repo" add -A
+        assert_eq "$(fgit -C "$repo" status --porcelain -z | jq -Rs '.[0:2] | contains("R")')" true \
+          "$label is a tracked rename"
+        ;;
+    esac
     run_hook "$t" reviewer-test "$tag$n"
     assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
     assert_eq "$(cat -- "$artifact")" '{}' "$label keeps the required report"
@@ -730,12 +747,26 @@ a completed Codex file change blocks|codex|rc=2 first=reviewer-stop-check: workt
 a failed Codex file change cannot attribute another agent's edit|codex-failed|rc=0 first=-
 a pending Codex file change cannot attribute another agent's edit|codex-pending|rc=0 first=-
 a completed Codex move blocks|codex-move|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a completed Codex move with quoted names blocks|codex-move-quoted|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a completed Codex move with backslashes blocks|codex-move-backslash|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a completed Codex move with an arrow in its destination blocks|codex-move-arrow|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a completed Codex move with final newlines blocks|codex-move-newline|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a completed Codex move with Git control escapes blocks|codex-move-control|rc=2 first=reviewer-stop-check: worktree=@REPO@
 writing the required report cannot attribute another agent's edit|artifact|rc=0 first=-
 the required report passes even when Git does not ignore it|unignored-report|rc=0 first=-
 ROWS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "actor rows: no row was asserted" >&2; exit 2; }
 }
 actor_rows actor
+# Git's display row has two quoted names for a rename. Treating that whole
+# row as JSON, then splitting on an arrow, loses the literal destination.
+rows_control actor_rows display-path-decoded \
+  '.path + "/"' '(.line[3:] | if startswith("\"") then (try fromjson catch "") else . end | split(" -> ") | last) + "/"' \
+  "a completed Codex move with quoted names blocks" \
+  "a completed Codex move with backslashes blocks" \
+  "a completed Codex move with an arrow in its destination blocks" \
+  "a completed Codex move with final newlines blocks" \
+  "a completed Codex move with Git control escapes blocks"
 rows_control actor_rows every-tracked-path \
   'jq -e --arg path "$p" '\''index($path) != null'\'' <<<"$EDIT_PATHS" >/dev/null' 'true' \
   "a concurrent tracked edit passes for a read-only reviewer" \
@@ -769,7 +800,12 @@ rows_control actor_rows own-edit-ignored \
   "an attributed deletion blocks" \
   "an attributed quoted path blocks" \
   "a completed Codex file change blocks" \
-  "a completed Codex move blocks"
+  "a completed Codex move blocks" \
+  "a completed Codex move with quoted names blocks" \
+  "a completed Codex move with backslashes blocks" \
+  "a completed Codex move with an arrow in its destination blocks" \
+  "a completed Codex move with final newlines blocks" \
+  "a completed Codex move with Git control escapes blocks"
 rows_control actor_rows failed-codex-counts \
   '.type == "FileChange" and .status == "completed"' '.type == "FileChange"' \
   "a failed Codex file change cannot attribute another agent's edit"
