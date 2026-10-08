@@ -393,16 +393,17 @@ build_dup_files() { # one D035 row, two D035 documents, no remote; local main is
   commit_all "$1/work" base
 }
 
-write_revisit_index() { # REPO ROW... — each ROW is ID,RATIONALE,REVISIT; rows start on line 3
-  local repo="$1" row id rationale revisit
+write_revisit_index() { # REPO ROW...: ROW is ID,RATIONALE,REVISIT[,DATE,RESEARCH,DECISION,STATUS,LINK]
+  local repo="$1" row id rationale revisit date research decision status link
   shift
   {
     printf '%s\n' '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |'
     printf '%s\n' '|------|----|----------|----------|-----------|--------------|--------|------|'
     for row in "$@"; do
-      IFS=, read -r id rationale revisit <<<"$row"
-      printf '| 2026-01-10 | %s | PROJ-1 | Decision %s | %s | %s | Active | [Full](%s-first.md) |\n' \
-        "$id" "$id" "$rationale" "$revisit" "$id"
+      IFS=, read -r id rationale revisit date research decision status link <<<"$row"
+      printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+        "${date:-2026-01-10}" "$id" "${research:-PROJ-1}" "${decision:-Decision $id}" \
+        "$rationale" "$revisit" "${status:-Active}" "${link:-[Full]($id-first.md)}"
     done
   } >"$repo/docs/decisions/INDEX.md"
 }
@@ -430,12 +431,24 @@ build_revisit_added() { # DIR CELL: beside the base's legacy None D034, the lane
   write_revisit_index "$1/work" "D034,Reason,None" "D035,Reason,$2"
 }
 
-build_revisit_edited() { # the lane rewrites the base's None D034's Rationale and keeps None
+build_revisit_edited() { # DIR CELL: an INDEX author edits one legacy row cell and leaves a placeholder
+  local row
   new_repo "$1/up" main
   write_revisit_index "$1/up" "D034,Reason,None"
   commit_all "$1/up" base
   clone_repo "$1/up" "$1/work"
-  write_revisit_index "$1/work" "D034,Reason rewritten,None"
+  case "$2" in
+    date) row='D034,Reason,None,2026-01-11' ;;
+    id) row='D035,Reason,None,,,Decision D034,,[Full](D034-first.md)' ;;
+    research) row='D034,Reason,None,,PROJ-2' ;;
+    decision) row='D034,Reason,None,,,Decision rewritten' ;;
+    rationale) row='D034,Reason rewritten,None' ;;
+    revisit) row='D034,Reason,' ;;
+    status) row='D034,Reason,None,,,,Superseded by D035' ;;
+    link) row='D034,Reason,None,,,,,[Record](D034-first.md)' ;;
+    *) return 1 ;;
+  esac
+  write_revisit_index "$1/work" "$row"
 }
 
 build_revisit_unread() { # no base resolves, and the committed D034 reads None
@@ -581,7 +594,14 @@ check-revisit-token-in-condition~revisit:When none of the clients need the API~~
 check-revisit-legacy-untouched~revisit_legacy~~check~~0~~
 check-revisit-added-none~revisit_added:None~~check~~1~~error=revisit-missing id=D035 path=docs/decisions/INDEX.md line=4 value="None"
 check-revisit-added-empty~revisit_added:~~check~~1~~error=revisit-missing id=D035 path=docs/decisions/INDEX.md line=4 value=""
-check-revisit-edited-none~revisit_edited~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-date~revisit_edited:date~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-id~revisit_edited:id~~check~~1~~error=revisit-missing id=D035 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-research~revisit_edited:research~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-decision~revisit_edited:decision~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-none~revisit_edited:rationale~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-revisit~revisit_edited:revisit~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value=""
+check-revisit-edited-status~revisit_edited:status~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-edited-link~revisit_edited:link~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
 check-revisit-base-unread~revisit_unread~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None";error=base-unverified ref=origin/HEAD,origin/main,main reason=unresolved
 check-fetch-failed-index-absent~first_index_offline~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed
 check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
@@ -676,12 +696,15 @@ check-malformed-base-row~|| BASE_ROWS_SKIPPED=1~|| BASE_ROWS_SKIPPED=0~a skipped
 check-revisit-empty~    | select(.revisit | ascii_downcase |~    | select(false) | select(.revisit | ascii_downcase |~a removed Revisit condition guard
 check-revisit-legacy-untouched~any($held[]; . == $row) | not~true~a Revisit guard that judges rows the base holds unchanged
 check-revisit-edited-none~any($held[]; . == $row)~any($held[]; .id == $row.id)~a base comparison that exempts an edited row by its ID
+check-revisit-edited-date~revisit: .[5], cells: .,~revisit: .[5], cells: .[1:],~a parser that discards Date from the base comparison
+check-revisit-edited-link~revisit: .[5], cells: .,~revisit: .[5], cells: (.[0:7] + [(.[7] | cell_path)]),~a parser that discards Link text from the base comparison
 check-not-a-repository~    not-a-repository) text=~    not-a-repository) refuse=1; text=~a directory outside a repository that check refuses
 check-configured-unresolved~  if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then~  if false; then~a configured base ref that is ignored
 check-blob-missing~rev-parse --verify --quiet "$BASE_REF:$BASE_PATH"~cat-file -e "$BASE_REF:$BASE_PATH"~a presence test that needs the blob
 get-ambiguous~  if [[ "$count" -gt 1 ]]; then~  if [[ "$count" -gt 99 ]]; then~a get that answers with the first of several rows
-get-unique~del(.line, .link, .revisit)~del(.line, .revisit)~a get that leaks the parser's link field
-get-unique~del(.line, .link, .revisit)~del(.line, .link)~a get that leaks the parser's Revisit field
+get-unique~del(.line, .link, .revisit, .cells)~del(.line, .revisit, .cells)~a get that leaks the parser's link field
+get-unique~del(.line, .link, .revisit, .cells)~del(.line, .link, .cells)~a get that leaks the parser's Revisit field
+get-unique~del(.line, .link, .revisit, .cells)~del(.line, .link, .revisit)~a get that leaks the parser's INDEX cells
 CONTROLS
 if [[ "$control_seq" -eq 0 ]]; then
   fail "the control table planted no defect"

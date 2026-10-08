@@ -1,1 +1,1 @@
-- `decisions check` judges a missing Revisit When condition only on INDEX rows the change adds or edits against the base branch, so a change no longer fails on untouched legacy rows whose cell reads `None`; with no readable base every row is still judged.
+- `decisions check` judges a missing Revisit When condition only on INDEX rows the change adds or edits against the base branch, including Date and Link text edits. Untouched legacy rows whose cell reads `None` pass; with no readable base every row is still judged.

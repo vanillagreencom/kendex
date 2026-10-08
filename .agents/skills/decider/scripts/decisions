@@ -315,7 +315,7 @@ parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in records
       | select(length >= 8)
       | map(sub("^\\s+"; "") | sub("\\s+$"; ""))
       | { id: .[1], research: .[2], decision: .[3], rationale: .[4],
-          revisit: .[5],
+          revisit: .[5], cells: .,
           status: .[6], link: (.[7] | cell_path), line: $line }
       | .path = (if .link == "" then "" else $prefix + .link end)
     ]' <<<"$text")" || return 1
@@ -787,7 +787,7 @@ cmd_get() {
     emit_error id-ambiguous "id=$id $fields" "More than one INDEX row carries this ID. Renumber all but one (workflows/create-decision.md § Renumber a record)."
     exit 1
   fi
-  match=$(jq 'first | del(.line, .link, .revisit)' <<<"$matches")
+  match=$(jq 'first | del(.line, .link, .revisit, .cells)' <<<"$matches")
 
   local path date="unknown" parsed
   path=$(printf '%s' "$match" | jq -r '.path')
@@ -834,6 +834,8 @@ cmd_check() {
   read_base_index
 
   # INDEX authors use placeholders before they choose a revisit condition.
+  # Retain every trimmed cell, including Date and the original Link text:
+  # a resolved filename alone establishes identity, not an unchanged row.
   # A row the base holds unchanged is history this change does not rewrite;
   # an unread base leaves BASE_ROWS empty, so every row is judged.
   local invalid_revisits revisit_row
