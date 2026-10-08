@@ -675,9 +675,9 @@ run_shellcheck() { # CONTENT-PATH — gcc-format output on stdout
   fi
 }
 
-# Both readers below take the whole diagnostic before answering, for the
-# reason has_exit_trap does: an awk that exits at the first hit closes the
-# pipe under it, printf takes SIGPIPE, and under pipefail the substitution
+# Both readers below take the whole diagnostic before answering: an awk
+# that exits at the first hit closes the pipe under it, printf takes
+# SIGPIPE, and under pipefail the substitution
 # answers 141. On first_line that status lands on a plain assignment in the
 # caller and errexit ends the run; line_hint's own assignment sits inside a
 # command substitution, where bash inherits no errexit, so the shape there

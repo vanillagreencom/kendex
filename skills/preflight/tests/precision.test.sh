@@ -492,7 +492,9 @@ for action in "trap ':' EXIT" $'trap \x27\n  echo cleanup\n\x27 EXIT'; do
 
   # Removing only the code/data decision must make the same assertion fail.
   original_pf="$PF"
-  PF="$TMP/preflight-code-data-control"
+  mkdir -p "$TMP/code-data-control"
+  cp -R "${original_pf%/*}/lib" "$TMP/code-data-control/"
+  PF="$TMP/code-data-control/preflight"
   awk '
     /^line_is_code\(\)/ { print "line_is_code() { return 0; }"; skip=1; changed++; next }
     skip && /^}$/ { skip=0; next }
@@ -500,15 +502,19 @@ for action in "trap ':' EXIT" $'trap \x27\n  echo cleanup\n\x27 EXIT'; do
     END { if (changed != 1) exit 1 }
   ' "$original_pf" >"$PF"
   chmod +x "$PF"
-  if (
-    run_pf
+  run_pf
+  # The scanner's verdict proves it scanned the fixture. A startup error
+  # cannot establish that the assertion rejects data treated as code.
+  if [ "$RC" -ne 0 ] || ! grep -Fx 'preflight: clean=1' <<<"$OUT" >/dev/null; then
+    bad "the code/data control scanner completes the fixture scan" "rc=$RC out=$OUT"
+  elif (
     FAIL=0
     fires "code/data control" "scripts/child.sh:3: [mktemp-trap]"
-    [ "$FAIL" -eq 0 ]
+    [ "$FAIL" -eq 1 ]
   ) >"$TMP/code-data-control.log" 2>&1; then
-    bad "the here-document assertion rejects a scanner that treats data as code"
-  else
     ok "the here-document assertion rejects a scanner that treats data as code"
+  else
+    bad "the here-document assertion rejects a scanner that treats data as code"
   fi
   PF="$original_pf"
 
