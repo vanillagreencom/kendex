@@ -249,7 +249,7 @@ mkdir "$MD_TMP/reader-bin"
 printf '#!/bin/sh\nexit 0\n' > "$MD_TMP/reader-bin/sleep"
 chmod +x "$MD_TMP/reader-bin/sleep"
 sed 's/\[ "$remaining" -gt 0 \] || exit 0/:/' "$MD_TMP/single.sh" > "$MD_TMP/quiet-control.sh"
-if python3 - "$MD_TMP" <<'PY'
+if python3 - "$MD_TMP" "$BASH" <<'PY'
 import os, pathlib, signal, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 env = {"PATH": str(root / "reader-bin") + os.pathsep + os.environ["PATH"]}
@@ -257,8 +257,8 @@ log = root / "watch.log"
 log.write_text("handled\n")
 (root / "oversee-watch.err").write_text("oversee-succeed: watch-restart-failed step=start\n")
 assert not (root / "oversee-watch.pid").exists()
-def run(reader):
-    p = subprocess.Popen(["/bin/sh", str(root / reader), str(log), "2"], env=env,
+def run(reader, shell):
+    p = subprocess.Popen([shell, str(root / reader), str(log), "2"], env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     try:
         out, err = p.communicate(timeout=2)
@@ -267,14 +267,16 @@ def run(reader):
         os.killpg(p.pid, signal.SIGKILL)
         p.communicate()
         return "deadline", b"", b""
-assert run("single.sh") == (0, b"", b"")
-assert run("quiet-control.sh")[0] == "deadline"
-with log.open("a") as f:
-    f.write("next\n")
-assert run("single.sh") == (0, b"2: next\n", b"")
+for shell in ("/bin/sh", sys.argv[2]):
+    log.write_text("handled\n")
+    assert run("single.sh", shell) == (0, b"", b"")
+    assert run("quiet-control.sh", shell)[0] == "deadline"
+    with log.open("a") as f:
+        f.write("next\n")
+    assert run("single.sh", shell) == (0, b"2: next\n", b"")
 PY
 then
-  pass "quiet expiry wakes the missing-watch read without advancing its cursor; removing expiry blocks it"
+  pass "quiet expiry returns without advancing the cursor; removing expiry blocks the reader"
 else
   fail "the quiet reader or its must-fail control broke the delivery contract"
 fi

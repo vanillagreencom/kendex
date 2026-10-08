@@ -33,10 +33,16 @@ TMP_ROOT="$(mktemp -d)" || { echo "oversee_succeed_ladder: scratch=mktemp-failed
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_succeed_ladder: scratch=resolve-failed" >&2; exit 1; }
 SOCK="oversee-succeed-ladder-$$"
 cleanup() {
+  [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
+source "$TEST_DIR/lib/watch-fixture.sh"
+QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee-succeed)" || exit 1
+cp -p -- "$SUCCEED" "$QUIET_SCRIPTS/oversee-succeed"
+SUCCEED="$QUIET_SCRIPTS/oversee-succeed"
+fixture_watch_neighbor "$SUCCEED"
 tm() { tmux -L "$SOCK" "$@"; }
 
 # shellcheck source=lib/assertions.sh
@@ -118,6 +124,7 @@ MAILBOX_DIR="$TMP_ROOT/work/tmp/lane-mail/overseer"
 # Fable on .claude, or with `codex` GPT-5.6 Sol on .codex; sets CALLER_PANE
 # and CALLER_WINDOW.
 new_caller() {
+  fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   local spec cmd="exec '$BIN/hclaude' 100000"
   [[ -f "$TMP_ROOT/work/tmp/workflow-state-oversee.json" ]] || printf '{"issue_id":"oversee","overseer":{"generation":1}}\n' > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   [[ "${1:-}" != codex ]] || cmd="exec '$TMP_ROOT/cbin/codex' 100000"
@@ -126,6 +133,7 @@ new_caller() {
   rm -f -- "${TMP_ROOT:?}"/argv.*
   spec="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
+  fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
   mkdir -p "$MAILBOX_DIR"
   if [[ "${1:-}" == codex ]]; then
     lane_context_record "$MAILBOX_DIR" codex 100000 258400 "${2-gpt-5.6-sol}" "" "$SERVER_PID $CALLER_PANE"
@@ -143,6 +151,7 @@ new_caller() {
 # ORCH_OVERSEER_PREFERENCE. Sets OUT (both streams) and RC.
 CALLER_FLAGS=("$BYPASS")
 run_succeed() {
+  fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
   local row="$1" pref=(ORCH_OVERSEER_PREFERENCE="$2") lane="${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
   local -a wait=(--wait-secs 20)
   [[ "$2" != unset ]] || pref=()
@@ -724,12 +733,14 @@ assert_eq "$RC|$(launched claude)|$(launched codex)" \
 # claude account: the pick leaves the walled account out and lands on .eclaude.
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 new_pi_caller() { # [norecord]
+  fixture_watch_stop "$FLEET_STATE"
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
   rm -f -- "${TMP_ROOT:?}"/argv.* "${FLEET_STATE:?}"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   CALLER_WINDOW="$(tm display-message -p -t "$CALLER_PANE" '#{window_id}')"
   printf '{"issue_id": "oversee", "overseer": {"generation": 1}}\n' > "$FLEET_STATE"
+  fixture_watch_predecessor "$SUCCEED" "$FLEET_STATE" "$TMP_ROOT/work" "$CALLER_PANE"
   [[ "${1:-}" != norecord ]] || return 0
   jq -n --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" --arg cwd "$TMP_ROOT/work" \
     --argjson start "$SERVER_START" \

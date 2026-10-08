@@ -117,6 +117,7 @@ new_caller() {
   tm move-window -r -t fleet
   rm -f -- "${MAILBOX_DIR:?}/$LANE_CONTEXT_RECORD"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' "$cmd")"
+  fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
 }
 # reading MODEL — the context reading the caller's own turn-end hook records in
 # the overseer mailbox for this pane, naming MODEL, well under the context mark.

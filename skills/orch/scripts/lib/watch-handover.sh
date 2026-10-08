@@ -155,7 +155,7 @@ watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
     WATCH_HANDOVER_FIELDS=(step=start "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR")
     rc=1
   fi
-  if ! cd -- "$launch_cwd" 2>"$DEP_ERR"; then
+  if ! cd -- "$launch_cwd" 2>>"$DEP_ERR"; then
     WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=directory)
     return 1
   fi

@@ -247,7 +247,8 @@ watch_stop "$NEW" "$FLEET_STATE" || true
 # replay control drops the recorded selection and cadence before execution.
 COMMAND_CONTROL="$(mutant_scripts command-control lib/watch-handover.sh)" || exit 1
 mutate_file "$COMMAND_CONTROL/lib/watch-handover.sh" '          *) argv+=("$word") ;;' \
-  '          *) : ;;'
+  '          --state) argv+=("$word" "$state"); skip=value ;;
+          *) : ;;'
 mkdir -p "$TMP_ROOT/configured"
 WATCH_START_CWD="$TMP_ROOT/configured"
 DEFAULT_WATCH_ARGS="$WATCH_ARGS"
@@ -286,6 +287,8 @@ PY
       "$COMMAND_CASE: replay keeps script, cwd, selection and cadence and replaces only successor values"
     assert_eq "$WATCH_SCRIPT" "$FIXTURE_WATCH" "$COMMAND_CASE: the configured script remains the replay owner"
   fi
+  [[ "$COMMAND_CASE" != replay-control ]] || assert_eq "$RC|${NEW:+claimed}" '0|claimed' \
+    "the replay control retains state and reaches the command-loss assertion with a live claim"
   [[ -z "$NEW" ]] || watch_stop "$NEW" "$FLEET_STATE" || true
 done
 WATCH_ARGS="$DEFAULT_WATCH_ARGS"
@@ -455,15 +458,23 @@ for CLAIM_CASE in refusal control; do
 done
 
 # The runner cannot write its record. A first launch must close the new pane.
-tm kill-window -a -t "$KEEP_WINDOW"
-rm -f -- "${FLEET_STATE:?}"
-mkdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
-run_oversee -- launch --wait-secs 20
-rmdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
-LIVE_RC=0
-watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
-assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$(grep -c '^job-unit: record-unwritable ' <<<"$OUT")" \
-  "1|1|0|1" "a refused first-watch job cannot report the overseer launch done"
+ERROR_CONTROL="$(mutant_scripts error-control lib/watch-handover.sh)" || exit 1
+mutate_file "$ERROR_CONTROL/lib/watch-handover.sh" \
+  'cd -- "$launch_cwd" 2>>"$DEP_ERR"' 'cd -- "$launch_cwd" 2>"$DEP_ERR"'
+for ERROR_CASE in retained control; do
+  ERROR_BIN="$OVERSEE"
+  EXPECT_ERROR=1
+  [[ "$ERROR_CASE" != control ]] || { ERROR_BIN="$ERROR_CONTROL/oversee"; EXPECT_ERROR=0; }
+  tm kill-window -a -t "$KEEP_WINDOW"
+  rm -f -- "${FLEET_STATE:?}"
+  mkdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
+  run_oversee "$ERROR_BIN" -- launch --wait-secs 20
+  rmdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
+  LIVE_RC=0
+  watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
+  assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$(grep -c '^job-unit: record-unwritable ' <<<"$OUT")" \
+    "1|1|0|$EXPECT_ERROR" "$ERROR_CASE: a refused job keeps its failed status and the restoration preserves the launch error"
+done
 
 UNSTARTED="$(mutant_scripts unstarted oversee)" || exit 1
 mutate_file "$UNSTARTED/oversee" '      hand_over_watch ;;' '      ;;'

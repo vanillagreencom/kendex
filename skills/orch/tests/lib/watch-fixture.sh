@@ -41,6 +41,18 @@ EOF
   chmod +x "$dir/oversee-watch"
 }
 
+# A normally released predecessor retains the command its successor replays.
+# Identity suites use this neutral command without running watch passes.
+fixture_watch_predecessor() { # PRIVATE_LAUNCHER STATE CWD PANE
+  fixture_watch_neighbor "$1" || return 1
+  (
+    cd -- "$3" || exit 1
+    watch_pid_write "$2" "$4" hand "$(dirname "$1")/oversee-watch" \
+      --repeat 60 --state "$2" || exit 1
+    watch_pid_release "$2"
+  )
+}
+
 fixture_watch_stop() { # STATE
   local rc=0
   watch_pid_live "$1" || rc=$?

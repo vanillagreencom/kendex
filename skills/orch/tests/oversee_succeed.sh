@@ -219,6 +219,7 @@ new_caller() {
   tm move-window -r -t fleet
   spec="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
+  fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
   record_caller "$1" "$CALLER_PANE"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
@@ -486,6 +487,7 @@ rm -f "${TMP_ROOT:?}"/argv.*
 spec="$(tm new-window -d -t fleet:3 -P -F '#{pane_id} #{window_id} #{pane_pid}' \
   "exec '$TMP_ROOT/in-pane' success 'claude:fable:high' -- --dangerously-skip-permissions --verbose")"
 read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
+fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
 record_caller "$MARK" "$CALLER_PANE"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 # Before the close that ends its own window, the run names the fleet watch it

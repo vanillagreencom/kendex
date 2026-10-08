@@ -315,9 +315,9 @@ record_case record_loop
 loop_args() { ps -o args= -p "${1:-0}" 2>/dev/null | grep -c -- 'oversee-watch.* --repeat 0 ' || true; }
 assert_eq "read=${LOOP:+yes}|$(loop_args "$LOOP")" "read=yes|1" \
   "the record names the repeat loop itself, whatever launched it" "$TMP_ROOT/e-record_loop"
-RECORDED_ARGV="$(tr '\0' ' ' < "$STUB_DIR/oversee-watch.argv")"
-assert_eq "$RECORDED_ARGV|$(sed -n 's/^cwd=//p' "$STUB_DIR/oversee-watch.pid")" \
-  "--interval 0 --max-loops 2 --repo owner/repo --max-loops 1 --repeat 0 --state $STUB_DIR/state.json |$TMP_ROOT/repo" \
+watch_argv_read "$STUB_DIR/state.json"
+assert_eq "${WATCH_ARGV[*]}|$WATCH_CWD" \
+  "--interval 0 --max-loops 2 --repo owner/repo --max-loops 1 --repeat 0 --state $STUB_DIR/state.json|$TMP_ROOT/repo" \
   "the record keeps the loop's own words and directory, and none of the overseer's flags"
 
 # A failed ps read of that live claim is unknown, not an absent claim.
