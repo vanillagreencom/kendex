@@ -114,7 +114,10 @@ Overseer side:
               A send to a lane first reads the lane's record in the fleet
               state (--state-dir, else the checkout's) and matches the
               channel its host kind declares (lane-host capabilities).
-              channel=mailbox sends as above, and so does a lane with no
+              channel=mailbox with files=verb requires --root MAIL_ROOT --host,
+              using the record's mail_root; without --host it refuses as
+              host-root-required. A local mailbox sends as above, and so
+              does a lane with no
               record when no --state-dir is given; with one, an unreadable
               state refuses as state-unreadable and no record as
               lane-unrecorded. channel=session, a Claude cloud session,
@@ -442,7 +445,7 @@ command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
-state-unreadable, lane-unrecorded, host-capabilities-unread, channel-session,
+state-unreadable, lane-unrecorded, host-capabilities-unread, host-root-required, channel-session,
 session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
 the same field the receipt above prints; `resolved-already`,
@@ -551,6 +554,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
     state-unreadable) text='The fleet state could not be read for the lane'"'"'s record, so which channel reaches the lane is unknown. Nothing was sent.' ;;
     host-capabilities-unread) text='lane-host could not declare the capability line of the host the lane'"'"'s record names, or declared a channel this send has no arm for, so nothing says how to reach the lane. Nothing was sent.' ;;
+    host-root-required) text='The lane reads its mailbox on its host. Use --root MAIL_ROOT --host, with MAIL_ROOT from the lane record'"'"'s mail_root, to send through lane-host. Nothing was sent.' ;;
     lane-unrecorded) text='The fleet state the send names holds no record for this lane, so which channel reaches it is unknown. Nothing was sent. Name the state the lane was launched into, or, for a lane with no record, such as one the watch carries from --item alone, send the same command with no --state-dir.' ;;
     channel-session) text='The lane runs in a cloud session, which never asks and enforces no halt, so this option reaches nothing there. Send a plain --directive; a stop goes to the operator, who archives the session.' ;;
     session-unrecorded) text='The lane'"'"'s record names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
@@ -832,7 +836,7 @@ trap lm_cleanup EXIT
 # lane never asks, so an answer has nothing to reach, and no hook enforces a
 # halt there.
 lm_send_channel() {
-  local state_args=() rc=0 exists record host channel harness account session root out answer cause
+  local state_args=() rc=0 exists record host channel files harness account session root out answer cause
   [ -z "$STATE_DIR" ] || state_args=(--state-dir "$STATE_DIR")
   if ! exists="$("$SCRIPT_DIR/workflow-state" ${state_args[@]+"${state_args[@]}"} exists --json oversee 2>"$WORK_DIR/state.err")" ||
     ! exists="$(jq -er '.exists | tostring' <<<"$exists")"; then
@@ -853,7 +857,13 @@ lm_send_channel() {
     refuse host-capabilities-unread "$host" "$(cat -- "$WORK_DIR/caps.err")"
   lane_capability channel channel
   case "$channel" in
-    mailbox) return 0 ;;
+    mailbox)
+      lane_capability files files
+      # A hosted launch records a mailbox on the provider's disk. A local
+      # append would report delivery to a mailbox the lane never reads.
+      [ "$files" = local ] || [ "$HOST" -eq 1 ] || refuse host-root-required "$host"
+      return 0
+      ;;
     session) ;;
     *) refuse host-capabilities-unread "$host" "channel=$channel" ;;
   esac

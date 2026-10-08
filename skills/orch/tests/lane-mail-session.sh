@@ -6,8 +6,9 @@
 # session-archived and any other as session-send-failed, and --re and --halt
 # refuse. A session record of another repository is lane-foreign, and a send
 # naming a fleet state that holds no record for the lane refuses rather than
-# fall back to the mailbox. A record on a mailbox kind keeps the mailbox. The
-# kind's line is the real lane-host's; `claude` is a stub.
+# fall back to the mailbox. A local mailbox record keeps its mailbox. A hosted
+# mailbox record requires --root MAIL_ROOT --host to reach the provider's disk.
+# The kind's line is the real lane-host's; `claude` and the provider are stubs.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_HOST ORCH_STATE_DIR
@@ -26,6 +27,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # The claude stub logs its argv, its CLAUDE_CONFIG_DIR and its stdin, and
 # prints STUB_CLAUDE_OUT.
 BIN="$TMP_ROOT/bin"
+HOST_PROVIDER="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+HOST_ROOT=/srv/lane/SSH-1
+HOST_DISK="$TMP_ROOT/host-disk"
 mkdir -p "$BIN"
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -36,7 +40,8 @@ chmod +x "$BIN/claude"
 
 # The overseer's checkout, with the fleet state a launch recorded: CC-1 a
 # claude-cloud lane, CC-2 a lane on this host, CC-3 a claude-cloud lane of
-# another repository's checkout. OTHER_STATE is a fleet that holds CC-2 alone.
+# another repository's checkout, SSH-1 a hosted mailbox lane. OTHER_STATE is
+# a fleet that holds CC-2 alone.
 CHECKOUT="$TMP_ROOT/checkout"
 mkdir -p "$CHECKOUT/tmp" "$CHECKOUT/wt/CC-1"
 git -C "$CHECKOUT" init -q
@@ -46,13 +51,16 @@ git -C "$FOREIGN" init -q
 STATE="$TMP_ROOT/state"
 OTHER_STATE="$TMP_ROOT/other-state"
 mkdir -p "$STATE" "$OTHER_STATE"
-jq -n --arg account "$TMP_ROOT/.eclaude" --arg root "$CHECKOUT" --arg foreign "$FOREIGN" '{issue_id: "oversee", lanes: [
+jq -n --arg account "$TMP_ROOT/.eclaude" --arg root "$CHECKOUT" --arg foreign "$FOREIGN" \
+  --arg host "$HOST_PROVIDER" --arg host_root "$HOST_ROOT" '{issue_id: "oversee", lanes: [
   {item: "CC-1", harness: "claude", host: "claude-cloud", kind: "claude-cloud", account: $account,
    session_id: "session_01CLOUD", mail_root: ($root + "/wt/CC-1"), window: null, status: "running"},
   {item: "CC-2", harness: "claude", host: null, kind: "local", account: $account,
    mail_root: $root, window: "stub:CC-2", status: "running"},
   {item: "CC-3", harness: "claude", host: "claude-cloud", kind: "claude-cloud", account: $account,
-   session_id: "session_03CLOUD", mail_root: $foreign, window: null, status: "running"}]}' > "$STATE/workflow-state-oversee.json"
+   session_id: "session_03CLOUD", mail_root: $foreign, window: null, status: "running"},
+  {item: "SSH-1", harness: "claude", host: $host, kind: "ssh", account: $account,
+   mail_root: $host_root, window: null, status: "running"}]}' > "$STATE/workflow-state-oversee.json"
 jq '.lanes |= map(select(.item == "CC-2"))' "$STATE/workflow-state-oversee.json" > "$OTHER_STATE/workflow-state-oversee.json"
 printf 'Rebase on main, then push.\n' > "$TMP_ROOT/directive"
 
@@ -66,6 +74,7 @@ lm() { # [ENV=VALUE...] -- ARGS...
   rm -f -- "$TMP_ROOT/claude.log"
   RC=0
   OUT="$(cd "$CHECKOUT" && env PATH="$BIN:$PATH" STUB_CLAUDE_LOG="$TMP_ROOT/claude.log" \
+    LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOST_DISK" \
     STUB_CLAUDE_OUT='{"ok":true,"session_id":"session_01CLOUD","url":"https://claude.ai/code/session_01CLOUD"}' \
     ${env_args[@]+"${env_args[@]}"} "${LANE_MAIL_BIN:-$LANE_MAIL}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(head -n 1 "$TMP_ROOT/err")"
@@ -108,6 +117,26 @@ lm -- send --item CC-2 --directive --file "$TMP_ROOT/directive" --state-dir "$ST
 assert_eq "rc=$RC called=$(called) lines=$(wc -l < "$CHECKOUT/tmp/lane-mail/CC-2/to-lane.jsonl" | tr -d ' ')" "rc=0 called=no lines=1" \
   "a local lane's directive is appended to its mailbox"
 
+echo "=== a hosted mailbox record requires the hosted send form ==="
+# An overseer's answer, directive and halt all reach lm_send_channel. The
+# record and the provider's files=verb declaration come from hosted launch.
+for opt in '--re 1700000000-1-abc' --directive --halt; do
+  read -r -a opts <<<"$opt"
+  lm -- send --item SSH-1 "${opts[@]}" --file "$TMP_ROOT/directive" --state-dir "$STATE"
+  assert_eq "rc=$RC out=$OUT err=$ERR" "rc=2 out= err=lane-mail: host-root-required=$HOST_PROVIDER" \
+    "$opt refuses with no sent receipt for a hosted mailbox"
+  assert_eq "mailbox=$([[ -e "$CHECKOUT/tmp/lane-mail/SSH-1/to-lane.jsonl" || -e "$HOST_DISK$HOST_ROOT/tmp/lane-mail/SSH-1/to-lane.jsonl" ]] && echo yes || echo no)" \
+    "mailbox=no" "$opt writes no envelope on either disk"
+done
+lm ORCH_LANE_HOST="$HOST_PROVIDER" -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" \
+  --state-dir "$STATE" --root "$HOST_ROOT" --host
+assert_eq "rc=$RC lines=$(wc -l < "$HOST_DISK$HOST_ROOT/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \
+  "rc=0 lines=1" "the hosted form appends to the lane's own mailbox"
+assert_eq "$(jq -r '.kind + ":" + .text' "$HOST_DISK$HOST_ROOT/tmp/lane-mail/SSH-1/to-lane.jsonl")" \
+  'directive:Rebase on main, then push.' "the provider receives the directive envelope"
+assert_eq "mailbox=$([[ -e "$CHECKOUT/tmp/lane-mail/SSH-1/to-lane.jsonl" ]] && echo yes || echo no)" \
+  "mailbox=no" "the hosted form leaves the overseer's local mailbox absent"
+
 echo "=== controls ==="
 # mutant OLD NEW — a copy of the scripts with lane-mail's one rule removed.
 mutant() {
@@ -142,6 +171,12 @@ mutant session-unrecorded '[ -z "$STATE_DIR" ] || refuse lane-unrecorded' 'true 
 printf 'Rebase again.\n' > "$TMP_ROOT/directive-2"
 lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive-2" --state-dir "$OTHER_STATE"
 assert_eq "rc=$RC called=$(called)" "rc=0 called=no" "control: without the record check the send falls back to a mailbox"
+# shellcheck disable=SC2016
+mutant hosted-mailbox '[ "$files" = local ] || [ "$HOST" -eq 1 ] || refuse host-root-required "$host"' \
+  'true || [ "$files" = local ] || [ "$HOST" -eq 1 ] || refuse host-root-required "$host"'
+lm -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
+assert_eq "rc=$RC lines=$(wc -l < "$CHECKOUT/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \
+  "rc=0 lines=1" "control: without the host check a send reports delivery to the local mailbox"
 unset LANE_MAIL_BIN
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
