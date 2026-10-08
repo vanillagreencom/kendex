@@ -66,11 +66,19 @@ git add -A
 
 Commit the workflow and the inventory removal with the installed skill. Without `--retire-writer`, adoption keeps a recorded retired gate workflow and its inventory entry and prints one `refresh-warning=legacy-writer` line. Retirement belongs to the trusted removal route above. That route removes an unedited retired copy, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
 
+The adopter also accepts `--templates-dir DIR`, where DIR holds the installed review-gate templates. It reads `DIR/kendex-refresh.yml`. From the consumer root:
+
+```bash
+"$KENDEX_RELEASE/refresh/adopt-refresh.sh" --templates-dir .agents/skills/review-gate/templates
+```
+
+For a template inside the consumer, adoption writes a record in `.kendex-generated.json`. Its `path` is `.github/workflows/kendex-refresh.yml`; its `template` is the selected template path relative to the consumer root. Its `templateHash` is `sha256:` followed by the SHA-256 digest of the template bytes. The release-checkout route removes the earlier workflow record instead.
+
 Refresh workflow adoption in `refresh/adopt-refresh.sh` compares exact bytes with both template paths, `skills/review-gate/templates/kendex-refresh.yml` and `refresh/kendex-refresh.yml`, in kendex's default-branch ancestry. It fetches that history from `https://github.com/vanillagreencom/kendex.git` as data only. Both the replacement template and any existing workflow must match shipped bytes. Consumer history and adoption records supply no replacement permission.
 
 | Existing `.github/workflows/kendex-refresh.yml` | Refresh result |
 |---|---|
-| Absent, or equal to a shipped template | Write the release checkout's caller and remove its earlier adoption record. A missing, matching or stale record does not change acceptance. |
+| Absent, or equal to a shipped template | Write the selected template and update the inventory as above. A missing, matching or stale record does not change acceptance. |
 | Equal to no shipped template | Stop with `refresh-error=workflow-edited value=PATH` before writer adoption. Preserve the workflow and inventory. |
 | Symlink | Stop with `refresh-error=workflow-symlink value=PATH`. Leave its target unchanged. |
 | Bytes changed during writer adoption | Stop with `refresh-error=workflow-changed value=PATH` before refresh replacement or inventory writes. Preserve the new bytes. |
