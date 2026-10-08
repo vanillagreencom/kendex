@@ -101,6 +101,12 @@ ci_message() {
       printf 'ci-wait: checks-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "gh pr checks failed for PR #$PR_NUM in $REPO:"
       ;;
+    head-read-failed|head-response-invalid)
+      printf 'ci-wait: %s pr=%s repo=%s\n' "$_message_key" "$PR_NUM" "$REPO"
+      ;;
+    actions-read-failed|actions-response-invalid)
+      printf 'ci-wait: %s head=%s repo=%s\n' "$_message_key" "$head_sha" "$REPO"
+      ;;
     probe-unreadable)
       printf 'ci-wait: probe-unreadable probe=%s\n' "$probe_name"
       printf '%s\n' "no-CI probe inconclusive ($probe_name lookup failed); continuing to wait for checks"
@@ -219,10 +225,14 @@ that completed successfully discards the stale failures; a failed newest
 run, or a cancelled run with no newer or fresher sibling, stays terminal.
 A missing replacement reaches the timeout rather than passing.
 
-Before a settled green rollup can pass, the head's Actions run list must
-also show no active substantive-event run. An active run or an unreadable
+In default mode, or when --required-only cannot narrow the required set,
+the head's Actions run list must also show no active substantive-event run
+before a settled green rollup can pass. An active run or an unreadable
 head/run lookup keeps the verdict pending, even if the only visible check
 is a completed review-request check or earlier polls saw checks in progress.
+Failed and invalid lookups report their diagnostic category on stderr.
+With a known required set, --required-only completes when those contexts
+have passed, regardless of active optional workflows.
 
 A rollup of settled checks with at least one passed, none ever seen in
 progress, is either the prior run's leftovers or CI that finished before the
@@ -673,13 +683,25 @@ get_failed_run_id() {
 # overwrote the frozen ones rather than preceding them.
 superseding_run_state() {
   local classes="$1" head_sha runs_json
-  head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null) || { echo "unavailable"; return 0; }
-  if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
+  if ! head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>"$checks_stderr"); then
+    ci_message head-read-failed >&2
+    cat "$checks_stderr" >&2
     echo "unavailable"
     return 0
   fi
-  runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>/dev/null) || { echo "unavailable"; return 0; }
+  if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
+    ci_message head-response-invalid >&2
+    echo "unavailable"
+    return 0
+  fi
+  if ! runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>"$checks_stderr"); then
+    ci_message actions-read-failed >&2
+    cat "$checks_stderr" >&2
+    echo "unavailable"
+    return 0
+  fi
   if ! jq -e '(.workflow_runs? | type) == "array"' >/dev/null 2>&1 <<<"$runs_json"; then
+    ci_message actions-response-invalid >&2
     echo "unavailable"
     return 0
   fi
@@ -952,12 +974,16 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
   if [ "$pending_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
     # The rollup can lag a head push or a dispatch. Neither an unchanged
     # green rollup nor progress seen on an earlier head proves CI has ended.
-    supersede_state=$(superseding_run_state "$check_classes" || echo "unavailable")
-    if [ "$supersede_state" != "settled" ]; then
-      check_classes=$(jq -c '.pending += [{name: "current-head Actions", state: "EXPECTED", bucket: "pending"}]' <<<"$check_classes")
-      last_check_classes="$check_classes"
-      poll_sleep "$POLL_INTERVAL"
-      continue
+    # A known required set already names every context that blocks the merge;
+    # optional workflows cannot postpone its passed result.
+    if ! $REQUIRED_ONLY || [ "$REQUIRED_CONTEXTS" = '[]' ]; then
+      supersede_state=$(superseding_run_state "$check_classes" || echo "unavailable")
+      if [ "$supersede_state" != "settled" ]; then
+        check_classes=$(jq -c '.pending += [{name: "current-head Actions", state: "EXPECTED", bucket: "pending"}]' <<<"$check_classes")
+        last_check_classes="$check_classes"
+        poll_sleep "$POLL_INTERVAL"
+        continue
+      fi
     fi
     if [ "$seen_in_progress" = true ]; then
       # We watched checks go from in-progress to complete — reliable
