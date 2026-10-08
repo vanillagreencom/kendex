@@ -119,7 +119,7 @@ ORCH_LANE_PREFERENCE = "pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:hig
 # entry attests. The saved setup line is fail-open: it ends with
 # `|| echo kendex-install-failed`, so a cloud session can start without
 # kendex on PATH.
-ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex"
+ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex,10claude=vanillagreencom/kendex,1claude=vanillagreencom/kendex,7claude=vanillagreencom/kendex,claude=vanillagreencom/kendex"
 
 # Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
 # slot before it refuses as lane-host-busy with exit 69.
