@@ -12,7 +12,7 @@ kendex is a desktop app and command-line tool for people who use AI coding tools
 - Converts agent and skill files into the format each tool reads.
 - Previews a package change before it applies it.
 - Keeps a personal setup and a separate setup for each project.
-- Adopts customizations you already set up by hand: it keeps your files and starts managing them.
+- Adopts customizations you set up by hand with `kendex adopt <kind> <name>`. For a project skill, the real directory moves to `.agents/skills/<name>` and the coding tools' positions become kendex-managed links, including links you made by hand.
 - Browses the [community marketplace](https://kendex.ai) and any package repository you subscribe to.
 - Opens a marketplace or a package in the app from a `kendex://` link on a kendex.ai page.
 - Finds outdated packages and updates them.

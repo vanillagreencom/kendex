@@ -1,0 +1,1 @@
+- `kendex adopt` uses all harnesses enabled in the scope when no `--harness` is given, and refuses when none are enabled. The README and command help explain how project skill adoption moves the directory and manages its links.

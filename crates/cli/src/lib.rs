@@ -121,14 +121,16 @@ enum Command {
     },
     /// Make installed packages match your saved setup
     Apply(commands::apply_cmd::ApplyArgs),
-    /// Keep an existing package in your own managed collection
+    /// Bring an existing agent, skill or hook under kendex management
+    ///
+    /// In a project, a skill's real directory moves to .agents/skills/<name>.
+    /// Harness positions become managed links, including links made by hand.
     Adopt {
         /// agent | skill | hook
         kind: String,
         name: String,
-        /// The harness whose files to keep; repeat it to keep one package for
-        /// several harnesses in a single pass, which is what a folder they
-        /// share needs
+        /// Keep files for this harness; repeat to select several.
+        /// Defaults to every harness enabled in the scope's [install].harnesses
         #[arg(long)]
         harness: Vec<String>,
         #[arg(short = 'g', long)]

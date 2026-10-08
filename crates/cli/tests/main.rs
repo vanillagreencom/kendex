@@ -21,6 +21,7 @@ mod width;
 mod add_kinds;
 mod add_picker_terminal;
 mod add_setting;
+mod adopt_cli;
 mod apply_locked;
 mod bookmark_cli;
 mod bot_instructions_render;
