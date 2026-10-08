@@ -1,1 +1,0 @@
-- SSH lane hosts keep lifecycle work on its lock-owning connection, refuse success after connection loss, and bound shutdown of a stalled connection, so unfinished creation cannot be reported as an absent sandbox.

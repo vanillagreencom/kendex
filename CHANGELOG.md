@@ -62,6 +62,9 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Close parked and stopped lanes when their tracker item is Done or Canceled, after recording a detected merge cycle. Resume open parked items for post-merge work. Report a sandbox close refusal once per lane record and tracker state.
 - Changes to the trusted bot-instructions checker require the merge queue and full checks because that checker can grant the rendered-change classification.
 - Hosted SSH lanes hide selected private settings files, their link targets, and provisioned copies, including accepted copy paths through directory aliases, in the clone and current worktree during dependency installation. Files and links are restored on success or failure. Installation refuses missing copy-path support or an older settings loader before project settings load, and refuses a private target outside both checkouts.
+- Codex callers keep reviewer watchdog waits in the current turn, so a delayed review artifact can continue the review without an external wake.
+- SSH lane hosts keep lifecycle work on its lock-owning connection, refuse success after connection loss, and bound shutdown of a stalled connection, so unfinished creation cannot be reported as an absent sandbox.
+- Report failed main-push Skill Tests runs to the overseer with the failed jobs and first failing suite line.
 
 #### preflight
 
