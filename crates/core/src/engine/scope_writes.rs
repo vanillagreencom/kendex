@@ -177,34 +177,30 @@ pub(super) struct RecordReadings {
 /// also read under that selector, even when the source was redeclared
 /// beside a targeted update; recording the new one would apply no edit.
 pub(super) fn record_entry_selectors(
-    manifest: &Manifest,
+    state: &DesiredState,
     lock: &Lock,
     new_lock: &mut Lock,
     pass: &super::plan_pass::ItemPass,
     kept: &super::item_plan::KeptAsIs,
-    held: &[HeldPin],
 ) {
     for (key, entry) in &mut new_lock.entries {
-        if held.iter().any(|pin| {
-            matches!(&pin.held, super::Held::Item { kind, name }
-                if *kind == entry.kind && *name == entry.name)
-        }) {
-            entry.selector = lock.entries.get(key).and_then(|old| old.selector.clone());
-        } else if entry.kind != crate::model::ItemKind::PiExtension
+        if entry.kind != crate::model::ItemKind::PiExtension
             && pass
                 .planned
                 .contains(&(entry.kind, entry.name.clone(), entry.harness))
             && !kept.contains(key)
         {
-            let rev = manifest
-                .declared(entry.kind)
-                .get(&entry.name)
-                .and_then(|decl| decl.rev.as_deref());
-            entry.selector = Some(crate::lock::DeclaredSelector::of(
-                manifest,
-                &entry.source,
-                rev,
-            ));
+            let Some(basis) = state.selector_bases.get(&(entry.kind, entry.name.clone())) else {
+                unreachable!("a successfully planned item has its reading owner's selector basis");
+            };
+            match basis {
+                super::desired::SelectorBasis::Held => {
+                    entry.selector = lock.entries.get(key).and_then(|old| old.selector.clone());
+                }
+                super::desired::SelectorBasis::Declared(selector) => {
+                    entry.selector = Some(selector.clone());
+                }
+            }
         }
     }
 }

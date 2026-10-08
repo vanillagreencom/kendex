@@ -262,7 +262,7 @@ fn plan_scope_with_lock_base(
         &mut kept,
         &mut scope_notes,
     )?;
-    scope_writes::record_entry_selectors(&manifest, lock, &mut new_lock, &item_pass, &kept, &held);
+    scope_writes::record_entry_selectors(&state, lock, &mut new_lock, &item_pass, &kept);
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock, &said, &state.retired);

@@ -1,1 +1,1 @@
-- Apply follows a removed package revision and a changed source revision after discarding local edits. Existing install records keep their earlier holds until refresh records revision choices.
+- Apply follows a removed package or set revision and a changed source revision after discarding local edits. Held set members keep their recorded revision choices. Existing install records keep their earlier holds until refresh records revision choices.

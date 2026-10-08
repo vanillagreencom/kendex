@@ -17,7 +17,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::{SourceConfig, SourceState, find_item, source_config_for};
 use crate::source_read::SealedSource;
 
-use super::desired::{DesiredState, target_harnesses};
+use super::desired::{DesiredState, SelectorBasis, target_harnesses};
 
 /// The kinds a plan installs, in the order it plans them.
 pub(super) const PLANNED_KINDS: [ItemKind; 6] = [
@@ -68,6 +68,9 @@ pub(super) struct Planned {
     /// every later one is weighed against — the reason that owns this
     /// item's revision. `None` for a declaration the person wrote.
     derived_from: Option<Reason>,
+    /// The synthetic declaration that supplied this reading, inherited
+    /// by dependencies when their parent owns the revision.
+    held_by: Option<super::Held>,
 }
 
 #[derive(Default, Clone)]
@@ -82,6 +85,7 @@ pub(super) struct Expansion {
     /// still, by source and commit: read revisions, never a person's
     /// choice.
     invented: BTreeSet<(String, String)>,
+    held_owners: BTreeSet<(String, super::Held)>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -100,6 +104,26 @@ struct Disagreement {
 }
 
 impl Expansion {
+    pub(super) fn selector_bases(
+        &self,
+        manifest: &Manifest,
+    ) -> BTreeMap<(ItemKind, String), SelectorBasis> {
+        self.items
+            .iter()
+            .map(|(key, planned)| {
+                let basis = match &planned.held_by {
+                    Some(_) => SelectorBasis::Held,
+                    None => SelectorBasis::Declared(crate::lock::DeclaredSelector::of(
+                        manifest,
+                        &planned.decl.source,
+                        planned.decl.rev.as_deref(),
+                    )),
+                };
+                (key.clone(), basis)
+            })
+            .collect()
+    }
+
     /// Everything of one kind this plan installs, in name order.
     pub(super) fn of(&self, kind: ItemKind) -> Vec<(&String, &Planned)> {
         self.items
@@ -182,6 +206,13 @@ impl Expansion {
                 harnesses,
                 chosen_rev,
                 derived_from: None,
+                held_by: self.held_owner(
+                    &decl.source,
+                    super::Held::Item {
+                        kind,
+                        name: name.to_owned(),
+                    },
+                ),
             },
         );
     }
@@ -258,6 +289,21 @@ impl Expansion {
         harness: HarnessId,
         reason: Reason,
     ) -> bool {
+        let held_by = match &reason {
+            Reason::Requested => unreachable!("a requested item is declared, never derived"),
+            Reason::MemberOf { bundle } => self.held_owner(
+                &bundle.source,
+                super::Held::Set {
+                    name: bundle.name.clone(),
+                },
+            ),
+            Reason::RequiredBy { by } => {
+                let Some(parent) = self.items.get(&(by.kind, by.name.clone())) else {
+                    unreachable!("a dependency's parent is already expanded");
+                };
+                parent.held_by.clone()
+            }
+        };
         // A set weighs its revision against the one the person chose for
         // the item; every other derivation weighs it against the revision
         // the item actually reads.
@@ -278,6 +324,7 @@ impl Expansion {
                 harnesses: Vec::new(),
                 chosen_rev: decl.rev.clone(),
                 derived_from: Some(reason_owning.clone()),
+                held_by,
             });
         // A derived item is on while any requirer that brings it in is on:
         // the first requirer walked wrote its switch, and a later one that
@@ -310,6 +357,12 @@ impl Expansion {
             planned.harnesses.push(harness);
         }
         fresh || turned_on
+    }
+
+    fn held_owner(&self, source: &str, owner: super::Held) -> Option<super::Held> {
+        self.held_owners
+            .contains(&(source.to_owned(), owner.clone()))
+            .then_some(owner)
     }
 
     /// Report every revision disagreement as a warning on the item, once
@@ -617,6 +670,14 @@ fn expand_read<'a>(
     installed: Option<&'a crate::lock::Lock>,
 ) -> Expansion {
     let mut expansion = Expansion {
+        held_owners: held
+            .map(|pins| {
+                pins.pins()
+                    .iter()
+                    .map(|pin| (pin.source.clone(), pin.held.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
         invented: held
             .map(|pins| {
                 pins.pins()

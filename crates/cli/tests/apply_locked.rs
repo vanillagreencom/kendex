@@ -167,34 +167,29 @@ fn an_apply_after_a_source_revision_edit_renders_at_that_revision() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision() {
-    for (case, write_args) in [
-        ("kendex pin", &["pin", "agent", "review", "", "-y"][..]),
+    for (case, write_args, set_only) in [
+        (
+            "kendex pin",
+            &["pin", "agent", "review", "", "-y"][..],
+            false,
+        ),
         (
             "kendex add",
             &["add", "cat", "--agent", "lint", "--harness", "claude", "-y"],
+            false,
+        ),
+        (
+            "kendex pin, set-only member",
+            &["pin", "agent", "review", "", "-y"][..],
+            true,
+        ),
+        (
+            "kendex add, set-only member",
+            &["add", "cat", "--agent", "lint", "--harness", "claude", "-y"],
+            true,
         ),
     ] {
-        let world = world();
-        move_the_catalog(&world);
-        write(
-            &world.catalog.join("agents/lint.md"),
-            "---\nname: lint\ndescription: lints\n---\n\nLint it.\n",
-        );
-        commit(&world.catalog, "a new agent");
-        let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
-        assert!(fetched.status.success(), "{case}: {}", said(&fetched));
-        let moved = catalog_head(&world);
-        let manifest = world.project.join("kendex.toml");
-        let declared = fs::read_to_string(&manifest).unwrap();
-        let redeclared = declared.replacen(
-            "[sources.cat]\n",
-            &format!("[sources.cat]\nrev = \"{moved}\"\n"),
-            1,
-        );
-        assert_ne!(redeclared, declared, "{case}");
-        write(&manifest, &redeclared);
-        commit(&world.project, "the catalog pinned");
-
+        let (world, moved) = single_package_world(case, set_only);
         let args: Vec<&str> = write_args
             .iter()
             .map(|arg| if arg.is_empty() { moved.as_str() } else { arg })
@@ -211,9 +206,15 @@ fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision
             after_write["bundles"]["starter"], before_write["bundles"]["starter"],
             "{case}"
         );
+        for key in ["skill:second:claude", "skill:second:codex"] {
+            assert_eq!(
+                after_write["entries"][key]["selector"], before_write["entries"][key]["selector"],
+                "{case}: {key}"
+            );
+        }
         commit(&world.project, "one package written");
 
-        let skill_path = world.project.join(".claude/skills/second/SKILL.md");
+        let skill_path = world.project.join(".agents/skills/second/SKILL.md");
         let before_apply = fs::read_to_string(&skill_path).unwrap();
         assert!(
             !before_apply.contains("A paragraph added later."),
@@ -268,6 +269,38 @@ fn an_apply_after_a_rev_edit_and_a_single_package_write_renders_at_that_revision
         );
         assert!(verified.status.success(), "{case}: {}", said(&verified));
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn single_package_world(case: &str, set_only: bool) -> (World, String) {
+    let world = world();
+    move_the_catalog(&world);
+    write(
+        &world.catalog.join("agents/lint.md"),
+        "---\nname: lint\ndescription: lints\n---\n\nLint it.\n",
+    );
+    commit(&world.catalog, "a new agent");
+    let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+    assert!(fetched.status.success(), "{case}: {}", said(&fetched));
+    let moved = catalog_head(&world);
+    let manifest = world.project.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    let declared = if set_only {
+        let member = "[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n";
+        assert_eq!(declared.matches(member).count(), 1);
+        declared.replacen(member, "", 1)
+    } else {
+        declared
+    };
+    let redeclared = declared.replacen(
+        "[sources.cat]\n",
+        &format!("[sources.cat]\nrev = \"{moved}\"\n"),
+        1,
+    );
+    assert_ne!(redeclared, declared, "{case}");
+    write(&manifest, &redeclared);
+    commit(&world.project, "the catalog pinned");
+    (world, moved)
 }
 
 fn catalog_head(world: &World) -> String {
@@ -348,16 +381,24 @@ fn a_legacy_apply_keeps_installed_commits_until_refresh_records_selectors() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_apply_after_a_removed_package_revision_follows_the_source() {
-    for (table, rendered, later) in [
+    for (table, rendered, later, declare_member) in [
         (
             "agents.review",
             ".claude/agents/review.md",
             "Also read the tests.",
+            false,
         ),
         (
             "bundles.starter",
             ".agents/skills/second/SKILL.md",
             "A paragraph added later.",
+            false,
+        ),
+        (
+            "bundles.starter",
+            ".agents/skills/second/SKILL.md",
+            "A paragraph added later.",
+            true,
         ),
     ] {
         let world = world();
@@ -392,7 +433,13 @@ fn an_apply_after_a_removed_package_revision_follows_the_source() {
         assert!(fetched.status.success(), "{}", said(&fetched));
         let declared = fs::read_to_string(&manifest).unwrap();
         assert_eq!(declared.matches(&pinned).count(), 1);
-        write(&manifest, &declared.replacen(&pinned, &heading, 1));
+        let mut declared = declared.replacen(&pinned, &heading, 1);
+        if declare_member {
+            declared.push_str(
+                "\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n",
+            );
+        }
+        write(&manifest, &declared);
         let before = fs::read_to_string(world.project.join(rendered)).unwrap();
         assert!(!before.contains(later));
         commit(&world.project, "package revision removed");
