@@ -115,14 +115,16 @@ fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &st
         ItemKind::Skill => [name, "all", "*"]
             .iter()
             .any(|key| manifest.skill_instructions.contains_key(*key)),
+        ItemKind::Command => [name, "all", "*"]
+            .iter()
+            .any(|key| manifest.command_instructions.contains_key(*key)),
         // Any harness: the preview is not for one of them, and a project
         // that overrides frontmatter for a single tool still makes this
         // reading incomplete.
         ItemKind::Agent => crate::model::HarnessId::ALL
             .into_iter()
             .any(|harness| crate::engine::contributes_to_agent(manifest, harness, name)),
-        ItemKind::Command
-        | ItemKind::Hook
+        ItemKind::Hook
         | ItemKind::McpServer
         | ItemKind::Plugin
         | ItemKind::PiExtension

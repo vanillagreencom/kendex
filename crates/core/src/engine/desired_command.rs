@@ -13,7 +13,8 @@ use super::desired_kinds::declared;
 use super::targets::disabled_name;
 
 pub(super) fn desired_command(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
-    let bytes = ctx.sealed.read(ctx.item_path)?;
+    let source = ctx.sealed.read(ctx.item_path)?;
+    let bytes = crate::render::command::with_instructions(&source, ctx.manifest, ctx.name);
     for harness in ctx.harnesses.clone() {
         let item = match crate::harness::capabilities(harness, ItemKind::Command).installs_as {
             None => native_file(ctx, state, harness, &bytes)?,

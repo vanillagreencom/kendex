@@ -104,6 +104,20 @@ Write a summary as one or two short sentences about what the package does and wh
 
 A package that writes neither shows no line. That is a supported state: kendex never fills the gap with the command a hook runs, the URL an MCP server is reached at, the path a file sits at, or anything read out of a script. Those stay in the package's details, where someone inspecting execution looks for them.
 
+## A consumer's own instructions
+
+A project adds its own text to an installed skill or command in its manifest, never by editing the installed copy. `[skill-instructions]` writes into a skill's `SKILL.md`, and `[command-instructions]` writes into every tool's copy of a command:
+
+```toml
+[command-instructions]
+all = "Every command reads this."
+code-scrub = """
+Merge review: a second reviewer signs off before merge.
+"""
+```
+
+A key names the package; `all` or `*` names every package of that kind. kendex renders the shared text first, then the package's own, as a `## Project Instructions` block between `kendex:project-instructions` markers, directly after the frontmatter and above the publisher's body. The publisher's body is never edited and still updates, so a project keeps its text without copying the command. A tool that reads a command file of its own gets the block in that file. Gemini gets it in the TOML `prompt`. Codex gets it in the generated skill. With no key for a command, every copy is the publisher's own rendering, byte for byte. In a source-catalog checkout the table goes in `kendex-local.toml`, which configures that checkout alone and ships to no install.
+
 ## Settings
 
 Only a skill seeds settings into a project, through its `kendex.settings.toml.example`. The same file declares the credentials the skill reads, which kendex keeps out of committed configuration: [settings.md](settings.md).

@@ -360,6 +360,11 @@ pub struct Manifest {
     pub agent_additional_instructions: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub skill_instructions: BTreeMap<String, String>,
+    /// `[command-instructions]`: the project's text for a command, written
+    /// into every tool's copy above the publisher's body, which still
+    /// updates. Keyed like `[skill-instructions]`, `all` and `*` included.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub command_instructions: BTreeMap<String, String>,
     /// Review-bot configuration. The bot-instructions package owns its schema;
     /// core retains TOML types through manifest and app reads and writes.
     #[serde(default, skip_serializing_if = "file::is_default")]

@@ -69,6 +69,7 @@ const TOP_LEVEL: &[&str] = &[
     "agent-launch-instructions",
     "agent-additional-instructions",
     "skill-instructions",
+    "command-instructions",
     "bot-instructions",
     "agent-frontmatter",
     "custom-hooks",

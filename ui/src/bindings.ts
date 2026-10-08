@@ -1649,6 +1649,7 @@ export type Customizations_Deserialize = {
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
+	"command-instructions"?: { [key in string]: string },
 	/**  `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it. */
 	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Deserialize } },
 	/**
@@ -1677,6 +1678,7 @@ export type Customizations_Serialize = {
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
+	"command-instructions"?: { [key in string]: string },
 	/**  `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it. */
 	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Serialize } },
 	/**
@@ -3119,6 +3121,12 @@ export type Manifest_Deserialize = {
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
 	/**
+	 *  `[command-instructions]`: the project's text for a command, written
+	 *  into every tool's copy above the publisher's body, which still
+	 *  updates. Keyed like `[skill-instructions]`, `all` and `*` included.
+	 */
+	"command-instructions"?: { [key in string]: string },
+	/**
 	 *  Review-bot configuration. The bot-instructions package owns its schema;
 	 *  core retains TOML types through manifest and app reads and writes.
 	 */
@@ -3177,6 +3185,12 @@ export type Manifest_Serialize = {
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
+	/**
+	 *  `[command-instructions]`: the project's text for a command, written
+	 *  into every tool's copy above the publisher's body, which still
+	 *  updates. Keyed like `[skill-instructions]`, `all` and `*` included.
+	 */
+	"command-instructions"?: { [key in string]: string },
 	/**
 	 *  Review-bot configuration. The bot-instructions package owns its schema;
 	 *  core retains TOML types through manifest and app reads and writes.

@@ -3,9 +3,30 @@
 //! that do not — Codex, which retired prompts for skills, and Gemini, which
 //! reads a TOML table — get a generated one.
 
+use std::borrow::Cow;
+
 use crate::frontmatter::Value;
-use crate::render::agent::GENERATED_BANNER;
+use crate::manifest::Manifest;
+use crate::render::agent::{GENERATED_BANNER, merged_instructions};
 use crate::render::yaml_scalar;
+
+/// The command with the project's `[command-instructions]` for it, the
+/// one input every tool's copy renders from: the block a skill takes,
+/// after the frontmatter and above the publisher's prose, so Gemini's
+/// prompt and Codex's skill carry it once as they carry that prose. With
+/// none configured the publisher's bytes pass through untouched.
+pub fn with_instructions<'a>(bytes: &'a [u8], manifest: &Manifest, name: &str) -> Cow<'a, [u8]> {
+    match merged_instructions(&manifest.command_instructions, name) {
+        None => Cow::Borrowed(bytes),
+        Some(instructions) => Cow::Owned(
+            crate::render::skill::inject_instructions(
+                &String::from_utf8_lossy(bytes),
+                Some(&instructions),
+            )
+            .into_bytes(),
+        ),
+    }
+}
 
 /// The prompt Gemini runs, from the command's prose. A body is written in
 /// Claude's spelling of the argument placeholder, `$ARGUMENTS`, and Gemini

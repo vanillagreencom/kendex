@@ -1214,6 +1214,10 @@ fn carry_customizations(
         &mut manifest.skill_instructions,
         &carried.skill_instructions,
     );
+    fill(
+        &mut manifest.command_instructions,
+        &carried.command_instructions,
+    );
     for (harness, agents) in &carried.agent_frontmatter {
         fill(
             manifest

@@ -218,6 +218,9 @@ fn removal(
         if disown && kinds.contains(&ItemKind::Agent) {
             manifest.agent_skills.remove(name);
         }
+        if kinds.contains(&ItemKind::Command) {
+            manifest.command_instructions.remove(name);
+        }
         if kinds.contains(&ItemKind::Skill) {
             manifest.skill_instructions.remove(name);
             manifest.optional_dependencies.remove(name);

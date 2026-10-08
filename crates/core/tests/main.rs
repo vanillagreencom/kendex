@@ -29,6 +29,7 @@ mod catalog_links;
 mod codex_mcp;
 mod collections;
 mod collision_refusal;
+mod command_instructions;
 mod command_names;
 mod command_update_fetch;
 mod commands;

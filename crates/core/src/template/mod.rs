@@ -297,6 +297,8 @@ pub struct Customizations {
     pub agent_additional_instructions: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub skill_instructions: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub command_instructions: BTreeMap<String, String>,
     /// `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agent_frontmatter: BTreeMap<String, BTreeMap<String, FrontmatterOverrides>>,
@@ -339,6 +341,7 @@ impl Customizations {
         self.agent_additional_instructions
             .retain(|name, _| mine(name));
         self.skill_instructions.retain(|name, _| mine(name));
+        self.command_instructions.retain(|name, _| mine(name));
         self.hook_env.retain(|name, _| mine(name));
         self.agent_frontmatter.retain(|_, agents| {
             agents.retain(|name, _| mine(name));
