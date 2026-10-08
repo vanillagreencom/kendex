@@ -561,7 +561,7 @@ EOF
     [[ "$SCREEN" != *"You've hit your limit"* ]] || break
     sleep 0.1
   done
-  assert_eq "$(case "$SCREEN" in *"You've hit your limit"*) echo walled ;; *) echo missing ;; esac)" walled \
+  assert_eq "$(case "$SCREEN" in (*"You've hit your limit"*) echo walled ;; (*) echo missing ;; esac)" walled \
     "$RECOVERY_CASE: the harness acknowledges the wall before the pass proceeds"
   touch "$WSTUBS/harness.dead"
   SUCC="$PRED"
