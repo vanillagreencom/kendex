@@ -3117,6 +3117,13 @@ overseer_pane_read() { # PANE
   OV_START="$(ol_session_start "$server" "$pane")" \
     || { overseer_note overseer-unreadable "pane=$pane" "field=server-start"; return 1; }
   [[ "$OL_INSPECT_STATE" != exited ]] || bare=1
+  # Login failure is this harness's wall even with a last successful row or
+  # room on its account. The shared judge supplies the failure classification.
+  if [[ "$OL_INSPECT_STATE" == walled ]] \
+    && lane_auth_failure "$(pane_below_last_turn "$OL_DETAIL")"; then
+    OV_STATE=walled OV_SOURCE=auth OV_SCREEN="$OL_DETAIL"
+    return 0
+  fi
   [[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]] || note_probe_unusable "$pane" "$OL_INSPECT_PROBE"
   # The rows file and the exit status the record holds for THIS pane on THIS
   # server, by `ol_names`, and neither for a record naming another session:
@@ -3192,7 +3199,9 @@ overseer_judge() { # PANE
   case "$OV_STATE" in
     exited) OV_VERDICT=exited ;;
     walled)
-      if [[ "$OV_SOURCE" == rows ]]; then
+      if [[ "$OV_SOURCE" == auth || ( "$OV_SOURCE" == rows && "$SESSION_ROWS_WALL_KIND" == auth ) ]]; then
+        OV_VERDICT=walled
+      elif [[ "$OV_SOURCE" == rows ]]; then
         if ! overseer_marks_judge || [[ "$OVERSEER_MARK_KEY" != below-mark ]]; then OV_VERDICT=walled
         else overseer_note overseer-wall-lifted "pane=$1"; fi
       elif overseer_wall_confirmed "$1"; then OV_VERDICT=walled; fi ;;

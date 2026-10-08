@@ -164,11 +164,19 @@ session_rows_last() { # FILE [EVENT]
 # every turn once its context filled.
 SESSION_ROWS_PROMPT_TOO_LONG='["prompt is too long"]'
 SESSION_ROWS_VERDICT=none
+SESSION_ROWS_WALL_KIND=""
 session_rows_verdict() { # FILE
-  local verdict banner
+  local verdict banner auth_fields
   SESSION_ROWS_VERDICT=none
+  SESSION_ROWS_WALL_KIND=""
   session_rows_last "$1" || return 2
   [ -n "$SESSION_ROW" ] || return 0
+  auth_fields="$(jq -r '[.harness, .event, (.error // "")] | join(":")' <<<"$SESSION_ROW")" || return 2
+  if [[ "$auth_fields" == claude:StopFailure:* ]] \
+    && lane_auth_failure "" "${auth_fields#claude:StopFailure:}"; then
+    SESSION_ROWS_VERDICT=walled SESSION_ROWS_WALL_KIND=auth
+    return 0
+  fi
   # `limit-text` is a Pi StopFailure the limit judge below settles.
   verdict="$(jq -r --argjson too_long "$SESSION_ROWS_PROMPT_TOO_LONG" '
     if .harness != "claude" and .harness != "pi" then "unsupported"

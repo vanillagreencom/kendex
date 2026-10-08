@@ -59,6 +59,13 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+# Claude Code's login failure, Codex's permanent token-refresh failure
+# (codex-rs/login/src/auth/manager.rs), and Copilot's captured login banner.
+# Anchor the harness line so a finished report quoting another lane is not
+# itself a login failure. A running shell can still print these words.
+AUTH_FAILURE_RE=$'^[[:space:]\xc2\xa0]*(⎿[[:space:]\xc2\xa0]*|■[[:space:]]*|✗[[:space:]]*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages[.] Please run /login)'
+AUTH_FAILURE_ERROR=authentication_failed
+lane_auth_failure() { [[ "${2:-}" == "$AUTH_FAILURE_ERROR" ]] || grep -Eq -- "$AUTH_FAILURE_RE" <<<"$1"; }
 MODEL_CAPACITY='Selected model is at capacity'
 # The marker each harness draws at column 0 for a submitted user message
 # echoed into the transcript AND for the composer the lane sits at: Claude
@@ -228,7 +235,7 @@ pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 # whether that ends its run. A grep miss is exit 1 and an empty banner.
 lane_limit_banner() {
   local slice="$1" banner rc=0
-  banner="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice")" || rc=$?
+  banner="$(grep -E -- "$USAGE_LIMIT_RE|$AUTH_FAILURE_RE" <<<"$slice")" || rc=$?
   [[ "$rc" -le 1 ]] || return 2
   [[ -n "$banner" ]] || return 0
   ! pane_working "$slice" || return 0
@@ -969,6 +976,15 @@ lane_state() {
     # LANE_PROBE_RC carries the status for the caller's note.
     if [[ "$_ls_rc" -eq 1 ]]; then LANE_EXIT_SOURCE=pane; printf -v "$_ls_out" exited; return 0; fi
   fi
+  _ls_slice="$(pane_below_last_turn "$_ls_screen")"
+  _ls_rc=0
+  _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
+  if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
+  # Account room and a last successful hook row cannot renew the login a
+  # running harness holds. Only its next successful turn lifts this failure.
+  if [[ -n "$_ls_banner" ]] && lane_auth_failure "$_ls_banner"; then
+    printf -v "$_ls_out" walled; return 0
+  fi
   if [[ "$_ls_rows" == walled ]]; then
     case "$_ls_account" in
       "" | walled) printf -v "$_ls_out" walled; return 0 ;;
@@ -988,10 +1004,6 @@ lane_state() {
       return 0 ;;
     *) printf -v "$_ls_out" unjudged; return 0 ;;
   esac
-  _ls_slice="$(pane_below_last_turn "$_ls_screen")"
-  _ls_rc=0
-  _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
-  if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
   if [[ -n "$_ls_banner" ]]; then
     case "$_ls_account" in
       "" | walled) printf -v "$_ls_out" walled; return 0 ;;

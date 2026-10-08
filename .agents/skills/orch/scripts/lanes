@@ -1451,6 +1451,16 @@ measure_lane() {
 			emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
 			return
 		fi
+		# Claude can keep a live access token after its refresh login ends.
+		# Usage room then says nothing about whether a new session can sign in.
+		if [[ "$harness" == claude ]]; then
+			local refresh_expiry
+			refresh_expiry="$(jq -r '.claudeAiOauth.refreshTokenExpiresAt // 0' "$creds")" || return 1
+			if token_expired "$refresh_expiry" "$now_s"; then
+				emit_lane "$alias" "$harness" "$dir" expired "refresh token expired; sign in again" "" '{}'
+				return
+			fi
+		fi
 		token="$(access_token "$harness" "$creds")"
 		expires_ms="$(token_expiry_ms "$harness" "$creds")"
 	fi
@@ -2001,7 +2011,7 @@ usage_lock_release() {
 token_expired() {
 	local exp="${1%%.*}"
 	[[ "$exp" =~ ^[0-9]+$ ]] || return 1
-	[[ "$exp" -gt 0 ]] && (( exp / 1000 <= $2 ))
+	[[ "$exp" -gt 0 ]] && (( exp <= $2 * 1000 ))
 }
 
 # The expiry of the access token in credentials file $2 of harness $1, in
