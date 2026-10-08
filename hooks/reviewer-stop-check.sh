@@ -359,34 +359,54 @@ if [ "$INSTALL" != copilot ]; then
     refuse transcript unread "$EDIT_PATHS"
 fi
 
-# Resolve directory aliases before reducing dot components. A deleted leaf
-# keeps its name under the nearest surviving directory. The leaf itself is
-# retained: a tracked symlink is a different Git entry from its target.
-path_identity() { # ABSOLUTE PATH -> JSON STRING
-  local ancestor="${1%/*}" suffix="/${1##*/}" physical
-  [ -n "$ancestor" ] || ancestor=/
-  while [ ! -d "$ancestor" ]; do
-    suffix="/${ancestor##*/}$suffix"
-    ancestor=${ancestor%/*}
+# Git's NUL rows supply literal names, including both rename endpoints.
+# Resolve all inputs together: directory aliases keep their physical meaning,
+# deleted leaves retain their names, and tracked symlink leaves stay distinct
+# from their targets. Both names of a rename and submodule descendants then
+# use the destination's identity, so attribution needs only equality.
+path_identity() { # -> JSON {artifact, edits, rows}
+  local paths path ancestor suffix physical resolved="" rows
+  rows=$(jq -sc '.' <<<"$STATUS") || return 1
+  paths=$(jq -nc --arg artifact "$ARTIFACT" --arg root "$TOPLEVEL" \
+    --argjson edits "$EDIT_PATHS" --argjson rows "$rows" '
+      [$artifact, $edits[], ($rows[] | ($root + "/" + .path),
+        (select(.source != null) | $root + "/" + .source))] | unique | .[]') || return 1
+  while IFS= read -r path; do
+    path=$(jq -r '. + "/"' <<<"$path") || return 1
+    path=${path%/}
+    ancestor=${path%/*} suffix="/${path##*/}"
     [ -n "$ancestor" ] || ancestor=/
-  done
-  physical=$(cd -P -- "$ancestor" 2>/dev/null && printf '%s/' "$PWD") || return 1
-  jq -nc --arg path "${physical%/}$suffix" '
-    $path | split("/") | reduce .[] as $part ([];
-      if $part == "" or $part == "." then .
-      elif $part == ".." then .[:-1]
-      else . + [$part] end) | "/" + join("/")'
+    while [ ! -d "$ancestor" ]; do
+      suffix="/${ancestor##*/}$suffix"
+      ancestor=${ancestor%/*}
+      [ -n "$ancestor" ] || ancestor=/
+    done
+    physical=$(cd -P -- "$ancestor" 2>/dev/null && printf '%s/' "$PWD") || return 1
+    physical=$(jq -nc --arg path "${physical%/}$suffix" '
+      $path | split("/") | reduce .[] as $part ([];
+        if $part == "" or $part == "." then .
+        elif $part == ".." then .[:-1]
+        else . + [$part] end) | "/" + join("/")') || return 1
+    resolved="$resolved$(jq -nc --arg path "$path" --argjson identity "$physical" \
+      '{key: $path, value: $identity}')"$'\n' || return 1
+  done <<<"$paths"
+  jq -sc --arg artifact "$ARTIFACT" --arg root "$TOPLEVEL" \
+    --argjson edits "$EDIT_PATHS" --argjson rows "$rows" '
+      from_entries as $physical |
+      [$rows[] | . as $row | $physical[$root + "/" + .path] as $destination |
+        (.path, .source // empty) |
+        {path: $physical[$root + "/" + .], identity: $destination, submodule: $row.submodule}] as $names |
+      def canonical($path):
+        ([$names[] | . as $name | select(.path == $path or (.submodule and ($path | startswith($name.path + "/"))))]
+          | sort_by(.path | length) | last | .identity) // $path;
+      {artifact: canonical($physical[$artifact]),
+       edits: ([$edits[] | canonical($physical[.])] | unique),
+       rows: [$rows[] | . + {identity: canonical($physical[$root + "/" + .path])}]}' <<<"$resolved"
 }
-ARTIFACT_ID=$(path_identity "$ARTIFACT" 2>&1) || refuse path unreadable "$ARTIFACT_ID"
-EDIT_ROWS=$(jq -c '.[]' <<<"$EDIT_PATHS" 2>&1) || refuse transcript unread "$EDIT_ROWS"
-IDENTITIES=""
-while IFS= read -r edit; do
-  [ -n "$edit" ] || continue
-  edit=$(jq -r '. + "/"' <<<"$edit" 2>&1) || refuse transcript unread "$edit"
-  identity=$(path_identity "${edit%/}" 2>&1) || refuse path unreadable "$identity"
-  IDENTITIES="$IDENTITIES$identity"$'\n'
-done <<<"$EDIT_ROWS"
-EDIT_PATHS=$(jq -sc 'unique' <<<"$IDENTITIES" 2>&1) || refuse transcript unread "$EDIT_PATHS"
+IDENTITIES=$(path_identity 2>&1) || refuse path unreadable "$IDENTITIES"
+ARTIFACT_ID=$(jq -c '.artifact' <<<"$IDENTITIES") || refuse path unreadable "$ARTIFACT_ID"
+EDIT_PATHS=$(jq -c '.edits' <<<"$IDENTITIES") || refuse path unreadable "$EDIT_PATHS"
+STATUS=$(jq -c '.rows[]' <<<"$IDENTITIES") || refuse path unreadable "$STATUS"
 
 # When the review started: the `timestamp` of the subagent transcript's first
 # entry, taken only when that entry is a launch record written before any tool
@@ -418,11 +438,10 @@ reviewers() { # JSON ROW
   path=$(jq -r '.path + "/"' <<<"$1") || git_failed status "$path"
   path=${path%/}
   p="$TOPLEVEL/$path"
-  identity=$(path_identity "$p" 2>&1) || refuse path unreadable "$identity"
+  identity=$(jq -c '.identity' <<<"$1") || refuse path unreadable "$identity"
   [ "$identity" != "$ARTIFACT_ID" ] || return 1
   if [ "$state" != '??' ]; then
-    jq -e --argjson path "$identity" --argjson row "$1" '
-      any(.[]; . == $path or ($row.submodule and startswith($path + "/")))' <<<"$EDIT_PATHS" >/dev/null
+    jq -e --argjson path "$identity" 'index($path) != null' <<<"$EDIT_PATHS" >/dev/null
     return $?
   fi
   [ -n "$START" ] || return 0

@@ -654,7 +654,7 @@ rows_control start_rows mtime 'stat -c %Z "$1" 2>/dev/null || stat -f %c "$1" 2>
 
 echo "reviewer-stop-check: tracked edits need the reviewer's own successful call"
 actor_rows() { # TAG
-  local tag="$1" label kind want repo t path state event move n=0 artifact before=$((PASS + FAIL))
+  local tag="$1" label kind want repo t path state event n=0 artifact before=$((PASS + FAIL))
   while IFS='|' read -r label kind want; do
     n=$((n + 1))
     repo="$(new_repo "actor-$tag$n")"
@@ -697,38 +697,18 @@ actor_rows() { # TAG
         fgit -C "$repo" commit -q -m quoted
         edit_in "$t" "$path"
         ;;
-      codex | codex-failed | codex-pending | codex-move*)
-        state=completed event=item_completed move=""
+      codex | codex-failed | codex-pending)
+        state=completed event=item_completed
         [ "$kind" != codex-failed ] || state=failed
         if [ "$kind" = codex-pending ]; then event=item_started; state=""; fi
-        case "$kind" in
-          codex-move) move="$repo/src/moved.rs" ;;
-          codex-move-quoted) path="$repo/src/quote\"old.rs"; move="$repo/src/quote\"new.rs" ;;
-          codex-move-backslash) path="$repo/src/back\\old.rs"; move="$repo/src/back\\new.rs" ;;
-          codex-move-arrow) move="$repo/src/name -> moved.rs" ;;
-          codex-move-newline) path="$repo/src/old"$'\n'; move="$repo/src/new"$'\n' ;;
-          codex-move-control) path="$repo/src/old"$'\a'; move="$repo/src/new"$'\a' ;;
-        esac
-        if [ "$path" != "$repo/src/lib.rs" ]; then
-          fgit -C "$repo" mv -- src/lib.rs "${path#"$repo/"}"
-          fgit -C "$repo" commit -q -m rename-input
-        fi
-        jq -nc --arg path "$path" --arg state "$state" --arg event "$event" --arg move "$move" \
+        jq -nc --arg path "$path" --arg state "$state" --arg event "$event" \
           '{type:"event_msg",payload:{type:$event,item:{type:"FileChange",id:"patch-1",status:(if $state == "" then null else $state end),
-            changes:{($path):{type:"update",unified_diff:"",move_path:(if $move == "" then null else $move end)}}}}}' >>"$t"
-        if [ -n "$move" ]; then mv -- "$path" "$move"; path="$move"; fi
+            changes:{($path):{type:"update",unified_diff:"",move_path:null}}}}}' >>"$t"
         ;;
       *) echo "actor rows: unknown kind=$kind" >&2; exit 2 ;;
     esac
     if [ "$kind" = deleted ]; then rm -- "$path"; else printf 'changed\n' >>"$path"; fi
     if [ "$kind" = staged ]; then fgit -C "$repo" add src/lib.rs; fi
-    case "$kind" in
-      codex-move*)
-        fgit -C "$repo" add -A
-        assert_eq "$(fgit -C "$repo" status --porcelain -z | jq -Rs '.[0:2] | contains("R")')" true \
-          "$label is a tracked rename"
-        ;;
-    esac
     run_hook "$t" reviewer-test "$tag$n"
     assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
     assert_eq "$(cat -- "$artifact")" '{}' "$label keeps the required report"
@@ -747,29 +727,14 @@ an attributed quoted path blocks|quoted|rc=2 first=reviewer-stop-check: worktree
 a completed Codex file change blocks|codex|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a failed Codex file change cannot attribute another agent's edit|codex-failed|rc=0 first=-
 a pending Codex file change cannot attribute another agent's edit|codex-pending|rc=0 first=-
-a completed Codex move blocks|codex-move|rc=2 first=reviewer-stop-check: worktree=@REPO@
-a completed Codex move with quoted names blocks|codex-move-quoted|rc=2 first=reviewer-stop-check: worktree=@REPO@
-a completed Codex move with backslashes blocks|codex-move-backslash|rc=2 first=reviewer-stop-check: worktree=@REPO@
-a completed Codex move with an arrow in its destination blocks|codex-move-arrow|rc=2 first=reviewer-stop-check: worktree=@REPO@
-a completed Codex move with final newlines blocks|codex-move-newline|rc=2 first=reviewer-stop-check: worktree=@REPO@
-a completed Codex move with Git control escapes blocks|codex-move-control|rc=2 first=reviewer-stop-check: worktree=@REPO@
 writing the required report cannot attribute another agent's edit|artifact|rc=0 first=-
 the required report passes even when Git does not ignore it|unignored-report|rc=0 first=-
 ROWS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "actor rows: no row was asserted" >&2; exit 2; }
 }
 actor_rows actor
-# Git's display row has two quoted names for a rename. Treating that whole
-# row as JSON, then splitting on an arrow, loses the literal destination.
-rows_control actor_rows display-path-decoded \
-  '.path + "/"' '(.line[3:] | if startswith("\"") then (try fromjson catch "") else . end | split(" -> ") | last) + "/"' \
-  "a completed Codex move with quoted names blocks" \
-  "a completed Codex move with backslashes blocks" \
-  "a completed Codex move with an arrow in its destination blocks" \
-  "a completed Codex move with final newlines blocks" \
-  "a completed Codex move with Git control escapes blocks"
 rows_control actor_rows every-tracked-path \
-  'any(.[]; . == $path or ($row.submodule and startswith($path + "/")))' 'true' \
+  'index($path) != null' 'true' \
   "a concurrent tracked edit passes for a read-only reviewer" \
   "a concurrent tracked edit passes when the reviewer edited a different path" \
   "a failed edit cannot attribute another agent's tracked edit" \
@@ -792,7 +757,7 @@ rows_control actor_rows read-counts-as-edit \
   'select(.name == "Write" or .name == "Edit" or .name == "MultiEdit" or .name == "NotebookEdit")' 'select(true)' \
   "a concurrent tracked edit passes for a read-only reviewer"
 rows_control actor_rows own-edit-ignored \
-  'any(.[]; . == $path or ($row.submodule and startswith($path + "/")))' 'false' \
+  'index($path) != null' 'false' \
   "a successful reviewer Edit blocks its tracked path" \
   "a successful reviewer Write blocks its tracked path" \
   "a successful reviewer MultiEdit blocks its tracked path" \
@@ -800,13 +765,7 @@ rows_control actor_rows own-edit-ignored \
   "an attributed staged edit blocks" \
   "an attributed deletion blocks" \
   "an attributed quoted path blocks" \
-  "a completed Codex file change blocks" \
-  "a completed Codex move blocks" \
-  "a completed Codex move with quoted names blocks" \
-  "a completed Codex move with backslashes blocks" \
-  "a completed Codex move with an arrow in its destination blocks" \
-  "a completed Codex move with final newlines blocks" \
-  "a completed Codex move with Git control escapes blocks"
+  "a completed Codex file change blocks"
 rows_control actor_rows failed-codex-counts \
   '.type == "FileChange" and .status == "completed"' '.type == "FileChange"' \
   "a failed Codex file change cannot attribute another agent's edit"
@@ -814,14 +773,31 @@ rows_control actor_rows failed-codex-counts \
 # Codex FileChange names the file it changed. Git names physical checkout
 # paths and collapses submodule descendants to the tracked gitlink entry.
 path_rows() { # TAG
-  local tag="$1" label kind want repo t path alias seed artifact n=0 before=$((PASS + FAIL))
+  local tag="$1" label kind want repo t path alias seed artifact move source n=0 before=$((PASS + FAIL))
   while IFS='|' read -r label kind want; do
     n=$((n + 1))
     repo="$(new_repo "paths-$tag$n")"
     path="$repo/src/lib.rs"
     t="$(transcript_for "$repo")"
     artifact="$repo/tmp/review-reviewer-test-20260903-101010.json"
+    move=""
     case "$kind" in
+      rename*)
+        move="$repo/src/moved.rs"
+        case "$kind" in
+          rename-quoted) path="$repo/src/quote\"old.rs"; move="$repo/src/quote\"new.rs" ;;
+          rename-backslash) path="$repo/src/back\\old.rs"; move="$repo/src/back\\new.rs" ;;
+          rename-arrow) move="$repo/src/name -> moved.rs" ;;
+          rename-newline) path="$repo/src/old"$'\n'; move="$repo/src/new"$'\n' ;;
+          rename-control) path="$repo/src/old"$'\a'; move="$repo/src/new"$'\a' ;;
+        esac
+        if [ "$path" != "$repo/src/lib.rs" ]; then
+          fgit -C "$repo" mv -- src/lib.rs "${path#"$repo/"}"
+          fgit -C "$repo" commit -q -m rename-input
+        fi
+        source="$path"
+        if [ "$kind" = rename-destination ]; then path="$move"; fi
+        ;;
       alias*)
         alias="$TMP_ROOT/alias-$tag$n"
         if [ "$kind" = alias-dot-parent ]; then ln -s -- "$repo/src" "$alias"
@@ -842,7 +818,7 @@ path_rows() { # TAG
         fgit -C "$repo" commit -q -m module
         path="$repo/module/src/lib.rs"
         case "$kind" in
-          module-other) path="$repo/src/other.rs" ;;
+          module-other | module-renamed-other) path="$repo/src/other.rs" ;;
           module-prefix)
             mkdir -p "$repo/module-extra/src"
             path="$repo/module-extra/src/lib.rs"
@@ -854,6 +830,7 @@ path_rows() { # TAG
             [ -L "$alias" ] || { echo "path rows: symlink=not-created" >&2; exit 2; }
             path="$alias/module/src/lib.rs"
             ;;
+          module-renamed-destination) path="$repo/renamed/src/lib.rs" ;;
         esac
         ;;
       ordinary-parent) path="$repo/src" ;;
@@ -868,9 +845,9 @@ path_rows() { # TAG
         ;;
       *) echo "path rows: unknown kind=$kind" >&2; exit 2 ;;
     esac
-    jq -nc --arg path "$path" \
+    jq -nc --arg path "$path" --arg move "$move" --arg kind "$kind" \
       '{type:"event_msg",payload:{type:"item_completed",item:{type:"FileChange",id:"patch-1",status:"completed",
-        changes:{($path):{type:"update",unified_diff:"",move_path:null}}}}}' >>"$t"
+        changes:{($path):{type:"update",unified_diff:"",move_path:(if $kind == "rename-both" then $move else null end)}}}}}' >>"$t"
     case "$kind" in
       alias-deleted) rm -- "$repo/src/lib.rs" ;;
       alias-deleted-directory) rm -rf -- "$repo/src" ;;
@@ -878,9 +855,24 @@ path_rows() { # TAG
       module-removed)
         fgit -C "$repo" rm -q -f module
         ;;
+      module-renamed*)
+        printf 'changed\n' >>"$repo/module/src/lib.rs"
+        fgit -C "$repo" mv module renamed
+        ;;
       module*) printf 'changed\n' >>"$repo/module/src/lib.rs" ;;
+      rename*)
+        fgit -C "$repo" mv -- "${source#"$repo/"}" "${move#"$repo/"}"
+        printf 'changed\n' >>"$move"
+        fgit -C "$repo" add -A
+        ;;
       ordinary-child) ;;
       *) printf 'changed\n' >>"$repo/src/lib.rs" ;;
+    esac
+    case "$kind" in
+      rename* | module-renamed*)
+        assert_eq "$(fgit -C "$repo" status --porcelain=v2 -z | jq -Rs 'split("\u0000") | any(.[]; startswith("2 "))')" true \
+          "$label is a tracked rename"
+        ;;
     esac
     run_hook "$t" reviewer-test "$tag$n"
     assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
@@ -892,10 +884,21 @@ a checkout alias retains a deleted tracked file|alias-deleted|rc=2 first=reviewe
 a checkout alias retains a deleted parent directory|alias-deleted-directory|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a parent component after a directory alias keeps physical meaning|alias-dot-parent|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a checkout alias keeps another tracked file distinct|alias-other|rc=0 first=-
+a rename source identifies the tracked destination|rename-source|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a rename destination identifies the tracked destination|rename-destination|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a Codex move names both tracked rename endpoints|rename-both|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a rename with quoted names retains literal identity|rename-quoted|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a rename with backslashes retains literal identity|rename-backslash|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a rename with an arrow retains literal identity|rename-arrow|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a rename with final newlines retains literal identity|rename-newline|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a rename with Git control escapes retains literal identity|rename-control|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a submodule descendant identifies the tracked submodule|module|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a deleted submodule descendant identifies the tracked submodule|module-deleted|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a removed submodule retains descendant attribution|module-removed|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a checkout alias identifies a submodule descendant|module-alias|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a renamed submodule retains its source descendant identity|module-renamed-source|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a renamed submodule retains its destination descendant identity|module-renamed-destination|rc=2 first=reviewer-stop-check: worktree=@REPO@
+another agent's renamed submodule edit stays distinct|module-renamed-other|rc=0 first=-
 another path does not identify a dirty submodule|module-other|rc=0 first=-
 a shared name prefix does not identify a dirty submodule|module-prefix|rc=0 first=-
 an ordinary parent directory does not identify a dirty file|ordinary-parent|rc=0 first=-
@@ -913,17 +916,28 @@ rows_control path_rows logical-ancestors \
   "a parent component after a directory alias keeps physical meaning" \
   "a checkout alias identifies a submodule descendant"
 rows_control path_rows submodule-descendant-ignored \
-  '$row.submodule and startswith($path + "/")' 'false' \
+  '.submodule and ($path | startswith($name.path + "/"))' 'false' \
   "a submodule descendant identifies the tracked submodule" \
   "a deleted submodule descendant identifies the tracked submodule" \
   "a removed submodule retains descendant attribution" \
-  "a checkout alias identifies a submodule descendant"
+  "a checkout alias identifies a submodule descendant" \
+  "a renamed submodule retains its source descendant identity" \
+  "a renamed submodule retains its destination descendant identity"
 rows_control path_rows ordinary-descendant-counts \
-  '$row.submodule and startswith($path + "/")' 'startswith($path + "/")' \
+  '.submodule and ($path | startswith($name.path + "/"))' '($path | startswith($name.path + "/"))' \
   "an ordinary child path does not identify a deleted tracked file"
 rows_control path_rows submodule-prefix-counts \
-  'startswith($path + "/")' 'startswith($path)' \
+  'startswith($name.path + "/")' 'startswith($name.path)' \
   "a shared name prefix does not identify a dirty submodule"
+rows_control path_rows rename-source-ignored \
+  '(.path, .source // empty)' '.path' \
+  "a rename source identifies the tracked destination" \
+  "a rename with quoted names retains literal identity" \
+  "a rename with backslashes retains literal identity" \
+  "a rename with an arrow retains literal identity" \
+  "a rename with final newlines retains literal identity" \
+  "a rename with Git control escapes retains literal identity" \
+  "a renamed submodule retains its source descendant identity"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not
