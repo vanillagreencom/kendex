@@ -54,7 +54,7 @@ run_guard
 git -C "$R" reset -q --hard HEAD
 rm -rf -- "$R/.github"
 
-echo "=== a decision ID two INDEX rows share reds full validation, and only full validation ==="
+echo "=== a decision ID two INDEX rows share reds full validation; CI also judges decision identity ==="
 # The world's kendex.settings.toml names docs/decisions. The world has no
 # remote, so its local main is the base; that commit has no INDEX.md, the base
 # half passes with its index-absent notice, and the duplicate half decides.
@@ -68,8 +68,8 @@ printf '%s\n' \
 FULL_GUARD=0
 run_guard
 [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: decision-ids="* ]] \
-  && ok "the commit chain leaves decision IDs to full validation" \
-  || bad "the commit chain leaves decision IDs to full validation" "rc=$RC out=$OUT"
+  && ok "the commit chain leaves decision IDs to full validation or CI" \
+  || bad "the commit chain leaves decision IDs to full validation or CI" "rc=$RC out=$OUT"
 FULL_GUARD=1
 run_guard
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: decision-ids=1"* ]] \

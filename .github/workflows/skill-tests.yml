@@ -341,6 +341,17 @@ jobs:
           fetch-depth: 0
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
+      # Independent branches can allocate the same decision ID. Check the
+      # base branch's current tip on both events, including after another
+      # branch lands while this pull request waits for the queue.
+      - id: decision-ids
+        if: always()
+        working-directory: candidate
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: |
+          base_ref=${BASE_REF#refs/heads/}
+          DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check
       # The two whole-tree content scans live in this job because every class
       # runs it, `render` and `trivial` included, and a diff small enough to
       # be `trivial` can still push a document past its ceiling. always(): a

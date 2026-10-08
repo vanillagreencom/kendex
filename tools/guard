@@ -435,8 +435,9 @@ if [ "$MODE" = full ] && lane_on bot_instructions; then
 fi
 # Decision IDs are judged before merge and not per commit: the check fetches
 # the base branch and reads its tip, since a merge base older than another
-# branch's merged record cannot show the collision. No CI lane runs it, so no
-# change class stands it down. A range run leaves it to that full run.
+# branch's merged record cannot show the collision. Bot instructions CI
+# runs the same check on pull requests and merge groups. A range run leaves
+# it to full validation or that required CI job.
 if [ "$MODE" = full ]; then
   "$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check || say decision-ids "$?"
 fi

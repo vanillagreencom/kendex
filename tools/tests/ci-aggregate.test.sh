@@ -42,7 +42,7 @@
 #      a lane dropped from one aggregate alone and an event-held job held to
 #      another condition. Every run step of the bot-instructions job is held
 #      to the events it runs on: the doc-limits, todo-ban and secrets scans on
-#      a pull request alone, the bot-instructions and changelog checks on
+#      a pull request alone, the bot-instructions, decision-ID and changelog checks on
 #      both; the job checks out the whole history the secrets scan judges
 #      each commit against. Arms change a step's event condition, add a run
 #      step the table does not hold and plant a shallow checkout.
@@ -550,7 +550,7 @@ done
 # The scans run on a pull request alone: a byte ceiling is a context budget,
 # a work marker is hygiene and the secrets scan reads the pull request's own
 # commits, which the pull request answers for, and none ejects a merge group.
-# The bot-instructions check and the changelog check stay on both events.
+# The bot-instructions, decision-ID and changelog checks stay on both events.
 # Every run step of the job is held here: a step is known by its `id:`, or
 # its `name:` where it has none, and its own `if:` is read and evaluated per
 # event; a step with none runs wherever its job runs.
@@ -612,6 +612,8 @@ pull_request|$SECRETS_STEP|yes
 merge_group|$SECRETS_STEP|no
 pull_request|bot-instructions-check|yes
 merge_group|bot-instructions-check|yes
+pull_request|decision-ids|yes
+merge_group|decision-ids|yes
 pull_request|changelog-entries|yes
 merge_group|changelog-entries|yes"
 while IFS='|' read -r event step runs; do
@@ -658,6 +660,7 @@ done <<ROWS
 $DOC_STEP|$PR_ONLY|$ALWAYS
 $TODO_STEP|$PR_ONLY|$ALWAYS
 changelog-entries|$ALWAYS|$PR_ONLY
+decision-ids|$ALWAYS|$PR_ONLY
 ROWS
 
 # A run step added to the job with no rows is named.
@@ -692,6 +695,130 @@ check "the content-scan job checks out the whole history, every commit's parents
 plant "$WORKFLOW" "          fetch-depth: 0" "" "$TMP/wf-shallow.yml" "$SCAN_JOB"
 check "must-fail: a content-scan checkout without fetch-depth 0 is named" "none" \
   "$(checkout_depth "$TMP/wf-shallow.yml" "$SCAN_JOB")"
+
+# Execute the decision step read from the workflow, not a second invocation
+# written by the test. The create-decision workflow can allocate D035 on two
+# branches before either lands. Here the remote's release branch advances
+# after the candidate clones; main stays behind, so a hard-coded default
+# branch or a stale clone cannot answer for the event's actual base.
+decision_step_field() { # WORKFLOW FIELD — the base expression, working directory or run body
+  awk -v field="$2" '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "bot-instructions:") }
+    /^      - / { in_step = (in_job && $0 == "      - id: decision-ids"); in_run = 0 }
+    !in_step { next }
+    field == "BASE_REF" && /^          BASE_REF: / {
+      sub(/^          BASE_REF: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
+    }
+    field == "working-directory" && /^        working-directory: / {
+      sub(/^        working-directory: /, ""); print
+    }
+    field == "run" && /^        run: \|$/ { in_run = 1; next }
+    field == "run" && in_run && /^          / { sub(/^          /, ""); print }
+  ' "$1"
+}
+decision_fixture_index() { # REPO [D035_FILENAME]
+  mkdir -p "$1/docs/decisions"
+  {
+    printf '%s\n' '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |' \
+      '|------|----|----------|----------|-----------|--------------|--------|------|' \
+      '| 2026-01-10 | D034 | P-1 | Existing | Reason | Never | Active | [Full](D034-first.md) |'
+    [ -z "${2:-}" ] || printf '| 2026-01-11 | D035 | P-2 | Added | Reason | Never | Active | [Full](%s) |\n' "$2"
+  } >"$1/docs/decisions/INDEX.md"
+  printf '# D034: Existing\n' >"$1/docs/decisions/D034-first.md"
+  [ -z "${2:-}" ] || printf '# D035: Added\n' >"$1/docs/decisions/$2"
+}
+decision_fixture_commit() { # REPO
+  git -C "$1" add docs/decisions
+  git -C "$1" -c core.hooksPath=/dev/null -c commit.gpgsign=false \
+    -c user.email=ci-test@example.invalid -c user.name=ci-test commit -q -m fixture
+}
+decision_ci_row_ok() { # WORKFLOW EVENT KIND STATUS ERROR_KEY — sets DECISION_GOT
+  local wf="$1" event="$2" kind="$3" want="$4" key="$5" dir context expr base_ref body work_dir rc=0 out seed
+  DECISION_GOT=fixture-failed
+  dir="$(mktemp -d "$TMP/decision-ci.XXXXXX")" || return 1
+  git init -q -b main "$dir/up" || return 1
+  decision_fixture_index "$dir/up" || return 1
+  decision_fixture_commit "$dir/up" || return 1
+  seed="$(git -C "$dir/up" rev-parse HEAD)" || return 1
+  git -C "$dir/up" checkout -q -b release || return 1
+  git clone -q --branch release "$dir/up" "$dir/work" || return 1
+  decision_fixture_index "$dir/up" D035-main.md || return 1
+  decision_fixture_commit "$dir/up" || return 1
+  case "$kind" in
+    collision|unavailable|empty-base)
+      decision_fixture_index "$dir/work" D035-lane.md || return 1
+      decision_fixture_commit "$dir/work" || return 1
+      ;;
+    inherited|renamed)
+      git -C "$dir/work" pull -q --ff-only || return 1
+      if [ "$kind" = renamed ]; then
+        git -C "$dir/work" mv docs/decisions/D035-main.md docs/decisions/D035-renamed.md || return 1
+        decision_fixture_index "$dir/work" D035-renamed.md || return 1
+        decision_fixture_commit "$dir/work" || return 1
+      fi
+      ;;
+    *) echo "decision fixture: unknown kind=$kind" >&2; return 1 ;;
+  esac
+  if [ "$kind" = unavailable ]; then
+    git -C "$dir/work" remote set-url origin "$dir/absent" || return 1
+  fi
+  context="$(jq -cn --arg event "$event" --arg seed "$seed" --arg kind "$kind" '
+    {github: {event_name: $event, event:
+      (if $kind == "empty-base" then {}
+       elif $event == "pull_request" then {pull_request: {base: {ref: "release", sha: $seed}}}
+       else {merge_group: {base_ref: "refs/heads/release", base_sha: $seed}} end)}}')" || return 1
+  expr="$(decision_step_field "$wf" BASE_REF)" || return 1
+  [ -n "$expr" ] || { DECISION_GOT=missing-base-expression; return 1; }
+  base_ref="$(gh_eval value "$context" "$expr" | jq -r '. // ""')" || return 1
+  body="$(decision_step_field "$wf" run)" || return 1
+  [ -n "$body" ] || { DECISION_GOT=missing-run-body; return 1; }
+  work_dir="$(decision_step_field "$wf" working-directory)" || return 1
+  printf '%s\n' "$body" >"$dir/step.sh" || return 1
+  mkdir -p "$dir/work/skills/decider" || return 1
+  cp -R "$ROOT/skills/decider/scripts" "$dir/work/skills/decider/" || return 1
+  mv "$dir/work" "$dir/candidate" || return 1
+  out="$(cd "$dir/$work_dir" && env -i "PATH=$PATH" "HOME=$HOME" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 DECISIONS_DIR=docs/decisions \
+    "BASE_REF=$base_ref" "$BASH" --noprofile --norc -e -o pipefail "$dir/step.sh" 2>&1)" || rc=$?
+  DECISION_GOT="exit=$rc out=$out"
+  [ "$rc" -eq "$want" ] || return 1
+  if [ -n "$key" ]; then
+    [[ "$out" == *"$key"* ]] || return 1
+  else
+    [[ "$out" != *"error="* ]] || return 1
+  fi
+}
+for event in pull_request merge_group; do
+  while IFS='|' read -r kind status key; do
+    if decision_ci_row_ok "$WORKFLOW" "$event" "$kind" "$status" "$key"; then
+      ok "decision CI: $event $kind"
+    else
+      bad "decision CI: $event $kind ($DECISION_GOT)"
+    fi
+  done <<'ROWS'
+collision|1|error=id-collision id=D035
+inherited|0|
+renamed|0|
+unavailable|1|error=base-unverified
+empty-base|1|error=base-unverified
+ROWS
+done
+# Removing refusal or reading another branch must turn the same collision
+# assertion red. The checker owns identity and base-read policy; this suite
+# holds the required CI job to its actual invocation and event inputs.
+plant "$WORKFLOW" 'DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check' \
+  'DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check || :' "$TMP/wf-decision-ignored.yml" "$STEP_JOB"
+plant "$WORKFLOW" 'DECISIONS_BASE_REF="origin/$base_ref"' \
+  'DECISIONS_BASE_REF="origin/main"' "$TMP/wf-decision-wrong-base.yml" "$STEP_JOB"
+for mutant in "$TMP/wf-decision-ignored.yml" "$TMP/wf-decision-wrong-base.yml"; do
+  if decision_ci_row_ok "$mutant" pull_request collision 1 'error=id-collision id=D035'; then
+    bad "must-fail: changed decision CI invocation still rejects collision"
+  else
+    [[ "$DECISION_GOT" == exit=0\ * ]] \
+      && ok "must-fail: changed decision CI invocation breaks collision assertion" \
+      || bad "must-fail: decision CI control did not reach a passing collision ($DECISION_GOT)"
+  fi
+done
 
 # --- 2a. The one context ---------------------------------------------------
 # `CI` is the aggregate context the organization standard has every repository
