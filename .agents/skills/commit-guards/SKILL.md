@@ -26,7 +26,7 @@ repo-effects:
     - "preflight"
     - "bot-instructions"
   notes:
-    - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit. A companion installed with its script missing or not executable is named unrun and blocks nothing; a bot-instructions install whose manifest declares no `[bot-instructions]` table and whose staged tree holds no file it rendered is named not adopted and blocks nothing; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
+    - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit. A companion installed with its script missing or not executable is named unrun and blocks nothing; a bot-instructions check that refuses as `unconfigured` is named not adopted and blocks nothing; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
     - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged, and CI where its credential scan is."
     - "Git does not clone hooks; arm every clone once."

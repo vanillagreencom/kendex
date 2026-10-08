@@ -125,12 +125,8 @@ def orphan_region(ctx, out):
 
 def unconfigured_orphans(tree, manifest):
     """Every marked render `tree` holds while `manifest` declares no
-    `[bot-instructions]` table, as `orphan` findings.
-
-    With no table nothing is produced, so each one is an orphan the bots
-    still load, and no render removes it: a render needs the table. A tree
-    holding none of them is the `Unconfigured` refusal instead, which callers
-    that run every installed package read to leave the repository alone.
+    `[bot-instructions]` table, as `orphan` findings: `validators.md`
+    § `orphan`, the no-table case.
     """
     found = [Finding("orphan", f"carries this package's marker and {manifest} declares no "
                                "[bot-instructions] table. Restore the table, or delete the file",

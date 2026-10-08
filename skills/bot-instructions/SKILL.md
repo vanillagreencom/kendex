@@ -42,7 +42,7 @@ repo-effects:
 
 Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
 
-Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks on both nonzero codes, except the `unconfigured` refusal: a manifest with no `[bot-instructions]` table and a judged tree holding no file or region carrying this package's marker. The `commit-guards` chain runs `check --staged` itself where this package is installed.
+Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks on both nonzero codes, except the `unconfigured` refusal, which [schemas/validators.md](schemas/validators.md) § `orphan` defines. The `commit-guards` chain runs `check --staged` itself where this package is installed.
 
 ## What reads what
 
@@ -70,7 +70,7 @@ A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plu
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 - `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.
 
-The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. `render` removes each marked file the TOML no longer produces after its writes, and prints `removed PATH` for it. A manifest that declares no `[bot-instructions]` table is refused as `unconfigured`, with nothing written, while the tree holds no marked file or region; each one it still holds is an `orphan` finding instead. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
+The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. `render` removes each marked file the TOML no longer produces after its writes, and prints `removed PATH` for it. A manifest that declares no `[bot-instructions]` table writes nothing; [schemas/validators.md](schemas/validators.md) § `orphan` says what the run reports instead. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 ## The doctrine lives in one file per repo
 

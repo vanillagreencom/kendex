@@ -121,10 +121,9 @@ fi
 # Same sibling contract for the bot-instructions check: the rendered review
 # bot instruction files are judged against the staged doctrine and manifest,
 # one coherent staged state, so no consumer wires a wrapper of its own.
-# A repo whose manifest carries no [bot-instructions] table has not adopted
-# the package, which arrives as another package's dependency too: its
-# `unconfigured` refusal record, the first line on exit 2, passes the lane.
-# Every other refusal blocks.
+# The package arrives as another package's dependency too, so its
+# `unconfigured` refusal record, the first line on exit 2, is the one refusal
+# the lane passes, as not adopted. Every other refusal blocks.
 bot_instructions_check() {
   local out="" status=0 record
   out="$("$BOT_CHECK" check --staged 2>&1)" || status=$?

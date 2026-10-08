@@ -208,9 +208,8 @@ fi
 # this run asks kendex to render once, which locates the package wherever the
 # install put it and writes no record. The invocation is the licence, spent
 # in a checkout this run discards, and it runs with no credential. The
-# package refuses a manifest with no [bot-instructions] table as
-# unconfigured where no marked render remains, which leaves that consumer
-# unrendered. The refresh is staged
+# package's unconfigured refusal, which bot-instructions' validators.md
+# § orphan defines, leaves that consumer unrendered. The refresh is staged
 # first because the render reads the index for the tree's subtrees; the
 # later git add -A takes what it writes and removes.
 git add -A
