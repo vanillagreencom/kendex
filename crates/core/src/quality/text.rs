@@ -84,7 +84,8 @@ pub struct Line {
     /// are the inline code spans, read for the whole document at once
     /// because a span may open on one line and close on a later one (see
     /// `lines`); in a shell file they are a full-line comment and the
-    /// strings a diagnostic command prints (see [`shell::named_spans`]),
+    /// strings a diagnostic command prints (see [`shell::named_spans`])
+    /// and a case arm's literal patterns (see [`shell::quoted`]),
     /// and in a test's shell file the literals it hands over as data (see
     /// [`shell::fixture_spans`]). Any other file has none.
     pub spans: Vec<Span>,
@@ -107,8 +108,8 @@ pub struct Span {
 pub enum Quotation {
     /// A markdown inline code span.
     CodeSpan,
-    /// A shell comment, or a string a shell script prints to the
-    /// terminal.
+    /// A shell comment, a literal case pattern, or a string a shell script
+    /// prints to the terminal.
     ShellText,
     /// In a shell file under a test directory, a literal the test hands
     /// over as data: a quoted string an assignment takes as its value, a
@@ -182,19 +183,11 @@ impl Line {
     /// Whether what stands at `at` counts as code, or is the file naming
     /// it under one of the quotations `reads`.
     ///
-    /// Three quotations exist. A markdown code span: a README writing
-    /// `--no-verify` in backticks is naming the switch, and the same
-    /// characters standing in the open are the switch. In a shell file, a
-    /// full-line comment or a string that `echo`, `printf` or a function
-    /// that only prints hands to the terminal: a guard that refuses the
-    /// switch spells it in exactly those two places, and nowhere the shell
-    /// would run it. And in a test's shell file, the literals it hands its
-    /// stubs and assertions as data. Everything else counts — a `case`
-    /// arm's pattern, a string handed to any other command outside a test,
-    /// a string in a language this does not parse — because each of those
-    /// is a switch written into a file a harness loads, and no reading of
-    /// what the file would then do with it holds for every shape a file
-    /// takes.
+    /// Markdown code spans name their text. Shell comments, literal case
+    /// patterns and strings printed to the terminal name their text, as
+    /// do the literals a test hands its stubs and assertions as data.
+    /// Executable substitutions, strings handed to other commands and
+    /// strings in languages this reader does not parse remain code.
     fn counts_at(&self, at: usize, reads: &[Quotation]) -> bool {
         !self
             .spans
@@ -213,6 +206,19 @@ impl Line {
             true => Some(Standing::Code),
             false => (!occurrences.is_empty()).then_some(Standing::Named),
         }
+    }
+
+    /// Read the command after a leading range of shell text. The shared
+    /// shell reader marks case patterns before any rule sees the line.
+    pub(crate) fn command_half(&self) -> &str {
+        let start = self
+            .spans
+            .iter()
+            .filter(|span| span.start == 0 && span.by == Quotation::ShellText)
+            .map(|span| span.end)
+            .max()
+            .unwrap_or(0);
+        &self.lower[start..]
     }
 }
 

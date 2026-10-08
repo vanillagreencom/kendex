@@ -1,10 +1,7 @@
 //! Turning off the checks a harness performs, and commands that are
 //! destructive whether or not anyone meant them to be.
 
-use std::borrow::Cow;
-
 use crate::model::ItemKind;
-use crate::quality::text::Span;
 
 use super::{
     AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Quotation, Severity, Standing, at,
@@ -73,15 +70,6 @@ impl AuditRule for SafetyBypass {
 
     fn check(&self, prepared: &Prepared) -> Outcome {
         scan_docs(prepared, AUTHORED, |doc, line, found| {
-            let mut line = Cow::Borrowed(line);
-            let pattern_end = line.lower.len() - command_half(&line.lower).len();
-            if pattern_end > 0 {
-                line.to_mut().spans.push(Span {
-                    start: 0,
-                    end: pattern_end,
-                    by: Quotation::ShellText,
-                });
-            }
             let tiers = BYPASS
                 .iter()
                 .map(|(needle, what)| (needle, what, Severity::Critical))
@@ -101,7 +89,7 @@ impl AuditRule for SafetyBypass {
                 ) else {
                     continue;
                 };
-                let finding = self.finding(doc, &line, needle, what, base);
+                let finding = self.finding(doc, line, needle, what, base);
                 found.push(standing, finding);
             }
         })
@@ -128,39 +116,6 @@ impl SafetyBypass {
                 "leave the check in place and let the user answer for themselves; if this is documenting the flag, describe what it costs"
                     .to_owned(),
         }
-    }
-}
-
-/// The part of this line that is a command, with a shell `case` arm's
-/// pattern list taken off the front: alternatives separated by `|`, ending
-/// at the `)` that opens the arm. Naming `sudo` as one of the tokens a
-/// parser should skip is not running it, and reading it as a command is the
-/// rule mistaking a list of words for an instruction.
-///
-/// This is a deliberate narrowing of what the rule catches, and the price
-/// is stated: a line that is a bare list of single words ending in `)` is
-/// not read as a command, so a command written in exactly that shape is
-/// missed. Every such word is a pattern to match, not a program to run —
-/// `sudo)` runs nothing — and the content that pays for the narrowing is
-/// the class of skills and hooks that parse command lines, which name the
-/// dangerous verbs precisely because they exist to catch them.
-///
-/// Only the pattern half is exempt, so only the pattern half is cut. A
-/// `case` arm whose body follows on the same line still has that body read:
-/// everything from the `)` on comes back as a command like any other.
-fn command_half(line: &str) -> &str {
-    let Some((head, body)) = line.split_once(')') else {
-        return line;
-    };
-    let pattern = head.trim();
-    let is_pattern = !pattern.is_empty()
-        && pattern
-            .split('|')
-            .map(str::trim)
-            .all(|token| !token.is_empty() && token.split_whitespace().count() == 1);
-    match is_pattern {
-        true => body,
-        false => line,
     }
 }
 
@@ -213,7 +168,7 @@ impl AuditRule for DangerousCommands {
                     found.push(standing, finding(needle, what));
                 }
             }
-            if command_half(&line.lower).trim_start().starts_with("sudo ") {
+            if line.command_half().trim_start().starts_with("sudo ") {
                 found.push(
                     Standing::Code,
                     finding("sudo", "runs the rest of the line as root"),

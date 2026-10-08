@@ -707,6 +707,7 @@ pub fn fixture_spans(line: &str, helpers: &BTreeSet<String>) -> Vec<(usize, usiz
 pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<Span>> {
     let mut found = vec![Vec::new(); lines.len()];
     let mut first = 0;
+    let mut cases = 0usize;
     while first < lines.len() {
         let mut last = first;
         while last + 1 < lines.len() && continues(&lines[last]) {
@@ -735,6 +736,23 @@ pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<Span>> {
                 by: Quotation::ShellText,
             })
             .collect();
+        if cases > 0 {
+            let pattern_end = joined.len() - command_half(&joined).len();
+            if pattern_end > 0 {
+                spans.push(Span {
+                    start: 0,
+                    end: pattern_end,
+                    by: Quotation::ShellText,
+                });
+            }
+        }
+        for word in command_words(&joined) {
+            match word {
+                "case" => cases += 1,
+                "esac" => cases = cases.saturating_sub(1),
+                _ => {}
+            }
+        }
         if let Some(helpers) = context.helpers {
             spans.extend(
                 fixture_spans(&joined, helpers)
@@ -764,6 +782,29 @@ pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<Span>> {
         first = last + 1;
     }
     found
+}
+
+/// The guard scripts name switches and command words as case patterns.
+/// Only a list of single literal patterns is named; a substitution can
+/// execute a command and must remain code.
+fn command_half(line: &str) -> &str {
+    let Some((head, body)) = line.split_once(')') else {
+        return line;
+    };
+    let pattern = head.trim();
+    let is_pattern = !pattern.is_empty()
+        && !pattern.contains('(')
+        && pattern
+            .split('|')
+            .map(str::trim)
+            .all(|token| !token.is_empty() && token.split_whitespace().count() == 1)
+        && lex(head)
+            .iter()
+            .all(|tok| matches!(tok, Tok::Word(..) | Tok::Str(..) | Tok::Pipe));
+    match is_pattern {
+        true => body,
+        false => line,
+    }
 }
 
 #[cfg(test)]

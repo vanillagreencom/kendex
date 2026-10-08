@@ -30,77 +30,103 @@ fn rules(findings: &[kendex_core::quality::Finding]) -> Vec<&str> {
 
 /// One row per shape: the script, the rules that fire, the rules that
 /// read a mention instead.
+const SHELL_ROWS: &[(&str, &[&str], &[&str])] = &[
+    (
+        "# refuses rm -rf / on sight\n",
+        &[],
+        &["dangerous-commands"],
+    ),
+    (
+        "echo \"bypass with --no-verify\" >&2\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "printf '%s\\n' 'never rm -rf /'\n",
+        &[],
+        &["dangerous-commands"],
+    ),
+    ("rm -rf /\n", &["dangerous-commands"], &[]),
+    ("git commit --no-verify\n", &["safety-bypass"], &[]),
+    (
+        "case \"$arg\" in\n  --no-verify|-n) : ;;\nesac\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "case \"$arg\" in\n  --no-verify) echo '--no-verify is refused' ;;\nesac\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "case \"$arg\" in\n  --no-verify) git commit --no-verify ;;\nesac\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "--no-verify) git commit --no-verify ;;\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "case \"$arg\" in\n  clean) : ;;\nesac\n--no-verify) : ;;\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "case \"$arg\" in\n  clean) case \"$other\" in\n    --no-verify) : ;;\n  esac\n  --no-verify) : ;;\nesac\n",
+        &[],
+        &["safety-bypass", "safety-bypass"],
+    ),
+    (
+        "case \"$arg\" in\n  $(git commit --no-verify)) : ;;\nesac\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "case \"$arg\" in\n  `git commit --no-verify`) : ;;\nesac\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    ("bash -c 'rm -rf /'\n", &["dangerous-commands"], &[]),
+    ("eval \"rm -rf /\"\n", &["dangerous-commands"], &[]),
+    ("echo \"rm -rf /\" | sh\n", &["dangerous-commands"], &[]),
+    ("echo \"rm -rf /\" > run.sh\n", &["dangerous-commands"], &[]),
+    (
+        "echo \"rm -rf /\" > \"$out\"\n",
+        &["dangerous-commands"],
+        &[],
+    ),
+    (
+        "echo \"rm -rf /\" >\"run.sh\"\n",
+        &["dangerous-commands"],
+        &[],
+    ),
+    ("x=$(echo \"rm -rf /\")\n", &["dangerous-commands"], &[]),
+    ("run \"rm -rf /\"\n", &["dangerous-commands"], &[]),
+    ("sh <<EOF\nrm -rf /\nEOF\n", &["dangerous-commands"], &[]),
+    // A one-line function is judged on its own line, not the next.
+    (
+        "run() { eval \"$1\"; }\nrun \"rm -rf /\"\n",
+        &["dangerous-commands"],
+        &[],
+    ),
+    (
+        "say() { echo \"$1\"; }\nsay \"rm -rf /\"\n",
+        &[],
+        &["dangerous-commands"],
+    ),
+    // A name redefined in the file is diagnostic only if both are.
+    (
+        "say() { echo \"$1\"; }\nsay() { eval \"$1\"; }\nsay \"rm -rf /\"\n",
+        &["dangerous-commands"],
+        &[],
+    ),
+];
+
 #[test]
 fn a_shell_line_names_a_switch_or_uses_it() {
-    let rows: &[(&str, &[&str], &[&str])] = &[
-        (
-            "# refuses rm -rf / on sight\n",
-            &[],
-            &["dangerous-commands"],
-        ),
-        (
-            "echo \"bypass with --no-verify\" >&2\n",
-            &[],
-            &["safety-bypass"],
-        ),
-        (
-            "printf '%s\\n' 'never rm -rf /'\n",
-            &[],
-            &["dangerous-commands"],
-        ),
-        ("rm -rf /\n", &["dangerous-commands"], &[]),
-        ("git commit --no-verify\n", &["safety-bypass"], &[]),
-        (
-            "case \"$arg\" in\n  --no-verify|-n) : ;;\nesac\n",
-            &[],
-            &["safety-bypass"],
-        ),
-        (
-            "case \"$arg\" in\n  --no-verify) echo '--no-verify is refused' ;;\nesac\n",
-            &[],
-            &["safety-bypass"],
-        ),
-        (
-            "case \"$arg\" in\n  --no-verify) git commit --no-verify ;;\nesac\n",
-            &["safety-bypass"],
-            &[],
-        ),
-        ("bash -c 'rm -rf /'\n", &["dangerous-commands"], &[]),
-        ("eval \"rm -rf /\"\n", &["dangerous-commands"], &[]),
-        ("echo \"rm -rf /\" | sh\n", &["dangerous-commands"], &[]),
-        ("echo \"rm -rf /\" > run.sh\n", &["dangerous-commands"], &[]),
-        (
-            "echo \"rm -rf /\" > \"$out\"\n",
-            &["dangerous-commands"],
-            &[],
-        ),
-        (
-            "echo \"rm -rf /\" >\"run.sh\"\n",
-            &["dangerous-commands"],
-            &[],
-        ),
-        ("x=$(echo \"rm -rf /\")\n", &["dangerous-commands"], &[]),
-        ("run \"rm -rf /\"\n", &["dangerous-commands"], &[]),
-        ("sh <<EOF\nrm -rf /\nEOF\n", &["dangerous-commands"], &[]),
-        // A one-line function is judged on its own line, not the next.
-        (
-            "run() { eval \"$1\"; }\nrun \"rm -rf /\"\n",
-            &["dangerous-commands"],
-            &[],
-        ),
-        (
-            "say() { echo \"$1\"; }\nsay \"rm -rf /\"\n",
-            &[],
-            &["dangerous-commands"],
-        ),
-        // A name redefined in the file is diagnostic only if both are.
-        (
-            "say() { echo \"$1\"; }\nsay() { eval \"$1\"; }\nsay \"rm -rf /\"\n",
-            &["dangerous-commands"],
-            &[],
-        ),
-    ];
-    for (body, flagged, named) in rows {
+    for (body, flagged, named) in SHELL_ROWS {
         let result = hook(&format!("#!/usr/bin/env bash\n{body}"));
         assert_eq!(
             rules(&result.findings),
@@ -114,6 +140,25 @@ fn a_shell_line_names_a_switch_or_uses_it() {
             "{body:?}: {:#?}",
             result.mentions
         );
+    }
+}
+
+#[test]
+fn non_shell_calls_keep_bypass_switches_as_code() {
+    let rows = [
+        ("scripts/run.js", "run(\"--no-verify\")\n"),
+        (
+            "scripts/run.ts",
+            "spawn(\"claude\",[\"--dangerously-skip-permissions\"])\n",
+        ),
+        ("scripts/run.py", "run(\"--no-verify\")\n"),
+        ("scripts/run.txt", "run(\"--no-verify\")\n"),
+        ("SKILL.md", "run(\"--no-verify\")\n"),
+    ];
+    for (path, text) in rows {
+        let result = skill(&[(path, text)]);
+        assert_eq!(rules(&result.findings), ["safety-bypass"], "{path}");
+        assert!(result.mentions.is_empty(), "{path}");
     }
 }
 
