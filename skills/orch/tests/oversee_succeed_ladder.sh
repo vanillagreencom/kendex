@@ -156,7 +156,8 @@ run_succeed() {
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" \
-    "$lane" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    "$lane" ORCH_LANES_FETCH_CMD="${LANES_FETCHER:-$FETCHER}" \
+    ORCH_LANE_EXCLUDE="${LANE_EXCLUDE:-}" ORCH_LANE_RETIRE="${LANE_RETIRE:-}" \
     ORCH_LANE_DIRS="${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.fclaude:$H/.codex:$H/.dcodex}" ORCH_LANES_USAGE_TTL="${USAGE_TTL:-0}" \
     ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS="${SUCCESSOR_ACCOUNTS:-0}" ORCH_QUESTION_TOOL=overseer \
     ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" ${wait[@]+"${wait[@]}"} "$@" -- ${CALLER_FLAGS[@]+"${CALLER_FLAGS[@]}"} 2>&1)" || RC=$?
@@ -615,6 +616,69 @@ copilot_ladder unmeasuredfirst context "" caller 'copilot:claude-opus-5.5:high,c
 assert_eq "$RC|$(kept_line)|$(launched copilot)|$(grep -cx -e --reasoning-effort -e high "$TMP_ROOT/argv.copilot")|$(launched claude)" \
   "0|$KEPT_LINE|$H/.1copilot claude-opus-5.5|2|none" \
   "a Copilot-first preference keeps the unmeasured caller's own account ahead of a Claude account with room"
+# Policy refusal and a recovered usage fetch reach both forms of the fallback.
+# The fetch command fails once for the caller, as a transport failure does,
+# then serves the spent pool through the shared usage fixture.
+RECOVER_FETCH="$TMP_ROOT/recover-fetch"
+cat > "$RECOVER_FETCH" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$2" == "$H/.1copilot" && ! -f "$TMP_ROOT/recovered" ]]; then
+  : > "$TMP_ROOT/recovered"
+  exit 1
+fi
+exec "$FETCHER" "\$@"
+STUB
+chmod +x "$RECOVER_FETCH"
+POLICYCTL="$(mutant_scripts retained-policy lib/overseer-launch.sh)" || exit 1
+mutate_file "$POLICYCTL/lib/overseer-launch.sh" \
+  '        ol_lanes check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?' \
+  '        : ol_lanes check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?'
+MEASURECTL="$(mutant_scripts retained-account lib/overseer-launch.sh)" || exit 1
+mutate_file "$MEASURECTL/lib/overseer-launch.sh" \
+  '        ol_pick_record "$OL_HARNESS" "$OL_PICK_MODEL" "$trigger" "" "$OL_WALK_CALLER_LANE" || rc=$?' \
+  '        ol_pick_record "$OL_HARNESS" "$OL_PICK_MODEL" "$trigger" "" "$OL_WALK_CALLER_LANE" || rc=$?; rc=5'
+for entry in caller named; do
+  pref=''
+  [[ "$entry" != named ]] || pref='copilot:claude-opus-5.5:high'
+  for refusal in retired excluded recovered; do
+    LANE_RETIRE="" LANE_EXCLUDE="" LANES_FETCHER="$FETCHER"
+    case "$refusal" in
+      retired) LANE_RETIRE='1copilot=2000-01-01' ;;
+      excluded) LANE_EXCLUDE=1copilot ;;
+      recovered)
+        mv "$H/.1copilot/config.json.held" "$H/.1copilot/config.json"
+        printf '%s\n' "$COPILOT_WALLED" > "$FIXTURE_DIR/.1copilot.json"
+        rm -f "$TMP_ROOT/recovered"
+        LANES_FETCHER="$RECOVER_FETCH"
+        ;;
+    esac
+    copilot_ladder "retained-$entry-$refusal" context "" caller "$pref"
+    assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2}')|$(kept_line)|$(kept_rows)|$(caller_open)|$(launched copilot)" \
+      '3|no-lane-qualifies|none|0|yes|none' \
+      "the $entry entry refuses the $refusal caller at the context fallback"
+    case "$refusal" in
+      retired)
+        copilot_ladder "retained-$entry-policy-control" context "$POLICYCTL/oversee-succeed" caller "$pref"
+        assert_eq "$RC|$(caller_open)|$(launched copilot)" \
+          "0|no|$H/.1copilot claude-opus-5.5" \
+          "control: the $entry entry launches a retired caller when retention omits the policy check"
+        ;;
+      recovered)
+        assert_eq "$(jq -r 'select(.config_dir == $d) | .usage.quota_snapshots.premium_interactions.remaining' \
+          --arg d "$H/.1copilot" "$TMP_ROOT/state-retained-$entry-$refusal/usage/"*.json)" \
+          0 "the recovered fetch measured the $entry caller's spent pool before refusal"
+        rm -f "$TMP_ROOT/recovered"
+        copilot_ladder "retained-$entry-measure-control" context "$MEASURECTL/oversee-succeed" caller "$pref"
+        assert_eq "$RC|$(caller_open)|$(launched copilot)" \
+          "0|no|$H/.1copilot claude-opus-5.5" \
+          "control: the $entry entry launches the spent caller when retention ignores its current account verdict"
+        mv "$H/.1copilot/config.json" "$H/.1copilot/config.json.held"
+        ;;
+    esac
+  done
+done
+LANE_RETIRE="" LANE_EXCLUDE="" LANES_FETCHER="$FETCHER"
 # Below the context mark nothing is kept: with one other Copilot account
 # with room the qualifying mark fires, its successor must move, and the walk
 # opens it on that account, never on the caller's unmeasured one.
