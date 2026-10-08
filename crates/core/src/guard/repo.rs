@@ -105,6 +105,43 @@ pub(crate) fn path_from(bytes: Vec<u8>, what: &str) -> Result<PathBuf> {
 }
 
 impl Repo {
+    /// Settle the checked branch boundary before selecting any executable.
+    /// Git's `.git` directory and linked-worktree file both mark the checkout.
+    /// Caller-owned discovery ceilings also bound fixture and non-Git roots.
+    /// No Git process can run here: its PATH is not trusted yet.
+    pub(crate) fn execution_boundary(dir: &Path) -> Result<PathBuf> {
+        let project = crate::paths::canonical(dir).map_err(|error| CoreError::io(dir, error))?;
+        let ceilings: Vec<_> = std::env::var_os("GIT_CEILING_DIRECTORIES")
+            .into_iter()
+            .flat_map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+            .filter(|path| path.is_absolute())
+            .filter_map(|path| crate::paths::canonical(&path).ok())
+            .collect();
+        for ancestor in project.ancestors() {
+            if ancestor != project && ceilings.iter().any(|ceiling| ceiling == ancestor) {
+                break;
+            }
+            let marker = ancestor.join(".git");
+            match std::fs::symlink_metadata(&marker) {
+                Ok(metadata) if metadata.is_dir() || metadata.is_file() => {
+                    return Ok(ancestor.to_owned());
+                }
+                Ok(_) => {
+                    return Err(CoreError::io(
+                        &marker,
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Git worktree marker is not a regular file or directory",
+                        ),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(CoreError::io(&marker, error)),
+            }
+        }
+        Ok(project)
+    }
+
     pub fn at(dir: &Path) -> Result<Repo> {
         let no_work_tree = || {
             guard_err(

@@ -292,18 +292,17 @@ impl Hardened {
         let (program, launch_cwd, tool_path) = match environment {
             ScriptEnvironment::Installed => (program.to_owned(), cwd.to_owned(), None),
             ScriptEnvironment::Trusted => {
-                let project =
-                    crate::paths::canonical(cwd).map_err(|error| CoreError::io(cwd, error))?;
+                let boundary = crate::guard::Repo::execution_boundary(cwd)?;
                 let trusted = crate::paths::canonical(program)
                     .map_err(|error| CoreError::io(program, error))?;
                 let parent = trusted
                     .parent()
-                    .filter(|parent| !parent.starts_with(&project))
+                    .filter(|parent| !parent.starts_with(&boundary))
                     .ok_or_else(|| CoreError::CommandNotStarted {
                         label: program.display().to_string(),
-                        why: "trusted checker directory is inside the checked project".to_owned(),
+                        why: "trusted checker directory is inside the checked branch".to_owned(),
                     })?;
-                let path = trusted_tool_path(program, &project)?;
+                let path = trusted_tool_path(program, &boundary)?;
                 let parent = parent.to_owned();
                 (trusted, parent, Some(path))
             }
@@ -344,19 +343,19 @@ impl Hardened {
     }
 }
 
-fn trusted_tool_path(program: &Path, project: &Path) -> Result<OsString> {
+fn trusted_tool_path(program: &Path, boundary: &Path) -> Result<OsString> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let directories: Vec<_> = std::env::split_paths(&inherited)
         .filter(|directory| directory.is_absolute())
         .filter_map(|directory| crate::paths::canonical(&directory).ok())
-        .filter(|directory| directory.is_dir() && !directory.starts_with(project))
+        .filter(|directory| directory.is_dir() && !directory.starts_with(boundary))
         .collect();
     // env/bash treat an empty PATH entry as cwd. Refuse before spawning when
     // filtering leaves no directories, rather than reintroduce project code.
     if directories.is_empty() {
         return Err(CoreError::CommandNotStarted {
             label: program.display().to_string(),
-            why: "trusted PATH contains no tool directories outside the checked project".to_owned(),
+            why: "trusted PATH contains no tool directories outside the checked branch".to_owned(),
         });
     }
     std::env::join_paths(directories).map_err(|error| CoreError::CommandNotStarted {

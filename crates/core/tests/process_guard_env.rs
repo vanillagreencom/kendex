@@ -12,21 +12,23 @@
 //! on the command line: it would write hooks into one repository while
 //! reporting about another. The two are pinned side by side, because the
 //! only thing separating them is which constructor a call site picked.
-#![cfg(unix)]
-
 use kendex_core::process::Hardened;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use crate::test_util;
 use test_util::rooted;
 
+#[cfg(unix)]
 const INNER: &str = "KENDEX_TEST_GUARD_ENV_INNER";
+#[cfg(unix)]
 const INNER_PROOF: &str = "KENDEX_TEST_GUARD_ENV_PROOF";
 
 /// The redirect has to come from the parent's environment. The outer run
 /// re-enters this test binary with the variables set and judges the inner
 /// run before writing and executing the verdict fixture.
 #[test]
+#[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn guard_hook_preserves_hook_env_and_relays_verdict() {
     if std::env::var_os(INNER).is_some() {
@@ -126,9 +128,10 @@ fn guard_hook_preserves_hook_env_and_relays_verdict() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("note on stderr"));
 }
 
-/// A trusted checker uses the same outside-project PATH for its env shebang
+/// A trusted checker uses the same outside-branch PATH for its env shebang
 /// and the tools its shell starts. Installed management scripts keep PATH.
 #[test]
+#[cfg(unix)]
 #[allow(
     clippy::unwrap_used,
     clippy::too_many_lines,
@@ -141,22 +144,25 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
     use std::path::{Path, PathBuf};
 
     const ROOT: &str = "KENDEX_TEST_LOOKUP_ROOT";
+    const BASE: &str = "KENDEX_TEST_LOOKUP_BASE";
     #[derive(Clone, Copy)]
     enum Expected {
         Trusted,
         Installed,
         Refused,
+        BoundaryUnavailable,
     }
 
     const MODE: &str = "KENDEX_TEST_LOOKUP_MODE";
     const PROGRAM: &str = "KENDEX_TEST_LOOKUP_PROGRAM";
     if let Some(root) = std::env::var_os(ROOT) {
         let root = PathBuf::from(root);
-        let base = root.parent().unwrap();
+        let base = PathBuf::from(std::env::var_os(BASE).unwrap());
         let expected = match std::env::var(MODE).unwrap().as_str() {
             "trusted" => Expected::Trusted,
             "installed" => Expected::Installed,
             "refused" => Expected::Refused,
+            "boundary-unavailable" => Expected::BoundaryUnavailable,
             _ => panic!("invalid fixture mode"),
         };
         let (environment, result) = match expected {
@@ -173,10 +179,11 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
                 Some((
                     b"trusted\n".as_slice(),
                     base.join("safe-tools").into_os_string(),
-                    base,
+                    base.as_path(),
                 )),
             ),
             Expected::Refused => (ScriptEnvironment::Trusted, None),
+            Expected::BoundaryUnavailable => (ScriptEnvironment::Trusted, None),
         };
         let program = std::env::var_os(PROGRAM)
             .map(PathBuf::from)
@@ -193,7 +200,15 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
             environment,
         );
         match result {
-            None => assert!(matches!(launch, Err(CoreError::CommandNotStarted { .. }))),
+            None => match expected {
+                Expected::Refused => {
+                    assert!(matches!(launch, Err(CoreError::CommandNotStarted { .. })));
+                }
+                Expected::BoundaryUnavailable => {
+                    assert!(matches!(launch, Err(CoreError::Io { .. })))
+                }
+                Expected::Trusted | Expected::Installed => panic!("missing launch result"),
+            },
             Some((stdout, path, cwd)) => {
                 let output = launch.unwrap().run().unwrap();
                 assert!(output.status.success());
@@ -217,7 +232,39 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
     let root = base.join("project");
     let safe = base.join("safe-tools");
     let project_tools = root.join("tools");
+    let repo = base.join("repo");
+    let nested = repo.join("app");
+    let sibling_tools = repo.join("tools");
+    let linked = base.join("linked");
+    let linked_project = linked.join("app");
+    let linked_tools = linked.join("tools");
+    let unavailable = base.join("unavailable");
     std::fs::create_dir_all(&project_tools).unwrap();
+    for directory in [
+        &sibling_tools,
+        &nested,
+        &linked_tools,
+        &linked_project,
+        &unavailable,
+    ] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    // Git produces both marker forms. The nested project marker matches the
+    // layout project_hook_root exercises and must not stop branch discovery.
+    test_util::git(&repo, &["init", "--quiet"]);
+    test_util::git(
+        &linked,
+        &[
+            "init",
+            "--quiet",
+            "--separate-git-dir",
+            base.join("linked-metadata").to_str().unwrap(),
+        ],
+    );
+    for project in [&nested, &linked_project] {
+        std::fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    }
+    std::os::unix::fs::symlink(base.join("absent-metadata"), unavailable.join(".git")).unwrap();
     std::fs::create_dir(&safe).unwrap();
     let inherited = std::env::var_os("PATH").unwrap();
     let bash = std::env::split_paths(&inherited)
@@ -229,6 +276,8 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
         (&safe, "trusted", "safe-interpreter"),
         (&project_tools, "project", "project-interpreter"),
         (&root, "project", "project-interpreter"),
+        (&sibling_tools, "project", "project-interpreter"),
+        (&linked_tools, "project", "project-interpreter"),
     ] {
         let interpreter = directory.join("bash");
         std::fs::write(
@@ -241,7 +290,16 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
         .unwrap();
         let tool = directory.join("kendex-lookup-tool");
         std::fs::write(&tool, format!("#!/bin/sh\nprintf '{answer}\\n'\n")).unwrap();
-        for script in [interpreter, tool] {
+        let git = directory.join("git");
+        std::fs::write(
+            &git,
+            format!(
+                "#!/bin/sh\nprintf invoked > {:?}\nexit 9\n",
+                base.join("unchecked-git")
+            ),
+        )
+        .unwrap();
+        for script in [interpreter, tool, git] {
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
     }
@@ -260,6 +318,13 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
     std::fs::copy(&checker, &project_checker).unwrap();
     let checker_link = base.join("checker-link");
     std::os::unix::fs::symlink(&project_checker, &checker_link).unwrap();
+    let sibling_checker = repo.join("skills/bot-instructions/scripts/checker");
+    std::fs::create_dir_all(sibling_checker.parent().unwrap()).unwrap();
+    std::fs::copy(&checker, &sibling_checker).unwrap();
+    let sibling_checker_link = base.join("sibling-checker-link");
+    std::os::unix::fs::symlink(&sibling_checker, &sibling_checker_link).unwrap();
+    let sibling_tools_link = base.join("sibling-tools-link");
+    std::os::unix::fs::symlink(&sibling_tools, &sibling_tools_link).unwrap();
     let safe_path = std::env::join_paths([&safe]).unwrap();
     let with_safe = |directory: &Path| std::env::join_paths([directory, &safe]).unwrap();
     let rows = [
@@ -333,9 +398,64 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
                 Expected::Refused,
                 Some(checker_link),
             ),
+        ])
+        .map(|(case, path, expected, program)| (case, path, expected, program, &root))
+        .chain([
+            (
+                "nested-sibling-tools",
+                Some(with_safe(&sibling_tools)),
+                Expected::Trusted,
+                None,
+                &nested,
+            ),
+            (
+                "nested-sibling-tools-link",
+                Some(with_safe(&sibling_tools_link)),
+                Expected::Trusted,
+                None,
+                &nested,
+            ),
+            (
+                "nested-only-sibling-tools",
+                Some(std::env::join_paths([&sibling_tools]).unwrap()),
+                Expected::Refused,
+                None,
+                &nested,
+            ),
+            (
+                "nested-sibling-checker",
+                Some(with_safe(&safe)),
+                Expected::Refused,
+                Some(sibling_checker),
+                &nested,
+            ),
+            (
+                "nested-sibling-checker-link",
+                Some(with_safe(&safe)),
+                Expected::Refused,
+                Some(sibling_checker_link),
+                &nested,
+            ),
+            (
+                "linked-sibling-tools",
+                Some(with_safe(&linked_tools)),
+                Expected::Trusted,
+                None,
+                &linked_project,
+            ),
+            (
+                "unavailable-boundary",
+                Some(with_safe(&safe)),
+                Expected::BoundaryUnavailable,
+                None,
+                &unavailable,
+            ),
         ]);
-    for (case, path, expected, program) in rows {
-        let mut environment = vec![(ROOT, root.as_os_str().to_owned())];
+    for (case, path, expected, program, project) in rows {
+        let mut environment = vec![
+            (ROOT, project.as_os_str().to_owned()),
+            (BASE, base.as_os_str().to_owned()),
+        ];
         if let Some(path) = path {
             environment.push(("PATH", path));
         }
@@ -343,6 +463,7 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
             Expected::Trusted => "trusted",
             Expected::Installed => "installed",
             Expected::Refused => "refused",
+            Expected::BoundaryUnavailable => "boundary-unavailable",
         };
         environment.push((MODE, OsString::from(mode)));
         if let Some(program) = program {
@@ -376,6 +497,7 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
             matches!(expected, Expected::Trusted),
             "{case}"
         );
+        assert!(!base.join("unchecked-git").exists(), "{case}");
         for marker in [
             "lookup-proof",
             "project-interpreter",
@@ -390,4 +512,82 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
             }
         }
     }
+}
+
+/// The branch boundary refuses a sibling checker before interpreter lookup,
+/// on every platform, for the marker forms Git writes for worktrees.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_scripts_exclude_enclosing_worktrees() {
+    use kendex_core::error::CoreError;
+    use kendex_core::process::ScriptEnvironment;
+    use std::path::PathBuf;
+
+    const ROOT: &str = "KENDEX_TEST_PORTABLE_BOUNDARY_ROOT";
+    let Some(base) = std::env::var_os(ROOT) else {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = rooted(&tmp);
+        let tools = base.join("safe-tools");
+        std::fs::create_dir(&tools).unwrap();
+        // Construction needs an available Windows interpreter. This fixture
+        // never executes it, so a file is sufficient for executable lookup.
+        std::fs::write(tools.join("sh.exe"), "interpreter").unwrap();
+        let mut environment = vec![
+            (ROOT, base.as_os_str().to_owned()),
+            ("PATH", tools.into_os_string()),
+        ];
+        environment.extend(test_util::fixture_env(&base.join("home")));
+        let output = test_util::reexecute_test(
+            module_path!(),
+            "trusted_scripts_exclude_enclosing_worktrees",
+            &environment,
+        )
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read(base.join("portable-proof")).unwrap(),
+            b"verified"
+        );
+        return;
+    };
+    let base = PathBuf::from(base);
+    let external = base.join("external/checker");
+    std::fs::create_dir_all(external.parent().unwrap()).unwrap();
+    std::fs::write(&external, "checker").unwrap();
+    for (case, gitfile) in [("checkout", false), ("linked", true)] {
+        let repo = base.join(case);
+        let project = repo.join("app");
+        let program = repo.join("skills/checker");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, "checker").unwrap();
+        if gitfile {
+            std::fs::write(repo.join(".git"), "gitdir: ../metadata\n").unwrap();
+        } else {
+            std::fs::create_dir(repo.join(".git")).unwrap();
+        }
+        assert!(
+            matches!(
+                Hardened::package_script(
+                    &program,
+                    Vec::new(),
+                    &project,
+                    ScriptEnvironment::Trusted
+                ),
+                Err(CoreError::CommandNotStarted { .. })
+            ),
+            "{case}"
+        );
+        assert!(
+            Hardened::package_script(&external, Vec::new(), &project, ScriptEnvironment::Trusted)
+                .is_ok(),
+            "{case}: external checker"
+        );
+    }
+    std::fs::write(base.join("portable-proof"), "verified").unwrap();
 }
