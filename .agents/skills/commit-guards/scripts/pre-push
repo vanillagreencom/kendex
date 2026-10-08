@@ -235,7 +235,7 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 #
 # When byte-ceiling is enabled in COMMIT_GUARDS_CHECKS, its `--all` run has
 # no source blob. It holds an oversized binary file to its row in the byte
-# baseline and fails one with no row; CHECKS.md § byte-ceiling states the
+# baseline and fails one with no row; ../CHECKS.md § byte-ceiling states the
 # scopes apart. Trying the boundary first limits these size refusals for
 # repositories that adopted the check with existing oversized binaries.
 local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
