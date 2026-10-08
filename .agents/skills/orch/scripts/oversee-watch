@@ -1707,16 +1707,18 @@ check_main_push() {
     log="$(gh run view "$run" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
     cause=unread failures=null
     if (( rc == 0 )); then
-      # run-all.sh emits suite=... fail=N; the workflow's other suite loops
-      # emit FAILED: paths. Keep the first failure, without gh's log prefix.
+      # Only producer summaries identify suites. Raw diagnostics describe
+      # the first cause but can change while the same suites still fail.
       log="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
         /^suite=.* fail=[1-9][0-9]*($| )/ || /^FAILED: / || /^FAIL[ :]/ || /^run-all.sh: (suite-timeout|run-deadline) / {
           gsub("\t", " "); print
         }' <<<"$log")" || rc=$?
       if (( rc == 0 )); then
         [[ -z "$log" ]] || cause="${log%%$'\n'*}"
-        failures="$(jq -Rsc 'split("\n") | map(select(length > 0) |
-          if startswith("suite=") then split(" ")[0] else . end) | unique' <<<"$log")" || rc=$?
+        failures="$(jq -Rsc 'split("\n") | map(
+          if startswith("suite=") then split(" ")[0]
+          elif startswith("FAILED: ") then ltrimstr("FAILED: ")
+          else empty end) | unique' <<<"$log")" || rc=$?
       fi
     fi
     if (( rc != 0 )); then
