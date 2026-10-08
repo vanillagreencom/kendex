@@ -1651,6 +1651,7 @@ mod tests {
                 }),
                 source_hash: "fixture".to_owned(),
                 source_commit: None,
+                selector: None,
                 rendered_hash: Some("fixture".to_owned()),
                 enabled: true,
                 upstream_skills: None,

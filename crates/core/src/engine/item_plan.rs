@@ -267,6 +267,7 @@ fn record(
         }),
         source_hash: item.hash.clone(),
         source_commit: item.source_commit.clone(),
+        selector: None,
         rendered_hash,
         enabled: item.enabled,
         upstream_skills: item.upstream_skills.clone(),

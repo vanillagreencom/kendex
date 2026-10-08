@@ -173,6 +173,36 @@ pub(super) struct RecordReadings {
     sets: BTreeMap<String, Reading<BundleRev>>,
 }
 
+/// A conflict keeps the old selector with its bytes. Synthetic holds
+/// also read under that selector, even when the source was redeclared
+/// beside a targeted update; recording the new one would apply no edit.
+pub(super) fn record_entry_selectors(
+    manifest: &Manifest,
+    lock: &Lock,
+    new_lock: &mut Lock,
+    kept: &super::item_plan::KeptAsIs,
+    held: &[HeldPin],
+) {
+    for (key, entry) in &mut new_lock.entries {
+        if held.iter().any(|pin| {
+            matches!(&pin.held, super::Held::Item { kind, name }
+                if *kind == entry.kind && *name == entry.name)
+        }) {
+            entry.selector = lock.entries.get(key).and_then(|old| old.selector.clone());
+        } else if entry.kind != crate::model::ItemKind::PiExtension && !kept.contains(key) {
+            let rev = manifest
+                .declared(entry.kind)
+                .get(&entry.name)
+                .and_then(|decl| decl.rev.as_deref());
+            entry.selector = Some(crate::lock::DeclaredSelector::of(
+                manifest,
+                &entry.source,
+                rev,
+            ));
+        }
+    }
+}
+
 /// Reads every declared source and set for the record. A source no item
 /// named, one only a Pi extension names among them, has no resolution in
 /// the pass and is read from its mirror alone, so its entry is held to the
@@ -263,6 +293,17 @@ pub(super) fn record_readings(
                     commit_reading(env, repo, rev, resolution, false).map(|commit| BundleRev {
                         source: decl.source.clone(),
                         source_repo: repo.to_owned(),
+                        selector: if held.iter().any(|pin| {
+                            matches!(&pin.held, super::Held::Set { name: held_name } if held_name == name)
+                        }) {
+                            lock.bundles.get(name).and_then(|old| old.selector.clone())
+                        } else {
+                            Some(crate::lock::DeclaredSelector::of(
+                                manifest,
+                                &decl.source,
+                                decl.rev.as_deref(),
+                            ))
+                        },
                         commit,
                     })
                 }

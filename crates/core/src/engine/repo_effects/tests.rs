@@ -96,6 +96,7 @@ fn entry(name: &str, harness: crate::model::HarnessId) -> crate::lock::LockEntry
         }),
         source_hash: "x".to_owned(),
         source_commit: None,
+        selector: None,
         rendered_hash: None,
         enabled: true,
         upstream_skills: None,

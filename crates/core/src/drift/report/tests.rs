@@ -532,6 +532,7 @@ fn recorded_entry(
         machine: None,
         source_hash: "source".into(),
         source_commit: None,
+        selector: None,
         rendered_hash: None,
         enabled: true,
         upstream_skills: None,

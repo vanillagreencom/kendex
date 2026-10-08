@@ -18,6 +18,7 @@ fn entry(emitted: Option<EmittedArtifact>) -> LockEntry {
         }),
         source_hash: "abc".into(),
         source_commit: None,
+        selector: None,
         rendered_hash: None,
         enabled: true,
         upstream_skills: None,
@@ -90,6 +91,50 @@ fn timestamps_are_iso8601() {
     assert_eq!(ts.len(), 20);
     assert!(ts.ends_with('Z'));
     assert!(ts.starts_with("20"));
+}
+
+#[test]
+fn version_11_selectors_distinguish_unknown_from_absent_revisions() {
+    for selector in [
+        None,
+        Some(DeclaredSelector {
+            source_rev: None,
+            rev: None,
+        }),
+        Some(DeclaredSelector {
+            source_rev: Some("stable".to_owned()),
+            rev: Some("package".to_owned()),
+        }),
+    ] {
+        let mut installed = entry(None);
+        installed.selector = selector.clone();
+        let set = BundleRev {
+            source: "kendex".to_owned(),
+            source_repo: "vanillagreencom/kendex".to_owned(),
+            selector: selector.clone(),
+            commit: "abc".to_owned(),
+        };
+        let lock = Lock {
+            version: 11,
+            entries: BTreeMap::from([("skill:gh:claude".to_owned(), installed)]),
+            bundles: BTreeMap::from([("starter".to_owned(), set)]),
+            ..Lock::default()
+        };
+        let value = serde_json::to_value(&lock).unwrap();
+        assert_eq!(
+            value["entries"]["skill:gh:claude"]
+                .get("selector")
+                .is_some(),
+            selector.is_some()
+        );
+        assert_eq!(
+            value["bundles"]["starter"].get("selector").is_some(),
+            selector.is_some()
+        );
+        let read: Lock = serde_json::from_value(value).unwrap();
+        assert_eq!(read.entries["skill:gh:claude"].selector, selector);
+        assert_eq!(read.bundles["starter"].selector, selector);
+    }
 }
 
 /// A path as JSON data rather than text spliced into a literal: a
@@ -279,6 +324,7 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
             source: "self".to_owned(),
             source_repo: ".".to_owned(),
             commit: "abc123".to_owned(),
+            selector: None,
         },
     );
     let styles = [

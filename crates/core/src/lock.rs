@@ -167,7 +167,37 @@ pub struct BundleRev {
     /// that source pointed at when it was read, spelled as
     /// [`LockEntry::source_repo`] spells it.
     pub source_repo: String,
+    /// The declaration this set was read under. Missing on older version
+    /// 11 records: unknown, so a locked write resolves the set afresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<DeclaredSelector>,
     pub commit: String,
+}
+
+/// The source and package revisions the person declared, before a plan
+/// invents any holds. A present value with absent revisions records a
+/// follower; an absent value on an entry or set records no such knowledge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredSelector {
+    pub source_rev: Option<String>,
+    pub rev: Option<String>,
+}
+
+impl DeclaredSelector {
+    pub(crate) fn of(
+        manifest: &crate::manifest::Manifest,
+        source: &str,
+        rev: Option<&str>,
+    ) -> Self {
+        Self {
+            source_rev: manifest
+                .sources
+                .get(source)
+                .and_then(|decl| decl.rev.clone()),
+            rev: rev.map(str::to_owned),
+        }
+    }
 }
 
 /// One installation an edge points at: the counterpart named the way the
@@ -241,6 +271,11 @@ pub struct LockEntry {
     /// its own at the commit its entries agree on here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_commit: Option<String>,
+    /// The declaration these bytes were read under. Missing on older
+    /// version 11 records: unknown, never a recorded absent revision.
+    /// A locked write cannot place such an entry and resolves it afresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<DeclaredSelector>,
     /// What the apply wrote to disk (file/tree artifacts only) — the anchor
     /// that tells a later pass whether the disk moved because upstream did
     /// or because the user edited it. Absent on pre-upgrade entries; the

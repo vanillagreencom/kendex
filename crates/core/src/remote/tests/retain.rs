@@ -395,6 +395,7 @@ fn a_snapshot_a_lock_names_is_never_removed() {
         source_repo: REPO.to_owned(),
         source_hash: "h".to_owned(),
         source_commit: Some(b.commit.clone()),
+        selector: None,
         rendered_hash: None,
         enabled: true,
         upstream_skills: None,
@@ -434,6 +435,7 @@ fn a_snapshot_a_lock_names_is_never_removed() {
                     source: "cat".to_owned(),
                     source_repo: REPO.to_owned(),
                     commit: c.commit.clone(),
+                    selector: None,
                 },
             )]),
             ..Lock::default()

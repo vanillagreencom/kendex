@@ -187,6 +187,7 @@ mod tests {
             source_repo: "local".into(),
             source_hash: "source".into(),
             source_commit: None,
+            selector: None,
             rendered_hash: Some(rendered_hash),
             enabled: true,
             upstream_skills: None,

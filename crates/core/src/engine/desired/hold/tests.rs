@@ -71,6 +71,10 @@ fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
         }),
         source_hash: "x".to_owned(),
         source_commit: commit.map(str::to_owned),
+        selector: Some(crate::lock::DeclaredSelector {
+            source_rev: None,
+            rev: None,
+        }),
         rendered_hash: None,
         enabled: true,
         upstream_skills: None,
@@ -101,12 +105,93 @@ fn recorded_set(lock: &mut Lock, name: &str, commit: &str) {
             source: "cat".to_owned(),
             source_repo: "owner/catalog".to_owned(),
             commit: commit.to_owned(),
+            selector: Some(crate::lock::DeclaredSelector {
+                source_rev: None,
+                rev: None,
+            }),
         },
     );
 }
 
 /// How a row builds the plan it reads through.
 type Plan = fn() -> PlanOptions;
+
+#[test]
+fn locked_holds_require_the_recorded_selector_on_every_copy_and_set() {
+    use crate::lock::DeclaredSelector;
+    for (case, recorded, mixed, holds) in [
+        (
+            "known follower",
+            Some(DeclaredSelector {
+                source_rev: None,
+                rev: None,
+            }),
+            false,
+            true,
+        ),
+        (
+            "removed package pin",
+            Some(DeclaredSelector {
+                source_rev: None,
+                rev: Some("old".into()),
+            }),
+            false,
+            false,
+        ),
+        (
+            "source changed after an edit hold",
+            Some(DeclaredSelector {
+                source_rev: Some("old".into()),
+                rev: None,
+            }),
+            false,
+            false,
+        ),
+        ("old version 11 record", None, false, false),
+        (
+            "one copy has another selector",
+            Some(DeclaredSelector {
+                source_rev: None,
+                rev: None,
+            }),
+            true,
+            false,
+        ),
+    ] {
+        let manifest = manifest_with(&[("a", None)], &["starter"]);
+        let mut lock = lock_with(&[(
+            "skill:a:claude",
+            entry("a", Some("aaa"), &[Reason::Requested]),
+        )]);
+        lock.entries.get_mut("skill:a:claude").unwrap().selector = recorded.clone();
+        recorded_set(&mut lock, "starter", "sss");
+        lock.bundles.get_mut("starter").unwrap().selector = recorded;
+        if mixed {
+            let mut other = entry("a", Some("aaa"), &[Reason::Requested]);
+            other.harness = HarnessId::Codex;
+            other.selector = None;
+            lock.entries.insert("skill:a:codex".into(), other);
+        }
+        let (held, _) = planning_manifest(&manifest, &lock, &PlanOptions::locked());
+        assert_eq!(
+            held.skills["a"].rev,
+            holds.then(|| "aaa".to_owned()),
+            "{case}"
+        );
+        assert_eq!(
+            held.bundles["starter"].rev,
+            (holds || mixed).then(|| "sss".to_owned()),
+            "{case}"
+        );
+        let (read_only, _) = planning_manifest(&manifest, &lock, &PlanOptions::at_record());
+        assert_eq!(read_only.skills["a"].rev.as_deref(), Some("aaa"), "{case}");
+        assert_eq!(
+            read_only.bundles["starter"].rev.as_deref(),
+            Some("sss"),
+            "{case}"
+        );
+    }
+}
 
 /// A source declared at `next` whose record was written at `recorded`: a
 /// write that keeps the record holds its followers only where the two
@@ -166,6 +251,12 @@ fn a_redeclared_source_unpins_only_under_a_write_that_keeps_the_record() {
                 commit: "aaa".to_owned(),
             },
         );
+        for entry in lock.entries.values_mut() {
+            entry.selector.as_mut().unwrap().source_rev = recorded.map(str::to_owned);
+        }
+        for set in lock.bundles.values_mut() {
+            set.selector.as_mut().unwrap().source_rev = recorded.map(str::to_owned);
+        }
 
         let (held, _) = planning_manifest(&manifest, &lock, &plan());
         let expect = |commit: &str| holds.then(|| commit.to_owned());

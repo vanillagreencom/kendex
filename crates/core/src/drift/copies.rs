@@ -725,6 +725,7 @@ mod tests {
             source_repo: "./catalog".into(),
             source_hash: "a".repeat(64),
             source_commit: None,
+            selector: None,
             rendered_hash: Some("b".repeat(64)),
             enabled: true,
             upstream_skills: None,

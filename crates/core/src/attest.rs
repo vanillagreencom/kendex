@@ -533,6 +533,7 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
         source_repo,
         source_hash,
         source_commit: _,
+        selector: _,
         rendered_hash,
         enabled,
         upstream_skills,
@@ -1091,6 +1092,7 @@ mod tests {
                 source: pin.source.clone(),
                 source_repo: pin.repo.clone(),
                 commit: "abcdefabcdefabcdefabcdefabcdefabcdefabcd".into(),
+                selector: None,
             },
         );
         for (resolved, floor, refresh, expected) in [

@@ -249,3 +249,129 @@ fn catalog_head(world: &World) -> String {
         .trim()
         .to_owned()
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_apply_after_a_removed_package_revision_follows_the_source() {
+    for (table, rendered, later) in [
+        (
+            "agents.review",
+            ".claude/agents/review.md",
+            "Also read the tests.",
+        ),
+        (
+            "bundles.starter",
+            ".agents/skills/second/SKILL.md",
+            "A paragraph added later.",
+        ),
+    ] {
+        let world = world();
+        let installed = catalog_head(&world);
+        let manifest = world.project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        let heading = format!("[{table}]\n");
+        let pinned = format!("{heading}rev = \"{installed}\"\n");
+        assert_eq!(declared.matches(&heading).count(), 1);
+        let mut declared = declared.replacen(&heading, &pinned, 1);
+        if table == "bundles.starter" {
+            let member =
+                "[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n";
+            assert_eq!(declared.matches(member).count(), 1);
+            declared = declared.replacen(member, "", 1);
+        }
+        write(&manifest, &declared);
+        let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+        assert!(applied.status.success(), "{}", said(&applied));
+        commit(&world.project, "package revision declared");
+        let pinned_record = record(&world);
+        let selector = if table == "bundles.starter" {
+            &pinned_record["bundles"]["starter"]["selector"]
+        } else {
+            &pinned_record["entries"]["agent:review:claude"]["selector"]
+        };
+        assert_eq!(selector["rev"], installed.as_str());
+
+        move_the_catalog(&world);
+        let moved = catalog_head(&world);
+        let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+        assert!(fetched.status.success(), "{}", said(&fetched));
+        let declared = fs::read_to_string(&manifest).unwrap();
+        assert_eq!(declared.matches(&pinned).count(), 1);
+        write(&manifest, &declared.replacen(&pinned, &heading, 1));
+        let before = fs::read_to_string(world.project.join(rendered)).unwrap();
+        assert!(!before.contains(later));
+        commit(&world.project, "package revision removed");
+
+        let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+        assert!(applied.status.success(), "{}", said(&applied));
+        let after = fs::read_to_string(world.project.join(rendered)).unwrap();
+        assert!(after.contains(later), "{table}: {after}");
+        let after_record = record(&world);
+        let updated = if table == "bundles.starter" {
+            &after_record["bundles"]["starter"]
+        } else {
+            &after_record["entries"]["agent:review:claude"]
+        };
+        assert!(updated["selector"].is_object());
+        assert!(updated["selector"]["rev"].is_null());
+        let commit_field = if table == "bundles.starter" {
+            "commit"
+        } else {
+            "sourceCommit"
+        };
+        assert_eq!(updated[commit_field], moved.as_str());
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_apply_discards_an_edit_at_the_changed_source_selector() {
+    let world = world();
+    let installed = catalog_head(&world);
+    let agent = world.project.join(".claude/agents/review.md");
+    let original = fs::read_to_string(&agent).unwrap();
+    let edited = format!("{original}\nA local edit.\n");
+    write(&agent, &edited);
+    move_the_catalog(&world);
+    let moved = catalog_head(&world);
+    let manifest = world.project.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    let heading = "[sources.cat]\n";
+    assert_eq!(declared.matches(heading).count(), 1);
+    write(
+        &manifest,
+        &declared.replacen(heading, &format!("{heading}rev = \"{moved}\"\n"), 1),
+    );
+    commit(&world.project, "source revision and local edit");
+
+    let applied = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+    assert!(applied.status.success(), "{}", said(&applied));
+    assert_eq!(fs::read_to_string(&agent).unwrap(), edited);
+    let held = record(&world);
+    assert_eq!(held["sources"]["cat"]["rev"], moved.as_str());
+    assert_eq!(
+        held["entries"]["agent:review:claude"]["sourceCommit"],
+        installed.as_str()
+    );
+    assert!(held["entries"]["agent:review:claude"]["selector"]["sourceRev"].is_null());
+    commit(&world.project, "applied with the edited agent held");
+
+    let applied = kendex(
+        &world.home,
+        &world.project,
+        &["apply", "--discard-edits", "-y", "--leave"],
+    );
+    assert!(applied.status.success(), "{}", said(&applied));
+    let after = fs::read_to_string(&agent).unwrap();
+    assert!(after.contains("Also read the tests."), "{after}");
+    assert!(!after.contains("A local edit."));
+    let after_record = record(&world);
+    assert_eq!(
+        after_record["entries"]["agent:review:claude"]["sourceCommit"],
+        moved.as_str()
+    );
+    assert_eq!(
+        after_record["entries"]["agent:review:claude"]["selector"]["sourceRev"],
+        moved.as_str()
+    );
+}

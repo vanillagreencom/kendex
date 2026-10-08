@@ -442,6 +442,7 @@ fn recorded_lock(stamp: &str) -> crate::lock::Lock {
             source_repo: "vanillagreencom/kendex".to_owned(),
             source_hash: "abc".to_owned(),
             source_commit: None,
+            selector: None,
             rendered_hash: None,
             enabled: true,
             upstream_skills: None,

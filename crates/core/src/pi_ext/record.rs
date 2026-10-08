@@ -15,6 +15,7 @@ pub struct DeclaredPackage {
     pub source: String,
     pub source_repo: String,
     pub source_commit: Option<String>,
+    pub selector: crate::lock::DeclaredSelector,
 }
 
 /// Preserve provenance but clear completion before replacement destroys the
@@ -84,6 +85,7 @@ pub fn resolve_declared(
         source: decl.source.clone(),
         source_repo: ready.provenance,
         source_commit: ready.commit,
+        selector: crate::lock::DeclaredSelector::of(manifest, &decl.source, decl.rev.as_deref()),
     }))
 }
 
@@ -124,6 +126,7 @@ pub fn matching_lock_entry(
         }),
         source_hash,
         source_commit: package.source_commit.clone(),
+        selector: Some(package.selector.clone()),
         rendered_hash: Some(rendered_hash),
         enabled: super::settings::package_enabled(&super::settings_path(scope_root), name)?
             .ok_or_else(|| CoreError::PiPackage {

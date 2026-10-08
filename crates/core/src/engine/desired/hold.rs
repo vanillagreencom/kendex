@@ -328,6 +328,9 @@ fn release(
 /// written for — is left to resolve fresh: a wrong pin would move it
 /// somewhere nobody asked for, and fresh is what a whole-scope apply gives
 /// it anyway.
+/// A write that keeps records also releases an entry or set whose own
+/// selector differs or is unknown. A source record may already describe
+/// the new selector while an edit conflict kept an older item record.
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
@@ -354,6 +357,20 @@ fn held_manifest(
             })
             .filter_map(|(name, decl)| {
                 let repo = held_repo(manifest, lock, &decl.source, keeps_records)?;
+                if keeps_records {
+                    let selector = crate::lock::DeclaredSelector::of(
+                        manifest,
+                        &decl.source,
+                        decl.rev.as_deref(),
+                    );
+                    if lock.entries.values().any(|entry| {
+                        entry.kind == kind
+                            && entry.name == *name
+                            && entry.selector.as_ref() != Some(&selector)
+                    }) {
+                        return None;
+                    }
+                }
                 let commit = held_at(lock, kind, name, &decl.source, repo)?;
                 Some((name.clone(), decl.source.clone(), repo.to_owned(), commit))
             })
@@ -381,6 +398,18 @@ fn held_manifest(
         let Some(repo) = held_repo(manifest, lock, &decl.source, keeps_records) else {
             continue;
         };
+        if keeps_records
+            && lock.bundles.get(name).is_none_or(|recorded| {
+                recorded.selector.as_ref()
+                    != Some(&crate::lock::DeclaredSelector::of(
+                        manifest,
+                        &decl.source,
+                        decl.rev.as_deref(),
+                    ))
+            })
+        {
+            continue;
+        }
         let Some(commit) = held_commit(lock, name, &decl.source, repo) else {
             continue;
         };

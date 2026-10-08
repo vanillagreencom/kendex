@@ -106,6 +106,7 @@ fn record_a_missing_agent(env: &Env, scope: &Scope) {
         source_repo: "local".to_owned(),
         source_hash: "0".repeat(64),
         source_commit: None,
+        selector: None,
         rendered_hash: None,
         enabled: true,
         upstream_skills: None,

@@ -244,6 +244,7 @@ mod tests {
             }),
             source_hash: "x".to_owned(),
             source_commit: None,
+            selector: None,
             rendered_hash: None,
             enabled: true,
             upstream_skills: upstream_skills

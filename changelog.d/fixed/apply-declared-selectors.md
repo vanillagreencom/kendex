@@ -1,0 +1,1 @@
+- Apply follows a removed package revision and a changed source revision after discarding local edits, while existing install records remain readable.

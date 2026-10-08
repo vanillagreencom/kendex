@@ -59,6 +59,7 @@ fn record_at(root: &Path, recorded: &Path) {
             }),
             source_hash: "abc".into(),
             source_commit: None,
+            selector: None,
             rendered_hash: None,
             enabled: true,
             upstream_skills: None,
