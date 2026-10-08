@@ -307,8 +307,10 @@ def install_dependencies(row):
     install run; a worktree links its node_modules from here. The settings
     come through the clone's own loader, so this reads what the worktree
     command reads, in a subshell: npm ci and the dependencies' install scripts
-    run with the SSH session's environment, never the project's settings or
-    its private env file. npm ci empties node_modules first, so the marker of the
+    run with the SSH session's environment. The private env file is moved out
+    of the clone after settings resolution and restored when this call exits,
+    so install scripts cannot read it through the clone or its worktree links.
+    npm ci empties node_modules first, so the marker of the
     committed lockfile blob it was installed from lives inside it and survives
     only a finished install: an unchanged lockfile installs nothing. An entry
     climbing out of the clone is the worktree command's to refuse, never a
@@ -316,6 +318,13 @@ def install_dependencies(row):
     """
     remote(row, '''symlinks=$(. "$1/.agents/skills/worktree/scripts/lib/kendex-env.sh" &&
   kendex_load_project_env "$1" >&2 && printf '%s' "${WORKTREE_SYMLINKS:-}") || exit 1
+# A reused clone already holds the private file, so delaying its upload alone
+# would still expose it to dependency lifecycle scripts.
+private=$(mktemp -d) || exit 1
+trap 'if test -e "$private/env" || test -L "$private/env"; then mv -- "$private/env" "$1/.env.local"; fi; rmdir -- "$private"' EXIT
+if test -e "$1/.env.local" || test -L "$1/.env.local"; then
+  mv -- "$1/.env.local" "$private/env"
+fi
 read -r -a entries <<<"$symlinks"
 for entry in ${entries[@]+"${entries[@]}"}; do
   case "/$entry/" in */../*|*/./*|//*) continue ;; esac
@@ -598,6 +607,8 @@ path), account (absolute remote harness config directory). Each target/clone
 pair and each item occurs once. SSH keys and host verification use your SSH config.
 LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local.
+Dependency installation temporarily removes that file from the clone after
+resolving WORKTREE_SYMLINKS and restores it on success or failure.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 create renders nothing and installs no Pi package: the worktree carries the

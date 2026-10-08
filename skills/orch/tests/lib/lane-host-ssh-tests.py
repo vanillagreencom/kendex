@@ -765,7 +765,10 @@ exec "$REAL_CAT" "$@"
         SSH_TEST_NPM_FAIL it leaves node_modules emptied, as a failed ci does,
         and exits with that status."""
         self.executable(self.bin / "npm", '''#!/usr/bin/env bash
+set -euo pipefail
 printf 'npm %s in %s%s\\n' "$*" "$PWD" "${WORKTREE_SYMLINKS+ project-env}" >> "$SSH_TEST_LOG"
+clone=$(git rev-parse --show-toplevel)
+if [[ -e "$clone/.env.local" || -e "$clone-worktree/.env.local" || -n "${SECRET:-}" ]]; then exit 91; fi
 rm -rf node_modules
 mkdir node_modules
 [[ "${SSH_TEST_NPM_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_NPM_FAIL"
@@ -781,7 +784,8 @@ touch node_modules/dep
         exit status, the installs expected, and the log lines its create
         wrote."""
         self.fake_npm()
-        self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = ".env.local ui/node_modules"\n')
+        self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = ".env.local"\n')
+        (self.source / ".env.local").write_text('SECRET=private-fixture\nWORKTREE_SYMLINKS=".env.local ui/node_modules"\n')
         self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
         install = f"npm ci --no-audit --no-fund in {Path(self.row['clone']) / 'ui'}"
         # Per step: its flags, the lockfile the source commits before it
@@ -806,6 +810,10 @@ touch node_modules/dep
             mark = len(self.log_since(0)) if (self.root / "calls").exists() else 0
             result = self.create(*flags, **env)
             self.assertEqual(result.returncode, code, (name, result.stderr))
+            clone = Path(self.row["clone"])
+            self.assertEqual((clone / ".env.local").read_bytes(), (self.source / ".env.local").read_bytes())
+            if name == "fresh clone":
+                (Path(str(clone) + "-worktree") / ".env.local").symlink_to(clone / ".env.local")
             yield name, code, installs, self.log_since(mark)
 
     def test_create_installs_a_linked_node_modules_once_per_lockfile(self):
@@ -819,6 +827,21 @@ touch node_modules/dep
                 if installs and code == 0:
                     creates = [i for i, line in enumerate(log) if line.startswith("worktree create ")]
                     self.assertLess(log.index(installs[0]), creates[-1])
+
+    def test_control_install_can_read_a_private_env_left_in_the_clone(self):
+        original = self.script.read_text()
+        fragment = '  mv -- "$1/.env.local" "$private/env"'
+        self.assertEqual(original.count(fragment), 1)
+        # Mutate only a disposable executable outside the worktree.
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(fragment, ":"))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.test_create_installs_a_linked_node_modules_once_per_lockfile()
+            exposed = self.create("--reuse")
+            self.assertEqual(exposed.returncode, 91, exposed.stderr)
+            self.assertFalse((Path(self.row["clone"]) / "ui/node_modules/.lane-host-install").exists())
 
     def test_control_install_without_its_lockfile_marker_runs_every_create(self):
         original = self.script.read_text()
