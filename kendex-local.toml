@@ -49,7 +49,7 @@ Intake decides only whether new work is filed. A create that groups or splits wo
 audit-issues applies Intake to every kendex create it executes, whatever producer built its input and whatever `create_fields` that producer filled:
 
 - § 6, in `ask` and `auto` mode alike, shows each new-work candidate with the Symptom or Owner text it rests on: a line in its proposal comment, its source item or its `create_fields`, or the owner's ask in this session. It declines a candidate with neither, naming this rule.
-- § 7.2 writes the `**Symptom**:` and `**Owner**:` headers of every kendex create from that text.
+- § 7.2 writes each new-work create's `**Symptom**:` or `**Owner**:` header from the text § 6 showed for it, and writes no header that text lacks. A create that Intake exempts carries only the line the paragraph above gives it, or neither.
 
 No producer marks a candidate `skip` under this rule. A create the primary session runs outside audit-issues applies the same check and headers at its own create.
 
