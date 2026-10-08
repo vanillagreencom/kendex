@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The orch battery outgrew one CI shard, so `.github/workflows/skill-tests.yml`
-# runs it as five, and a shard is nothing but a `run-all.sh` name filter:
+# runs it as platform partitions, and each shard uses `run-all.sh` filters:
 # `open-terminal`, `oversee` in two halves, a third set of name fragments, and
 # the negation of all three. That makes the filters load-bearing. A filter that stopped
 # matching would leave its suites in no shard at all, and every shard would
@@ -186,7 +186,7 @@ done
 roster="$(printf '%s' "$roster" | sort)"
 
 selected() { # selected <filter>... ; the suite names that ran, sorted
-  bash "$SANDBOX/run-all.sh" "$@" 2>/dev/null |
+  RUNNER_OS="${PARTITION_RUNNER_OS:-Linux}" bash "$SANDBOX/run-all.sh" "$@" 2>/dev/null |
     sed -n 's/^──── \(.*\) ────$/\1/p' | sort
 }
 status_of() { # status_of <filter>... ; the exit status, output discarded
@@ -222,8 +222,34 @@ check "a filter matching no suite exits non-zero" \
 # One line per invocation, each opened by a marker: a shard that passes no
 # filter at all is an empty argument string, and without the marker that line
 # would vanish into the surrounding newlines and read as no shard.
-shard_filters() { # shard_filters <workflow> ; `|<argument string>` per shard
-  sed -n 's%^ *run: bash skills/orch/tests/run-all\.sh *%|%p' "$1"
+excluded_shards() { # WORKFLOW OS ; shards excluded from that runner's roster
+  awk -v os_want="$2" '
+    function flush() { if (os == os_want && shard != "") print shard; os = ""; shard = "" }
+    /^  [A-Za-z0-9_-]+:/ { job = $1 }
+    !((os_want == "macos-latest" && job == "skill-suites-macos:") ||
+      (os_want == "ubuntu-latest" && job == "skill-suites-shard:")) { next }
+    NF == 0 || $1 == "#" { next }
+    { n = 0; while (substr($0, n + 1, 1) == " ") n++ }
+    inx == 1 && n < 10 { flush(); inx = 0 }
+    inx == 0 && n == 8 && $1 == "exclude:" { inx = 1; next }
+    inx == 0 { next }
+    $1 == "-" { flush(); key = $2; val = $3 }
+    $1 != "-" { key = $1; val = $2 }
+    key == "os:" { os = val }
+    key == "shard:" { shard = val }
+    END { if (inx == 1) flush() }
+  ' "$1" | sort -u
+}
+shard_filters() { # WORKFLOW ; `|<argument string>` per shard on this platform
+  local wf="$1" os=ubuntu-latest excluded job cond wd run shard
+  [[ "${PARTITION_RUNNER_OS:-Linux}" != macOS ]] || os=macos-latest
+  excluded="$(excluded_shards "$wf" "$os")"
+  one_line_steps "$wf" | while IFS=$'\037' read -r job cond wd run; do
+    [[ "$run" == 'bash skills/orch/tests/run-all.sh'* ]] || continue
+    shard="$(one_shard "$cond")"
+    grep -qxF "$shard" <<< "$excluded" && continue
+    printf '|%s\n' "${run#bash skills/orch/tests/run-all.sh}"
+  done
 }
 # What an argument string selects depends on that string alone, since the
 # sandbox battery never changes, so each string's run is made once and kept
@@ -234,7 +260,7 @@ mkdir -p "$UNION_RUNS"
 union_of() { # union_of <argument string>... ; names selected, duplicates kept
   local args kept
   for args in "$@"; do
-    kept="$UNION_RUNS/$(printf '%s' "$args" | cksum | tr ' ' '-')"
+    kept="$UNION_RUNS/${PARTITION_RUNNER_OS:-Linux}-$(printf '%s' "$args" | cksum | tr ' ' '-')"
     if [[ ! -f "$kept" || "$(head -n 1 "$kept")" != "|$args" ]]; then
       (
         set -f
@@ -255,6 +281,19 @@ shared_by() { # shared_by <argument string>... ; suites more than one runs
   union_of "$@" | sort | uniq -d
 }
 
+one_shard() { # if text ; the shard it names when it names exactly one
+  local names
+  names="$(grep -oE "matrix\.shard == '[^']+'" <<< "$1" | cut -d"'" -f2)" || names=""
+  [[ -n "$names" && "$names" != *$'\n'* ]] && printf '%s' "$names"
+  return 0
+}
+
+for PARTITION_RUNNER_OS in Linux macOS; do
+if [[ "$PARTITION_RUNNER_OS" == Linux ]]; then
+  check "Linux retains the original oversee membership" \
+    "$(selected oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report')" \
+    "$(selected --shard orch-oversee)"
+fi
 filters="$(shard_filters "$WORKFLOW")"
 if [[ -z "$filters" ]]; then
   printf '  FAIL  no step in %s runs run-all.sh, so there is no partition to judge\n' \
@@ -275,10 +314,10 @@ if [[ "${#shard_args[@]}" -lt 2 ]]; then
   printf 'pass: %d   fail: %d\n' "$PASS" "$((FAIL + 1))"
   exit 1
 fi
-ok "the workflow runs the battery as ${#shard_args[@]} shards"
-check "every suite is claimed by one of the workflow's orch shards" \
+ok "the workflow runs the $PARTITION_RUNNER_OS battery as ${#shard_args[@]} shards"
+check "every suite is claimed by one of the workflow's orch shards on $PARTITION_RUNNER_OS" \
   "" "$(missing_from "${shard_args[@]}")"
-check "no suite is claimed by two of them" "" "$(shared_by "${shard_args[@]}")"
+check "no suite is claimed by two of them on $PARTITION_RUNNER_OS" "" "$(shared_by "${shard_args[@]}")"
 
 # --- 2b. Must-fail: the two ways the partition breaks -----------------------
 # Dropping a shard leaves the suites only it runs in nothing; repeating one
@@ -296,6 +335,34 @@ if [[ -n "$twice" ]]; then
 else
   bad "must-fail: a repeated shard produced no duplicate, so the overlap check proves nothing"
 fi
+
+done
+PARTITION_RUNNER_OS=Linux
+
+# A new oversee suite belongs to the complement on macOS, even when its
+# name extends one of the moved suites. The workflow produces both profiles.
+printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_watch_terminal_future.sh"
+PARTITION_RUNNER_OS=macOS
+for profile in orch-oversee orch-oversee-watch; do
+  kept="$(selected --shard "$profile")"
+  if [[ "$profile" == orch-oversee ]]; then
+    grep -qx oversee_watch_terminal_future <<< "$kept" && ok "new oversee suite enters the macOS complement" || bad "new oversee suite lost from macOS complement"
+    ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle leaves the macOS complement" || bad "lifecycle remains in macOS complement"
+  else
+    grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle runs in the macOS watch leg" || bad "lifecycle lost from macOS watch leg"
+    ! grep -qx oversee_watch_terminal_future <<< "$kept" && ok "watch leg owns only the moved whole names" || bad "watch leg claims a new name extension"
+  fi
+done
+rm -- "$SANDBOX/oversee_watch_terminal_future.sh"
+# The lifecycle suite must reach the moved leg. Remove its selector from a
+# disposable runner copy while retaining its suite and the rest of the rule.
+cp "$SANDBOX/run-all.sh" "$TMP/runner-original"
+sed 's/ =oversee_watch_lifecycle / /' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
+cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "lifecycle control changed no selector"
+kept="$(selected --shard orch-oversee-watch)"
+! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "must-fail: missing lifecycle selector fails its moved-leg contract" || bad "lifecycle omission control retained the suite"
+cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
+PARTITION_RUNNER_OS=Linux
 
 # --- 3. The shell shards' partition over every suite FILE -------------------
 # Section 2 judges one seam, the orch battery's name filters. The rest of the
@@ -694,15 +761,11 @@ fi
 # directory, which the table cannot tell apart.
 JOB_SET="$ROOT/tools/ci-job-set"
 
-one_shard() { # one_shard <if text> ; the shard it names when it names exactly one
-  local names
-  names="$(grep -oE "matrix\.shard == '[^']+'" <<< "$1" | cut -d"'" -f2)" || names=""
-  [[ -n "$names" && "$names" != *$'\n'* ]] && printf '%s' "$names"
-  return 0
-}
-
 suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by directory or every file
   local wf="$1" mode="${2-directories}" major="${3-}" dir="$TMP/owner-blocks" f shard cond wd run word
+  local PARTITION_RUNNER_OS=Linux os=ubuntu-latest excluded
+  [[ "$major" != 3 ]] || { PARTITION_RUNNER_OS=macOS; os=macos-latest; }
+  excluded="$(excluded_shards "$wf" "$os")"
   cp "$wf" "$PART/.github/workflows/skill-tests.yml"
   split_run_blocks "$wf" "$dir"
   {
@@ -721,6 +784,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
     one_line_steps "$wf" | while IFS=$'\037' read -r _ cond wd run; do
       shard="$(one_shard "$cond")"
       [[ -n "$shard" ]] || continue
+      grep -qxF "$shard" <<< "$excluded" && continue
       if [[ "$mode" == files && "$run" == "bash $runner"* ]]; then
         union_of "${run#"bash $runner"}" | sed "s%^%$shard	$ORCH_TESTS_DIR/%; s%\$%.sh%"
         continue
@@ -749,7 +813,7 @@ unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<ta
 }
 
 OWNERS="$TMP/owners"
-suite_owners "$WORKFLOW" > "$OWNERS"
+{ suite_owners "$WORKFLOW"; suite_owners "$WORKFLOW" directories 3; } | sort -u > "$OWNERS"
 owner_shards="$(cut -f1 "$OWNERS" | sort -u)"
 check "a suite is read for every shard the matrix declares" "$declared_shards" "$owner_shards"
 check "ci-job-set selects the shard running each suite for a diff to that suite" \
@@ -793,21 +857,7 @@ else bad "refresh shard selection control"; fi
 # The shards the main-push macOS matrix excludes, read as
 # YAML sequence items the way cargo_excluded_legs reads them.
 macos_excluded_shards() { # macos_excluded_shards <workflow>
-  awk '
-    function flush() { if (os == "macos-latest" && shard != "") print shard; os = ""; shard = "" }
-    /^  skill-suites-macos:/ { job = 1; next }
-    job && /^  [A-Za-z0-9_-]+:/ { job = 0 }
-    !job || NF == 0 || $1 == "#" { next }
-    { n = 0; while (substr($0, n + 1, 1) == " ") n++ }
-    inx == 1 && n < 10 { flush(); inx = 0 }
-    inx == 0 && n == 8 && $1 == "exclude:" { inx = 1; next }
-    inx == 0 { next }
-    $1 == "-" { flush(); key = $2; val = $3 }
-    $1 != "-" { key = $1; val = $2 }
-    key == "os:" { os = val }
-    key == "shard:" { shard = val }
-    END { if (inx == 1) flush() }
-  ' "$1" | sort -u
+  excluded_shards "$1" macos-latest
 }
 linux_only_shards() { # linux_only_shards <ci-job-set>
   sed -n 's/^LINUX_ONLY_SHARDS="\(.*\)"$/\1/p' "$1" | tr ' ' '\n' | grep . | sort -u

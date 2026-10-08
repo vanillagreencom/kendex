@@ -173,7 +173,7 @@ LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-tools guards-tools-tail linear linear-controls worktree rest slack node pi-claude-bridge"
+SHARDS="review-gate orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-tools guards-tools-tail linear linear-controls worktree rest slack node pi-claude-bridge"
 # The shards the main-push matrix never runs on macOS, nothing in them running
 # under its Bash 3.2: node and pi-claude-bridge hold no bash, and
 # linear-controls runs the linear suites, which need Bash 4. They are its
@@ -383,7 +383,7 @@ want_shard() { # SHARD...
 # steps, suite by suite.
 want_package() { # PACKAGE
   case "$1" in
-    skills/orch) want_shard orch-terminal orch-oversee orch-oversee-succeed orch-state orch-rest ;;
+    skills/orch) want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-state orch-rest ;;
     skills/review-gate | refresh) want_shard review-gate ;;
     skills/commit-guards) want_shard guards-commit guards-hooks ;;
     skills/linear) want_shard linear linear-controls ;;

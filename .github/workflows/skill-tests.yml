@@ -486,8 +486,11 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
+        exclude:
+          - os: ubuntu-latest
+            shard: orch-oversee-watch
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
     # against 4m45s on Linux, guards 9m09s against 3m13s, rest 7m39s against
@@ -797,7 +800,7 @@ jobs:
       # in place, confirms it: both shards finished inside each leg's job
       # ceiling, by the per-suite paragraph above.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
+        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-watch' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -813,7 +816,14 @@ jobs:
 
       - name: orch suites — the oversee watch loop
         if: matrix.shard == 'orch-oversee'
-        run: bash skills/orch/tests/run-all.sh oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report'
+        run: bash skills/orch/tests/run-all.sh --shard orch-oversee
+
+      # Run 37769037887 stopped oversee_watch at the deadline and never
+      # started its lifecycle suite. Its terminal and overseer suites took
+      # 537s and 535s. run-all.sh owns this macOS partition and its complement.
+      - name: orch suites — the macOS watch, terminal, overseer and lanes
+        if: matrix.shard == 'orch-oversee-watch'
+        run: bash skills/orch/tests/run-all.sh --shard orch-oversee-watch
 
       - name: orch suites — the overseer succession, mailbox and report
         if: matrix.shard == 'orch-oversee-succeed'

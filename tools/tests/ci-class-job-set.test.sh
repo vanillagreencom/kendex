@@ -50,8 +50,8 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-succeed -orch-state -orch-rest -guards-commit -linear -linear-controls -worktree -rest -slack -node -pi-claude-bridge"
-ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-succeed +orch-state +orch-rest"
+NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-state -orch-rest -guards-commit -linear -linear-controls -worktree -rest -slack -node -pi-claude-bridge"
+ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-watch +orch-oversee-succeed +orch-state +orch-rest"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
 # `+shard` members it must hold and `-shard` members it must not. Empty

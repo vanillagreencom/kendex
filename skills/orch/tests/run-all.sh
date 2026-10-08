@@ -13,6 +13,7 @@
 #   bash skills/orch/tests/run-all.sh open-terminal oversee   # either name
 #   bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'  # neither
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
+#   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
 #   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
 #
@@ -116,6 +117,24 @@ BATTERY="$(basename "$(dirname "$TEST_DIR")")"
 
 SELECT=()
 REJECT=()
+# Main run 37769037887 exhausted the macOS deadline. These watch suites
+# share a separate macOS leg; Linux retains the original oversee partition.
+if [ "${1-}" = --shard ]; then
+  shard="${2-}"
+  [ "$#" -eq 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
+  WATCH=(=oversee_watch =oversee_watch_lifecycle =oversee_watch_terminal =oversee_watch_lanes =oversee_watch_overseer =oversee_watch_overseer_rows)
+  case "$shard" in
+    orch-oversee)
+      set -- oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report'
+      case "${RUNNER_OS:-Linux}" in
+        Linux) ;;
+        macOS) for arg in "${WATCH[@]}"; do set -- "$@" "!$arg"; done ;;
+        *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
+      esac ;;
+    orch-oversee-watch) set -- "${WATCH[@]}" ;;
+    *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
+  esac
+fi
 for arg in "$@"; do
   case "$arg" in
     '') echo "run-all.sh: empty name filter; a filter is a substring of a suite's base name" >&2; exit 1 ;;
