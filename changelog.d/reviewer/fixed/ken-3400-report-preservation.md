@@ -1,0 +1,1 @@
+- Clarify that reviewer completion checks preserve the required report and require evidence for tracked edits.

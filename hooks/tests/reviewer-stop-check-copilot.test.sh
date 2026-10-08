@@ -59,6 +59,8 @@ new_repo() { # NAME -> path
   fgit init -q "$repo"
   fgit -C "$repo" config user.email t@example.com
   fgit -C "$repo" config user.name t
+  fgit -C "$repo" config gc.auto 0
+  fgit -C "$repo" config maintenance.auto false
   printf 'pub fn a() {}\n' >"$repo/src/lib.rs"
   printf 'tmp/\n' >"$repo/.gitignore"
   cp "$HOOK" "$repo/.github/hooks/reviewer-stop-check.sh"
@@ -107,13 +109,16 @@ reply_for() { # REPO
 }
 
 copilot_rows() {
-  local label repo type id reply path install want clean dirty none account marker
+  local label repo type id reply path install want clean dirty tracked none account marker
   WORLD=$(mktemp -d "$TMP_ROOT/world.XXXXXX") || { echo "reviewer-stop-check-copilot: world=mktemp-failed" >&2; exit 1; }
   LEAD_TRANSCRIPT="$WORLD/session-state/lead-1/events.jsonl"
   mkdir -p "${LEAD_TRANSCRIPT%/*}"
   clean="$(new_repo clean)"
   dirty="$(new_repo dirty)"
   printf 'probe\n' >"$dirty/probe.sh"
+  tracked="$(new_repo tracked)"
+  printf 'changed\n' >>"$tracked/src/lib.rs"
+  fgit -C "$tracked" add src/lib.rs
   none="$(new_repo none)"
   account="$(new_account)"
   # The lead's transcript names the dirty repository's artifact: a hook reading
@@ -122,7 +127,7 @@ copilot_rows() {
     >"$LEAD_TRANSCRIPT"
 
   while IFS='|' read -r label repo type id reply path install want; do
-    case "$repo" in clean) repo=$clean ;; dirty) repo=$dirty ;; none) repo=$none ;; esac
+    case "$repo" in clean) repo=$clean ;; dirty) repo=$dirty ;; tracked) repo=$tracked ;; none) repo=$none ;; esac
     case "$reply" in
       artifact) reply=$(reply_for "$repo") ;;
       bare) reply='Verdict: pass' ;;
@@ -132,8 +137,10 @@ copilot_rows() {
     case "$install" in project) install="$repo/.github/hooks/reviewer-stop-check.sh" ;; account) install=$account ;; esac
     run_copilot "$repo" "$type" "$id" "$reply" "$path" "$install"
     assert_eq "$(verdict)" "${want//@REPO@/$repo}" "$label"
+    assert_eq "$(cat -- "$repo/tmp/review-reviewer-test-20261002-101010.json")" '{}' "$label keeps the report"
   done <<'ROWS'
 a reviewer whose reply names a clean worktree passes, whatever the lead's transcript names|clean|reviewer-test|sub-1|artifact|all|project|rc=0 decision=- first=-
+a reviewer passes shared tracked edits that Copilot cannot attribute|tracked|reviewer-test|sub-tracked|artifact|all|project|rc=0 decision=- first=-
 a reviewer whose reply names a dirty worktree is held with the block answer at exit 0|dirty|reviewer-test|sub-2|artifact|all|project|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
 the same subagent's next stop passes|dirty|reviewer-test|sub-2|artifact|all|project|rc=0 decision=- first=-
 another reviewer subagent over the same dirty worktree is held|dirty|reviewer-test|sub-3|artifact|all|project|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
@@ -143,6 +150,7 @@ a reviewer whose reply names a worktree git cannot read is held|clean|reviewer-t
 the same subagent's next stop over that unreadable worktree passes|clean|reviewer-test|sub-7|unreadable|all|project|rc=0 decision=- first=-
 with jq off PATH a reviewer is held with the block answer, built without jq|dirty|reviewer-test|sub-8|artifact|no-jq|project|rc=0 decision=block first=reviewer-stop-check: missing-tools=jq
 a reviewer over a dirty worktree is held with the block answer at exit 0 from a global-scope install|dirty|reviewer-test|sub-9|artifact|all|account|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
+a global-scope reviewer passes shared tracked edits that Copilot cannot attribute|tracked|reviewer-test|sub-tracked-global|artifact|all|account|rc=0 decision=- first=-
 ROWS
 
   # The reason Copilot hands the subagent is the text the stderr carries.

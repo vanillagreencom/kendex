@@ -7,8 +7,8 @@
 # names no artifact path at all. Pinned here: which payload field
 # names the subagent's transcript, what names the worktree (the newest
 # <dir>/tmp/review-*.json mention, in a Write call or a File: line), what
-# counts as dirty (a modified tracked file, an untracked file, one inside an
-# untracked directory), that a path dirty before the transcript's first
+# counts as dirty (an attributed tracked edit, an untracked file, one inside
+# an untracked directory), that untracked dirt before the transcript's first
 # timestamp is the author's, the once-per-agent marker under the
 # reviewed repository's git common dir, that a sibling worktree's dirt is
 # not this worktree's, and the fail-closed edges — an unreadable payload,
@@ -62,6 +62,8 @@ new_repo() {
   fgit init -q "$repo"
   fgit -C "$repo" config user.email t@example.com
   fgit -C "$repo" config user.name t
+  fgit -C "$repo" config gc.auto 0
+  fgit -C "$repo" config maintenance.auto false
   printf 'pub fn a() {}\n' >"$repo/src/lib.rs"
   printf 'tmp/\n' >"$repo/.gitignore"
   fgit -C "$repo" add -A
@@ -72,7 +74,7 @@ new_repo() {
 # A transcript naming REPO's artifact the way the harness records a Write
 # call and the return message: JSON lines, the path inside a JSON string. The
 # artifact is written as the Write call would have. Its first entry carries no
-# timestamp, so the review's start is unknown and every dirty path counts.
+# timestamp, so the review's start is unknown and every untracked path counts.
 transcript_for() { # REPO [AGENT] -> path
   local repo="$1" agent="${2:-reviewer-test}" t="$TMP_ROOT/transcript.$$.$RANDOM.jsonl"
   mkdir -p "$repo/tmp"
@@ -82,6 +84,14 @@ transcript_for() { # REPO [AGENT] -> path
     printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Verdict: pass\\nFile: %s/tmp/review-%s-20260903-101010.json\\n"}]}}\n' "$repo" "$agent"
   } >"$t"
   printf '%s' "$t"
+}
+
+# Claude Code records the calling assistant and its tool result separately.
+edit_in() { # TRANSCRIPT PATH [TOOL] [ERROR] [RESULT_ID]
+  jq -nc --arg path "$2" --arg tool "${3:-Edit}" \
+    '{type:"assistant",message:{content:[{type:"tool_use",id:"edit-1",name:$tool,input:{file_path:$path}}]}}' >>"$1"
+  jq -nc --argjson error "${4:-false}" --arg id "${5:-edit-1}" \
+    '{type:"user",message:{content:[{type:"tool_result",tool_use_id:$id,is_error:$error,content:"result"}]}}' >>"$1"
 }
 
 # run TRANSCRIPT [AGENT_TYPE] [AGENT_ID] [ACTIVE] -> rc, stderr in $err
@@ -191,6 +201,7 @@ echo "reviewer-stop-check: every kind of dirt is named"
 REPO="$(new_repo dirt)"
 T="$(transcript_for "$REPO")"
 printf 'pub fn b() {}\n' >>"$REPO/src/lib.rs"
+edit_in "$T" "$REPO/src/lib.rs"
 run_hook "$T" reviewer-test b1
 assert_eq "$rc" 2 "a modified tracked file blocks"
 assert_contains "$err" " M src/lib.rs" "names the modified file"
@@ -203,6 +214,7 @@ assert_contains "$err" "?? fixtures/new/case.txt" "names the file, not only its 
 rm -rf "$REPO/fixtures"
 printf 'staged\n' >"$REPO/staged.txt"
 fgit -C "$REPO" add staged.txt
+edit_in "$T" "$REPO/staged.txt" Write
 run_hook "$T" reviewer-test b3
 assert_eq "$rc" 2 "a staged file blocks"
 assert_contains "$err" "A  staged.txt" "names the staged file"
@@ -548,8 +560,8 @@ echo "reviewer-stop-check: only paths the review changed block"
 START_ROWS="\
 dirt the author left before the review passes|dated|none|rc=0 first=-|-
 a probe the reviewer created blocks over the author's dirt|dated|probe|rc=2 first=reviewer-stop-check: worktree=@REPO@|?? probe.sh
-a mode the reviewer changed blocks though the file's mtime is old|dated|chmod|rc=2 first=reviewer-stop-check: worktree=@REPO@| M tools/run.sh
-the reviewer staging the author's change blocks|dated|stage|rc=2 first=reviewer-stop-check: worktree=@REPO@|M  src/lib.rs
+a mode change without actor evidence passes|dated|chmod|rc=0 first=-|-
+an index change without actor evidence passes|dated|stage|rc=0 first=-|-
 the reviewer moving the author's file blocks though its mtime is old|dated|move|rc=2 first=reviewer-stop-check: worktree=@REPO@|?? notes-moved.txt
 a Codex session_meta dates the start, and the author's dirt passes|codex|none|rc=0 first=-|-
 a completed tool call first gives no start, and the author's dirt blocks|toolfirst|none|rc=2 first=reviewer-stop-check: worktree=@REPO@|-
@@ -617,45 +629,150 @@ start_rows() { # TAG
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "start rows: no row was asserted" >&2; exit 2; }
 }
 start_rows st
-# Every path counted as the reviewer's reds the author's row and each row's
-# claim that the author's file is not named; no path counted reds every act a
-# file time shows; the index left unread reds the staging; the modification
-# time in place of the change time reds the chmod and the move.
+# Untracked paths still use the start and change times. Tracked files never
+# take actor evidence from either the file's clock or the index's clock.
 rows_control start_rows start-ignored '[ "$t" -ge "$START" ]' 'true' \
   "dirt the author left before the review passes" \
-  "a Codex session_meta dates the start, and the author's dirt passes" \
-  "a probe the reviewer created blocks over the author's dirt, and not the author's deletion" \
-  "a mode the reviewer changed blocks though the file's mtime is old, and not the author's deletion" \
-  "the reviewer staging the author's change blocks, and not the author's deletion" \
-  "the reviewer moving the author's file blocks though its mtime is old, and not the author's deletion"
+  "a mode change without actor evidence passes" \
+  "an index change without actor evidence passes" \
+  "a Codex session_meta dates the start, and the author's dirt passes"
 rows_control start_rows start-all-old '[ "$t" -ge "$START" ]' 'false' \
   "a probe the reviewer created blocks over the author's dirt" \
   "a probe the reviewer created blocks over the author's dirt, naming the reviewer's path" \
-  "a mode the reviewer changed blocks though the file's mtime is old" \
-  "a mode the reviewer changed blocks though the file's mtime is old, naming the reviewer's path" \
   "the reviewer moving the author's file blocks though its mtime is old" \
   "the reviewer moving the author's file blocks though its mtime is old, naming the reviewer's path"
-rows_control start_rows index-unread '[ "$INDEX_CHANGED" -eq 0 ] || return 0' ':' \
-  "the reviewer staging the author's change blocks" \
-  "the reviewer staging the author's change blocks, naming the reviewer's path"
 # Any first entry taken as the start reds the tool-call row.
-# The hook's own status refreshing the stale entry rewrites the index, which
-# reds the rows where the author's staged path must pass.
-rows_control start_rows status-refreshes \
-  'STATUS=$(git --no-optional-locks -C "$WORKTREE" status' \
-  'STATUS=$(git -C "$WORKTREE" status' \
-  "dirt the author left before the review passes" \
-  "a Codex session_meta dates the start, and the author's dirt passes"
 rows_control start_rows launch-record-unchecked \
   '| select(.type == "session_meta" or (.type == "user" and ([.message.content | arrays | .[] | .type?] | index("tool_result") | not)))' \
   '' \
   "a completed tool call first gives no start, and the author's dirt blocks"
 rows_control start_rows mtime 'stat -c %Z "$1" 2>/dev/null || stat -f %c "$1" 2>/dev/null' \
   'stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null' \
-  "a mode the reviewer changed blocks though the file's mtime is old" \
-  "a mode the reviewer changed blocks though the file's mtime is old, naming the reviewer's path" \
   "the reviewer moving the author's file blocks though its mtime is old" \
   "the reviewer moving the author's file blocks though its mtime is old, naming the reviewer's path"
+
+echo "reviewer-stop-check: tracked edits need the reviewer's own successful call"
+actor_rows() { # TAG
+  local tag="$1" label kind want repo t path state event move n=0 artifact before=$((PASS + FAIL))
+  while IFS='|' read -r label kind want; do
+    n=$((n + 1))
+    repo="$(new_repo "actor-$tag$n")"
+    t="$(transcript_for "$repo")"
+    artifact="$repo/tmp/review-reviewer-test-20260903-101010.json"
+    path="$repo/src/lib.rs"
+    # The launch precedes both the reviewer's calls and the other agent's
+    # edits. No clock delay is needed: any later ctime would be blamed by the
+    # old rule, whereas this rule uses the calling agent's tool results.
+    jq -nc --arg cwd "$repo" '{type:"session_meta",timestamp:"2000-01-01T00:00:00Z",payload:{cwd:$cwd}}' >"$t.launch"
+    cat -- "$t" >>"$t.launch"
+    t="$t.launch"
+    case "$kind" in
+      read) edit_in "$t" "$path" Read ;;
+      other) edit_in "$t" "$repo/src/other.rs" ;;
+      failed) edit_in "$t" "$path" Edit true ;;
+      pending)
+        # A result for another call cannot complete this mutation call.
+        edit_in "$t" "$path" Edit false another-call
+        ;;
+      edit | staged | deleted) edit_in "$t" "$path" ;;
+      write) edit_in "$t" "$path" Write ;;
+      multi) edit_in "$t" "$path" MultiEdit ;;
+      notebook)
+        path="$repo/src/notebook.ipynb"
+        printf '{}\n' >"$path"
+        fgit -C "$repo" add src/notebook.ipynb
+        fgit -C "$repo" commit -q -m notebook
+        jq -nc --arg path "$path" '{type:"assistant",message:{content:[{type:"tool_use",id:"edit-1",name:"NotebookEdit",input:{notebook_path:$path}}]}}' >>"$t"
+        jq -nc '{type:"user",message:{content:[{type:"tool_result",tool_use_id:"edit-1",is_error:false,content:"result"}]}}' >>"$t"
+        ;;
+      artifact | unignored-report)
+        edit_in "$t" "$artifact" Write
+        if [ "$kind" = unignored-report ]; then printf '# no ignored paths\n' >"$repo/.gitignore"; fi
+        ;;
+      quoted)
+        path="$repo/src/a\"b.rs"
+        printf 'before\n' >"$path"
+        fgit -C "$repo" add -- "$path"
+        fgit -C "$repo" commit -q -m quoted
+        edit_in "$t" "$path"
+        ;;
+      codex | codex-failed | codex-pending | codex-move)
+        state=completed event=item_completed move=""
+        [ "$kind" != codex-failed ] || state=failed
+        if [ "$kind" = codex-pending ]; then event=item_started; state=""; fi
+        [ "$kind" != codex-move ] || move="$repo/src/moved.rs"
+        jq -nc --arg path "$path" --arg state "$state" --arg event "$event" --arg move "$move" \
+          '{type:"event_msg",payload:{type:$event,item:{type:"FileChange",id:"patch-1",status:(if $state == "" then null else $state end),
+            changes:{($path):{type:"update",unified_diff:"",move_path:(if $move == "" then null else $move end)}}}}}' >>"$t"
+        if [ -n "$move" ]; then mv -- "$path" "$move"; path="$move"; fi
+        ;;
+      *) echo "actor rows: unknown kind=$kind" >&2; exit 2 ;;
+    esac
+    if [ "$kind" = deleted ]; then rm -- "$path"; else printf 'changed\n' >>"$path"; fi
+    if [ "$kind" = staged ]; then fgit -C "$repo" add src/lib.rs; fi
+    if [ "$kind" = codex-move ]; then fgit -C "$repo" add -A; fi
+    run_hook "$t" reviewer-test "$tag$n"
+    assert_eq "rc=$rc first=$(first_line)" "${want//@REPO@/$repo}" "$label"
+    assert_eq "$(cat -- "$artifact")" '{}' "$label keeps the required report"
+  done <<'ROWS'
+a concurrent tracked edit passes for a read-only reviewer|read|rc=0 first=-
+a concurrent tracked edit passes when the reviewer edited a different path|other|rc=0 first=-
+a failed edit cannot attribute another agent's tracked edit|failed|rc=0 first=-
+an unmatched tool result cannot attribute another agent's tracked edit|pending|rc=0 first=-
+a successful reviewer Edit blocks its tracked path|edit|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a successful reviewer Write blocks its tracked path|write|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a successful reviewer MultiEdit blocks its tracked path|multi|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a successful reviewer NotebookEdit blocks its tracked path|notebook|rc=2 first=reviewer-stop-check: worktree=@REPO@
+an attributed staged edit blocks|staged|rc=2 first=reviewer-stop-check: worktree=@REPO@
+an attributed deletion blocks|deleted|rc=2 first=reviewer-stop-check: worktree=@REPO@
+an attributed quoted path blocks|quoted|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a completed Codex file change blocks|codex|rc=2 first=reviewer-stop-check: worktree=@REPO@
+a failed Codex file change cannot attribute another agent's edit|codex-failed|rc=0 first=-
+a pending Codex file change cannot attribute another agent's edit|codex-pending|rc=0 first=-
+a completed Codex move blocks|codex-move|rc=2 first=reviewer-stop-check: worktree=@REPO@
+writing the required report cannot attribute another agent's edit|artifact|rc=0 first=-
+the required report passes even when Git does not ignore it|unignored-report|rc=0 first=-
+ROWS
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "actor rows: no row was asserted" >&2; exit 2; }
+}
+actor_rows actor
+rows_control actor_rows every-tracked-path \
+  'jq -e --arg path "$p" '\''index($path) != null'\'' <<<"$EDIT_PATHS" >/dev/null' 'true' \
+  "a concurrent tracked edit passes for a read-only reviewer" \
+  "a concurrent tracked edit passes when the reviewer edited a different path" \
+  "a failed edit cannot attribute another agent's tracked edit" \
+  "an unmatched tool result cannot attribute another agent's tracked edit" \
+  "a failed Codex file change cannot attribute another agent's edit" \
+  "a pending Codex file change cannot attribute another agent's edit" \
+  "writing the required report cannot attribute another agent's edit" \
+  "the required report passes even when Git does not ignore it"
+rows_control actor_rows report-counts-as-probe \
+  '[ "$p" != "$ARTIFACT" ] || return 1' ':' \
+  "the required report passes even when Git does not ignore it"
+rows_control actor_rows failed-edit-counts \
+  '.type == "tool_result" and .is_error != true' '.type == "tool_result"' \
+  "a failed edit cannot attribute another agent's tracked edit"
+rows_control actor_rows unmatched-call-counts \
+  'select(.id as $id | $claude_ok | index($id))' 'select(true)' \
+  "a failed edit cannot attribute another agent's tracked edit" \
+  "an unmatched tool result cannot attribute another agent's tracked edit"
+rows_control actor_rows read-counts-as-edit \
+  'select(.name == "Write" or .name == "Edit" or .name == "MultiEdit" or .name == "NotebookEdit")' 'select(true)' \
+  "a concurrent tracked edit passes for a read-only reviewer"
+rows_control actor_rows own-edit-ignored \
+  'jq -e --arg path "$p" '\''index($path) != null'\'' <<<"$EDIT_PATHS" >/dev/null' 'false' \
+  "a successful reviewer Edit blocks its tracked path" \
+  "a successful reviewer Write blocks its tracked path" \
+  "a successful reviewer MultiEdit blocks its tracked path" \
+  "a successful reviewer NotebookEdit blocks its tracked path" \
+  "an attributed staged edit blocks" \
+  "an attributed deletion blocks" \
+  "an attributed quoted path blocks" \
+  "a completed Codex file change blocks" \
+  "a completed Codex move blocks"
+rows_control actor_rows failed-codex-counts \
+  '.type == "FileChange" and .status == "completed"' '.type == "FileChange"' \
+  "a failed Codex file change cannot attribute another agent's edit"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not
