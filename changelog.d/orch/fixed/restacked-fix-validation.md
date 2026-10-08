@@ -1,0 +1,1 @@
+- Accept a fix round's validation record when its run commit contains the restack-mapped round base.

@@ -510,7 +510,7 @@ table \
   "control: without the binding the implement round's full run is recorded for the fix|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=0 .validate_mode=full"
 WRITE="$WRITE_SHIPPED"
 
-echo "=== guarded restack binds the delegated base to the exact run head ==="
+echo "=== guarded restack binds the delegated base to the run history ==="
 # KEN-2156: merge-pr-restack validates from origin/main, which is still an
 # ancestor. dev-validate-run therefore records no orphan for the round base.
 # worktree's append_rebase_hop owns these map rows; worktree-push consumes
@@ -533,7 +533,7 @@ for row in \
   "no map cannot bind the rewritten head|missing|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
   "a map for another base cannot bind this round|other-base|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
   "a map to another head cannot bind this run|other-head|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
-  "a descendant of the mapped head is not the mapped head|matching|$RESTACK_CHILD_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a descendant of the mapped base binds the round|matching|$RESTACK_CHILD_RUN|rc=0 .validate_mode=range" \
   "a dropped round base cannot bind a run|dropped|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
   "a pending rewrite is not a completed guarded restack|pending|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
   "ordered hops move the delegated base to the final head|two-hops|$RESTACK_NEXT_RUN|rc=0 .validate_mode=range" \
@@ -572,12 +572,12 @@ for control in refuse mismatch; do
   CONTROL_WRITE="$(mutant_scripts "restack-$control-mutant" dev-return-write)/dev-return-write" || exit 1
   case "$control" in
     refuse)
-      mutate_file "$CONTROL_WRITE" '        [[ "$mapped_base" == "$run_head" ]] \' '        [[ "$mapped_base" == "$run_head" ]] && false \'
+      mutate_file "$CONTROL_WRITE" '        [[ "$mapped_base" =~ ^[0-9a-f]+$ ]] \' '        [[ "$mapped_base" =~ ^[0-9a-f]+$ ]] && false \'
       printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED" > "$RESTACK_MAP"
       expect="rc=2 written=no stderr~dev-return-write:+run-off-round=true"
       ;;
     mismatch)
-      mutate_file "$CONTROL_WRITE" '        [[ "$mapped_base" == "$run_head" ]] \' '        [[ "$mapped_base" == "$run_head" || -n "$mapped_base" ]] \'
+      mutate_file "$CONTROL_WRITE" 'git -C "$worktree" merge-base --is-ancestor "$mapped_base" "$run_head" 2>/dev/null || ancestry=$?' 'true'
       printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED_NEXT" > "$RESTACK_MAP"
       expect="rc=0 .validate_mode=range"
       ;;
@@ -681,10 +681,19 @@ table "${FOREGROUND_ROWS[@]}"
 FG_BOUND="$(foreground_record fix-bound "head=$ROUND_BASE" "started-at=$(utc_at "$ROUND_DELEGATED")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
 FG_EARLY="$(foreground_record fix-early "head=$ROUND_BASE" "started-at=$(utc_at "$(( ROUND_DELEGATED - 1 ))")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
 FG_OFF="$(foreground_record fix-off "head=$IMPL_BASE" "started-at=$(utc_at "$ROUND_DELEGATED")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
+FG_RESTACK="$(foreground_record fix-restack "head=$REBASED_CHILD" "started-at=$(utc_at "$ROUND_DELEGATED")" "ended-at=$(utc_at "$(( ROUND_DELEGATED + 60 ))")")"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED" > "$RESTACK_MAP"
 table \
+  "a fix record at a descendant of the mapped base is accepted|--worktree $BW $RESTACK_ARGS --validate-record $FG_RESTACK|rc=0 .validate_mode=full .validate_time.seconds=60" \
   "a fix record started at the round base once the round was delegated is accepted|--worktree $BW $BIND_ARGS --validate-record $FG_BOUND|rc=0 .validate_mode=full .validate_time.seconds=60" \
   "a fix record started before the round was delegated is refused|--worktree $BW $BIND_ARGS --validate-record $FG_EARLY|rc=2 written=no stderr~dev-return-write:+run-before-round+validate-record=$FG_EARLY+start=$(( ROUND_DELEGATED - 1 ))+delegated-at=$ROUND_DELEGATED=true" \
   "a fix record whose head lacks the round base is refused|--worktree $BW $BIND_ARGS --validate-record $FG_OFF|rc=2 written=no stderr~dev-return-write:+run-off-round+validate-record=$FG_OFF+head=$IMPL_BASE+base-sha=$ROUND_BASE=true"
+RECORD_RESTACK_WRITE="$(mutant_scripts record-restack-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$RECORD_RESTACK_WRITE" 'git -C "$worktree" merge-base --is-ancestor "$mapped_base" "$run_head" 2>/dev/null || ancestry=$?' '[[ "$mapped_base" == "$run_head" ]] || ancestry=$?'
+WRITE="$RECORD_RESTACK_WRITE"
+table "control: exact equality refuses the restacked fix record|--worktree $BW $RESTACK_ARGS --validate-record $FG_RESTACK|rc=2 written=no stderr~dev-return-write:+run-off-round=true"
+WRITE="$WRITE_SHIPPED"
+rm -f -- "$RESTACK_MAP"
 rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
 WRITE="$BIND_WRITE"
 table "control: without the binding a record from before the round is recorded for the fix|--worktree $BW $BIND_ARGS --validate-record $FG_EARLY|rc=0 .validate_mode=full"

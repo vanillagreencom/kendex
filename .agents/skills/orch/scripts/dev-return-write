@@ -653,7 +653,7 @@ if [[ "$kind" == "fix" && -n "$run_ref" ]]; then
         mapped_base=""
         if [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
           # The shared owner projects the round base without consuming the
-          # file. Only a complete map can bind the run's exact HEAD below.
+          # file. Only a complete map can bind a run after the restack.
           if rebase_map_load "$rebase_map" && rebase_map_project "$round_base"; then
             mapped_base="$REBASE_MAP_PROJECTED"
           else
@@ -664,8 +664,15 @@ if [[ "$kind" == "fix" && -n "$run_ref" ]]; then
             esac
           fi
         fi
-        [[ "$mapped_base" == "$run_head" ]] \
+        [[ "$mapped_base" =~ ^[0-9a-f]+$ ]] \
           || die run-off-round "$run_ref" "head=$run_head" "base-sha=$round_base"
+        ancestry=0
+        git -C "$worktree" merge-base --is-ancestor "$mapped_base" "$run_head" 2>/dev/null || ancestry=$?
+        case "$ancestry" in
+          0) ;;
+          1) die run-off-round "$run_ref" "head=$run_head" "base-sha=$round_base" ;;
+          *) die ancestry-unreadable "$run_ref" "head=$run_head" "base-sha=$mapped_base" ;;
+        esac
       fi
       ;;
     *) die ancestry-unreadable "$run_ref" "head=$run_head" "base-sha=$round_base" ;;
