@@ -368,7 +368,8 @@ _md_offenders() {
 }
 
 # _md_fenced_hits RE FILE... — the same, over fenced command lines. RE is
-# matched against the command text alone; the line number is reported.
+# matched against command text with arithmetic whitespace masked, so an
+# expansion stays one value. Diagnostics retain the original command text.
 _md_fenced_hits() {
   local re="$1" f out rc
   shift
@@ -379,7 +380,20 @@ _md_fenced_hits() {
     fi
     out="$(_md_fenced "$f" | md_re="$re" awk -F'\t' -v p="${f#$REPO_ROOT/}" '
       BEGIN { re = ENVIRON["md_re"] }
-      { t = $0; sub(/^[0-9]+\t[0-9]+\t/, "", t); if (t ~ re) printf "%s:%s: %s\n", p, $2, t }
+      {
+        t = $0; sub(/^[0-9]+\t[0-9]+\t/, "", t)
+        text = ""; depth = 0; quote = ""
+        for (i = 1; i <= length(t); i++) {
+          c = substr(t, i, 1)
+          if (c == "\\" && quote != sprintf("%c", 39)) { text = text c substr(t, ++i, 1); continue }
+          if (quote != "") { text = text c; if (c == quote) quote = ""; continue }
+          if (!depth && (c == "\"" || c == sprintf("%c", 39))) { quote = c; text = text c; continue }
+          if (!depth && substr(t, i, 3) == "$((") { text = text "$(("; depth = 2; i += 2; continue }
+          if (depth) { if (c == "(") depth++; else if (c == ")") depth--; if (c ~ /[[:space:]]/) c = "_" }
+          text = text c
+        }
+        if (text ~ re) printf "%s:%s: %s\n", p, $2, t
+      }
     ')" && rc=0 || rc=$?
     if [ "$rc" -ne 0 ]; then
       printf '%s: scan failed with exit %s\n' "${f#$REPO_ROOT/}" "$rc"

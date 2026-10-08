@@ -31,5 +31,11 @@ permits_fenced "a bare assignment is a value, not a prefix" "$ENV_PREFIX" \
   'LC_ALL=C tools/test-ci-changes' 'LC_ALL=C' "$SKILL_DIR/SKILL.md"
 permits_fenced "an assignment whose quoted value holds a space is not a prefix" "$ENV_PREFIX" \
   'LC_ALL=C tools/test-ci-changes' 'KEYWORDS="worktree lease"' "$SKILL_DIR/SKILL.md"
+permits_fenced "an arithmetic assignment is a value, not a prefix" "$ENV_PREFIX" \
+  'remaining=$((remaining - 1)) tools/test-ci-changes' 'remaining=$((remaining - 1))' "$SKILL_DIR/SKILL.md"
+permits_fenced "a nested arithmetic assignment is a value, not a prefix" "$ENV_PREFIX" \
+  'remaining=$((remaining - (1 + 2))) tools/test-ci-changes' 'remaining=$((remaining - (1 + 2)))' "$SKILL_DIR/SKILL.md"
+permits_fenced "quoted arithmetic text does not hide a command prefix" "$ENV_PREFIX" \
+  "KEYWORDS='\$((literal' tools/test-ci-changes" 'remaining=$((remaining - 1))' "$SKILL_DIR/SKILL.md"
 
 md_report
