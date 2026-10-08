@@ -351,16 +351,6 @@ harnesses = [
 ]
 enabled = true
 
-[skills.kendex-issues]
-source = "in-place"
-harnesses = [
-    "claude",
-    "codex",
-    "pi",
-    "copilot",
-]
-enabled = true
-
 [skills.linear]
 source = "."
 harnesses = [
