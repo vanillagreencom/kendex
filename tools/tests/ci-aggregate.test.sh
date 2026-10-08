@@ -49,6 +49,7 @@
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
+# Inputs: .github/workflows/skill-tests.yml tools/ci-aggregate tools/ci-job-set tools/lib/* tools/rust-reads skills/* .agents/skills/* crates/* Cargo.toml Cargo.lock clippy.toml .cargo/*
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,

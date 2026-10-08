@@ -265,12 +265,9 @@ BOT_REMOTE_NAME = ""
 # Where the decider skill keeps architecture decision records.
 DECISIONS_DIR = "docs/decisions"
 
-# Full validation runs at development completion. Submit reuses that result
-# for the same commit; CI runs the suites tools/ci-job-set selects
-# independently. dev-validate-run
-# hands over the change class, and tools/guard --full runs the lanes
-# tools/ci-job-set selects for it.
-DEV_VALIDATE_CMD = "tools/guard --full"
+# Local rounds validate the branch range. Pull-request CI and the merge
+# queue retain the full validation record.
+DEV_VALIDATE_CMD = "base=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$base) && tools/guard --range $base"
 
 # A full run with CARGO_INCREMENTAL=0 writes one artifact set. Measured from a
 # clean target/ at rustc 1.96.1, its test, clippy and doc invocations wrote
@@ -291,13 +288,13 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # the working-tree bot-instructions check, the decision-ID check, the
 # free-space floor above and the class lane selection.
 # A restack also runs it, as skills/orch/workflows/merge-pr-restack.md sets out.
-# Submit reuses full validation or its CI receipt. CI runs the selected
+# Submit requests CI validation. CI runs the selected
 # lanes and the decision-ID check on both pull requests and merge groups.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
 # Preview the same suite selection before launching validation. An all-suite
 # pre-open run uses this command's scoped route; PR CI holds the full record.
-DEV_VALIDATE_SELECTION_CMD = "tools/guard --selection"
+DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; then branch=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$branch) || exit; fi; tools/guard --selection --range $base"
 
 # The required CI context runs the tools/guard lanes through tools/ci-job-set,
 # so a review-comment fix round on an open pull request leaves its validation

@@ -1331,12 +1331,13 @@ skill_files() { # DIR
 # SCAN_PATH, SCAN_ROLE, SCAN_CODE, its lines that are no `#` comment,
 # SCAN_READ_CODE, those lines filtered to document reads for scripts/libs,
 # SCAN_NAMES, each `/<name>` that code spells, and SCAN_SOURCED, each
-# `/<name>` its `source` and `.` lines spell, one per line between newlines.
+# `/<name>` its `source` and `.` lines spell, one per line between newlines,
+# and SCAN_INPUTS, the repository path patterns in its input notes.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
 # `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f code read_code names lines sourced
+  local role f code read_code names lines sourced inputs
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
@@ -1344,6 +1345,7 @@ scan_load() { # DIR
   SCAN_READ_CODE=()
   SCAN_NAMES=()
   SCAN_SOURCED=()
+  SCAN_INPUTS=()
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
     code=$(grep -v '^[[:space:]]*#' -- "$f") || [ $? -eq 1 ] || return 2
@@ -1386,12 +1388,14 @@ scan_load() { # DIR
     names=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$code") || [ $? -eq 1 ] || return 2
     lines=$(grep -E '(^|[;&|({[:space:]])(source|\.)[[:space:]]' <<<"$code") || [ $? -eq 1 ] || return 2
     sourced=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$lines") || [ $? -eq 1 ] || return 2
+    inputs=$(sed -n 's/^# Inputs: //p' "$f" | tr ' ' '\n') || return 2
     SCAN_PATH+=("$f")
     SCAN_ROLE+=("$role")
     SCAN_CODE+=("$code")
     SCAN_READ_CODE+=("$read_code")
     SCAN_NAMES+=($'\n'"$names"$'\n')
     SCAN_SOURCED+=($'\n'"$sourced"$'\n')
+    SCAN_INPUTS+=("$inputs")
   done <<<"$(skill_files "$1")"
   SCAN_DIR=$1
 }
@@ -1470,6 +1474,9 @@ reach_join() { # ROLE PATH
 #     A module no suite names runs nothing.
 #   - A path of no role, a changed test module, and a path whose
 #     reach holds no suite map to no suite.
+#   - tools/ also scans repository inputs outside its tree. Whole paths in
+#     code and `# Inputs:` path patterns seed the same reader reach. Input
+#     notes name indirect reads that the text scan cannot resolve.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
 # only through another script that runs it. CI's full run owns completeness.
@@ -1479,19 +1486,39 @@ reach_join() { # ROLE PATH
 # suite, status 2 a file the scan could not read, and status 3 a role
 # reach_join does not know, a broken guard.
 mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" role="" i n hit names readers f t name base out="" nl=$'\n'
+  local dir="$1" rel="$2" role="" i n hit names readers f t name base input input_path noted="" out="" nl=$'\n'
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
-  role=$(path_role "$dir" "$rel") || return 1
+  case "$rel" in
+    ../*) role=doc ;;
+    *) role=$(path_role "$dir" "$rel") || return 1 ;;
+  esac
   case "$role" in test-module) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
+    input_path="$dir/$rel"
+    [[ $rel != ../* ]] || input_path=${rel#../}
+    while IFS= read -r input; do
+      [ -n "$input" ] || continue
+      case "$input_path" in $input)
+        reached[i]=1
+        noted="$noted$i"$'\n'
+        reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
+        ;;
+      esac
+    done <<<"${SCAN_INPUTS[i]}"
   done
   if [ "$role" = doc ]; then
-    readers=$(doc_readers "$rel") || return 2
+    if [[ $rel == ../* ]]; then
+      readers=$(doc_readers "${rel#../}") || return 2
+    else
+      readers=$(doc_readers "$rel") || return 2
+    fi
+    readers="$noted$readers"
     [ -n "$readers" ] || return 0
     while IFS= read -r i; do
+      [ -n "$i" ] || continue
       reached[i]=1
       reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
     done <<<"$readers"
@@ -1604,10 +1631,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         tree="pi-extensions/${x%%/*}"
         rel="${x#*/}"
         ;;
-      *) continue ;;
+      *) tree=tools; rel="../$f" ;;
     esac
     tree_paths="$tree_paths$tree	$rel	$f
 "
+    if [ "$tree" != tools ]; then
+      tree_paths="${tree_paths}tools	../$f	$f
+"
+    fi
   done <<<"$touched"
   for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
     case "$d" in
@@ -1628,13 +1659,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       *)
         [ -d "$d/tests" ] || continue
         run=all
-        case "$d" in skills/* | hooks) run="" ;; esac
+        case "$d" in skills/* | hooks | tools) run="" ;; esac
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             if [ "$scoped_only" -eq 1 ]; then
               role=$(path_role "$d" "$rel") || continue
+              [[ $rel != ../* ]] || role=script
               case "$role" in script | lib | helper | module | suite | test-module) ;; *) continue ;; esac
             fi
             map_status=0

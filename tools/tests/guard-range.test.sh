@@ -753,7 +753,7 @@ MAP_CONTROLS=(
   "control: with each path's suites overwriting the last only the last path's run~append~skills/mapped/scripts/tool skills/mapped/tests/other.sh~s/^            run=\"\$run\$sel$/            run=\"\$sel/~other"
   "control: with the no-runner loop reading the whole set every suite runs~append~skills/plain/scripts/alpha.sh~s/^        done <<<\"\$run\"$/        done <<<\"\$(skill_suites \"\$d\")\"/~$PLAIN_ALL"
   "control: without the .test strip the script's suite goes unmatched and the whole set runs~append~skills/plain/scripts/alpha.sh~/base=\"\${base%.test}\"/d~$PLAIN_ALL"
-  "control: with the mapping taking skills alone a changed hook runs the whole hooks set~append~hooks/alpha.sh~s/ in skills\/\* | hooks) run=\"\" ;;/ in skills\/*) run=\"\" ;;/~$HOOKS_ALL"
+  "control: with the mapping taking skills alone a changed hook runs the whole hooks set~append~hooks/alpha.sh~s/ in skills\/\* | hooks | tools) run=\"\" ;;/ in skills\/* | tools) run=\"\" ;;/~$HOOKS_ALL"
   "control: with a render's path kept whole a changed hook render runs the whole hooks set~append~.codex/hooks/demo.sh~s/^        rel=\"\${f#\*hooks\/}\"$/        rel=\"\$f\"/~$HOOKS_ALL"
   "control: without the hook arm a changed hook runs the whole hooks set~append~hooks/alpha.sh~/^    hooks:\*.sh) echo script ;;$/d~$HOOKS_ALL"
 )
