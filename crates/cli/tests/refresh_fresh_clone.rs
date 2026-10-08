@@ -756,6 +756,121 @@ fn declining_user_pi_keeps_the_completed_project_and_user_files() {
     }
 }
 
+/// A project decline leaves its install unchanged and still reaches user work.
+/// Catalog declarations produce the set change; the Pi source edit adds the
+/// second consent path. Skipping later scopes must fail the user assertions.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn declining_project_changes_still_accepts_user_pi() {
+    use kendex_core::{drift::snapshot, env::Env, lock, model::Scope};
+    for pending_project_pi in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = committed_consumer(&home, NO_DEPENDENCIES);
+        let env = Env::host_rooted(&home);
+        let project_scope = Scope::Project {
+            root: project.clone(),
+        };
+        let project_manifest = project.join("kendex.toml");
+        let declared = fs::read_to_string(&project_manifest).unwrap();
+        write(
+            &project_manifest,
+            &(declared + "\n[skills.tidy]\nsource = 'cat'\n"),
+        );
+        write(
+            &project.join("catalog/skills/tidy/SKILL.md"),
+            "---\nname: tidy\ndescription: tidy the project\n---\nKeep the tree clean.\n",
+        );
+        if pending_project_pi {
+            write(
+                &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+                "export const version = 2;\n",
+            );
+        }
+        let project_watched = [
+            project_manifest,
+            lock::lock_path(&env, &project_scope),
+            snapshot::snapshot_path(&env, &project_scope),
+            project.join(".kendex-generated.json"),
+            project.join(".agents/skills/deploy/SKILL.md"),
+            project.join(".agents/skills/tidy/SKILL.md"),
+            project.join(".claude/skills/tidy/SKILL.md"),
+            project.join(".pi/settings.json"),
+            project.join(".pi/packages/pi-widgets/index.js"),
+        ];
+        let project_before: Vec<_> = project_watched.iter().map(|p| fs::read(p).ok()).collect();
+        let status_before = git(&home, &project, &["status", "--porcelain"]);
+        write(
+            &kendex_core::manifest::manifest_path(&env, &Scope::Global),
+            "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-user]\nsource = 'cat'\n",
+        );
+        let user_catalog = home.join("catalog/pi-extensions/pi-user");
+        write(
+            &user_catalog.join("package.json"),
+            &NO_DEPENDENCIES.replace("pi-widgets", "pi-user"),
+        );
+        let user_bytes = "export const version = 1;\n";
+        write(&user_catalog.join("index.js"), user_bytes);
+        let user_snapshot = snapshot::snapshot_path(&env, &Scope::Global);
+        assert!(!user_snapshot.exists());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+        command
+            .args(["refresh", "--leave"])
+            .current_dir(&project)
+            .env_clear()
+            .envs(test_util::fixture_env(&home))
+            .env("KENDEX_BACKGROUND_REFRESH", "off")
+            .env("KENDEX_UI", "plain")
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
+        let output = pty::conversation(
+            command,
+            &[("[y]", "n"), ("[y]", "y"), ("[y]", "y")],
+            pty::Stderr::Terminal,
+        );
+        assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+        assert_eq!(
+            project_watched
+                .iter()
+                .map(|p| fs::read(p).ok())
+                .collect::<Vec<_>>(),
+            project_before
+        );
+        assert_eq!(
+            git(&home, &project, &["status", "--porcelain"]),
+            status_before
+        );
+        assert_user_pi_installed(&env, &home, user_bytes);
+    }
+}
+
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn assert_user_pi_installed(env: &kendex_core::env::Env, home: &Path, expected: &str) {
+    use kendex_core::{
+        drift::snapshot,
+        lock,
+        model::{HarnessId, ItemKind, Scope},
+    };
+    assert_eq!(
+        fs::read(home.join(".pi/agent/packages/pi-user/index.js")).unwrap(),
+        expected.as_bytes()
+    );
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(home.join(".pi/agent/settings.json")).unwrap()).unwrap();
+    assert!(settings["packages"].as_array().unwrap().iter().any(|p| {
+        p.as_str()
+            .is_some_and(|path| path.ends_with("/packages/pi-user"))
+    }));
+    let record = lock::load(&lock::lock_path(env, &Scope::Global)).unwrap();
+    let key = lock::entry_key(ItemKind::PiExtension, "pi-user", HarnessId::Pi);
+    assert!(record.entries.contains_key(&key));
+    assert!(matches!(
+        snapshot::load(env, &Scope::Global),
+        snapshot::SnapshotFile::Current(_)
+    ));
+}
+
 /// The settle is a write into the checkout, and a run with nobody to ask
 /// refuses before its first write, naming the flag that would have
 /// answered: no package copied, no record written, the clone as cloned.

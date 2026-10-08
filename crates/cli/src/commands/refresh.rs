@@ -7,8 +7,8 @@ use super::advisory::Listing;
 use super::attention::{Attention, print_attention};
 use super::commit_offer::after_writing;
 use super::engine_common::{
-    Confirmation, apply_report, confirm_before_writing, print_synced, refresh_failures,
-    require_yes_in_non_interactive,
+    Confirmation, PlanApplication, confirm_before_writing, confirm_plan_and_apply, print_synced,
+    refresh_failures, require_yes_in_non_interactive,
 };
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::update_pi::{Pending, PendingChange};
@@ -460,20 +460,13 @@ fn write_scope(
     report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport) -> CliResult,
 ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
     if pending.is_empty() {
-        let count = match (report.plan.is_empty(), report.set_changes.is_empty()) {
-            (true, _) => apply_report(env, &report).map(|_| None)?,
-            (false, true) => apply_report(env, &report).map(Some)?,
-            (false, false) => {
-                print_changes_needing_consent(scope, &report, pending);
-                if confirm_before_writing(
-                    &format!("write {} changes?", report.plan.ops.len()),
-                    yes,
-                )? == Confirmation::Declined
-                {
-                    return Ok(ScopeWrite::Declined);
-                }
-                Some(apply_report(env, &report)?)
-            }
+        let needs_consent = !report.set_changes.is_empty();
+        if needs_consent && !report.plan.is_empty() {
+            print_changes_needing_consent(scope, &report, pending);
+        }
+        let count = match confirm_plan_and_apply(env, &report, yes || !needs_consent)? {
+            PlanApplication::Applied(applied) => (!report.plan.is_empty()).then_some(applied),
+            PlanApplication::Declined => return Ok(ScopeWrite::Declined),
         };
         return Ok(ScopeWrite::Written(Box::new(Written {
             report,
@@ -532,20 +525,16 @@ fn write_scope(
             ui::stderr(&ui::style().plan_row(op));
         }
     }
-    let applied = if after.plan.is_empty() {
-        apply_report(env, &after)
-    } else {
-        match confirm_before_writing(&format!("write {} changes?", after.plan.ops.len()), yes) {
-            Ok(Confirmation::Accepted) => apply_report(env, &after),
-            Ok(Confirmation::Declined) => {
-                ui::report::notice(&format!(
-                    "{}: remaining changes declined",
-                    consent_scope(scope)
-                ));
-                after_writing(env, scope, &after.generated, &Before::Untaken).map(|()| 0)
-            }
-            Err(error) => Err(error),
+    let applied = match confirm_plan_and_apply(env, &after, yes) {
+        Ok(PlanApplication::Applied(applied)) => Ok(applied),
+        Ok(PlanApplication::Declined) => {
+            ui::report::notice(&format!(
+                "{}: remaining changes declined",
+                consent_scope(scope)
+            ));
+            after_writing(env, scope, &after.generated, &Before::Untaken).map(|()| 0)
         }
+        Err(error) => Err(error),
     };
     Ok(ScopeWrite::Written(Box::new(Written {
         report: after,

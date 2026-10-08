@@ -234,14 +234,35 @@ pub fn confirm_and_apply(
     report: &EngineReport,
     yes: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    match confirm_plan_and_apply(env, report, yes)? {
+        PlanApplication::Applied(applied) => Ok(applied),
+        PlanApplication::Declined => Err("cancelled — these changes were not written".into()),
+    }
+}
+
+pub(super) enum PlanApplication {
+    Applied(usize),
+    Declined,
+}
+
+/// Plan consent shared by verbs that handle a decline as their own outcome.
+pub(super) fn confirm_plan_and_apply(
+    env: &Env,
+    report: &EngineReport,
+    yes: bool,
+) -> Result<PlanApplication, Box<dyn std::error::Error>> {
     // The count is the consequence: an answer given to a bare "apply?" is
     // an answer to the verb's name rather than to what it writes. An empty
     // plan asks nothing and writes nothing, and still reaches the offer.
     if !report.plan.is_empty() {
         let ops = report.plan.ops.len();
-        ask_before_writing(&format!("write {ops} change{}?", plural(ops)), yes)?;
+        if confirm_before_writing(&format!("write {ops} change{}?", plural(ops)), yes)?
+            == Confirmation::Declined
+        {
+            return Ok(PlanApplication::Declined);
+        }
     }
-    apply_report(env, report)
+    apply_report(env, report).map(PlanApplication::Applied)
 }
 
 /// Execute a report's plan — the one way a CLI verb holding an

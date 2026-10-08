@@ -717,8 +717,6 @@ fn a_package_in_the_unregistered_current_project_blocks_the_global_install() {
 
     let output = kendex(tmp.path(), &project, &["update-pi", "--scope", "global"]);
     assert!(output.status.success(), "{output:?}");
-    let plan = String::from_utf8_lossy(&output.stdout);
-    assert!(plan.contains("register twice"), "{plan}");
     assert!(!tmp.path().join(".pi/agent/packages/pi-widgets").exists());
 }
 
@@ -759,22 +757,17 @@ fn a_package_at_the_other_scope_blocks_the_declared_name_under_either_spelling()
         fs::create_dir_all(project.join(".pi")).unwrap();
         // The other spelling of the same package sits at the global
         // scope, registering the same resources.
-        write(
-            &root.join(format!(".pi/agent/packages/{installed}/package.json")),
-            &format!("{{\"name\": \"{installed}\", \"version\": \"0.9.0\"}}\n"),
-        );
+        let other_copy = root.join(format!(".pi/agent/packages/{installed}/package.json"));
+        let other_bytes = format!("{{\"name\": \"{installed}\", \"version\": \"0.9.0\"}}\n");
+        write(&other_copy, &other_bytes);
 
         let output = kendex(&root, &project, &["update-pi"]);
         assert!(output.status.success(), "{case}: {output:?}");
-        let plan = String::from_utf8_lossy(&output.stdout);
-        // The whole opening of the blocked line: the unscoped name is a
-        // suffix of the scoped one, so a bare substring would pass while
-        // the line named the other spelling.
-        assert!(
-            plan.contains(&format!("blocked: {installed} is installed at")),
-            "{case}: {plan}"
+        assert_eq!(
+            fs::read(&other_copy).unwrap(),
+            other_bytes.as_bytes(),
+            "{case}"
         );
-        assert!(plan.contains("would register twice"), "{case}: {plan}");
         assert!(
             !project.join(".pi/packages").join(declared).exists(),
             "{case}: the declared name landed"

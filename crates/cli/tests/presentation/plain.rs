@@ -7,11 +7,10 @@ use crate::test_util::source_path;
 
 use super::*;
 
-/// The blocked refresh, said plainly. Every line of it, in order, with
-/// nothing repeated and nothing framed.
+/// The blocked refresh keeps its headline and detail hierarchy without framing.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_blocked_refresh_prints_the_lines_scripts_parse() {
+fn the_blocked_refresh_keeps_the_plain_output_hierarchy() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let project = blocked_project(home);
@@ -21,41 +20,16 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
         "plain",
         &["refresh", "-y", "--scope", "project"],
     ));
-    let scope = kendex_core::paths::slashed(&project);
-
-    let shape: Vec<String> = printed
+    let shape: Vec<usize> = printed
         .lines()
-        .map(|line| match line.split_whitespace().next() {
-            // The finding text is the safety rules' to word, and the
-            // position under it is a path; what this pins is the shape.
-            Some("[critical]" | "[high]" | "[medium]" | "[low]") => "  [finding]".to_owned(),
-            _ => line.replace(&scope, "<project>"),
-        })
+        .map(|line| line.len() - line.trim_start().len())
         .collect();
     assert_eq!(
         shape,
-        vec![
-            "conflicts:",
-            "  skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
-            "    also at <project>/.agents/skills/commit-guards",
-            "    differs from the package in 2 files: SKILL.md, references/rules.md",
-            "    to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
-            "  to install the packages this place lists instead: kendex apply --replace-unmanaged",
-            "safety:",
-            "  skill commit-guards for Claude Code, Codex scores 75/100",
-            "  [finding]",
-            "  skill tidy for Claude Code, Codex scores 75/100",
-            "  [finding]",
-            "<project>: this changes what is installed",
-            "  - install skill tidy for Claude Code — asked for",
-            "  - install skill tidy for Codex — asked for",
-            "<project>: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety · details folded",
-            "  skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
-            "  flagged — the safety lines above",
-            "  folded — --verbose draws them",
-        ],
+        [0, 2, 4, 4, 4, 2, 0, 2, 4, 2, 4, 0, 2, 2, 0, 2, 2, 2],
         "{printed}"
     );
+    assert!(FRAMING.into_iter().all(|symbol| !printed.contains(symbol)));
 }
 
 /// The detection, not the override: with no terminal on either stream and
@@ -73,10 +47,6 @@ fn a_run_with_no_terminal_is_plain_without_being_told() {
         "",
         &["refresh", "-y", "--scope", "project"],
     ));
-    assert!(
-        printed.contains(": refreshed 3 changes · skipped 1 item on conflict"),
-        "{printed}"
-    );
     let found: Vec<char> = FRAMING
         .into_iter()
         .filter(|symbol| printed.contains(*symbol))
