@@ -182,3 +182,32 @@ fn unset_instructions_leave_every_copy_as_it_was() {
     apply_now(&elsewhere);
     assert_eq!(outputs(&elsewhere), before);
 }
+
+/// A retired agent label in a command's instructions renders under the
+/// agent's current name, as it does in skill and agent instructions, and
+/// the plan names the old one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_legacy_agent_label_renders_under_the_current_name() {
+    let f = fixture(
+        "[command-instructions]\ncode-scrub = \"Hand the risky part to agent:engineer.\"\n",
+    );
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == ItemKind::Agent && warning.name == "engineer"),
+        "{:?}",
+        report.warnings
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    for (harness, text) in outputs(&f) {
+        assert_eq!(
+            text.matches("agent:runtime.").count(),
+            1,
+            "{harness:?}: {text}"
+        );
+        assert!(!text.contains("agent:engineer"), "{harness:?}: {text}");
+    }
+}

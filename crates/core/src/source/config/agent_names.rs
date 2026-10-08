@@ -130,6 +130,12 @@ impl Uses {
                 &format!("kendex.toml: skill-instructions.{skill}"),
             );
         }
+        for (command, instructions) in &mut manifest.command_instructions {
+            *instructions = self.labels(
+                instructions,
+                &format!("kendex.toml: command-instructions.{command}"),
+            );
+        }
         for (section, agents) in [
             (
                 "agent-launch-instructions",
