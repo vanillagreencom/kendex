@@ -105,8 +105,8 @@ macos_record() { # CLASS DOCS PATHS — actual PR coverage fields
 }
 
 # The whole shard roster, in the matrix's order.
-ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear","linear-controls","worktree","rest","slack","node","pi-claude-bridge"]'
-ORCH='"orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest"'
+ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear","linear-controls","worktree","rest","slack","node","pi-claude-bridge"]'
+ORCH='"orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-state","orch-rest"'
 # The shards a merge group runs on macOS, the whole queue_macos_shards list.
 QUEUE_ALL='["orch-terminal","orch-oversee-succeed","guards-tools"]'
 # The runner lists the shell shards expand on, as ci-job-set spells them.
