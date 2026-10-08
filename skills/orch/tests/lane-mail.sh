@@ -13,8 +13,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf -- "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "lane-mail: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # mutant_scripts and mutate_file, the two halves of the controls at the end.
 # shellcheck source=lib/growth-state.sh
 source "$REPO_ROOT/skills/orch/tests/lib/growth-state.sh"
@@ -1312,9 +1314,6 @@ for row in '3|lock-failed' '2|write-failed'; do
   KEY="${row#*|}"
   mutant_lib "returns-$CODE" 'exec 9>>"$1" || return 2' "return $CODE"
   new_lane "decode_$CODE"
-  # --root, as the neighbouring rows pass it: a verb that resolves its own root
-  # answers the physical path, and on a disk whose temporary root is a symlink,
-  # every macOS, that is not the name this file built the lane under.
   LANE_MAIL_BIN="$MUTANT_LIB_BIN" lm notice --item KEN-1 --root "$LANE" --file "$(text n 'decoded')"
   assert_eq "$RC=$ERR" "2=lane-mail: $KEY=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" \
     "the library's $CODE is refused as $KEY"
