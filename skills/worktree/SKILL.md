@@ -35,7 +35,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 | `path` / `exists` | Print / check the worktree path for an issue ID; `path --hosted` prints the hosted lane path |
 | `merged` | Print the commit the issue tree's pull request merged as, asking about the branch that tree has checked out; exit 1 when none did, 2 when the lookup could not answer, a detached tree included (`merged --help`) |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
-| `push` | Push worktree branch with auto-rebase and pinned `--force-with-lease`; on a merge-queue base with no up-to-date rule it pushes a cleanly merging branch unrebased and refuses a conflicting one toward `create --restack`. The `rebase-map:` contract for remapping pre-rebase SHAs is in `push --help` |
+| `push` | Push worktree branch to remote. Publication, rebase, force-with-lease and `rebase-map:` contracts: `push --help` |
 | `fix-links` / `repair-links` | Restore configured symlinks; `repair-links` is the git-hook-driven variant that never destroys untracked data |
 | `codex-setup` / `codex-branch` / `codex-cleanup`, `claude-setup` / `claude-cleanup` | App-created worktree hooks. Installation wiring: [references/hooks.md](references/hooks.md) |
 

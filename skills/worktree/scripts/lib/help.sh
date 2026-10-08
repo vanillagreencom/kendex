@@ -527,11 +527,21 @@ print_push_help() {
   cat <<'EOF'
 Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]
 
-Push worktree branch to remote. Auto-rebases onto origin/<default> first.
+Push worktree branch to remote.
 Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to
 origin.
 
-Merge-queue base: where GitHub's effective rules for the default branch hold
+Remote-work claim: a worktree created with --no-checkout keeps that mode
+until 'create --reuse' or 'create --restack' checks out its files for local
+work. While it remains a claim, push publishes its creation snapshot through
+a plain push. It skips automatic rebase and its force-with-lease, even when
+the default branch advances or requires an up-to-date branch.
+
+Full checkout: push enables automatic rebase onto origin/<default> unless
+--no-rebase is set. An already contained base needs no rebase.
+
+Merge-queue base: for a full checkout with automatic rebase enabled, where
+GitHub's effective rules for the default branch hold
 a merge queue and no required-status-checks rule demanding an up-to-date
 branch, push does not rebase a branch behind that base. A trial merge onto
 origin/<default> decides instead: clean pushes the branch where it stands
@@ -548,8 +558,10 @@ registry. When run from a checkout whose current branch already matches the
 normalized issue branch, it pushes that active checkout instead (app-created
 worktrees).
 
-Force-with-lease authorization: after the auto-rebase, the push uses a scoped
---force-with-lease pinned to the target branch OID known before the rebase.
+Force-with-lease authorization: a full checkout with automatic rebase enabled
+on a non-default branch uses a scoped --force-with-lease pinned to the target
+branch OID read before any rebase. This also applies when the base is already
+contained or the merge-queue policy skips the rebase.
 Every verb that rewrites the branch persists the same narrowly scoped
 authorization in the worktree before it rewrites: this auto-rebase, 'create
 --reuse' and the supported 'create --restack' conflict-recovery flow. It
@@ -563,7 +575,7 @@ hand-run git command. A default branch that advanced since is rebased onto
 again under the same authorization. A different local rewrite, remote
 movement while conflict resolution is pending, or a moved remote at push time
 fails closed.
-Plain pushes are still used with --no-rebase.
+Remote-work claims, --no-rebase and the default branch use plain pushes.
 
 A remote OID the local branch does not contain is
 'worktree-push-remote-uncontained', and the route it names follows what the
