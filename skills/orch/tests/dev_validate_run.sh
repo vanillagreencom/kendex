@@ -90,7 +90,7 @@ run_script() { # SCRIPT ARG...
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_FINDING_PREFIX \
-    -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+    -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -704,11 +704,23 @@ SH
 cat > "$LAYOUT/harness-ci/scripts/harness-only" <<'SH'
 #!/usr/bin/env bash
 prev=""
+base="" head="" repo="" paths=""
 for a in "$@"; do
-  [[ "$prev" != --paths-output ]] || tr , '\n' <<<"${STUB_PATHS:-docs/a.md}" > "$a"
+  case "$prev" in
+    --base) base="$a" ;;
+    --head) head="$a" ;;
+    --repo) repo="$a" ;;
+    --paths-output) paths="$a" ;;
+  esac
   prev="$a"
 done
+if [[ "${STUB_PATHS:-}" == git ]]; then
+  git -C "$repo" diff --name-only "$base" "$head" -- > "$paths" || exit 2
+else
+  tr , '\n' <<<"${STUB_PATHS:-docs/a.md}" > "$paths"
+fi
 case "$STUB_DOCS" in
+  round-unread) [[ "$base" != "${STUB_ROUND_BASE:-}" ]] || exit 2; printf 'docs_only=false\n' ;;
   exit-2) exit 2 ;;
   *) printf 'docs_only=%s\n' "$STUB_DOCS" ;;
 esac
@@ -1118,6 +1130,130 @@ assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: empty-validate-cmd set
   "control: a ci run that resolves the range mode first is refused" "$ERR"
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
+# The repository entry point derives its heavy checks from touched source
+# metadata. The branch already changes a guarded crate before the fix base;
+# a widget-only round must therefore receive the round's paths, not that
+# earlier crate. Both preview and execution use this same entry point.
+CI_EXTENSION_ROWS=(
+  'widget-test fix|widget|CI|normal|false|ci||tests/widget.sh|none|yes'
+  'guarded crate fix|guarded|CI|normal|false|range|selection-local|crates/orders/src/lib.rs|orders:risk|yes'
+  'widget fix before context setting|widget||normal|false|range|setting-empty|crates/positions/src/lib.rs,tests/widget.sh|positions:loom|yes'
+  'failed selector|widget|CI|failed|false|range|selection-unread|tests/widget.sh|none|yes'
+  'unreported selector|widget|CI|unreported|false|range|selection-unread|tests/widget.sh|none|yes'
+  'ambiguous selector|widget|CI|ambiguous|false|range|selection-unread|tests/widget.sh|none|yes'
+  'unread round evidence|guarded|CI|normal|round-unread|range|selection-unread||none|no'
+)
+ci_extension_rows() { # SCRIPT [LABEL]
+  local row label change context selector docs proj round dir paths checks preview n=0
+  local initial_fail="$FAIL"
+  for row in "${CI_EXTENSION_ROWS[@]}"; do
+    IFS='|' read -r label change context selector docs _ _ _ _ _ <<<"$row"
+    [[ -z "${2:-}" || "$label" == "$2" ]] || continue
+    n=$((n + 1))
+    proj="$(ci_proj "proj-ci-extension-$n" "$context")"
+    cat > "$proj/validation" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+checks() {
+  [[ -r "$DEV_VALIDATE_PATHS" ]] || return 1
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    [[ -f "$path" ]] || continue
+    while IFS= read -r heavy; do
+      [[ -z "$heavy" ]] || printf '%s:%s\n' "${path#crates/}" "$heavy"
+    done < <(sed -n 's/^heavy=//p' "$path")
+  done < "$DEV_VALIDATE_PATHS"
+}
+if [[ "$1" == preview ]]; then
+  printf '%s\n' "$DEV_VALIDATE_BASE" > preview-base
+  printf '%s\n' "$DEV_VALIDATE_MODE" > preview-mode
+  cp -- "$DEV_VALIDATE_PATHS" preview-paths
+  case "${STUB_SELECTOR:-normal}" in
+    failed) printf 'selector: unavailable\n' >&2; exit 1 ;;
+    unreported) exit 0 ;;
+    ambiguous) printf 'selection=all\nselection=subset\n'; exit 0 ;;
+  esac
+  selected="$(checks)" || exit 1
+  if [[ -n "$selected" ]]; then printf 'selection=subset\n'; else printf 'selection=all\n'; fi
+else
+  cp -- "$DEV_VALIDATE_PATHS" local-paths
+  checks | sed 's@/src/lib.rs@@' > local-checks
+  printf 'validate: lanes=heavy selection=subset\n'
+fi
+SH
+    chmod +x "$proj/validation"
+    sed -i.bak 's@^DEV_VALIDATE_CMD = .*@DEV_VALIDATE_CMD = "./validation run"@; s@^DEV_VALIDATE_RANGE_CMD = .*@DEV_VALIDATE_RANGE_CMD = "./validation run"@' "$proj/kendex.settings.toml"
+    printf 'DEV_VALIDATE_SELECTION_CMD = "./validation preview"\n' >> "$proj/kendex.settings.toml"
+    printf 'preview-*\nlocal-*\n*.bak\n' >> "$proj/.gitignore"
+    mkdir -p "$proj/crates/positions/src" "$proj/crates/orders/src" "$proj/tests"
+    printf 'heavy=loom\n' > "$proj/crates/positions/src/lib.rs"
+    printf 'heavy=risk\n' > "$proj/crates/orders/src/lib.rs"
+    printf 'widget\n' > "$proj/tests/widget.sh"
+    git -C "$proj" add -A
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m fixture
+    git -C "$proj" update-ref refs/remotes/origin/main HEAD
+    printf 'branch-change\n' >> "$proj/crates/positions/src/lib.rs"
+    git -C "$proj" add -A
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m branch
+    round="$(git -C "$proj" rev-parse HEAD)"
+    case "$change" in
+      widget) printf 'round-change\n' >> "$proj/tests/widget.sh" ;;
+      guarded) printf 'round-change\n' >> "$proj/crates/orders/src/lib.rs" ;;
+    esac
+    ci_world rules
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=small STUB_DOCS="$docs" STUB_MEASURED=true \
+      STUB_PATHS=git STUB_SELECTOR="$selector" STUB_ROUND_BASE="$round" \
+      run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base "$round"
+    dir="$(run_dir_of "$OUT")"
+    paths="$(paste -sd, "$dir/paths")"
+    checks=none
+    [[ ! -s "$proj/local-checks" ]] || checks="$(paste -sd, "$proj/local-checks")"
+    preview=no
+    if [[ -f "$proj/preview-base" && "$(cat "$proj/preview-base")" == "$round" ]]; then preview=yes; fi
+    if [[ "$preview" == yes && -n "$context" ]]; then
+      assert_eq "$(cat "$proj/preview-mode")" ci "$label: the selector reads the requested validation mode" "$ERR"
+    fi
+    assert_eq "$RC" 0 "$label: validation returns its exit status" "$ERR"
+    if [[ "$selector" == failed ]]; then
+      assert_eq "$(cat "$dir/selection.log")" 'selector: unavailable' "$label: selection failure is retained" "$ERR"
+    fi
+    if [[ "$(start_line "$dir" validate-mode)" == range && -f "$proj/local-checks" ]]; then
+      run_script "$1" --record --run-dir "$dir"
+      assert_eq "$(record_field selection "$OUT") $(record_field lanes "$OUT")" 'subset heavy' \
+        "$label: the receipt records the repository's selected local checks" "$ERR"
+    fi
+    printf '%s\t%s|%s|%s|%s|%s\n' "$label" "$(start_line "$dir" validate-mode)" \
+      "$(start_line "$dir" ci-fallback)" "$paths" "$checks" "$preview"
+    rm -rf -- "$proj"
+  done
+  [[ "$FAIL" == "$initial_fail" ]] || return 1
+}
+CI_EXTENSION_GOT="$(ci_extension_rows "$CI_SCRIPT")"
+for row in "${CI_EXTENSION_ROWS[@]}"; do
+  IFS='|' read -r label _ _ _ _ want_mode want_fallback want_paths want_checks want_preview <<<"$row"
+  assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$CI_EXTENSION_GOT")" \
+    "$want_mode|$want_fallback|$want_paths|$want_checks|$want_preview" "$label"
+done
+ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
+  local got
+  cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+  mutate_file "$CI_SCRIPT.mutant" "$1" "$2"
+  got="$(ci_extension_rows "$CI_SCRIPT.mutant" "$3" | awk -F'\t' -v want="$3" '$1 == want { print $2 }')"
+  assert_eq "$got" "$4" "control: $3 rejects the planted defect"
+}
+# shellcheck disable=SC2016 # private production mutations
+{
+ci_extension_control 'if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' 'if true; then' \
+  'guarded crate fix' 'ci||crates/orders/src/lib.rs,crates/positions/src/lib.rs|none|no'
+ci_extension_control $'          class_base="$base_sha"\n          classify "$class_base"' $'          class_base="$base_sha"\n          classify ""' \
+  'widget-test fix' 'range|selection-local|crates/positions/src/lib.rs,tests/widget.sh|positions:loom|yes'
+ci_extension_control '&& preview_selection; then' '&& { preview_selection || selection=selection=all; }; then' \
+  'failed selector' 'ci||tests/widget.sh|none|yes'
+ci_extension_control 'if [[ -z "$class_fallback" ]] && preview_selection; then' 'if preview_selection; then' \
+  'unread round evidence' 'ci|||none|yes'
+}
+rm -f -- "${CI_SCRIPT:?}.mutant"
+
 # --- The real classifier weighs uncommitted render edits -----------------------
 # dev-implement validates before it commits, so the runner hands the
 # classifier a snapshot commit of the worktree as the range's head, and
@@ -1197,7 +1333,8 @@ mutant mutant-record-no-battery 'selection=(all|subset|battery)$/' 'selection=(a
 run_script "$MUTANT" --record --run-dir "$round_dir"
 assert_eq "$RC $(record_field selection "$OUT") $(record_field class-base "$OUT")" "0 unreported $round_base" \
   "control: with battery outside the grammar the whole battery reads as unreported, which submit never reuses" "$ERR"
-mutant mutant-round-base 'class_base="$base_sha"' 'class_base=""'
+mutant mutant-round-base '[[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base="$base_sha"' \
+  '[[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base=""'
 # The mutant's copy sits outside the catalog, so it finds the classifier on PATH.
 RUN_PATH="$REPO_ROOT/skills/harness-ci/scripts:$PATH"
 run_script "$MUTANT" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
@@ -1913,8 +2050,8 @@ for row in "${SELECTION_ROWS[@]}"; do
   fi
   [[ "$want_launch" == absent ]] || continue
   selection_control "launching the original command before preview turns $label red" \
-    $'  scoped=false\n  if [[ "$validate_mode" != ci ]]; then' \
-    $'  scoped=false\n  if [[ "$validate_mode" != ci ]]; then\n    "$BASH" -c "$cmd" >/dev/null' \
+    $'  scoped=false\n  if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then' \
+    $'  scoped=false\n  if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then\n    "$BASH" -c "$cmd" >/dev/null' \
     "$label"
 done
 }

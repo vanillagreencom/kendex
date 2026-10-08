@@ -166,9 +166,11 @@
 #          default.
 #          Anywhere else it runs the command a range request runs, records
 #          the mode that ran, and names why as the ci-fallback= line of start.
-#          It still hands that command the class, docs verdict and paths of
-#          the whole branch, with no class-base= line, where a range request
-#          hands those since its base. The causes:
+#          Without a repository selector it hands that command the class,
+#          docs verdict and paths of the whole branch, with no class-base=
+#          line, where a range request hands those since its base. A selector
+#          that requires local work supplies the round's evidence instead.
+#          The causes:
 #            setting-empty       DEV_VALIDATE_CI_CONTEXT is empty, the default
 #            pr-not-open         no pull request, or its state is CLOSED or
 #                                MERGED, confirmed by pr-view-json
@@ -182,12 +184,21 @@
 #                                classifier did not measure or fell back to,
 #                                since harness-ci may stand CI's checks down
 #                                for it
+#            selection-local     the repository selector requires local work
+#            selection-unread    the selector or the round evidence failed
 #
 # Full and range starts may also resolve to ci before launching their command.
 # DEV_VALIDATE_SELECTION_CMD, optional, previews the command's own selection
 # with one selection=all or selection=subset line. It receives the same class,
-# docs verdict, paths and base as validation. Only all attempts the existing
-# ci route. Unset, failed or unreported selection keeps local validation.
+# docs verdict, paths and base as validation, plus DEV_VALIDATE_MODE, the
+# requested mode. Only all attempts the existing ci route. Unset, failed or
+# unreported selection keeps full and range requests local. For an explicit
+# ci request, an unset selector preserves the existing CI route. A configured
+# selector must report all before CI can skip local work; subset runs the
+# existing range or full command. Its evidence is the current round from
+# --base, including uncommitted edits, rather than the whole pull request.
+# The whole branch still determines whether CI covers the change class.
+# Failed evidence keeps local validation with a conservative class and paths.
 # With no pull request or an older CLOSED/MERGED pull request confirmed, an
 # eligible all selection runs that selector
 # with DEV_VALIDATE_SCOPED=true: the selector executes its changed-file suites
@@ -494,9 +505,12 @@ class_scratch=""
 snapshot_tree=""
 classify() { # [ROUND_BASE] — a commit; the origin base branch where empty
   local base="${1:-}" index objects
-  class_scratch="$(mktemp -d)" || die scratch-unavailable
-  trap 'rm -rf -- "$class_scratch"' EXIT
-  : > "$class_scratch/class.log"
+  if [[ -z "$class_scratch" ]]; then
+    class_scratch="$(mktemp -d)" || die scratch-unavailable
+    trap 'rm -rf -- "$class_scratch"' EXIT
+    : > "$class_scratch/class.log"
+  fi
+  class=standard docs_only=false class_fallback="" snapshot_tree=""
   : > "$class_scratch/paths"
   if [[ -z "$base" ]]; then
     base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
@@ -505,7 +519,7 @@ classify() { # [ROUND_BASE] — a commit; the origin base branch where empty
   fi
   index="$(git -C "$worktree" rev-parse --path-format=absolute --git-path index 2>/dev/null)" \
     && objects="$(git -C "$worktree" rev-parse --path-format=absolute --git-path objects 2>/dev/null)" \
-    && mkdir -- "$class_scratch/objects" \
+    && mkdir -p -- "$class_scratch/objects" \
     || { class_fallback=worktree-unrecorded; return 0; }
   [[ ! -f "$index" ]] || cp -p -- "$index" "$class_scratch/index" \
     || { class_fallback=worktree-unrecorded; return 0; }
@@ -637,6 +651,17 @@ resolve_range_mode() {
   fi
 }
 
+# The repository entry point owns path selection for both local and CI
+# requests. A failed or ambiguous preview grants no permission to skip it.
+preview_selection() {
+  selection=""
+  selection="$(DEV_VALIDATE_CLASS="$class" DEV_VALIDATE_DOCS_ONLY="$docs_only" \
+      DEV_VALIDATE_PATHS="$class_scratch/paths" DEV_VALIDATE_BASE="$base_sha" \
+      DEV_VALIDATE_MODE="$requested_mode" DEV_VALIDATE_SCOPED=false \
+      "$BASH" -c "$selection_cmd" 2>"$class_scratch/selection.log")" \
+    && selection="$(sed -n '/^selection=/p' <<<"$selection")"
+}
+
 # The contexts the base branch requires, one per line: those its rulesets'
 # required_status_checks rules name, and those its classic branch protection
 # names. GitHub omits the branch payload's protection key from a caller
@@ -726,6 +751,10 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   base_sha=""
   orphaned_sha=""
   cmd=""
+  requested_mode="$validate_mode"
+  selection_previewed=false
+  selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
+    || die unreadable-setting setting=DEV_VALIDATE_SELECTION_CMD
   if [[ "$validate_mode" != full ]]; then
     base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
     # A base a rebase left off the branch is recorded whichever mode runs: a
@@ -751,7 +780,26 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   if [[ "$validate_mode" == ci ]]; then
     validate_mode=range
     ci_fallback=class-uncovered
-    if ci_class_covered && ci_runs_validation; then validate_mode=ci; fi
+    if ci_class_covered && ci_runs_validation; then
+      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then
+        validate_mode=ci
+      else
+        selection_previewed=true
+        ci_fallback=selection-unread
+        # CI eligibility uses the branch. The repository's local bound uses
+        # the fix round, which --base names, before CI can bypass its checks.
+        if [[ -z "$orphaned_sha" ]]; then
+          class_base="$base_sha"
+          classify "$class_base"
+          if [[ -z "$class_fallback" ]] && preview_selection; then
+            case "$selection" in
+              selection=all) validate_mode=ci; class_base="" ;;
+              selection=subset) ci_fallback=selection-local ;;
+            esac
+          fi
+        fi
+      fi
+    fi
   fi
   if [[ "$validate_mode" != full ]]; then
     [[ "$validate_mode" == ci ]] || resolve_range_mode
@@ -772,15 +820,9 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
   fi
   scoped=false
-  if [[ "$validate_mode" != ci ]]; then
-    selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
-      || die unreadable-setting setting=DEV_VALIDATE_SELECTION_CMD
+  if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then
     if [[ -n "${selection_cmd//[[:space:]]/}" ]]; then
-      selection=""
-      if selection="$(DEV_VALIDATE_CLASS="$class" DEV_VALIDATE_DOCS_ONLY="$docs_only" \
-          DEV_VALIDATE_PATHS="$class_scratch/paths" DEV_VALIDATE_BASE="$base_sha" DEV_VALIDATE_SCOPED=false \
-          "$BASH" -c "$selection_cmd" 2>"$class_scratch/selection.log")" \
-        && selection="$(sed -n '/^selection=/p' <<<"$selection")" \
+      if preview_selection \
         && [[ "$selection" == selection=all ]] && ci_class_covered; then
         if ci_runs_validation; then
           validate_mode=ci
