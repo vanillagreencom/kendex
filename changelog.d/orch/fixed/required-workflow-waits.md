@@ -1,1 +1,1 @@
-- Required-only CI waits ignore optional pending or queued CodeQL checks after required workflows pass. Pending required workflows and unreadable results hold the wait even when visible jobs pass.
+- Required-only CI waits ignore optional failed, pending or queued jobs, including jobs with the same name as required jobs after required workflows pass. Pending required workflows and unreadable results hold the wait even when visible jobs pass.

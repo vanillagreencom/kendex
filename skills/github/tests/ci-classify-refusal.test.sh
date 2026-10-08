@@ -48,6 +48,7 @@ R=https://github.com/owner/repo/actions/runs
 checks_of() {
   case "$1" in
     ci-required) printf '[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]' ;;
+    workflow-membership) printf '[{"name":"request","state":"FAILURE","bucket":"fail","link":"%s/500/job/501","workflow":"Required"},{"name":"request","state":"FAILURE","bucket":"fail","link":"%s/600/job/601","workflow":"Optional"}]' "$R" "$R" ;;
     # a check with no run link at all
     lint-fail) printf '[{"name":"Lint","state":"FAILURE","bucket":"fail"}]' ;;
     # the same red check beside a green one, so a base requiring CodeQL has
@@ -94,9 +95,14 @@ word() {
     state-err:silent4) W_ENV+=("STUB_STATE_SILENT_FAIL=true" "STUB_STATE_EXIT=4") ;;
     mergeable:*) W_ENV+=("STUB_MERGEABLE=$v") ;;
     required:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg c "$v" '[{type: "required_status_checks", parameters: {required_status_checks: [{context: $c}]}}]' <<<null)") ;;
+    workflow-membership)
+      W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
+        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"id":500,"workflow_id":500,"path":".github/workflows/required.yml","head_sha":"test-head","repository":{"id":123},"check_suite_id":500,"check_suite_node_id":"suite-500","status":"completed","conclusion":"success"}]}]'
+        'STUB_WORKFLOW_CHECKS={"500":[{"total_count":1,"check_runs":[{"name":"request","html_url":"https://github.com/owner/repo/actions/runs/500/job/501"}]}]}')
+      ;;
     workflow-failed)
-      W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CodeQL"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
-        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"id":500,"workflow_id":500,"path":".github/workflows/required.yml","head_sha":"test-head","repository":{"id":123},"check_suite_id":500,"status":"completed","conclusion":"failure"}]}]')
+      W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CodeQL"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
+        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"id":500,"workflow_id":500,"path":".github/workflows/required.yml","head_sha":"test-head","repository":{"id":123},"check_suite_id":500,"check_suite_node_id":"suite-500","status":"completed","conclusion":"failure"}]}]')
       ;;
     env:*) W_ENV+=("$v") ;;
     thread:*) W_ENV+=("STUB_THREADS=$(thread_node "$v")") ;;
@@ -176,6 +182,7 @@ a pending-only refusal names its run and lists no failure|checks:pending-run che
 a failure with no run link has head-run none and run none|checks:lint-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=none;fail=Lint state=FAILURE workflow=- run=none|1
 a red check the base does not require is named although nothing blocks|checks:lint-fail-codeql-pass checks-exit:8 required:CodeQL|123|0|cause=none;ci_optional_failed: Lint (FAILURE);retry=same-head;note|1
 a failed required workflow uses its issue while a visible optional job is red|checks:lint-fail-codeql-pass workflow-failed|123|0|cause=ci_failed;issue=ci_failed: Required workflow;head-run=none|1
+same-name workflow failures list only the required member on fail|checks:workflow-membership workflow-membership|123|0|cause=ci_failed;issue=ci_failed: request (FAILURE);ci_optional_failed: request (FAILURE);head-run=500,600;fail=request state=FAILURE workflow=Required run=500|1
 a red optional check beside a red required one is named optional and never on fail|checks:two-fails checks-exit:8 required:Lint|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);ci_optional_failed: CodeQL (FAILURE);head-run=29099680623;fail=Lint state=FAILURE workflow=CI run=29099680623|1
 a rerun on its original, lower id is the head run by start time|checks:rerun-lower-id checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=29098545030;fail=Lint state=FAILURE workflow=CI run=29098545030;superseded=workflow=CI run=29099680623|1
 a failing status-only check names its run, not none|checks:status-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: CI Required (FAILURE);head-run=29099700000;fail=CI Required state=FAILURE workflow=- run=29099700000|1
@@ -232,20 +239,21 @@ control unread-threads '    if ! threads=$(bash "$SCRIPT_DIR/pr-threads.sh" "$pr
 an unreadable thread count read as zero is retried|checks:ci-required env:STUB_THREAD_STATE_FAIL=true|123|0|cause=none;retry=same-head;note|1
 "
 
-# This control uses a fresh world and the normal row's complete assertion.
-# Its extra fail: line must name the visible optional job before rejection.
+# The old workflow-result control depended on an empty context array making
+# optional jobs required. Complete requirements removed that premise. This
+# control instead drops workflow membership at the diagnostic's wire reader.
 live_classify="$CLASSIFY"
-CLASSIFY=$(mutant_copy_edit "$TMPDIR/mutant-workflow-result" \
-  "if jq -e 'any(.issues[]?; . == \"ci_failed: Required workflow\")' >/dev/null <<<\"\$check_json\"; then" \
-  'if false; then' commands/ci-classify-refusal.sh)
-build checks:lint-fail-codeql-pass workflow-failed
+CLASSIFY=$(mutant_copy_edit "$TMPDIR/mutant-workflow-membership" \
+  "required_json=\$(jq -c '.requirements // .required_contexts // []' <<<\"\$check_json\")" \
+  "required_json=\$(jq -c '.required_contexts // []' <<<\"\$check_json\")" commands/ci-classify-refusal.sh)
+build checks:workflow-membership workflow-membership
 got=$(run 123)
-assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: Required workflow;head-run=none;fail=Lint state=FAILURE workflow=- run=none checks=1' 'the workflow control reaches the false optional failure detail'
+assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: request (FAILURE);ci_optional_failed: request (FAILURE);head-run=500,600;fail=request state=FAILURE workflow=Optional run=600;fail=request state=FAILURE workflow=Required run=500 checks=1' 'the membership control reaches false optional failure detail'
 set +e
-( FAIL=0; assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: Required workflow;head-run=none checks=1' 'required workflow failure detail'; [[ "$FAIL" -eq 0 ]] ) > "$TMPDIR/workflow-control.log"
+( FAIL=0; assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: request (FAILURE);ci_optional_failed: request (FAILURE);head-run=500,600;fail=request state=FAILURE workflow=Required run=500 checks=1' 'required workflow failure detail'; [[ "$FAIL" -eq 0 ]] ) > "$TMPDIR/workflow-control.log"
 control_rc=$?
 set -e
-assert_eq "$control_rc" 1 'the normal workflow detail assertion rejects the control'
+assert_eq "$control_rc" 1 'the normal membership detail assertion rejects the control'
 CLASSIFY="$live_classify"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

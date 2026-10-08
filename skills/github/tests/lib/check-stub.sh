@@ -133,6 +133,32 @@ case "${1:-}" in
             prev="$a"
         done
         case "${2:-}" in
+            'repositories/'*)
+                [[ "${STUB_SOURCE_EXIT:-0}" == 0 ]] || exit "$STUB_SOURCE_EXIT"
+                id=${2#repositories/}
+                case "$id" in 123) source_name=owner/repo ;; 999) source_name=org/source ;; 888) source_name=org/other ;; *) exit 1 ;; esac
+                jq -cn --argjson id "$id" --arg name "$source_name" '{id:$id,full_name:$name,default_branch:"main"}'
+                exit 0 ;;
+            'repos/'*'/commits/'*)
+                [[ "${STUB_SOURCE_REVISION_EXIT:-0}" == 0 ]] || exit "$STUB_SOURCE_REVISION_EXIT"
+                echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                exit 0 ;;
+            graphql)
+                if [[ "${3:-}" == --input ]]; then
+                    [[ "${STUB_WORKFLOW_FILES_EXIT:-0}" == 0 ]] || exit "$STUB_WORKFLOW_FILES_EXIT"
+                    request=$(cat -- "$4")
+                    if [[ -n "${STUB_WORKFLOW_FILES:-}" ]]; then
+                        printf '%s\n' "$STUB_WORKFLOW_FILES"
+                    else
+                        jq -cn --argjson request "$request" --argjson pages "$STUB_WORKFLOW_RUNS" \
+                            --arg source "${STUB_WORKFLOW_SOURCE_REPO:-owner/repo}" \
+                            --arg revision "${STUB_WORKFLOW_SOURCE_REVISION:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" '
+                            {data:{nodes:[$pages[].workflow_runs[] | . as $run
+                                | select($request.variables.ids | index($run.check_suite_node_id))
+                                | {id:.check_suite_node_id,databaseId:.check_suite_id,workflowRun:{databaseId:.id,runAttempt:(.run_attempt // 1),file:{path:.path,repositoryName:$source,repositoryFileUrl:("https://github.com/" + $source + "/blob/" + $revision + "/" + .path),viewerCanReadRepository:true}}}] | unique_by(.id)}}'
+                    fi
+                    exit 0
+                fi ;;
             'repos/{owner}/{repo}/actions/runs?head_sha='*)
                 [[ "${STUB_WORKFLOW_RUNS_EXIT:-0}" == 0 ]] || exit "$STUB_WORKFLOW_RUNS_EXIT"
                 printf '%s\n' "${STUB_WORKFLOW_RUNS:-[]}"

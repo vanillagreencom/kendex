@@ -148,6 +148,10 @@ checks_of() {
     ci-required) printf '[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]' ;;
     # a green context beside a red one, and beside one still running
     optional-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
+    workflow-same-failure|workflow-same-pending|workflow-same-queued)
+      local optional_state=FAILURE optional_bucket=fail
+      case "$1" in workflow-same-pending) optional_state=IN_PROGRESS; optional_bucket=pending ;; workflow-same-queued) optional_state=QUEUED; optional_bucket=pending ;; esac
+      jq -cn --arg state "$optional_state" --arg bucket "$optional_bucket" '[{name:"Request review",state:"SUCCESS",bucket:"pass",workflow:"Required",link:"https://github.com/owner/repo/actions/runs/500/job/501"},{name:"Request review",state:$state,bucket:$bucket,workflow:"Optional",link:"https://github.com/owner/repo/actions/runs/600/job/601"}]' ;;
     workflow-optional-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
     workflow-required-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"FAILURE","bucket":"fail"},{"name":"CodeQL","state":"SUCCESS","bucket":"pass"}]' ;;
     workflow-green) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"SUCCESS","bucket":"pass"}]' ;;
@@ -194,7 +198,7 @@ MERGE_REFUSED="$TMPDIR/merge-refused"
 word() {
   local v="${1#*:}" env_word fixture_head
   case "$1" in
-    checks:*) W_ENV+=("STUB_CHECKS=$(checks_of "$v")") ;;
+    checks:*) W_ENV+=("STUB_CHECKS=$(checks_of "$v" | jq -c 'map(if (.name == "Request review" or .name == "Lint") and (.link // "") == "" then . + {link:("https://github.com/owner/repo/runs/" + (.name | @uri))} else . end)')") ;;
     checks-exit:*) W_ENV+=("STUB_CHECKS_EXIT=$v") ;;
     state:*) W_ENV+=("STUB_STATE=$v") ;;
     merged-at) W_ENV+=("STUB_MERGED_AT=2026-08-15T09:41:12Z") ;;
@@ -235,8 +239,33 @@ word() {
         'STUB_WORKFLOW_CHECKS={"500":[{"total_count":1,"check_runs":[{"name":"Request review"}]}]}')
       case "$v" in
         matched) ;;
-        cross-repository) W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999}]}}]') ;;
+        source-unreadable) W_ENV+=("STUB_WORKFLOW_FILES_EXIT=1") ;;
+        source-null) W_ENV+=('STUB_WORKFLOW_FILES={"data":{"nodes":[null]}}') ;;
+        source-repository-collision|source-pin-collision|source-ref-collision)
+          W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"path":".github/workflows/request-copilot-review.yml","repository_id":888,"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}}]')
+          if [[ "$v" == source-pin-collision ]]; then
+            W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}}]')
+          elif [[ "$v" == source-ref-collision ]]; then
+            W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" "STUB_WORKFLOW_SOURCE_REVISION=release-old" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"ref":"refs/heads/release-new"}]}}]')
+          fi
+          ;;
+        same-name)
+          W_ENV+=('STUB_WORKFLOW_CHECKS={"500":[{"total_count":1,"check_runs":[{"name":"Request review","html_url":"https://github.com/owner/repo/actions/runs/500/job/501"}]}]}')
+          W_ENV+=('STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":123}]}}]') ;;
+        source-pinned) W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"ref":"refs/heads/main","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}]') ;;
+        source-ref) W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" "STUB_WORKFLOW_SOURCE_REVISION=refs/heads/release" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"ref":"refs/heads/release"}]}}]') ;;
+        source-same-pin-refs|source-same-pin-ref-runs|source-duplicate)
+          local second_ref=refs/heads/release
+          [[ "$v" != source-duplicate ]] || second_ref=refs/heads/main
+          W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" "STUB_GATE_RULES=$(jq -cn --arg ref "$second_ref" '{type:"workflows",parameters:{workflows:[{path:".github/workflows/request-copilot-review.yml",repository_id:999,ref:"refs/heads/main",sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{path:".github/workflows/request-copilot-review.yml",repository_id:999,ref:$ref,sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}} | [.]')")
+          if [[ "$v" == source-same-pin-ref-runs ]]; then
+            W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"id":500,"workflow_id":500,"status":"completed"},{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":123,"id":123,"workflow_id":500,"status":"completed"}]}]')
+          fi
+          ;;
+        source-revision-unreadable) W_ENV+=("STUB_SOURCE_REVISION_EXIT=1") ;;
+        cross-repository) W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999}]}}]') ;;
         unnameable-active|unnameable-completed)
+          W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source")
           W_ENV+=('STUB_GATE_RULES=[{"type":"code_quality"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999}]}}]')
           if [[ "$v" == unnameable-active ]]; then
             W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"in_progress"}]}]')
@@ -275,7 +304,9 @@ word() {
       done
       for env_word in "${W_ENV[@]}"; do
         case "$env_word" in STUB_WORKFLOW_RUNS=*)
-          W_ENV+=("STUB_WORKFLOW_RUNS=$(jq -c --arg head "$fixture_head" 'map(.workflow_runs |= map(. + {head_sha: (if .head_sha == "test-head" then $head else .head_sha end), workflow_id: (.workflow_id // .check_suite_id), id: (.id // .check_suite_id), conclusion: (if .status == "completed" then (if has("conclusion") then .conclusion else "success" end) else null end)}))' <<<"${env_word#*=}")") ;;
+          W_ENV+=("STUB_WORKFLOW_RUNS=$(jq -c --arg head "$fixture_head" 'map(.workflow_runs |= map(. + {head_sha: (if .head_sha == "test-head" then $head else .head_sha end), workflow_id: (.workflow_id // .check_suite_id), id: (.id // .check_suite_id), check_suite_node_id: ("suite-" + ((.id // .check_suite_id) | tostring)), conclusion: (if .status == "completed" then (if has("conclusion") then .conclusion else "success" end) else null end)}))' <<<"${env_word#*=}")") ;;
+        STUB_WORKFLOW_CHECKS=*)
+          W_ENV+=("STUB_WORKFLOW_CHECKS=$(jq -c 'with_entries(.value |= map(.check_runs |= map(. + {html_url: (.html_url // ("https://github.com/owner/repo/runs/" + (.name | @uri)))})))' <<<"${env_word#*=}")") ;;
         esac
       done
       ;;
@@ -396,7 +427,7 @@ calls() {
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
       "api user"*) out="$out,user" ;;
       "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
-      "auth status"*|"repo view"*|"api repos/"*|"api graphql"*reviewThreads*|"api graphql"*viewer*|"pr view 123 --json baseRefName"*) ;;
+      "auth status"*|"repo view"*|"api repos/"*|"api repositories/"*|"api graphql --input "*|"api graphql"*reviewThreads*|"api graphql"*viewer*|"pr view 123 --json baseRefName"*) ;;
       *) out="$out,?($line)" ;;
     esac
   done < <(awk '/^(pr|api|auth|repo) / { if (call != "") print call; call = $0; next }
@@ -552,7 +583,7 @@ CHECK="view:state,view:mergeable,checks,view:reviews"
 PRE="view:state,view:mergeable,checks,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
 # The readiness JSON's keys, in order: no thread term among them.
-KEYS="keys=[can_merge,issues,warnings,mergeable,review,transient,state,merged_at,head_runs,checks,required_contexts]"
+KEYS="keys=[can_merge,issues,warnings,mergeable,review,transient,state,merged_at,head_runs,checks,required_contexts,requirements]"
 # The classifier's queue-only lines, as harness-ci's change-class prints them.
 QUEUE_TRUE="queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*"
 QUEUE_FALSE="queue_only=false cause=no-queue-path"

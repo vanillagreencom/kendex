@@ -228,7 +228,7 @@ scoped_json=$(echo "$ci_json" | scope_current_run)
 # the `ci_failed:` issue counted. Re-deriving "this check blocks" here would
 # print a red optional check on `fail:` and on `ci_optional_failed:` with
 # opposite meanings, and orch routes on `fail:`.
-required_json=$(jq -c '.required_contexts // []' <<<"$check_json")
+required_json=$(jq -c '.requirements // .required_contexts // []' <<<"$check_json")
 
 jq -r --argjson scoped "$scoped_json" --argjson required "$required_json" "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
     $scoped[]
