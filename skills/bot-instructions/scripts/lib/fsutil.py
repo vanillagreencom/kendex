@@ -4,6 +4,7 @@ Paths are ordinary joins under a root the caller already resolved.
 """
 
 import os
+import stat
 
 from .errors import RenderError, SourceUnavailable
 
@@ -11,10 +12,20 @@ from .errors import RenderError, SourceUnavailable
 def read_file(root, rel):
     """Bytes at `rel`, or None when it is absent."""
     try:
-        with open(os.path.join(root, rel), "rb") as fh:
-            return fh.read()
-    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+        # Pull request trees can link scanned inputs to devices or FIFOs.
+        # Inspect the opened target before reading, without waiting for a writer.
+        fd = os.open(os.path.join(root, rel), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise SourceUnavailable(f"read {rel}", "not a regular file")
+            with os.fdopen(fd, "rb", closefd=False) as fh:
+                return fh.read()
+        finally:
+            os.close(fd)
+    except (FileNotFoundError, NotADirectoryError):
         return None
+    except OSError as exc:
+        raise SourceUnavailable(f"read {rel}", f"cannot read ({exc.strerror})") from exc
 
 
 def decode_text(raw, rel):
