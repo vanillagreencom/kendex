@@ -7,7 +7,7 @@ Load from [merge-pr.md § 5 step 1](../workflows/merge-pr.md#5-execute-the-merge
 **The direct attempt** follows a CI wait on the PR, on every entry to it, since the immediate merge refuses a pending check. Wait through [Waiter launch](waiter-launch.md):
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --json --item [STATE_KEY]
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --required-only --json --item [STATE_KEY]
 ```
 
 The lane owns this approved-head wait. Read its completion file. `status=complete verdict=pass` takes the direct attempt without overseer direction, on the first green poll after pending CI (`ci-wait --help`).

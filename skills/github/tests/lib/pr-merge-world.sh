@@ -87,7 +87,8 @@
 #          dropped, `{word}` macros expanded (see err_macro)
 #   calls  `calls=<each gh call by kind, in order> auth=<the GH_TOKEN each
 #          call saw, distinct values in order>`
-#   control optional mutant argv: the same row assertion must reject it
+#   control optional mutant argv: the same row assertion must reject it;
+#           same:<argv> keeps behavior and must pass after the fixture reset
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -149,6 +150,11 @@ checks_of() {
     optional-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
     workflow-optional-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
     workflow-required-red) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"FAILURE","bucket":"fail"},{"name":"CodeQL","state":"SUCCESS","bucket":"pass"}]' ;;
+    workflow-green) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"Request review","state":"SUCCESS","bucket":"pass"}]' ;;
+    workflow-optional-pending|workflow-optional-queued|workflow-required-pending)
+      case "$1" in workflow-optional-pending) name=CodeQL; state=IN_PROGRESS ;; workflow-optional-queued) name=CodeQL; state=QUEUED ;; *) name='Request review'; state=IN_PROGRESS ;; esac
+      jq -cn --arg name "$name" --arg state "$state" '[{name:"Lint",state:"SUCCESS",bucket:"pass"},{name:"Request review",state:"SUCCESS",bucket:"pass"},{name:$name,state:$state,bucket:"pending"}] | if $name == "Request review" then map(select(.name != $name or .bucket == "pending")) else . end'
+      ;;
     # the same red check with no entry for the required context at all
     unregistered) printf '[{"name":"CodeQL","state":"FAILURE","bucket":"fail"}]' ;;
     optional-pending) printf '[{"name":"Lint","state":"SUCCESS","bucket":"pass"},{"name":"CodeQL","state":"IN_PROGRESS","bucket":"pending"}]' ;;
@@ -186,7 +192,7 @@ AUTH_LOG="$TMPDIR/auth.log"
 FAIL_ONCE="$TMPDIR/state-failed-once"
 MERGE_REFUSED="$TMPDIR/merge-refused"
 word() {
-  local v="${1#*:}"
+  local v="${1#*:}" env_word fixture_head
   case "$1" in
     checks:*) W_ENV+=("STUB_CHECKS=$(checks_of "$v")") ;;
     checks-exit:*) W_ENV+=("STUB_CHECKS_EXIT=$v") ;;
@@ -229,6 +235,13 @@ word() {
         'STUB_WORKFLOW_CHECKS={"500":[{"total_count":1,"check_runs":[{"name":"Request review"}]}]}')
       case "$v" in
         matched) ;;
+        cross-repository) W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999}]}}]') ;;
+        unnameable-active|unnameable-completed)
+          W_ENV+=('STUB_GATE_RULES=[{"type":"code_quality"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999}]}}]')
+          if [[ "$v" == unnameable-active ]]; then
+            W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"in_progress"}]}]')
+          fi
+          ;;
         in-progress) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"in_progress"}]}]') ;;
         paged) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":499,"status":"completed"}]},{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]'
           'STUB_WORKFLOW_CHECKS={"500":[{"total_count":2,"check_runs":[{"name":"Request review"}]},{"total_count":2,"check_runs":[{"name":"Lint"}]}]}') ;;
@@ -242,8 +255,29 @@ word() {
         wrong-head) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"old-head","check_suite_id":500,"status":"completed"}]}]') ;;
         wrong-repository) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":999},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]') ;;
         empty-checks) W_ENV+=('STUB_WORKFLOW_CHECKS={"500":[{"total_count":0,"check_runs":[]}]}') ;;
+        failed|unreadable-result|newer-success|older-active|older-finished-late|rerun-success)
+          W_ENV+=("STUB_WORKFLOW_RUNS=$(jq -cn --arg shape "$v" '
+            {path:".github/workflows/request-copilot-review.yml",repository:{id:123},head_sha:"test-head",check_suite_id:500,workflow_id:123,id:123,status:"completed",conclusion:"failure",run_attempt:1,updated_at:"2026-10-08T14:35:23Z"} as $run
+            | (if $shape == "failed" then [$run]
+               elif $shape == "unreadable-result" then [$run | .conclusion = null]
+               elif $shape == "older-active" then [$run | .status = "in_progress" | .conclusion = null] + [$run + {id:500,conclusion:"success",updated_at:"2026-10-08T14:35:29Z"}]
+               elif $shape == "older-finished-late" then [$run + {updated_at:"2026-10-08T14:36:31Z"}] + [$run + {id:500,conclusion:"success",updated_at:"2026-10-08T14:35:29Z"}]
+               elif $shape == "rerun-success" then [$run + {id:500}] + [$run + {conclusion:"success",run_attempt:2,updated_at:"2026-10-08T14:35:29Z"}]
+               else [$run] + [$run + {id:500,conclusion:"success",updated_at:"2026-10-08T14:35:29Z"}] end)
+            | [{total_count:length,workflow_runs:.}]')") ;;
         *) echo "UNKNOWN-WORKFLOW: $v" >&2; exit 2 ;;
       esac
+      # Runs in the default workflow fixtures use one completed attempt.
+      # Keep active attempts without a conclusion, as the Actions API does.
+      fixture_head=test-head
+      for env_word in "${W_ENV[@]}"; do
+        case "$env_word" in STUB_HEAD=*) fixture_head=${env_word#*=} ;; esac
+      done
+      for env_word in "${W_ENV[@]}"; do
+        case "$env_word" in STUB_WORKFLOW_RUNS=*)
+          W_ENV+=("STUB_WORKFLOW_RUNS=$(jq -c --arg head "$fixture_head" 'map(.workflow_runs |= map(. + {head_sha: (if .head_sha == "test-head" then $head else .head_sha end), workflow_id: (.workflow_id // .check_suite_id), id: (.id // .check_suite_id), conclusion: (if .status == "completed" then (if has("conclusion") then .conclusion else "success" end) else null end)}))' <<<"${env_word#*=}")") ;;
+        esac
+      done
       ;;
     rules:fail) W_ENV+=("STUB_RULES_EXIT=1") ;;
     branch:fail) W_ENV+=("STUB_BRANCH_EXIT=1") ;;
@@ -497,7 +531,14 @@ run_table() {
     expected="rc=$rc out=$out err=$(err_text "$err") $want"
     assert_eq "$got" "$expected" "$label"
     if [[ -n "$control" ]]; then
-      assert_mutant_fails "$(run "$control")" "$expected" "$label"
+      # Rebuild each evaluation so the control cannot inherit API call logs
+      # or mutation state from the normal row.
+      # shellcheck disable=SC2086
+      build $world
+      case "$control" in
+        same:*) assert_eq "$(run "${control#same:}")" "$expected" "clean fixture: $label" ;;
+        *) assert_mutant_fails "$(run "$control")" "$expected" "$label" ;;
+      esac
     fi
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }

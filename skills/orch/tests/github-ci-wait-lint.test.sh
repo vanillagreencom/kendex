@@ -28,7 +28,11 @@ forbid "no doc routes ci-wait through github.sh" \
   'Wait for CI with `github.sh  ci-wait 296 --json`.' \
   ${DOCS+"${DOCS[@]}"}
 
-rule_fenced "submit-pr invokes ci-wait by its orch path" \
-  "$SKILL_DIR/workflows/submit-pr.md" "" '.agents/skills/orch/scripts/ci-wait'
+# Register the required-only token first so the shared fenced-rule control
+# drops the mode flag and proves that the real merge caller cannot omit it.
+for workflow in workflows/submit-pr.md references/merge-attempt.md; do
+  rule_fenced "$workflow waits only for required CI" \
+    "$SKILL_DIR/$workflow" "" '--required-only' '.agents/skills/orch/scripts/ci-wait'
+done
 
 md_report

@@ -1,1 +1,1 @@
-- Merge checks include the required workflow's jobs. A failed optional check no longer blocks the merge when GitHub supplies the required workflow's check names.
+- Merge checks include the current required workflow's jobs in the consumer repository. Optional failed, pending or queued checks no longer block a merge. Pending required workflows hold the merge, and unreadable workflow results refuse it even when visible jobs pass.

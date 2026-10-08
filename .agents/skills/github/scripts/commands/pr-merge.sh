@@ -273,10 +273,13 @@ Terminal and mutation rules:
   ci_optional_failed: warning, which blocks nothing — GitHub merges over it. A
   required context that has registered no check on the head is ci_pending:
   "<context> (missing)", the state GitHub itself is in while it waits. A base
-  that requires nothing or whose whole required set cannot be resolved
-  counts every check. Readable required workflows contribute job check names
-  from completed runs on the head. Unfinished required workflows and
-  unreadable workflow evidence keep the all-check fallback.
+  that requires nothing, other unreadable protection or an unnameable rule
+  type counts every check. Required workflows contribute job check names
+  from their current completed runs on the head, in the consumer repository.
+  Optional pending or queued checks hold nothing. A pending required workflow
+  or unregistered jobs hold as ci_pending. Unreadable workflow evidence
+  refuses as ci_fetch_failed even when visible jobs pass. A failed required
+  workflow holds as ci_failed.
 
   head_runs contains the authoritative workflow run plus runs referenced by
   custom commit statuses. checks is the same snapshot consumed by
@@ -486,33 +489,47 @@ run_checks() {
         # Mirrors orch ci-wait's pre-classification scoping; the shared
         # classify_checks_rollup carries the scoping and name-sanitization
         # contract, including the required contexts that registered no check.
-        local rollup pending failed optional_failed
-        required_json=$(required_contexts "$pr_num")
-        rollup=$(echo "$ci_json" | classify_checks_rollup "$required_json")
-        checks_json=$(jq -c '.checks' <<<"$rollup")
-        head_runs_json=$(jq -c '.head_runs' <<<"$rollup")
-        pending=$(jq -r '.pending' <<<"$rollup")
-        failed=$(jq -r '.failed' <<<"$rollup")
-        optional_failed=$(jq -r '.optional_failed' <<<"$rollup")
-        # An empty rollup is "no status checks configured" only where the base
-        # requires none. With a required context outstanding the checks ARE
-        # configured and none has reported yet, which the classification
-        # already names in `pending`.
-        if [ "$(jq 'length' <<<"$ci_json")" -eq 0 ] && [ -z "$pending" ]; then
-            warnings+=("ci_unconfigured: No status checks configured")
-        fi
-        if [ -n "$pending" ]; then
-            can_merge=false
-            issues+=("ci_pending: $pending")
-        fi
-        if [ -n "$failed" ]; then
-            can_merge=false
-            issues+=("ci_failed: $failed")
-        fi
-        # A warning, not an issue: the base branch does not require these, so
-        # GitHub merges over them and so must this gate.
-        if [ -n "$optional_failed" ]; then
-            warnings+=("ci_optional_failed: $optional_failed")
+        local rollup pending failed optional_failed required_evidence required_state
+        required_evidence=$(required_contexts "$pr_num") || required_evidence='{"state":"unreadable","contexts":[]}'
+        required_state=$(jq -r '.state' <<<"$required_evidence")
+        required_json=$(jq -c '.contexts' <<<"$required_evidence")
+        case "$required_state" in
+            ready) ;;
+            pending) can_merge=false; issues+=("ci_pending: Required workflow") ;;
+            failed) can_merge=false; issues+=("ci_failed: Required workflow") ;;
+            unreadable) can_merge=false; issues+=("ci_fetch_failed: Required workflow evidence unavailable") ;;
+            *) echo "pr-merge: required-state=$required_state" >&2; return 1 ;;
+        esac
+        if [ "$required_state" != ready ]; then
+            checks_json="$ci_json"
+            head_runs_json=$(scope_current_run <<<"$ci_json" | jq -c "$CI_RUN_JQ_DEFS"'head_runs')
+        else
+            rollup=$(echo "$ci_json" | classify_checks_rollup "$required_json")
+            checks_json=$(jq -c '.checks' <<<"$rollup")
+            head_runs_json=$(jq -c '.head_runs' <<<"$rollup")
+            pending=$(jq -r '.pending' <<<"$rollup")
+            failed=$(jq -r '.failed' <<<"$rollup")
+            optional_failed=$(jq -r '.optional_failed' <<<"$rollup")
+            # An empty rollup is "no status checks configured" only where the base
+            # requires none. With a required context outstanding the checks ARE
+            # configured and none has reported yet, which the classification
+            # already names in `pending`.
+            if [ "$(jq 'length' <<<"$ci_json")" -eq 0 ] && [ -z "$pending" ]; then
+                warnings+=("ci_unconfigured: No status checks configured")
+            fi
+            if [ -n "$pending" ]; then
+                can_merge=false
+                issues+=("ci_pending: $pending")
+            fi
+            if [ -n "$failed" ]; then
+                can_merge=false
+                issues+=("ci_failed: $failed")
+            fi
+            # A warning, not an issue: the base branch does not require these, so
+            # GitHub merges over them and so must this gate.
+            if [ -n "$optional_failed" ]; then
+                warnings+=("ci_optional_failed: $optional_failed")
+            fi
         fi
     fi
 

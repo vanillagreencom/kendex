@@ -57,7 +57,14 @@
 # run beside the workflow's instead of vanishing behind it. The one exclusion
 # is a status held EXPECTED: its link names the superseded run the rewrite
 # just retired, which must not read as current scope.
+# An old run finishing later does not replace a newer run. Reruns keep their
+# original id, so a later attempt can replace it through its execution time.
 CI_RUN_JQ_DEFS='
+  def latest_workflow_attempt:
+    max_by(.id) as $newest
+    | map(select(.id == $newest.id or ((.run_attempt // 1) > 1
+        and ((.run_started_at // .updated_at // "") > ($newest.run_started_at // $newest.updated_at // "")))))
+    | max_by([(.run_started_at // .updated_at // ""), .id]);
   def runid:
     (.link // "")
     | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
@@ -224,12 +231,11 @@ classify_checks_rollup() {
     }'
 }
 
-# The base branch's required status-check contexts as a JSON array, read from
+# The base branch's required status-check contexts, read from
 # its ruleset and classic-protection endpoints. GitHub merges a PR whose
 # non-required checks are red, so these names are what the CI gate may block
-# on. Any answer that is not positive evidence of the whole required set
-# prints `[]`, which counts every check — a branch whose protection cannot be
-# read must never merge over a red one.
+# on. Other unreadable protection and unnameable rule types keep the all-check
+# fallback. A known required workflow needs its own readable outcome.
 #
 # An empty classic list counts only when the branch answer actually carried a
 # `protection` object. GitHub omits that key from the branch payload for a
@@ -270,67 +276,95 @@ RULESET_CONTEXTS_JQ='
   , (select($type == "workflows")
      | if (.parameters.workflows | type) == "array" and (.parameters.workflows | length) > 0
        then .parameters.workflows[] | "workflow:" + tojson
-       else "unnameable:workflows" end)'
+       else "unreadable:workflows" end)'
 # Both reads yield one line per rule: `ctx:<context>` for a context a ruleset
 # or classic protection names, `workflow:<json>` for a required workflow,
 # `unnameable:<type>` for a ruleset rule gating
-# on a check it does not name. A failed read or an unnameable rule prints `[]`.
+# on a check it does not name. Unreadable workflow parameters refuse.
+# The result is {state, contexts}. Other unnameable rules retain the empty-set
+# fallback. Required workflows instead hold as pending, failed or unreadable;
+# their partial job rollup cannot prove that the required run passed.
 # Arg 2, when given, is the owner/name the PR lives in; without it gh resolves
 # the repository from the working directory, as pr-merge relies on.
+# Arg 3 binds workflow evidence to a caller's checks snapshot head.
 required_contexts() {
     local pr_num="$1" repo="${2:-}" base="" rules="" classic="" branch_json=""
-    local path="{owner}/{repo}" repo_arg=()
-    local head runs workflow suites suite checks names="" resolved
+    local path="{owner}/{repo}" repo_arg=() fallback=false
+    local head="${3:-}" runs workflow suites suite checks names="" resolved repo_id evidence state
     if [ -n "$repo" ]; then
         path="$repo"
         repo_arg=(--repo "$repo")
     fi
     if ! base=$(gh pr view "$pr_num" ${repo_arg[@]+"${repo_arg[@]}"} --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
-        || ! rules=$(gh api "repos/$path/rules/branches/$base" --paginate --jq "$RULESET_CONTEXTS_JQ" 2>/dev/null) \
-        || ! branch_json=$(gh api "repos/$path/branches/$base" 2>/dev/null) \
+        || ! rules=$(gh api "repos/$path/rules/branches/$base" --paginate --jq "$RULESET_CONTEXTS_JQ" 2>/dev/null); then
+        echo '{"state":"ready","contexts":[]}'
+        return 0
+    fi
+    if ! branch_json=$(gh api "repos/$path/branches/$base" 2>/dev/null) \
         || ! jq -e 'type == "object" and has("protection")' >/dev/null 2>&1 <<<"$branch_json" \
         || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null) \
         || grep -q '^unnameable:' <<<"$rules"; then
-        echo '[]'
+        # These protection types cannot narrow the check list. Known workflow
+        # evidence still has to hold or refuse before the fallback can pass.
+        fallback=true
+    fi
+    if grep -q '^unreadable:workflows' <<<"$rules"; then
+        echo '{"state":"unreadable","contexts":[]}'
         return 0
     fi
     if grep -q '^workflow:' <<<"$rules"; then
-        if ! head=$(gh pr view "$pr_num" ${repo_arg[@]+"${repo_arg[@]}"} --json headRefOid --jq '.headRefOid' 2>/dev/null) \
+        if { [ -z "$head" ] && ! head=$(gh pr view "$pr_num" ${repo_arg[@]+"${repo_arg[@]}"} --json headRefOid --jq '.headRefOid' 2>/dev/null); } \
             || [ -z "$head" ] \
             || ! head=$(jq -nr --arg v "$head" '$v | @uri') \
+            || ! repo_id=$(gh api "repos/$path" --jq '.id' 2>/dev/null) \
+            || ! jq -e 'type == "number" and . > 0 and . == floor' >/dev/null 2>&1 <<<"$repo_id" \
             || ! runs=$(gh api "repos/$path/actions/runs?head_sha=$head&per_page=100" --paginate --slurp 2>/dev/null) \
             || ! runs=$(jq -ce '
                 [.[].workflow_runs[]] as $runs
-                | if length > 0 and all(.[]; (.workflow_runs | type) == "array" and .total_count == ($runs | length))
+                | if length > 0 and ($runs | length) < 1000 and all(.[]; (.workflow_runs | type) == "array" and .total_count == ($runs | length))
                   then $runs else error("incomplete workflow runs") end' <<<"$runs" 2>/dev/null); then
-            echo '[]'
+            echo '{"state":"unreadable","contexts":[]}'
             return 0
         fi
         while IFS= read -r workflow; do
             case "$workflow" in workflow:*) workflow=${workflow#workflow:} ;; *) continue ;; esac
-            # A matching path in another repository cannot prove the source.
+            # The rule names the definition repository. GitHub executes its
+            # workflow in the consumer, whose endpoint and id bind the run.
             # GitHub can register dependent jobs later while a run is unfinished,
             # so only completed matching runs can prove the whole required set.
-            if ! suites=$(jq -er --argjson workflow "$workflow" --arg head "$head" '
+            if ! evidence=$(jq -ce --argjson workflow "$workflow" --arg head "$head" --argjson repo_id "$repo_id" "$CI_RUN_JQ_DEFS"'
                 [.[] | select(.path == $workflow.path and .head_sha == $head
-                              and .repository.id == $workflow.repository_id)]
-                | if length > 0 and all(.[]; .status == "completed"
-                    and (.check_suite_id | type == "number" and . > 0))
-                  then map(.check_suite_id) | unique[]
-                  else error("required workflow evidence is unfinished or missing") end' <<<"$runs" 2>/dev/null); then
-                echo '[]'
+                              and .repository.id == $repo_id)]
+                | group_by(.workflow_id) | map(latest_workflow_attempt)
+                | if length == 0 or any(.[]; .status != "completed") then {state: "pending"}
+                  elif any(.[]; (.conclusion | IN("success", "neutral", "skipped", "failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale")) | not)
+                    or any(.[]; (.check_suite_id | type != "number" or . <= 0)) then {state: "unreadable"}
+                  elif any(.[]; (.conclusion | IN("success", "neutral", "skipped")) | not) then {state: "failed"}
+                  else {state: "ready", suites: (map(.check_suite_id) | unique)} end
+            ' <<<"$runs" 2>/dev/null); then
+                echo '{"state":"unreadable","contexts":[]}'
                 return 0
             fi
+            state=$(jq -r '.state' <<<"$evidence") || return 1
+            if [ "$state" != ready ]; then
+                jq -c '{state, contexts: []}' <<<"$evidence"
+                return 0
+            fi
+            suites=$(jq -r '.suites[]' <<<"$evidence") || return 1
             while IFS= read -r suite; do
                 if ! checks=$(gh api "repos/$path/check-suites/$suite/check-runs?per_page=100" --paginate --slurp 2>/dev/null) \
-                    || ! resolved=$(jq -er '
+                    || ! resolved=$(jq -r '
                         [.[].check_runs[]] as $checks
                         | if length > 0 and all(.[]; (.check_runs | type) == "array" and .total_count == ($checks | length))
-                             and ($checks | length) > 0 and all($checks[]; (.name | type) == "string" and (.name | length) > 0)
+                             and all($checks[]; (.name | type) == "string" and (.name | length) > 0)
                           then $checks[] | "ctx:" + .name
                           else error("incomplete workflow checks") end' <<<"$checks" 2>/dev/null); then
-                    echo '[]'
+                    echo '{"state":"unreadable","contexts":[]}'
+                    return 0
+                fi
+                if [ -z "$resolved" ]; then
+                    echo '{"state":"pending","contexts":[]}'
                     return 0
                 fi
                 names="$names
@@ -338,7 +372,11 @@ $resolved"
             done <<<"$suites"
         done <<<"$rules"
     fi
-    printf '%s\n%s\n%s\n' "$rules" "$classic" "$names" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
+    if $fallback; then
+        echo '{"state":"ready","contexts":[]}'
+        return 0
+    fi
+    printf '%s\n%s\n%s\n' "$rules" "$classic" "$names" | jq -R -s -c '{state: "ready", contexts: (split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique)}'
 }
 
 # The `head-run: <ids>` line for a --check JSON (stdin): the run ids the CI

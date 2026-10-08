@@ -311,7 +311,7 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 ## 5. Verify CI
 
 ```bash
-.agents/skills/orch/scripts/ci-wait [PR_NUMBER] --json --item [ISSUE_ID]
+.agents/skills/orch/scripts/ci-wait [PR_NUMBER] --required-only --json --item [ISSUE_ID]
 ```
 
 | Result | Action |

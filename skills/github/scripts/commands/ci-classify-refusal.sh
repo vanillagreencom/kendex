@@ -43,7 +43,9 @@
 #                          classification was scoped to; "none" when no
 #                          run-correlated checks exist
 #   fail: ...              (ci_failed only) each failing check with its
-#                          state, workflow, and run id
+#                          state, workflow, and run id. A required workflow
+#                          run failure uses its issue: detail above; visible
+#                          optional failures are not attributed to that run
 #   superseded: ...        (ci_failed only) runs on the head whose checks
 #                          were NOT counted — workflow runs (`workflow=`)
 #                          and commit statuses (`status=`) alike. A status
@@ -210,6 +212,12 @@ fi
 # starting between two fetches cannot make cause:/issue: and the
 # fail:/superseded: detail describe different states.
 check_head_run_line <<<"$check_json"
+
+# A run can fail before its jobs report a failure. The existing issue names
+# that workflow result; the visible rollup cannot name its failed job.
+if jq -e 'any(.issues[]?; . == "ci_failed: Required workflow")' >/dev/null <<<"$check_json"; then
+    exit 0
+fi
 
 ci_json=$(jq -c '.checks // []' <<<"$check_json")
 scoped_json=$(echo "$ci_json" | scope_current_run)

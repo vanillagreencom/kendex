@@ -94,6 +94,10 @@ word() {
     state-err:silent4) W_ENV+=("STUB_STATE_SILENT_FAIL=true" "STUB_STATE_EXIT=4") ;;
     mergeable:*) W_ENV+=("STUB_MERGEABLE=$v") ;;
     required:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg c "$v" '[{type: "required_status_checks", parameters: {required_status_checks: [{context: $c}]}}]' <<<null)") ;;
+    workflow-failed)
+      W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CodeQL"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
+        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"id":500,"workflow_id":500,"path":".github/workflows/required.yml","head_sha":"test-head","repository":{"id":123},"check_suite_id":500,"status":"completed","conclusion":"failure"}]}]')
+      ;;
     env:*) W_ENV+=("$v") ;;
     thread:*) W_ENV+=("STUB_THREADS=$(thread_node "$v")") ;;
     review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=$(jq -c --arg s "$v" '[{state: (if $s == "CHANGES_REQUESTED" then $s else "COMMENTED" end)}]' <<<null)") ;;
@@ -171,6 +175,7 @@ a current-run failure is ci_failed, correlated to its run, the old run supersede
 a pending-only refusal names its run and lists no failure|checks:pending-run checks-exit:8|123|0|cause=ci_pending;issue=ci_pending: Changes (IN_PROGRESS);head-run=29099680623|1
 a failure with no run link has head-run none and run none|checks:lint-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=none;fail=Lint state=FAILURE workflow=- run=none|1
 a red check the base does not require is named although nothing blocks|checks:lint-fail-codeql-pass checks-exit:8 required:CodeQL|123|0|cause=none;ci_optional_failed: Lint (FAILURE);retry=same-head;note|1
+a failed required workflow uses its issue while a visible optional job is red|checks:lint-fail-codeql-pass workflow-failed|123|0|cause=ci_failed;issue=ci_failed: Required workflow;head-run=none|1
 a red optional check beside a red required one is named optional and never on fail|checks:two-fails checks-exit:8 required:Lint|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);ci_optional_failed: CodeQL (FAILURE);head-run=29099680623;fail=Lint state=FAILURE workflow=CI run=29099680623|1
 a rerun on its original, lower id is the head run by start time|checks:rerun-lower-id checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=29098545030;fail=Lint state=FAILURE workflow=CI run=29098545030;superseded=workflow=CI run=29099680623|1
 a failing status-only check names its run, not none|checks:status-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: CI Required (FAILURE);head-run=29099700000;fail=CI Required state=FAILURE workflow=- run=29099700000|1
@@ -226,6 +231,22 @@ control unread-threads '    if ! threads=$(bash "$SCRIPT_DIR/pr-threads.sh" "$pr
   '    if ! { threads=$(bash "$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>"$check_err") || threads='"'"'{"unresolved_count":0}'"'"'; } ||' "\
 an unreadable thread count read as zero is retried|checks:ci-required env:STUB_THREAD_STATE_FAIL=true|123|0|cause=none;retry=same-head;note|1
 "
+
+# This control uses a fresh world and the normal row's complete assertion.
+# Its extra fail: line must name the visible optional job before rejection.
+live_classify="$CLASSIFY"
+CLASSIFY=$(mutant_copy_edit "$TMPDIR/mutant-workflow-result" \
+  "if jq -e 'any(.issues[]?; . == \"ci_failed: Required workflow\")' >/dev/null <<<\"\$check_json\"; then" \
+  'if false; then' commands/ci-classify-refusal.sh)
+build checks:lint-fail-codeql-pass workflow-failed
+got=$(run 123)
+assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: Required workflow;head-run=none;fail=Lint state=FAILURE workflow=- run=none checks=1' 'the workflow control reaches the false optional failure detail'
+set +e
+( FAIL=0; assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: Required workflow;head-run=none checks=1' 'required workflow failure detail'; [[ "$FAIL" -eq 0 ]] ) > "$TMPDIR/workflow-control.log"
+control_rc=$?
+set -e
+assert_eq "$control_rc" 1 'the normal workflow detail assertion rejects the control'
+CLASSIFY="$live_classify"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

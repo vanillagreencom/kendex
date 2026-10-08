@@ -190,13 +190,14 @@ case "${1:-}" in
                     exit "$STUB_REPO_EXIT"
                 fi
                 repo_json=$(jq -cn \
+                    --argjson id "${STUB_REPO_ID:-123}" \
                     --argjson auto "${STUB_ALLOW_AUTO_MERGE:-true}" \
                     --arg methods "${STUB_MERGE_METHODS-squash merge rebase}" \
                     --argjson deletes "${STUB_DELETE_BRANCH_ON_MERGE:-false}" \
                     --arg default "${STUB_DEFAULT_BRANCH:-main}" \
                     --argjson pushless "${STUB_REPO_PUSHLESS:-false}" \
                     '($methods | split(" ")) as $m
-                    | {allow_auto_merge: $auto, default_branch: $default}
+                    | {id: $id, allow_auto_merge: $auto, default_branch: $default}
                     + if $pushless then {} else {allow_squash_merge: ($m | index("squash") != null), allow_merge_commit: ($m | index("merge") != null), allow_rebase_merge: ($m | index("rebase") != null), delete_branch_on_merge: $deletes} end')
                 if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$repo_json"; else printf '%s\n' "$repo_json"; fi
                 exit 0
