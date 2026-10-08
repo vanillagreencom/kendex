@@ -104,7 +104,7 @@ cat >"$BASE/rules.json" <<'JSON'
   {"type": "deletion", "ruleset_source_type": "Organization", "ruleset_id": 1},
   {"type": "non_fast_forward", "ruleset_source_type": "Organization", "ruleset_id": 1},
   {"type": "pull_request", "parameters": {"required_approving_review_count": 1, "dismiss_stale_reviews_on_push": true, "required_review_thread_resolution": true}, "ruleset_source_type": "Organization", "ruleset_id": 1},
-  {"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2},
+  {"type": "workflows", "parameters": {"do_not_enforce_on_create": false, "workflows": [{"repository_id": 1190866154, "path": ".github/workflows/request-copilot-review.yml", "ref": "refs/heads/main", "sha": "0123456789abcdef0123456789abcdef01234567"}]}, "ruleset_source_type": "Organization", "ruleset_id": 2},
   {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}, "ruleset_source_type": "Repository", "ruleset_id": 3},
   {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "CI"}, {"context": "Cargo (workspace tests)"}]}, "ruleset_source_type": "Repository", "ruleset_id": 4}
 ]
@@ -291,12 +291,12 @@ no approval required~~rules.json~.[2].parameters.required_approving_review_count
 stale approvals kept on push~~rules.json~.[2].parameters.dismiss_stale_reviews_on_push = false~advisory:standard-stale-dismissal=false
 a laxer second organization pull-request rule~~rules.json~. += [{"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false}, "ruleset_source_type": "Organization", "ruleset_id": 2}]~
 threads need no resolution~~rules.json~.[2].parameters.required_review_thread_resolution = false~standard-conversation-resolution=false
-no Copilot review~~rules.json~del(.[3])~advisory:standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent
+no Copilot review~~rules.json~del(.[3])~advisory:standard-ruleset-source=missing:workflows^standard-copilot-review=absent
 a bypass actor on each ruleset is named on each~~org-ruleset-1.json,org-ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=1=RepositoryRole:5:always\,2=RepositoryRole:5:always
 an admitted queue actor on the ruleset holding every other rule is a departure~~org-ruleset-1.json~.bypass_actors = [{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]~standard-bypass-actors=1=Integration:5115517:pull_request
 bypass actors withheld from the token~~org-ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
-a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=2=RepositoryRole:9:always
-a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~advisory:standard-ruleset-source=Enterprise:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=unreadable:2
+a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:workflows^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
+a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~advisory:standard-ruleset-source=Enterprise:2:workflows\,missing:workflows^standard-copilot-review=absent^standard-bypass-actors=unreadable:2
 a repository deletion rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~advisory:standard-ruleset-source=Repository:1:deletion
 classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
 the branch unreadable~branch~~~standard-classic-protection=unreadable
@@ -340,27 +340,32 @@ an organization secret of a standard name not shared with this repository~~organ
 organization secrets unreadable~organization-actions-secrets~~~standard-secrets-outside=unreadable:organization
 ROWS
 
-# The owner migration replaces the native request rule. Identity departures
-# must fail the review row and must not satisfy the shared source requirement.
-MIGRATED_RULE='.[3] |= (.type = "workflows" | .parameters = {"workflows": [{"repository_id": 1190866154, "path": ".github/workflows/request-copilot-review.yml", "ref": "refs/heads/main", "sha": "0123456789abcdef0123456789abcdef01234567"}]})'
-MIGRATED_FAILURE='advisory:standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent'
+# The organization ruleset requests the review through kendex's workflow
+# (the base fixture's rule 3, as the live ruleset carries it). The source row
+# judges the workflow's repository and path; the review row also judges its
+# ref and pin.
+SOURCE_FAILURE='advisory:standard-ruleset-source=missing:workflows^standard-copilot-review=absent'
+PIN_FAILURE='standard-copilot-review=absent'
 while IFS='~' read -r name edit overrides; do
   [ -n "$name" ] || continue
-  drift_case "$name" '' rules.json "$MIGRATED_RULE | $edit" "$overrides"
+  drift_case "$name" '' rules.json "$edit" "$overrides"
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<ROWS
-the migrated organization standard~.~
-a workflow in a different repository~.[3].parameters.workflows[0].repository_id = 7~$MIGRATED_FAILURE
-a repository id with the wrong type~.[3].parameters.workflows[0].repository_id = "1190866154"~$MIGRATED_FAILURE
-a different workflow path~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$MIGRATED_FAILURE
-a different workflow ref~.[3].parameters.workflows[0].ref = "refs/heads/release"~$MIGRATED_FAILURE
-an unpinned workflow~del(.[3].parameters.workflows[0].sha)~$MIGRATED_FAILURE
-a short workflow pin~.[3].parameters.workflows[0].sha = "0123456"~$MIGRATED_FAILURE
-a non-hex workflow pin~.[3].parameters.workflows[0].sha = "g123456789abcdef0123456789abcdef01234567"~$MIGRATED_FAILURE
-a non-string workflow pin~.[3].parameters.workflows[0].sha = 7~$MIGRATED_FAILURE
-a missing workflow declaration~.[3].parameters.workflows = []~$MIGRATED_FAILURE
-a workflow on the wrong rule type~.[3].type = "required_deployments"~$MIGRATED_FAILURE
-a workflow from a repository ruleset~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:copilot_code_review^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
+the live organization ruleset~.~
+the native Copilot rule without the workflow~.[3] = {"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2}~advisory:standard-ruleset-source=missing:workflows
+the native Copilot rule beside the workflow~. += [{"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2}]~
+a workflow in a different repository~.[3].parameters.workflows[0].repository_id = 7~$SOURCE_FAILURE
+a repository id with the wrong type~.[3].parameters.workflows[0].repository_id = "1190866154"~$SOURCE_FAILURE
+a different workflow path~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$SOURCE_FAILURE
+a missing workflow declaration~.[3].parameters.workflows = []~$SOURCE_FAILURE
+a workflow on the wrong rule type~.[3].type = "required_deployments"~$SOURCE_FAILURE
+a workflow from a repository ruleset~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:workflows^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
+a re-pinned workflow~.[3].parameters.workflows[0].sha = "fedcba9876543210fedcba9876543210fedcba98"~
+a different workflow ref~.[3].parameters.workflows[0].ref = "refs/heads/release"~$PIN_FAILURE
+an unpinned workflow~del(.[3].parameters.workflows[0].sha)~$PIN_FAILURE
+a short workflow pin~.[3].parameters.workflows[0].sha = "0123456"~$PIN_FAILURE
+a non-hex workflow pin~.[3].parameters.workflows[0].sha = "g123456789abcdef0123456789abcdef01234567"~$PIN_FAILURE
+a non-string workflow pin~.[3].parameters.workflows[0].sha = 7~$PIN_FAILURE
 the pinned workflow beside an unrelated workflow~.[3].parameters.workflows += [{"repository_id": 7, "path": ".github/workflows/build.yml"}]~
 ROWS
 
@@ -738,7 +743,7 @@ while IFS='~' read -r name match edit consumer rules_edit real; do
 done <<'ROWS'
 required checks and a merge queue that may not come from a repository ruleset fail the matching layout~!= "Repository" else~s/!= "Repository" else/!= "Repository" or true else/~full~~ok check=standard-ruleset-source value=Organization\,Repository
 required checks that may come from an organization ruleset pass~!= "Repository" else~s/!= "Repository" else/!= "Repository" and .ruleset_source_type != "Organization" else/~full~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~advisory check=standard-ruleset-source value=Organization:2:required_status_checks
-a shared-rule list without deletion passes a branch with no deletion rule~"copilot_code_review", "deletion", "non_fast_forward"\] -~s/"deletion", "non_fast_forward"\] -/"non_fast_forward"] -/~full~del(.[0])~advisory check=standard-ruleset-source value=missing:deletion
+a shared-rule list without deletion passes a branch with no deletion rule~"pull_request", "deletion", "non_fast_forward"\] -~s/"deletion", "non_fast_forward"\] -/"non_fast_forward"] -/~full~del(.[0])~advisory check=standard-ruleset-source value=missing:deletion
 an unchecked context list passes an extra required context~elif \[ "\$contexts" = "\$WANT_CONTEXTS" \]; then~s/elif \[ "\$contexts" = "\$WANT_CONTEXTS" \]; then/elif [ "$contexts" = "$WANT_CONTEXTS" ] || true; then/~full~.[5].parameters.required_status_checks += [{"context": "Other"}]~FAIL check=standard-required-contexts value=CI\;Cargo\ \(workspace\ tests\)\;Other
 a skipped gate exclusion passes a required gate context the repository declares~if \[ "\$gated" = true \]; then~s/if \[ "\$gated" = true \]; then/if [ "$gated" = true ] \&\& false; then/~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~FAIL check=standard-required-contexts value=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 a skipped undeclared-list failure reports no undeclared list~elif \[ -z "\$WANT_CONTEXTS" \]; then~s/elif \[ -z "\$WANT_CONTEXTS" \]; then/elif [ -z "$WANT_CONTEXTS" ] \&\& false; then/~no-contexts~~advisory check=standard-required-contexts value=undeclared:CI\;Cargo\ \(workspace\ tests\)
@@ -753,7 +758,7 @@ ROWS
 while IFS='~' read -r name match mutation fixture overrides; do
   [ -n "$name" ] || continue
   file_edit "$SKILL" scripts/validate-standard.sh 1 "$match" "$mutation"
-  drift_case "$name" '' rules.json "$MIGRATED_RULE | $fixture" "$overrides"
+  drift_case "$name" '' rules.json "$fixture" "$overrides"
   if [ "$RC" -le 1 ] && [ "$CASE_MATCH" = false ]; then
     ok "control: $name"
   else
@@ -761,14 +766,15 @@ while IFS='~' read -r name match mutation fixture overrides; do
   fi
   cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
 done <<ROWS
-workflow rule type~^      \.type == "workflows"$~s/\.type == "workflows"/.type == "workflows" or true/~.[3].type = "required_deployments"~$MIGRATED_FAILURE
-workflow source~^      and \.ruleset_source_type == "Organization"$~s/and \.ruleset_source_type == "Organization"/and (.ruleset_source_type == "Organization" or true)/~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:copilot_code_review^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
-workflow repository~^        \.repository_id == 1190866154$~s/\.repository_id == 1190866154/(.repository_id == 1190866154 or true)/~.[3].parameters.workflows[0].repository_id = 7~$MIGRATED_FAILURE
-workflow path~^        and \.path ==~s/and \.path == "[^"]*"/and (.path == ".github\/workflows\/request-copilot-review.yml" or true)/~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$MIGRATED_FAILURE
-workflow ref~^        and \.ref ==~s/and \.ref == "[^"]*"/and (.ref == "refs\/heads\/main" or true)/~.[3].parameters.workflows[0].ref = "refs/heads/release"~$MIGRATED_FAILURE
-workflow pin~then test\(~s/{40}/{1,40}/~.[3].parameters.workflows[0].sha = "0123456"~$MIGRATED_FAILURE
-workflow pin type~if type == "string" then test~s/else false end/else true end/~.[3].parameters.workflows[0].sha = 7~$MIGRATED_FAILURE
-workflow source accounting~if kendex_copilot_workflow then~s/if kendex_copilot_workflow then/if false then/~.~
+the old native-rule assertion~"pull_request", "deletion", "non_fast_forward"\] -~s/"pull_request", "deletion"/"pull_request", "copilot_code_review", "deletion"/~.~
+workflow rule type~^      \.type == "workflows"$~s/\.type == "workflows"/.type == "workflows" or true/~.[3].type = "required_deployments"~$SOURCE_FAILURE
+workflow source~^      and \.ruleset_source_type == "Organization"$~s/and \.ruleset_source_type == "Organization"/and (.ruleset_source_type == "Organization" or true)/~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:workflows^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
+workflow repository~^        \.repository_id == 1190866154$~s/\.repository_id == 1190866154/(.repository_id == 1190866154 or true)/~.[3].parameters.workflows[0].repository_id = 7~$SOURCE_FAILURE
+workflow path~^        and \.path ==~s/and \.path == "[^"]*"/and (.path == ".github\/workflows\/request-copilot-review.yml" or true)/~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$SOURCE_FAILURE
+workflow ref~^        and \.ref ==~s/and \.ref == "[^"]*"/and (.ref == "refs\/heads\/main" or true)/~.[3].parameters.workflows[0].ref = "refs/heads/release"~$PIN_FAILURE
+workflow pin~then test\(~s/{40}/{1,40}/~.[3].parameters.workflows[0].sha = "0123456"~$PIN_FAILURE
+workflow pin type~if type == "string" then test~s/else false end/else true end/~.[3].parameters.workflows[0].sha = 7~$PIN_FAILURE
+workflow source accounting~if any\(\.\[\]; kendex_review_workflow\) then~s/if any(\.\[\]; kendex_review_workflow) then/if false then/~.~
 workflow review accounting~any\(\.\[\]; \.type == "copilot_code_review" or kendex_copilot_workflow\)~s/or kendex_copilot_workflow/or false/~.~
 ROWS
 

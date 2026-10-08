@@ -1,0 +1,1 @@
+- The organization-standard report's ruleset-source row requires the organization `workflows` rule for kendex's `request-copilot-review.yml`, judged by repository and path at any pin, and no longer requires the native `copilot_code_review` rule.
