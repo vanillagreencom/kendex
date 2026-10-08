@@ -1332,9 +1332,6 @@ printf '3\n' > "$STUB_DIR/succeed.rc"
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" "rc=4 launched=1" \
   "the child tells its live owner to stop, having tried the recovery once" "$ERR"
-assert_eq "$(mailbox text)" \
-  "overseer-recovery-blocked: no account qualifies for a successor to the overseer in tmux window $WINDOW (pane $PANE). Its own account is $WALL_ACCOUNT and its binding bucket frees up at $WALL_RESETS. The repeat stops; start a fresh overseer by hand once an account has room." \
-  "the notice names the spent account and when it frees up" "$ERR"
 assert_eq "$(fleet_log_text)" "$(mailbox text)" \
   "and reaches the fleet log with that same text" "$ERR"
 assert_eq "mail=$(mailbox_lines) log=$(jq '[.fleet_log[] | select(.item == "overseer")] | length' "$STUB_DIR/oversee-state.json")" \
@@ -1345,17 +1342,16 @@ run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" "launched=1 mail=2" \
   "a later pass neither retries the same accounts nor repeats the notice" "$ERR"
 
-# An account judgement that named neither figure. The notice says so rather
-# than carrying a figure from somewhere else: the words are `unknown` and
-# `none`, which is what the reader acts on.
+# An account judgement that named neither figure cannot supply measured
+# values to the blocked recovery record.
 overseer_case walled_no_room_unnamed walled
 state_with "$LINE"
 printf '%s\n' "oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on" \
   > "$STUB_DIR/succeed.check"
 printf '3\n' > "$STUB_DIR/succeed.rc"
 run TMUX_PANE="$PANE" -- --max-loops 2
-assert_contains "$(mailbox text)" "Its own account is unknown and its binding bucket frees up at none." \
-  "a judgement naming neither figure gives the notice no figure to print" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-recovery-blocked pane=$PANE account=unknown resets=none" \
+  "a judgement naming neither figure leaves both structured fields unmeasured" "$ERR"
 
 # A launcher that refuses leaves one bounded retry, written to the WALLED row:
 # the death's row is untouched throughout, so the two cases never spend each

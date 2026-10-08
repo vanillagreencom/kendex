@@ -727,7 +727,7 @@ for scenario in same-harness other-harness no-successor; do
   args=(pick --harness copilot --model gpt-5-mini --exclude-lane "$H/.failedcopilot" --json)
   want="0|$H/.othercopilot"
   case "$scenario" in
-    other-harness) args=(pick --harness pi --model copilot/gpt-5-mini --exclude-lane "$H/.failedcopilot" --json); want="0|$H/.pi/agent" ;;
+    other-harness) args=(pick --harness pi --model github-copilot/gpt-5-mini --exclude-lane "$H/.failedcopilot" --json); want="0|$H/.pi/agent" ;;
     no-successor) ORCH_LANE_COPILOT_POOL="$H/.failedcopilot=0/100"; want='3|none' ;;
   esac
   run_lanes "${args[@]}"
