@@ -7,11 +7,14 @@ _WATCH_FIXTURE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts/lib" && p
 source "$_WATCH_FIXTURE_LIB"
 
 fixture_watch_neighbor() { # PRIVATE_LAUNCHER
-  local dir
+  local dir sleep_bin
   dir="$(dirname "$1")"
   [[ "$dir" == "$TMP_ROOT/"* ]] || { echo 'watch-fixture: launcher=not-private' >&2; return 1; }
   if [[ -f "$dir/oversee-watch" && ! -L "$dir/oversee-watch" ]]; then return 0; fi
   [[ ! -L "$dir/oversee-watch" ]] || rm -- "${dir:?}/oversee-watch"
+  # The watch holds its claim while the launcher's clock can advance at once.
+  sleep_bin="$(command -v sleep)" || return 1
+  [[ -x "$sleep_bin" ]] || return 1
   cat > "$dir/oversee-watch" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -34,7 +37,7 @@ finish() {
   exit 0
 }
 trap finish TERM INT
-sleep 100000 &
+"$sleep_bin" 100000 &
 child=\$!
 wait "\$child"
 EOF

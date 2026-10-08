@@ -2917,13 +2917,15 @@ exec "$REAL_TMUX" "\$@"
 SHIM
   chmod +x "$BIN/tmux"
   VIRTUAL_CLOCK=1 SUCCEED_BIN="${2:-$SUCCEED}" succeed_shim "$1" 'claude:fable:high' --wait-secs 1
+  printf '%s\n' "$OUT" > "$TMP_ROOT/lastsecond.out"
+  [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.err" ]] || cat "$TMP_ROOT/work/tmp/oversee-watch.err" >> "$TMP_ROOT/lastsecond.out"
   rm -f -- "${BIN:?}/tmux" "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-gate" "${TMP_ROOT:?}/late-release"
 }
 if observed_row "a deciding read with the budget already spent still looks, and catches the handover"; then
   lastsecond_run lastsecond
   assert_eq "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
     "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0" \
-    "a deciding read with the budget already spent still looks, and catches the handover"
+    "a deciding read with the budget already spent still looks, and catches the handover" "$TMP_ROOT/lastsecond.out"
   # The control: the deciding read handed the raw budget instead of its floor
   # cannot look, so the row above reaches that read with the budget spent.
   NOFLOOR="$(mutant_scripts nofloor lib/overseer-launch.sh)" || exit 1
@@ -2933,7 +2935,7 @@ if observed_row "a deciding read with the budget already spent still looks, and 
   lastsecond_run nofloor "$NOFLOOR/oversee-succeed"
   assert_eq "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)" \
     "0|oversee-succeed: successor-lane-unobserved reason=no-settle-budget" \
-    "control: a deciding read handed the raw budget cannot look, and the handover stands"
+    "control: a deciding read handed the raw budget cannot look, and the handover stands" "$TMP_ROOT/lastsecond.out"
 fi
 
 echo "=== an overseer whose ACCOUNT is spent, which reaches none of the marks either ==="

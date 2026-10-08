@@ -756,8 +756,16 @@ mutate_file "$REPLAY_CONTROL/lib/watch-overseer-record.sh" \
 printf '#!/bin/sh\n[ "$1 $2" != "auth status" ] || { echo ready >> %s/auth.calls; echo Logged in; }\n' "$WSTUBS" > "$WSTUBS/gh"
 chmod +x "$WSTUBS/gh"
 for REPLAY_CASE in replay control; do
+  REPLAY_BIN="$SRC_DIR/oversee-succeed"
+  [[ "$REPLAY_CASE" != control ]] || REPLAY_BIN="$REPLAY_CONTROL/oversee-succeed"
   new_predecessor
   watch_stop "$OLD" "$FLEET_STATE"
+  watch_argv_read "$FLEET_STATE"
+  (
+    cd -- "$WATCH_CWD" || exit 1
+    watch_pid_write "$FLEET_STATE" "$PRED" hand "${REPLAY_BIN%/*}/oversee-watch" "${WATCH_ARGV[@]}"
+    watch_pid_release "$FLEET_STATE"
+  )
   REPLAY_LINE="$(recorded launch_line)"
   printf '%s\n' "$REPLAY_LINE" > "$TMP_ROOT/replay.line"
   kill "$(cat "$HARNESS_PIDS/${PRED#%}")"
@@ -766,8 +774,6 @@ for REPLAY_CASE in replay control; do
     TMUX="$(tm display-message -p -t "$PRED" '#{socket_path},#{pid},0')")
   printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
   printf 'fixture retained\n' > "$WATCH_ERR_FILE"
-  REPLAY_BIN="$SRC_DIR/oversee-succeed"
-  [[ "$REPLAY_CASE" != control ]] || REPLAY_BIN="$REPLAY_CONTROL/oversee-succeed"
   run_oversee "$REPLAY_BIN" -- --dead-pane "$PRED" --line-file "$TMP_ROOT/replay.line" --wait-secs 20
   ROW_ENV=()
   printf '%s\n' "$OUT" > "$TMP_ROOT/replay.out"
