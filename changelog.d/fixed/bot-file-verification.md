@@ -1,1 +1,1 @@
-- Verification can compare generated review-bot files through a trusted checker supplied for that run. Consumer refresh can prove Copilot instruction changes without running code from the checked branch.
+- Verification can compare generated review-bot files through a trusted checker supplied for that run. Consumer refresh can prove Copilot instruction changes without running code from the checked branch. The trusted checker receives only the tool environment it needs.

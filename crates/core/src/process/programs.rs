@@ -277,4 +277,26 @@ impl Hardened {
         hardened.command.current_dir(cwd);
         hardened
     }
+
+    /// The trusted bot checker reads an installed package as data. Caller
+    /// settings must not inject shell startup code or Python imports into it.
+    pub(crate) fn trusted_checker(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
+        let mut hardened = Hardened::shell_script(program, args);
+        hardened.command.env_clear();
+        // PATH locates bash, Python and git. Windows needs SystemRoot to load
+        // system libraries. No package setting or interpreter import path is
+        // part of this read-only check's contract.
+        #[cfg(windows)]
+        let inherited = ["PATH", "SystemRoot"];
+        #[cfg(not(windows))]
+        let inherited = ["PATH"];
+        for variable in inherited {
+            if let Some(value) = std::env::var_os(variable) {
+                hardened.command.env(variable, value);
+            }
+        }
+        hardened.command.env("PYTHONNOUSERSITE", "1");
+        hardened.command.current_dir(cwd);
+        hardened
+    }
 }

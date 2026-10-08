@@ -36,7 +36,7 @@ pub fn verify(env: &Env, scope: &Scope, trusted: &Path) -> Result<Option<Vec<Pos
             "the trusted package overlaps the checked project",
         ));
     }
-    let report = crate::repo_effects::run_script_program(
+    let report = crate::repo_effects::run_trusted_script_program(
         scope,
         &trusted,
         "scripts/bot-instructions",

@@ -2150,6 +2150,24 @@ TOML
   classify_here "a hand edit to the copilot instructions has no render proof" standard \
     --repo "$bot_consumer" --event pull_request --base "$bot_render_head" --head HEAD
 
+  bot_verify_status=0
+  (cd -- "$bot_consumer" && env -i PATH="$PATH" SystemRoot="${SystemRoot:-}" \
+    TMPDIR="${TMPDIR:-$SANDBOX}" HOME="$render_home" KENDEX_REAL_HOME=1 \
+    XDG_CONFIG_HOME="$render_home/.config" \
+    XDG_CACHE_HOME="$render_home/.cache" \
+    XDG_DATA_HOME="$render_home/.local/share" \
+    KENDEX_BACKGROUND_REFRESH=off kendex verify --scope project --json \
+      --bot-instructions-from "$TEST_DIR/../../bot-instructions") \
+    >"$SANDBOX/bot-verify.json" 2>"$SANDBOX/bot-verify.stderr" || bot_verify_status=$?
+  assert_eq "trusted verify exits nonzero for edited bot instructions" false \
+    "$([ "$bot_verify_status" -eq 0 ] && echo true || echo false)"
+  assert_eq "trusted verify reports clean=false for edited bot instructions" false \
+    "$(jq -r '.clean' "$SANDBOX/bot-verify.json")"
+  assert_eq "trusted verify reports one failed bot row with no ownership positions" true \
+    "$(jq '[.rows[] | select(.kind == "bot-instructions")] |
+      length == 1 and .[0].state == "failed" and (.[0].positions | length) == 0' \
+      "$SANDBOX/bot-verify.json")"
+
   # The catalog moves on after the refresh is pushed, and the runner's mirror
   # with it. The refresh is weighed at the commits its record names, so it is
   # still a render, and the log names the source it trails. The hand edit on

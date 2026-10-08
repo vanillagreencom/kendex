@@ -278,6 +278,114 @@ fn trusted_verification_compares_whole_bot_files_without_running_installed_code(
     }
 }
 
+/// Interpreter startup settings come from a caller's process, not from the
+/// trusted checker. The selected tool path still has to reach the checker.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_verification_excludes_caller_settings_and_interpreter_imports() {
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+
+    const ROOT: &str = "KENDEX_TEST_CHECKER_ROOT";
+    const CALLER_SETTING: &str = "KENDEX_TEST_CHECKER_SETTING";
+    if let Some(root) = std::env::var_os(ROOT) {
+        assert!(std::env::var_os("PYTHONPATH").is_some());
+        assert!(std::env::var_os("BASH_ENV").is_some());
+        assert!(std::env::var_os(CALLER_SETTING).is_some());
+        let root = PathBuf::from(root);
+        let env = Env::fake(root.parent().unwrap().join("home"), FakeOs::Linux);
+        let scope = Scope::Project { root: root.clone() };
+        let positions = bot_instructions::verify(
+            &env,
+            &scope,
+            &test_util::checkout_root().join("skills/bot-instructions"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(positions.iter().any(|position| {
+            position.path == root.join(".github/copilot-instructions.md")
+                && position.owns == kendex_core::engine::Owns::File
+        }));
+        fs::write(root.parent().unwrap().join("checker-proof"), "verified").unwrap();
+        return;
+    }
+
+    let fixture = enabled_fixture_with_arming(false);
+    let base = fixture.root.parent().unwrap();
+    let tools = base.join("tools");
+    let imports = base.join("imports");
+    fs::create_dir(&tools).unwrap();
+    fs::create_dir(&imports).unwrap();
+    let inherited_path = std::env::var_os("PATH").unwrap();
+    let python = std::env::split_paths(&inherited_path)
+        .map(|directory| directory.join("python3"))
+        .find(|path| kendex_core::fs::is_executable(path))
+        .unwrap();
+    let python = std::path::absolute(python).unwrap();
+    let selected_python = tools.join("python3");
+    fs::write(
+        &selected_python,
+        format!(
+            "#!/bin/sh\n[ -z \"${{{CALLER_SETTING}+x}}\" ] || exit 1\nprintf '%s' invoked > {tool:?}\nexec {python:?} \"$@\"\n",
+            tool = base.join("selected-tool-ran"),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&selected_python, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        imports.join("sitecustomize.py"),
+        format!(
+            "from pathlib import Path\nPath({:?}).write_text('executed')\n",
+            base.join("import-ran"),
+        ),
+    )
+    .unwrap();
+    let shell_startup = base.join("shell-startup");
+    fs::write(
+        &shell_startup,
+        format!(
+            "printf '%s' executed > {:?}\n",
+            base.join("shell-startup-ran")
+        ),
+    )
+    .unwrap();
+    let path =
+        std::env::join_paths(std::iter::once(tools).chain(std::env::split_paths(&inherited_path)))
+            .unwrap();
+    let mut environment = vec![
+        (ROOT, fixture.root.as_os_str().to_owned()),
+        (CALLER_SETTING, OsString::from("caller-value")),
+        ("PATH", path),
+        ("PYTHONPATH", imports.into_os_string()),
+        (
+            "PYTHONHOME",
+            base.join("absent-python-home").into_os_string(),
+        ),
+        ("BASH_ENV", shell_startup.into_os_string()),
+        ("TMPDIR", base.as_os_str().to_owned()),
+    ];
+    environment.extend(test_util::fixture_env(&base.join("home")));
+    let output = test_util::reexecute_test(
+        module_path!(),
+        "trusted_verification_excludes_caller_settings_and_interpreter_imports",
+        &environment,
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(fs::read(base.join("checker-proof")).unwrap(), b"verified");
+    assert_eq!(
+        fs::read(base.join("selected-tool-ran")).unwrap(),
+        b"invoked"
+    );
+    assert!(!base.join("import-ran").exists());
+    assert!(!base.join("shell-startup-ran").exists());
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_refuses_code_in_the_checked_project() {
