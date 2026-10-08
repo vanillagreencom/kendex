@@ -6,6 +6,7 @@ close, and list, which reads the inventory every verb reads first.
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import shlex
 import subprocess
@@ -2448,16 +2449,17 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                 self.assertEqual((result.returncode, result.stdout), (75, b""), result.stderr)
         self.script.write_text(original)
 
-    def creation_overlap(self, expect_busy):
+    def creation_overlap(self, expect_busy, channel_loss=False):
         """An installer acknowledgement fixes the pre-worktree interval.
 
         Every child has a parent deadline. The pipe releases create even when
         an assertion rejects the unlocked control, before scratch is removed.
         """
         self.fake_npm()
-        self.seed_source(".gitignore", (self.source / ".gitignore").read_text() + "ui/node_modules/\n")
-        self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = "ui/node_modules"\n')
-        self.seed_source("ui/package-lock.json", '{"lockfileVersion":3}\n')
+        if not (self.source / "ui/package-lock.json").exists():
+            self.seed_source(".gitignore", (self.source / ".gitignore").read_text() + "ui/node_modules/\n")
+            self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = "ui/node_modules"\n')
+            self.seed_source("ui/package-lock.json", '{"lockfileVersion":3}\n')
         entered = self.root / "install-entered"
         release = self.root / "install-release"
         # Opening both ends here lets cleanup release a child even if its
@@ -2473,6 +2475,16 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         command = [str(self.script), "create", "--item", "TEST-1", "--repo", "owner/repo",
                    "--harness", "claude", "--account", str(self.account)]
         environment = {**self.env, "SSH_TEST_ENTERED": str(entered), "SSH_TEST_RELEASE": str(release)}
+        transport_source = (self.bin / "ssh").read_text()
+        cut_descriptor = None
+        if channel_loss:
+            cut = self.root / "channel-cut"
+            lost = self.root / "channel-lost"
+            os.mkfifo(cut)
+            cut_descriptor = os.open(cut, os.O_RDWR | os.O_NONBLOCK)
+            environment.update(SSH_TEST_CUT_CHANNEL=str(cut), SSH_TEST_CHANNEL_LOST=str(lost),
+                               SSH_TEST_BASH=shutil.which("bash"))
+            self.channel_transport()
         child = subprocess.Popen(command, cwd=self.root, env=environment,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
@@ -2484,6 +2496,12 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
             clone = Path(self.row["clone"])
             self.assertFalse((clone / ".git/lane-host-item").exists())
             self.assertFalse(Path(str(clone) + "-worktree").exists())
+            if channel_loss:
+                os.write(cut_descriptor, b"close\n")
+                deadline = time.monotonic() + 10
+                while not lost.exists():
+                    self.assertLess(time.monotonic(), deadline, "transport never acknowledged channel closure")
+                    time.sleep(0.01)
             answers = (("status", ("--harness", "claude"), b"exited\n"),
                        ("stop", ("--harness", "claude"), b"stopped item=TEST-1 processes=0\n"),
                        ("close", (), b"closed=absent item=TEST-1\n"))
@@ -2494,7 +2512,7 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                 results.append(result)
                 expected = (75, b"") if expect_busy else (0, absent)
                 self.assertEqual((result.returncode, result.stdout), expected, result.stderr)
-            if expect_busy:
+            if expect_busy and not channel_loss:
                 competing = subprocess.run(command, cwd=self.root, env=self.env,
                                            capture_output=True, timeout=10)
                 self.assertEqual((competing.returncode, competing.stdout), (75, b""), competing.stderr)
@@ -2502,27 +2520,212 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         finally:
             os.write(descriptor, b"continue\n")
             os.close(descriptor)
+            if cut_descriptor is not None:
+                os.close(cut_descriptor)
             try:
                 output, error = child.communicate(timeout=20)
             except subprocess.TimeoutExpired:
                 child.kill()
-                child.communicate()
+                child.communicate(timeout=10)
                 raise
-            self.assertEqual(child.returncode, 0, error)
-            self.assertTrue(Path(self.row["clone"] + "-worktree").is_dir())
+            finally:
+                child.stdout.close()
+                child.stderr.close()
+                entered.unlink(missing_ok=True)
+                release.unlink(missing_ok=True)
+                if channel_loss:
+                    cut.unlink(missing_ok=True)
+                    lost.unlink(missing_ok=True)
+                    (self.bin / "ssh").write_text(transport_source)
+            if channel_loss and expect_busy:
+                self.assertNotEqual(child.returncode, 0, error)
+                self.assertEqual(output, b"")
+                self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+                self.assertFalse((clone / ".git/lane-host-item").exists())
+            else:
+                self.assertEqual(child.returncode, 0, error)
+                self.assertTrue(Path(self.row["clone"] + "-worktree").is_dir())
 
-    def test_unfinished_create_refuses_lifecycle_calls_and_releases_ownership(self):
-        self.creation_overlap(expect_busy=True)
-        # Successful completion released the lock: the same lifecycle calls
-        # can operate on the actual sandbox, then preserve the absent contract.
-        for verb in ("status", "stop"):
-            result = self.call(verb, "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual(result.returncode, 0, result.stderr)
-        closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
-        absent = self.call("close", "--item", "TEST-1")
-        self.assertEqual((absent.returncode, absent.stdout), (0, b"closed=absent item=TEST-1\n"), absent.stderr)
+    def channel_transport(self):
+        """Close the lock channel at the acknowledged installer interval.
+
+        Closing the remote input and local reply stream models OpenSSH
+        ChannelTimeout without killing the active remote installer. The
+        transport retains its child handle until that installer finishes.
+        """
+        self.executable(self.bin / "ssh", '''#!/usr/bin/env python3
+import os, pathlib, subprocess, sys, threading
+command = sys.argv[-1]
+environment = {key: value for key, value in os.environ.items()
+               if key in ("HOME", "PATH") or key.startswith(("SSH_TEST_", "REAL_"))}
+if "orch_take_lock 9" not in command or "SSH_TEST_CUT_CHANNEL" not in os.environ:
+    os.execve(os.environ.get("SSH_TEST_BASH", "'''+shutil.which("bash")+'''"),
+              ["bash", "-c", command], environment)
+child = subprocess.Popen([os.environ["SSH_TEST_BASH"], "-c", command],
+                         env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+closed = threading.Event()
+def forward():
+    try:
+        while True:
+            data = os.read(0, 65536)
+            if not data:
+                break
+            child.stdin.write(data)
+            child.stdin.flush()
+    except (BrokenPipeError, ValueError):
+        pass
+    finally:
+        child.stdin.close()
+def expire():
+    with open(os.environ["SSH_TEST_CUT_CHANNEL"]) as trigger:
+        trigger.readline()
+    closed.set()
+    child.stdin.close()
+    os.close(1)
+    pathlib.Path(os.environ["SSH_TEST_CHANNEL_LOST"]).touch()
+threading.Thread(target=forward, daemon=True).start()
+threading.Thread(target=expire, daemon=True).start()
+while True:
+    data = os.read(child.stdout.fileno(), 65536)
+    if not data:
+        break
+    if not closed.is_set():
+        os.write(1, data)
+code = child.wait(timeout=20)
+sys.exit(255 if closed.is_set() else code)
+''')
+
+    def test_control_separate_work_channel_loses_ownership_during_install(self):
+        original = self.script.read_text()
+        rule = '    if "session" in row:\n        result = row["session"].request(script, args, data or b"")'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(rule, rule.replace('if "session" in row:', 'if False:')))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.creation_overlap(expect_busy=True, channel_loss=True)
+
+    def stalled_channel_shutdown(self, verb, ignore_term=False, deadline=18):
+        """A parent deadline bounds a transport held after remote EOF."""
+        entered = self.root / "shutdown-entered"
+        release = self.root / "shutdown-release"
+        entered.unlink(missing_ok=True)
+        release.unlink(missing_ok=True)
+        os.mkfifo(release)
+        descriptor = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+        transport = self.bin / "ssh"
+        original = transport.read_text()
+        anchor = 'exec bash -c "${!#}"'
+        self.assertEqual(original.count(anchor), 1)
+        transport.write_text(original.replace(anchor, '''bash -c "${!#}"
+if [[ -n "${SSH_TEST_STALL_EOF:-}" ]]; then
+  if [[ "${SSH_TEST_IGNORE_TERM:-}" == yes ]]; then trap '' TERM; fi
+  printf ready > "$SSH_TEST_STALL_EOF"
+  read -r _ < "$SSH_TEST_SHUTDOWN_RELEASE"
+fi'''))
+        arguments = [verb, "--item", "TEST-1"]
+        if verb == "create":
+            arguments += ["--repo", "owner/repo", "--harness", "claude", "--account", str(self.account), "--reuse"]
+        elif verb in ("status", "stop"):
+            arguments += ["--harness", "claude"]
+        environment = {**self.env, "SSH_TEST_STALL_EOF": str(entered),
+                       "SSH_TEST_SHUTDOWN_RELEASE": str(release),
+                       "SSH_TEST_IGNORE_TERM": "yes" if ignore_term else "no"}
+        child = subprocess.Popen([str(self.script), *arguments], cwd=self.root,
+                                 env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            output, error = child.communicate(timeout=deadline)
+            self.assertTrue(entered.exists(), "transport never acknowledged remote EOF")
+            self.assertEqual(child.returncode, 1, error)
+            if verb != "close":
+                self.assertEqual(output, b"")
+        finally:
+            os.write(descriptor, b"continue\n")
+            os.close(descriptor)
+            try:
+                child.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.communicate(timeout=10)
+                raise
+            finally:
+                child.stdout.close()
+                child.stderr.close()
+                transport.write_text(original)
+
+    def test_lifecycle_shutdown_refuses_stalled_eof_with_bounded_reaping(self):
+        self.assertEqual(self.create().returncode, 0)
+        for verb, ignore_term in (("create", False), ("status", True), ("stop", False), ("close", False)):
+            with self.subTest(verb=verb, ignore_term=ignore_term):
+                self.stalled_channel_shutdown(verb, ignore_term=ignore_term)
+
+    def test_control_unbounded_shutdown_exceeds_parent_deadline(self):
+        self.assertEqual(self.create().returncode, 0)
+        original = self.script.read_text()
+        rule = 'return self.process.wait(timeout=5)'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(rule, 'return self.process.wait()'))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.stalled_channel_shutdown("status", deadline=8)
+
+    def test_truncated_lifecycle_request_performs_no_remote_effect(self):
+        """A controller killed mid-write cannot execute a partial request."""
+        original = self.script.read_text()
+        rules = (("command", '  test "$((arrived + 0))" -eq "$command_size" || exit 1'),
+                 ("input", '  test "$((arrived + 0))" -eq "$input_size" || exit 1'))
+        for field, rule in rules:
+            self.assertEqual(original.count(rule), 1)
+            for control in (False, True):
+                with self.subTest(field=field, control=control), tempfile.TemporaryDirectory() as scratch:
+                    script = Path(scratch) / "lane-host-ssh"
+                    self.executable(script, original.replace(rule, "  :") if control else original)
+                    module = runpy.run_path(str(script))
+                    with mock.patch.dict(os.environ, self.env, clear=True):
+                        session = module["LifecycleSession"](self.row)
+                    try:
+                        self.assertEqual(session.process.stdout.readline(), b"owned\n")
+                        target = self.root / f"cut-{field}-{control}"
+                        command = ('cat > ' + shlex.quote(str(target)) + '\n').encode()
+                        data = b"cut data\x00\n"
+                        sizes = (len(command) + (3 if field == "command" else 0),
+                                 len(data) + (3 if field == "input" else 0))
+                        # A short command has no input; otherwise those bytes
+                        # would fill the declared command rather than cut it.
+                        if field == "command":
+                            data = b""
+                            sizes = (sizes[0], 0)
+                        session.process.stdin.write(f"{sizes[0]} {sizes[1]}\n".encode() + command + data)
+                        session.process.stdin.close()
+                        session.process.wait(timeout=10)
+                        if control:
+                            with self.assertRaises(AssertionError):
+                                self.assertFalse(target.exists())
+                        else:
+                            self.assertFalse(target.exists())
+                    finally:
+                        session.close()
+
+    def test_creation_keeps_work_exclusive_until_its_owner_finishes(self):
+        clone = self.row["clone"]
+        for channel_loss in (False, True):
+            with self.subTest(channel_loss=channel_loss):
+                self.row["clone"] = clone + ("-lost" if channel_loss else "-kept")
+                self.inventory.write_text(json.dumps([self.row]))
+                self.creation_overlap(expect_busy=True, channel_loss=channel_loss)
+                # The channel ended, so lifecycle calls can read the completed
+                # sandbox or the absent result of the interrupted create.
+                for verb in ("status", "stop"):
+                    result = self.call(verb, "--item", "TEST-1", "--harness", "claude")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                closed = self.call("close", "--item", "TEST-1")
+                self.assertEqual(closed.returncode, 0, closed.stderr)
+                self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+                absent = self.call("close", "--item", "TEST-1")
+                self.assertEqual((absent.returncode, absent.stdout), (0, b"closed=absent item=TEST-1\n"), absent.stderr)
 
     def test_control_unlocked_create_returns_absent_while_install_is_unfinished(self):
         original = self.script.read_text()

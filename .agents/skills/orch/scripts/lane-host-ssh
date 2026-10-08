@@ -32,7 +32,7 @@ def notice(key, **values):
 
 
 def remote_command(row, script, *args):
-    """Build the SSH command shared by requests and their ownership holder."""
+    """Build the SSH command for a request or a lifecycle session."""
     control_dir = Path.home() / ".cache" / "kendex-ssh"
     control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     control_dir.chmod(0o700)
@@ -45,39 +45,133 @@ def remote_command(row, script, *args):
 
 def remote(row, script, *args, data=None, accept=()):
     """Run Bash through SSH; quote every argument for the remote login shell."""
-    result = subprocess.run(remote_command(row, script, *args),
-                            input=data if data is not None else b"", stdout=subprocess.PIPE)
+    if "session" in row:
+        result = row["session"].request(script, args, data or b"")
+    else:
+        result = subprocess.run(remote_command(row, script, *args),
+                                input=data if data is not None else b"", stdout=subprocess.PIPE)
     if result.returncode != 0 and result.returncode not in accept:
         notice("remote-failed", target=row["target"], exit=result.returncode)
         raise SystemExit(result.returncode if result.returncode > 0 else 1)
     return result
 
 
-@contextmanager
-def ownership_lock(row):
-    """Keep lifecycle calls exclusive on the host until their remote work ends."""
-    # create can spend an install with neither clone marker nor worktree yet.
-    # The lock sits beside the clone so even the first clone takes it. Ship
-    # the installed library to that shell because the clone may not exist.
-    library = Path(__file__).with_name("lib").joinpath("file-lock.sh").read_text()
-    script = library + '\n' + '''mkdir -p -- "$(dirname -- "$1")"
+class LifecycleSession:
+    """One SSH channel owns the lock and executes every lifecycle step.
+
+    OpenSSH ChannelTimeout can close one idle session while other sessions
+    continue. Executing the work on the lock's channel removes that split.
+    Requests and replies count bytes so credentials and tar archives keep
+    their binary contents, and a truncated request executes nothing.
+    """
+
+    def __init__(self, row):
+        self.row = row
+        self.output = bytearray()
+        library = Path(__file__).with_name("lib").joinpath("file-lock.sh").read_text()
+        script = library + '\n' + '''mkdir -p -- "$(dirname -- "$1")"
 exec 9>>"$1"
 orch_take_lock 9 "$1" 0 || exit 75
+umask 077
+session=$(mktemp -d) || exit 1
+trap 'rm -rf -- "${session:?}"; orch_release_lock' EXIT
+# sshd can send HUP when ChannelTimeout closes this channel. Bash defers a
+# trapped signal until its foreground operation ends, keeping the mutex too.
+trap 'exit 129' HUP
 printf 'owned\\n'
-cat >/dev/null
+while read -r command_size input_size; do
+  dd bs=1 count="$command_size" of="$session/command" 2>/dev/null
+  arrived=$(wc -c < "$session/command")
+  test "$((arrived + 0))" -eq "$command_size" || exit 1
+  dd bs=1 count="$input_size" of="$session/input" 2>/dev/null
+  arrived=$(wc -c < "$session/input")
+  test "$((arrived + 0))" -eq "$input_size" || exit 1
+  code=0
+  # The command is exclusively shlex.join output from this provider.
+  bash "$session/command" < "$session/input" > "$session/output" || code=$?
+  size=$(wc -c < "$session/output")
+  printf '%s %s\\n' "$code" "$((size + 0))"
+  cat -- "$session/output"
+done
 '''
-    with subprocess.Popen(remote_command(row, script, row["clone"] + ".lane-host.lock"),
-                          stdin=subprocess.PIPE, stdout=subprocess.PIPE) as holder:
+        self.process = subprocess.Popen(remote_command(row, script, row["clone"] + ".lane-host.lock"),
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        env=dict(os.environ))
+
+    def request(self, script, args, data):
+        command = shlex.join(["bash", "-c", "set -euo pipefail\n" + script, "lane-host-ssh", *args]).encode()
         try:
-            if holder.stdout.readline() != b"owned\n":
-                code = holder.wait()
-                notice("ownership-busy" if code == 75 else "ownership-lock-failed",
-                       target=row["target"], clone=row["clone"], exit=code)
-                raise SystemExit(code if code > 0 else 1)
-            yield
+            self.process.stdin.write(f"{len(command)} {len(data)}\n".encode() + command + data)
+            self.process.stdin.flush()
+            header = self.process.stdout.readline().split()
+            if len(header) != 2 or not all(word.isdigit() for word in header):
+                raise EOFError
+            code, size = map(int, header)
+            output = self.process.stdout.read(size)
+            if len(output) != size:
+                raise EOFError
+        except (BrokenPipeError, EOFError):
+            notice("ownership-channel-failed", target=self.row["target"], clone=self.row["clone"])
+            raise SystemExit(1) from None
+        return subprocess.CompletedProcess(command, code, output)
+
+    def close(self):
+        """Bound an SSH client stalled in the remote EOF exchange."""
+        try:
+            try:
+                self.process.stdin.close()
+            except BrokenPipeError:
+                pass
+            # No operation remains after EOF. Give the SSH exchange a grace
+            # interval, then signal only the process handle this owner holds.
+            try:
+                return self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                notice("ownership-shutdown-timeout", target=self.row["target"])
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    notice("ownership-reap-timeout", target=self.row["target"])
+            return 1
         finally:
-            holder.stdin.close()
-            holder.wait()
+            self.process.stdout.close()
+
+
+@contextmanager
+def ownership_lock(row):
+    """Execute lifecycle work on its lock owner and confirm that owner exited."""
+    session = LifecycleSession(row)
+    ready = False
+    try:
+        ready = session.process.stdout.readline() == b"owned\n"
+        if not ready:
+            return
+        yield {**row, "session": session}
+    finally:
+        error = sys.exc_info()[1]
+        code = session.close()
+        if not ready and code == 0:
+            code = 1
+        if code:
+            notice("ownership-busy" if code == 75 else "ownership-lock-failed",
+                   target=row["target"], clone=row["clone"], exit=code)
+        if error is None or isinstance(error, SystemExit) and error.code == 0:
+            if code:
+                raise SystemExit(code if code > 0 else 1)
+            sys.stdout.buffer.write(session.output)
+
+
+def lifecycle_output(row, data):
+    """Publish lifecycle success only after the owning SSH channel completes."""
+    if "session" in row:
+        row["session"].output.extend(data)
+    else:
+        sys.stdout.buffer.write(data)
 
 
 # Run first by `read`, which `cat` and the Claude state merge use, and by
@@ -266,7 +360,7 @@ printf other''', row["clone"], item).stdout
     if owner == b"owned":
         return
     if owner == b"other" and not worktree_exists(row, item):
-        print(ABSENT_ANSWERS[verb].format(item))
+        lifecycle_output(row, (ABSENT_ANSWERS[verb].format(item) + "\n").encode())
         raise SystemExit(0)
     notice(verb + "-unowned", item=item)
     raise SystemExit(75)
@@ -629,7 +723,7 @@ if [ ! -x "$marker" ]; then
 fi
 exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
     pi_root = f"\tpi-root={remote_account}" if args.harness == "pi" else ""
-    print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{pi_root}")
+    lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{pi_root}\n".encode())
 
 
 def archive_tmp(row, item, worktree_path):
@@ -712,7 +806,7 @@ lane_owned_processes "$1" "$2" launch-record || {
 }
 if test -n "$LANE_OWNED_PROCESS_PIDS"; then printf 'running\\n'
 else printf 'exited\\n'; fi''', path, harness, row["clone"], item)
-    sys.stdout.buffer.write(result.stdout)
+    lifecycle_output(row, result.stdout)
 
 
 def stop(row, item, harness):
@@ -755,7 +849,7 @@ case "$rc" in
 esac''', harness, row["clone"], item, IDENTITY_FILE, str(STOP_BY_DIRECTORY), accept=(STOP_BY_DIRECTORY,))
     if result.returncode == STOP_BY_DIRECTORY:
         result = stop_by_worktree(row, item, harness)
-    sys.stdout.buffer.write(result.stdout)
+    lifecycle_output(row, result.stdout)
 
 
 def stop_by_worktree(row, item, harness):
@@ -958,8 +1052,8 @@ capabilities prints the static ssh host kind's one capability line
         raise SystemExit(2)
     row = matches[0]
     if args.verb in ("create", "status", "stop", "close"):
-        with ownership_lock(row):
-            dispatch(row, args)
+        with ownership_lock(row) as locked:
+            dispatch(locked, args)
     else:
         dispatch(row, args)
 
