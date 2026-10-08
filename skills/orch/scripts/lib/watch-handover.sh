@@ -73,7 +73,14 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
   watch_pid_live "$state" 2>"$DEP_ERR" || live_rc=$?
   case "$live_rc" in
     0) ;;
-    1) watch_start "$state" "${@:2}"; return $? ;;
+    1)
+      # A fresh reader starts at line one. A successor keeps its cursor
+      # and unread events, even when its prior watch has already stopped.
+      if [[ -z "$1" ]] && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; } 2>"$DEP_ERR"; then
+        WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=logs)
+        return 1
+      fi
+      watch_start "$state" "${@:2}"; return $? ;;
     *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=claim); return 1 ;;
   esac
   old="$WATCH_PID"

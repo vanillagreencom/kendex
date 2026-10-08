@@ -153,6 +153,10 @@ if [[ "\${OVERSEE_WATCH_ORIGIN:-hand}" == succession ]]; then
 fi
 printf 'started %s pane=%s origin=%s lane=%s tmux=%s cwd=%s argv=%s\n' "\$\$" "\${TMUX_PANE:-none}" \\
   "\${OVERSEE_WATCH_ORIGIN:-hand}" "\${CLAUDE_CONFIG_DIR:-none}" "\${TMUX:-none}" "\$PWD" "\$*" >> "$TMP_ROOT/watch.log"
+if [[ -n "\${OVERSEE_WATCH_LOG_CASE:-}" ]]; then
+  printf 'EVENT fixture current-%s\n' "\$OVERSEE_WATCH_LOG_CASE"
+  printf 'fixture current-%s\n' "\$OVERSEE_WATCH_LOG_CASE" >&2
+fi
 watch_pid_write "\$state" "\${TMUX_PANE:-none}" "\${OVERSEE_WATCH_ORIGIN:-hand}" "\$0" "\${base[@]}"
 while :; do sleep 1; done
 EOF
@@ -263,6 +267,50 @@ assert_eq "$RC|$LIVE_RC|$WATCH_PANE" "0|0|$SUCC" \
 watch_handoff_read
 assert_eq "$WATCH_SINCE" "$FIRST_SINCE" "a missing-watch succession keeps the fleet start with no lane records"
 watch_stop "$WATCH_PID" "$FLEET_STATE"
+
+# Stop keeps the fleet state and its handled event logs. A fresh reader
+# starts from line one; a successor retains its previous reader cursor.
+LOG_BOUNDARY="$(mutant_scripts log-boundary)" || exit 1
+LOG_CONTROL="$(mutant_scripts log-control lib/watch-handover.sh)" || exit 1
+mutate_file "$LOG_CONTROL/lib/watch-handover.sh" \
+  'if [[ -z "$1" ]] && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; }' \
+  'if false && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; }'
+for LOG_BIN in "$LOG_BOUNDARY" "$LOG_CONTROL"; do
+  rm -- "$LOG_BIN/oversee-watch"
+  cp -p -- "$FIXTURE_WATCH" "$LOG_BIN/oversee-watch"
+done
+for LOG_CASE in fresh succession control; do
+  LOG_BIN="$LOG_BOUNDARY"
+  [[ "$LOG_CASE" != control ]] || LOG_BIN="$LOG_CONTROL"
+  PRED="$(recorded pane)"
+  printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
+  printf 'fixture retained\n' > "$WATCH_ERR_FILE"
+  ROW_ENV=(OVERSEE_WATCH_LOG_CASE="$LOG_CASE")
+  if [[ "$LOG_CASE" != succession ]]; then
+    tm kill-window -t "$PRED"
+    run_oversee "$LOG_BIN/oversee" -- launch --wait-secs 20
+  else
+    run_oversee "$LOG_BIN/oversee" -- launch --predecessor "$PRED" --wait-secs 20
+  fi
+  ROW_ENV=()
+  watch_handoff_read
+  assert_eq "$RC" 0 "$LOG_CASE: the stopped-watch launch succeeds against the retained fleet state"
+  for LOG_STREAM in "$WATCH_LOG_FILE" "$WATCH_ERR_FILE"; do
+    assert_file_contains "$LOG_STREAM" "current-$LOG_CASE" "$LOG_CASE: the new watch writes its current event"
+    if [[ "$LOG_CASE" == fresh ]]; then
+      assert_file_not_contains "$LOG_STREAM" retained "$LOG_CASE: a reader from line one cannot receive a handled event"
+    elif [[ "$LOG_CASE" == succession ]]; then
+      assert_file_contains "$LOG_STREAM" retained "$LOG_CASE: the successor keeps unread log lines and their cursor positions"
+      RETAINED_LINE='fixture retained'
+      [[ "$LOG_STREAM" != "$WATCH_LOG_FILE" ]] || RETAINED_LINE='EVENT fixture retained'
+      assert_eq "$(sed -n '1p' "$LOG_STREAM")" "$RETAINED_LINE" \
+        "$LOG_CASE: the old event keeps its numbered reader position"
+    else
+      assert_file_contains "$LOG_STREAM" retained "$LOG_CASE: disabling fresh-log clearing delivers the handled event again"
+    fi
+  done
+  watch_stop "$WATCH_PID" "$FLEET_STATE"
+done
 
 # The floor comes from the first lane. Repository selection stays with the
 # watch's existing default and ORCH_CONNECTED_REPOS resolution.
@@ -613,6 +661,8 @@ for REPLAY_CASE in replay control; do
   rm -f -- "${WSTUBS:?}/auth.calls"
   ROW_ENV=("${WATCH_ENV[@]}" GH_REPO=owner/repo OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/replay-state-$REPLAY_CASE"
     TMUX="$(tm display-message -p -t "$PRED" '#{socket_path},#{pid},0')")
+  printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
+  printf 'fixture retained\n' > "$WATCH_ERR_FILE"
   REPLAY_BIN="$SRC_DIR/oversee-succeed"
   [[ "$REPLAY_CASE" != control ]] || REPLAY_BIN="$REPLAY_CONTROL/oversee-succeed"
   run_oversee "$REPLAY_BIN" -- --dead-pane "$PRED" --line-file "$TMP_ROOT/replay.line" --wait-secs 20
@@ -626,6 +676,8 @@ for REPLAY_CASE in replay control; do
   watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
   assert_eq "$RC|$LIVE_RC|$(test -f "$WSTUBS/auth.calls" && echo ready || echo missing)" \
     "0|0|ready" "$REPLAY_CASE: death recovery with no watch starts a detached repeat watch" "$TMP_ROOT/replay.out"
+  assert_file_contains "$WATCH_LOG_FILE" retained "$REPLAY_CASE: death recovery keeps unread stdout events"
+  assert_file_contains "$WATCH_ERR_FILE" retained "$REPLAY_CASE: death recovery keeps the previous error log"
   if [[ "$REPLAY_CASE" == replay ]]; then
     assert_eq "$(recorded launch_line)" "$REPLAY_LINE" "the replay watch keeps the complete recorded command"
   else
