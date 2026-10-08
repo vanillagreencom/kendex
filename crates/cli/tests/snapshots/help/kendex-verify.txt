@@ -34,6 +34,12 @@ Options:
           as that revision held it, and base_owned lists the whole files and
           trees that revision's install record names
 
+      --bot-instructions-from <DIR>
+          Run this trusted bot-instructions package's checker once to compare
+          whole bot files. DIR must be outside the checked project. The
+          installed package supplies doctrine data only; no installed checker
+          runs under this licence
+
       --strict
           Also fail on warnings: a path an installed agent declares as tracked
           output that the project ignores

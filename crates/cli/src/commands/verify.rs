@@ -55,6 +55,9 @@ pub struct Output {
     /// A git revision of the project; with --json, each shared file kendex writes keys in under the project scope says whether the rest of it is as that revision held it, and base_owned lists the whole files and trees that revision's install record names
     #[arg(long, requires = "json", value_name = "REV")]
     pub base: Option<String>,
+    /// Run this trusted bot-instructions package's checker once to compare whole bot files. DIR must be outside the checked project. The installed package supplies doctrine data only; no installed checker runs under this licence
+    #[arg(long, value_name = "DIR")]
+    pub bot_instructions_from: Option<PathBuf>,
 }
 
 impl Output {
@@ -142,6 +145,7 @@ struct Tally {
     /// these are for the exit code and the closing line's other-rows count.
     shims_failed: usize,
     setup_failed: usize,
+    bots_failed: usize,
     bookkeeping_failed: usize,
     /// Declared tracked outputs the project ignores under `--strict`, and
     /// projects whose ignore rules git could not be asked about.
@@ -162,6 +166,7 @@ impl Tally {
     fn beside_failed(&self) -> usize {
         self.shims_failed
             + self.setup_failed
+            + self.bots_failed
             + self.bookkeeping_failed
             + self.outputs_failed
             + self.deliveries_failed
@@ -172,6 +177,7 @@ impl Tally {
         !(self.failed > 0
             || self.shims_failed > 0
             || self.setup_failed > 0
+            || self.bots_failed > 0
             || self.bookkeeping_failed > 0
             || self.outputs_failed > 0
             || self.deliveries_failed > 0
@@ -370,12 +376,50 @@ fn check_scope(
     kept_bundle_rows(&report, &placer, &named, tally, style);
     failed_hook_delivery_rows(&lock, &report, &placer, &named, tally, style);
     pinned_hook_rows(&report, &placer, &named, tally, style);
+    installation_rows(env, &lock, &report, &placer, &named, tally, style);
+    for shim in &report.instruction_shims {
+        if !named(&shim.name) {
+            continue;
+        }
+        let problem = say_shim(style, shim);
+        tally.shims_failed += usize::from(problem.is_some());
+        tally.rows.push(placer.row(
+            "shim",
+            &shim.name,
+            Some(shim.harness),
+            State::of(problem.is_none()),
+            problem,
+            &[shim.position()],
+        ));
+    }
+    tally.setup_failed += super::repo_effects::say_lapsed(env, &scope, names);
+    bot_instruction_rows(env, &scope, output, &placer, &named, tally, style);
+    if let Scope::Project { root } = &scope {
+        tracked_output_rows(root, &report, &placer, &named, warnings, tally, style);
+    }
+    let record = match fallback {
+        true => None,
+        false => attest::record(env, &scope, &lock, &report, &output.floor(&scope))?,
+    };
+    bookkeeping_rows(&scope, record, &report, &placer, tally, style)?;
+    Ok(())
+}
+
+fn installation_rows(
+    env: &Env,
+    lock: &kendex_core::lock::Lock,
+    report: &EngineReport,
+    placer: &Placer,
+    named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+    style: &Style,
+) {
     for (key, entry) in &lock.entries {
         if !named(&entry.name) {
             continue;
         }
         tally.checked += 1;
-        let (detail, remedy) = say_row(env, style, entry, &report)
+        let (detail, remedy) = say_row(env, style, entry, report)
             .map(|Problem { detail, remedy }| (detail, remedy))
             .unzip();
         tally.failed += usize::from(detail.is_some());
@@ -394,31 +438,38 @@ fn check_scope(
         row.remedy = remedy.flatten();
         tally.rows.push(row);
     }
-    for shim in &report.instruction_shims {
-        if !named(&shim.name) {
-            continue;
-        }
-        let problem = say_shim(style, shim);
-        tally.shims_failed += usize::from(problem.is_some());
-        tally.rows.push(placer.row(
-            "shim",
-            &shim.name,
-            Some(shim.harness),
-            State::of(problem.is_none()),
-            problem,
-            &[shim.position()],
-        ));
+}
+
+fn bot_instruction_rows(
+    env: &Env,
+    scope: &Scope,
+    output: &Output,
+    placer: &Placer,
+    named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+    style: &Style,
+) {
+    if !named("bot-instructions") {
+        return;
     }
-    tally.setup_failed += super::repo_effects::say_lapsed(env, &scope, names);
-    if let Scope::Project { root } = &scope {
-        tracked_output_rows(root, &report, &placer, &named, warnings, tally, style);
-    }
-    let record = match fallback {
-        true => None,
-        false => attest::record(env, &scope, &lock, &report, &output.floor(&scope))?,
+    let Some(trusted) = output.bot_instructions_from.as_deref() else {
+        return;
     };
-    bookkeeping_rows(&scope, record, &report, &placer, tally, style)?;
-    Ok(())
+    let (positions, problem) = match kendex_core::bot_instructions::verify(env, scope, trusted) {
+        Ok(Some(positions)) => (positions, None),
+        Ok(None) => return,
+        Err(error) => (Vec::new(), Some(error.to_string())),
+    };
+    ui::stderr(&style.report_verdict("bot-instructions", problem.as_deref()));
+    tally.bots_failed += usize::from(problem.is_some());
+    tally.rows.push(placer.row(
+        "bot-instructions",
+        "bot-instructions",
+        None,
+        State::of(problem.is_none()),
+        problem,
+        &positions,
+    ));
 }
 
 /// The declared sets whose members a refresh keeps as recorded. Those

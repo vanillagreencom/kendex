@@ -95,7 +95,7 @@ pub struct Placed {
 /// One record of `kendex verify --json`: what the verb's human row
 /// decided, with the positions the engine resolved. `kind` is the item
 /// kind's name, or `shim`, `record`, `inventory`, `adopted-workflow`,
-/// `tracked-output` or `bundle`, none of which names an item kind.
+/// `tracked-output`, `bot-instructions` or `bundle`, none of which names an item kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Row {
     #[serde(flatten)]

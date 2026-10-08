@@ -1,0 +1,1 @@
+- The checker can report verified output files for refresh classification.

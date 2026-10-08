@@ -73,6 +73,7 @@ The effective manifest holds `[bot-instructions]`. Its child tables configure bo
 A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bot-instructions.bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. The spec copy's own surfaces, § Default surfaces, reach the same routes in every repo with no manifest entry. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
 
 - `render` writes every enabled surface after validating it.
+- `check --json` reports verified whole-file paths for `kendex verify`; it grants no ownership of the shared `AGENTS.md` region.
 - `check` re-renders and diffs, reading the index under `--staged`.
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 - `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.

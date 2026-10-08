@@ -242,7 +242,7 @@ assert_eq "the shared branch measurement is carried" "1" \
 assert_eq "the Linear CLI read for the allowance is not" "0" \
   "$(grep -cxF 'skills/linear/scripts/linear.sh' <<<"$declared" || true)"
 
-# One planted drift per rule, each on a fresh copy of the two packages, each
+# One planted drift per rule, each on a fresh copy of the dependencies, each
 # answering exactly the line that rule prints. @CATALOG@ and @CONF@ stand for
 # the copy's catalog and conf, @LAST_LINE@ for the line an edit appended.
 # label | the edit | the drift expected
@@ -250,10 +250,11 @@ fixture_rows=0
 while IFS='|' read -r label edit expected; do
   fixture_rows=$((fixture_rows + 1))
   fixture="$SANDBOX/catalog-$fixture_rows"
-  mkdir -p "$fixture/orch/references" "$fixture/harness-ci"
+  mkdir -p "$fixture/orch/references" "$fixture/harness-ci" "$fixture/bot-instructions"
   cp -R "$CATALOG/orch/scripts" "$fixture/orch/scripts"
   cp "$REAL_CONF" "$fixture/orch/references/narrow-change.conf"
   cp -R "$CATALOG/harness-ci/scripts" "$fixture/harness-ci/scripts"
+  cp -R "$CATALOG/bot-instructions/scripts" "$fixture/bot-instructions/scripts"
   conf="$fixture/orch/references/narrow-change.conf"
   measured="$fixture/harness-ci/scripts/change-class"
   case "$edit" in

@@ -245,11 +245,14 @@ a gain whose inventory has no passing position|standard|no-bookkeeping|.agents/s
 GAINS
 require_rows change-class-gain "$gain_rows"
 
-# The same refresh fixture must turn red if the proof cannot read a gain.
+# Hold the optional path proof out of this control, so this refresh fixture
+# tests the inventory-gain admission alone.
 set_verifier clean
 gain_mutant="$(mutant gain-mutant change-class \
   'if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=generated-ownership-gain" ]; then' \
-  'if [ "$harness_verdict" = "harness_only=true" ] || { false && [ "$harness_note" = "cause=generated-ownership-gain" ]; }; then')"
+  'if [ "$harness_verdict" = "harness_only=true" ] || { false && [ "$harness_note" = "cause=generated-ownership-gain" ]; }; then' \
+  '  narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"' \
+  '  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured')"
 gain_control="$(PATH="$stub_bin:$PATH" "$gain_mutant" --repo "$repo" \
   --event pull_request --base "$base" --head "$gain_head" 2>/dev/null)"
 assert_eq "must-fail control: denying the gain the proof fails the refresh row" \
@@ -459,7 +462,7 @@ assert_eq "and the refused run still says how many positions it weighed" \
   "render-coverage: named=7" \
   "$(printf '%s\n' "$unowned_err" | grep '^render-coverage: ')"
 assert_eq "the verifier is asked for its document against the range's base, at the record's commits" \
-  "verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD) --at-record" \
+  "verify --scope project --json --bot-instructions-from $(dirname "$CHANGE_CLASS")/../../bot-instructions --base $(git -C "$repo" merge-base "$base" HEAD) --at-record" \
   "$(cat "$KENDEX_STUB_CALLS")"
 
 # A registry file kendex writes keys in is owned only where the row that
@@ -1707,6 +1710,7 @@ else
   catalog="$render_home/catalog"
   consumer="$render_home/dev/app"
   mkdir -p "$catalog/skills/demo" "$catalog/skills/second" "$consumer"
+  cp -R "$TEST_DIR/../../bot-instructions" "$catalog/skills/bot-instructions"
 
   # kendex reaches this sandbox alone: its home, its caches and its state are
   # all under SANDBOX, so the suite never writes the developer's own install.
@@ -2077,6 +2081,75 @@ TOML
     "class=standard measured=false cause=verify-refused verifier=path" \
     "$(printf '%s\n' "$catalog_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
 
+  # A refresh can replace only a stale bot output while the installed package
+  # and its record stay current. The old summary produces the base's stale
+  # file; the declared summary is restored before that base is committed.
+  bot_consumer="$render_home/dev/bot-app"
+  mkdir -p "$bot_consumer"
+  cat >"$bot_consumer/kendex.toml" <<TOML
+schema = 6
+
+[sources.cat]
+repo = "file://$catalog"
+
+[install]
+harnesses = ["claude"]
+method = "copy"
+
+[skills.bot-instructions]
+source = "cat"
+
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "bot-app"
+summary = "The previous project summary."
+
+[bot-instructions.bots]
+codex = true
+copilot = true
+TOML
+  printf '# Bot app\n\n## Code Review Rules\n' >"$bot_consumer/AGENTS.md"
+  fixture_repo "$bot_consumer"
+  git -C "$bot_consumer" add -A
+  git -C "$bot_consumer" commit -q -m "the bot consumer before kendex"
+  kendex_here "$bot_consumer" apply -y --leave
+  bot_launcher="$bot_consumer/.claude/skills/bot-instructions/scripts/bot-instructions"
+  "$bot_launcher" adopt --repo "$bot_consumer" >"$SANDBOX/bot-adopt" 2>&1
+  kendex_here "$bot_consumer" bot-instructions-render
+  assert_eq "the old bot manifest has exactly one summary to replace" 1 \
+    "$(grep -cF 'The previous project summary.' "$bot_consumer/kendex.toml")"
+  sed 's/The previous project summary\./The current project summary./' \
+    "$bot_consumer/kendex.toml" >"$SANDBOX/bot-manifest"
+  assert_eq "the declared bot summary differs from the stale render input" differs \
+    "$(cmp -s "$SANDBOX/bot-manifest" "$bot_consumer/kendex.toml" && echo same || echo differs)"
+  mv "$SANDBOX/bot-manifest" "$bot_consumer/kendex.toml"
+  git -C "$bot_consumer" add -A
+  git -C "$bot_consumer" commit -q -m "a current install with stale bot instructions"
+  bot_base="$(git -C "$bot_consumer" rev-parse HEAD)"
+  kendex_here "$bot_consumer" bot-instructions-render
+  git -C "$bot_consumer" add -A
+  git -C "$bot_consumer" commit -q -m "re-render the copilot instructions"
+  assert_eq "the bot refresh changes only the copilot instructions" \
+    ".github/copilot-instructions.md" \
+    "$(git -C "$bot_consumer" diff --name-only "$bot_base" HEAD)"
+  bot_render_head="$(git -C "$bot_consumer" rev-parse HEAD)"
+  classify_here "a copilot-only bot re-render has verified ownership" render \
+    --repo "$bot_consumer" --event pull_request --base "$bot_base" --head HEAD
+  bot_unowned_class="$(mutant bot-unowned change-class \
+    '  verify_args=(verify --scope project --json --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")' \
+    '  verify_args=(verify --scope project --json)')"
+  CHANGE_CLASS="$bot_unowned_class" classify_here \
+    "control: omitting the trusted checker turns the copilot-only render row red" standard \
+    --repo "$bot_consumer" --event pull_request --base "$bot_base" --head HEAD
+  printf '\nA rule the renderer did not produce.\n' \
+    >>"$bot_consumer/.github/copilot-instructions.md"
+  git -C "$bot_consumer" add -A
+  git -C "$bot_consumer" commit -q -m "a hand edit to the copilot instructions"
+  classify_here "a hand edit to the copilot instructions has no render proof" standard \
+    --repo "$bot_consumer" --event pull_request --base "$bot_render_head" --head HEAD
+
   # The catalog moves on after the refresh is pushed, and the runner's mirror
   # with it. The refresh is weighed at the commits its record names, so it is
   # still a render, and the log names the source it trails. The hand edit on
@@ -2120,13 +2193,13 @@ fi
 # Must-fail control: a classifier that trusts .kendex-generated.json instead of
 # the render answers render on the hand-edit row. The mutant stands in a
 # package layout of its own so it resolves the same siblings the real script
-# does, and only the provenance proof is taken out.
+# does, and every full source-and-ownership proof is taken out.
 mutant="$(plant_package "$SANDBOX/mutant" link)"
 sed 's/^  renders_match && render_paths_covered &&$/  true \&\&/' \
   "$CHANGE_CLASS" >"$mutant"
 chmod +x "$mutant"
-assert_eq "the control removes exactly one call" 1 \
-  "$(grep -c '^  true &&$' "$mutant")"
+assert_eq "the control removes the full source-and-ownership proof" 0 \
+  "$(awk '$0 == "  renders_match && render_paths_covered &&" { calls++ } END { print calls + 0 }' "$mutant")"
 
 reset_case
 set_verifier dirty

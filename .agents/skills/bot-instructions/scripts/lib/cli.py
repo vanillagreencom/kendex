@@ -7,6 +7,10 @@ suites read:
     findings  bot-instructions: findings=N  first line, on stderr, exit 1
               then one line per finding
     bounds    region bounds<TAB>start<TAB>end   `region-bounds`, stdout, exit 0
+    owned     {"version":1,"paths":[...]}   `check --json`, stdout, exit 0
+
+`kendex verify` reads the owned report after a successful comparison. It lists
+whole files from the render's existing file map and grants no region ownership.
 
 The key names the condition and the value is that condition's subject: the
 repository or spec root for a failure reading them, the argument for a usage
@@ -26,6 +30,7 @@ contract. Exit codes: 0 clean, 1 findings, 2 could not complete.
 """
 
 import argparse
+import json
 import os
 import sys
 import traceback
@@ -75,6 +80,7 @@ def parser():
              "well as the outputs, so a pre-commit lane judges one coherent state",
     )
     p.add_argument("--dry-run", action="store_true", help="render: validate and write nothing")
+    p.add_argument("--json", action="store_true", help="check: report verified whole-file paths as JSON")
     p.add_argument("--input", default=None, help=argparse.SUPPRESS)
     return p
 
@@ -125,6 +131,8 @@ def main(argv=None):
     p = parser()
     p.given = tuple(sys.argv[1:] if argv is None else argv)
     args = p.parse_args(argv)
+    if args.json and args.verb != "check":
+        p.error("--json belongs to check")
     if args.verb == "region-bounds":
         if args.input is None:
             p.error("region-bounds requires --input")
@@ -204,6 +212,9 @@ def main(argv=None):
         print(f"bot-instructions: crashed={repo}", file=sys.stderr)
         traceback.print_exc()
         return 2
+    if args.json:
+        print(json.dumps({"version": 1, "paths": sorted(ctx.build.files)}))
+        return 0
     for line in lines:
         print(line)
     return 0

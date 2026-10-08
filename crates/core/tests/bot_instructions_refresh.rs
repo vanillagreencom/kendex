@@ -206,6 +206,156 @@ fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fix
     fixture
 }
 
+/// The trusted checker owns the file set. The installed launcher is data,
+/// and an edited output fails comparison before it can grant ownership.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_verification_compares_whole_bot_files_without_running_installed_code() {
+    enum Change {
+        None,
+        Output,
+        Launcher,
+    }
+    for change in [Change::None, Change::Output, Change::Launcher] {
+        let fixture = enabled_fixture_with_arming(false);
+        let copilot = fixture.root.join(".github/copilot-instructions.md");
+        match change {
+            Change::None => {}
+            Change::Output => {
+                let text = fs::read_to_string(&copilot).unwrap();
+                fs::write(&copilot, format!("{text}\nHand-written rules.\n")).unwrap();
+            }
+            Change::Launcher => {
+                fs::write(
+                    fixture
+                        .root
+                        .join(CODEX_PACKAGE)
+                        .join("scripts/bot-instructions"),
+                    "#!/bin/sh\ntouch judged-code-ran\nexit 1\n",
+                )
+                .unwrap();
+            }
+        }
+        let before = fs::read(&copilot).unwrap();
+        let index = fs::read(fixture.root.join(".git/index")).unwrap();
+        let positions = bot_instructions::verify(
+            &fixture.env,
+            &fixture.scope,
+            &test_util::checkout_root().join("skills/bot-instructions"),
+        );
+        match change {
+            Change::Output => assert!(matches!(
+                positions,
+                Err(kendex_core::error::CoreError::Guard { check, .. })
+                    if check == "bot-instructions"
+            )),
+            Change::None | Change::Launcher => {
+                let positions = positions.unwrap().unwrap();
+                assert!(positions.iter().any(|position| position.path == copilot));
+                assert!(
+                    positions
+                        .iter()
+                        .all(|position| position.owns == kendex_core::engine::Owns::File)
+                );
+                assert!(
+                    !positions
+                        .iter()
+                        .any(|position| position.path == fixture.root.join("AGENTS.md"))
+                );
+            }
+        }
+        assert_eq!(fs::read(&copilot).unwrap(), before);
+        assert_eq!(fs::read(fixture.root.join(".git/index")).unwrap(), index);
+        assert!(!fixture.root.join("judged-code-ran").exists());
+        let repo = kendex_core::guard::Repo::at(&fixture.root).unwrap();
+        assert!(
+            !kendex_core::repo_effects::armed::recorded(
+                kendex_core::repo_effects::armed::record_dir(&repo, false),
+                "bot-instructions",
+            )
+            .unwrap()
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_verification_refuses_code_in_the_checked_project() {
+    let fixture = enabled_fixture_with_arming(false);
+    for trusted in [
+        fixture.root.join(CODEX_PACKAGE),
+        fixture.root.parent().unwrap().to_owned(),
+    ] {
+        let verified = bot_instructions::verify(&fixture.env, &fixture.scope, &trusted);
+        assert!(matches!(
+            verified,
+            Err(kendex_core::error::CoreError::Guard { check, .. }) if check == "bot-instructions"
+        ));
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_verification_without_configuration_grants_no_positions() {
+    let fixture = fixture_with_arming("schema = 6\n[install]\nharnesses = [\"codex\"]\n", false);
+    let verified = bot_instructions::verify(
+        &fixture.env,
+        &fixture.scope,
+        &test_util::checkout_root().join("skills/bot-instructions"),
+    )
+    .unwrap();
+    assert!(verified.is_none());
+}
+
+/// A caller can select an older or incompatible trusted checker. Its report
+/// must read at this version and must not grant a position outside the project.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_verification_rejects_unusable_reports() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture_with_arming("schema = 6\n", false);
+    let trusted = fixture.root.parent().unwrap().join("trusted");
+    let launcher = trusted.join("scripts/bot-instructions");
+    fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    for report in [
+        "check clean",
+        r#"{"version":2,"paths":[".github/copilot-instructions.md"]}"#,
+        r#"{"version":1,"paths":["../outside.md"]}"#,
+        r#"{"version":1,"paths":["/outside.md"]}"#,
+    ] {
+        fs::write(&launcher, format!("#!/bin/sh\nprintf '%s\\n' '{report}'\n")).unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+        let verified = bot_instructions::verify(&fixture.env, &fixture.scope, &trusted);
+        assert!(matches!(
+            verified,
+            Err(kendex_core::error::CoreError::Guard { check, .. }) if check == "bot-instructions"
+        ));
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn trusted_verification_refuses_a_launcher_link_into_the_checked_project() {
+    let fixture = enabled_fixture_with_arming(false);
+    let trusted = fixture.root.parent().unwrap().join("trusted");
+    let launcher = trusted.join("scripts/bot-instructions");
+    fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        fixture
+            .root
+            .join(CODEX_PACKAGE)
+            .join("scripts/bot-instructions"),
+        &launcher,
+    )
+    .unwrap();
+    let verified = bot_instructions::verify(&fixture.env, &fixture.scope, &trusted);
+    assert!(matches!(
+        verified,
+        Err(kendex_core::error::CoreError::Guard { check, .. }) if check == "repo-effects"
+    ));
+}
+
 /// Adopt the fixture's hand-written surfaces.
 ///
 /// The package reports the hand-written `## Code Review Rules` region under

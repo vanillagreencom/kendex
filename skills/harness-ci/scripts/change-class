@@ -91,7 +91,9 @@
 # The render proof runs `kendex verify --scope
 # project --json` in the head revision's private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
-# document. The classes, first match winning:
+# document. `--bot-instructions-from` licenses the trusted sibling checker's
+# comparison of bot files; the judged package supplies doctrine data only.
+# The classes, first match winning:
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
 #            reports files checked and none failed, and every changed path is
@@ -228,6 +230,7 @@ shopt -s extglob
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_ONLY="$SCRIPT_DIR/harness-only"
 ORCH_DIR="$SCRIPT_DIR/../../orch"
+BOT_INSTRUCTIONS_DIR="$SCRIPT_DIR/../../bot-instructions"
 NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 # shellcheck source=lib/change-class.sh
 . "$SCRIPT_DIR/lib/change-class.sh"
@@ -244,6 +247,33 @@ NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 # measures-with: skills/harness-ci/scripts/harness-only
 # measures-with: skills/harness-ci/scripts/lib/change-class.sh
 # measures-with: skills/harness-ci/scripts/lib/ci-lanes.sh
+# measures-with: skills/bot-instructions/scripts/bot-instructions
+# measures-with: skills/bot-instructions/scripts/lib/__init__.py
+# measures-with: skills/bot-instructions/scripts/lib/cli.py
+# measures-with: skills/bot-instructions/scripts/lib/config.py
+# measures-with: skills/bot-instructions/scripts/lib/constants.py
+# measures-with: skills/bot-instructions/scripts/lib/errors.py
+# measures-with: skills/bot-instructions/scripts/lib/fsutil.py
+# measures-with: skills/bot-instructions/scripts/lib/globs.py
+# measures-with: skills/bot-instructions/scripts/lib/jsonschema.py
+# measures-with: skills/bot-instructions/scripts/lib/main.py
+# measures-with: skills/bot-instructions/scripts/lib/manifest.py
+# measures-with: skills/bot-instructions/scripts/lib/markdown.py
+# measures-with: skills/bot-instructions/scripts/lib/marker.py
+# measures-with: skills/bot-instructions/scripts/lib/model.py
+# measures-with: skills/bot-instructions/scripts/lib/refusals.py
+# measures-with: skills/bot-instructions/scripts/lib/render.py
+# measures-with: skills/bot-instructions/scripts/lib/render_coderabbit.py
+# measures-with: skills/bot-instructions/scripts/lib/render_markdown.py
+# measures-with: skills/bot-instructions/scripts/lib/render_qodo.py
+# measures-with: skills/bot-instructions/scripts/lib/run.py
+# measures-with: skills/bot-instructions/scripts/lib/spec.py
+# measures-with: skills/bot-instructions/scripts/lib/tree.py
+# measures-with: skills/bot-instructions/scripts/lib/validators_bytes.py
+# measures-with: skills/bot-instructions/scripts/lib/validators_repo.py
+# measures-with: skills/bot-instructions/scripts/lib/verbs.py
+# measures-with: skills/bot-instructions/scripts/lib/writer.py
+# measures-with: skills/bot-instructions/scripts/lib/yamlemit.py
 # measures-with: skills/orch/references/narrow-change.conf
 # measures-with: skills/orch/scripts/lib/branch-growth.sh
 # measures-with: skills/orch/scripts/lib/kendex-env.sh
@@ -815,7 +845,7 @@ renders_match() {
     RENDER_REFUSAL="cause=head-checkout-failed head=$head_rev"
     return 1
   fi
-  verify_args=(verify --scope project --json)
+  verify_args=(verify --scope project --json --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")
   if [ -n "$base_rev" ]; then
     # `--at-record` weighs each package at the commit the install record
     # names, and goes only beside `--base`: the base's record is the floor
@@ -1061,7 +1091,14 @@ case "$inventory_change" in
 esac
 
 change_class_path_load "$NARROW_CONF" || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE"
-! path_class_matches narrow standard || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
+if path_class_matches narrow standard; then
+  narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"
+  # Package outputs outside the engine inventory can still be proved by
+  # their trusted checker. Without full ownership the path rule stands.
+  renders_match && render_paths_covered &&
+    answer render "cause=renders-match-their-sources"
+  answer standard "cause=$narrow_refusal" measured
+fi
 
 # Every measured class shares orch's branch growth reader, which owns the
 # production/test split and render-mirror pairing for CI classification. It is handed the base endpoint this call named, so the lines

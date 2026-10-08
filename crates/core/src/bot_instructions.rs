@@ -1,17 +1,99 @@
 //! The installed bot-instructions package owns its render grammar. kendex
 //! locates and runs that package after it changes a project, then carries the
-//! package's reported output paths into the commit offer.
+//! package's reported output paths into the commit offer. Verification uses a
+//! caller-supplied trusted checker and reads the installed doctrine as data.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use crate::engine::GeneratedPaths;
+use crate::engine::{GeneratedPaths, Owns, Position};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
 use crate::repo_effects::{ArmError, DeclaredEffects};
 
 const PACKAGE: &str = "bot-instructions";
+
+/// Compare bot files through a trusted package supplied for this invocation.
+///
+/// The installed package supplies doctrine as data through `--spec`. Its code
+/// and its declared commands never run. The caller licenses only the supplied
+/// checker, which must sit outside the project under judgement. A clean check
+/// reports whole files from the package's own render; shared regions grant no
+/// whole-file ownership here.
+pub fn verify(env: &Env, scope: &Scope, trusted: &Path) -> Result<Option<Vec<Position>>> {
+    let Scope::Project { root } = scope.canonical() else {
+        return Ok(None);
+    };
+    let Some(installed) = crate::engine::installed_declaration(env, scope, PACKAGE)? else {
+        return Ok(None);
+    };
+    let trusted =
+        crate::paths::canonical(trusted).map_err(|error| CoreError::io(trusted, error))?;
+    if trusted.starts_with(&root) || root.starts_with(&trusted) {
+        return Err(verify_error(
+            &root,
+            "the trusted package overlaps the checked project",
+        ));
+    }
+    let report = crate::repo_effects::run_script_program(
+        scope,
+        &trusted,
+        "scripts/bot-instructions",
+        vec![
+            "check".into(),
+            "--repo".into(),
+            root.as_os_str().to_owned(),
+            "--spec".into(),
+            installed.root.as_os_str().to_owned(),
+            "--json".into(),
+        ],
+    )?;
+    if report.code == 2
+        && report
+            .stderr
+            .first()
+            .is_some_and(|line| line.starts_with("bot-instructions: unconfigured="))
+    {
+        return Ok(None);
+    }
+    if report.code != 0 {
+        return Err(verify_error(&root, said(&report.stdout, &report.stderr)));
+    }
+    let checked: Checked = serde_json::from_str(&report.stdout.join("\n"))
+        .map_err(|error| verify_error(&root, format!("invalid check report: {error}")))?;
+    if checked.version != 1 {
+        return Err(verify_error(&root, "unsupported check report version"));
+    }
+    let positions = checked
+        .paths
+        .into_iter()
+        .map(|relative| {
+            project_path(&root, &relative)
+                .map(|path| Position {
+                    path,
+                    owns: Owns::File,
+                })
+                .ok_or_else(|| {
+                    verify_error(&root, "the checker reported a path outside its project")
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some(positions))
+}
+
+#[derive(serde::Deserialize)]
+struct Checked {
+    version: u32,
+    paths: Vec<String>,
+}
+
+fn verify_error(root: &Path, detail: impl std::fmt::Display) -> CoreError {
+    CoreError::Guard {
+        check: PACKAGE.to_owned(),
+        message: format!("verify-failed={}\n{detail}", crate::paths::slashed(root)),
+    }
+}
 
 /// Re-render every enabled bot-instruction surface in this project.
 ///
@@ -201,6 +283,17 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
 }
 
 fn reported_path(root: &Path, command: &str, line: &str, relative: &str) -> Result<PathBuf> {
+    project_path(root, relative).ok_or_else(|| {
+        protocol_error(
+            root,
+            command,
+            line,
+            "the renderer reported a path outside its project",
+        )
+    })
+}
+
+fn project_path(root: &Path, relative: &str) -> Option<PathBuf> {
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
@@ -211,14 +304,9 @@ fn reported_path(root: &Path, command: &str, line: &str, relative: &str) -> Resu
             )
         })
     {
-        return Err(protocol_error(
-            root,
-            command,
-            line,
-            "the renderer reported a path outside its project",
-        ));
+        return None;
     }
-    Ok(root.join(relative))
+    Some(root.join(relative))
 }
 
 fn protocol_error(root: &Path, command: &str, line: &str, detail: &str) -> CoreError {

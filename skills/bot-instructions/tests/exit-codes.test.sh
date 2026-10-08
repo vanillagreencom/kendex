@@ -49,6 +49,7 @@ git unable to answer exits 2 under the source key|rendered no-git|check|2|source
 a spec copy with no doctrine source exits 2 under the spec key|rendered spec:no-doctrine|check|2|spec|-
 flag misuse exits 2 before any read, under the usage key|rendered|render --staged|2|usage|--staged
 an unknown verb exits 2 from the parser under the usage key|rendered|bogus|2|usage|-
+JSON output on a writing verb refuses before any read|rendered|render --json|2|usage|-
 "
 
 # A row renders the key, so the value beside it is asserted here, on a world
@@ -312,6 +313,67 @@ if [ "$status" -eq 0 ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] \
   ok 'one owned heading answers with a single bounds line and exits 0'
 else
   bad 'one owned heading answers with a single bounds line and exits 0' "exit $status: $out"
+fi
+
+# kendex verify consumes only a successful JSON report. Whole-file ownership
+# includes the generated Copilot file but excludes the shared AGENTS region.
+json_repo="$(bi_rendered_repo exit-json)" || exit 1
+owned_report() {
+  python3 -c 'import json, sys
+try:
+    report = json.load(sys.stdin)
+    paths = report["paths"]
+    good = report["version"] == 1 and isinstance(paths, list)
+    good = good and ".github/copilot-instructions.md" in paths
+    good = good and ".github/instructions/code-review.md" in paths
+    good = good and "AGENTS.md" not in paths
+except (ValueError, KeyError, TypeError):
+    good = False
+sys.exit(0 if good else 1)'
+}
+json_out="$("$BI" check --json --repo "$json_repo")"
+json_status=$?
+if [ "$json_status" -eq 0 ] && owned_report <<<"$json_out"; then
+  ok 'the JSON report owns verified whole files and no shared region'
+else
+  bad 'the JSON report owns verified whole files and no shared region' "exit $json_status: $json_out"
+fi
+json_mutant="$(bi_mutant json-empty scripts/lib/cli.py \
+  'print(json.dumps({"version": 1, "paths": sorted(ctx.build.files)}))' \
+  'print(json.dumps({"version": 1, "paths": []}))')" || exit 1
+json_out="$("$json_mutant" check --json --repo "$json_repo")"
+json_status=$?
+if [ "$json_status" -eq 0 ] && ! owned_report <<<"$json_out"; then
+  ok 'control: omitting verified paths turns the ownership assertion red'
+else
+  bad 'control: omitting verified paths turns the ownership assertion red' "exit $json_status: $json_out"
+fi
+verb_mutant="$(bi_mutant json-verb scripts/lib/cli.py \
+  'p.error("--json belongs to check")' 'return 0')" || exit 1
+"$verb_mutant" render --json --repo "$json_repo" >"$BI_TMP/json-verb" 2>&1
+json_status=$?
+if [ "$json_status" -eq 0 ]; then
+  ok 'control: bypassing JSON flag validation turns the writing-verb refusal red'
+else
+  bad 'control: bypassing JSON flag validation turns the writing-verb refusal red' "exit $json_status"
+fi
+printf '\nstale\n' >>"$json_repo/.github/copilot-instructions.md"
+"$BI" check --json --repo "$json_repo" >"$BI_TMP/json-report" 2>"$BI_TMP/json-findings"
+json_status=$?
+if [ "$json_status" -eq 1 ] && [ ! -s "$BI_TMP/json-report" ]; then
+  ok 'a failed comparison publishes no owned paths'
+else
+  bad 'a failed comparison publishes no owned paths' "exit $json_status"
+fi
+comparison_mutant="$(bi_mutant json-unchecked scripts/lib/cli.py \
+  'lines = verbs.check_verb(ctx)' 'lines = []')" || exit 1
+"$comparison_mutant" check --json --repo "$json_repo" \
+  >"$BI_TMP/json-unchecked" 2>"$BI_TMP/json-unchecked-findings"
+json_status=$?
+if [ "$json_status" -eq 0 ] && owned_report <"$BI_TMP/json-unchecked"; then
+  ok 'control: bypassing comparison turns the failed-output refusal red'
+else
+  bad 'control: bypassing comparison turns the failed-output refusal red' "exit $json_status"
 fi
 
 bi_summary
