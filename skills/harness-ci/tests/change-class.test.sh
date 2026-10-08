@@ -207,13 +207,33 @@ git clone -q --no-checkout --filter=blob:none "file://$repo" "$partial"
 git -C "$partial" config gc.auto 0
 git -C "$partial" config maintenance.auto false
 git -C "$partial" checkout -q --detach "$base"
-missing="$(git -C "$partial" rev-list --objects --missing=print case)"
-assert_eq 'partial clone has a missing head blob before classification' true \
-  "$(grep -Eq '^\?' <<<"$missing" && echo true || echo false)"
-PATH="$stub_bin:$PATH" assert_class 'partial clone render fetches missing blobs privately' render \
-  --repo "$partial" --event pull_request --base "$base" --head case
-assert_eq 'partial clone working tree stays at its original commit' "$base" \
-  "$(git -C "$partial" rev-parse HEAD)"
+while IFS='|' read -r label remote_url; do
+  git -C "$partial" remote set-url origin "$remote_url"
+  missing="$(git -C "$partial" rev-list --objects --missing=print case)"
+  assert_eq "$label partial clone has a missing head blob before classification" true \
+    "$(grep -Eq '^\?' <<<"$missing" && echo true || echo false)"
+  PATH="$stub_bin:$PATH" assert_class "$label partial clone fetches missing blobs privately" render \
+    --repo "$partial" --event pull_request --base "$base" --head case
+  assert_eq "$label partial clone working tree stays at its original commit" "$base" \
+    "$(git -C "$partial" rev-parse HEAD)"
+  assert_eq "$label partial clone keeps its remote URL" "$remote_url" \
+    "$(git -C "$partial" remote get-url origin)"
+  missing="$(git -C "$partial" rev-list --objects --missing=print case)"
+  assert_eq "$label partial clone still lacks the head blob after classification" true \
+    "$(grep -Eq '^\?' <<<"$missing" && echo true || echo false)"
+done <<URLS
+file URL|file://$repo
+absolute path|$repo
+relative path|../change-class
+explicit local path|./../change-class
+URLS
+relative_mutant="$(mutant partial-relative-url change-class \
+  '                value="$remote_base/$value" ;;' \
+  '                : ;;')"
+relative_err="$(PATH="$stub_bin:$PATH" "$relative_mutant" --repo "$partial" \
+  --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
+assert_eq 'control: copying a relative URL without its base cannot check out the head' true \
+  "$(grep -Eq '^class: class=standard measured=false cause=head-checkout-failed head=' <<<"$relative_err" && echo true || echo false)"
 partial_mutant="$(mutant partial-promisor change-class \
   '    git -C "$private_tree" config "$key" "$value" 2>>"$3" || return 1' \
   '    :')"
@@ -221,6 +241,16 @@ partial_err="$(PATH="$stub_bin:$PATH" "$partial_mutant" --repo "$partial" \
   --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
 assert_eq 'control: alternates without promisor settings cannot check out the head' true \
   "$(grep -Eq '^class: class=standard measured=false cause=head-checkout-failed head=' <<<"$partial_err" && echo true || echo false)"
+git -C "$partial" remote set-url origin ../missing-remote
+partial_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$partial" \
+  --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
+assert_eq 'an unavailable relative remote still refuses the head checkout' true \
+  "$(grep -Eq '^class: class=standard measured=false cause=head-checkout-failed head=' <<<"$partial_err" && echo true || echo false)"
+git -C "$partial" remote set-url origin ../change-class
+assert_eq 'the judged clone can fetch the missing blob with its relative remote' \
+  $'line 1\nline 2' "$(git -C "$partial" show case:.agents/skills/orch/app.ts)"
+assert_eq 'native relative fetch keeps the judged working tree at its original commit' "$base" \
+  "$(git -C "$partial" rev-parse HEAD)"
 
 # The public transport is a local release fixture. The classifier still runs
 # its own fetch and exact-pin comparison; no ownership operation is stubbed.

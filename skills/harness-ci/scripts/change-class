@@ -655,7 +655,7 @@ queue_only_of_paths() {
 # so the checkout is held to REV afterwards: a status naming anything is a
 # tree that is not the commit, and is refused like a checkout that failed.
 private_checkout() { # DIR REV ERR
-  local private_tree="$1" objects left setting key value config_status=0
+  local private_tree="$1" objects left setting key value remote_base config_status=0
   objects="$(git -C "$repo" rev-parse --path-format=absolute --git-path objects 2>"$3")" &&
     git init -q "$private_tree" 2>>"$3" &&
     mkdir -p "$private_tree/.git/objects/info" &&
@@ -669,6 +669,21 @@ private_checkout() { # DIR REV ERR
   while IFS= read -r -d '' setting; do
     key="${setting%%$'\n'*}"
     value="${setting#*$'\n'}"
+    # remote set-url retains local relative paths. Their base must survive
+    # the move to this checkout; a colon before a slash names a transport.
+    case "$key" in
+      remote.*.url)
+        case "$value" in
+          /*) ;;
+          *)
+            case "${value%%/*}" in
+              *:*) ;;
+              *)
+                remote_base="$(cd -- "$repo" && pwd -P)" 2>>"$3" || return 1
+                value="$remote_base/$value" ;;
+            esac ;;
+        esac ;;
+    esac
     git -C "$private_tree" config "$key" "$value" 2>>"$3" || return 1
   done <"$private_tree/.git/promisor-config"
   git -C "$private_tree" checkout -q --detach "$2" 2>>"$3" &&
