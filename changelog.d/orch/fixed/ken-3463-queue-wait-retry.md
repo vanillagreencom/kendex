@@ -1,0 +1,1 @@
+- Make the queue waiter retry tests independent of runner delays, so CPU contention does not cause false authentication failures in the skill test suite.

@@ -15,17 +15,23 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "queue_wait: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "queue_wait: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "queue_wait: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
+git -C "$TMP_ROOT/repo" config gc.auto 0
+git -C "$TMP_ROOT/repo" config maintenance.auto false
 
 # Sequenced `gh` stub. Each poll makes one `gh pr view --json
 # state,mergedAt,mergeable` call, that field list matched EXACTLY by the
@@ -139,9 +145,12 @@ case "${1:-}" in
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then
-      # The first STUB_GH_API_USER_HANGS checks outlive any auth bound; a
-      # fractional sleep is a real one under the virtual clock.
-      [[ "$(_next api_user)" -gt "${STUB_GH_API_USER_HANGS:-0}" ]] || sleep 5.0
+      # The shared bounded runner returns 124 for a killed check. Supply that
+      # status at the gh boundary: this suite tests the retry, not its clock.
+      if [[ "$(_next api_user)" -le "${STUB_GH_API_USER_TIMEOUTS:-0}" ]]; then
+        _next api_user_timeout >/dev/null
+        exit 124
+      fi
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "test-user"
       exit 0
@@ -481,6 +490,8 @@ observe() {
         ;;
       reruns) value="$(paste -sd, - <"$SEQ_DIR/reruns.log" 2>/dev/null || true)"; [[ -n "$value" ]] || value=none ;;
       thread_reads) value="$(cat "$SEQ_DIR/threads.count" 2>/dev/null || echo 0)" ;;
+      auth_checks) value="$(cat "$SEQ_DIR/api_user.count" 2>/dev/null || echo 0)" ;;
+      auth_timeouts) value="$(cat "$SEQ_DIR/api_user_timeout.count" 2>/dev/null || echo 0)" ;;
       checkruns_read) value="$([[ -f "$SEQ_DIR/checkruns.count" ]] && echo true || echo false)" ;;
       guard_warned) value="$(grep -qF 'queue-wait: guard-blind failures=3 pr=1' "$ERR" && echo true || echo false)" ;;
       checkrun_warned) value="$(grep -qF 'queue-wait: checks-blind failures=3 commit=' "$ERR" && echo true || echo false)" ;;
@@ -542,8 +553,30 @@ table "$QW" \
   'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-unreadable+pr=1+repo=owner/repo+polls=3' \
   'a GraphQL errors array surfaces its message|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-rejected+pr=1+detail=isInMergeQueue' \
   'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error_line=queue-wait:+auth-unavailable+command=gh' \
-  'an env token whose check is killed at its bound is asked again and polls|state:last=merged,queue:last=in||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_HANGS=1,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0.1|rc=0 verdict=merged polls=1' \
-  'an env token killed at its bound twice is not accepted|open_queued||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_HANGS=2,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0.1|rc=3 status=error polls=0'
+  'a bound-killed status retries the env token once, then polls|state:last=merged,queue:last=in||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_TIMEOUTS=1,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0|rc=0 verdict=merged polls=1 auth_checks=2 auth_timeouts=1' \
+  'two bound-killed statuses refuse the env token without another retry|open_queued||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_TIMEOUTS=2,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0|rc=3 status=error polls=0 auth_checks=2 auth_timeouts=2'
+
+# The same once-then-success row must fail when the retry is disabled in the
+# real helper. Keep the helper's matched text in the disposable copy.
+CONTROL_SCRIPTS="$(mutant_scripts no-retry/orch lib/gh-auth.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/no-retry/github"
+mutate_file "$CONTROL_SCRIPTS/lib/gh-auth.sh" \
+  'if [[ "$status" -eq 124 ]] && kendex_github_has_env_token; then' \
+  'if false && [[ "$status" -eq 124 ]] && kendex_github_has_env_token; then'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$TMP_ROOT/no-retry/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+stage 'state:last=merged,queue:last=in'
+run_wait 'GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_TIMEOUTS=1,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0' 1 1 20 --json --no-check-probe
+assert_eq "$(observe 'rc=3 polls=0 auth_checks=1 auth_timeouts=1')" \
+  'rc=3 polls=0 auth_checks=1 auth_timeouts=1' 'control reaches the killed-status refusal without retry' "$ERR"
+set +e
+( FAIL=0; assert_eq "$(observe 'rc=0 verdict=merged polls=1 auth_checks=2 auth_timeouts=1')" \
+  'rc=0 verdict=merged polls=1 auth_checks=2 auth_timeouts=1' 'retry removed'; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/no-retry/assertion.log"
+CONTROL_RC=$?
+set -e
+assert_eq "$CONTROL_RC" 1 'the retry row rejects the retry-removed control'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
 echo "=== the late-findings guard: any unresolved thread while queued or armed ==="
 # Disarm first (a bare dequeue can be raced back in by the arming), then
