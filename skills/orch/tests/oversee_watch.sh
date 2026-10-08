@@ -1650,7 +1650,7 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | pa
 # `departs` starts with the record and closes it; the hosted mailbox is
 # emptied first, since a lane with mail would deliver it in loop 1 and end the
 # pass before the loop that must no longer carry the lane ever runs.
-mid_pass_case() { # NAME joins|departs
+mid_pass_case() { # NAME joins|departs [WATCH_BIN]
   new_case "$1"
   printf 'gh-1\nKEN-10\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-KEN-10.txt"
@@ -1668,12 +1668,12 @@ mid_pass_case() { # NAME joins|departs
   fi
   repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
   err="$TMP_ROOT/e-$1"
-  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" \
+  out="$(WATCH_BIN="${3:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" \
     -- --max-loops 3 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   MID_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
   MID_ITEMS="$(awk '{ for (i = 1; i < NF; i++) if ($i == "handoff-standing") { printf "%s%s", sep, $(i + 1); sep = " " } }' "$STUB_DIR/workflow-state.args")"
-  MID_MAIL_READS="$(grep -c -- "/tmp/lane-mail/KEN-10/to-overseer.jsonl" "$STUB_DIR/host.log" || true)"
+  MID_MAIL_READS="$(grep -c -- '/tmp/lane-mail/KEN-10/to-overseer\.jsonl$' "$STUB_DIR/host.log" || true)"
 }
 mid_pass_case repeat_state_joins_mid_pass joins
 assert_eq "$rc" "2" "the mid-pass run ends on the state it cannot read" "$err"
@@ -1691,6 +1691,13 @@ assert_eq "$rc" "2" "the departure run ends on the state it cannot read" "$err"
 assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 issue-1" "the loops after the record closes no longer carry it, without the pass returning first" "$err"
 assert_eq "$MID_MAIL_READS" "1" "the closed lane's mailbox is read in the loop that carried it and never again" "$err"
 assert_eq "$MID_EVENTS" "heartbeat" "the closed lane produces no event after it leaves the fleet" "$err"
+# Keep a closed record in the production reader to prove the mailbox counter
+# detects reads after closure, while ignoring the numbering file beside it.
+DEPARTS_MUTANT="$(mutant_scripts departs-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/departs-mutant/github"
+mutate_file "$DEPARTS_MUTANT" '(.[] | select(running)' '(.[] | select(running or .status == "done")'
+mid_pass_case repeat_state_departs_control departs "$DEPARTS_MUTANT"
+assert_le 2 "$MID_MAIL_READS" "control: retaining the closed lane repeats reads of its actual mailbox" "$err"
 # An argument a pass would refuse ends repeat mode before any pass. The sleep
 # stub takes the state away, so a watch that ran the pass and slept anyway
 # ends too, on a second refusal.
