@@ -96,7 +96,7 @@ fn a_stale_copy_names_its_revision_both_hashes_and_the_adoption_step() {
         let adopted = collect(&root, &state, &Default::default(), &mut Vec::new())
             .unwrap()
             .unwrap();
-        let workflow = &adopted[&root.join(WORKFLOW)];
+        let workflow = &adopted.workflows[&root.join(WORKFLOW)];
         assert_eq!(workflow.problems, expected, "{case}");
         assert_eq!(workflow.record.template_hash, SHIPPED_HASH, "{case}");
     }

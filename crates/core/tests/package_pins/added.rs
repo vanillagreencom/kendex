@@ -130,6 +130,71 @@ fn an_add_changes_only_new_packages_and_their_dependencies() {
     }
 }
 
+/// Git projects must retain the inventory of an unrelated installation,
+/// including one whose install has not been committed yet.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_retains_installed_paths_for_verification_and_commit_ownership() {
+    use kendex_core::attest::{self, Reading};
+    use kendex_core::engine::generated_paths::INVENTORY;
+
+    for (commit_seed, commit_install) in [(false, false), (true, false), (true, true)] {
+        let w = world();
+        let root = w.home.join("app");
+        super::git(&root, &["init", "--quiet", "-b", "main"]);
+        write_skill(&w.upstream, "a", "", "a.");
+        std::fs::write(w.upstream.join("skills/a/helper.sh"), "echo a\n").unwrap();
+        write_hook(&w.upstream, "safety", &[], "safety");
+        write_skill(&w.upstream, "b", "", "b.");
+        std::fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        commit(&w.upstream, "catalog");
+        declare(
+            &w,
+            "[skills.a]\nsource = \"cat\"\n[hooks.safety]\nsource = \"cat\"\n",
+        );
+        if commit_seed {
+            commit(&root, "project");
+        }
+        sync_and_apply(&w);
+        let prior: std::collections::BTreeSet<String> =
+            serde_json::from_slice(&std::fs::read(root.join(INVENTORY)).unwrap()).unwrap();
+        let retained = [
+            ".agents/skills/a/SKILL.md",
+            ".agents/skills/a/helper.sh",
+            ".claude/hooks/safety.sh",
+            ".claude/settings.json",
+        ];
+        for path in retained {
+            assert!(prior.contains(path), "initial inventory must list {path}");
+        }
+        if commit_install {
+            commit(&root, "install");
+        }
+        std::fs::write(root.join("personal.md"), "personal\n").unwrap();
+
+        let report = add_skills(&w, &["b"]);
+        apply::execute(&w.env, &report.plan).unwrap();
+        let after: std::collections::BTreeSet<String> =
+            serde_json::from_slice(&std::fs::read(root.join(INVENTORY)).unwrap()).unwrap();
+        assert!(prior.is_subset(&after), "an add must keep every prior row");
+        assert!(after.contains(".agents/skills/b/SKILL.md"));
+        assert!(!after.contains("personal.md"));
+        let owned = report.generated.owned(&root);
+        for path in &retained[..3] {
+            assert!(owned.contains(&root.join(path)), "commit must own {path}");
+        }
+        let settings = root.join(".claude/settings.json");
+        assert!(report.generated.beside(&root).contains(&settings));
+        assert!(!owned.contains(&settings));
+
+        let verification =
+            kendex_core::engine::plan_apply(&w.env, &w.scope, &Reading::Current.plan_options())
+                .unwrap();
+        let inventory = attest::inventory(&w.scope, &verification).unwrap().unwrap();
+        assert!(inventory.problems.is_empty(), "{:?}", inventory.problems);
+    }
+}
+
 /// A package the request names that is already installed at another
 /// commit moves with it, and the plan says so in one line before the
 /// write.

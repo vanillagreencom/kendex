@@ -160,6 +160,12 @@ fn differs(record: &Record, item: &Desired, actual: &[u8]) -> String {
     )
 }
 
+#[derive(Default)]
+pub(super) struct Collected {
+    pub(super) workflows: BTreeMap<PathBuf, AdoptedWorkflow>,
+    pub(super) paths: BTreeSet<String>,
+}
+
 /// `trees` holds the installed trees no declared item renders this pass
 /// ([`super::Unrendered`]). A record whose template sits in a leaving
 /// one, with the copy still at that template's bytes, plans the copy's
@@ -170,19 +176,23 @@ pub(super) fn collect(
     state: &DesiredState,
     trees: &super::Unrendered,
     ops: &mut Vec<PlannedOp>,
-) -> Result<Option<BTreeMap<PathBuf, AdoptedWorkflow>>> {
+) -> Result<Option<Collected>> {
     let Some(text) = crate::fs::read_if_exists(&root.join(INVENTORY))? else {
-        return Ok(Some(BTreeMap::new()));
+        return Ok(Some(Collected::default()));
     };
     let Ok(entries) = parse(text.as_bytes()) else {
         // The attestation reports the parse failure. Keep the unreadable
         // declarations on disk instead of planning an empty replacement.
         return Ok(None);
     };
-    let mut adopted = BTreeMap::new();
+    let mut collected = Collected::default();
     for entry in entries {
-        let Entry::Adopted(mut record) = entry else {
-            continue;
+        let mut record = match entry {
+            Entry::Adopted(record) => record,
+            Entry::Path(path) => {
+                collected.paths.insert(path);
+                continue;
+            }
         };
         let path = root.join(&record.path);
         let template = root.join(&record.template);
@@ -260,14 +270,15 @@ pub(super) fn collect(
                 )),
             },
         }
-        if adopted
+        if collected
+            .workflows
             .insert(path, AdoptedWorkflow { record, problems })
             .is_some()
         {
             return Err(invalid(root, "duplicate adopted workflow path"));
         }
     }
-    Ok(Some(adopted))
+    Ok(Some(collected))
 }
 
 /// What sits where a record's copy belongs.

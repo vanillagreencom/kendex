@@ -414,7 +414,7 @@ pub(super) fn plan(
         // rewriting it could erase adoption declarations it cannot read.
         return Ok(generated);
     };
-    generated.adopted = adopted;
+    generated.adopted = adopted.workflows;
     let kept = &unrendered.recorded;
     if !generated.held.is_empty() || !kept.is_empty() {
         let committed = crate::commit_offer::committed_inventory(root).map_err(git_failed(
@@ -427,6 +427,7 @@ pub(super) fn plan(
                 .is_some_and(|relative| committed.contains(&crate::paths::slashed(relative)))
         });
         kept.list(root, &committed, &mut generated);
+        kept.list(root, &adopted.paths, &mut generated);
     }
     let path = root.join(INVENTORY);
     // A project that renders nothing gets no inventory, and one that
@@ -455,12 +456,13 @@ pub(super) fn plan(
 /// declared item renders, wrote: an item its catalog retired, on each tool
 /// it stays on ([`super::desired::Retirement::kept`]), and a member a
 /// declared set this pass cannot expand keeps
-/// ([`DesiredState::kept_members`]). Read off the record this pass writes,
+/// ([`DesiredState::kept_members`]), or an installation an unrelated add
+/// keeps ([`DesiredState::addition_kept`]). Read off the record this pass writes,
 /// so a removal or a prune that takes the package takes its rows.
 ///
 /// The record names a tree, not the files in it, and the pass reads no
-/// source for the package, so the rows are the committed inventory's under
-/// these positions: what the last render listed.
+/// source for the package, so the rows come from the committed and pending
+/// inventories under these positions: what the last render listed.
 #[derive(Debug, Default)]
 struct KeptPositions {
     /// The whole files and trees each wrote.
@@ -487,7 +489,9 @@ impl KeptPositions {
                 .retired
                 .get(&(entry.kind, entry.name.clone()))
                 .is_some_and(|retirement| retirement.kept.contains(&entry.harness));
-            if !(retired || state.kept_members.contains_key(key))
+            if !(retired
+                || state.kept_members.contains_key(key)
+                || state.addition_kept.contains(key))
                 || rendered.contains(&(entry.kind, entry.name.as_str(), entry.harness))
             {
                 continue;
@@ -504,10 +508,10 @@ impl KeptPositions {
         self.whole.is_empty() && self.shared.is_empty()
     }
 
-    /// Adds the rows of `committed`, the inventory at `HEAD`, that these
+    /// Adds the rows of a prior inventory that these
     /// positions hold to `generated`, in the group a render's rows go to.
-    fn list(&self, root: &Path, committed: &BTreeSet<String>, generated: &mut GeneratedPaths) {
-        for row in committed {
+    fn list(&self, root: &Path, previous: &BTreeSet<String>, generated: &mut GeneratedPaths) {
+        for row in previous {
             let path = root.join(row);
             if self.shared.contains(&path) {
                 generated.shared.insert(path);
