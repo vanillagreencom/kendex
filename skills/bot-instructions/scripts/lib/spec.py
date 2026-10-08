@@ -1,7 +1,7 @@
 """The spec copy: doctrine blocks, default surfaces, and the routing table.
 
 SKILL.md § Doctrine defines a spec copy as a copy of this package whose
-`SKILL.md` carries the doctrine section and whose `schemas/renders.md` carries
+skill file carries the doctrine section and whose `schemas/renders.md` carries
 the routing table. One `--spec` flag names both, because `doctrine-routing`
 holds one against the other and reading them from different copies would red
 on every legitimate doctrine change.
@@ -210,6 +210,11 @@ def load(spec_tree, skill_rel, renders_rel):
     """
     try:
         skill_text = spec_tree.read(skill_rel)
+        # kendex disable parks the installed doctrine under this filename.
+        # Keep the same tree so --staged selects the filename from the index.
+        if skill_text is None:
+            skill_rel += ".disabled"
+            skill_text = spec_tree.read(skill_rel)
         if skill_text is None:
             raise SpecError(f"{skill_rel}: the spec copy has no doctrine source")
         renders_text = spec_tree.read(renders_rel)

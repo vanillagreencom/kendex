@@ -376,4 +376,62 @@ else
   bad 'control: bypassing comparison turns the failed-output refusal red' "exit $json_status"
 fi
 
+# The trusted checker reads a disabled installed package as data. The rename
+# must preserve the canonical render markers and verified whole-file paths.
+disabled_repo="$(bi_vendored_repo exit-disabled-json)" || exit 1
+disabled_spec="$disabled_repo/$BI_VENDORED_SPEC"
+mv "$disabled_spec/SKILL.md" "$disabled_spec/SKILL.md.disabled" || exit 1
+bi_commit "$disabled_repo"
+disabled_mutant="$(bi_mutant disabled-unread scripts/lib/spec.py \
+  '            skill_text = spec_tree.read(skill_rel)' \
+  '            if False:
+                skill_text = spec_tree.read(skill_rel)')" || exit 1
+for mode in worktree staged; do
+  case "$mode" in
+    worktree) set -- ;;
+    staged) set -- --staged ;;
+  esac
+  json_out="$("$BI" check --json "$@" --repo "$disabled_repo" --spec "$disabled_spec")"
+  json_status=$?
+  if [ "$json_status" -eq 0 ] && owned_report <<<"$json_out"; then
+    ok "$mode: the disabled installed doctrine preserves verified ownership"
+  else
+    bad "$mode: the disabled installed doctrine preserves verified ownership" "exit $json_status: $json_out"
+  fi
+  "$disabled_mutant" check --json "$@" --repo "$disabled_repo" --spec "$disabled_spec" \
+    >"$BI_TMP/disabled-control" 2>"$BI_TMP/disabled-control-findings"
+  json_status=$?
+  if [ "$json_status" -eq 2 ] && [ ! -s "$BI_TMP/disabled-control" ]; then
+    ok "$mode control: disabling the fallback rejects the installed doctrine"
+  else
+    bad "$mode control: disabling the fallback rejects the installed doctrine" "exit $json_status"
+  fi
+  python3 - "$disabled_spec/SKILL.md.disabled" <<'PY' || exit 1
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text()
+old = "### declined\n"
+assert text.count(old) == 1, "the doctrine fixture shape changed"
+changed = text.replace(old, old + "\nDisabled doctrine content changed.\n", 1)
+assert changed != text
+path.write_text(changed)
+PY
+  if [ "$mode" = staged ]; then
+    expect_green 'staged: an unstaged disabled doctrine edit does not change the check' \
+      check --staged --repo "$disabled_repo" --spec "$disabled_spec"
+  fi
+  git -C "$disabled_repo" add -A || exit 1
+  "$BI" check --json "$@" --repo "$disabled_repo" --spec "$disabled_spec" \
+    >"$BI_TMP/disabled-report" 2>"$BI_TMP/disabled-findings"
+  json_status=$?
+  bi_out="$(cat "$BI_TMP/disabled-findings")"
+  if [ "$json_status" -eq 1 ] && [ ! -s "$BI_TMP/disabled-report" ] && [ "$(bi_fired)" = 'drift ' ]; then
+    ok "$mode: a disabled doctrine edit rejects stale outputs with no owned paths"
+  else
+    bad "$mode: a disabled doctrine edit rejects stale outputs with no owned paths" "exit $json_status: $bi_out"
+  fi
+  git -C "$disabled_repo" reset -q --hard HEAD || exit 1
+done
+
 bi_summary
