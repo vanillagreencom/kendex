@@ -41,7 +41,7 @@ done
 run_hook() {
   local dir="$1" payload="$2"
   set +e
-  (cd -- "$dir" && env -i HOME="$TMP_ROOT" PATH="$NO_KENDEX_BIN" "$BASH" "$HOOK" <<<"$payload") >"$OUT_FILE" 2>"$ERR_FILE"
+  (cd -- "$dir" && env -i HOME="$TMP_ROOT" PATH="$NO_KENDEX_BIN" GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH" "$HOOK" <<<"$payload") >"$OUT_FILE" 2>"$ERR_FILE"
   rc=$?
   set -e
   out="$(cat "$OUT_FILE")"
