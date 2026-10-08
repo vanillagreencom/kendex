@@ -84,6 +84,8 @@ make_repo() {
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
   printf 'orig\n' >"$repo/file.txt"
   git -C "$repo" add file.txt
   git -C "$repo" commit -q -m base
@@ -206,15 +208,17 @@ external_commit() {
 # `record` records the same argv and then performs the push, for a row that
 # pins the lease expectation a real push carried.
 git_shim() {
-  local fail_repo=""
+  local fail_repo="" race_verb=""
   mkdir -p "$ROOT/bin"
   case "$1" in
-    race)
+    race | race-push)
+      race_verb=rebase
+      [[ "$1" != race-push ]] || race_verb=push
       cat >"$ROOT/bin/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 for arg in "\$@"; do
-  if [[ "\$arg" == rebase && ! -e "$ROOT/raced" ]]; then
+  if [[ "\$arg" == "$race_verb" && ! -e "$ROOT/raced" ]]; then
     touch "$ROOT/raced"
     "$REAL_GIT" --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
     break
@@ -484,6 +488,7 @@ step() {
     # The main checkout fetched the remote branch after the outsider moved it.
     observe) git -C "$MAIN" fetch -q origin "+refs/heads/$ISSUE:refs/remotes/origin/$ISSUE" ;;
     race) EXTERNAL="$(external_commit)"; git_shim race ;;
+    race-push) EXTERNAL="$(external_commit)"; git_shim race-push ;;
     record-push) git_shim record ;;
     merge-tree-fails) git_shim merge-tree-fails ;;
     base-fetch-fails) git_shim base-fetch-fails ;;
@@ -543,22 +548,6 @@ step() {
       rm -f "$ROW_SCRIPT.bak"
       grep -q 'elif \[\[ ${#PUSH_LEASE\[@\]} -gt 0 \]\]; then' "$ROW_SCRIPT" || {
         echo "FIXTURE: the lease-arm edit matched nothing in $ROW_SCRIPT" >&2
-        exit 2
-      }
-      ;;
-    # The must-fail control's world for the retry: a package copy whose push
-    # auto-rebase records no authorization before it rewrites the branch, the
-    # state that left a refused lane with no route but a hand-run git push.
-    unfixed-push-authorization)
-      step standalone
-      [[ "$(grep -cF 'prepare_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID"' "$ROW_SCRIPT")" == 1 ]] || {
-        echo "FIXTURE: the push authorization call was not unique in $ROW_SCRIPT" >&2
-        exit 2
-      }
-      sed -i.bak 's/prepare_restack_authorization "\$WT_PATH" "\$REMOTE" "\$CURRENT_BRANCH" "\$LEASE_EXPECTED_OID".*/: unauthorized-push-rewrite/' "$ROW_SCRIPT"
-      rm -f "$ROW_SCRIPT.bak"
-      grep -qF ': unauthorized-push-rewrite' "$ROW_SCRIPT" || {
-        echo "FIXTURE: the push authorization edit matched nothing in $ROW_SCRIPT" >&2
         exit 2
       }
       ;;
@@ -707,9 +696,24 @@ EOF
     # one that seeds an unread rules answer as a queue, one that reads a trial
     # merge that could not run as clean, and one whose record answers for any
     # branch, and one whose rules read keeps an inherited GH_REPO.
-    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo | unfixed-base-fetch)
+    unfixed-queue-skip | unfixed-queue-conflict | unfixed-strict | unfixed-cache | unfixed-unverified | unfixed-trial | unfixed-branch-key | unfixed-inherited-repo | unfixed-base-fetch | unfixed-rewrite-recovery | unfixed-rewrite-containment | unfixed-rewrite-lease)
       step standalone
       case "$1" in
+        unfixed-rewrite-recovery)
+          mutant="$ROW_SCRIPT"
+          mutant_from='if branch_holds_remote_commits "$wt" "$expected_oid"; then'
+          mutant_to='if false && branch_holds_remote_commits "$wt" "$expected_oid"; then'
+          ;;
+        unfixed-rewrite-containment)
+          mutant="$ROW_SCRIPT"
+          mutant_from='if branch_holds_remote_commits "$wt" "$expected_oid"; then'
+          mutant_to='if true || branch_holds_remote_commits "$wt" "$expected_oid"; then'
+          ;;
+        unfixed-rewrite-lease)
+          mutant="$ROW_SCRIPT"
+          mutant_from='PUSH_LEASE=("--force-with-lease=refs/heads/$CURRENT_BRANCH:$LEASE_EXPECTED_OID")'
+          mutant_to='PUSH_LEASE=("--force-with-lease=refs/heads/$CURRENT_BRANCH:$LEASE_EXPECTED_OID"); PUSH_LEASE=("--force")'
+          ;;
         unfixed-base-fetch)
           mutant="$ROW_SCRIPT"
           mutant_from='if [[ "$BASE_FETCH_FAILED" == true ]]; then'
@@ -767,7 +771,7 @@ EOF
       # Written over in place, so the copy keeps its executable bit.
       cat -- "$mutant.edit" >"$mutant"
       rm -f -- "${mutant:?}.edit"
-      ! grep -qF -- "$mutant_from" "$mutant" || {
+      grep -qF -- "$mutant_to" "$mutant" && ! cmp -s "$mutant" "$PACKAGE_DIR/${mutant#"$ROOT/pkg/worktree/"}" || {
         echo "FIXTURE: the $1 edit matched nothing in $mutant" >&2
         exit 2
       }
@@ -1000,6 +1004,9 @@ map_text() {
 
 out_text() {
   case "$1" in
+    republished) printf 'worktree-republished-after-rewrite: remote_oid=<published>' ;;
+    republished-external) printf 'worktree-republished-after-rewrite: remote_oid=<external>' ;;
+    republished-map1) printf '%s;%s' "$(out_text map1)" "$(out_text republished)" ;;
     -) printf '' ;;
     usage) printf 'worktree-help: push' ;;
     map1) printf '%s' "rebase-map: <end> <head>" ;;
@@ -1065,7 +1072,6 @@ a clean hook leaves the remote its own rejection to explain, under the lease rec
 a composed hook whose consumer half refuses under a clean lane verdict is not a lease conflict|pair fix hook-composed|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
 must-fail: with the lease arm keyed on the absence of a hook verdict, it is told as one|pair fix unfixed-lease|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
 a push the pre-push chain refused after its rebase is retried, and publishes under the same lease with no second rebase|pair fix publish advance fix2 refused-rebase record-push|push TOPIC|0|-|skip-rebase|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre
-must-fail: with no authorization recorded before the rebase, that retry is refused as an uncontained remote|pair fix publish advance fix2 unfixed-push-authorization refused-rebase|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=hop:map2-pre
 a remote that moved between the refused push and its retry is still refused|pair fix publish advance fix2 refused-rebase move-remote observe|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
 a default branch that advanced between the refused push and its retry is rebased onto again, and publishes under the first lease|pair fix publish advance fix2 refused-rebase advance2 record-push|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced,main-advanced2.txt:advanced2 remote=origin:head upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre+hop:map2
 a rebase conflict after a refused push drops its own pending half and keeps what that push authorized|pair fix publish advance fix2 refused-rebase conflict-main|push TOPIC|1|-|rebase-failed|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
@@ -1073,7 +1079,13 @@ once that conflict is resolved by a merge, the earlier authorization publishes i
 a published branch whose rewrite went unmapped still refuses on its record, its authorization finalized|pair twins publish twins-main unmapped-push|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=published
 a restack whose map was refused leaves no authorization, and its record refuses the push before the lease names a republish|pair twins publish twins-main restack-unmapped|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=- map=published
 a published branch whose rewrite went unmapped publishes under the same lease once its record is removed|pair twins publish twins-main unmapped-push remove-record record-push|push TOPIC|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=-
-a rewrite made outside the tool authorizes nothing and is refused|pair fix publish advance hand-rebase|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
+a bare rebase of a pushed branch is republished under the observed lease|pair fix publish advance hand-rebase record-push|push TOPIC|0|republished|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=-
+a bare rewrite also republishes when the base needs a further rebase|pair fix publish advance hand-rebase advance2 record-push|push TOPIC|0|republished-map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,main-advanced2.txt:advanced2 remote=origin:head upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map1
+must-fail: without rewrite recovery, the same pushed branch is refused|pair fix publish advance hand-rebase unfixed-rewrite-recovery|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
+a bare rebase cannot publish over remote work the branch lacks|pair fix publish advance hand-rebase move-remote observe record-push|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=- map=-
+must-fail: accepting every rewrite overwrites the remote work the branch lacks|pair fix publish advance hand-rebase move-remote observe unfixed-rewrite-containment|push TOPIC|0|republished-external|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
+a remote move after the rewrite check is refused by the pinned lease|pair fix publish advance hand-rebase race-push|push TOPIC|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=- map=-
+must-fail: an unpinned force push overwrites a move after the rewrite check|pair fix publish advance hand-rebase race-push unfixed-rewrite-lease|push TOPIC|0|republished|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:end upstream=origin push=- auth=- map=-
 a behind branch on a merge-queue base that merges cleanly is pushed where it stands|pair queue advance fix|push @wt --set-upstream|0|-|skip-queue|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
 must-fail: with the clean-merge skip cut, that branch is rebased|pair queue advance fix unfixed-queue-skip|push @wt --set-upstream|0|map1|map:1|head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map1
 a branch on a merge-queue base that conflicts is refused toward the restack, with nothing rebased or pushed|pair queue fix2 conflict-main|push @wt --set-upstream|1|-|base-conflict|head=end ahead=1 tree=file.txt:orig,fix2.txt:fix2 remote=origin:- upstream=- push=- auth=- map=-
@@ -1142,63 +1154,20 @@ for cache_case in 'a second push answers from the checkout, not GitHub|pair queu
 done
 
 echo
-echo "=== the uncontained refusal routes by what the branch actually holds ==="
+echo "=== rewrite recovery keeps shell syntax in the branch name inert ==="
 
-# The record names the refusal; the line under it names the way out, and the
-# two ways out are opposites. A branch that already carries the remote's work
-# under rewritten SHAs must not be sent to fetch and rebase, which would replay
-# commits the rewrite superseded; a remote carrying work the branch lacks must.
-# Both directions are pinned, so a predicate that answered one way for every
-# branch would fail one of them. A republish command the refusal prints is
-# then run as printed: it must move the remote to the local head, and the same
-# command must be refused by git once the remote moves under it, which is what
-# the lease in it is for. Text alone would stay green over a wrong refspec,
-# remote or OID once the expectation was edited to match.
-ROUTE_ROWS='the local branch holds the remote commits under rewritten SHAs|pair fix publish advance hand-rebase|Local branch '"'"'topic'"'"' already holds every commit on '"'"'origin/topic'"'"' under rewritten SHAs, so fetching and rebasing would replay superseded work.;No recorded push authorization covers this rewrite.;Republish the branch pinned to the remote OID above:;  git -C <wt> push --force-with-lease=refs/heads/topic:<published> origin topic
-the remote carries a commit the local branch never had|pair fix publish move-remote observe fix2|Fetch and rebase/merge '"'"'origin/topic'"'"' before using worktree push.'
-
-route_n=0
-while IFS= read -r route_row; do
-  IFS='|' read -r route_label route_fixture route_want <<<"$route_row"
-  route_n=$((route_n + 1))
-  # shellcheck disable=SC2086
-  build "route-$route_n" $route_fixture
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" push TOPIC >/dev/null 2>"$ROOT/route.err") || true
-  # Line 1 is the keyed record and line 2 the explanation worktree_message
-  # indents under it; the route is everything after them.
-  assert_eq "$(sed -n '3,$p' "$ROOT/route.err" | alias_text)" "$route_want" "$route_label"
-  route_cmd="$(sed -n 's/^  \(git -C .*\)$/\1/p' "$ROOT/route.err")"
-  [[ -n "$route_cmd" ]] || continue
-  route_rc=0
-  eval "$route_cmd" >/dev/null 2>&1 || route_rc=$?
-  assert_eq "$route_rc:$(oid_name "$(remote_oid origin)")" "0:end" "the printed republish moves the remote to the local head"
-  EXTERNAL="$(external_commit)"
-  git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
-  route_rc=0
-  eval "$route_cmd" >/dev/null 2>&1 || route_rc=$?
-  assert_eq "$([[ "$route_rc" -ne 0 ]] && printf refused || printf 'rc=%s' "$route_rc"):$(oid_name "$(remote_oid origin)")" \
-    "refused:external" "the same command is refused once the remote has moved"
-done <<<"$ROUTE_ROWS"
-
-echo
-echo "=== the printed republish quotes a branch name that carries shell syntax ==="
-
-# Git accepts a branch name holding a command substitution, and a PR author
-# names the branch `create --pr` checks out, so the command the refusal prints
-# is run here exactly as an operator would paste it: the name must reach git
-# as one argument and run nothing.
+# Git and PR authors can produce a branch name holding shell syntax. The
+# owning push passes the name as data through Git's lease and refspec.
 build quoted pair fix
 quoted_branch='topic$(touch${IFS}pwned)'
 git -C "$WT" branch -m "$quoted_branch"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --set-upstream >/dev/null 2>&1) || true
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --set-upstream >/dev/null 2>&1)
 commit_main main-advanced.txt advanced
 git -C "$WT" rebase -q origin/main
-(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" >/dev/null 2>"$ROOT/quoted.err") || true
-quoted_cmd="$(sed -n 's/^  \(git -C .*\)$/\1/p' "$ROOT/quoted.err")"
 quoted_rc=0
-(cd "$ROOT" && eval "$quoted_cmd" >/dev/null 2>&1) || quoted_rc=$?
-assert_eq "$quoted_rc:$([[ -e "$ROOT/pwned" ]] && printf ran || printf inert)" "0:inert" \
-  "the pasted command runs nothing from the branch name"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" >/dev/null 2>"$ROOT/quoted.err") || quoted_rc=$?
+assert_eq "$quoted_rc:$([[ -e "$MAIN/pwned" || -e "$WT/pwned" ]] && printf ran || printf inert)" "0:inert" \
+  "the owning push runs nothing from the branch name"
 assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse -q --verify "refs/heads/$quoted_branch" 2>/dev/null || true)" \
   "$(git -C "$WT" rev-parse HEAD)" "and publishes the branch under its own name"
 

@@ -588,17 +588,16 @@ movement while conflict resolution is pending, or a moved remote at push time
 fails closed.
 Remote-work claims, --no-rebase and the default branch use plain pushes.
 
-A remote OID the local branch does not contain is
-'worktree-push-remote-uncontained', and the route it names follows what the
-branch holds. Where the remote carries work the branch lacks, it names the
-fetch and rebase. Where the branch already carries every commit on the remote
-branch under rewritten SHAs, fetching and rebasing would replay work that
-rewrite superseded, so the refusal says so: no recorded authorization covers
-the rewrite. Running a rewrite verb on that branch now rewrites nothing and
-records nothing, so the refusal names the git push that republishes the
-branch, pinned to the remote OID it read. A rewrite push or the guarded
-restack recorded but could not map is refused on that record before this
-check, so that route is never named for it.
+A remote with work the local branch lacks is
+'worktree-push-remote-uncontained'. Fetch and integrate the remote branch
+before retrying 'worktree push'. For a base rewrite, use 'create <ID>
+--restack' or 'create <ID> --reuse', then 'push'. Where the branch already
+carries every remote commit under rewritten SHAs after a bare rebase, push
+republishes pinned to the remote OID it read. Success prints
+'worktree-republished-after-rewrite: remote_oid=OID' on stdout. A remote
+that moves after that read is refused by the pinned lease. A rewrite push or
+guarded restack recorded but could not map is refused on that record before
+this check.
 
 rebase-map: when the auto-rebase rewrites branch commits, push prints one
 'rebase-map: <old-sha> <new-sha>' line per rewritten commit on stdout

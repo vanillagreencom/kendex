@@ -43,7 +43,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push. Add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
 
-A branch is rebased only through `worktree push`, `create --restack`, or `create --reuse`, never a bare `git rebase`; use this section's replay fallback for recovery.
+A branch is rebased through `worktree push`, `create --restack`, or `create --reuse`. After a bare `git rebase`, `worktree push` republishes with a pinned lease when the branch holds every remote commit under rewritten SHAs. A remote with missing work keeps the refusal and the fetch-and-integrate route. Use this section's replay fallback when execution policy blocks rebase.
 
 `create --reuse --keep-on-conflict` aborts a conflicting rebase and hands the tree back on its pre-rebase head with exit 76, for a relaunch that must start the session before the restack; a caller that needs the base omits the flag and keeps the failure (`create --help`).
 
