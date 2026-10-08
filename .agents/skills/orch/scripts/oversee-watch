@@ -276,7 +276,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last unmeasured reading, or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
-#   directive<TAB><item>[@clone]<TAB><to-lane.cursor reported read> <last line reported unread> <first id>
+#   directive<TAB><item>[@clone]<TAB><to-lane.cursor reported read> <last line reported unread>[:<passes since unread reported>] <first id>
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the mail pass reported>
 #   long-pass<TAB>fleet<TAB><the epoch the last long pass started at>
@@ -1798,7 +1798,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # from the last full read stand.
 check_mail() { # [overseer]
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
-  local envelopes receipts replaced hold lane_read to_first read_at unread_at at
+  local envelopes receipts replaced hold lane_read to_first read_at unread_at unread_passes repeat standing reported at
   local mail_items host_flag args state="$MAIL_SEEN"
   mail_items=()
   if [[ "${1:-}" != overseer ]]; then
@@ -1900,8 +1900,9 @@ check_mail() { # [overseer]
         || die mail-read-invalid "" "item=$item" "value=${header:-<empty>}"
       lane_read="${BASH_REMATCH[1]}"
       to_first="${BASH_REMATCH[2]}"
-      # `<read> <unread> <first>`: the cursor directive-read was last reported
-      # up to, the last line reported directive-unread, and the id to-lane.jsonl
+      # `<read> <unread>[:<passes>] <first>`: the cursor directive-read was
+      # last reported up to, the last line reported directive-unread with the
+      # passes since unread lines were last reported, and the id to-lane.jsonl
       # opened with. A lane with no row yet is taken as having read up to its
       # cursor, so a first pass does not replay every directive it ever read.
       # Only a mailbox opening with another envelope is a replacement, and
@@ -1912,12 +1913,16 @@ check_mail() { # [overseer]
         die state-read-failed "" "item=$item" "row=directive"
       fi
       read -r read_at unread_at seen <<<"$stored"
+      unread_passes=0
+      if [[ "$unread_at" == *:* ]]; then
+        unread_passes="${unread_at#*:}"; unread_at="${unread_at%%:*}"
+      fi
       if [[ "$lane_read" == missed ]]; then
         hold=item
-      elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
-        read_at="$lane_read"; unread_at=0
+      elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ && "$unread_passes" =~ ^[0-9]+$ ]]; then
+        read_at="$lane_read"; unread_at=0; unread_passes=0
       elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
-        read_at=0; unread_at=0
+        read_at=0; unread_at=0; unread_passes=0
       elif [[ "$lane_read" -lt "$read_at" ]]; then
         hold=directives
       fi
@@ -1999,19 +2004,33 @@ check_mail() { # [overseer]
     [[ "$replaced" -eq 0 && "$count" -lt "$prior" ]] \
       || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
     if [[ "$hold" == none ]]; then
+      # A directive reported unread and still unread is reported again every
+      # MARK_REPEAT full mail passes, the rhythm start-stalled keeps on long
+      # passes; one mailbox's standing lines share the count, which any unread
+      # line it reports starts over.
+      unread_passes=$((unread_passes + 1))
+      repeat=0
+      (( unread_passes < MARK_REPEAT )) || repeat=1
+      standing=0
+      reported=0
       while read -r line id at; do
         [[ -n "$line" ]] || continue
         if [[ "$line" -le "$lane_read" ]]; then
           [[ "$line" -gt "$read_at" ]] || continue
           echo "EVENT directive-read $item $id"
           PASS_EVENT=1
-        elif [[ "$line" -gt "$unread_at" && -n "$at" ]] && (( PASS_NOW - at >= UNREAD_SECS )); then
+        elif [[ -n "$at" ]] && (( PASS_NOW - at >= UNREAD_SECS )) \
+          && [[ "$line" -gt "$unread_at" || "$repeat" -eq 1 ]]; then
           echo "EVENT directive-unread $item $id age=$((PASS_NOW - at))"
-          unread_at="$line"
+          [[ "$line" -le "$unread_at" ]] || unread_at="$line"
+          reported=1
           PASS_EVENT=1
+        elif [[ "$line" -le "$unread_at" ]]; then
+          standing=1
         fi
       done <<<"$(tail -n +2 <<<"$receipts")"
-      state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at ${to_first:-$seen}")"
+      (( standing == 1 && reported == 0 )) || unread_passes=0
+      state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at:$unread_passes ${to_first:-$seen}")"
     fi
     # Committed here, per item and after its lines are out: a later mailbox
     # can fail without discarding this read, and a row left uncommitted would

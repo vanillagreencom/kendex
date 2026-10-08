@@ -68,23 +68,33 @@ assert_eq "$READ_AFTER" "EVENT directive-read KEN-80 $READ_ID" \
   "the lane's cursor passing the directive is its receipt, reported as directive-read" "$STUB_DIR/receipts.err"
 assert_eq "$READ_AGAIN" "$HEARTBEAT" "and reported once" "$STUB_DIR/receipts.err"
 
-unread_sequence() {
+# A standing unread directive is reported again every MARK_REPEAT full mail
+# passes, not before, and a read between ends the repeats with directive-read.
+# A quiet run reads the mail twice, its turn and the read owed after its long
+# pass, so with a repeat of 3 the run after a quiet one repeats the line.
+unread_sequence() { # [WATCH_BIN]
+  local bin="${1:-}" pass
+  local -a env=(ORCH_DIRECTIVE_UNREAD_SECS=0 ORCH_OVERSEER_MARK_REPEAT=3)
   mail_reset KEN-81
-  receipts KEN-81
+  receipts KEN-81 "$bin"
   UNREAD_ID="$(direct KEN-81 'Stop and rebase.')"
-  receipts KEN-81 "" ORCH_DIRECTIVE_UNREAD_SECS=0
-  UNREAD_FIRST="$RECEIPTS"
-  receipts KEN-81 "" ORCH_DIRECTIVE_UNREAD_SECS=0
-  UNREAD_AGAIN="$RECEIPTS"
+  UNREAD_RUNS=""
+  for pass in 1 2 3 4 5; do
+    receipts KEN-81 "$bin" "${env[@]}"
+    UNREAD_RUNS+="${UNREAD_RUNS:+;}$RECEIPTS"
+  done
   lane_reads KEN-81
-  receipts KEN-81 "" ORCH_DIRECTIVE_UNREAD_SECS=0
-  UNREAD_READ="$RECEIPTS"
+  for pass in 1 2 3; do
+    receipts KEN-81 "$bin" "${env[@]}"
+    UNREAD_RUNS+=";$RECEIPTS"
+  done
 }
 new_case receipts_unread
 unread_sequence
-assert_eq "$UNREAD_FIRST|$UNREAD_AGAIN|$UNREAD_READ" \
-  "EVENT directive-unread KEN-81 $UNREAD_ID age=N|$HEARTBEAT|EVENT directive-read KEN-81 $UNREAD_ID" \
-  "a directive past the age the cursor has not passed is directive-unread once, then directive-read when read" \
+UNREAD_LINE="EVENT directive-unread KEN-81 $UNREAD_ID age=N"
+assert_eq "$UNREAD_RUNS" \
+  "$UNREAD_LINE;$HEARTBEAT;$UNREAD_LINE;$HEARTBEAT;$UNREAD_LINE;EVENT directive-read KEN-81 $UNREAD_ID;$HEARTBEAT;$HEARTBEAT" \
+  "a standing unread directive repeats every MARK_REPEAT passes until directive-read ends it" \
   "$STUB_DIR/receipts.err"
 
 # A lane first watched after it read its mail: the watch starts from its
@@ -123,6 +133,17 @@ new_case receipts_read_mutant
 read_sequence "$MUTANT_WATCH"
 assert_eq "$READ_AFTER" "$HEARTBEAT" "control: with the cursor unread, a directive the lane read is never reported" \
   "$STUB_DIR/receipts.err"
+
+# Control: the repeat never due, the single report this replaced, so the
+# standing directive's third-pass line is missing.
+REPEAT_WATCH="$(mutant_scripts mutant-repeat/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-repeat/github"
+mutate_file "$REPEAT_WATCH" '      (( unread_passes < MARK_REPEAT )) || repeat=1' '      repeat=0'
+new_case receipts_unread_repeat_mutant
+unread_sequence "$REPEAT_WATCH"
+assert_eq "$UNREAD_RUNS" \
+  "EVENT directive-unread KEN-81 $UNREAD_ID age=N;$HEARTBEAT;$HEARTBEAT;$HEARTBEAT;$HEARTBEAT;EVENT directive-read KEN-81 $UNREAD_ID;$HEARTBEAT;$HEARTBEAT" \
+  "control: with the repeat never due, a standing unread directive is reported once" "$STUB_DIR/receipts.err"
 
 # A hosted lane whose cursor read comes back short once, in either shape: the
 # provider's read of to-lane.cursor exits as a file not there while its probe
