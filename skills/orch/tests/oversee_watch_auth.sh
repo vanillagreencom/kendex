@@ -94,9 +94,35 @@ assert_eq "$(lane_wall_sequence wall_kind_transition)" "$WALL_SEQUENCE" \
   "a same-pane wall kind change reports once and an unchanged wall stays quiet" "$STUB_DIR/err"
 IDENTITY_CONTROL="$(mutant_scripts auth-identity/orch oversee-watch)"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-identity/github"
-mutate_file "$IDENTITY_CONTROL/oversee-watch" 'if [[ "$seen_kind" != "$wall_kind" ]]; then' 'if false; then'
+mutate_file "$IDENTITY_CONTROL/oversee-watch" '[[ "$wall_kind" != auth ]] || reported_event="$event:auth"' '[[ "$wall_kind" != auth ]] || reported_event="$event"'
 assert_eq "$(WATCH_BIN="$IDENTITY_CONTROL/oversee-watch" lane_wall_sequence wall_kind_control)" \
   $'usage|0|EVENT usage-limit gh-2\nauth|0|quiet\nauth_repeat|0|quiet\nusage_again|0|quiet\nusage_repeat|0|quiet' \
   "must-fail: ignoring the judge wall kind suppresses a later login failure" "$STUB_DIR/err"
+
+# A shipped saved row can outlive its dayless reset, including a sighting
+# observe_lanes recorded before the lane was judged walled.
+saved_reset() { # NAME REPORTED_EVENT
+  new_case "$1"
+  mkdir -p "$STATE_DIR"
+  printf 'usage-limit\tgh-2\t1788364800|7000 %%gh-2|%s|clock||||09:50|America/Los_Angeles\n' "$2" > "$STATE_DIR/owner_repo__none"
+  printf '%b\n' "$WALL_BANNER" "$COMPOSER" > "$STUB_DIR/pane-gh-2.txt"
+  printf '1788369300\n' > "$STUB_DIR/now.epoch"
+  local rc=0
+  OUT="$(run_watch TZ=UTC -- --max-loops 1 gh-2 2>"$STUB_DIR/err")" || rc=$?
+  printf 'rc=%s\n' "$rc"
+  awk '/^EVENT usage-limit/ { print }' <<<"$OUT"
+  awk -F'\t' '$1 == "usage-limit" && $2 == "gh-2" { print $3 }' "$STATE_DIR/owner_repo__none"
+}
+SAVED_RESET=$'rc=0\nEVENT usage-limit-passed gh-2 resets=2026-09-02T16:50:00Z\n1788364800|7000 %gh-2|usage-limit-passed|clock||||09:50|America/Los_Angeles'
+for reported in usage-limit ''; do
+  assert_eq "$(saved_reset saved_reset "$reported")" "$SAVED_RESET" \
+    "a saved $reported wall keeps its first-seen day and reset key after the reset passes" "$STUB_DIR/err"
+done
+RESET_CONTROL="$(mutant_scripts auth-reset/orch oversee-watch)"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-reset/github"
+mutate_file "$RESET_CONTROL/oversee-watch" 'read -r seen_at seen_pane seen_reported seen_key <<<"$prior"' 'read -r seen_at seen_pane seen_reported shifted_kind seen_key <<<"$prior"'
+assert_eq "$(WATCH_BIN="$RESET_CONTROL/oversee-watch" saved_reset saved_reset_control usage-limit)" \
+  $'rc=0\nEVENT usage-limit gh-2 resets=2026-09-03T16:50:00Z\n1788369300|7000 %gh-2|usage-limit|clock||||09:50|America/Los_Angeles' \
+  "must-fail: shifting a saved reset key discards the observed day" "$STUB_DIR/err"
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
