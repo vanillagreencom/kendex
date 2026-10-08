@@ -266,7 +266,7 @@ watch_read_case() { # RUNNER PATH_PREFIX
   esac
   printf 'stopped\n' > "$case_dir/watch.exit"
   # The documented stop, its span run as written with the placeholders filled.
-  stop_cmd="$(awk 'match($0, /`[.]agents\/skills\/orch\/scripts\/lib\/job-unit[.]sh stop-job [^`]*`/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }' \
+  stop_cmd="$(awk 'match($0, /`[.]agents\/skills\/orch\/scripts\/lib\/job-unit[.]sh stop-job "\[RUN_DIR\]\/watch[.]runner" [^`]*`/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }' \
     "$SKILL_DIR/references/watch-delivery.md")"
   stop_cmd="${stop_cmd//\[RUN_DIR\]/$case_dir}"
   stop_cmd="${stop_cmd//\[RUN_ID\]/$run_id}"

@@ -88,6 +88,12 @@ overseer_command_record() {
     overseer_record_notice "" "$held" overseer-unrecorded "pane=$pane" "step=window"
     return 0
   fi
+  # A death recovery replays the complete recorded line. It has no freshly
+  # built flag words to hand the watch, so printing again would replace that
+  # line with a command that lost the replay's permission and model flags.
+  if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" == succession && ${#OVERSEER_FLAGS[@]} -eq 0 && "$held" != none && "$held" != unread ]]; then
+    return 0
+  fi
   overseer_launch_args
   # The line is the print's stdout alone, so no notice on its stderr enters
   # the command a relaunch types; that stderr is the notice's detail or relayed.

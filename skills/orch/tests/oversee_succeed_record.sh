@@ -41,10 +41,16 @@ source "$TEST_DIR/../scripts/lib/lane-context.sh"
 TMP_ROOT="$(mktemp -d)"
 SOCK="oversee-succeed-record-$$"
 cleanup() {
+  [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
+source "$TEST_DIR/lib/watch-fixture.sh"
+QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee-succeed)" || exit 1
+cp -p -- "$SUCCEED" "$QUIET_SCRIPTS/oversee-succeed"
+SUCCEED="$QUIET_SCRIPTS/oversee-succeed"
+fixture_watch_neighbor "$SUCCEED"
 tm() { tmux -L "$SOCK" "$@"; }
 
 # shellcheck source=lib/assertions.sh
@@ -104,6 +110,7 @@ BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow a
 # record names it.
 MAILBOX_DIR="$TMP_ROOT/work/tmp/lane-mail/overseer"
 new_caller() {
+  fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   local cmd="exec sleep 100000"
   [[ "${1:-}" != claude ]] || cmd="exec '$BIN/hclaude' 100000"
   tm kill-window -a -t "$KEEP_WINDOW"
@@ -146,6 +153,7 @@ PENDING="$(jq -cn --arg h "$H" '{pending: {launch_line: "pending", harness: "cod
 # environment from the caller pane, ENV_LANE being the account variable that
 # environment carries. Sets OUT (stdout), ERR (stderr) and RC.
 run_succeed() {
+  fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
   local lane="$1"
   shift
   case " $* " in

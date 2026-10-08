@@ -26,11 +26,17 @@ TMP_ROOT="$(mktemp -d)" || { echo "oversee_succeed: scratch=mktemp-failed" >&2; 
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_succeed: scratch=resolve-failed" >&2; exit 1; }
 SOCK="oversee-succeed-$$"
 cleanup() {
+  [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   [[ -z "${FOREIGN_PID:-}" ]] || kill "$FOREIGN_PID" 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
+source "$TEST_DIR/lib/watch-fixture.sh"
+QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee-succeed)" || exit 1
+cp -p -- "$SUCCEED" "$QUIET_SCRIPTS/oversee-succeed"
+SUCCEED="$QUIET_SCRIPTS/oversee-succeed"
+fixture_watch_neighbor "$SUCCEED"
 tm() { tmux -L "$SOCK" "$@"; }
 
 # shellcheck source=lib/assertions.sh
@@ -205,6 +211,7 @@ record_caller() { # SCREEN PANE
 # screens' own. COMMAND is the pane's own command, defaulting to one whose
 # foreground process names no harness.
 new_caller() {
+  fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   local f="$TMP_ROOT/caller.screen" spec marker="${2:-(fixture@example.com)}"
   local cmd="${3:-cat '$f'; exec sleep 100000}"
   printf '%s\n' "$1" > "$f"
@@ -334,6 +341,7 @@ chmod +x "$TMP_ROOT/succeed-env" "$TMP_ROOT/in-pane"
 # exec_succeed ROW PREFERENCE ARGS... — replaces the calling subshell with
 # the script, so a background launch's pid is the script's own.
 exec_succeed() {
+  fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
   exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" "$TMP_ROOT/succeed-env" "$@"
 }
 
@@ -483,8 +491,8 @@ for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2;
 # Before the close that ends its own window, the run names the fleet watch it
 # hands to the successor, here that none runs on the fleet state
 # (oversee_succeed_watch.sh holds the handover itself).
-assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|' | tr '\n' ';')|$(recorded claude)" \
-  "0 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=account-config;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
+assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|; s/watch-started .*/watch-started/' | tr '\n' ';')|$(recorded claude)" \
+  "0 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=account-config;${UNOBSERVED_LINE}oversee-succeed: watch-started;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
   "success in the caller's own pane: successor at the base index, caller window gone"
 
 # The record that succession wrote before the successor's first turn, over the

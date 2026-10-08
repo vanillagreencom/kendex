@@ -4,17 +4,25 @@ Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before 
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
-The harness picks the path before any launch. A harness that delivers a detached log's lines as they are written, or holds a blocking follow of that log inside the turn, runs § Repeat watch: the Claude Code, Codex and Pi rows below. A harness whose only wake is a background command's exit runs § Single passes, and nothing in § Repeat watch applies to it.
+`oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper.
+
+Read that watch's log without starting another watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside the turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
 
 ## Repeat watch
 
 The registered overseer's lead turn end refuses with `lane-mail-check: wake=unarmed` when the repeat watch is live but its follow is not running on the watch claim's cwd. Re-arm with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]` from the next unhandled line. The hook starts no process.
 
-Launch the repeat command once from the overseer's own pane by [Waiter launch](waiter-launch.md) § Launch, run path `[RUN_DIR]/watch`: output in `[RUN_DIR]/watch.log`, status in `[RUN_DIR]/watch.exit`. `[NEXT_LINE]` starts at 1 in each fresh `[RUN_DIR]`. Save the numbered follow below as `[RUN_DIR]/follow.sh` with the harness file-write tool. Every harness follows the log with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]`, one simple command that prefixes each line with its number. Arm every follow from the line after the last number handled. The launch starts the watch through the orch job runner ([job-units.md](job-units.md)), which records how it runs in `[RUN_DIR]/watch.runner`; line 1 of `[RUN_DIR]/watch.log` repeats its runner line. The watch is the launch shell, whose argv carries the run path as its own word, and that shell leads the process group of everything the watch started. One read finds it, `pgrep -f 'waiter[.][RUN_ID]/watc[h] '`, `[RUN_ID]` being the letters and digits `mktemp` put after `waiter.` in `[RUN_DIR]`, whatever spelling launched the command: the name holds no regex character where the checkout path may, the bracket keeps the read from matching the shell that runs it, the trailing space keeps it off `watch.log`, and a pid it prints is that group. Exit 0 is a live watch and exit 1 is no watch. Any other status is a failed read: report it with pgrep's stderr, and launch, stop or relaunch nothing on it. The watch's own `oversee-watch.pid`, beside the fleet state, is its claim record for the refusals `oversee-watch --help` states, not this liveness read. After a self-succession `oversee-succeed` restarts the watch from the successor pane, and the successor's own launch here takes that watch over.
+Read the `log` field of the launch's `watch-started` line. After a handover, the stdout log is `oversee-watch.log` beside the fleet state. Read `oversee-watch.err` beside it for restart failures. Create a fresh reader directory with `mktemp -d tmp/waiter.XXXXXX` from the watch claim's cwd. Use its absolute path as `[RUN_DIR]`. Link `[RUN_DIR]/watch.log` to that stdout log. Save the numbered follow below as `[RUN_DIR]/follow.sh`. The reader directory uses the path the turn-end wake check recognizes. It owns no watch claim.
 
-After each delivery and expiry, run that read first, then `test -s "[RUN_DIR]/watch.exit"`. A printed pid is a live watch. With no pid, a nonempty file ends the watch: `stopped` is the mark the stop below writes and ends oversight with no restart, and any other value follows the stop and restart rules of [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance). With no pid and an empty file, the watch died without writing its status, killed together with its launch shell: report it and launch a new one in a fresh `[RUN_DIR]` under the same restart rule, then end the current follow and arm a new one on the new `[RUN_DIR]/watch.log` from line 1 (on Pi, stop the kept pid's task and keep the new pid). A follow is re-armed only while these checks read a live watch.
+Every harness follows with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]`. `[NEXT_LINE]` starts at 1 in each fresh reader. Each follow starts after the last numbered line handled. The detached watch appends to the same log across succession, so the successor keeps the cursor from the handoff. Read the runner record and the live watch claim beside the fleet state through `scripts/lib/watch-pid.sh` and `scripts/lib/job-unit.sh`. Never launch a second repeat command merely to receive events.
 
-To stop the watch, write `stopped` into `[RUN_DIR]/watch.exit` with the harness file-write tool, then run the read. When it exits 1, there is no watch to stop. With the `[PID]` it printed, run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID] '*waiter.[RUN_ID]/watch *'`: it stops the unit the launch recorded by its exact name, or, under `setsid`, signals only the group the read proved, while `[PID]` still runs the watch's command line. Exit 0 stopped it and exit 1 is a watch already ended; any other exit is a failed stop to report with its `job-unit:` line. Then run the read again until it exits 1. The stop ends the launch shell before it writes a status, so the mark written first is what every later check reads.
+For a hand-opened session with no live watch claim, launch the workflow's repeat command once by [Waiter launch](waiter-launch.md) § Launch. That launch uses `[RUN_DIR]/watch`, `[RUN_DIR]/watch.log`, `[RUN_DIR]/watch.exit` and `[RUN_DIR]/watch.runner`, as the steps below specify.
+
+For a watch the overseer launcher started, check `watch_pid_live [OVERSEE_STATE]` after each delivery and expiry. Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, follow [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance)'s stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
+
+To stop a launcher-owned watch, read its claim to get `[PID]`. Run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[OVERSEE_STATE_DIR]/oversee-watch.runner" [PID] '*oversee-watch*'`. The runner stops its exact unit or its verified process group. Report any failed stop with its `job-unit:` line.
+
+For a hand-opened session's waiter launch, find its group with `pgrep -f 'waiter[.][RUN_ID]/watc[h] '`. Exit 0 is a live watch and exit 1 is no watch. Report any other status and start nothing. Run `test -s "[RUN_DIR]/watch.exit"` after each delivery and expiry. With no pid, read that file: `stopped` ends oversight, another value follows the workflow's stop and restart rules, and an empty file means the watch died without a verdict. To stop that watch, write `stopped` into `[RUN_DIR]/watch.exit`, then stop its verified group with `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID] '*waiter.[RUN_ID]/watch *'`.
 
 | Harness | Wake mechanism | Re-arm |
 |---------|----------------|--------|
@@ -33,7 +41,24 @@ The [oversee.md § 5](../workflows/oversee.md#5-stop) handoff names the mechanis
 
 ## Single passes
 
-Run the oversee.md § 4 command without `--repeat`, as the harness's background command: no detach, no `[RUN_DIR]`, no follow, no process read. Its exit is the wake. No watch record stands between passes, so the lane-mail hooks hand the overseer mailbox to the session the fleet record names, this overseer and no other session in the checkout ([peer-mail.md § Who reads a note](peer-mail.md#who-reads-a-note)), and a pass does not report a note the hooks already handed over. Handle every line it printed, then start the next pass, with `--skip-lane [WINDOW]` per window reported `window-gone` until tmux lists it again. An exit the § 4 stop rules name ends the passes. Nothing reports `overseer-dead`, since no watch outlives the session. At § 5 Stop, start no further pass and stop a running one through the harness's own background-task control. The handoff's Watch row reads `single passes` alone, and a successor starts its own passes.
+Keep single-pass delivery for a harness that wakes only when a background command exits. When a detached repeat watch owns the fleet state, each pass reads new log lines instead of running `oversee-watch` again. Use the same reader directory, log link and numbered cursor as § Repeat watch. Save this version as `[RUN_DIR]/follow.sh`:
+
+```sh
+n=$2
+while :; do
+  lines="$(
+    sed -n "${n},\$p" "$1" | while IFS= read -r line; do
+      printf '%s: %s\n' "$n" "$line"; n=$((n + 1))
+    done
+  )" || exit 2
+  if [ -n "$lines" ]; then printf '%s\n' "$lines"; exit 0; fi
+  sleep 1 || exit 2
+done
+```
+
+Run the follow as the harness's background command. Its exit wakes the session. Handle each numbered line and start the next pass after the last line handled. The detached watch keeps judging the overseer's pane for death and wall between deliveries. At Stop, stop that watch through its runner record and start no further reader pass.
+
+A hand-opened fleet with no repeat claim may still run the workflow command without `--repeat` as its background command. Its exit is the wake. This mode alone cannot report the session's death. Do not use it when a detached watch owns the state.
 
 ## Lane mailbox monitor
 

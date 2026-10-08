@@ -121,23 +121,14 @@
 #        closes the successor, puts the record back and refuses
 #        `close-failed`, the predecessor still running. Run from inside the
 #        predecessor's own window, the stop ends this command with it.
-#     9. With --predecessor, hand the fleet watch to the successor pane,
-#        arranged before step 8 because nothing after the stop can be counted
-#        on to run: lib/watch-handover.sh's watch_handover, the step 6
-#        `oversee-succeed` runs, so a successor that dies or walls is judged
-#        by the watch from its first pass. `watch-absent` where no watch runs
-#        on the fleet state, otherwise `watch-handover pid=<N> pane=<pane>
-#        log=<path>` and the runner line of `oversee-succeed`'s restart
-#        helper, which restarts the watch from the successor pane once the
-#        predecessor's session is gone and writes how that went to the log
-#        field's file (`oversee-succeed --help`, step 6). Run from outside
-#        tmux, the launch hands the helper the $TMUX tmux sets in the
-#        successor's pane, which the restarted watch reads that pane under. A
-#        helper the job runner refused is the notice `watch-restart-failed
-#        step=helper`, a fleet state with no path `step=state-path`, and a
-#        $TMUX tmux would not state `step=tmux`, each on stderr; the
-#        succession stands, and the successor's own watch start takes over
-#        the watch of the gone pane (`oversee-watch` § watch_claim).
+#     9. Ensure the fleet repeat watch runs through the orch job runner,
+#        serving the new pane. With no watch claim, start one and wait for
+#        its claim. With a live watch, arrange its handover before step 8,
+#        because the stop can end this command. A start or helper launch
+#        the runner refuses closes the new pane and restores the prior
+#        record. Its job-unit line states the cause. The shared owner is
+#        lib/watch-handover.sh; references/watch-delivery.md gives the
+#        session's log reader and stop route.
 #     On success `overseer-launched` names the session, window, generation
 #     and lane, and the predecessor where one was stopped, at exit 0.
 #   register writes the session record for the session this command runs in,
@@ -243,8 +234,8 @@ message() { # KEY FIELD=VALUE...
     overseer-lane-unknown) text='The account check returned an outcome this script does not know; the session was closed rather than trusted.' ;;
     overseer-launched) text='The overseer is running and recorded.' ;;
     watch-handover) text='The fleet watch serving the predecessor pane is restarted from the successor pane once the predecessor is stopped, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
-    watch-absent) text='No watch runs on the fleet state, so none is restarted. The successor starts its own.' ;;
-    watch-restart-failed) text='The fleet watch was not handed to the successor pane; the succession goes on and the step field names what failed, with the orch job runner error where it refused a launch. The old watch serves a pane about to close until the successor starts its own watch, which takes it over.' ;;
+    watch-started) text='The repeat fleet watch runs outside the overseer session. Read the log field to receive its events.' ;;
+    watch-restart-failed) text='The fleet watch could not be started or handed to the new pane. The launch failed. The step and runner fields name the cause.' ;;
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
@@ -622,7 +613,7 @@ ol_succession_hook() { # STEP
         "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" ;;
     verified)
       [[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2
-      [[ -z "$PREDECESSOR" ]] || hand_over_watch ;;
+      hand_over_watch ;;
   esac
 }
 # Step 9 of the header: lib/watch-handover.sh's watch_handover, the one
@@ -634,16 +625,13 @@ hand_over_watch() {
   local tmux_env="${TMUX:-}"
   if [[ -z "$tmux_env" ]] \
      && ! tmux_env="$(tmux display-message -p -t "$SESSION" '#{socket_path},#{pid},#{session_id}' 2>"$DEP_ERR")"; then
-    message watch-restart-failed step=tmux "session=$SESSION" >&2
-    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-    return 0
+    abandon watch-restart-failed step=tmux "session=$SESSION"
   fi
   if TMUX="${tmux_env/,\$/,}" watch_handover "$PREDECESSOR" "$SESSION" "$OL_LANE_VAR" "$OL_LAUNCH_HOME" \
       "$OL_HARNESS" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then
     message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
   else
-    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}" >&2
-    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+    abandon "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
   fi
 }
 # ol_session_verify's refusals, each closing the session and putting the

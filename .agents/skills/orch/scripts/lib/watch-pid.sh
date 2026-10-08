@@ -4,7 +4,7 @@
 # `oversee-watch`, which refuses a second watch on one fleet state and takes
 # over the one a succession restarted for its pane or one whose pane is gone,
 # and by lib/watch-handover.sh, through which `oversee-succeed` and `oversee
-# launch --predecessor` restart the running watch from the successor pane.
+# launch` start or restart the running watch from the successor pane.
 #
 # Files, in the directory holding the fleet state:
 #   oversee-watch.pid   `key=value` lines: pid (the repeat loop's own pid,
@@ -16,7 +16,7 @@
 #   oversee-watch.argv  NUL-separated: its arguments up to, never including,
 #                       the `--` that starts the overseer's own flags, which a
 #                       restart replaces with the successor's
-#   oversee-watch.log   stdout of a watch a succession restarted, where no
+#   oversee-watch.log   stdout of a watch an overseer launcher started, where no
 #   oversee-watch.err   harness is reading it, and stderr beside it, where the
 #                       restart also writes how it went. The next watch start
 #                       on the state other than a succession's prints both

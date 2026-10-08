@@ -248,20 +248,21 @@ else
   printf '  skip  no systemd user manager answers on this host; the unit handover row did not run\n'
 fi
 
-# No watch runs on the fleet state: nothing is started, and the run says so.
+# A succession with no watch starts one before the caller closes.
 new_caller
 fresh_output
-STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
 run_succeed
-assert_eq "$RC|$(grep -c '^oversee-succeed: watch-absent path=.*/tmp/workflow-state-oversee.json$' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
-  "0|1|$STARTED" \
-  "a fleet with no running watch reports watch-absent and starts none"
+LIVE_RC=0
+watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
+assert_eq "$RC|$LIVE_RC|$WATCH_PANE|$(sed -n 's/^runner=//p' "$WATCH_RUNNER_FILE")" \
+  "0|0|$SUCC_PANE|setsid" "a succession starts a missing repeat watch through the job runner"
+watch_stop "$WATCH_PID" "$FLEET_STATE"
 
 # The suite's one must-fail control: the succession as it stood before the
 # handover, which closes the caller and leaves its watch reading the pane that
 # closed. The line is matched whole, so the mutation lands on that one site.
 UNPATCHED="$(mutant_scripts unpatched oversee-succeed)" || exit 1
-awk '$0 == "      [[ \"$MODE\" != succeed ]] || hand_over_watch ;;" { print "      ;;"; hits++; next } { print }
+awk '$0 == "      hand_over_watch ;;" { print "      ;;"; hits++; next } { print }
      END { if (hits != 1) exit 1 }' "$SUCCEED" > "$UNPATCHED/oversee-succeed" \
   || { echo "fixture: the handover mutant found no single site" >&2; exit 1; }
 new_caller
@@ -394,8 +395,8 @@ if command -v setsid >/dev/null 2>&1; then
   rmdir -- "$RUNNER_PART"
   HELPER_LINE="$(grep '^oversee-succeed: watch-restart-failed step=helper ' <<<"$OUT" || true)"
   assert_eq "$RC|$HELPER_LINE|$(grep -c '^oversee-succeed: watch-handover ' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
-    "0|oversee-succeed: watch-restart-failed step=helper pid=$OLD error=record-unwritable path=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.runner|0|$STARTED" \
-    "a helper the runner refuses is a notice with the runner's error, and no handover or restart"
+    "1|oversee-succeed: watch-restart-failed step=helper pid=$OLD error=record-unwritable path=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.runner|0|$STARTED" \
+    "a helper the runner refuses stops succession with the runner error"
   watch_stop "$OLD" "$FLEET_STATE" || true
 
   REAL_SETSID="$(command -v setsid)"

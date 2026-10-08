@@ -147,12 +147,20 @@ esac
 # Runs the fence every harness saves as follow.sh against a log, from a start
 # line past 1, and appends a line while it runs: each line must arrive with its
 # own number, including the one written after the follow started.
-awk '
-  /^```sh$/ { active = 1; blocks++; next }
-  /^```$/ && active { active = 0; next }
-  active { print }
-  END { if (blocks != 1 || active) exit 1 }
-' "$WATCH" > "$MD_TMP/follow.sh"
+reader_fence() { # FILE HEADING
+  awk -v heading="$2" '
+    /^## / && !active { selected = ($0 == heading); next }
+    selected && /^```sh$/ { active = 1; blocks++; next }
+    /^```$/ && active { active = 0; next }
+    active { print }
+    END { if (blocks != 1 || active) exit 1 }
+  ' "$1"
+}
+reader_fence "$WATCH" "$REPEAT" > "$MD_TMP/follow.sh" || {
+  fail "watch-delivery.md Repeat watch must hold one complete reader fence"
+  md_report
+  exit 1
+}
 # Job control gives the follow its own process group, so one group kill ends
 # the tail and the loop together. The kill waits for the lines it expects: a
 # job forked but not yet exec'd still runs this suite's EXIT trap on a TERM,
@@ -201,6 +209,37 @@ if [ "$FOLLOW_OUT" = "$FOLLOW_WANT" ]; then
   pass "the follow row waits for a follow.out opened late"
 else
   fail "with follow.out opened late the follow printed: $FOLLOW_OUT"
+fi
+
+# The exit reader returns complete lines and preserves a partial final line
+# for the next pass. A harness can then wake on exit without another watch.
+reader_fence "$WATCH" "## Single passes" > "$MD_TMP/single.sh" || {
+  fail "watch-delivery.md Single passes must hold one complete reader fence"
+  md_report
+  exit 1
+}
+printf 'a\nb\npartial' > "$MD_TMP/watch.log"
+single_out="$(sh "$MD_TMP/single.sh" "$MD_TMP/watch.log" 2)"
+if [ "$single_out" = '2: b' ]; then
+  pass "the exit reader returns complete numbered lines and leaves a partial line unread"
+else
+  fail "watch-delivery.md exit reader printed: $single_out"
+fi
+printf '\n' >> "$MD_TMP/watch.log"
+single_out="$(sh "$MD_TMP/single.sh" "$MD_TMP/watch.log" 3)"
+if [ "$single_out" = '3: partial' ]; then
+  pass "the next exit reader returns the completed line from its cursor"
+else
+  fail "watch-delivery.md re-armed exit reader printed: $single_out"
+fi
+printf 'a\nb\npartial' > "$MD_TMP/watch.log"
+sed 's/while IFS= read -r line; do/while IFS= read -r line || [ -n "$line" ]; do/' \
+  "$MD_TMP/single.sh" > "$MD_TMP/single-control.sh"
+single_out="$(sh "$MD_TMP/single-control.sh" "$MD_TMP/watch.log" 2)"
+if [ "$single_out" != '2: b' ]; then
+  pass "control: reading an incomplete line changes the exit reader's result"
+else
+  fail "control: an incomplete-line reader passed the complete-line assertion"
 fi
 
 md_report
