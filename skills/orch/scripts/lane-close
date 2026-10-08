@@ -112,7 +112,7 @@ message() { # REASON FIELD=VALUE...
         '  provider          the lane host stop-sandbox verb exited with status; its own words are on the lines above this one. A provider without the verb answers 2.' \
         '  answer-unparsed   the verb succeeded without its sandbox-stopped item=ID line, so nothing here confirms the sandbox is down.' \
         'A stopped record is what --keep-sandbox leaves: a relaunch recovers it, and lane-close --park --pr N on it retries the stop from the record alone.' ;;
-    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check, which hands that merge to the overseer as parked-merged.' ;;
+    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch records its cycle and closes a terminal item at merge, or hands an open item to the overseer as parked-merged.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     host-absent) printf '%s\n' "The lane mailbox could not be read, mail-status= being lane-mail's exit, and the provider's list names no sandbox for this terminal item, so no session holds an ask. The record closes with no provider stop or close; its files and window go as in any full close." ;;
     host-kept) printf '%s\n' 'The host kind has no stop: the session runs on until the operator archives it from the claude.ai sidebar. The record reads done and the local worktree is removed.' ;;
@@ -269,8 +269,9 @@ whatever the lane is doing, waits for its pane to read exited, closes the
 window, then stops the sandbox through lane-host stop-sandbox and requires its
 sandbox-stopped item=ID line. The record then reads parked and carries
 {pr, head, repo, at}, the pull request and head it was judged on. The merge of
-that pull request closes nothing: oversee-watch prints parked-merged, and the
-overseer's relaunch resumes the lane, which runs its own post-merge. A stop the
+that pull request lets oversee-watch record its cycle before closing a Done
+or Canceled item. An open item gets parked-merged, and the overseer's relaunch
+resumes the lane to finish its post-merge work. A stop the
 provider refuses, or answers without that line, leaves the record stopped,
 what --keep-sandbox leaves, and refuses as park-failed: the harness is gone
 and the sandbox still up, which that status says. --park on a stopped record

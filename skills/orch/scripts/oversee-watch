@@ -521,10 +521,17 @@ check_repo_set() {
 # (worktree create's branch name); one branch per line, for the jq membership
 # test.
 check_item_set() {
-  local item entry hosted_item hosted_seen=""
+  local item entry hosted_item hosted_seen="" stopped=""
+  local merge_items=(${ITEMS[@]+"${ITEMS[@]}"} ${PARKED_ITEMS[@]+"${PARKED_ITEMS[@]}"})
+  if [[ -n "$FLEET_STATE" ]]; then
+    stopped="$(jq -r '(.lanes // [])[] | objects | select(.status == "stopped") | .item | strings' <<<"$FLEET_STATE")" \
+      || die state-invalid "" "path=$STATE_FILE"
+    while IFS= read -r item; do [[ -z "$item" ]] || merge_items+=("$item"); done <<<"$stopped"
+  fi
   ITEM_BRANCHES=""
   MERGED_ITEMS=()
-  for item in ${ITEMS[@]+"${ITEMS[@]}"} ${PARKED_ITEMS[@]+"${PARKED_ITEMS[@]}"}; do
+  for item in ${merge_items[@]+"${merge_items[@]}"}; do
+    item_in "$item" ${MERGED_ITEMS[@]+"${MERGED_ITEMS[@]}"} && continue
     [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
     ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
     MERGED_ITEMS+=("$item")
@@ -1131,7 +1138,7 @@ close_hosted_lane() { # ITEM [--if-terminal]
 # user-owned changes need an overseer's action, not another provider call.
 check_terminal_lanes() {
   [[ -n "$STATE_FILE" ]] || return 0
-  local records record item terminal key prior rc rows="${PW_SEEN[0]}" refreshed=false
+  local records record item terminal key prior rc merged merge_key cycle_pr recorded_merge merged_repo rows="${PW_SEEN[0]}" refreshed=false
   local items=()
   records="$(jq -cS '(.lanes // [])[] | objects | select(.status == "parked" or .status == "stopped")' <<<"$FLEET_STATE")" \
     || die state-invalid "" "path=$STATE_FILE"
@@ -1157,6 +1164,36 @@ check_terminal_lanes() {
     prior="$(lane_row_get terminal-close "$rows" "$item")" \
       || die state-read-failed "" "item=$item" "row=terminal-close"
     [[ "$prior" != "$key" ]] || continue
+    # The tracker can become terminal at merge while the sandbox is stopped.
+    # Preserve the merge record before close removes its lane-side state.
+    merged="$(lane_row_get merged "$rows" "$item")" \
+      || die state-read-failed "" "item=$item" "row=merged"
+    cycle_pr="$(jq -r '.cycle.pr // empty' <<<"$record")" \
+      || die state-invalid "" "path=$STATE_FILE" "field=cycle"
+    recorded_merge="$(jq -r 'if .parked.pr != null then "\(.parked.repo | ascii_downcase)#\(.parked.pr)" else "" end' <<<"$record")" \
+      || die state-invalid "" "path=$STATE_FILE" "field=parked"
+    merged_repo="$(jq -r '(.repo // "") | ascii_downcase' <<<"$record")" \
+      || die state-invalid "" "path=$STATE_FILE" "field=repo"
+    for merge_key in $merged; do
+      if [[ -n "$recorded_merge" ]]; then
+        [[ "$merge_key" == "$recorded_merge" ]] || continue
+      elif [[ -n "$merged_repo" && "${merge_key%#*}" != "$merged_repo" ]]; then
+        continue
+      fi
+      [[ "${merge_key##*#}" != "$cycle_pr" ]] || break
+      rc=0
+      "$SCRIPT_DIR/oversee-cycle" --state-dir "$FLEET_STATE_DIR" record \
+        --pr "${merge_key##*#}" --repo "${merge_key%#*}" "$item" || rc=$?
+      if [[ "$rc" -ne 0 ]]; then
+        ow_message lane-close-failed "item=$item" "step=cycle" "exit=$rc" >&2
+      fi
+      # The recorder adds cycle to this same record. Keep that write in the
+      # refusal key so it does not cause a second provider call on restart.
+      record="$(jq -cS --arg item "$item" '.lanes[] | select(.item == $item)' "$STATE_FILE")" \
+        || die state-read-failed "" "path=$STATE_FILE" "item=$item"
+      key="$terminal|$record"
+      break
+    done
     if close_hosted_lane "$item" --if-terminal; then
       if [[ "$CLOSE_RESULT" == refused ]]; then rows="$(lane_row_set terminal-close "$rows" "$item" "$key")"; fi
       # A close may have rewritten the fleet. Read it before pane and merge
@@ -1344,16 +1381,11 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # delivered, so a merged item still in --item on a re-run is not news again,
 # while a further PR on the branch, in any repo, is. The rows are committed
 # once, after the lines are out.
-# A parked item's merge is handed to the overseer as parked-merged, in the
-# pass that reports it: the lane has no pane to exit and nothing wakes a
-# parked sandbox, and the record carries no launch flags, so the resume is the
-# overseer's relaunch, after which the lane runs its own post-merge. The hand
-# is owed to the pull request its park judged, in the repository it read it
-# in, and to no other pull request on the branch's name, which is reported as
-# any item's is and hands nothing. The record stays parked and nothing is
-# closed here: the relaunched lane's own completion is what closes it. The
-# merged row that holds the key is what parked_merged_owed repeats the hand
-# from at each heartbeat while the record still reads parked.
+# An open parked item needs its lane to finish post-merge work. Hand only
+# the pull request its park judged to the overseer's relaunch. A terminal
+# item needs no relaunch: check_terminal_lanes records its cycle and closes
+# it after this check commits the merge row. The heartbeat repeats the hand
+# while the open item's record still reads parked over that merge.
 # GitHub's search ceiling for one gh pr list; the key search refuses a page
 # that reaches it, since the item's own pull request may be past it.
 MERGED_SEARCH_PAGE=1000
@@ -1420,7 +1452,17 @@ check_merged() {
 # The parked-merged line, one spelling for the merged check's fresh merge and
 # the heartbeat's repeat.
 parked_merged_line() { # ITEM KEY
-  echo "EVENT parked-merged $1 pr=${2##*#} repo=${2%#*}"
+  local terminal rc=0
+  terminal="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" --terminal-state "$1" 2>"$WORK_DIR/terminal.err")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    cat -- "$WORK_DIR/terminal.err" >&2
+    die lane-close-failed "" "item=$1" "exit=$rc"
+  fi
+  case "$terminal" in
+    completed|canceled) return 0 ;;
+    open) echo "EVENT parked-merged $1 pr=${2##*#} repo=${2%#*}" ;;
+    *) die state-invalid "$terminal" "item=$1" "field=terminal-state" ;;
+  esac
 }
 
 # The hand is level-triggered from the record: every record still reading
@@ -4026,10 +4068,10 @@ long_pass() {
   # overseer exited or walled. A later live pass or the successor receives
   # that work.
   if check_overseer; then
+    check_merged
     check_terminal_lanes
     observe_lanes
     check_pr_watch
-    check_merged
     check_triage
     check_outside_contribution
     check_refresh
