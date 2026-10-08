@@ -18,7 +18,7 @@ class RenderModel:
         self.config = config
         self.doctrine = doctrine
         self.exclusions = exclusions      # ordered [{glob, reason, derived}]
-        self.inputs = inputs              # every path this render read
+        self.inputs = inputs
         # The repo's `[[bot-instructions.surface]]` set, then the spec copy's
         # defaults. Every route that renders surfaces reads this list.
         self.surfaces = surfaces
