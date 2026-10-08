@@ -182,15 +182,16 @@ BOT_CONFIGURED='[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname 
 fx_bot_stale() { repo bot-stale; bot_real "$BOT_CONFIGURED"; }
 fx_bot_refuses() { repo bot-refuses; tree bot-instructions "bot-instructions: source=<repo>" 2; }
 # A copy older than the package's orphan scan: the record with no
-# `renders=none` attestation under it, whatever renders the tree holds.
-fx_bot_bare() { repo bot-bare; tree bot-instructions "bot-instructions: unconfigured=kendex.toml" 2; }
+# `renders=none` attestation under it, whatever renders the tree holds. The
+# lane names that cause after the package's own text.
+fx_bot_bare() { repo bot-bare; tree bot-instructions $'bot-instructions: unconfigured=kendex.toml\nfixture=pre-scan-copy' 2; }
 UNADOPTED="rc=0 $BOT;pre-commit: not-adopted=bot-instructions:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
 REFUSED="rc=2 $BOT;bot-instructions: source=<repo> check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
-BARE_REFUSED="rc=2 $BOT;bot-instructions: unconfigured=kendex.toml check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
+BARE_REFUSED="rc=2 $BOT;bot-instructions: unconfigured=kendex.toml;fixture=pre-scan-copy check --staged;pre-commit: unattested=bot-instructions:kendex.toml;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 run_rows \
   "an installed package with no [bot-instructions] table is not adopted: one line, and the chain passes|fx_bot_unadopted||$BARE||$UNADOPTED" \
   "any other exit-2 refusal is a step that did not complete, and blocks|fx_bot_refuses||$BARE||$REFUSED" \
-  "an unconfigured record without its renders=none attestation blocks|fx_bot_bare||$BARE||$BARE_REFUSED"
+  "an unconfigured record without its renders=none attestation blocks, its cause named|fx_bot_bare||$BARE||$BARE_REFUSED"
 fx_bot_stale
 stale="$(run "" "$BARE" "")"
 case "$stale" in
@@ -245,7 +246,7 @@ EDIT
 }
 bot_mutant unread '"$status" -eq 2 ] && [[' '"$status" -eq 99 ] && [['
 bot_mutant keyless '"bot-instructions: unconfigured="*' '"bot-instructions: "*'
-bot_mutant unattested $'&&\n    [ "${rest' '|| [ "${rest'
+bot_mutant unattested 'if [ "${rest' 'if true || [ "${rest'
 fx_bot_unadopted_control() { repo bot-unadopted-control; bot_real '[skills.orch]\n'; }
 # The attestation under another key, so only the key match stands between it
 # and a pass.

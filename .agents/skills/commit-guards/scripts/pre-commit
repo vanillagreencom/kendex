@@ -128,17 +128,22 @@ fi
 # the record bare whatever renders the tree still holds, and that blocks.
 # Every other refusal blocks.
 bot_instructions_check() {
-  local out="" status=0 record rest
+  local out="" status=0 record rest unattested=""
   out="$("$BOT_CHECK" check --staged 2>&1)" || status=$?
   record="${out%%$'\n'*}"
   rest="${out#"$record"}"
   rest="${rest#$'\n'}"
-  if [ "$status" -eq 2 ] && [[ "$record" == "bot-instructions: unconfigured="* ]] &&
-    [ "${rest%%$'\n'*}" = "bot-instructions: renders=none" ]; then
-    gg_message not-adopted "bot-instructions:${record#*=}" "=== pre-commit: bot-instructions is installed but ${record#*=} declares no [bot-instructions] table; nothing to check"
-    return 0
+  if [ "$status" -eq 2 ] && [[ "$record" == "bot-instructions: unconfigured="* ]]; then
+    if [ "${rest%%$'\n'*}" = "bot-instructions: renders=none" ]; then
+      gg_message not-adopted "bot-instructions:${record#*=}" "=== pre-commit: bot-instructions is installed but ${record#*=} declares no [bot-instructions] table; nothing to check"
+      return 0
+    fi
+    unattested=1
   fi
   [ -z "$out" ] || printf '%s\n' "$out"
+  # The package's own advice above, add the table or remove the package, is
+  # not this case's fix.
+  [ -z "$unattested" ] || gg_message unattested "bot-instructions:${record#*=}" "bot-instructions refused as unconfigured without its renders=none attestation; this copy predates the orphan scan, so update bot-instructions"
   return "$status"
 }
 if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
