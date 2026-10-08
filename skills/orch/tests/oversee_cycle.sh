@@ -620,6 +620,9 @@ assert_eq "$(record KEN-3 micro)" \
   "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
 
 echo "=== armed time starts after both CI and the gate are green ==="
+# pr-timeline green($head) uses the last completed head check, including an
+# optional check completed after merge. Only green stamps in the measured
+# span can place an arm in that span.
 while IFS='|' read -r name ci gate armed queued want_phase want_secs; do
   new_case "arm-order-$name"
   printf micro > "$CASE/class"
@@ -629,8 +632,8 @@ while IFS='|' read -r name ci gate armed queued want_phase want_secs; do
     | .queued = $(if [[ "$queued" == null ]]; then echo null; else printf '\"%s\"' "$(at "$queued")"; fi))"
   got="$(record KEN-1 micro)"
   assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=$want_phase phase_secs=$want_secs" "$name"
-  assert_eq "$(state '.lanes[0].cycle | [.phase, .phase_secs, .stamps.armed]')" \
-    "[\"$want_phase\",$want_secs,\"$(at "${armed/null/$queued}")\"]" "$name persists the phase and original arm"
+  assert_eq "$(state '.lanes[0].cycle | [.phase, .phase_secs, .stamps.ci_green, .stamps.gate_green, .stamps.armed]')" \
+    "[\"$want_phase\",$want_secs,\"$(at "$ci")\",\"$(at "$gate")\",\"$(at "${armed/null/$queued}")\"]" "$name persists the phase and original stamps"
 done <<'ROWS'
 arm before both|1700|1600|1500|null|gate_green|1480
 arm before CI|1700|300|1500|null|ci_green|1400
@@ -638,6 +641,12 @@ arm before gate|300|1700|1500|null|gate_green|1400
 arm at last green|1700|300|1700|null|ci_green|1400
 arm after both|300|360|1700|null|armed|1340
 queue before CI|1700|300|null|1500|ci_green|1400
+CI after merge|10000|300|1500|null|armed|1200
+gate after merge|300|10000|1500|null|armed|1200
+both green after merge|10000|11000|1500|null|armed|1380
+CI before open|100|300|1500|null|armed|1200
+gate before open|300|100|1500|null|armed|1200
+queue with CI after merge|10000|300|null|1500|armed|1200
 ROWS
 
 echo "=== the gate_green phase is split into the waits it holds ==="
@@ -1014,13 +1023,22 @@ assert_eq "$(repeat_row c-phase-end "a:1 a:2 a:3")" "repeat-miss phase=ci_green 
   "control: without the upper bound, a CI green after the merge charges the miss to merged to CI green"
 
 control m-arm-order oversee-cycle \
-  '| map(select(.name != "armed" or .at > ([$stamps.ci_green, $stamps.gate_green] | map(fromdate) | max)))' \
+  '| map(select(.name != "armed" or .at > $green))' \
   '| map(select(true))'
 new_case c-arm-order; printf micro > "$CASE/class"; timeline 1800
 edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at 1700)\" | .armed = \"$(at 1500)\")"
 got="$(record KEN-1 micro)"
 assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=armed phase_secs=1200" \
   "control: old ordering charges pre-CI time to armed and fails the ci_green row"
+
+control m-arm-outside oversee-cycle \
+  '([.[] | select(.name == "ci_green" or .name == "gate_green") | .at] | max) as $green' \
+  '([$stamps.ci_green, $stamps.gate_green] | map(fromdate) | max) as $green'
+new_case c-arm-outside; printf micro > "$CASE/class"; timeline 1800
+edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at 10000)\" | .armed = \"$(at 1500)\")"
+got="$(record KEN-1 micro)"
+assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=merged phase_secs=1500" \
+  "control: a post-merge CI threshold hides the arm and turns the armed row red"
 
 control m-ci-bar oversee-cycle '(.phase != "ci_green" or .cause == "ci")' '(true)'
 assert_eq "$(repeat_row c-ci-bar "cw:1 cw:2 cw:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=work,work,work" \
