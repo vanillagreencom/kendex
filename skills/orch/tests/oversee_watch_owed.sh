@@ -273,6 +273,8 @@ ROWS
 verifying_world() {
   world "$1"
   local description
+  jq '.launch_queue += ["KEN-4"]' "$STUB_DIR/state.json" >"$STUB_DIR/verifying-state.json"
+  mv -- "$STUB_DIR/verifying-state.json" "$STUB_DIR/state.json"
   description='## Done when
 - [x] branch proof
 - [ ] Post-merge: Read deployed health; Where: live service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z
@@ -349,7 +351,7 @@ for validation in fields branch; do
 done
 
 # Must-fail controls retain the executable watch and change one rule each.
-for control in membership event filter; do
+for control in membership event filter queue; do
   MUTANT_DIR="$TMP_ROOT/verifying-mutant-$control"
   MUTANT_WATCH="$(mutant_scripts "verifying-mutant-$control/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
@@ -358,16 +360,23 @@ for control in membership event filter; do
     membership) mutate_file "$MUTANT_WATCH" 'In Progress,In Review,Verifying' 'In Progress,In Review' ;;
     event) mutate_file "$MUTANT_WATCH" 'and .deadline_epoch <= $now' 'and false' ;;
     filter) mutate_file "$MUTANT_WATCH" 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"' 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"; VERIFYING_LINES=""' ;;
+    queue)
+      old='    verifying_read "$items"'
+      new='    items="$(jq -c --argjson fleet "$FLEET_STATE" '\''map(. as $item | select(($fleet.launch_queue // []) | index($item.id) | not))'\'' <<<"$items")"
+    verifying_read "$items"'
+      mutate_file "$MUTANT_WATCH" "$old" "$new"
+      ;;
   esac
   verifying_world "verifying_control_$control"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-  if [[ "$control" == filter ]]; then
+  if [[ "$control" == filter || "$control" == queue ]]; then
     if [[ "$(verification_lines)" != "$want_lines" ]]; then
       pass "control: the missing boxes violate the listing contract"
     else
       fail "control: the missing boxes violate the listing contract" "$OUT"
     fi
-  else
+  fi
+  if [[ "$control" != filter ]]; then
     if [[ "$(verification_events)" != "$want_events" ]]; then
       pass "control: $control violates the deadline event contract"
     else

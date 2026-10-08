@@ -108,7 +108,7 @@ Exit 75 means a branch or open PR already owns the issue — inspect it instead 
 
 Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
 
-An `orch start` run is complete only when the tracker issue is Done and its worktree is gone. An opened or armed PR is not complete.
+An `orch start` run is complete when its merge work is complete, its worktree is gone, and the tracker issue is Done or handed to the overseer in Verifying under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). The issue reaches Done only after every post-merge box has proof. An opened or armed PR is not complete.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
