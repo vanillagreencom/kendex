@@ -118,12 +118,13 @@ kendex.settings.toml [env] > default):
   COMMIT_GUARDS_MD_REFS_SOURCE_PATHS
                                 the same, for the files read for citations
                                 in comment text (default: the extensions in
-                                CHECKS.md § comments); empty is refused, so
-                                name a path or drop the check
+                                CHECKS.md § comments)
   COMMIT_GUARDS_MD_REFS_PATHS_EXTRA
   COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA
                                 globs added to the list above, the default
                                 or the replacing value (default empty)
+                                Each combined base and EXTRA list must name
+                                a path; an empty combined list is refused.
   COMMIT_GUARDS_MD_EXCLUDES     exclusion list, pattern<TAB>reason per line
                                 (default $GG_MD_EXCLUDES_DEFAULT)
   COMMIT_GUARDS_MD_SCOPE        touched | all (default $GG_MD_SCOPE_DEFAULT)
