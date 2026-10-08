@@ -678,7 +678,7 @@ narrow_row_holds \
 # cause it plants: its exit and the lines, joined by `~`, only that cause
 # prints. A sed expression holds `|`, so `#` separates the fields.
 narrow_controls=(
-  'whole sets under --full#s/case "\$d" in skills\/\* | hooks) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks) run="" ;; esac/#1#guard: suite=skills/narrow/tests/beta.test.sh~guard: suite=hooks/tests/unreached.test.sh'
+  'whole sets under --full#s/case "\$d" in skills\/\* | hooks | tools) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks | range:tools) run="" ;; esac/#1#guard: suite=skills/narrow/tests/beta.test.sh~guard: suite=hooks/tests/unreached.test.sh'
   'the mapped selection dropped#s/run="\$run\$sel$/run="$run/#0#guard-note: suites=0/2 reason=mapped tree=skills/narrow~guard-note: suites=0/3 reason=mapped tree=hooks'
 )
 for row in "${narrow_controls[@]}"; do
