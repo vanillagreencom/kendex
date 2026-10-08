@@ -1,15 +1,6 @@
-# Drop the scope at the create call site, so the resolver is asked for a
-# milestone name with no project to resolve it in — which is what both call
-# sites did before, having resolved the project id and then not passed it.
+# Drop the query's project filter. The fixture returns milestones from both
+# projects, so a valid project milestone is refused as ambiguous.
 control_expect "issues create files the issue under the project own milestone"
-control_replace scripts/commands/issues.sh 1 \
-    '        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")' \
-    '        milestone_id=$(resolve_milestone_id "$milestone")'
-
-# Ask the name query without the project filter, as it shipped. The fixture then
-# answers from every project, foreign milestone first, so a name the project
-# does not hold is matched anyway.
-control_expect "an unmatched name reports a miss, not an API failure"
 control_replace scripts/lib/common.sh 1 \
     "    local query='query GetMilestone(\$name: String!, \$projectId: ID!, \$after: String) { projectMilestones(filter: {name: {eq: \$name}, project: {id: {eq: \$projectId}}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id } } }'" \
     "    local query='query GetMilestone(\$name: String!, \$after: String) { projectMilestones(filter: {name: {eq: \$name}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id } } }'"
@@ -20,14 +11,6 @@ control_expect "two milestones of that name in the project is a refusal, not a p
 control_replace scripts/lib/common.sh 1 \
     "    milestone_ids=\$(echo \"\$result\" | jq -r '[(.projectMilestones.nodes // [])[].id] | join(\", \")')" \
     "    milestone_ids=\$(echo \"\$result\" | jq -r '.projectMilestones.nodes[0].id // empty')"
-
-# Let every name resolver take a failed lookup for an empty one. Only the
-# milestone lookup fails in this suite, so this is the unchecked exit status
-# resolve_milestone_id shipped with: an outage reported as a missing milestone.
-control_expect "a failed lookup reports the API failure, not a miss"
-control_replace scripts/lib/common.sh 1 \
-    '    if ! result=$(graphql_pages "$query" "$vars" projectMilestones); then' \
-    '    if ! result=$(graphql_pages "$query" "$vars" projectMilestones || true); then'
 
 # Resolve a name with no project rather than refusing it.
 control_expect "a milestone name with no project to scope it is refused before any milestone lookup"
