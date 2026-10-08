@@ -77,6 +77,8 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 
+Run [Store Stage Start](#store-stage-start) as kind `implement` before delegating.
+
 Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
 
 ```bash
@@ -145,6 +147,14 @@ Handoff from prior agents:
 - [extracted handoff notes]
 </delegation_format>
 
+### Store Stage Start
+
+The implement and fix delegation paths run this write after their delegation stamp. `[KIND]` is `implement` or `fix`. A repeated write keeps the entry already recorded for this round.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg kind [KIND] '.dev_round_id as $round | if any(.stages[]?; .round_id == $round) then . else .stages = ((.stages // []) + [{kind: $kind, round_id: $round, start: .dev_delegated_at, end: null}]) end'
+```
+
 ## 3. Accept The Round
 
 Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only — run A/B on the § 2 watchdog deadline rather than waiting for one.
@@ -178,7 +188,7 @@ Before B or the check's `reason` routes the round, run [Store Validation Time](#
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Stage End for `[DEV_ROUND_ID]`, then Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
@@ -187,6 +197,18 @@ Before B or the check's `reason` routes the round, run [Store Validation Time](#
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
 Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
+
+### Store Stage End
+
+The accepting workflow runs this write for the stage's `[STAGE_ROUND_ID]`. A repeated acceptance keeps the first end time. A stage that stops before acceptance keeps `end: null`.
+
+```bash
+.agents/skills/orch/scripts/git-context timestamp epoch
+```
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [STAGE_ROUND_ID] --argjson end [EPOCH_FROM_PREVIOUS_COMMAND] '.stages = ((.stages // []) | map(if .round_id == $round then .end //= $end else . end))'
+```
 
 ### Store Proposed Rules
 

@@ -40,7 +40,7 @@
 # when classified. The cycle object carries commit instead of pr, and the
 # cycle line below uses commit=SHA instead of pr=N. actual and escaped still
 # enter the per-class rollup. Exactly one of --pr and --commit is required.
-# The round counts come from
+# The round counts and stage times come from
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state. A hosted lane's is read on its host
 # in the state directory the lane resolves from its own worktree's settings,
@@ -140,6 +140,10 @@
 #             review, records null seconds and prints
 #             `oversee-cycle: negative-interval item=ITEM kind=K head=H secs=S`
 #             on stderr
+#   stages    the lane workflow state's {kind, round_id, start, end} entries,
+#             copied beside pr_rounds. Start and end are epoch seconds; end
+#             is null until the stage finishes. An absent list or unread state
+#             records null, preserving unknown history rather than inventing it.
 # When this record makes the third miss on one phase among the fleet's
 # records, it also prints and logs
 #   repeat-miss phase=P items=A,B,C causes=W,W,W
@@ -168,6 +172,9 @@
 # rollup gives no verdict on them, and the owner names no fix-round target.
 # A negative interval enters no median or p90, in a record written before
 # the record refused it too; such a round counts as untimed.
+# report also prints each recorded stage, without changing the cycle line:
+#   stage item=ITEM kind=K round_id=RID start=EPOCH end=EPOCH
+# An unfinished stage prints end=-. Unread stage lists print no stage rows.
 #
 # Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
 # Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
@@ -278,6 +285,11 @@ if [[ "$VERB" != record ]]; then
     fi
     printf '%s\n' "$line"
   done <<<"$lines"
+  if [[ "$VERB" == report ]]; then
+    jq -r '.lanes[]? | .item as $item | .cycle.stages[]?
+      | "stage item=\($item) kind=\(.kind) round_id=\(.round_id) start=\(.start) end=\(.end // "-")"' \
+      "$STATE_FILE" || refuse state-unreadable "$STATE_FILE"
+  fi
   exit 0
 fi
 
@@ -335,11 +347,13 @@ LANE_KEPT="$(jq -r --arg item "$ITEM" --arg since "$LANE_SINCE" '
    | capture("(^|\\s)kept=(?<p>/.*[^\\s])\\s*$") | .p] | last // empty' "$STATE_FILE")" \
   || refuse state-unreadable "$STATE_FILE"
 
-rounds=null rounds_unread=""
+rounds=null stages=null rounds_unread=""
 if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
   "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
+  stages="$(jq -c '.stages // null' <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" \
+    || { stages=null; rounds_unread="$WORK/state.err"; }
   rounds="$(jq -c '{review: ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0)),
      fix: (.cycles // 0),
      bot: (.pr_comment_review.iterations // 0),
@@ -470,7 +484,7 @@ negatives="$(jq -r --arg item "$ITEM" "$CYCLE_DEFS"'.rounds // [] | .[] | select
   | "oversee-cycle: negative-interval item=\($item) kind=\(.kind) head=\(.head) secs=\(.secs)"' <<<"$timeline")" \
   || refuse timeline-failed "${PR:-$COMMIT}"
 
-cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson pauses "$pauses" \
+cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson stages "$stages" --argjson pauses "$pauses" \
   --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" \
   --arg class_reason "$class_reason" --arg evidence "$class_evidence" "$CYCLE_DEFS"'
   # The gate waits of the gap FROM..TO, epoch seconds: an instant a pause
@@ -531,7 +545,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
                then $waits | to_entries | sort_by(- .value) | first.key
              elif $dominant.phase == "ci_green" then $ci_cause
              else null end),
-     missing: $missing, rounds: $rounds,
+     missing: $missing, rounds: $rounds, stages: $stages,
      pr_rounds: ($t.rounds | if . == null then null else map(.secs |= interval) end),
      escaped: (if $class == null or $tier == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))

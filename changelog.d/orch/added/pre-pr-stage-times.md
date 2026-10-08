@@ -1,0 +1,1 @@
+- Closed lane records retain the start and end of each implementation, review and fix stage. Cycle reports show these times without reconstructing them from status messages.

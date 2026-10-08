@@ -126,8 +126,14 @@ Store the active set:
 Stamp the freshness boundary immediately before the delegation batch. In wave mode, re-stamp before each wave's batch:
 
 ```bash
+.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] review_round_id
+```
+
+```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
+
+Run [Store Review Stage Start](#store-review-stage-start) before delegating.
 
 Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
@@ -176,6 +182,14 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 ```
 
 `ok == true` → append the path to `json_paths`, carrying its `repeats` to § 4; `reason == "valid_undermeasured"` → report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path; never present the external pass as clean. `ok == false`, including `moving_tree`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass. A detached run that has already exited non-zero, or an artifact that does not validate, is **resolved** right then as `external: failed — [REASON]` (the script's exit class, or the check's `reason`) and leaves `OUTSTANDING` in § 3.1.
+
+### Store Review Stage Start
+
+Record one stage per delegated batch, including each wave. A repeated write keeps the existing stage.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_round_id as $round | if any(.stages[]?; .round_id == $round) then . else .stages = ((.stages // []) + [{kind: "review", round_id: $round, start: .review_delegated_at, end: null}]) end'
+```
 
 ## 3. Collect Results
 
@@ -231,7 +245,7 @@ Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] review_wave_done "[AGENT]"
 ```
 
-`OUTSTANDING` empty (`unresponsive` counts as resolved) → § 3.3 in persistent mode; in wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3.
+`OUTSTANDING` empty (`unresponsive` counts as resolved) → read `.review_round_id` with `workflow-state get`, then run [dev-start.md § Store Stage End](dev-start.md#store-stage-end) for that id. Close the batch once, after all reviewers resolve, never on a reviewer's self-check. Then → § 3.3 in persistent mode; in wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3.
 
 ### 3.3 Present
 
@@ -405,7 +419,7 @@ Previous review cycle context (cycle [CYCLES]):
 - Do NOT re-report the fixed, escalated or declined items listed above, unless you check a listed fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha. A listed fixed item you did not check, and every listed escalated or declined item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
 </delegation_format>
 
-Omit `[OWNER/REPO]` when `TRACKER=linear`. Stamp `review_delegated_at` before each QA delegation and accept the return through § 3.1's check; on `ok == true`, append the artifact path to `json_paths` and carry its `repeats` to § 7; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first. A `pass` verdict continues to the next QA agent. After all QA agents complete, → § 7 — every verdict, every time: § 7 owns the exit and no branch here decides one around it, carrying the blockers and the `category == "fix"` suggestions not already in `escalated_items`. An item this round's QA artifact reports again is retained even when `fixed_items` lists it, as § 7 states.
+Omit `[OWNER/REPO]` when `TRACKER=linear`. Before each QA delegation, mint `review_round_id` with `workflow-state new-round-id`, stamp `review_delegated_at` with `set-now`, and run [Store Review Stage Start](#store-review-stage-start). Accept the return through § 3.1's check; on `ok == true`, run [dev-start.md § Store Stage End](dev-start.md#store-stage-end) for that `review_round_id`, append the artifact path to `json_paths` and carry its `repeats` to § 7; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first. A `pass` verdict continues to the next QA agent. After all QA agents complete, → § 7 — every verdict, every time: § 7 owns the exit and no branch here decides one around it, carrying the blockers and the `category == "fix"` suggestions not already in `escalated_items`. An item this round's QA artifact reports again is retained even when `fixed_items` lists it, as § 7 states.
 
 ## 7. Handle QA Items
 
