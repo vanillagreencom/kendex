@@ -9,8 +9,9 @@ TOOLS="$(cd "$TEST_DIR/.." && pwd)"
 # Physical, because cargo names a crate's directory by its physical path and
 # the warm rows compare that name with the lane path built from this one.
 REPO="$(cd "$TOOLS/.." && pwd -P)"
-mkdir -p "$REPO/tmp"
-TMP="$(mktemp -d "$REPO/tmp/lane-setup.XXXXXX")"
+TMP="$(mktemp -d)" || { echo "lane-setup: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "lane-setup: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "lane-setup: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 REAL_GIT="$(command -v git)" || { printf 'the host provides git\n'; exit 1; }
@@ -144,6 +145,67 @@ run_setup ./tools/lane-setup
 [ "$RC" -eq 0 ] && [ "$(wc -l <"$NPM_LOG")" -eq 1 ] && [ "$(wc -l <"$RUSTUP_LOG")" -eq 1 ] && case "$OUT" in *"lane-setup: ui=skip"*"lane-setup: rust-targets=skip"*) true ;; *) false ;; esac \
   && ok "a second run skips npm and rustup" \
   || bad "a second run skips npm and rustup" "rc=$RC out=$OUT"
+
+echo "=== the provider's completed install satisfies the current lockfile ==="
+HOST_UI_ROWS=0
+proof_host_ui() { # MARKER EXPECT [FROM TO]
+  local marker=$1 expect=$2 installed_blob="" own_inputs=""
+  shift 2
+  HOST_UI_ROWS=$((HOST_UI_ROWS + 1))
+  fixture "host-ui-$HOST_UI_ROWS" "$@"
+  # This marker contract uses committed blobs, rather than the text fake.
+  cat >"$R/fake-bin/git" <<'SH'
+#!/usr/bin/env bash
+exec "$REAL_GIT" "$@"
+SH
+  mkdir -p "$R/ui/node_modules"
+  printf 'provider-installed\n' >"$R/ui/node_modules/keep"
+  case "$marker" in
+    current | stale)
+      installed_blob="$(git -C "$R" rev-parse -q --verify HEAD:ui/package-lock.json)" || return 1
+      printf '%s\n' "$installed_blob" >"$R/ui/node_modules/.lane-host-install"
+      if [ "$marker" = stale ]; then
+        printf '{"lockfileVersion":3}\n' >"$R/ui/package-lock.json"
+        git -C "$R" add ui/package-lock.json || return 1
+        git -C "$R" -c user.name=test -c user.email=test@example.com commit -qm "changed lock" || return 1
+      fi
+      ;;
+    absent) ;;
+    *) return 1 ;;
+  esac
+  run_setup ./.fleet-setup
+  WHY="marker=$marker expect=$expect rc=$RC out=$OUT"
+  [ "$RC" -eq 0 ] || return 1
+  case "$expect" in
+    skip)
+      [ ! -e "$NPM_LOG" ] && [ ! -e "$R/ui/node_modules/.kendex-lane-setup" ] \
+        && [ "$(cat "$R/ui/node_modules/.lane-host-install")" = "$installed_blob" ] \
+        && [ "$(cat "$R/ui/node_modules/keep")" = provider-installed ]
+      ;;
+    install)
+      own_inputs="$(git -C "$R" rev-parse HEAD:ui/package.json HEAD:ui/package-lock.json)" || return 1
+      [ "$(cat "$NPM_LOG" 2>/dev/null)" = "ci --no-audit --no-fund --prefix ui" ] \
+        && [ "$(cat "$R/ui/node_modules/.kendex-lane-setup" 2>/dev/null)" = "$own_inputs" ]
+      ;;
+    *) return 1 ;;
+  esac
+}
+for row in 'current skip' 'stale install' 'absent install'; do
+  read -r marker expect <<<"$row"
+  proof_host_ui "$marker" "$expect" \
+    && ok "provider marker $marker: UI $expect" \
+    || bad "provider marker $marker: UI $expect" "$WHY"
+done
+proof_host_ui current skip \
+  'if [ "$installed_ui_inputs" = "$ui_inputs" ] || [ "$installed_host_ui_input" = "$ui_lockfile_blob" ]; then' \
+  'if [ "$installed_ui_inputs" = "$ui_inputs" ]; then' \
+  && bad "control: ignoring the provider marker must fail the current row" "$WHY" \
+  || ok "control: ignoring the provider marker fails the current row"
+proof_host_ui stale install \
+  'if [ "$installed_ui_inputs" = "$ui_inputs" ] || [ "$installed_host_ui_input" = "$ui_lockfile_blob" ]; then' \
+  'if [ "$installed_ui_inputs" = "$ui_inputs" ] || [ -n "$installed_host_ui_input" ]; then' \
+  && bad "control: trusting a stale provider marker must fail the stale row" "$WHY" \
+  || ok "control: trusting a stale provider marker fails the stale row"
 
 echo "=== npm failure stops before rustup ==="
 fixture npm-fail
