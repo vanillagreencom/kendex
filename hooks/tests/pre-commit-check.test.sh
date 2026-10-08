@@ -28,7 +28,7 @@ command_rows() {
   while IFS='|' read -r status key form; do
     [ -n "$status" ] || continue
     form=${form//NOVERIFY/$NV}; key=${key//NOVERIFY/$NV}
-    form=${form//APPEND_BOTH/$APPEND_BOTH}
+    form=${form//APPEND_BOTH/"$APPEND_BOTH"}
     form=${form//HEREDOC_MESSAGE/$'cat <<EOF >msg\ngit commit -n\nEOF'}
     form=${form//HEREDOC_COMMIT/$'cat <<EOF >msg\nmessage\nEOF\ngit commit -n -F msg'}
     run_hook "$ARMED" "$(jq -nc --arg c "$form" '{tool_input:{command:$c}}')"
