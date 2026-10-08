@@ -127,15 +127,11 @@ const FIXTURE_FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 const CLONE_TIMEOUT: Duration = Duration::from_secs(600);
 
-#[cfg(not(test))]
 const DETACHED_OPERATION_LIMIT: Duration = CLONE_TIMEOUT
     .saturating_mul(2)
     .saturating_add(crate::drift::refresh::FETCH_DEADLINE);
-#[cfg(not(test))]
 const FOREGROUND_LOCK_WAIT: Duration =
     DETACHED_OPERATION_LIMIT.saturating_add(BACKGROUND_LOCK_WAIT);
-#[cfg(test)]
-const FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 
 pub fn lock_repo(env: &Env, key: &str, repo: &str) -> Result<CacheGuard> {
     let wait = cache_wait(env);
@@ -153,7 +149,14 @@ pub fn lock_repo(env: &Env, key: &str, repo: &str) -> Result<CacheGuard> {
 )]
 fn waiting(repo: &str) {
     #[cfg(test)]
-    WAIT_NOTICES.with(|notices| notices.borrow_mut().push(repo.to_owned()));
+    {
+        WAIT_NOTICES.with(|notices| notices.borrow_mut().push(repo.to_owned()));
+        WAIT_ACKNOWLEDGEMENT.with(|sender| {
+            if let Some(sender) = sender.take() {
+                sender.send(()).unwrap();
+            }
+        });
+    }
     eprintln!("{repo}: waiting for another kendex process to finish downloading it");
 }
 
@@ -178,6 +181,18 @@ fn cache_wait(env: &Env) -> Duration {
 thread_local! {
     static WAIT_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     static WAIT_NOTICES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static WAIT_ACKNOWLEDGEMENT: std::cell::RefCell<Option<std::sync::mpsc::Sender<()>>> = const { std::cell::RefCell::new(None) };
+    static MIRROR_CLONE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(in crate::remote) fn acknowledge_next_wait(sender: std::sync::mpsc::Sender<()>) {
+    WAIT_ACKNOWLEDGEMENT.set(Some(sender));
+}
+
+#[cfg(test)]
+pub(in crate::remote) fn mirror_clone_calls() -> usize {
+    MIRROR_CLONE_CALLS.get()
 }
 
 #[cfg(test)]
@@ -262,6 +277,8 @@ fn stdout(git: Hardened) -> Option<String> {
 /// no template at all and the mirror carries no `info` directory.
 pub fn ensure_mirror(mirror: &Path, url: &str) -> Result<()> {
     ensure_mirror_using(mirror, |timeout| {
+        #[cfg(test)]
+        MIRROR_CLONE_CALLS.set(MIRROR_CLONE_CALLS.get() + 1);
         run(Hardened::git(
             &[
                 "clone",

@@ -158,29 +158,42 @@ fn a_changed_or_unreadable_receipt_revokes_validation_in_the_same_operation() {
 #[test]
 fn concurrent_operations_share_the_download_and_validate_independently() {
     let f = fixture();
-    let barrier = std::sync::Barrier::new(2);
+    let key = key_for(&f.env);
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
+    let (waiting, acknowledgements) = std::sync::mpsc::channel();
     let results = std::thread::scope(|scope| {
         let tasks: Vec<_> = (0..2)
             .map(|_| {
-                let env = f.env.next_invocation();
-                let barrier = &barrier;
+                // A cold clone on CI can exceed the fixture's short deadline.
+                let env = f
+                    .env
+                    .next_invocation()
+                    .with_source_cache_wait(crate::env::SourceCacheWait::Foreground);
+                let waiting = waiting.clone();
                 scope.spawn(move || {
-                    barrier.wait();
+                    store::acknowledge_next_wait(waiting);
                     let result = sync(&env, REPO, None).unwrap();
                     for _ in 0..2 {
                         assert!(store::published(&env, &key_for(&env), &result.commit).is_some());
                     }
                     assert_eq!(store::signature_calls(&result.root), 1);
-                    (result.root, result.commit)
+                    (result.root, result.commit, store::mirror_clone_calls())
                 })
             })
             .collect();
+        drop(waiting);
+        for _ in 0..tasks.len() {
+            acknowledgements.recv().unwrap();
+        }
+        drop(guard);
         tasks
             .into_iter()
             .map(|task| task.join().unwrap())
             .collect::<Vec<_>>()
     });
-    assert_eq!(results[0], results[1]);
+    assert_eq!(results[0].0, results[1].0);
+    assert_eq!(results[0].1, results[1].1);
+    assert_eq!(results.iter().map(|result| result.2).sum::<usize>(), 1);
     assert!(body(&results[0].0).contains("v1"));
     assert_eq!(
         store::resolve_ref(&store::mirror_dir(&f.env, &key_for(&f.env)), "HEAD"),
