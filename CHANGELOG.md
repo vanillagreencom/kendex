@@ -36,6 +36,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - `decisions check` judges a missing Revisit When condition only on INDEX rows the change adds or edits against the base branch, including Date and Link text edits. Untouched legacy rows whose cell reads `None` pass; with no readable base every row is still judged.
 
+#### docs-writing
+
+- Correct Claude Code instruction guidance: kendex writes no CLAUDE.md and leaves existing root and nested imports with the project.
+
 #### harness-ci
 
 - Consumer refresh CI publishes the measured change class and skips product jobs after render proof. New generated files reach that proof through a prerequisite-only candidate. CI installs the latest released engine instead of a fixed older build.
