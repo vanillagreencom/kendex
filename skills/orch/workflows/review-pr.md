@@ -221,7 +221,7 @@ Sweep the filesystem on every wake. Per-agent deadline from `review_delegated_at
 | Event | Action |
 |-------|--------|
 | Return arrives | Run `review-artifact-check` (§ 3.1) |
-| 2 min after the first return, or 10 min from delegation with no returns — once per cycle (wave mode: per wave) | Ping each outstanding agent once (external exempt): `Status check on [ISSUE_ID] review — return your verdict if complete, or report the blocker.` |
+| 2 min after the first return, or 10 min from delegation with no returns — once per cycle (wave mode: per wave) | Ping each outstanding agent once (external exempt): `Status check on [ISSUE_ID] review: return your verdict if complete. If incomplete, report the blocker and identify any active required Mutation-Stability Pairing job.` |
 | 2 min after that ping | Mark each **agent** still outstanding `unresponsive`, except a perf agent, `reviewer-test`, or a responsive reviewer with an active required measurement as defined above. This row excludes the external lane. |
 | Per-agent deadline (external: printed deadline, else 2 × timeout + 3 min) | Mark that agent or lane `unresponsive` at its applicable deadline, including the active required measurement deadline above |
 
