@@ -16,6 +16,10 @@ use crate::error::{CoreError, Result};
 /// dangles here, and reading through it would either fail or pull in bytes
 /// from the host.
 pub fn tree_signature(root: &Path) -> Result<String> {
+    #[cfg(test)]
+    SIGNATURE_CALLS.with(|calls| {
+        *calls.borrow_mut().entry(root.to_path_buf()).or_default() += 1;
+    });
     let mut hasher = Sha256::new();
     hash_entry(&mut hasher, root, Path::new(""))?;
     let mut out = String::new();
@@ -24,6 +28,17 @@ pub fn tree_signature(root: &Path) -> Result<String> {
         let _ = write!(out, "{byte:02x}");
     }
     Ok(out)
+}
+
+#[cfg(test)]
+thread_local! {
+    static SIGNATURE_CALLS: std::cell::RefCell<std::collections::BTreeMap<PathBuf, usize>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+#[cfg(test)]
+pub(in crate::remote) fn signature_calls(root: &Path) -> usize {
+    SIGNATURE_CALLS.with(|calls| calls.borrow().get(root).copied().unwrap_or_default())
 }
 
 /// The name a path contributes to the hash, with `/` between components on

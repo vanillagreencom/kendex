@@ -418,16 +418,20 @@ const RECEIPT_RULES: &str = "kendex-checkout 2";
 /// every snapshot it asks about is pinned for the run.
 pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
     let dir = checkout_dir(env, key, commit);
-    if !dir.is_dir() {
-        return None;
-    }
-    let recorded = fs::read_to_string(receipt_path(env, key, commit)).ok()?;
-    let (rules, signature) = recorded.split_once('\n')?;
-    let matches = rules == RECEIPT_RULES && signature.trim() == tree_signature(&dir).ok()?;
+    let recorded = dir
+        .is_dir()
+        .then(|| fs::read_to_string(receipt_path(env, key, commit)).ok())
+        .flatten();
+    let matches = env.validate_checkout(key, commit, recorded.as_deref(), || {
+        let Some((rules, signature)) = recorded.as_deref().and_then(|r| r.split_once('\n')) else {
+            return false;
+        };
+        rules == RECEIPT_RULES
+            && tree_signature(&dir).is_ok_and(|actual| signature.trim() == actual)
+    });
     if !matches {
         return None;
     }
-    env.hold_checkout(key, commit);
     Some(dir)
 }
 
@@ -536,3 +540,6 @@ fn check_out(into: &Path, mirror: &Path, commit: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) use signature::signature_calls;

@@ -311,6 +311,7 @@ fn a_checkout_this_invocation_was_handed_is_never_removed() {
 
     next_invocation(&mut f);
     assert!(store::published(&f.env, &key_for(&f.env), &a.commit).is_some());
+    assert!(store::published(&f.env.clone(), &key_for(&f.env), &a.commit).is_some());
     let b = advance_here(&f, "v2");
     assert_eq!(b.retention, Retention::Pruned { removed: 0 });
     age(&f, &b.commit, 400);

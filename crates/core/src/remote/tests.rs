@@ -8,6 +8,7 @@ use crate::process::Hardened;
 
 mod retain;
 mod sync;
+mod validation;
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Hardened::git(args, Some(dir)).run().unwrap();

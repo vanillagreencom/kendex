@@ -41,9 +41,8 @@ const HARNESS_VARS: [&str; 10] = [
 /// can point the whole engine at a fixture tree instead of the real machine.
 ///
 /// One value is one invocation: the CLI builds one per process and the app
-/// one per command. What the invocation holds in the source cache
-/// ([`Held`]) rides along, shared by every clone, so a builder call keeps
-/// it and a fresh `detect` or `fake` starts with nothing held.
+/// one per command. Validated source receipts and the retention holds
+/// ([`Held`]) are shared by every clone. A fresh operation validates again.
 #[derive(Debug, Clone)]
 pub struct Env {
     pub home: PathBuf,
@@ -61,7 +60,13 @@ pub struct Env {
     cwd: Option<PathBuf>,
     vars: BTreeMap<String, String>,
     source_cache_wait: SourceCacheWait,
-    held: Arc<Mutex<Held>>,
+    invocation: Arc<Mutex<Invocation>>,
+}
+
+#[derive(Debug, Default)]
+struct Invocation {
+    held: Held,
+    validated: BTreeMap<(String, String), String>,
 }
 
 /// How this invocation responds when another process owns a source cache.
@@ -118,7 +123,7 @@ impl Env {
             cwd: std::env::current_dir().ok(),
             vars: BTreeMap::new(),
             source_cache_wait: SourceCacheWait::Foreground,
-            held: Arc::default(),
+            invocation: Arc::default(),
         };
         let dev = dev_home(cfg!(debug_assertions), real_home.as_ref(), &data_dir);
         Ok(Self::resolve(dev, machine, vars))
@@ -164,22 +169,55 @@ impl Env {
 
     /// Record a checkout the store handed this invocation.
     pub fn hold_checkout(&self, key: &str, commit: &str) {
-        self.held_mut()
+        self.invocation_mut()
+            .held
             .checkouts
             .insert((key.to_owned(), commit.to_owned()));
+    }
+
+    /// Immutable snapshots can share a receipt check until this operation ends.
+    /// Receipt changes revalidate; failures grant no trust. The same owner
+    /// serializes clones' checks and pins each successful checkout for retention.
+    pub(crate) fn validate_checkout(
+        &self,
+        key: &str,
+        commit: &str,
+        receipt: Option<&str>,
+        validate: impl FnOnce() -> bool,
+    ) -> bool {
+        let mut invocation = self.invocation_mut();
+        let identity = (key.to_owned(), commit.to_owned());
+        let Some(receipt) = receipt else {
+            invocation.validated.remove(&identity);
+            return false;
+        };
+        if invocation.validated.get(&identity).map(String::as_str) != Some(receipt) {
+            invocation.validated.remove(&identity);
+            if !validate() {
+                return false;
+            }
+            invocation
+                .validated
+                .insert(identity.clone(), receipt.to_owned());
+        }
+        invocation.held.checkouts.insert(identity);
+        true
     }
 
     /// Record a scope this invocation stands in. `manifest::manifest_path`
     /// is the one caller: naming a scope's manifest is what standing in
     /// it means.
     pub fn stand_in(&self, scope: &Scope) {
-        self.held_mut().scopes.insert(scope.clone());
+        self.invocation_mut().held.scopes.insert(scope.clone());
     }
 
     /// Record a trash entry this invocation wrote. `trash::move_to_trash`
     /// is the one caller: every removal lands through it.
     pub fn hold_trashed(&self, entry: &Path) {
-        self.held_mut().trashed.insert(entry.to_path_buf());
+        self.invocation_mut()
+            .held
+            .trashed
+            .insert(entry.to_path_buf());
     }
 
     /// The same machine starting a fresh invocation, holding nothing: what
@@ -188,20 +226,20 @@ impl Env {
     pub fn next_invocation(&self) -> Env {
         Env {
             source_cache_wait: SourceCacheWait::Foreground,
-            held: Arc::default(),
+            invocation: Arc::default(),
             ..self.clone()
         }
     }
 
     /// What this invocation holds, as of now.
     pub fn held(&self) -> Held {
-        self.held_mut().clone()
+        self.invocation_mut().held.clone()
     }
 
-    fn held_mut(&self) -> std::sync::MutexGuard<'_, Held> {
-        // A panic while inserting leaves both sets whole, so the record is
-        // as good after one as before it.
-        self.held
+    fn invocation_mut(&self) -> std::sync::MutexGuard<'_, Invocation> {
+        // Failed checks never enter the validation map. A panic leaves the
+        // recorded holds and successful validations intact.
+        self.invocation
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -273,7 +311,7 @@ impl Env {
             cwd: None,
             vars: BTreeMap::new(),
             source_cache_wait: SourceCacheWait::Foreground,
-            held: Arc::default(),
+            invocation: Arc::default(),
         }
     }
 
