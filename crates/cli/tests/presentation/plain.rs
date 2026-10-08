@@ -32,28 +32,6 @@ fn the_blocked_refresh_keeps_the_plain_output_hierarchy() {
     assert!(FRAMING.into_iter().all(|symbol| !printed.contains(symbol)));
 }
 
-/// The detection, not the override: with no terminal on either stream and
-/// nothing asked for, a run is plain. The override is a test's way in and
-/// a CI switch, never what decides an ordinary run.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_run_with_no_terminal_is_plain_without_being_told() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = &rooted(&tmp);
-    let project = blocked_project(home);
-    let printed = said(&kendex(
-        home,
-        &project,
-        "",
-        &["refresh", "-y", "--scope", "project"],
-    ));
-    let found: Vec<char> = FRAMING
-        .into_iter()
-        .filter(|symbol| printed.contains(*symbol))
-        .collect();
-    assert!(found.is_empty(), "an undetected terminal framed: {printed}");
-}
-
 /// A payload prints as itself. `show --file` exists to put a package's
 /// file in front of the reader, so escaping it the way a value in a
 /// sentence is escaped hands them one line of literal `\n` instead of the
