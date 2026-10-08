@@ -3,7 +3,7 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: Defers commits to executable, marked pre-commit and commit-msg hooks in the working repository. Refuses a literal bypass option in a direct git commit call or a literal core.hooksPath override applied to that call. Reads quoted words, comments, command boundaries and option values without executing shell text. Messages, path operands and other programs' arguments are not options. Unarmed repositories get a consent notice; linked worktrees get a main-owner setup route. Unavailable tools, unreadable payloads and commit calls this reader cannot resolve get a notice as harness context and allow the command. This hook never runs repository setup or check scripts.
+# description: Defers commits to executable, marked pre-commit and commit-msg hooks in the working repository. Refuses a literal bypass option in a direct git commit call or a literal core.hooksPath override applied to that call. Reads quoted words, comments, command boundaries and option values without executing shell text. Messages, path operands and other programs' arguments are not options. Unarmed repositories get a consent notice; linked worktrees get a main-owner setup route. Unavailable tools, unreadable payloads and commands this reader cannot resolve get a notice as harness context and allow the command. This hook never runs repository setup or check scripts.
 # summary: Stops explicit options that skip armed commit checks. Missing setup or an unavailable reader produces a notice with the responsible owner.
 # safety: Reads JSON, literal shell words and Git hook files. Executes no command from the payload and no repository script. Quoted message and file expansions are kept as single argument values without execution. Unresolved argument boundaries and unclosed quotes are reported and allowed; indirect launches are outside the literal direct-call check. Git's installed hooks enforce checks when the hook cannot read a command. The working repository alone is judged; repository-moving commits get a notice when the working directory has no readable Git hook directory. Every diagnostic starts with pre-commit-check: key=value.
 # timeout: 60
@@ -404,7 +404,10 @@ read_call() {
     esac
   done
   [ -n "$CALL_BYPASS" ] || CALL_BYPASS=$flag
-  [ -z "$unresolved" ] || CALL_RESULT=commit-unavailable
+  # A completed call owns its refusal, independent of prior configuration.
+  # Unknown option identity or argument boundaries still withhold a refusal.
+  if [ -n "$unresolved" ]; then CALL_RESULT=commit-unavailable
+  elif [ -n "$CALL_BYPASS" ]; then CALL_RESULT=commit-refusal; fi
 }
 
 tokenize || [ "$READER_STATE" = incomplete ]
@@ -417,10 +420,13 @@ for ((index=0; index<${#TOKENS[@]}; index++)); do
     if [ "${#ARGS[@]}" -gt 0 ]; then
       read_call
       case "$CALL_RESULT" in
+        commit-refusal)
+          COMMIT=1
+          [ -n "$BYPASS" ] || BYPASS=$CALL_BYPASS ;;
         commit)
           COMMIT=1
           if [ "$CONFIG_STATE" = unavailable ]; then UNAVAILABLE=1
-          elif [ -z "$BYPASS" ]; then BYPASS=${CALL_BYPASS:-$CONFIG_BYPASS}; fi ;;
+          elif [ -z "$BYPASS" ]; then BYPASS=$CONFIG_BYPASS; fi ;;
         commit-unavailable) COMMIT=1; UNAVAILABLE=1 ;;
         config) CONFIG_BYPASS=$CALL_CONFIG; CONFIG_STATE=set ;;
         config-unavailable) CONFIG_STATE=unavailable ;;
