@@ -1,8 +1,6 @@
 name: Dispatch kendex refresh
 
 "on":
-  push:
-    branches: [main]
   workflow_dispatch: {}
 
 permissions:

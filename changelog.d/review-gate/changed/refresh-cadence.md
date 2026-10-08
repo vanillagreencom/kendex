@@ -1,0 +1,1 @@
+- Consumers check for kendex changes every 6 hours after adopting the updated refresh workflow. Merges into kendex no longer dispatch a refresh. A fix can reach consumers up to 6 hours later; run the catalog's dispatch workflow by hand when it cannot wait.
