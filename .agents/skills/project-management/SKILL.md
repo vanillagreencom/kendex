@@ -22,6 +22,24 @@ tags: [planning]
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
 
+### Intake
+
+File a kendex issue only when its body names one of these two, in addition to the Creation bar in § Disposition:
+
+- **A failure that happened**: a `Symptom:` line that names where it broke, when, and what broke.
+- **An owner request**: an `Owner:` line that names the owner's note or ask.
+
+Decline a candidate with neither, with one line in the report. The 2026-10-08 backlog read canceled these four kinds, each filed with neither line:
+
+- A post-merge reading's remainder filed as a new item (KEN-3369, KEN-3371, KEN-3375). The reading stays on its originating item, per § Disposition.
+- A plan follow-up that proposes a migration with no failing action (KEN-2360, KEN-2361, KEN-2362).
+- An audit item that reclassifies a correct refusal (KEN-2378, KEN-2397).
+- A scanner or grammar extension with no live failure (KEN-2207, KEN-3285).
+
+An organization setup request, one that names a host, account, repository or person of this organization, is not filed as asked. Restate it as a need any catalog consumer has, or return it to its sender for routing to fleet or to the consumer that owns the setup.
+
+`issues create` checks neither line, apart from its review-born priority-2 `Symptom:` refusal. The author applies this rule.
+
 ### Project taxonomy
 
 Require one agent and one surface label. Surface means where a person meets the work. Agent names are declared by LINEAR_AGENT_LABELS in kendex.settings.toml. Labels outside these categories are legacy and are not assigned.
