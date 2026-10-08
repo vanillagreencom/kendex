@@ -131,9 +131,12 @@ The long pass's events, checked and reported in this order:
                              walled one; the line it built is on the watch's
                              stderr under the event. Where no account
                              qualifies, one `overseer-recovery-blocked` notice
-                             naming the account and when its binding bucket
-                             frees up goes to both channels and the repeat
-                             stops
+                             goes to both channels and the repeat stops.
+                             Measured account and reset values need an
+                             account mark. Unmeasured fields read
+                             account=unknown and resets=none. Login recovery
+                             has no usage reset: sign in to an account, then
+                             start a fresh overseer by hand
   EVENT overseer-mark <pane> kind=<headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
                              the OVERSEER's own account reached its mark,
@@ -406,7 +409,7 @@ The long pass's events, checked and reported in this order:
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
                              reads the item's state, never a pane.
-  EVENT usage-limit <lane> [<config-dir>] [resets=<utc>]
+  EVENT usage-limit <lane> [<config-dir>] [resets=<utc>] [wall_kind=auth]
                              a live harness with no turn in flight shows a
                              limit banner below the last user turn on its screen.
                              The block that follows is a window AROUND that
@@ -414,6 +417,10 @@ The long pass's events, checked and reported in this order:
                              cap below, so the banner is always in the block
                              and the sentence marking a quoted wall travels
                              with it.
+                             wall_kind=auth is the shared judge's login
+                             failure. Exclude the failed account on every
+                             replacement pick, including another harness.
+                             No usage reset lifts a login failure.
                              `resets=` carries the reset time the banner
                              states; the wall is still standing. It is absent
                              when the banner states no reset in a shape the
@@ -1066,7 +1073,7 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched. '"$OW_REPLAY_RULE"' The held field is that line, none where the record holds none for this pane, or unread where the record, or the pane key or server start that names it, could not be read. The step field names what failed.' ;;
     overseer-notice-failed) text='An overseer notice could not be delivered on the channel the field names. A notice from a pass still had its event line printed; a notice from the watch start has none.' ;;
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
-    overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The fields name the spent account and the reset its banner states; a notice carrying both went to the fleet log and the overseer mailbox.' ;;
+    overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The notice reaches the fleet log and the overseer mailbox. Measured account and reset values come from an account mark. Unmeasured fields read account=unknown and resets=none. Login recovery has no usage reset: sign in to an account, then start a fresh overseer by hand.' ;;
     overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
     state-required) text='The option reads its lanes from the oversee workflow state. Add --state PATH.' ;;

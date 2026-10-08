@@ -294,8 +294,8 @@ case "$VERB" in
       lane_state state listed "$cmd" "$pid" "$screen" || cause=",limit-scan"
       [[ "$LANE_PROBE_RC" -le 1 ]] || cause="$cause,process-probe probe=$LANE_PROBE_RC"
       inspect_settled
-      printf 'session=%s window=%s server=%s state=%s%s\n' "$SESSION" "$window" "$server" "$state" \
-        "${cause:+ cause=${cause#,}}"
+      printf 'session=%s window=%s server=%s state=%s%s%s\n' "$SESSION" "$window" "$server" "$state" \
+        "${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}" "${cause:+ cause=${cause#,}}"
     fi
     printf '%s\n' "$screen"
     ;;

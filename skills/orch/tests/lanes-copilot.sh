@@ -718,5 +718,23 @@ PI_STUB=""
 LANES_BIN=""
 
 echo
+# A signed-out Copilot home can still have a stated pool reading. Recovery
+# keeps the failed home excluded instead of treating that reading as a login.
+new_home login-recovery
+mkdir -p "$H/.failedcopilot/session-state" "$H/.othercopilot/session-state" "$H/.pi/agent"
+export ORCH_LANE_COPILOT_POOL="$H/.failedcopilot=0/100,$H/.othercopilot=10/100,$H/.pi/agent=20/100"
+for scenario in same-harness other-harness no-successor; do
+  args=(pick --harness copilot --model gpt-5-mini --exclude-lane "$H/.failedcopilot" --json)
+  want="0|$H/.othercopilot"
+  case "$scenario" in
+    other-harness) args=(pick --harness pi --model copilot/gpt-5-mini --exclude-lane "$H/.failedcopilot" --json); want="0|$H/.pi/agent" ;;
+    no-successor) ORCH_LANE_COPILOT_POOL="$H/.failedcopilot=0/100"; want='3|none' ;;
+  esac
+  run_lanes "${args[@]}"
+  picked="$(jq -r '.config_dir // "none"' <<<"$OUT")"
+  assert_eq "$RC|$picked" "$want" "$scenario login recovery excludes the failed home despite usage room"
+done
+unset ORCH_LANE_COPILOT_POOL
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

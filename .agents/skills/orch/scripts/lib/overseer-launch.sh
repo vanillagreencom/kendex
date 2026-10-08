@@ -865,23 +865,25 @@ ol_session_from_out() {
 # wait for the caller to close, and the watch's per-pass overseer read take.
 # The keyed line's state, server, window, cause and probe go into
 # OL_INSPECT_STATE, OL_INSPECT_SERVER, OL_INSPECT_WINDOW, OL_INSPECT_CAUSE and
-# OL_INSPECT_PROBE, each empty where the line names none, and window and
+# OL_INSPECT_PROBE; wall_kind goes into OL_INSPECT_WALL_KIND. Each is empty
+# where the line names none, and window and
 # server the word `none` for a session the runtime no longer lists; the line
 # itself into OL_INSPECT_LINE and the snapshot under it into OL_DETAIL.
 # OL_INSPECT_CAUSE is the comma-separated scans the judge could not run, and
 # OL_INSPECT_PROBE the child probe's exit status where one of them is
 # `process-probe`. Returns 1 with OL_REASON=inspect-failed; the provider's own
 # line is in DEP_ERR.
-OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
+OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
 ol_session_inspect() { # SESSION [--launch]
   local out word
-  OL_INSPECT_STATE="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
+  OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
   out="$("$SCRIPT_DIR/overseer-host" inspect --session "$1" ${2:+"$2"} 2>"$DEP_ERR")" \
     || { OL_REASON=inspect-failed; return 1; }
   OL_INSPECT_LINE="${out%%$'\n'*}"
   for word in $OL_INSPECT_LINE; do
     case "$word" in
       state=*) OL_INSPECT_STATE="${word#state=}" ;;
+      wall_kind=*) OL_INSPECT_WALL_KIND="${word#wall_kind=}" ;;
       server=*) OL_INSPECT_SERVER="${word#server=}" ;;
       window=*) OL_INSPECT_WINDOW="${word#window=}" ;;
       cause=*) OL_INSPECT_CAUSE="${word#cause=}" ;;

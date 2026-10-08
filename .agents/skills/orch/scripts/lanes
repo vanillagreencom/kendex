@@ -1451,8 +1451,14 @@ measure_lane() {
 			emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
 			return
 		fi
-		# Claude can keep a live access token after its refresh login ends.
-		# Usage room then says nothing about whether a new session can sign in.
+		# `claude auth status` exposes current account authentication, but its
+		# documented JSON has no refresh-expiry timestamp. /status is an
+		# interactive view. Neither supplies this chooser's exact expiry read.
+		# Read the stored refreshTokenExpiresAt here: a live access token and
+		# usage room can survive the refresh login's end. An absent timestamp
+		# stays unmeasured; it does not prove expiry.
+		# https://code.claude.com/docs/en/cli-reference
+		# https://code.claude.com/docs/en/authentication#renew-an-expiring-login
 		if [[ "$harness" == claude ]]; then
 			local refresh_expiry
 			refresh_expiry="$(jq -r '.claudeAiOauth.refreshTokenExpiresAt // 0' "$creds")" || return 1

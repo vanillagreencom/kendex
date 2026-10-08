@@ -19,8 +19,8 @@ COMPOSER=$'❯\xc2\xa0'
 for row in "claude|$CLAUDE_AUTH" "codex|$CODEX_AUTH" "copilot|$COPILOT_AUTH"; do
   IFS='|' read -r harness message <<<"$row"
   screen="❯ watch the fleet"$'\n'"$message"$'\n'"$COMPOSER"
-  lane_state actual listed "$harness" "" "$screen" "" room idle
-  assert_eq "$actual" walled "$harness login failure overrides usage room and a stale idle row"
+  lane_state actual listed "$harness" "" "$screen" "" room
+  assert_eq "$actual/$LANE_WALL_KIND" walled/auth "$harness login failure overrides usage room"
   lane_state actual listed "$harness" "" "$screen"$'\n''esc to interrupt'
   assert_eq "$actual" working "$harness login words printed during a live turn do not stop it"
   lane_state actual listed "$harness" "" "$message"$'\n''❯ continue'$'\n'"$COMPOSER"
@@ -28,13 +28,31 @@ for row in "claude|$CLAUDE_AUTH" "codex|$CODEX_AUTH" "copilot|$COPILOT_AUTH"; do
 done
 lane_state actual listed claude "" "❯ read lane news"$'\n''⏺ The lane answered "Login expired · Please run /login".'$'\n'"$COMPOSER"
 assert_eq "$actual" idle "an inline quote in an overseer report is not its login failure"
+for rows in idle working walled unreadable; do
+  want="$rows"; [[ "$rows" != unreadable ]] || want=unjudged
+  for scan in banner failed; do
+    rc=0
+    if [[ "$scan" == failed ]]; then
+      grep() { return 2; }
+    fi
+    lane_state actual listed pi "" "$CLAUDE_AUTH"$'\n'"$COMPOSER" "" "" "$rows" || rc=$?
+    unset -f grep
+    assert_eq "$actual/$rc" "$want/0" "Pi $rows row owns state with $scan pane scan"
+  done
+done
+ROWS_CONTROL="$(mutant_scripts pi-row-owner lib/lane-state.sh)"
+mutate_file "$ROWS_CONTROL/lib/lane-state.sh" 'local _ls_rows="${8:-}"' 'local _ls_rows=""'
+source "$ROWS_CONTROL/lib/lane-state.sh"
+lane_state actual listed pi "" "$CLAUDE_AUTH"$'\n'"$COMPOSER" "" "" idle
+assert_eq "$actual" walled "must-fail: dropping Pi rows loses the authoritative idle result"
+source "$JUDGE"
 CONTROL="$(mutant_scripts auth-classifier lib/lane-state.sh)"
 mutate_file "$CONTROL/lib/lane-state.sh" 'AUTH_FAILURE_RE=' 'AUTH_FAILURE_RE_DISABLED='
 # Retain the table's text but disable its use, as one failed classification
 # must turn the auth contract red rather than merely stop the test running.
 AUTH_FAILURE_RE='a^'
 source "$CONTROL/lib/lane-state.sh"
-lane_state actual listed claude "" "$CLAUDE_AUTH"$'\n'"$COMPOSER" "" room idle
+lane_state actual listed claude "" "$CLAUDE_AUTH"$'\n'"$COMPOSER" "" room
 if [[ "$actual" == walled ]]; then
   assert_eq control survived "must-fail: authentication classification removed"
 else

@@ -64,6 +64,25 @@ USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reach
 # Anchor the harness line so a finished report quoting another lane is not
 # itself a login failure. A running shell can still print these words.
 AUTH_FAILURE_RE=$'^[[:space:]\xc2\xa0]*(⎿[[:space:]\xc2\xa0]*|■[[:space:]]*|✗[[:space:]]*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages[.] Please run /login)'
+# Claude's `auth status` reads current account authentication, not the result
+# held by an already running terminal session. Its StopFailure hook supplies
+# authentication_failed after a failed turn; session-rows.sh consumes it where
+# callers have rows. Pane-driven callers still need the current turn's error:
+# a previous successful row cannot settle a later login failure.
+# https://code.claude.com/docs/en/cli-reference
+# https://code.claude.com/docs/en/hooks#stopfailure
+# Codex's `login status` checks saved credentials; app-server's account/read
+# serves its own RPC process, not an existing terminal lane. Neither reports
+# that terminal's held refresh failure, so read its current turn's banner.
+# https://developers.openai.com/codex/cli/reference/#codex-login
+# https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md
+# Copilot's /login and `copilot login` sign in; the documented `gh auth status`
+# troubleshooting check reads GitHub CLI authentication, not a held Copilot
+# turn's result. The SDK getAuthStatus call reads its connected RPC server,
+# not this already running interactive terminal.
+# The captured terminal error is therefore needed for pane-driven callers.
+# https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/troubleshoot-copilot-cli-auth
+# https://github.com/github/copilot-sdk/blob/main/docs/setup/backend-services.md
 AUTH_FAILURE_ERROR=authentication_failed
 lane_auth_failure() { [[ "${2:-}" == "$AUTH_FAILURE_ERROR" ]] || grep -Eq -- "$AUTH_FAILURE_RE" <<<"$1"; }
 MODEL_CAPACITY='Selected model is at capacity'
@@ -881,8 +900,8 @@ lane_pane_observe() { # WINDOW
 #   exited    the window outlived its harness: the provider confirms the
 #             remote harness has ended, or a local shell runs nothing but
 #             shells
-#   walled    the account is spent and said so below the lane's last turn,
-#             and no ACCOUNT reading says the wall has lifted
+#   walled    the current turn reports a failed login, or a usage wall
+#             that no ACCOUNT reading says has lifted
 #   asking    a dialog is up and waiting on an answer
 #   idle      the harness is at its input prompt with nothing in flight
 #   working   a turn is in flight
@@ -905,6 +924,8 @@ lane_pane_observe() { # WINDOW
 #   HOSTED_ITEM and HARNESS name the remote process read through lane-host.
 #            One call per invocation; a failure returns unjudged without
 #            falling back to the local ssh child or the screen.
+#   LANE_WALL_KIND is `auth` for a failed login, `usage` for a usage wall,
+#            and empty for every other verdict.
 #   LANE_EXIT_SOURCE is `provider` for a confirmed remote exit, `pane` for
 #            a local shell running nothing but shells, and empty for every
 #            other verdict.
@@ -956,11 +977,13 @@ lane_pane_observe() { # WINDOW
 #
 # Exit 2, with OUT_VAR set to `unjudged`, means a scan failed rather than
 # answered. The caller decides whether that ends its run.
+LANE_WALL_KIND=""
 lane_state() {
   local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}" _ls_account="${7:-}"
   local _ls_rows="${8:-}" _ls_item="${9:-}" _ls_harness="${10:-}" _ls_slice _ls_banner _ls_rc=0
   LANE_PROBE_RC=0
   LANE_EXIT_SOURCE=""
+  LANE_WALL_KIND=""
   if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
   if [[ -n "$_ls_item" ]]; then
     pane_has_remote_harness "$SCRIPT_DIR/lane-host" "$_ls_item" "$_ls_harness" || _ls_rc=$?
@@ -976,18 +999,9 @@ lane_state() {
     # LANE_PROBE_RC carries the status for the caller's note.
     if [[ "$_ls_rc" -eq 1 ]]; then LANE_EXIT_SOURCE=pane; printf -v "$_ls_out" exited; return 0; fi
   fi
-  _ls_slice="$(pane_below_last_turn "$_ls_screen")"
-  _ls_rc=0
-  _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
-  if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
-  # Account room and a last successful hook row cannot renew the login a
-  # running harness holds. Only its next successful turn lifts this failure.
-  if [[ -n "$_ls_banner" ]] && lane_auth_failure "$_ls_banner"; then
-    printf -v "$_ls_out" walled; return 0
-  fi
   if [[ "$_ls_rows" == walled ]]; then
     case "$_ls_account" in
-      "" | walled) printf -v "$_ls_out" walled; return 0 ;;
+      "" | walled) LANE_WALL_KIND=usage; printf -v "$_ls_out" walled; return 0 ;;
       room) _ls_rows=idle ;;
       *) printf -v "$_ls_out" unjudged; return 0 ;;
     esac
@@ -1004,9 +1018,18 @@ lane_state() {
       return 0 ;;
     *) printf -v "$_ls_out" unjudged; return 0 ;;
   esac
+  _ls_slice="$(pane_below_last_turn "$_ls_screen")"
+  _ls_rc=0
+  _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
+  if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
+  # Account room cannot renew the login held by a running terminal. The
+  # watch also keeps this result ahead of its earlier successful session row.
+  if [[ -n "$_ls_banner" ]] && lane_auth_failure "$_ls_banner"; then
+    LANE_WALL_KIND=auth; printf -v "$_ls_out" walled; return 0
+  fi
   if [[ -n "$_ls_banner" ]]; then
     case "$_ls_account" in
-      "" | walled) printf -v "$_ls_out" walled; return 0 ;;
+      "" | walled) LANE_WALL_KIND=usage; printf -v "$_ls_out" walled; return 0 ;;
       room) ;;
       *) printf -v "$_ls_out" unjudged; return 0 ;;
     esac

@@ -38,6 +38,12 @@ jq --arg rows "$rows" '.overseer.session_rows=$rows' "$STUB_DIR/oversee-state.js
 mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" 'rc=3 launched=1' "stale success cannot suppress the login wall" "$ERR"
+INSPECT_CONTROL="$(mutant_scripts auth-inspect/orch overseer-host-tmux)"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-inspect/github"
+mutate_file "$INSPECT_CONTROL/overseer-host-tmux" '${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}' ''
+auth_case inspect_control
+WATCH_BIN="$INSPECT_CONTROL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" 'rc=0 launched=0' "must-fail: inspect losing the wall kind suppresses first-pass recovery" "$ERR"
 WATCH_CONTROL="$(mutant_scripts auth-watch/orch oversee-watch)"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-watch/github"
 mutate_file "$WATCH_CONTROL/oversee-watch" 'OV_STATE=walled OV_SOURCE=auth OV_SCREEN="$OL_DETAIL"' 'OV_STATE=walled OV_SOURCE=pane OV_SCREEN="$OL_DETAIL"'
@@ -50,9 +56,17 @@ mutate_file "$ROWS_CONTROL/lib/session-rows.sh" '&& lane_auth_failure "" "${auth
 auth_case rows_control authentication_failed
 WATCH_BIN="$ROWS_CONTROL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" 'rc=0 launched=0' "must-fail: ignoring authentication_failed leaves the overseer unrecovered" "$ERR"
+for shape in pane authentication_failed; do
+  error="$shape"; [[ "$shape" != pane ]] || error=""
+  auth_case "blocked_$shape" "$error"
+  printf '3\n' > "$STUB_DIR/succeed.rc"
+  run TMUX_PANE="$PANE" -- --max-loops 1
+  assert_contains "$(cat -- "$ERR")" 'overseer-recovery-blocked pane=%9 account=unknown resets=none' "blocked $shape login recovery has no measured usage reset" "$ERR"
+  assert_eq "$(succeed_calls --check-marks)" 0 "blocked $shape recovery does not wait for an account probe" "$ERR"
+done
 new_case auth_lane
 printf '%s\n' '❯ continue the issue' "$CLAUDE_AUTH" "$COMPOSER" > "$STUB_DIR/pane-gh-2.txt"
 OUT="$(run_watch -- --max-loops 1 gh-2 2>"$STUB_DIR/err")"
-assert_contains "$OUT" 'EVENT usage-limit gh-2' "lane login failure reaches the existing walled-lane handler on the first pass" "$STUB_DIR/err"
+assert_contains "$OUT" 'EVENT usage-limit gh-2 wall_kind=auth' "lane login failure reaches recovery with the shared wall kind on the first pass" "$STUB_DIR/err"
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
