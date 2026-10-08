@@ -1138,7 +1138,7 @@ close_hosted_lane() { # ITEM [--if-terminal]
 # user-owned changes need an overseer's action, not another provider call.
 check_terminal_lanes() {
   [[ -n "$STATE_FILE" ]] || return 0
-  local records record item terminal key prior rc merged merge_key cycle_pr recorded_merge merged_repo rows="${PW_SEEN[0]}" refreshed=false
+  local records record item terminal key prior refused rc merged merge_key cycle_pr recorded_merge merged_repo rows="${PW_SEEN[0]}" refreshed=false
   local items=()
   records="$(jq -cS '(.lanes // [])[] | objects | select(.status == "parked" or .status == "stopped")' <<<"$FLEET_STATE")" \
     || die state-invalid "" "path=$STATE_FILE"
@@ -1163,7 +1163,8 @@ check_terminal_lanes() {
     key="$terminal|$record"
     prior="$(lane_row_get terminal-close "$rows" "$item")" \
       || die state-read-failed "" "item=$item" "row=terminal-close"
-    [[ "$prior" != "$key" ]] || continue
+    refused=false
+    [[ "$prior" != "$key" ]] || refused=true
     # The tracker can become terminal at merge while the sandbox is stopped.
     # Preserve the merge record before close removes its lane-side state.
     merged="$(lane_row_get merged "$rows" "$item")" \
@@ -1192,8 +1193,15 @@ check_terminal_lanes() {
       record="$(jq -cS --arg item "$item" '.lanes[] | select(.item == $item)' "$STATE_FILE")" \
         || die state-read-failed "" "path=$STATE_FILE" "item=$item"
       key="$terminal|$record"
+      refreshed=true
       break
     done
+    # A provider refusal suppresses only close. Merge discovery and recorder
+    # recovery still run, and their cycle write keeps the refusal on restart.
+    if [[ "$refused" == true ]]; then
+      rows="$(lane_row_set terminal-close "$rows" "$item" "$key")"
+      continue
+    fi
     if close_hosted_lane "$item" --if-terminal; then
       if [[ "$CLOSE_RESULT" == refused ]]; then rows="$(lane_row_set terminal-close "$rows" "$item" "$key")"; fi
       # A close may have rewritten the fleet. Read it before pane and merge
