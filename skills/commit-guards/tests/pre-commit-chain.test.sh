@@ -165,8 +165,9 @@ run_rows \
   "a status past 1 is a step that did not complete, with its status|fx_bot_dies||$BARE||rc=2 $BOT;fixture=bot-error check --staged;$(incomplete 'bot-instructions check --staged' 3);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 
 echo "=== a bot-instructions install the manifest never configured blocks nothing; every other refusal blocks ==="
-# The real package, so the record the lane reads is the one it prints. It is
-# committed with the seed; the commit stages the manifest alone.
+# The real package, so the record the lane reads is the one it prints. The
+# package is installed in a commit of its own after the seed; the commit under
+# test stages AGENTS.md and the manifest.
 bot_real() { # MANIFEST
   mkdir -p "$R/.agents/skills"
   cp -R "$SKILL_DIR/../bot-instructions" "$R/.agents/skills/bot-instructions"
@@ -177,7 +178,8 @@ bot_real() { # MANIFEST
   git -C "$R" add -A
 }
 fx_bot_unadopted() { repo bot-unadopted; bot_real '[skills.orch]\n'; }
-fx_bot_stale() { repo bot-stale; bot_real '[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = "fixture"\nsummary = "A fixture."\n\n[bot-instructions.bots]\ncodex = true\n'; }
+BOT_CONFIGURED='[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = "fixture"\nsummary = "A fixture."\n\n[bot-instructions.bots]\ncodex = true\n'
+fx_bot_stale() { repo bot-stale; bot_real "$BOT_CONFIGURED"; }
 fx_bot_refuses() { repo bot-refuses; tree bot-instructions "bot-instructions: source=<repo>" 2; }
 UNADOPTED="rc=0 $BOT;pre-commit: not-adopted=bot-instructions:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
 REFUSED="rc=2 $BOT;bot-instructions: source=<repo> check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
@@ -190,6 +192,38 @@ case "$stale" in
   "rc=1 $BOT;bot-instructions: findings="*";$BATCH_OK;$LOCAL_NONE;$BLOCKED") stale=blocked ;;
 esac
 assert_eq "a configured repository whose rendered bot files are stale still blocks" blocked "$stale"
+
+# Adopted, rendered and committed, then the table removed: the bots still load
+# the renders, so the package names each as an orphan and the lane blocks. The
+# control is the same tree under a package copy that never looks for marked
+# renders, which calls it unconfigured and passes.
+bot_rendered() { # NAME
+  repo "$1"
+  bot_real "$BOT_CONFIGURED"
+  # adopt takes the hand-written region over and reports it with exit 1; the
+  # render that follows fails unless it did.
+  "$R/.agents/skills/bot-instructions/scripts/bot-instructions" adopt --repo "$R" >/dev/null 2>&1 || true
+  "$R/.agents/skills/bot-instructions/scripts/bot-instructions" render --repo "$R" >/dev/null
+  git -C "$R" add -A && git -C "$R" commit -qm 'chore: render bot instructions'
+  printf '[skills.orch]\n' >"$R/kendex.toml"
+  git -C "$R" add -A
+}
+bot_rendered bot-table-removed
+removed="$(run "" "$BARE" "")"
+case "$removed" in
+  "rc=1 $BOT;bot-instructions: findings=2;orphan: "*" [.github/instructions/code-review.md];orphan: "*" [AGENTS.md];$BATCH_OK;$LOCAL_NONE;$BLOCKED") removed=blocked ;;
+esac
+assert_eq "an adopted, rendered repository whose table is removed blocks on each render left behind" blocked "$removed"
+bot_rendered bot-table-removed-control
+python3 - "$R/.agents/skills/bot-instructions/scripts/lib/run.py" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = "stranded = vr.unconfigured_orphans(tree, config_path)"
+assert s.count(old) == 1
+p.write_text(s.replace(old, "stranded = []"))
+EDIT
+assert_eq "control: a package that never looks for marked renders passes the removed table as not adopted" "rc=0" "$(run "" "$BARE" "" | cut -d' ' -f1)"
 
 # Controls, each on a private install: without the not-adopted branch the
 # unconfigured install blocks, and with the record's key unread every exit-2

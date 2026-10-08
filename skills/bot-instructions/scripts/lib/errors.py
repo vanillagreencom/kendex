@@ -61,13 +61,16 @@ class ManifestError(InputError):
 
 
 class Unconfigured(InputError):
-    """The resolved manifest declares no `[bot-instructions]` table.
+    """The resolved manifest declares no `[bot-instructions]` table, and the
+    judged tree holds no marked file or region.
 
-    A refusal of its own rather than a `toml-schema` finding: a repo that
-    installed this package and never configured it has nothing to render or
-    judge, and a caller that runs every installed package's render, such as
-    a consumer refresh, reads this key to leave that repo alone. The subject
-    is the manifest that was read.
+    A refusal of its own rather than a `toml-schema` finding: such a repo has
+    nothing to render or judge, and a caller that runs every installed
+    package's render or check reads this key to leave that repo alone: a
+    consumer refresh, the commit-guards pre-commit lane and `kendex verify`.
+    A marked render left behind is an `orphan` finding instead
+    (`validators_repo.unconfigured_orphans`). The subject is the manifest
+    that was read.
     """
 
     key = "unconfigured"

@@ -18,8 +18,11 @@ refusal, the interpreter for a launcher refusal, the count for findings, and
 the `--input` path for `region-bounds`. It is not always a path.
 
 `unconfigured` names the manifest read when it declares no `[bot-instructions]`
-table. review-gate's consumer refresh reads that record to leave a repo that
-installed this package and never configured it unrendered.
+table and the judged tree holds no marked render; a marked render left behind
+is an `orphan` finding instead. Three callers read that record to leave the
+repo alone: review-gate's consumer refresh, which leaves it unrendered, the
+commit-guards pre-commit lane, which passes it, and `kendex verify`, which
+skips it.
 
 `region-input` is the one subject a person cannot open: the host writes the
 snapshot to a temporary file and unlinks it as soon as the child returns. The

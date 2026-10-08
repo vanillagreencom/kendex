@@ -1,1 +1,1 @@
-- Let commits through when bot-instructions is installed but the manifest has no `[bot-instructions]` table. The pre-commit chain prints `not-adopted=` for that lane and passes. Every other bot-instructions refusal still blocks the commit.
+- Let commits through when bot-instructions is installed, the manifest has no `[bot-instructions]` table and no file the package rendered remains. The pre-commit chain prints `not-adopted=` for that lane and passes. Every other bot-instructions refusal still blocks the commit.

@@ -418,8 +418,7 @@ expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a tabl
 # line to leave such a consumer unrendered. Without the refusal the run falls
 # through to the schema, which is the control.
 printf 'schema = 6\n' > "$repo/kendex-local.toml"
-unconfigured_raise='        if "bot-instructions" not in resolved.data:
-            raise Unconfigured(config_path)
+unconfigured_raise='            raise Unconfigured(config_path)
 '
 for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_raise" '')"; do
   out="$("$launcher" render --repo "$repo" 2>&1)"

@@ -1,0 +1,1 @@
+- A manifest with no `[bot-instructions]` table no longer hides the bot files this package rendered: `check` and `render` name each marked file or `AGENTS.md` region still in the tree as an `orphan` finding, and refuse as `unconfigured` only when none remains.

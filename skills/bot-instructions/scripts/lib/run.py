@@ -78,6 +78,11 @@ class Context:
             resolved = manifest.resolve(tree)
         config_path = resolved.chosen
         if "bot-instructions" not in resolved.data:
+            # Marked renders outlive the table that wrote them, and the bots
+            # still load each one, so only a tree without them is unconfigured.
+            stranded = vr.unconfigured_orphans(tree, config_path)
+            if stranded:
+                raise ValidationFailed(stranded)
             raise Unconfigured(config_path)
         with _as_finding("toml-schema", config_path):
             self.config = config_mod.parse(

@@ -176,6 +176,8 @@ That covers a retired surface's `.instructions.md` and `correctness/*.md`, the r
 
 **Retiring one is a render.** `render` removes every marked file this rule names after its writes and the region splice succeed, rereading the marker at the moment of removal, so a write that fails leaves each orphan for the next render, and prints `removed PATH` for each, `would remove PATH` under `--dry-run`. A package version that retires a default surface therefore needs no hand step in any repo that renders. `check` reports the files, because it writes nothing. A repo whose own gate reads a file a retirement removes moves what that gate reads first: retiring `[bot-instructions.bots] copilot` in a repo whose gate reads `.github/copilot-instructions.md` is move the pointer, then render.
 
+**A manifest with no `[bot-instructions]` table** produces nothing, so every marked file at a path this rule scans and a marked `AGENTS.md` region are each a finding on every verb, and no render removes one, since a render needs the table. Only a judged tree holding none of them is the `unconfigured` refusal, the record a caller that runs every installed package reads to leave the repository alone. Without this, removing the table would turn every render left behind into a refusal those callers pass, and the bots would keep loading doctrine nothing judges.
+
 **De-orphaning the `AGENTS.md` region** is not a deletion of the file. The heading is the repo's and has to survive; what goes is the marker and the body below it, leaving the section for the repo to fill or leave empty. `render` removes no region, so until that happens it fails on this one.
 
 ## `drift`

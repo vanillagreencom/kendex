@@ -64,17 +64,26 @@ def _nested_agents_files(ctx):
     return [p for p in tracked if p.endswith("/AGENTS.md")]
 
 
-def _retired(ctx, path):
-    """A path this package may have written that the current TOML does not
-    produce: one of ROOT_OUTPUTS, or a file under one of SCANNED_TREES."""
-    return path not in ctx.build.files and (
+def _retired(produced, path):
+    """A path this package may have written that is not in `produced`: one of
+    ROOT_OUTPUTS, or a file under one of SCANNED_TREES."""
+    return path not in produced and (
         path in ROOT_OUTPUTS or any(path.startswith(tree + "/") for tree in SCANNED_TREES))
+
+
+def _marked_files(tree, produced):
+    return [path for path in sorted(set(ROOT_OUTPUTS) | _scanned(tree))
+            if _retired(produced, path) and marker.carries_marker(tree.read(path))]
+
+
+def _marked_region(tree):
+    text = tree.read("AGENTS.md")
+    return text is not None and marker.owns("AGENTS.md", render.region_of(text))
 
 
 def orphan_files(ctx):
     """Every marked file the current TOML does not produce, sorted."""
-    return [path for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx))
-            if _retired(ctx, path) and marker.carries_marker(ctx.read(path))]
+    return _marked_files(ctx.tree, ctx.build.files)
 
 
 def removed_orphans(ctx, index):
@@ -88,7 +97,7 @@ def removed_orphans(ctx, index):
     `index` reads the staged blobs, the one place their marker still is.
     """
     return [path for path in sorted(ctx.tracked_paths())
-            if _retired(ctx, path) and ctx.read(path) is None
+            if _retired(ctx.build.files, path) and ctx.read(path) is None
             and marker.carries_marker(index.read(path))]
 
 
@@ -106,21 +115,39 @@ def orphan_region(ctx, out):
     """
     if ctx.config.bots["codex"] or ctx.build.region_body is not None:
         return
-    text = ctx.read("AGENTS.md")
-    if text is not None:
-        region = render.region_of(text)
-        if marker.owns("AGENTS.md", region):
-            out.append(Finding("orphan", "the `## Code Review Rules` region carries the marker and "
-                                         "[bot-instructions.bots] codex is false. De-orphaning it is not a deletion "
-                                         "of the file: the heading is the repo's and has to "
-                                         "survive; what goes is the marker and the body below it",
-                               "AGENTS.md"))
+    if _marked_region(ctx.tree):
+        out.append(Finding("orphan", "the `## Code Review Rules` region carries the marker and "
+                                     "[bot-instructions.bots] codex is false. De-orphaning it is not a deletion "
+                                     "of the file: the heading is the repo's and has to "
+                                     "survive; what goes is the marker and the body below it",
+                           "AGENTS.md"))
 
 
-def _scanned(ctx):
+def unconfigured_orphans(tree, manifest):
+    """Every marked render `tree` holds while `manifest` declares no
+    `[bot-instructions]` table, as `orphan` findings.
+
+    With no table nothing is produced, so each one is an orphan the bots
+    still load, and no render removes it: a render needs the table. A tree
+    holding none of them is the `Unconfigured` refusal instead, which callers
+    that run every installed package read to leave the repository alone.
+    """
+    found = [Finding("orphan", f"carries this package's marker and {manifest} declares no "
+                               "[bot-instructions] table. Restore the table, or delete the file",
+                     path)
+             for path in _marked_files(tree, ())]
+    if _marked_region(tree):
+        found.append(Finding("orphan", "the `## Code Review Rules` region carries the marker and "
+                                       f"{manifest} declares no [bot-instructions] table. Restore "
+                                       "the table, or delete the marker and the body below the "
+                                       "heading", "AGENTS.md"))
+    return found
+
+
+def _scanned(tree):
     found = set()
-    for tree in SCANNED_TREES:
-        found.update(ctx.walk(tree))
+    for root in SCANNED_TREES:
+        found.update(tree.walk(root))
     return found
 
 

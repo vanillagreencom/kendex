@@ -83,7 +83,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a silent skip where neither exists. An installed copy that does not complete is a step that did not complete, and blocks. `scripts/lib/siblings.sh` owns resolution for both hooks. Pre-push announces an absent doc-limits copy and refuses an installed one that cannot run.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
-3. `bot-instructions check --staged`, resolved the same way, so no consumer carries a wrapper for it. Its `unconfigured` refusal, a manifest with no `[bot-instructions]` table, prints `not-adopted=` and passes.
+3. `bot-instructions check --staged`, resolved the same way, so no consumer carries a wrapper for it. Its `unconfigured` refusal, a manifest with no `[bot-instructions]` table and a staged tree holding no marked render, prints `not-adopted=` and passes.
 4. `commit-guards all --staged`.
 5. The repo-root-relative executable `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names, when set. With `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` set, it runs only when a path the commit touches matches, the list `gg_commit_paths` in `scripts/lib/commit-changes.sh` gives the commit-msg gate too.
 
