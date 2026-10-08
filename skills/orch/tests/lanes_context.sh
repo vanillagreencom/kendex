@@ -431,7 +431,7 @@ record_reading "$OVERSEER_BOX" claude 400000 1000000 claude-fable-5-1 "$LIVE_PID
 CALLER="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)"
 lanes_table "$CALLER" \
   "the caller's own unclaimed pane is a row with no reading, joined to the lane its harness defaults to|overseer|status=unrecorded harness=null context_tokens=null headroom_pct=3" \
-  "the caller's own row is the one flagged caller, and carries its account's reset and tmux server|overseer|caller=true binding_resets_at=2099-07-27T06:00:00Z server=$LIVE_PID"
+  "the caller's own row is the one flagged caller, and carries its account's reset and tmux server|overseer|caller=true binding_resets_at=$CLAUDE_USAGE_SESSION_RESET server=$LIVE_PID"
 # A claimed caller adds no row: the claim and the caller carry the same
 # `<server pid> <pane id>` key, and a second row would report one session as
 # two lanes. The flag lands on the claim's record, which is still read as the

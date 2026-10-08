@@ -834,7 +834,7 @@ codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 run_succeed headroom-wall 'claude:fable:high,codex:gpt-6-astra:high' -- "$BYPASS"
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=headroom account=claude resets=2099-07-27T06:00:00Z|yes|0|none|none" \
+  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|yes|0|none|none" \
   "every account under the trigger: refusal names the account and its reset"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
@@ -1498,7 +1498,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 new_known_claude_caller "$NO_CONTEXT"
 run_succeed knownheadroom '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=2099-07-27T06:00:00Z" \
+  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=$CLAUDE_USAGE_SESSION_RESET" \
   "a known harness with no context line still fires the headroom trigger"
 
 stage_usage_pair knownrate 40 20 600
@@ -1548,7 +1548,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed checkheadroom '' --check-marks
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=2099-07-27T06:00:00Z|0|yes" \
+  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=$CLAUDE_USAGE_SESSION_RESET|0|yes" \
   "--check-marks at the account mark: the headroom mark, its account and its reset"
 
 # Succession off launches nothing, and a judgement launches nothing either: the
@@ -2365,7 +2365,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed pickatbound 'claude:fable:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=headroom account=claude resets=2099-07-27T06:00:00Z|yes|0|none" \
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|yes|0|none" \
   "a candidate at exactly the trigger is refused, not picked"
 
 new_caller "$MARK"
@@ -2418,7 +2418,7 @@ run_succeed callerwall ''
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom account=claude resets=2099-07-27T06:00:00Z|yes|0|none" \
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|yes|0|none" \
   "a caller at the trigger with every lane walled refuses at the account mark"
 
 # A claim from this server already naming the caller's pane changes nothing

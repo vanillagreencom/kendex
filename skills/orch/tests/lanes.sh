@@ -1470,9 +1470,9 @@ for f in "$CACHE_STATE"/usage/*.json; do
     && mv "$f.tmp" "$f"
 done
 assert_eq "$(jq -r 'select(.config_dir == "'"$H/.claude"'") | .usage.five_hour.resets_at + " " + .prior.usage.five_hour.resets_at' "$CACHE_STATE"/usage/*.json)" \
-  "2099-07-27T06:00:00.123456+00:00 2099-07-27T06:00:00.123456+00:00" \
+  "${CLAUDE_USAGE_SESSION_RESET%Z}.123456+00:00 ${CLAUDE_USAGE_SESSION_RESET%Z}.123456+00:00" \
   "the staged samples carry the endpoint's fractional spelling"
-table "fractional +00:00 resets on both samples still expose the rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.binding_resets_at=2099-07-27T06:00:00Z"
+table "fractional +00:00 resets on both samples still expose the rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.binding_resets_at=$CLAUDE_USAGE_SESSION_RESET"
 stage_cache 0
 table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
@@ -1929,7 +1929,7 @@ echo "=== pick --json names the binding bucket and its reset ==="
 standard_home home
 table \
   "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2099-08-01T06:00:00Z" \
-  "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=2099-07-27T06:00:00Z nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
+  "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=$CLAUDE_USAGE_SESSION_RESET nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
 
 # The Claude endpoint writes fractional seconds and +00:00; every reset a
 # record carries is whole-second UTC with a Z, the spelling Codex resets
@@ -1940,7 +1940,7 @@ claude_usage 10 20 5 Opus \
   | jq 'walk(if type == "object" and (.resets_at | type) == "string"
              then .resets_at |= sub("Z$"; ".123456+00:00") else . end)' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a fractional +00:00 reset from the endpoint is listed as whole-second UTC||$LIST|claude.binding_resets_at=2099-08-01T06:00:00Z claude.resets.session=2099-07-27T06:00:00Z claude.model_buckets[0].resets_at=2099-08-01T06:00:00Z"
+  "a fractional +00:00 reset from the endpoint is listed as whole-second UTC||$LIST|claude.binding_resets_at=2099-08-01T06:00:00Z claude.resets.session=$CLAUDE_USAGE_SESSION_RESET claude.model_buckets[0].resets_at=2099-08-01T06:00:00Z"
 
 echo "=== pick --model judges the window that walls THAT model ==="
 # An account with plan-wide weekly room can still have none left for ONE model,
