@@ -41,10 +41,15 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_launch: scratch=res
 TMUX_DIR="$TMP_ROOT/tmux"
 mkdir -p "$TMUX_DIR"
 cleanup() {
+  [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   TMUX_TMPDIR="$TMUX_DIR" tmux -L default kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
+source "$TEST_DIR/lib/watch-fixture.sh"
+QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee)" || exit 1
+OVERSEE="$QUIET_SCRIPTS/oversee"
+fixture_watch_neighbor "$OVERSEE"
 tm() { TMUX_TMPDIR="$TMUX_DIR" tmux -L default "$@"; }
 
 # shellcheck source=lib/assertions.sh
@@ -138,6 +143,7 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 # claude:fable:high, or LAUNCH_PREF where a row sets it, `unset` exporting none.
 # Sets OUT (both streams) and RC.
 run_oversee() {
+  fixture_watch_neighbor "${OVERSEE_BIN:-$OVERSEE}"
   local env_args=() pref=(ORCH_OVERSEER_PREFERENCE="${LAUNCH_PREF:-claude:fable:high}")
   [[ "${LAUNCH_PREF:-}" != unset ]] || pref=()
   while [[ $# -gt 0 && "$1" != -- ]]; do env_args+=("$1"); shift; done
@@ -149,6 +155,8 @@ run_oversee() {
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 \
     ${pref[@]+"${pref[@]}"} ORCH_TMUX_SESSION=fleet \
     ${env_args[@]+"${env_args[@]}"} "${OVERSEE_BIN:-$OVERSEE}" "$@" 2>&1 </dev/null)" || RC=$?
+  fixture_watch_stop "${RUN_DIR:-$TMP_ROOT/work}/tmp/workflow-state-oversee.json"
+  [[ "${RUN_DIR:-$TMP_ROOT/work}" == "$TMP_ROOT/work" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 }
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 recorded() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }

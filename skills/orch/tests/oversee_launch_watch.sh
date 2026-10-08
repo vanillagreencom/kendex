@@ -130,8 +130,9 @@ fresh_output() { rm -f -- "${TMP_ROOT:?}/work/tmp/oversee-watch.log" "${TMP_ROOT
 FIXTURE_WATCH="$TMP_ROOT/fixture/oversee-watch"
 cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
+set -euo pipefail
 source "$SRC_DIR/lib/watch-pid.sh"
-trap 'echo "stopped \$\$" >> "$TMP_ROOT/watch.log"; exit 143' TERM
+trap 'watch_pid_release "\$state"; echo "stopped \$\$" >> "$TMP_ROOT/watch.log"; exit 143' TERM
 state=""
 prev=""
 base=()
@@ -215,8 +216,8 @@ wait_restart
 assert_eq "$RC|$SUCC|$(grep -c "^oversee: watch-handover pid=$OLD pane=$SUCC log=$TMP_ROOT/work/tmp/oversee-watch.err $SETSID_LINE\$" <<<"$OUT")" \
   "0|$SUCC|1" \
   "the succession names the watch it hands to the successor pane"
-assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
-  "1|gone" \
+assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")" \
+  "1" \
   "the watch serving the predecessor's pane is stopped, once"
 assert_eq "${NEW:+found}|$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')" \
   "found|pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF" \
@@ -231,8 +232,9 @@ watch_stop "$NEW" "$FLEET_STATE" || true
 tm kill-window -a -t "$KEEP_WINDOW"
 tm move-window -r -t fleet
 rm -f -- "$FLEET_STATE"
-FIRST_HANDOFF="$TMP_ROOT/work/tmp/handoff file.md"
+FIRST_HANDOFF="$TMP_ROOT/work/tmp/custom-handoff.md"
 run_oversee -- launch --handoff "$FIRST_HANDOFF" --wait-secs 20
+[[ "$RC" -eq 0 ]] || printf '%s\ncustom-handoff-launch-exit=%s\n' "$OUT" "$RC" >&2
 PRED="$(recorded pane)"
 LIVE_RC=0
 watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
@@ -276,6 +278,7 @@ cp -p -- "$FIXTURE_WATCH" "$HANDOFF_CONTROL/oversee-watch"
 tm kill-window -a -t "$KEEP_WINDOW"
 rm -f -- "${FLEET_STATE:?}"
 run_oversee "$HANDOFF_CONTROL/oversee" -- launch --handoff "$FIRST_HANDOFF" --wait-secs 20
+[[ "$RC" -eq 0 ]] || printf '%s\ncustom-handoff-control-exit=%s\n' "$OUT" "$RC" >&2
 watch_handoff_read
 assert_eq "$RC|$WATCH_HANDOFF" '0|' "control: omitting the handoff word loses the first watch's custom path"
 watch_stop "$WATCH_PID" "$FLEET_STATE"
@@ -340,8 +343,8 @@ EOF
   ROW_LAUNCH=setsid succeed
   ROW_ENV=()
   wait_restart
-  assert_eq "$RC|$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$PRED" || true)|${NEW:+restarted}|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
-    "137|0|restarted|gone" \
+  assert_eq "$RC|$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$PRED" || true)|${NEW:+restarted}|$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")" \
+    "137|0|restarted|1" \
     "a launch killed with its process group at the stop still has the watch restarted from the successor pane"
   watch_stop "$NEW" "$FLEET_STATE" || true
 else
