@@ -241,6 +241,10 @@ enum Command {
     #[command(name = "release-main-build", hide = true)]
     ReleaseMainBuild(commands::update::ReleaseMainBuildArgs),
     /// Update Pi extension packages
+    ///
+    /// Pi loads user and project package lists together. Installing the same
+    /// package in both prevents Pi from starting. Keep either copy and remove
+    /// the other before updating.
     #[command(name = "update-pi")]
     UpdatePi {
         /// Print the plan and change nothing

@@ -51,11 +51,22 @@ fn consented(
     style: &Style,
     reading: Reading,
     question: &str,
-    read: impl FnMut() -> io::Result<Pressed>,
+    mut read: impl FnMut() -> io::Result<Pressed>,
     mut draw: impl FnMut(&[String]),
 ) -> io::Result<bool> {
     draw(&style.callout(question, None, &[]));
-    asked(style, reading, &CONSENT, read, draw)
+    asked(
+        style,
+        reading,
+        &CONSENT,
+        || {
+            read().map(|key| match key {
+                Pressed::Char('n' | 'N') => Pressed::Enter,
+                key => key,
+            })
+        },
+        draw,
+    )
 }
 
 const CONSENT: [(Choice<'static>, bool); 2] = [
@@ -627,7 +638,7 @@ mod tests {
         ];
         let plain_asked = ["! write 3 changes?", "  [y] yes · [Enter] no"];
         type Row = (&'static str, Pressed, bool, &'static str, &'static str);
-        let rows: [Row; 2] = [
+        let rows: [Row; 4] = [
             (
                 "accept",
                 Pressed::Char('y'),
@@ -638,6 +649,20 @@ mod tests {
             (
                 "decline",
                 Pressed::Enter,
+                false,
+                "  <34>›</> <1>no</>",
+                "  › no",
+            ),
+            (
+                "typed no",
+                Pressed::Char('n'),
+                false,
+                "  <34>›</> <1>no</>",
+                "  › no",
+            ),
+            (
+                "typed No",
+                Pressed::Char('N'),
                 false,
                 "  <34>›</> <1>no</>",
                 "  › no",

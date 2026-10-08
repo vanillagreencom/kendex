@@ -694,9 +694,6 @@ fn a_package_installed_at_the_other_scope_blocks_the_install() {
 
     let output = kendex(tmp.path(), &project, &["update-pi"]);
     assert!(output.status.success());
-    let plan = String::from_utf8_lossy(&output.stdout);
-    assert!(plan.contains("blocked"), "{plan}");
-    assert!(plan.contains("register twice"), "{plan}");
     assert!(!project.join(".pi/packages/pi-widgets").exists());
 }
 

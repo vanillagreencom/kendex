@@ -637,7 +637,7 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
     // The settle's consent, then the final one.
     type Steps = &'static [(&'static str, &'static str)];
     let rows: [(Steps, i32, bool, &str); 3] = [
-        (&[("[y]", "y"), ("[y]", "\n")], 1, false, "plain"),
+        (&[("[y]", "y"), ("[y]", "\n")], 0, false, "plain"),
         (&[("[y]", "y"), ("[y]", "y")], 0, true, "plain"),
         (&[("[y]", "y"), ("[y]", "\x1b")], 130, false, "pretty"),
     ];
@@ -666,9 +666,6 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
         assert_eq!(output.status.code(), Some(status), "{printed}");
         let committed = project.join(".git/refs/heads/main").is_file();
         assert_eq!(committed, status != 130, "{printed}");
-        let ledger = printed.rfind("refreshed").unwrap();
-        let detail_first = printed.find("failed: ").is_some_and(|at| at < ledger);
-        assert_eq!(detail_first, status == 1, "{printed}");
         assert!(!printed.contains("settling added"), "{printed}");
         let partial = printed.contains("refreshed 1 change");
         assert_eq!(partial, !installed, "{printed}");
@@ -680,6 +677,82 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
         let env = Env::host_rooted(&home);
         let scope = Scope::Project { root: project };
         assert!(matches!(load(&env, &scope), SnapshotFile::Current(_)));
+    }
+}
+
+/// A later user-package choice cannot erase the project's write or commit.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn declining_user_pi_keeps_the_completed_project_and_user_files() {
+    use kendex_core::{drift::snapshot, env::Env, model::Scope};
+    for (answer, status) in [("n", 0), ("N", 0), ("\n", 0), ("\x03", 130)] {
+        for stale in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let project = committed_consumer(&home, NO_DEPENDENCIES);
+            write(&home.join(".gitconfig"), "[user]\nname = t\nemail = t@t\n");
+            let env = Env::host_rooted(&home);
+            let user_manifest = kendex_core::manifest::manifest_path(&env, &Scope::Global);
+            write(
+                &user_manifest,
+                "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-user]\nsource = 'cat'\n",
+            );
+            let catalog = home.join("catalog/pi-extensions/pi-user");
+            write(
+                &catalog.join("package.json"),
+                &NO_DEPENDENCIES.replace("pi-widgets", "pi-user"),
+            );
+            write(&catalog.join("index.js"), "export const version = 1;\n");
+            if stale {
+                let installed = kendex(
+                    &home,
+                    &project,
+                    &["update-pi", "--scope", "global", "--leave"],
+                );
+                assert_eq!(installed.status.code(), Some(0), "{}", said(&installed));
+                write(&catalog.join("index.js"), "export const version = 2;\n");
+            }
+            let watched = [
+                user_manifest,
+                kendex_core::lock::lock_path(&env, &Scope::Global),
+                snapshot::snapshot_path(&env, &Scope::Global),
+                home.join(".pi/agent/settings.json"),
+                home.join(".pi/agent/packages/pi-user/index.js"),
+            ];
+            let before: Vec<_> = watched.iter().map(|path| fs::read(path).ok()).collect();
+            let old_commit = git(&home, &project, &["rev-parse", "HEAD"]);
+            let skill =
+                "---\nname: deploy\ndescription: ship the service\n---\nCheck the deployment.\n";
+            write(&project.join("catalog/skills/deploy/SKILL.md"), skill);
+            let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+            command
+                .args(["refresh", "--commit"])
+                .current_dir(&project)
+                .env_clear()
+                .envs(test_util::fixture_env(&home))
+                .env("KENDEX_BACKGROUND_REFRESH", "off")
+                .env("KENDEX_UI", "plain")
+                .env("PATH", std::env::var("PATH").unwrap_or_default());
+            let output = pty::conversation(command, &[("[y]", answer)], pty::Stderr::Terminal);
+            assert_eq!(output.status.code(), Some(status), "{}", said(&output));
+            assert_eq!(
+                watched
+                    .iter()
+                    .map(|path| fs::read(path).ok())
+                    .collect::<Vec<_>>(),
+                before
+            );
+            assert_ne!(git(&home, &project, &["rev-parse", "HEAD"]), old_commit);
+            assert_eq!(
+                fs::read_to_string(project.join(".agents/skills/deploy/SKILL.md")).unwrap(),
+                skill
+            );
+            assert!(matches!(
+                snapshot::load(&env, &Scope::Project { root: project }),
+                snapshot::SnapshotFile::Current(_)
+            ));
+        }
     }
 }
 

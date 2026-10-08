@@ -38,8 +38,27 @@ enum Status {
 
 /// Packages eligible for settlement, split at the process boundary.
 enum Settlement {
-    Copy(Status),
+    Copy {
+        status: Status,
+        change: PendingChange,
+    },
     Process,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PendingChange {
+    Missing,
+    Stale {
+        from_version: Option<String>,
+        to_version: Option<String>,
+        from: String,
+        to: String,
+    },
+}
+
+pub(super) struct Pending {
+    pub name: String,
+    pub change: PendingChange,
 }
 
 struct Row {
@@ -114,17 +133,17 @@ fn updatable(row: &&Row) -> bool {
 /// asks for the yes that lets the settle write, and the names it then
 /// hands the settle. `options` are the verb's plan options, so each
 /// package is read at the commit that plan reads it at.
-pub fn pending_settle(
+pub(super) fn pending_settle(
     env: &Env,
     scope: &Scope,
     options: &PlanOptions,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Pending>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
     Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
-            Settlement::Copy(_) => Some(name),
+            Settlement::Copy { change, .. } => Some(Pending { name, change }),
             Settlement::Process => None,
         })
         .collect())
@@ -142,7 +161,7 @@ pub(super) fn deferred_settle(
     Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
-            Settlement::Copy(_) => None,
+            Settlement::Copy { .. } => None,
             Settlement::Process => Some(name),
         })
         .collect())
@@ -174,7 +193,7 @@ pub fn settle_scope(
         .into_iter()
         .filter(|(name, _)| names.contains(name))
         .filter_map(|(name, settlement)| match settlement {
-            Settlement::Copy(status) => Some(Row {
+            Settlement::Copy { status, .. } => Some(Row {
                 version: installed_version(&root, &name),
                 name,
                 status,
@@ -294,7 +313,26 @@ fn settleable(
             (Some(_), _) | (_, Err(_)) => continue,
         };
         let settlement = match pi_ext::declares_runtime_deps(&package.source_dir) {
-            Ok(false) => Settlement::Copy(status),
+            Ok(false) => {
+                let change = match existing {
+                    None => PendingChange::Missing,
+                    Some(entry) => PendingChange::Stale {
+                        from_version: installed_version(root, name),
+                        to_version: pi_ext::read(&package.source_dir)?.version,
+                        from: entry
+                            .source_commit
+                            .as_ref()
+                            .unwrap_or(&entry.source_hash)
+                            .clone(),
+                        to: match package.source_commit {
+                            Some(commit) => commit,
+                            None => pi_ext::package_hash(&package.source_dir)?
+                                .ok_or("Pi source package disappeared before consent")?,
+                        },
+                    },
+                };
+                Settlement::Copy { status, change }
+            }
             Ok(true) => Settlement::Process,
             Err(_) => continue,
         };
@@ -329,8 +367,17 @@ fn plan_scope(
     let guard = |name: &str, status: Status| match pi_ext::duplicate_elsewhere(name, other_roots) {
         Some((conflict, at)) => Status::Blocked {
             reason: format!(
-                "blocked: {conflict} is installed at {} and would register twice — remove it there first",
-                at.display()
+                "blocked: {conflict} would register twice. Pi loads your user and project package lists together; loading this package twice prevents Pi from starting. Keep either copy and remove the other before updating. User packages: {}; project packages: {}",
+                match scope {
+                    Scope::Global => root.as_path(),
+                    Scope::Project { .. } => at.as_path(),
+                }
+                .display(),
+                match scope {
+                    Scope::Global => at.as_path(),
+                    Scope::Project { .. } => root.as_path(),
+                }
+                .display()
             ),
         },
         None => status,
@@ -706,4 +753,79 @@ fn record_pi_installs(
         say(&format!("  ! {}: {}", row.name, row.detail));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Catalog declarations produce missing, recorded stale, and current copies.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn pending_consent_keeps_missing_and_stale_separate() {
+        for scope_name in ["project", "user"] {
+            let temp = tempfile::tempdir().unwrap();
+            let home = crate::test_util::rooted(&temp);
+            let env = Env::host_rooted(&home);
+            let scope = match scope_name {
+                "project" => Scope::Project {
+                    root: home.join("project"),
+                },
+                "user" => Scope::Global,
+                _ => unreachable!(),
+            };
+            let base = match &scope {
+                Scope::Project { root } => root,
+                Scope::Global => &home,
+            };
+            let source = base.join("catalog/pi-extensions/pi-consent");
+            std::fs::create_dir_all(&source).unwrap();
+            let path = manifest::manifest_path(&env, &scope);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-consent]\nsource = 'cat'\n").unwrap();
+            std::fs::write(
+                source.join("package.json"),
+                r#"{"name":"pi-consent","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
+            )
+            .unwrap();
+            std::fs::write(source.join("index.js"), "export const value = 1;\n").unwrap();
+            let options = PlanOptions::current();
+            let missing = pending_settle(&env, &scope, &options).unwrap();
+            assert_eq!(
+                missing
+                    .iter()
+                    .map(|pending| pending.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["pi-consent"]
+            );
+            assert_eq!(missing[0].change, PendingChange::Missing);
+            settle_scope(&env, &scope, &["pi-consent".into()], &options).unwrap();
+            let from = pi_ext::package_hash(&source).unwrap().unwrap();
+            std::fs::write(
+                source.join("package.json"),
+                r#"{"name":"pi-consent","version":"2.0.0","pi":{"extensions":["index.js"]}}"#,
+            )
+            .unwrap();
+            let to = pi_ext::package_hash(&source).unwrap().unwrap();
+            let stale = pending_settle(&env, &scope, &options).unwrap();
+            assert_eq!(
+                stale
+                    .iter()
+                    .map(|pending| pending.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["pi-consent"]
+            );
+            assert_eq!(
+                stale[0].change,
+                PendingChange::Stale {
+                    from_version: Some("1.0.0".into()),
+                    to_version: Some("2.0.0".into()),
+                    from,
+                    to,
+                }
+            );
+            settle_scope(&env, &scope, &["pi-consent".into()], &options).unwrap();
+            assert!(pending_settle(&env, &scope, &options).unwrap().is_empty());
+        }
+    }
 }

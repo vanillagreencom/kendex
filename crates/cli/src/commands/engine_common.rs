@@ -315,13 +315,30 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
 /// Asked through `ui::consent`: Enter is no and exits 1; Escape and Ctrl-C
 /// cancel, which the run exits 130 on.
 pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
+    match confirm_before_writing(question, yes)? {
+        Confirmation::Accepted => Ok(()),
+        Confirmation::Declined => Err("cancelled — these changes were not written".into()),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Confirmation {
+    Accepted,
+    Declined,
+}
+
+/// A decline leaves the caller's scope unchanged; read errors still stop it.
+pub(super) fn confirm_before_writing(
+    question: &str,
+    yes: bool,
+) -> Result<Confirmation, Box<dyn std::error::Error>> {
     require_yes_in_non_interactive(yes)?;
     if yes {
-        return Ok(());
+        return Ok(Confirmation::Accepted);
     }
     match ui::consent(question)? {
-        true => Ok(()),
-        false => Err("cancelled — these changes were not written".into()),
+        true => Ok(Confirmation::Accepted),
+        false => Ok(Confirmation::Declined),
     }
 }
 

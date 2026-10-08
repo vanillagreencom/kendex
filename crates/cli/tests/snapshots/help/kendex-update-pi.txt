@@ -1,5 +1,9 @@
 Update Pi extension packages
 
+Pi loads user and project package lists together. Installing the same package in
+both prevents Pi from starting. Keep either copy and remove the other before
+updating.
+
 Usage: kendex update-pi [OPTIONS]
 
 Options:
@@ -25,4 +29,4 @@ Options:
           The commit message to use instead of the default
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')

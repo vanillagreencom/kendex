@@ -7,10 +7,11 @@ use super::advisory::Listing;
 use super::attention::{Attention, print_attention};
 use super::commit_offer::after_writing;
 use super::engine_common::{
-    apply_report, ask_before_writing, confirm_and_apply, print_synced, refresh_failures,
+    Confirmation, apply_report, confirm_before_writing, print_synced, refresh_failures,
     require_yes_in_non_interactive,
 };
 use super::ledger::{Folded, Wrote, say_ledger};
+use super::update_pi::{Pending, PendingChange};
 use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Span};
@@ -112,7 +113,7 @@ fn print_set_changes(
         ui::Status::Decision,
         &[Span::Prose(&format!(
             "{}: this changes what is installed",
-            scope_label(scope)
+            consent_scope(scope)
         ))],
         "",
     ));
@@ -142,18 +143,46 @@ fn say_set_change(change: &kendex_core::engine::SetChange) {
 fn print_changes_needing_consent(
     scope: &kendex_core::model::Scope,
     report: &EngineReport,
-    pending: &[String],
+    pending: &[Pending],
 ) {
     print_set_changes(scope, report);
-    for name in pending {
+    for pending in pending {
+        let name = &pending.name;
+        let change = match &pending.change {
+            PendingChange::Missing => format!("install Pi extension {name}"),
+            PendingChange::Stale {
+                from_version,
+                to_version,
+                from,
+                to,
+            } => {
+                format!(
+                    "update Pi extension {name}: from version {} (source {from}) to version {} (source {to})",
+                    from_version.as_deref().unwrap_or("unknown"),
+                    to_version.as_deref().unwrap_or("unknown")
+                )
+            }
+        };
         ui::stderr(&ui::style().report_row(
             ui::Status::Decision,
-            &[Span::Prose(&format!(
-                "install pi-extension {name} for Pi — listed, not installed here yet"
-            ))],
+            &[Span::Prose(&format!("{change}; {}", consent_scope(scope)))],
             "  - ",
         ));
     }
+}
+
+fn consent_scope(scope: &kendex_core::model::Scope) -> String {
+    match scope {
+        kendex_core::model::Scope::Global => "your user account, used by every project".into(),
+        kendex_core::model::Scope::Project { root } => format!("this project ({})", root.display()),
+    }
+}
+
+fn declined_scope(scope: &kendex_core::model::Scope) {
+    ui::stderr(&ui::style().summary(
+        ui::Status::Done,
+        &format!("{}: unchanged; update declined", consent_scope(scope)),
+    ));
 }
 
 /// A refresh draws what needs the reader, and every line with `--verbose`;
@@ -266,13 +295,18 @@ struct Written {
     stop: Option<Box<dyn std::error::Error>>,
 }
 
+enum ScopeWrite {
+    Written(Box<Written>),
+    Declined,
+}
+
 /// A selected scope after every read needed to decide whether this run will
 /// need consent. No scope writes until every preparation has finished.
 struct PreparedScope {
     scope: kendex_core::model::Scope,
     synced: kendex_core::remote::Synced,
     options: PlanOptions,
-    planned: Result<(EngineReport, Vec<String>), String>,
+    planned: Result<(EngineReport, Vec<Pending>), String>,
 }
 
 impl PreparedScope {
@@ -420,36 +454,47 @@ fn write_scope(
     env: &Env,
     scope: &kendex_core::model::Scope,
     report: kendex_core::engine::EngineReport,
-    pending: &[String],
+    pending: &[Pending],
     options: &PlanOptions,
     yes: bool,
     report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport) -> CliResult,
-) -> Result<Written, Box<dyn std::error::Error>> {
+) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
     if pending.is_empty() {
         let count = match (report.plan.is_empty(), report.set_changes.is_empty()) {
             (true, _) => apply_report(env, &report).map(|_| None)?,
             (false, true) => apply_report(env, &report).map(Some)?,
             (false, false) => {
                 print_changes_needing_consent(scope, &report, pending);
-                confirm_and_apply(env, &report, yes).map(Some)?
+                if confirm_before_writing(
+                    &format!("write {} changes?", report.plan.ops.len()),
+                    yes,
+                )? == Confirmation::Declined
+                {
+                    return Ok(ScopeWrite::Declined);
+                }
+                Some(apply_report(env, &report)?)
             }
         };
-        return Ok(Written {
+        return Ok(ScopeWrite::Written(Box::new(Written {
             report,
             count,
             stop: None,
-        });
+        })));
     }
     print_changes_needing_consent(scope, &report, pending);
     let changes = report.plan.ops.len() + pending.len();
-    ask_before_writing(
+    if confirm_before_writing(
         &format!(
             "write {changes} change{}?",
             if changes == 1 { "" } else { "s" }
         ),
         yes,
-    )?;
-    let settled = super::update_pi::settle_scope(env, scope, pending, options)?;
+    )? == Confirmation::Declined
+    {
+        return Ok(ScopeWrite::Declined);
+    }
+    let names: Vec<_> = pending.iter().map(|pending| pending.name.clone()).collect();
+    let settled = super::update_pi::settle_scope(env, scope, &names, options)?;
     let mut after = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, options)?
@@ -487,12 +532,26 @@ fn write_scope(
             ui::stderr(&ui::style().plan_row(op));
         }
     }
-    let applied = confirm_and_apply(env, &after, yes);
-    Ok(Written {
+    let applied = if after.plan.is_empty() {
+        apply_report(env, &after)
+    } else {
+        match confirm_before_writing(&format!("write {} changes?", after.plan.ops.len()), yes) {
+            Ok(Confirmation::Accepted) => apply_report(env, &after),
+            Ok(Confirmation::Declined) => {
+                ui::report::notice(&format!(
+                    "{}: remaining changes declined",
+                    consent_scope(scope)
+                ));
+                after_writing(env, scope, &after.generated, &Before::Untaken).map(|()| 0)
+            }
+            Err(error) => Err(error),
+        }
+    };
+    Ok(ScopeWrite::Written(Box::new(Written {
         report: after,
         count: Some(settled + applied.as_ref().map_or(0, |count| *count)),
         stop: applied.err(),
-    })
+    })))
 }
 
 pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
@@ -593,7 +652,11 @@ pub fn run(
                 Ok(())
             },
         ) {
-            Ok(written) => {
+            Ok(ScopeWrite::Declined) => {
+                reached.pop();
+                declined_scope(&scope);
+            }
+            Ok(ScopeWrite::Written(written)) => {
                 if !pending.is_empty() {
                     failures.extend(refresh_failures(&written.report));
                 }
@@ -644,6 +707,14 @@ pub fn run(
         ui::report::failure(failure);
     }
     finish_scopes(env, &reached, closing);
+    refresh_result(refreshed_anything, &failures, cancelled)
+}
+
+fn refresh_result(
+    refreshed_anything: bool,
+    failures: &[String],
+    cancelled: Option<Box<dyn std::error::Error>>,
+) -> CliResult {
     if let Some(error) = cancelled {
         return Err(error);
     }
