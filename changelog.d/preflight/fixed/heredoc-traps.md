@@ -1,0 +1,1 @@
+- Treat EXIT traps inside here-document bodies as data on Bash 3.2 and Bash 5, so preflight reports missing parent-script cleanup.

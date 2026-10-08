@@ -743,18 +743,14 @@ MKTEMP_CALL_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
 # arms nothing.
 TRAP_EXIT_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
 has_exit_trap() { # FILE
-  # The match reads its producer to EOF. `grep -q` exits at its first hit,
-  # the upstream grep takes SIGPIPE on its next write, and under pipefail
-  # the pipeline answers 141 — read here as "no trap" — for any file with
-  # more than a pipe buffer left below the trap line. `grep -c` reads to the
-  # end and still exits 1 when nothing matched.
-  grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Ec -- "$TRAP_EXIT_RE" >/dev/null && return 0
   # A quoted action can span lines and name its signal only on the line its
   # quote closes. Only the operands after that quote are read: any word in
   # the action, a substitution's included, names no signal.
-  local n='' signals=''
+  local n='' signals='' line=''
   while IFS= read -r n; do
     line_is_code "$1" "$n" || continue
+    line="$(sed -n "${n}p" <"$1")" || continue
+    grep -Eq -- "$TRAP_EXIT_RE" <<<"$line" && return 0
     signals="$(trap_signals "$1" "$n")" || continue
     grep -Eq -- '(^|[[:space:]])(EXIT|0)([[:space:]]|;|$)' <<<"$signals" && return 0
   done < <(LC_ALL=C awk '!/^[[:space:]]*#/ && /(^[[:space:]]*|[;(`{&|][[:space:]]*)trap[[:space:]]/ { print NR }' "$1" 2>/dev/null)
@@ -770,7 +766,13 @@ line_is_code() { # FILE LINE
   case "$diagnostic" in
     *'unexpected EOF while looking for matching '* | *'here-document at line '*' delimited by end-of-file'*) return 1 ;;
   esac
-  return 0
+  # Bash 3.2 emits no warning for an open here-document. An unmatched quote
+  # on a new line produces a quote diagnostic only when it is read as code.
+  diagnostic="$(LC_ALL=C bash -n <<<"$prefix"$'\n\x27' 2>&1)" || :
+  case "$diagnostic" in
+    *'unexpected EOF while looking for matching '*) return 0 ;;
+  esac
+  return 1
 }
 # The signal operands of the trap command opening on LINE whose quoted action
 # spans lines: from the quote that closes the action to the end of the

@@ -8,8 +8,11 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "precision: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "precision: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "precision: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+TMP="$TMP_ROOT"
 
 SEED_TEMPLATE="$TMP/.seed-template"
 
@@ -476,6 +479,43 @@ fires "a multiline INT trap whose action says EXIT, plainly, beside or inside a 
   "scripts/heredoc-trap.sh:3: [mktemp-trap]" \
   "scripts/comment-trap.sh:3: [mktemp-trap]" \
   "scripts/later-command-trap.sh:3: [mktemp-trap]"
+
+echo "=== here-document trap text is data until its delimiter closes ==="
+seed heredoc-boundary
+for action in "trap ':' EXIT" $'trap \x27\n  echo cleanup\n\x27 EXIT'; do
+  # Script generators write child cleanup into here-documents. That cleanup
+  # cannot remove the parent's scratch directory.
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'D="$(mktemp -d)"' \
+    "cat >\"\$D/child.sh\" <<'CHILD'" "$action" 'CHILD' 'echo "$D"' >"$R/scripts/child.sh"
+  run_pf
+  fires "an EXIT trap in child-script data leaves parent scratch untrapped" "scripts/child.sh:3: [mktemp-trap]"
+
+  # Removing only the code/data decision must make the same assertion fail.
+  original_pf="$PF"
+  PF="$TMP/preflight-code-data-control"
+  awk '
+    /^line_is_code\(\)/ { print "line_is_code() { return 0; }"; skip=1; changed++; next }
+    skip && /^}$/ { skip=0; next }
+    !skip { print }
+    END { if (changed != 1) exit 1 }
+  ' "$original_pf" >"$PF"
+  chmod +x "$PF"
+  if (
+    run_pf
+    FAIL=0
+    fires "code/data control" "scripts/child.sh:3: [mktemp-trap]"
+    [ "$FAIL" -eq 0 ]
+  ) >"$TMP/code-data-control.log" 2>&1; then
+    bad "the here-document assertion rejects a scanner that treats data as code"
+  else
+    ok "the here-document assertion rejects a scanner that treats data as code"
+  fi
+  PF="$original_pf"
+
+  printf '%s\n' "trap ':' EXIT" >>"$R/scripts/child.sh"
+  run_pf
+  clean "an EXIT trap after the here-document delimiter arms parent cleanup" 1
+done
 
 echo "=== a temp-path literal is a finding only in a creation call's hands ==="
 seed tmppath
