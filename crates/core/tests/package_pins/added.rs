@@ -130,8 +130,8 @@ fn an_add_changes_only_new_packages_and_their_dependencies() {
     }
 }
 
-/// Git projects must retain the inventory of an unrelated installation,
-/// including one whose install has not been committed yet.
+/// Git projects must retain installed paths even when a new package
+/// requires a retained dependency whose declaration now wants other paths.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_retains_installed_paths_for_verification_and_commit_ownership() {
@@ -139,59 +139,107 @@ fn an_add_retains_installed_paths_for_verification_and_commit_ownership() {
     use kendex_core::engine::generated_paths::INVENTORY;
 
     for (commit_seed, commit_install) in [(false, false), (true, false), (true, true)] {
-        let w = world();
-        let root = w.home.join("app");
-        super::git(&root, &["init", "--quiet", "-b", "main"]);
-        write_skill(&w.upstream, "a", "", "a.");
-        std::fs::write(w.upstream.join("skills/a/helper.sh"), "echo a\n").unwrap();
-        write_hook(&w.upstream, "safety", &[], "safety");
-        write_skill(&w.upstream, "b", "", "b.");
-        std::fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-        commit(&w.upstream, "catalog");
-        declare(
-            &w,
-            "[skills.a]\nsource = \"cat\"\n[hooks.safety]\nsource = \"cat\"\n",
-        );
-        if commit_seed {
-            commit(&root, "project");
-        }
-        sync_and_apply(&w);
-        let prior: std::collections::BTreeSet<String> =
-            serde_json::from_slice(&std::fs::read(root.join(INVENTORY)).unwrap()).unwrap();
-        let retained = [
-            ".agents/skills/a/SKILL.md",
-            ".agents/skills/a/helper.sh",
-            ".claude/hooks/safety.sh",
-            ".claude/settings.json",
-        ];
-        for path in retained {
-            assert!(prior.contains(path), "initial inventory must list {path}");
-        }
-        if commit_install {
-            commit(&root, "install");
-        }
-        std::fs::write(root.join("personal.md"), "personal\n").unwrap();
+        for (requires_a, pending_copy) in
+            [(false, false), (true, false), (true, true), (false, true)]
+        {
+            let w = world();
+            let root = w.home.join("app");
+            super::git(&root, &["init", "--quiet", "-b", "main"]);
+            write_skill(&w.upstream, "a", "", "a.");
+            std::fs::write(w.upstream.join("skills/a/helper.sh"), "echo a\n").unwrap();
+            write_hook(&w.upstream, "safety", &[], "safety");
+            let dependencies = if requires_a {
+                "dependencies:\n  required: [a]\n"
+            } else {
+                ""
+            };
+            write_skill(&w.upstream, "b", dependencies, "b.");
+            std::fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+            commit(&w.upstream, "catalog");
+            declare(
+                &w,
+                "[skills.a]\nsource = \"cat\"\n[hooks.safety]\nsource = \"cat\"\n",
+            );
+            if commit_seed {
+                commit(&root, "project");
+            }
+            sync_and_apply(&w);
+            let prior: std::collections::BTreeSet<String> =
+                serde_json::from_slice(&std::fs::read(root.join(INVENTORY)).unwrap()).unwrap();
+            let retained = [
+                ".agents/skills/a/SKILL.md",
+                ".agents/skills/a/helper.sh",
+                ".claude/hooks/safety.sh",
+                ".claude/skills/a",
+                ".claude/settings.json",
+            ];
+            for path in retained {
+                assert!(prior.contains(path), "initial inventory must list {path}");
+            }
+            if commit_install {
+                commit(&root, "install");
+            }
+            let before_lock = super::load_lock(&super::lock_path(&w.env, &w.scope)).unwrap();
+            let before_body = installed_body(&w, "a");
+            std::fs::write(root.join("personal.md"), "personal\n").unwrap();
+            if pending_copy {
+                declare(
+                    &w,
+                    "[skills.a]\nsource = \"cat\"\nmethod = \"copy\"\n[hooks.safety]\nsource = \"cat\"\n",
+                );
+            }
 
-        let report = add_skills(&w, &["b"]);
-        apply::execute(&w.env, &report.plan).unwrap();
-        let after: std::collections::BTreeSet<String> =
-            serde_json::from_slice(&std::fs::read(root.join(INVENTORY)).unwrap()).unwrap();
-        assert!(prior.is_subset(&after), "an add must keep every prior row");
-        assert!(after.contains(".agents/skills/b/SKILL.md"));
-        assert!(!after.contains("personal.md"));
-        let owned = report.generated.owned(&root);
-        for path in &retained[..3] {
-            assert!(owned.contains(&root.join(path)), "commit must own {path}");
-        }
-        let settings = root.join(".claude/settings.json");
-        assert!(report.generated.beside(&root).contains(&settings));
-        assert!(!owned.contains(&settings));
+            let report = add_skills(&w, &["b"]);
+            assert!(report.refused.is_empty());
+            apply::execute(&w.env, &report.plan).unwrap();
+            let after_lock = super::load_lock(&super::lock_path(&w.env, &w.scope)).unwrap();
+            for (key, entry) in &before_lock.entries {
+                let after = &after_lock.entries[key];
+                assert_eq!(after.source_hash, entry.source_hash);
+                assert_eq!(after.source_commit, entry.source_commit);
+                assert_eq!(after.rendered_hash, entry.rendered_hash);
+                assert_eq!(after.emitted, entry.emitted);
+            }
+            assert_eq!(installed_body(&w, "a"), before_body);
+            let after: std::collections::BTreeSet<String> =
+                serde_json::from_slice(&std::fs::read(root.join(INVENTORY)).unwrap()).unwrap();
+            assert!(prior.is_subset(&after), "an add must keep every prior row");
+            assert!(after.contains(".agents/skills/b/SKILL.md"));
+            assert!(!after.contains(".claude/skills/a/SKILL.md"));
+            assert!(!after.contains("personal.md"));
+            let owned = report.generated.owned(&root);
+            for path in &retained[..4] {
+                assert!(owned.contains(&root.join(path)), "commit must own {path}");
+            }
+            let settings = root.join(".claude/settings.json");
+            assert!(report.generated.beside(&root).contains(&settings));
+            assert!(!owned.contains(&settings));
+            assert!(!owned.contains(&root.join(".claude/skills/a/SKILL.md")));
 
-        let verification =
-            kendex_core::engine::plan_apply(&w.env, &w.scope, &Reading::Current.plan_options())
+            if pending_copy {
+                let declared = kendex_core::manifest::load_for_mutation(
+                    &kendex_core::manifest::manifest_path(&w.env, &w.scope),
+                )
+                .unwrap()
                 .unwrap();
-        let inventory = attest::inventory(&w.scope, &verification).unwrap().unwrap();
-        assert!(inventory.problems.is_empty(), "{:?}", inventory.problems);
+                assert_eq!(
+                    declared.skills["a"].method,
+                    Some(kendex_core::manifest::Method::Copy)
+                );
+                // A full verification renders declared paths. Remove the pending
+                // method change before comparing it with the retained installation.
+                declare(
+                    &w,
+                    "[skills.a]\nsource = \"cat\"\n[skills.b]\nsource = \"cat\"\n[hooks.safety]\nsource = \"cat\"\n",
+                );
+            }
+
+            let verification =
+                kendex_core::engine::plan_apply(&w.env, &w.scope, &Reading::Current.plan_options())
+                    .unwrap();
+            let inventory = attest::inventory(&w.scope, &verification).unwrap().unwrap();
+            assert!(inventory.problems.is_empty(), "{:?}", inventory.problems);
+        }
     }
 }
 

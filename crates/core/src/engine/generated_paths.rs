@@ -273,11 +273,15 @@ fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// a render like any other.
 fn collect(
     state: &DesiredState,
+    planned: &BTreeSet<(ItemKind, String, HarnessId)>,
     shims: &[ShimStanding],
     drift: &[super::DriftRow],
 ) -> GeneratedPaths {
     let mut generated = GeneratedPaths::default();
     for item in &state.items {
+        if !planned.contains(&(item.kind, item.name.clone(), item.harness)) {
+            continue;
+        }
         if matches!(item.artifact, Artifact::Tree { in_place: true, .. }) {
             continue;
         }
@@ -399,10 +403,10 @@ pub(super) fn plan(
     state: &DesiredState,
     shims: &[ShimStanding],
     drift: &[super::DriftRow],
-    unrendered: &Unrendered,
+    unrendered: &Unrendered<'_>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<GeneratedPaths> {
-    let mut generated = collect(state, shims, drift);
+    let mut generated = collect(state, unrendered.planned, shims, drift);
     let Scope::Project { root } = scope else {
         return Ok(generated);
     };
@@ -452,17 +456,12 @@ pub(super) fn plan(
     Ok(generated)
 }
 
-/// What the record says each package this pass keeps as recorded, and no
-/// declared item renders, wrote: an item its catalog retired, on each tool
-/// it stays on ([`super::desired::Retirement::kept`]), and a member a
-/// declared set this pass cannot expand keeps
-/// ([`DesiredState::kept_members`]), or an installation an unrelated add
-/// keeps ([`DesiredState::addition_kept`]). Read off the record this pass writes,
-/// so a removal or a prune that takes the package takes its rows.
+/// What each surviving installation the item pass skipped wrote.
+/// Read off the record this pass writes, so a removal or a prune that
+/// takes the package takes its rows.
 ///
-/// The record names a tree, not the files in it, and the pass reads no
-/// source for the package, so the rows come from the committed and pending
-/// inventories under these positions: what the last render listed.
+/// The record names a tree rather than every file in it. Committed and
+/// pending inventory rows identify the files under these retained positions.
 #[derive(Debug, Default)]
 struct KeptPositions {
     /// The whole files and trees each wrote.
@@ -475,24 +474,14 @@ impl KeptPositions {
     fn of(
         env: &Env,
         scope: &Scope,
-        state: &DesiredState,
+        item_pass: &super::plan_pass::ItemPass,
         after: &crate::lock::Lock,
     ) -> Result<KeptPositions> {
-        let rendered: BTreeSet<(ItemKind, &str, HarnessId)> = state
-            .items
-            .iter()
-            .map(|item| (item.kind, item.name.as_str(), item.harness))
-            .collect();
         let mut kept = KeptPositions::default();
-        for (key, entry) in &after.entries {
-            let retired = state
-                .retired
-                .get(&(entry.kind, entry.name.clone()))
-                .is_some_and(|retirement| retirement.kept.contains(&entry.harness));
-            if !(retired
-                || state.kept_members.contains_key(key)
-                || state.addition_kept.contains(key))
-                || rendered.contains(&(entry.kind, entry.name.as_str(), entry.harness))
+        for entry in after.entries.values() {
+            if item_pass
+                .planned
+                .contains(&(entry.kind, entry.name.clone(), entry.harness))
             {
                 continue;
             }
@@ -525,8 +514,9 @@ impl KeptPositions {
 /// What the records say about the positions no declared item renders this
 /// pass: the installed trees an adopted workflow's template can sit in, and
 /// the rows a package kept as recorded keeps.
-#[derive(Debug, Default)]
-pub(super) struct Unrendered {
+#[derive(Debug)]
+pub(super) struct Unrendered<'a> {
+    planned: &'a BTreeSet<(ItemKind, String, HarnessId)>,
     /// Every package this pass takes out of the scope: its kind and name
     /// are in the old record and not in the new one. A tree one tool drops
     /// while another keeps the package is not among them.
@@ -538,16 +528,17 @@ pub(super) struct Unrendered {
     recorded: KeptPositions,
 }
 
-impl Unrendered {
+impl<'a> Unrendered<'a> {
     /// Read off the positions the records wrote: `before` the record this
     /// pass read, `after` the one it writes.
     pub(super) fn of(
         env: &Env,
         scope: &Scope,
         state: &DesiredState,
+        item_pass: &'a super::plan_pass::ItemPass,
         before: &crate::lock::Lock,
         after: &crate::lock::Lock,
-    ) -> Result<Unrendered> {
+    ) -> Result<Unrendered<'a>> {
         let staying: BTreeSet<(ItemKind, &str)> = after
             .entries
             .values()
@@ -562,6 +553,7 @@ impl Unrendered {
                 .collect()
         };
         Ok(Unrendered {
+            planned: &item_pass.planned,
             leaving: trees(before, &|_, entry| {
                 !staying.contains(&(entry.kind, entry.name.as_str()))
             }),
@@ -569,7 +561,7 @@ impl Unrendered {
                 let retired = (entry.kind, entry.name.clone());
                 state.retired.contains_key(&retired) || state.kept_by_retired_bundle(key)
             }),
-            recorded: KeptPositions::of(env, scope, state, after)?,
+            recorded: KeptPositions::of(env, scope, item_pass, after)?,
         })
     }
 

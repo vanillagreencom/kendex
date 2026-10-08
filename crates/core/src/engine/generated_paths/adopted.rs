@@ -174,7 +174,7 @@ pub(super) struct Collected {
 pub(super) fn collect(
     root: &Path,
     state: &DesiredState,
-    trees: &super::Unrendered,
+    trees: &super::Unrendered<'_>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Option<Collected>> {
     let Some(text) = crate::fs::read_if_exists(&root.join(INVENTORY))? else {

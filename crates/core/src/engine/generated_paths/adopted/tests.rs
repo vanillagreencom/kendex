@@ -93,7 +93,14 @@ fn a_stale_copy_names_its_revision_both_hashes_and_the_adoption_step() {
             items: vec![deploy(&root, commit)],
             ..DesiredState::default()
         };
-        let adopted = collect(&root, &state, &Default::default(), &mut Vec::new())
+        let planned = BTreeSet::new();
+        let unrendered = super::super::Unrendered {
+            planned: &planned,
+            leaving: Vec::new(),
+            kept: Vec::new(),
+            recorded: Default::default(),
+        };
+        let adopted = collect(&root, &state, &unrendered, &mut Vec::new())
             .unwrap()
             .unwrap();
         let workflow = &adopted.workflows[&root.join(WORKFLOW)];

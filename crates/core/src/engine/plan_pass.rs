@@ -18,6 +18,10 @@ use super::{
 
 /// What the item pass found beside its drift rows, this pass's alone.
 pub(super) struct ItemPass {
+    /// The logical installations this pass considered. Inventory reads
+    /// desired positions only for these; every other surviving record
+    /// retains its installed positions, even if its declaration changed.
+    pub(super) planned: BTreeSet<(crate::model::ItemKind, String, crate::model::HarnessId)>,
     /// The fork edits this pass took into their own local sources.
     pub(super) fork_edits: Vec<super::ForkEdit>,
     /// The installations whose Missing row is a deletion of what the
@@ -51,6 +55,7 @@ pub(super) fn plan_items(
     let mut fork_edits = Vec::new();
     let mut recorded_gone = Vec::new();
     let mut own_edit_rows = BTreeSet::new();
+    let mut planned = BTreeSet::new();
     for item in &state.items {
         if state.addition_kept.contains(&item.key) {
             if let Some(entry) = new_lock.entries.get_mut(&item.key) {
@@ -70,6 +75,7 @@ pub(super) fn plan_items(
             }
             continue;
         }
+        planned.insert((item.kind, item.name.clone(), item.harness));
         let before = drift.len();
         let mut sink = item_plan::PlanSink {
             drift,
@@ -109,6 +115,7 @@ pub(super) fn plan_items(
         }
     }
     Ok(ItemPass {
+        planned,
         fork_edits,
         recorded_gone,
         own_edit_rows,
