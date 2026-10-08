@@ -1,1 +1,0 @@
-- md-refs reads `COMMIT_GUARDS_MD_REFS_PATHS_EXTRA` and `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA`, globs added to the shipped document and source lists or to the values replacing them, so a project adding one path no longer restates the rest.

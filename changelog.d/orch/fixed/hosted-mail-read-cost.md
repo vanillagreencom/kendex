@@ -1,1 +1,0 @@
-- Hosted mailbox reads reuse SSH connections and skip repeated host probes for absent files.

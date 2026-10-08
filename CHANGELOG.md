@@ -30,6 +30,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - The commit guards block only what the committer can fix. conflict-markers and md-format no longer judge a render `.kendex-generated.json` lists. Outside CI, an inventory the lanes cannot read turns their findings into `owner-unknown` warnings. md-format fails a fence or block left open. md-refs names a file it cannot read `unjudged` and refuses it only under `--strict`. py-names prints a `gap` notice when no ruff or pyflakes is usable, and a CI range or `--all` scan still refuses. The batch and the pre-commit chain name a check or companion script the package lacks as `package-incomplete` and skip it. In a linked worktree, `install-git-hooks` writes nothing and reports whether the main checkout armed the hooks, exiting 1 when it has not. The `core.hooksPath` notice points to the setting's owner.
 - The secrets check completes in a terminal when Bash updates its row count during the scan.
+- md-refs reads `COMMIT_GUARDS_MD_REFS_PATHS_EXTRA` and `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA`, globs added to the shipped document and source lists or to the values replacing them, so a project adding one path no longer restates the rest.
 
 #### decider
 
@@ -42,6 +43,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 #### linear
 
 - Issue lookup hints omit ignored arguments from bulk reads and name `--with-bundle` for bundle reads.
+- Complete merged items to Verifying while a post-merge checklist box remains open, and to Done after the last box. Validate each box deadline against the real merge time.
 
 #### orch
 
@@ -55,16 +57,24 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - All-suite validation uses PR CI or scoped suites. CI checks decision ID collisions. Reused timeout evidence requires the current finding prefix.
 - Keep review and CI time out of the armed phase when a pull request arms before both checks are green. Ignore green stamps outside the pull request's open-to-merge span when placing the arm.
 - SSH lane close archives workflow state on macOS without a BSD tar error.
+- Hosted mailbox reads reuse SSH connections and skip repeated host probes for absent files.
+- Keep merged work with open post-merge checks on the same Linear item in Verifying. The watch lists each check and deadline, raises overdue events, and reconciliation reports overdue or empty verification.
+- SSH lane creation keeps the clone's private environment file absent during dependency installation and restores it when the install succeeds or fails.
 
 #### preflight
 
 - The `mktemp-trap` lane reads an EXIT trap whose quoted action spans several lines, so a script with such a trap is no longer reported as leaving its scratch behind.
+
+#### project-management
+
+- Require branch proof before merge and keep post-merge checks on the same item with a named reading, location, reason and deadline within three days after merge.
 
 #### review-gate
 
 - Consumer refreshes waive product CI after render proof. The watcher reports green refresh heads for app approval. The central workflow requests Copilot for other PRs and warns on request failure.
 - The organization-standard report accepts the pinned kendex Copilot workflow after migration and retains native Copilot rule support.
 - Consumer refresh disarms an armed rolling pull request before it pushes a new head, so the old arm cannot merge that head before its review; a disarm GitHub refuses stops the run.
+- The organization-standard report's ruleset-source row requires the organization `workflows` rule for kendex's `request-copilot-review.yml`, judged by repository and path at any pin, and no longer requires the native `copilot_code_review` rule.
 
 #### reviewer-stop-check
 
@@ -82,6 +92,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - `worktree push` of a branch other than the default refuses with `worktree-push-base-fetch-failed` when its fetch of origin's default branch fails, instead of judging the branch contained or merging cleanly against a stale base and pushing it unrebased.
 - A paused restack now holds a conflicted script a declared harness hook executes, such as the lane-mail script the lane-mail-check hook runs, as it holds the libraries a hook sources, so the hook keeps running until the restack continues, skips or aborts.
+
+#### worktree-session-claim
+
+- The workflow and orchestration bundles install the session-start hook that gives a session opened by hand in an issue worktree a cleanup lease.
 
 ## [1.12.0] - 2026-10-07
 
