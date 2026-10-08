@@ -484,7 +484,7 @@ if test "${#paths[@]}" -eq 0; then exit 0; fi
 manifest=$(mktemp -d)
 trap 'rm -rf -- "${manifest:?}"' EXIT
 printf '%s\\n' "$member" > "$manifest/lane-host-state"
-tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / -- "${paths[@]}"''', row["clone"], worktree_path, item).stdout
+tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row["clone"], worktree_path, item).stdout
     if not data:
         return
     fleet = Path(os.environ.get("FLEET_DIR") or str(Path.home() / ".fleet")).expanduser()
