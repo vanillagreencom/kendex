@@ -52,7 +52,7 @@ fn skill(source: &Path, name: &str, dependencies: &str) {
 #[allow(clippy::unwrap_used)]
 pub fn fixture(declarations: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = test_util::rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
