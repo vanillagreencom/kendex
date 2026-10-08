@@ -22,6 +22,8 @@ fn kendex(home: &Path, project: &Path, kind: ItemKind, flags: &[&str]) -> Output
         .current_dir(project)
         .env_clear()
         .envs(test_util::fixture_env(home))
+        // Windows known folders ignore HOME; keep global roots under the fixture home.
+        .env("KENDEX_REAL_HOME", home)
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .output()
@@ -163,7 +165,13 @@ fn adoption_targets_scope_defaults_or_the_explicit_selection() {
         fs::write(&manifest_path, &setup).unwrap();
 
         let output = kendex(&home, &project, kind, &flags);
-        assert_eq!(output.status.success(), !expected.is_empty(), "{case}");
+        assert_eq!(
+            output.status.success(),
+            !expected.is_empty(),
+            "{case}: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         if expected.is_empty() {
             assert_eq!(fs::read_to_string(&manifest_path).unwrap(), setup, "{case}");
             assert_eq!(fs::read_to_string(&original).unwrap(), content, "{case}");
