@@ -101,9 +101,9 @@ pub fn validate_agent(harness: HarnessId, name: &str, text: &str) -> Vec<Finding
 }
 
 /// Everything wrong with a command file as this harness reads it. The name
-/// is not checked here: every harness but Gemini installs the author's own
-/// file untouched, and Gemini's commands dir turns a `/` in a name into the
-/// namespace separator it lists the command under.
+/// is not checked here: native markdown keeps the publisher's bytes when
+/// no command instructions apply. Gemini's commands dir turns a `/` in a
+/// name into the namespace separator it lists the command under.
 pub fn validate_command(harness: HarnessId, text: &str) -> Vec<Finding> {
     match harness {
         HarnessId::Gemini => command::gemini(text),

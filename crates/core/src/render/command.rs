@@ -1,7 +1,7 @@
-//! A declared command as each harness's own file. Every harness with a
-//! commands directory of its own reads the author's file untouched; the two
-//! that do not — Codex, which retired prompts for skills, and Gemini, which
-//! reads a TOML table — get a generated one.
+//! A declared command as each harness's own file. Native markdown commands
+//! keep the publisher's bytes when no command instructions apply. Codex
+//! converts commands to skills, and Gemini converts them to TOML tables.
+//! Each format carries any applicable command instructions.
 
 use std::borrow::Cow;
 
