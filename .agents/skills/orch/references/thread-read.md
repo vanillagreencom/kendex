@@ -31,7 +31,7 @@ Four readers check open threads:
 
 - This read, from merge-pr § 3.2 before the `not_approved` wait, and from merge-pr § 5 step 1 before every merge call. The § 5 read covers the entries that skip § 3.2: a [micro.md](../workflows/micro.md) § 4 entry and every return from the merge cycles.
 - `queue-wait`'s late-findings guard, on a thread posted after this read while the PR is armed or queued. Its `dequeued` verdict takes merge-pr § 5 step 1's Late-findings triage, which runs this read.
-- `ci-classify-refusal`, on a cause `none` refusal, one its readiness gates did not produce: an open thread withholds its `retry: same-head` line, so [merge-attempt.md § Exit routing](merge-attempt.md#exit-routing) returns to merge-pr § 3.2 instead of retrying.
+- `ci-classify-refusal`, before a same-head retry. Read `ci-classify-refusal --help` for its thread and retry contract. [merge-attempt.md § Exit routing](merge-attempt.md#exit-routing) routes the emitted result.
 - GitHub, only where the base branch's ruleset requires thread resolution: `pr-merge --help` § Approvals and review threads.
 
 `check-review-replies`, which every `pr-merge` readiness check runs, reads every thread's replies but not whether a thread is open, so it is not one of them: `pr-merge --help` § Review replies.
