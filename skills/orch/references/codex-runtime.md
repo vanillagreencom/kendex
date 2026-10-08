@@ -100,7 +100,7 @@ A session that exits 2 with a `dev-validate-run: [REASON]` line was refused and 
 
 ## Delegated round wait
 
-Codex starts no turn when a collaboration agent returns after its caller ended the turn. This includes hosted lanes, whose mailbox wake is unavailable. Keep the delegation's watchdog inside the current turn until it records an artifact verdict or reaches the round deadline. The round token, deadline, acceptance and escalation stay in [skill-rules.md § Round Closure](skill-rules.md#round-closure).
+Codex starts no turn when a collaboration agent returns after its caller ended the turn. This includes hosted lanes, whose mailbox wake is unavailable. For dev rounds that write a dev-return artifact, keep the delegation's watchdog inside the current turn until it records an artifact verdict or reaches the round deadline. The round token, deadline, acceptance and escalation stay in [skill-rules.md § Round Closure](skill-rules.md#round-closure).
 
 Launch the single `dev-artifact-check` watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 

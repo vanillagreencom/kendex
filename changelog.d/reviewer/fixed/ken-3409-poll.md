@@ -1,0 +1,1 @@
+- Completion polling accepts either supported timeout command and keeps the caller active until the job records its exit.

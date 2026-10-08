@@ -35,7 +35,7 @@ awk '/^## Delegated round wait$/ { section=1; next } /^## / && section { section
   "$SKILL_DIR/references/codex-runtime.md" > "$TMP_ROOT/command"
 # The completion command has one owner. Execute it, rather than reproducing
 # the poll in this fixture.
-awk 'match($0, /`timeout 540 sh -c [^`]+`/) { print substr($0, RSTART + 1, RLENGTH - 2); hits++ } END { if (hits != 1) exit 1 }' \
+awk 'match($0, /foreground poll `[^`]+`/) { print substr($0, RSTART + 17, RLENGTH - 18); hits++ } END { if (hits != 1) exit 1 }' \
   "$SKILL_DIR/../reviewer/SKILL.md" > "$TMP_ROOT/poll"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/systemd-run" <<'SH'
@@ -65,6 +65,18 @@ case "$1" in
 esac
 SH
 chmod +x "$TMP_ROOT/bin/"*
+# Only the poll receives these PATHs, so its command lookup cannot find the
+# other supported name elsewhere on the host.
+for dependency in timeout gtimeout; do
+  mkdir "$TMP_ROOT/$dependency-bin"
+  ln -s "$(command -v sh)" "$TMP_ROOT/$dependency-bin/sh"
+  ln -s "$TMP_ROOT/bin/sleep" "$TMP_ROOT/$dependency-bin/sleep"
+  ln -s "$(command -v bash)" "$TMP_ROOT/$dependency-bin/bash"
+  ln -s "$TIMEOUT" "$TMP_ROOT/$dependency-bin/$dependency"
+done
+cp "$TMP_ROOT/poll" "$TMP_ROOT/timeout-only-poll"
+mutate_file "$TMP_ROOT/timeout-only-poll" \
+  'command -v timeout || command -v gtimeout' 'command -v timeout'
 cat > "$TMP_ROOT/caller.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -75,18 +87,17 @@ command="${command//\[WORKTREE_PATH\]/$ROUND_CASE}"
 command="${command//\[ISSUE_ID\]/issue-3409}"
 command="${command//\[DEV_ROUND_ID\]/round-1}"
 "$BASH" -c "$command"
-poll="$(cat "$ROUND_SOURCE/poll")"
+poll="$(cat "$ROUND_SOURCE/$ROUND_POLL_SOURCE")"
 poll="${poll//\[RUN_DIR\]/$ROUND_CASE}"
-poll="${poll/#timeout /$TIMEOUT }"
-"$BASH" -c "$poll"
+PATH="$ROUND_POLL_PATH" "$BASH" -c "$poll"
 code="$(cat "$ROUND_CASE/wait.exit")"
 [[ "$code" == 0 || "$code" == 1 ]] || exit "$code"
 sed '1d' "$ROUND_CASE/wait.log" | jq -r '.verdict' > "$ROUND_CASE/continued"
 SH
 cp "$TMP_ROOT/caller.sh" "$TMP_ROOT/old-turn-end.sh"
 mutate_file "$TMP_ROOT/old-turn-end.sh" \
-  '"$BASH" -c "$poll"' 'exit 0
-"$BASH" -c "$poll"'
+  'PATH="$ROUND_POLL_PATH" "$BASH" -c "$poll"' 'exit 0
+PATH="$ROUND_POLL_PATH" "$BASH" -c "$poll"'
 
 await_file() {
   local i
@@ -98,7 +109,7 @@ await_file() {
   return 1
 }
 
-while IFS='|' read -r name caller lands elapsed verdict continuation; do
+while IFS='|' read -r name caller dependency poll_source lands elapsed verdict continuation expected_rc; do
   case_dir="$TMP_ROOT/$name"
   mkdir -p "$case_dir/tmp" "$case_dir/.agents/skills"
   ln -s "$SKILL_DIR" "$case_dir/.agents/skills/orch"
@@ -106,16 +117,17 @@ while IFS='|' read -r name caller lands elapsed verdict continuation; do
   printf '0\n' > "$case_dir/clock"
   printf '%s\n' '{"schema_version":1,"round_id":"round-1","kind":"implement","issue":"issue-3409","branch":"fixture","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","validate_time":{"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:05:00Z","seconds":300},"qa_labels":[],"summary_posted":true,"summary":null,"bundled":false,"items":[]}' > "$case_dir/receipt"
   env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" ROUND_CASE="$case_dir" ROUND_LANDS="$lands" \
-    ROUND_SOURCE="$TMP_ROOT" REAL_SLEEP="$REAL_SLEEP" REAL_DATE="$REAL_DATE" TIMEOUT="$TIMEOUT" \
+    ROUND_SOURCE="$TMP_ROOT" REAL_SLEEP="$REAL_SLEEP" REAL_DATE="$REAL_DATE" \
+    ROUND_POLL_PATH="$TMP_ROOT/$dependency-bin" ROUND_POLL_SOURCE="$poll_source" \
     "$BASH" "$TMP_ROOT/$caller.sh" > "$case_dir/caller.log" 2>&1 &
   caller_pid=$!
   await_file "$case_dir/check-waiting"
-  if [[ "$caller" == caller ]]; then
+  if [[ "$caller" == caller && "$expected_rc" == 0 ]]; then
     await_file "$case_dir/caller-waiting"
   else
     caller_rc=0
     wait "$caller_pid" || caller_rc=$?
-    assert_eq "$caller_rc" 0 "$name: caller exit" "$case_dir/caller.log"
+    assert_eq "$caller_rc" "$expected_rc" "$name: caller exit" "$case_dir/caller.log"
     caller_pid=""
   fi
   : > "$case_dir/release"
@@ -123,7 +135,7 @@ while IFS='|' read -r name caller lands elapsed verdict continuation; do
     caller_rc=0
     wait "$caller_pid" || caller_rc=$?
     caller_pid=""
-    assert_eq "$caller_rc" 0 "$name: caller exit" "$case_dir/caller.log"
+    assert_eq "$caller_rc" "$expected_rc" "$name: caller exit" "$case_dir/caller.log"
   fi
   await_file "$case_dir/wait.exit"
   got_continuation=absent
@@ -132,9 +144,11 @@ while IFS='|' read -r name caller lands elapsed verdict continuation; do
   assert_eq "$(cat "$case_dir/clock")|$got_verdict|$got_continuation" \
     "$elapsed|$verdict|$continuation" "$name" "$case_dir/caller.log"
 done <<'ROWS'
-delayed-round-same-turn|caller|yes|300|accept|accept
-deadline-same-turn|caller|no|600|wait|wait
-control-old-turn-end-stalls|old-turn-end|yes|300|accept|absent
+delayed-round-same-turn|caller|timeout|poll|yes|300|accept|accept|0
+delayed-round-gtimeout-only|caller|gtimeout|poll|yes|300|accept|accept|0
+deadline-same-turn|caller|timeout|poll|no|600|wait|wait|0
+control-old-turn-end-stalls|old-turn-end|timeout|poll|yes|300|accept|absent|0
+control-timeout-only-refuses|caller|gtimeout|timeout-only-poll|yes|300|accept|absent|127
 ROWS
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
