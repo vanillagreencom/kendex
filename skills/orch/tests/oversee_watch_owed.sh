@@ -280,7 +280,7 @@ verifying_world() {
   jq --arg d "$description" 'map(if .id == "KEN-1" or .id == "KEN-4" then .state = "Verifying" | .description = $d else . end)' \
     "$STUB_DIR/tracker.out" >"$STUB_DIR/verifying.json"
   mv -- "$STUB_DIR/verifying.json" "$STUB_DIR/tracker.out"
-  jq -nr '"2026-10-02T00:00:00Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+  jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
 }
 verification_lines() { awk '/^verifying /' <<<"$OUT"; }
 verification_events() { awk '/^EVENT verifying-deadline /' <<<"$OUT"; }
