@@ -79,7 +79,7 @@ Check for a recorded runtime demotion before choosing persistent mode:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{observed: (.reviewer_slots_observed // 0), live: (.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length)}'
 ```
 
-`observed > 0` → wave mode at that size. Otherwise a budget of `0` is persistent mode, and a budget above `0` gives `REVIEWER_SLOTS = budget - 1 - live` (minimum 1; the `1` is this primary session), with wave mode when `[AGENTS]` exceeds it. A `child_sessions` record with no `status` counts as active. Recompute at every § 2 entry.
+On Codex MultiAgentV2, [skill-rules.md § Codex thread reuse](../references/skill-rules.md#codex-thread-reuse) replaces the active-only count above: read `spawn-adapter slots` and `list_agents`, counting every held thread and the primary once. Set `REVIEWER_SLOTS` to eligible finished reviewer threads plus `max(0, effective_cap - held threads)`. Bound the wave by a positive `reviewer_slots_observed` and by a nonzero configured budget after the primary and other active work. A zero-sized wave takes the held-thread wait in Codex thread reuse. Use wave mode when the panel exceeds this size; otherwise use persistent mode. Re-read before each spawn. On other surfaces, `observed > 0` → wave mode at that size. Otherwise a budget of `0` is persistent mode, and a budget above `0` gives `REVIEWER_SLOTS = budget - 1 - live` (minimum 1; the `1` is this primary session), with wave mode when `[AGENTS]` exceeds it. A `child_sessions` record with no `status` counts as active. Recompute at every § 2 entry.
 
 Read existing reviewer state before any spawn:
 
@@ -87,7 +87,7 @@ Read existing reviewer state before any spawn:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}'
 ```
 
-Classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed, or confirmed-stuck. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree. Apply that rule after a name-only resume too. Retire context-exhausted sessions and add them with the missing, closed, or confirmed-stuck sessions to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
+Classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed, or confirmed-stuck. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree. Apply that rule after a name-only resume too. Apply [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse) to Codex retirements; V1 closes the thread, while V2 keeps its slot allocated. Add context-exhausted sessions with the missing, closed, or confirmed-stuck sessions to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
 
 ### 2.1 External Review Availability
 
@@ -103,19 +103,19 @@ A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anyth
 
 ### 2.2 Launch And Delegate
 
-Spawn each reviewer in `REVIEWERS_TO_LAUNCH`, resolving Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on entry from § 2.1 (skip the reset when re-entering from § 3.2 for the next wave of the same cycle):
+Select an eligible finished thread or spawn each reviewer in `REVIEWERS_TO_LAUNCH` under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), resolving fresh Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on entry from § 2.1 (skip the reset when re-entering from § 3.2 for the next wave of the same cycle):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_wave_done '[]'
 ```
 
-A retired reviewer has no session to reuse: recreate it fresh and write state with the live wave only. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write:
+On V1, a closed reviewer has no session to reuse: recreate it fresh. On V2, retirement keeps the thread allocated: reuse an eligible finished reviewer through `followup_task` with the complete delegation below. Write state for the assigned wave under canonical reviewer names. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write, counting assigned reusable threads as well as successful fresh spawns in `[OBSERVED_SPAWN_COUNT]` on V2:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.reviewer_slots_observed = [OBSERVED_SPAWN_COUNT] | .review_wave_done = []'
 ```
 
-Then tell the user once: `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in kendex.settings.toml [env]`, where `[OBSERVED_BUDGET]` is successful spawns + this session + live dev/QA sessions. If nothing spawned at all, report the misconfiguration and stop.
+Then tell the user once: `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in kendex.settings.toml [env]`, where `[OBSERVED_BUDGET]` is successful spawns + this session + live dev/QA sessions on other surfaces. On V2, report the `effective_cap` read from `spawn-adapter slots`; the active-only sum omits held finished threads. On V2, an empty fresh-spawn set first takes Codex thread reuse's eligible-thread and held-thread wave routes. Only after those routes cannot run the work, report the cap blocker that rule requires. On other surfaces, if nothing spawned at all, report the misconfiguration and stop.
 
 Store the active set:
 
