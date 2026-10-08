@@ -4,6 +4,8 @@
 # in with `include_str!` and asserted to hold no carriage return, and the
 # authoring golden digest is over those same bytes.
 * -text
+skills/orch/scripts/open-terminal text eol=lf
+skills/orch/scripts/lib/lane-launch.sh text eol=lf
 kendex.toml text eol=lf
 skills/orch/references/codex-runtime.md text eol=lf
 skills/orch/references/waiter-launch.md text eol=lf

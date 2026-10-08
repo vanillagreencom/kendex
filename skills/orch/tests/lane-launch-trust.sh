@@ -489,6 +489,7 @@ prefix|-c model_auto_compact_token_limit=300000 -c model_auto_compact_token_limi
 account|-c model_auto_compact_token_limit=300000 --config model_auto_compact_token_limit=200000 --config=model_auto_compact_token_limit_scope=total -cmodel_post_turn_compact_threshold_percent=80|["200000","total","80"]
 prefix|-c model_auto_compact_token_limit=300000|["300000",null,null]
 unchecked|-c model_auto_compact_token_limit=300000|null
+custom|-c model_auto_compact_token_limit=300000|null
 ROWS
 
 # --- § control --------------------------------------------------------------
@@ -566,6 +567,12 @@ assert_eq "$(CODEX_HOME="$ACCOUNT_HOME" bash -c '
   ' bash "$MUTANT_FOUR_SCRIPTS/lib/lane-context.sh")" \
   "$ACCOUNT_HOME" \
   "control: without the home-to-account rule a session reports the home as its account"
+
+# A custom command cannot establish the compaction arguments it will execute.
+MUTANT_CUSTOM="$(mutant_scripts lane-launch-custom-evidence lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
+mutate_file "$MUTANT_CUSTOM" '[[ "$form" != unchecked && "$form" != custom ]]' '[[ "$form" != unchecked ]]'
+assert_eq "$(compaction_child "$MUTANT_CUSTOM" custom 'codex -c model_auto_compact_token_limit=300000' | jq -r '.evidence.settings.model_auto_compact_token_limit')" \
+  300000 'control: a custom command supplies compaction evidence when its exclusion is removed'
 
 # Removing transport leaves the stub with only its inherited, invalid value.
 MUTANT_COMPACTION="$(mutant_scripts lane-launch-compaction lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1

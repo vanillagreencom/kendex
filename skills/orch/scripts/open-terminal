@@ -549,8 +549,8 @@ fi
 #   tmux_wait_harness  two callers: the premise ahead of open_tmux's account
 #                      read, and the harness-screen wait of a hosted claude,
 #                      codex or pi relaunch with no --cmd and no brief
-#   lane_account_ok    a local claude, codex or copilot lane with a --lane and
-#                      no --cmd, and a cloud session
+#   lane_account_ok    a local claude, codex or copilot lane with a --lane,
+#                      including --cmd, and a cloud session
 #   cloud_cli_wait     a cloud session, before anything is typed after its
 #                      launch line
 # The account read and its premise are not reachable on an ssh-hosted lane:
@@ -572,9 +572,9 @@ fi
 # the wait for the pane's own shell after the interrupt, and the prompt wait
 # after the second dial; a cloud launch makes one.
 #
-# All of them are reached only from open_tmux. A --cmd template reaches none of
-# them locally: lane_launch_form answers `unchecked` for one, and the brief is
-# empty. A wake reaches neither setting, whatever its harness: it resumes an
+# All of them are reached only from open_tmux. A local --cmd template with a
+# lane reaches the account read and its premise. A wake reaches neither
+# setting, whatever its harness: it resumes an
 # existing session through open_wake, whose own wait is its own, so refusing
 # one over these settings would stop a resume that never consults them. `$LANE`
 # rather than the resolved `$LANE_ENV`, which the lane block below this gate
@@ -588,7 +588,7 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
     if [[ -z "$CMD_TEMPLATE" && "$RELAUNCH" == true ]]; then
       case "$HARNESS" in codex | pi) TIMEOUT_IS_READ=true ;; esac
     fi
-  elif [[ -z "$CMD_TEMPLATE" ]]; then
+  elif [[ -z "$CMD_TEMPLATE" || -n "$LANE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
       codex | copilot) [[ -z "$LANE" ]] || TIMEOUT_IS_READ=true ;;
@@ -3286,11 +3286,6 @@ launch_prepared() { # LOG
 # the gate.
 CAP_GATED=false
 [[ "$FLEET" != true || "$WAKE" == true ]] || CAP_GATED=true
-if [[ "$CAP_GATED" == true ]]; then
-  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
-  FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
-  FLEET_CAP=$((10#$FLEET_CAP))
-fi
 
 # Judges the launch lane again once a --wait-slot wait has let its usage
 # window move: `--lane auto` picks again, and a named lane goes back to
@@ -3337,6 +3332,15 @@ fi
 # checkout lists in ORCH_CONNECTED_REPOS; lib/lane-cap.sh's overseer_bind judges
 # it.
 [[ "$FLEET" != true ]] || overseer_bind || exit 1
+if [[ "$CAP_GATED" == true ]]; then
+  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
+  if [[ "$OVERSEER_BIND" == connected ]]; then
+    FLEET_CAP="$(cd -- "$OVERSEER_DIR" && unset ORCH_OVERSEER_LANES KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
+  else
+    FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
+  fi
+  FLEET_CAP=$((10#$FLEET_CAP))
+fi
 launched=0
 preparing=0
 failed=0

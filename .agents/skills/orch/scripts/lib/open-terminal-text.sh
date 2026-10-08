@@ -334,6 +334,9 @@ Options:
                     pane to keep a claim alive, so a GUI batch stays on the
                     lane resolved up front. `lanes --help` states the
                     launcher-first rule and the pane check that follows it.
+                    Local Claude, Codex and Copilot tmux launches with --cmd
+                    keep the caller's command and check its account too.
+                    An observed mismatch closes the window and fails the item.
                     Claims line up only while this command, `lanes` and
                     `oversee-watch` resolve the same $OVERSEE_WATCH_STATE_DIR;
                     set it explicitly when they do not share one project
@@ -762,7 +765,10 @@ saved foreground continuation, see --host) or parked (a hosted lane stopped by
 `lane-close --park`, whose resume takes back its slot) plus the live launch claims and reservations this
 fleet wrote that no such record names (a claim store several fleets share
 counts each fleet's own claims here); a launch that would pass it is refused
-as cap-reached, naming the cap, those records and the claims. No cap bounds
+as cap-reached, naming the cap, those records and the claims. A connected
+repository launch reads this cap in the overseer's resolved directory, with
+the launcher's ORCH_OVERSEER_LANES and KENDEX_ENV_FILE dropped. Own-repository
+launches keep their checkout's cap. No cap bounds
 the lanes on one account: `--lane auto` chooses the account by its headroom
 through `lanes pick`. A refusal stops the batch, and so does a claim this run
 failed to write under --lane auto, whose re-pick reads claims, as

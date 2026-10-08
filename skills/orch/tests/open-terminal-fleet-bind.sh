@@ -226,6 +226,43 @@ run_ot CWD="$TARGET" CC-1
 assert_eq "$(head -n 1 <<<"$ERR")" "$FOREIGN_LINE" \
   "the first line keys the refusal on the item, the target and overseer origins and the setting and peer-mail routes"
 
+echo "=== connected launches use the overseer's fleet cap ==="
+CAP_TARGET_SETTINGS="$(cat "$TARGET/kendex.settings.toml")"
+CAP_PRIVATE_SETTINGS="$(cat "$OVERSEER_REPO/alt.env")"
+connected_cap() { # SCRIPT OVERSEER_CAP LAUNCH_CAP ENV_VALUE ENV_FILE HELD
+  local script="$1" overseer_cap="$2" launch_cap="$3" ambient="$4" private="$5" held="$6"
+  printf '[env]\nORCH_CONNECTED_REPOS = "acme/target"\n' > "$OVERSEER_REPO/kendex.settings.toml"
+  [[ "$overseer_cap" == absent ]] || printf 'ORCH_OVERSEER_LANES = "%s"\n' "$overseer_cap" >> "$OVERSEER_REPO/kendex.settings.toml"
+  printf '[env]\nORCH_OVERSEER_LANES = "%s"\n' "$launch_cap" > "$TARGET/kendex.settings.toml"
+  printf 'ORCH_OVERSEER_LANES=%s\n' "$launch_cap" > "$OVERSEER_REPO/alt.env"
+  fleet cwd "$OVERSEER_REPO"
+  "$WS" --state-dir "$STATE" update oversee --argjson held "$held" '.lanes = [range(0;$held) | {item:("CC-" + ((. + 2) | tostring)),status:"running"}]' >/dev/null
+  run_ot SCRIPT="$script" CWD="$TARGET" "ENV=ORCH_OVERSEER_LANES=$ambient" "ENV=KENDEX_ENV_FILE=$private" CC-1
+}
+while IFS='|' read -r owner launch ambient private held want label; do
+  connected_cap "$OT" "$owner" "$launch" "$ambient" "$private" "$held"
+  cap_line="$(sed -n 's/^open-terminal: cap-reached .* cap=\([0-9]*\) .*/\1/p' <<<"$ERR")"
+  assert_eq "rc=$RC cap=$cap_line record=$(record CC-1)" "$want" "$label"
+done <<'ROWS'
+5|3|3|alt.env|3|rc=0 cap= record=repo=acme/target|the overseer's higher cap admits a connected launch despite checkout, inherited and private-file caps
+3|5|5|alt.env|3|rc=1 cap=3 record=none|a launch checkout's higher cap cannot let the fleet exceed its own cap
+absent|5|5|alt.env|3|rc=1 cap=3 record=none|a cap set only in the launch checkout cannot raise the overseer's default cap
+ROWS
+# Each control keeps the same fleet and changes only where its cap is read.
+CAP_DIR="$(mutant_scripts cap-directory open-terminal)"
+mutate_file "$CAP_DIR/open-terminal" 'cd -- "$OVERSEER_DIR" && unset ORCH_OVERSEER_LANES KENDEX_ENV_FILE' 'cd -- "$CLAIM_ROOT" && unset ORCH_OVERSEER_LANES KENDEX_ENV_FILE'
+CAP_ENV="$(mutant_scripts cap-inherited open-terminal)"
+mutate_file "$CAP_ENV/open-terminal" 'unset ORCH_OVERSEER_LANES KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3' 'unset KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3'
+CAP_PRIVATE="$(mutant_scripts cap-private-file open-terminal)"
+mutate_file "$CAP_PRIVATE/open-terminal" 'unset ORCH_OVERSEER_LANES KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3' 'unset ORCH_OVERSEER_LANES && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3'
+for mutant in "$CAP_DIR" "$CAP_ENV" "$CAP_PRIVATE"; do
+  connected_cap "$mutant/open-terminal" 5 3 3 alt.env 3
+  assert_eq "rc=$RC cap=$(sed -n 's/^open-terminal: cap-reached .* cap=\([0-9]*\) .*/\1/p' <<<"$ERR") record=$(record CC-1)" \
+    'rc=1 cap=3 record=none' "control: ${mutant%/scripts} loses the same admission guarantee"
+done
+printf '%s\n' "$CAP_TARGET_SETTINGS" > "$TARGET/kendex.settings.toml"
+printf '%s\n' "$CAP_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
+
 echo "=== a binding that cannot be judged launches nothing ==="
 connected acme/target
 fleet cwd "$OVERSEER_REPO"

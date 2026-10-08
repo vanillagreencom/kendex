@@ -1208,6 +1208,8 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # follows the pane open. Prints one of:
 #   launcher:<path>  launch through that file, with no env prefix
 #   prefix           launch under the env prefix, and check the pane
+#   custom           keep the caller's command and check its account;
+#                    custom argv supplies no compaction evidence
 #   unchecked        launch under the env prefix where a lane was resolved;
 #                    nothing of ours to check either way
 #
@@ -1253,16 +1255,17 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 #
 # TEMPLATE non-empty says the command is the CALLER'S own, from a --cmd
 # template, whose first word is not ours to replace. It is an input to this
-# judge rather than a tag a caller writes for itself, so every launch that ASKS
-# gets its form from this one line. A launch that never asks — a hosted one,
-# which runs on another machine and carries no local lane prefix — keeps
-# whatever its caller initialised the form to, and is read back by nothing.
+# judge rather than a tag a caller writes for itself, so every launch that asks
+# gets its form from this judge. Its account is still read back: a bare
+# harness wrapper can overwrite the prefix before exec. A hosted launch runs
+# on another machine. It keeps its caller's form and has no local account read.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
-  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
+  if [[ -z "$dir" ]] || [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi
+  if [[ -n "$template" ]]; then printf 'custom\n'; return; fi
   name="$(basename -- "$dir")" || { printf 'prefix\n'; return; }
   name="${name#.}"
   if [[ "$name" != *"$harness"* || "$name" == "$harness" ]]; then printf 'prefix\n'; return; fi
@@ -1336,7 +1339,7 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true env_words
   if [[ "$harness" == codex ]]; then
-    [[ "$form" != unchecked ]] || verified=false
+    [[ "$form" != unchecked && "$form" != custom ]] || verified=false
     compaction=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
   fi
   if [[ "$harness" != copilot ]]; then
@@ -1449,15 +1452,16 @@ lane_observed_dir() { # PANE_PID NAME
 }
 
 # lane_account_readable FORM — true for a launch this check can read back at
-# all: one this machine started under a lane of its own, by env prefix or by
-# the account launcher. A hosted launch runs on another machine and an
-# `unchecked` one carries no lane, so neither has a local pane to read.
+# all: one this machine started under a lane of its own, by env prefix, a
+# custom command or the account launcher. A hosted launch runs on another
+# machine. An `unchecked` launch carries no lane. Neither has a local account
+# to read.
 #
 # Its own name because a caller has to ask the same question BEFORE the check:
 # waiting for the harness to come up ahead of a read that will not happen is
 # the whole of that wait spent for nothing.
 lane_account_readable() { # FORM
-  case "$1" in prefix|launcher:*) return 0 ;; *) return 1 ;; esac
+  case "$1" in prefix|custom|launcher:*) return 0 ;; *) return 1 ;; esac
 }
 
 # lane_process_env_readable — true where this machine lets a process be read

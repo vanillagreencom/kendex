@@ -1,0 +1,1 @@
+- Terminal launches in connected repositories use the overseer's fleet limit. Custom local terminal commands refuse an observed account mismatch.

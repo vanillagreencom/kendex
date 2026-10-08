@@ -111,7 +111,7 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #
 # Trailing KEY=VALUE options, each optional:
 #   cmd=       a --cmd template: the caller's own command, whose first word
-#              open-terminal does not replace and whose pane it never reads back
+#              open-terminal does not replace and whose account it reads back
 #   flags=     further open-terminal flags, split on whitespace
 #   text=      the pane screen the tmux stub draws, in place of the brief plus
 #              the live-input marker the row's own harness draws
@@ -256,18 +256,25 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" -
   "rc=0 form=launcher bare=0" \
   "a lane path written with a trailing slash reaches the same launcher, the spelling --lane and ORCH_LANE_DIRS both carry through"
 
-# A --cmd template is the caller's own command: its first word is not replaced
-# even on a lane whose launcher IS on PATH, and its pane is read back by
-# nothing, so neither account verdict appears. Without the template term in the
-# judge this launch would be read back against a command nobody here built.
-# The pane draws no harness screen, so a wait taken here would run to its whole
-# bound: at zero probes this launch never looked, which is the guard. That bound
-# is the hard-coded 15 here, not ORCH_TMUX_VERIFY_SECS: a --cmd template reads
-# none of the waits the setting is validated for, so the setting is not read for
-# it either.
-assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved probes" "cmd=true {item}" "text=dev@lane:~$" clock=virtual)" \
-  "rc=0 form=prefix verified=0 unobserved=0 probes=0" \
-  "a --cmd template keeps the env prefix on a launcher-named lane and is read back by nothing"
+# A custom command retains its caller's first word even when the account has
+# a launcher. Account observations are exercised below on supported hosts.
+assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form" "cmd=true {item}" clock=virtual)" \
+  "rc=0 form=prefix" \
+  "a --cmd template retains its command under the selected account prefix"
+
+run_ot "ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$OUTSIDE_LANE" KEN-89
+assert_eq "$(observe 'rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc')" \
+  'rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc' \
+  "a custom account launch refuses an invalid bound before opening its pane"
+BOUND_CONTROL="$(mutant_scripts custom-bound open-terminal)"
+orch_fixture_shared_libs "${BOUND_CONTROL%/scripts}"
+mutate_file "$BOUND_CONTROL/open-terminal" 'elif [[ -z "$CMD_TEMPLATE" || -n "$LANE" ]]; then' 'elif [[ -z "$CMD_TEMPLATE" ]]; then'
+BOUND_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$BOUND_CONTROL/open-terminal"
+run_ot "ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$OUTSIDE_LANE" KEN-89
+assert_eq "$(observe 'rc=0 seconds_invalid=none')" 'rc=0 seconds_invalid=none' \
+  "control: skipping the custom account bound check accepts the invalid setting"
+OPEN_TERMINAL="$BOUND_SHIPPED"
 
 # The suite's one must-fail control is on the model rule, on the same arguments
 # as the green row beside it. run_ot reads $OPEN_TERMINAL, so the mutant takes
@@ -319,6 +326,19 @@ echo "=== the pane is read back, and a disagreement closes the window ==="
 if ! ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_process_env_readable ); then
   printf '  skip  pane-check rows (no readable per-process environment)\n'
 else
+  while IFS='|' read -r name leaf want; do
+    assert_eq "$(lane_launch "$OPEN_TERMINAL" "$name" claude "$LNLANE" "$leaf" - "rc verified mismatch closed" "cmd=claude")" \
+      "$want" "a custom-command account observation: $name"
+  done <<ROWS
+custom-picked|$LNLANE|rc=0 verified=1 mismatch=0 closed=0
+custom-wrong|$LNSELF|rc=1 verified=0 mismatch=1 closed=1
+ROWS
+  CUSTOM_CONTROL="$(mutant_scripts custom-unchecked lib/lane-launch.sh)"
+  orch_fixture_shared_libs "${CUSTOM_CONTROL%/scripts}"
+  mutate_file "$CUSTOM_CONTROL/lib/lane-launch.sh" "printf 'custom\\n'; return;" "printf 'unchecked\\n'; return;"
+  assert_eq "$(lane_launch "$CUSTOM_CONTROL/open-terminal" custom-control claude "$LNLANE" "$LNSELF" - "rc verified mismatch closed" "cmd=claude")" \
+    "rc=0 verified=0 mismatch=0 closed=0" \
+    "control: skipping custom account observation accepts the wrong account"
   assert_eq "$(lane_launch "$OPEN_TERMINAL" ok-launcher claude "$LNLANE" "$LNLANE" - "rc verified mismatch closed")" \
     "rc=0 verified=1 mismatch=0 closed=0" \
     "the pane confirms the account under the launcher form"

@@ -188,6 +188,8 @@ cap_gate() { # ITEM KEY WINDOW
 # refuses naming LAUNCH_NAME and OVERSEER_NAME, `unread` for a state the cap
 # count reads first, and `none` for a launch that names no fleet.
 OVERSEER_BIND=none
+# Retained by the binding owner for connected launches' fleet settings.
+OVERSEER_DIR=""
 CONNECTED_REPO=""
 LAUNCH_NAME=""
 OVERSEER_NAME=""
@@ -278,6 +280,7 @@ overseer_bind() {
       root="$("$SCRIPT_DIR/git-context" common-root "$dir" 2>/dev/null)" || { root="$launch_root"; }
     fi
   fi
+  OVERSEER_DIR="$dir"
   OVERSEER_BIND=own
   [[ "$root" != "$launch_root" ]] || return 0
   LAUNCH_NAME="$(kendex_github_origin_slug "$CLAIM_ROOT")" || LAUNCH_NAME=""
