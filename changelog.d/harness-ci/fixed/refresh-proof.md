@@ -1,0 +1,1 @@
+- Prove refreshes in partial clones, identify a missing source commit with its fetch remedy, and verify adopted refresh callers against their pinned released template.

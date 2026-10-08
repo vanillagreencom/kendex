@@ -37,6 +37,10 @@ approval_message() {
       printf 'approval-wait: author-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "could not resolve the author login of PR #$PR_NUM in $REPO"
       ;;
+    request-identity-unreadable)
+      printf 'approval-wait: request-identity-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' 'Could not read the pull request branch and author before requesting review.'
+      ;;
     base-unreadable)
       printf 'approval-wait: base-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "approval-wait: could not read the base branch and review decision of PR #$PR_NUM in $REPO, so no gate mode is available"
@@ -203,6 +207,8 @@ stop: stdout stays empty and stderr says why.
                  Read committed policy with the caller's trusted settings reader, not PATH's code or private env.
                  Authentication stays with the caller's project.
   --request-review
+                 A kendex/refresh head from the lanes app answers
+                 fallback cause=refresh-identity and requests no Copilot review.
                  resolve through --base-checkout each time. An off gate prints off
                  and sends no request. An approval gate requests Copilot and prints
                  approval, or prints a fallback line when no request went out
@@ -845,6 +851,21 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
     if [[ "$COPILOT_REQUESTS" == off ]]; then
       answer='fallback cause=off'
     else
+      identity=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE") || {
+        cat "$GH_ERR_FILE" >&2
+        approval_message request-identity-unreadable >&2; exit 2;
+      }
+      refresh_identity=$(jq -er 'if (.head.ref | type) == "string" and
+          (.user.login | type) == "string" and (.user.type | type) == "string"
+        then (.head.ref == "kendex/refresh" and
+          .user.login == "vanillagreen-fleet-lanes[bot]" and .user.type == "Bot") | tostring
+        else error("pull request identity unreadable") end' <<<"$identity") || {
+        approval_message request-identity-unreadable >&2; exit 2;
+      }
+      if [[ "$refresh_identity" == true ]]; then
+        printf '%s\n' 'fallback cause=refresh-identity'
+        exit 0
+      fi
       request_rc=0
       gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
       if [[ "$request_rc" -ne 0 ]]; then

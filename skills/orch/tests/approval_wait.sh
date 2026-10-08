@@ -275,7 +275,7 @@ case "${1:-}" in
         http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
         flaky_503) _stub_flaky_503 "${STUB_AUTHOR_COUNT_FILE:?}" ;;
       esac
-      jq -nc --arg login "$login" '{user: {login: $login}, head: {user: {login: "fork-owner"}}}' \
+      jq -nc --arg login "$login" '{user: {login: $login, type: "Bot"}, head: {ref: "feature/work", user: {login: "fork-owner"}}}' \
         | jq -r "$filter"
       exit 0
     fi

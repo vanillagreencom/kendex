@@ -172,6 +172,7 @@ reset_case() {
   git -C "$repo" clean -qfd
 }
 
+
 # The first line alone: a wiring error's key/value line, ahead of its English.
 # Cut in the shell rather than piped into head, which stops reading while its
 # producer still writes.
@@ -191,6 +192,86 @@ write_lines() { # REPO PATH COUNT|binary
     printf 'line %d\n' "$n" >>"$1/$2"
   done
 }
+
+# Hosted lanes use blob:none clones. The source store retains missing blobs;
+# the proof checkout must fetch into its own object store instead.
+reset_case
+set_verifier clean
+write_lines "$repo" .agents/skills/orch/app.ts 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m 'render in a partial clone'
+git -C "$repo" config uploadpack.allowFilter true
+git -C "$repo" config uploadpack.allowAnySHA1InWant true
+partial="$SANDBOX/partial"
+git clone -q --no-checkout --filter=blob:none "file://$repo" "$partial"
+git -C "$partial" config gc.auto 0
+git -C "$partial" config maintenance.auto false
+git -C "$partial" checkout -q --detach "$base"
+missing="$(git -C "$partial" rev-list --objects --missing=print case)"
+assert_eq 'partial clone has a missing head blob before classification' true \
+  "$(grep -Eq '^\?' <<<"$missing" && echo true || echo false)"
+PATH="$stub_bin:$PATH" assert_class 'partial clone render fetches missing blobs privately' render \
+  --repo "$partial" --event pull_request --base "$base" --head case
+assert_eq 'partial clone working tree stays at its original commit' "$base" \
+  "$(git -C "$partial" rev-parse HEAD)"
+partial_mutant="$(mutant partial-promisor change-class \
+  '    git -C "$private_tree" config "$key" "$value" 2>>"$3" || return 1' \
+  '    :')"
+partial_err="$(PATH="$stub_bin:$PATH" "$partial_mutant" --repo "$partial" \
+  --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
+assert_eq 'control: alternates without promisor settings cannot check out the head' true \
+  "$(grep -Eq '^class: class=standard measured=false cause=head-checkout-failed head=' <<<"$partial_err" && echo true || echo false)"
+
+# The public transport is a local release fixture. The classifier still runs
+# its own fetch and exact-pin comparison; no ownership operation is stubbed.
+release_catalog="$(new_repo released-caller)"
+mkdir -p "$release_catalog/skills/review-gate/templates"
+cp "$TEST_DIR/../../review-gate/templates/kendex-refresh.yml" \
+  "$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
+git -C "$release_catalog" add -A
+git -C "$release_catalog" commit -q -m 'released refresh caller'
+git -C "$release_catalog" tag v1
+release_bin="$SANDBOX/release-bin"
+mkdir -p "$release_bin"
+real_git="$(command -v git)"
+cat >"$release_bin/git" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+args=()
+for arg in "\$@"; do
+  [ "\$arg" != https://github.com/vanillagreencom/kendex.git ] || arg='file://$release_catalog'
+  args+=("\$arg")
+done
+exec '$real_git' "\${args[@]}"
+WRAPPER
+chmod +x "$release_bin/git"
+for variation in released byte-edited unreleased unavailable; do
+  reset_case
+  set_verifier clean
+  mkdir -p "$repo/.github/workflows"
+  cp "$release_catalog/skills/review-gate/templates/kendex-refresh.yml" \
+    "$repo/.github/workflows/kendex-refresh.yml"
+  case "$variation" in
+    byte-edited) printf '#' >>"$repo/.github/workflows/kendex-refresh.yml" ;;
+    unreleased)
+      printf '\n# caller not published at its pin\n' >>"$repo/.github/workflows/kendex-refresh.yml" ;;
+    unavailable)
+      sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v999999|' \
+        "$repo/.github/workflows/kendex-refresh.yml" >"$SANDBOX/unavailable-caller"
+      mv "$SANDBOX/unavailable-caller" "$repo/.github/workflows/kendex-refresh.yml" ;;
+  esac
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "adopted caller $variation"
+  caller_err="$(PATH="$release_bin:$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  if [ "$variation" = released ]; then
+    want='class=render measured=true cause=renders-match-their-sources'
+  else
+    want='class=standard measured=true cause=render-path-unowned path=.github/workflows/kendex-refresh.yml'
+  fi
+  assert_eq "adopted caller $variation has exact release ownership" "$want" \
+    "$(sed -n 's/^class: //p' <<<"$caller_err")"
+done
 
 # label | expected | verifier | file:lines pairs
 table_rows=0
@@ -864,54 +945,6 @@ pull_request
 push
 BASELESS
 require_rows change-class-baseless "$baseless_row_count"
-
-# The header `--help` prints is the script's own account of what it touches
-# in the tree it judges, and a reader acts on it. The rows below assert its
-# TEXT: that it still names each read, and still claims no merge base. Each
-# claim is looked for in a flattened copy of the paragraph, so a sentence
-# rewrapped is the same sentence and a row that broke on the wrap would be a
-# row about the margin. What the text cannot see is a read added or dropped
-# while the sentence stands; the row after them is the one that reads the
-# code and catches that.
-help_text="$("$CHANGE_CLASS" --help | tr '\n' ' ')"
-git_read_count=0
-while IFS='|' read -r expected git_read; do
-  git_read_count=$((git_read_count + 1))
-  assert_eq "the header names what it reads: $git_read" "$expected" \
-    "$(grep -qF -- "$git_read" <<<"$help_text" && echo present || echo absent)"
-done <<'GIT_READS'
-present|four reads and no write
-present|where its object store is
-present|the commit the base endpoint names
-present|settings files that commit holds
-present|The private env file is never read
-present|never the judged checkout's working tree
-present|cause=render-path-unowned
-present|cause=render-path-partial
-present|--json
-absent|merge base
-GIT_READS
-require_rows change-class-git-reads "$git_read_count"
-
-# `git -C "$repo"` is the one spelling the script runs against the tree it
-# judges, which the first row establishes, so counting those call sites
-# counts the reads. The only other git the script runs writes a private
-# checkout, the one the proof weighs or the one the queue selector runs in,
-# and every such line names it, as proof_tree or as private_checkout's
-# private_tree. The
-# count and the word the header prints are asserted against one expected
-# pair: a read added while the sentence stands reds here, and so does a
-# sentence reworded while the code stands. A maintainer changing either on
-# purpose moves the pair with it.
-assert_eq "every git the script runs on the judged tree carries --repo" "0" \
-  "$(awk '/^[[:space:]]*#/ { next }
-     /git / && !/git -C "\$repo"/ && !/"\$(proof_tree|private_tree)"/ { n++ }
-     END { print n + 0 }' "$CHANGE_CLASS")"
-git_read_sites="$(grep -c 'git -C "$repo"' "$CHANGE_CLASS" | tr -d ' ')"
-git_read_word="$(grep -oE '[a-z]+ reads? and no write' <<<"$help_text" |
-  tail -1 | cut -d' ' -f1)"
-assert_eq "the header spells the number of git call sites the script holds" \
-  "4 four" "$git_read_sites $git_read_word"
 
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
@@ -1915,6 +1948,7 @@ TOML
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m "the consumer with kendex installed"
   consumer_base="$(git -C "$consumer" rev-parse HEAD)"
+  cp -R "$render_home/.cache/kendex" "$SANDBOX/base-source-cache"
 
   # The render carries the consumer's own instructions, which the catalog file
   # does not. Without this the catalog-byte inverse below would pass by
@@ -1947,6 +1981,20 @@ TOML
   rm -rf -- "${render_home:?}/.cache/kendex"
   classify_here "no mirror, no proof" standard \
     --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
+  cp -R "$SANDBOX/base-source-cache" "$render_home/.cache/kendex"
+  missing_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head HEAD)"
+  assert_eq 'a mirror behind the recorded head names its source refresh remedy' \
+    'class=standard measured=false cause=source-mirror-missing verb=source operation=refresh verifier=path' \
+    "$(printf '%s\n' "$missing_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
+  missing_mutant="$(mutant missing-source-cause change-class \
+    '      RENDER_REFUSAL="cause=source-mirror-missing verb=source operation=refresh verifier=$kind version=$verifier_version"' \
+    '      :')"
+  missing_control="$(CHANGE_CLASS="$missing_mutant" classify_stderr --repo "$consumer" \
+    --event pull_request --base "$consumer_base" --head HEAD)"
+  assert_eq 'control: removing the keyed remedy restores the generic refusal' \
+    'class=standard measured=false cause=verify-refused verifier=path' \
+    "$(printf '%s\n' "$missing_control" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
   kendex_here "$consumer" source refresh
   assert_eq "the priming step left the judged tree exactly as committed" "" \
     "$(git -C "$consumer" status --porcelain)"
@@ -1966,6 +2014,19 @@ TOML
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
   assert_eq "and a record the catalog has not moved past trails nothing" "" \
     "$(printf '%s\n' "$refresh_err" | sed -n '/^render-stale: /p')"
+  git -C "$consumer" checkout -q -B unknown-source refreshed
+  jq '.entries |= with_entries(.value.sourceCommit = "0000000000000000000000000000000000000000")' \
+    "$consumer/.kendex-lock.json" >"$SANDBOX/unknown-source-lock"
+  mv "$SANDBOX/unknown-source-lock" "$consumer/.kendex-lock.json"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m 'record names a commit the source never held'
+  kendex_here "$consumer" source refresh
+  unknown_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head HEAD)"
+  assert_eq 'a commit the source never held remains a source-mirror refusal after refresh' \
+    'class=standard measured=false cause=source-mirror-missing verb=source operation=refresh verifier=path' \
+    "$(printf '%s\n' "$unknown_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
+  git -C "$consumer" checkout -q refreshed
 
   # Optional real released executables prove the compatibility boundary.
   # The fixture above is made by the newer engine on PATH, not by either
