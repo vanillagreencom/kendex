@@ -8,7 +8,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"
 mkdir -p "$PROJECT_ROOT/tmp"
-TMP_ROOT="$(mktemp -d "$PROJECT_ROOT/tmp/lane-close.XXXXXX")"
+TMP_ROOT="$(mktemp -d)" || { echo "lane-close: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-close: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-close: scratch=resolve-failed" >&2; exit 1; }
 LANE_PIDS=""
 cleanup() {
   local pid
@@ -760,7 +762,7 @@ GONE_ROWS=(
   "an idle record on a terminal item whose provider lists no sandbox closes done and kills its window|$SCRIPT|python|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=1 status=done"
   "a provider still listing the item, in another case, keeps the refusal|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=acme/repo/ken-1\trunning\t1h\tsandbox-1\n||rc=1 absent=0 refused=1 list=1 stop=0 close=0 removed=0 kill=0 status=running"
   "a list that fails keeps the refusal|$SCRIPT|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST_STATUS=1||rc=1 absent=0 refused=1 list=1 stop=0 close=0 removed=0 kill=0 status=running"
-  "a stopped record on a terminal item reads its tracker there and closes done|$SCRIPT|stopped|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=$NO_ROW||rc=0 absent=1 refused=0 list=1 stop=0 close=0 removed=1 kill=0 status=done"
+  "a stopped record on a terminal item closes without its mailbox or the host list|$SCRIPT|stopped|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=$NO_ROW||rc=0 absent=0 refused=0 list=0 stop=0 close=1 removed=1 kill=0 status=done"
   "a stopped record on an item the tracker holds open reads no list and keeps the refusal|$SCRIPT|stopped|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_TRACKER_STATE_TYPE=started LANE_CLOSE_HOST_LIST=$NO_ROW||rc=1 absent=0 refused=1 list=0 stop=0 close=0 removed=0 kill=0 status=stopped"
   "--keep-sandbox reads no list and keeps the refusal|$SCRIPT|python|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_HOST_LIST=$NO_ROW|--keep-sandbox|rc=1 absent=0 refused=1 list=0 stop=0 close=0 removed=0 kill=0 status=running"
   "control: without the list reading the gone sandbox strands the record at mail-read-failed|$(mutant lane-close-gone '  if [[ -n "$host" && "$KEEP_SANDBOX" == false && "$PARK" == false ]]; then' '  if false; then')|-|LANE_CLOSE_MAIL_STATUS=2 LANE_CLOSE_TRACKER_STATE_TYPE=canceled LANE_CLOSE_HOST_LIST=$NO_ROW||rc=1 absent=0 refused=1 list=0 stop=0 close=0 removed=0 kill=0 status=running"
@@ -1300,6 +1302,54 @@ assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$ST
   'rc=0 host=1 status=done' 'a later close removes the kept sandbox without requiring its former pane'
 
 echo '=== tracker terminal routes close idle work ==='
+for mode in --terminal-state --if-terminal; do
+  for action in --keep-sandbox --park; do
+    write_state stopped claude /host; : >"$ROWS"
+    if [[ "$action" == --park ]]; then run_close "$SCRIPT" "$mode" "$action" --pr 7
+    else run_close "$SCRIPT" "$mode" "$action"; fi
+    assert_eq "rc=$RC host=$(host_call_count) mail=$(awk 'END {print NR+0}' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+      'rc=2 host=0 mail=0 status=stopped' 'a terminal close option cannot keep or park the sandbox'
+  done
+done
+MUTANT="$(mutant terminal-options '  [[ "$KEEP_SANDBOX" == false && "$PARK" == false ]] \
+    || { message argument-count "value=terminal" "conflict=keep-or-park" >&2; exit 2; }' '  true || [[ "$KEEP_SANDBOX" == false && "$PARK" == false ]] \
+    || { message argument-count "value=terminal" "conflict=keep-or-park" >&2; exit 2; }')"
+write_state stopped claude /host; : >"$ROWS"
+run_close "$MUTANT" --terminal-state --keep-sandbox
+assert_eq "rc=$RC out=$OUT" 'rc=0 out=completed' 'control: without the option guard conflicting terminal and keep modes are accepted'
+for tracker_type in completed canceled started; do
+  write_state stopped claude /host; : >"$ROWS"
+  LANE_CLOSE_TRACKER_STATE_TYPE="$tracker_type" run_close "$SCRIPT" --terminal-state
+  expected="$tracker_type"; [[ "$tracker_type" != started ]] || expected=open
+  assert_eq "rc=$RC out=$OUT host=$(host_call_count) mail=$(awk 'END {print NR+0}' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    "rc=0 out=$expected host=0 mail=0 status=stopped" 'the terminal-state probe reads only the tracker'
+done
+write_state stopped claude /host; : >"$ROWS"
+LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$SCRIPT" --if-terminal
+assert_eq "rc=$RC host=$(host_call_count) mail=$(awk 'END {print NR+0}' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=4 host=0 mail=0 status=stopped' 'a conditional close rechecks an item that reopened after the probe'
+MUTANT="$(mutant conditional-open '      exit 4 ;;' '      : ;; # exit 4')"
+write_state stopped claude /host; : >"$ROWS"
+LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$MUTANT" --if-terminal
+assert_eq "rc=$RC close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 close=1 status=done' 'control: without the conditional refusal an open stopped record closes'
+for tracker_type in completed canceled; do
+  write_state stopped claude /host; : >"$ROWS"
+  LANE_CLOSE_TRACKER_STATE_TYPE="$tracker_type" LANE_CLOSE_MAIL_STATUS=2 run_close "$SCRIPT"
+  assert_eq "rc=$RC close=$(close_call_count) mail=$(awk 'END {print NR+0}' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 close=1 mail=0 status=done' 'a terminal stopped record closes without its unavailable mailbox'
+done
+MUTANT="$(mutant stopped-terminal-mail '  [[ "$tracker_rc" -eq 0 ]] || refuse_unanswered_ask' '  [[ "$tracker_rc" -eq 0 ]] && tracker_rc=1; refuse_unanswered_ask')"
+write_state stopped claude /host; : >"$ROWS"
+LANE_CLOSE_MAIL_STATUS=2 run_close "$MUTANT"
+assert_eq "rc=$RC close=$(close_call_count) mail=$(awk 'END {print NR+0}' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 close=0 mail=1 status=stopped' 'control: restoring the mailbox read strands the terminal stopped record'
+MUTANT="$(mutant stopped-open-ask '  [[ "$tracker_rc" -eq 0 ]] || refuse_unanswered_ask' '  [[ "$tracker_rc" -eq 0 ]] || { true || refuse_unanswered_ask; }')"
+write_state stopped claude /host; : >"$ROWS"
+ASK_CONTROL="$(pending_ask 0)"
+LANE_CLOSE_TRACKER_STATE_TYPE=started LANE_CLOSE_MAIL_PENDING="$ASK_CONTROL" run_close "$MUTANT"
+assert_eq "rc=$RC close=$(close_call_count) mail=$(awk 'END {print NR+0}' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 close=1 mail=0 status=done' 'control: skipping the open-item ask check closes a session that still owes an answer'
 for row in 'linear|Done|completed' 'linear|Abandoned|canceled' 'github|CLOSED|'; do
   IFS='|' read -r tracker tracker_state tracker_type <<<"$row"
   write_state running claude /host "$tracker" 'owner/repo'; write_panes python; claude_screen
@@ -1462,7 +1512,7 @@ assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true
   'rc=1 ask=1 status=running kill=0' 'keep-sandbox takes the same refusal and leaves the window standing'
 
 write_state stopped claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"
-LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
+LANE_CLOSE_TRACKER_STATE_TYPE=started LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
 assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 ask=1 host=0 status=stopped' 'a stopped record holding an ask refuses before its kept sandbox is closed'
 
@@ -1478,7 +1528,7 @@ write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
 LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT" --keep-sandbox
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") mail=$(awk 'END { print NR + 0 }' "$MAIL_CALLS")" \
   'rc=0 status=stopped mail=0' 'keep-sandbox on an exited lane holding an ask records stopped and reads no mailbox'
-LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
+LANE_CLOSE_TRACKER_STATE_TYPE=started LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
 assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 ask=1 host=0 status=stopped' 'the full close of that stopped record refuses until the ask is answered'
 

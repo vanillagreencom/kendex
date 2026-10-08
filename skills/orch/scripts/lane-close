@@ -50,6 +50,7 @@ message() { # REASON FIELD=VALUE...
         '  unlisted        the recorded account is no configured lane of the harness.' \
         '  read-failed     lanes pick --lane failed; its words are on the lines above.' \
         '  none            the record names no account, or its harness is not one lanes measures.' ;;
+    item-open) printf '%s\n' 'The tracker holds this item open. The conditional close changed nothing.' ;;
     tracker-read-failed)
       printf '%s\n' \
         'The tracker state could not be read. Close-out changed nothing. cause names which read did not answer:' \
@@ -185,6 +186,8 @@ local lane, an exited one included, an idle one's in the same stop as its
 harness, and refuses as stop-failed target=wake where it does not end. A wake identity whose process has exited or whose pid a later
 process holds is a turn already over.
 A record already marked stopped can close its kept sandbox without a pane.
+On a full close of a terminal item it reads no mailbox: the item needs no
+resumed session to answer an ask. Open items keep the ask check.
 A full close of a record whose window no pane carries, on an item its
 tracker answers terminal, closes with no lane state read and no exit wait: a
 hosted harness is stopped through lane-host stop and the host closed, and a
@@ -288,8 +291,9 @@ this is about to end. An exited lane takes no such refusal, its session being
 gone already. A kept sandbox can be relaunched into a session that reads the
 reply, which is why the two differ: --keep-sandbox on an exited lane records
 stopped and refuses nothing, and the full close of that stopped record refuses
-until the ask is answered. Answering is the one thing that lifts it. A mailbox
-that cannot be read refuses as mail-read-failed.
+until the ask is answered or the tracker item is terminal. A stopped record
+on a terminal item takes no mailbox read on a full close. Other mailbox reads
+that fail refuse as mail-read-failed.
 A hosted mailbox that cannot be read, on a full close of an item the tracker
 answers terminal, is weighed against lane-host list instead: where no row's
 first field ends in /ITEM, in any case, the provider holds no sandbox for the
@@ -300,6 +304,12 @@ any full close. A list that fails or names the item keeps mail-read-failed.
 
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
+
+--terminal-state reads only the tracker through the recorded identity. It
+prints open, completed or canceled and exits 0. A failed read exits 2.
+--if-terminal closes only if that judge answers terminal. An open item exits
+4 with an item-open line and no changes. Neither option accepts --keep-sandbox
+or --park.
 
 --harness, --tracker and --repo supply a lane identity for a record written
 before the launcher recorded one. Each fills only a field the record leaves
@@ -335,6 +345,7 @@ need_value() {
 
 STATE_DIR=""
 KEEP_SANDBOX=false
+TERMINAL_MODE=close
 PARK=false
 PARK_PR=""
 OPT_HARNESS=""
@@ -352,6 +363,8 @@ while [[ $# -gt 0 ]]; do
     --repo) need_value "$@"; OPT_REPO="$2"; shift 2 ;;
     --repo=*) OPT_REPO="${1#--repo=}"; need_value --repo "$OPT_REPO"; shift ;;
     --keep-sandbox) KEEP_SANDBOX=true; shift ;;
+    --terminal-state) TERMINAL_MODE=state; shift ;;
+    --if-terminal) TERMINAL_MODE=if; shift ;;
     --park) PARK=true; shift ;;
     --pr) need_value "$@"; PARK_PR="$2"; shift 2 ;;
     --pr=*) PARK_PR="${1#--pr=}"; need_value --pr "$PARK_PR"; shift ;;
@@ -374,6 +387,10 @@ if [[ "$PARK" == true && -z "$PARK_PR" || "$PARK" == false && -n "$PARK_PR" ]]; 
   message missing-value "option=--park" "requires=--pr" >&2; usage >&2; exit 2
 fi
 [[ -z "$PARK_PR" || "$PARK_PR" =~ ^[1-9][0-9]*$ ]] || { message missing-value "option=--pr" "value=$PARK_PR" >&2; exit 2; }
+if [[ "$TERMINAL_MODE" != close ]]; then
+  [[ "$KEEP_SANDBOX" == false && "$PARK" == false ]] \
+    || { message argument-count "value=terminal" "conflict=keep-or-park" >&2; exit 2; }
+fi
 
 STATE_ARGS=()
 [[ -z "$STATE_DIR" ]] || STATE_ARGS=(--state-dir "$STATE_DIR")
@@ -440,8 +457,10 @@ tracker_source=given
 
 case "$status" in
   done)
-    message closed "item=$ITEM" "status=done"
-    exit 0 ;;
+    if [[ "$TERMINAL_MODE" != state ]]; then
+      message closed "item=$ITEM" "status=done"
+      exit 0
+    fi ;;
   running|stopped|preparing|parked) ;;
   *) message record-invalid "item=$ITEM" "field=status" >&2; exit 1 ;;
 esac
@@ -610,6 +629,7 @@ tracker_read() { # OUT_VAR COMMAND...
 # asserting one of them. TRACKER_CAUSE carries it on every status 2, and
 # ITEM_END the terminal state on status 0.
 TRACKER_CAUSE=""
+ITEM_END=""
 tracker_terminal() {
   local value number state reason
   TRACKER_CAUSE=""
@@ -652,6 +672,21 @@ tracker_terminal() {
       return 2 ;;
   esac
 }
+
+# The watch reads the same judge before offering a stopped record for close.
+# The actual close checks again: the tracker can reopen the item between calls.
+if [[ "$TERMINAL_MODE" != close ]]; then
+  tracker_rc=0
+  tracker_terminal || tracker_rc=$?
+  case "$tracker_rc" in
+    0) [[ "$TERMINAL_MODE" != state ]] || { printf '%s\n' "$ITEM_END"; exit 0; } ;;
+    1)
+      [[ "$TERMINAL_MODE" != state ]] || { printf 'open\n'; exit 0; }
+      message item-open "item=$ITEM"
+      exit 4 ;;
+    *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 2 ;;
+  esac
+fi
 
 # The park guard: the one reading that admits a merge-wait park, made before
 # anything is signalled. It delegates to the three judges that already own the
@@ -788,7 +823,6 @@ stop_validations() {
 # ITEM_END is the terminal state the tracker answered, empty until a read
 # answers terminal: completed for shipped work, canceled for any other end.
 # Both remove the files; only completed lets the host close pass --merged.
-ITEM_END=""
 remove_item_files() {
   local rc=0
   if [[ -z "$ITEM_END" ]]; then
@@ -937,10 +971,13 @@ esac
 # A stopped record means an earlier --keep-sandbox call already exited the
 # harness and removed its window. Only the kept sandbox and the record remain.
 if [[ "$status" == stopped ]]; then
-  # The sandbox is kept, so this lane can still be relaunched into the session
-  # an answer would reach. Its ask is owed a reply before the record closes,
-  # and before a park takes the mailbox out of reach.
-  refuse_unanswered_ask
+  # Only an open item still needs the session that can answer its ask.
+  tracker_rc=1
+  if [[ "$KEEP_SANDBOX" == false && "$PARK" == false ]]; then
+    tracker_rc=0
+    [[ -n "$ITEM_END" ]] || tracker_terminal || tracker_rc=$?
+  fi
+  [[ "$tracker_rc" -eq 0 ]] || refuse_unanswered_ask
   if [[ "$PARK" == true ]]; then
     park_judge
     park_sandbox

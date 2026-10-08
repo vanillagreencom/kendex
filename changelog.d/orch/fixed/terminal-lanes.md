@@ -1,0 +1,1 @@
+- Close parked and stopped lanes when their tracker item is Done or Canceled. Report a sandbox close refusal once per lane record and tracker state.

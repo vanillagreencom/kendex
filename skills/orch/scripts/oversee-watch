@@ -262,6 +262,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<reset key>
 #   model-capacity<TAB><lane><TAB><pane key>|<turn identity>|model-capacity
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
+#   terminal-close<TAB><item><TAB><terminal state>|<lane record JSON>
 #   lane-idle<TAB><lane><TAB><pane key>|<copilot note>|<screen cksum>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
@@ -1070,10 +1071,12 @@ item_state_dir() { # ITEM
 # background, for tick_sleep's reason, and again after a TERM returns the wait
 # early. pass_stop spares its tree, read from CLOSE_PID_FILE.
 CLOSE_TERMED=""
-close_hosted_lane() { # ITEM
+CLOSE_RESULT=failed
+close_hosted_lane() { # ITEM [--if-terminal]
   local out line path="" rc=0 close_pid
+  CLOSE_RESULT=failed
   trap 'CLOSE_TERMED=1' TERM
-  "$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" > "$WORK_DIR/lane-close.out" 2>&1 &
+  "$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$@" > "$WORK_DIR/lane-close.out" 2>&1 &
   close_pid=$!
   printf '%s\n' "$close_pid" > "$CLOSE_PID_FILE"
   while :; do
@@ -1086,6 +1089,7 @@ close_hosted_lane() { # ITEM
   out="$(cat -- "$WORK_DIR/lane-close.out")"
   case "$rc" in
     0)
+      CLOSE_RESULT=closed
       echo "EVENT lane-closed $1"
       # A host that no longer held the item ran no archive pass, so lane-close
       # gives no archive verdict and its closed=absent line stands in its place.
@@ -1095,6 +1099,7 @@ close_hosted_lane() { # ITEM
         echo "kept=none"
       fi ;;
     3)
+      CLOSE_RESULT=refused
       # The provider's close-refused line names the refused checkout.
       while IFS= read -r line; do
         [[ "$line" == *"close-refused path="* ]] || continue
@@ -1104,11 +1109,68 @@ close_hosted_lane() { # ITEM
       echo "EVENT lane-close-refused $1"
       printf 'path=%s\n' "${path:-unknown}"
       [[ -z "$out" ]] || printf '%s\n' "$out" >&2 ;;
+    4)
+      # A provider can also return 4. Only the close verb's own keyed line
+      # says the item reopened after the probe.
+      if [[ "${2:-}" == --if-terminal ]] && grep -qxF "lane-close: item-open item=$1" <<<"$out"; then
+        CLOSE_RESULT=open
+        return 0
+      fi
+      ow_message lane-close-failed "item=$1" "exit=$rc" >&2
+      [[ -z "$out" ]] || printf '%s\n' "$out" >&2
+      return 1 ;;
     *)
       ow_message lane-close-failed "item=$1" "exit=$rc" >&2
       [[ -z "$out" ]] || printf '%s\n' "$out" >&2
       return 1 ;;
   esac
+}
+
+# Stopped and parked records have no pane or mailbox to watch. Read the close
+# verb's terminal judge on every fleet pass, and keep only provider refusals:
+# user-owned changes need an overseer's action, not another provider call.
+check_terminal_lanes() {
+  [[ -n "$STATE_FILE" ]] || return 0
+  local records record item terminal key prior rc rows="${PW_SEEN[0]}" refreshed=false
+  local items=()
+  records="$(jq -cS '(.lanes // [])[] | objects | select(.status == "parked" or .status == "stopped")' <<<"$FLEET_STATE")" \
+    || die state-invalid "" "path=$STATE_FILE"
+  while IFS= read -r record; do
+    [[ -n "$record" ]] || continue
+    item="$(jq -er '.item | strings | select(length > 0)' <<<"$record")" \
+      || die state-invalid "" "path=$STATE_FILE" "field=item"
+    items+=("$item")
+    rc=0
+    terminal="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" --terminal-state "$item" 2>"$WORK_DIR/terminal.err")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      ow_message lane-close-failed "item=$item" "exit=$rc" >&2
+      cat -- "$WORK_DIR/terminal.err" >&2
+      PASS_FAILED=1
+      continue
+    fi
+    case "$terminal" in
+      open) rows="$(lane_row_clear terminal-close "$rows" "$item")"; continue ;;
+      completed|canceled) ;;
+      *) die state-invalid "$terminal" "item=$item" "field=terminal-state" ;;
+    esac
+    key="$terminal|$record"
+    prior="$(lane_row_get terminal-close "$rows" "$item")" \
+      || die state-read-failed "" "item=$item" "row=terminal-close"
+    [[ "$prior" != "$key" ]] || continue
+    if close_hosted_lane "$item" --if-terminal; then
+      if [[ "$CLOSE_RESULT" == refused ]]; then rows="$(lane_row_set terminal-close "$rows" "$item" "$key")"; fi
+      # A close may have rewritten the fleet. Read it before pane and merge
+      # checks, so they cannot report a closed record as still parked.
+      if [[ "$CLOSE_RESULT" != open ]]; then refreshed=true; PASS_EVENT=1; fi
+    else
+      PASS_FAILED=1
+    fi
+    lane_row_commit "$rows"
+    [[ -z "$CLOSE_TERMED" ]] || exit 143
+  done <<<"$records"
+  rows="$(lane_row_prune terminal-close "$rows" ${items[@]+"${items[@]}"})"
+  lane_row_commit "$rows"
+  [[ "$refreshed" == false ]] || fleet_merge quiet
 }
 
 command -v gh >/dev/null 2>&1 || die command-missing "" "command=gh"
@@ -3964,6 +4026,7 @@ long_pass() {
   # overseer exited or walled. A later live pass or the successor receives
   # that work.
   if check_overseer; then
+    check_terminal_lanes
     observe_lanes
     check_pr_watch
     check_merged

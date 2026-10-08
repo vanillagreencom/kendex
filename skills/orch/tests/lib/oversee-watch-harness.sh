@@ -651,6 +651,7 @@ EOF
 cat > "$TMP_ROOT/bin/lane-close-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
+if [[ " $* " == *" --terminal-state "* ]]; then printf 'open\n'; exit 0; fi
 printf '%s\n' "$*" >> "$STUB_DIR/lane-close.args"
 if [[ "${1:-}" == --state-dir ]]; then shift 2; fi
 item="$1"
