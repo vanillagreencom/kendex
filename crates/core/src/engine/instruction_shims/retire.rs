@@ -1,10 +1,7 @@
-//! Taking obsolete Claude shims back from every project, and Gemini's
-//! shim from a project that no longer installs to Gemini. What proves a
-//! shim is kendex's is a record that an earlier pass
-//! kept it, and what the position holds: the exact bytes, or the exact
-//! value the shim's edit wrote. Either alone is something a person writes
-//! by hand, and stays. The record of a whole-file shim is the inventory on
-//! disk listing its position; a keyed one's is the install record
+//! Taking Gemini's shim from a project that no longer installs to Gemini.
+//! What proves a shim is kendex's is a record that an earlier pass kept it,
+//! and the exact value the shim's edit wrote. Either alone is something a
+//! person writes by hand, and stays. Its record is the install record
 //! ([`crate::lock::Lock::shims`]), which a project with no `.git` of its
 //! own has too, seeded by the inventory where it lacks the shim
 //! ([`super::recorded_shims`]). Only a project with its own `.git` has an
@@ -12,26 +9,20 @@
 //! an apply with its harness still listed.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use super::observe::{
-    agents_files, gemini_retirement, relative_name, uncomparable, under_dot_directory,
-};
-use super::{
-    AGENTS_FILE, CLAUDE_SHIM, CLAUDE_SHIM_FILE, GEMINI_KEY, keyed_position, recorded_shims,
-};
-use crate::apply::{Description, PlannedOp};
+use super::observe::{gemini_retirement, relative_name, uncomparable};
+use super::{AGENTS_FILE, GEMINI_KEY, keyed_position, recorded_shims};
 use crate::engine::config_edits::ConfigEditPlan;
 use crate::engine::generated_paths::{INVENTORY, inventory_paths};
-use crate::engine::removal::trash;
 use crate::engine::{DriftRow, DriftState};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::KeyedShim;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Plan the retirement of every Claude shim and a Gemini shim whose
-/// harness `harnesses` no longer names, with a row for each: orphaned where it goes, a conflict where
+/// Plan the retirement of a Gemini shim whose harness `harnesses` no longer
+/// names, with a row for each: orphaned where it goes, a conflict where
 /// the file it sits in cannot be read. `shims` is the keyed shims the
 /// record holds, and loses each one this pass settles; one whose file
 /// refused the retirement stays, or joins it where only the inventory
@@ -41,18 +32,17 @@ pub(super) fn retire(
     scope: &Scope,
     harnesses: &[HarnessId],
     shims: &mut BTreeSet<KeyedShim>,
-    ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
-) -> Result<(Vec<DriftRow>, BTreeSet<PathBuf>)> {
+) -> Result<Vec<DriftRow>> {
     let Scope::Project { root } = scope else {
-        return Ok((Vec::new(), BTreeSet::new()));
+        return Ok(Vec::new());
     };
     // An inventory that will not parse lists nothing; the attestation
     // reports it.
     let listed = crate::fs::read_if_exists(&root.join(INVENTORY))?
         .and_then(|text| inventory_paths(text.as_bytes()).ok())
         .unwrap_or_default();
-    let (mut drift, retained) = claude(scope, root, &listed, ops)?;
+    let mut drift = Vec::new();
     let shim = KeyedShim::GeminiContextFile;
     let path = keyed_position(env, scope, shim);
     let recorded = recorded_shims(env, scope, root, shims, || Ok(listed.clone()))?.contains(&shim);
@@ -71,7 +61,7 @@ pub(super) fn retire(
             }
         }
     }
-    Ok((drift, retained))
+    Ok(drift)
 }
 
 /// What one keyed shim's retirement comes to.
@@ -84,78 +74,6 @@ enum Retirement {
     /// The file would not read or parse, so it is left as it is, with the
     /// conflict row.
     Refused(DriftRow),
-}
-
-/// Each `CLAUDE.md` beside a tracked `AGENTS.md` that holds exactly the
-/// shim and that the inventory on disk lists, so an earlier pass wrote it.
-/// The bytes alone are not proof: one import line is also what a person
-/// writes by hand to point Claude Code at their `AGENTS.md`.
-fn claude(
-    scope: &Scope,
-    root: &Path,
-    listed: &BTreeSet<String>,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<(Vec<DriftRow>, BTreeSet<PathBuf>)> {
-    let mut drift = Vec::new();
-    let mut retained = BTreeSet::new();
-    let discovered: BTreeSet<_> = agents_files(root)?
-        .into_iter()
-        .map(|agents| agents.parent().unwrap_or(root).join(CLAUDE_SHIM_FILE))
-        .collect();
-    for name in listed {
-        let relative = Path::new(name);
-        if relative.is_absolute()
-            || relative.file_name() != Some(std::ffi::OsStr::new(CLAUDE_SHIM_FILE))
-            || under_dot_directory(relative)
-        {
-            continue;
-        }
-        let path = root.join(relative);
-        if path.is_symlink() {
-            continue;
-        }
-        match std::fs::read(&path) {
-            Ok(bytes) if bytes == CLAUDE_SHIM.as_bytes() => {}
-            Ok(_) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                retained.insert(path.clone());
-                if discovered.contains(&path) {
-                    drift.push(row(
-                        scope,
-                        name.clone(),
-                        HarnessId::Claude,
-                        DriftState::Conflict,
-                        uncomparable(name, &crate::error::CoreError::io(&path, error)),
-                    ));
-                }
-                continue;
-            }
-        }
-        // Removing a tracked AGENTS.md must not erase the proof a later
-        // restored file needs. Inventory evidence alone authorizes no trash.
-        if !discovered.contains(&path) {
-            retained.insert(path);
-            continue;
-        }
-        ops.push(trash(
-            Description::around(
-                "Move the Claude Code shim ",
-                " to the trash; Claude Code reads AGENTS.md itself",
-            ),
-            path,
-        )?);
-        drift.push(row(
-            scope,
-            name.clone(),
-            HarnessId::Claude,
-            DriftState::Orphaned,
-            format!(
-                "the {CLAUDE_SHIM_FILE} shim is retired because Claude Code reads {AGENTS_FILE} itself"
-            ),
-        ));
-    }
-    Ok((drift, retained))
 }
 
 /// The Gemini settings file at `path`, where the record says an earlier

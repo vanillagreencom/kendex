@@ -1,5 +1,5 @@
-//! Claude needs no generated instruction file. Apply retires recorded
-//! former shims and keeps personal files. Gemini still verifies its key.
+//! Claude needs no generated instruction file. Refresh leaves former
+//! shims with the consumer and drops their generated-path records. Gemini still verifies its key.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -100,59 +100,69 @@ fn apply_and_verify_need_no_claude_instruction_file() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn apply_retires_recorded_claude_files_and_keeps_personal_files() {
-    for (bytes, listed, linked, retired) in [
-        ("@AGENTS.md\n", true, false, true),
-        ("@AGENTS.md\n# mine\n", true, false, false),
-        ("@AGENTS.md\n", true, true, false),
-        ("@AGENTS.md\n", false, false, false),
+fn refresh_keeps_consumer_claude_files_and_drops_generated_records() {
+    for (bytes, listed, linked) in [
+        ("@AGENTS.md\n", true, false),
+        ("@AGENTS.md\n# mine\n", true, false),
+        ("@AGENTS.md\n", true, true),
+        ("@AGENTS.md\n", false, false),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = project(&tmp);
         let output = kendex(&home, &project, &["apply", "--yes"]);
         assert!(output.status.success(), "{}", said(&output));
-        let path = project.join("CLAUDE.md");
-        if linked {
-            fs::write(project.join("personal.md"), bytes).unwrap();
-            std::os::unix::fs::symlink("personal.md", &path).unwrap();
-        } else {
-            fs::write(&path, bytes).unwrap();
+        let nested = project.join("crates/core");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("AGENTS.md"), "# core\n").unwrap();
+        let paths = ["CLAUDE.md", "crates/core/CLAUDE.md"];
+        for name in paths {
+            let path = project.join(name);
+            if linked {
+                fs::write(path.with_file_name("personal.md"), bytes).unwrap();
+                std::os::unix::fs::symlink("personal.md", &path).unwrap();
+            } else {
+                fs::write(&path, bytes).unwrap();
+            }
         }
         if listed {
-            let inventory = project.join(".kendex-generated.json");
-            fs::write(inventory, "[\"CLAUDE.md\"]\n").unwrap();
+            fs::write(
+                project.join(".kendex-generated.json"),
+                serde_json::to_string(&paths).unwrap(),
+            )
+            .unwrap();
         }
-        if retired {
-            git(&project, &["rm", "--", "AGENTS.md"]);
-            let output = kendex(&home, &project, &["apply", "--yes"]);
-            assert!(output.status.success(), "{}", said(&output));
-            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-q", "-m", "consumer imports"]);
+
+        let output = kendex(
+            &home,
+            &project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        );
+        assert!(output.status.success(), "{}", said(&output));
+        if listed {
             let inventory: Vec<String> = serde_json::from_str(
                 &fs::read_to_string(project.join(".kendex-generated.json")).unwrap(),
             )
             .unwrap();
-            assert!(inventory.iter().any(|entry| entry == "CLAUDE.md"));
-            git(
-                &project,
-                &["restore", "--staged", "--worktree", "--", "AGENTS.md"],
-            );
+            for name in paths {
+                assert!(!inventory.iter().any(|entry| entry == name));
+            }
+        } else {
+            assert!(!project.join(".kendex-generated.json").exists());
         }
-        let output = kendex(&home, &project, &["apply", "--yes", "--replace-unmanaged"]);
-        assert!(output.status.success(), "{}", said(&output));
-        assert_eq!(path.exists(), !retired);
-        if !retired {
+        for name in paths {
+            let path = project.join(name);
             assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
             assert_eq!(path.is_symlink(), linked);
-            assert!(!said(&output).contains("CLAUDE.md"));
         }
         for args in [
-            vec!["apply", "--plan"],
+            vec!["apply", "--plan", "--replace-unmanaged"],
             vec!["verify", "--scope", "project"],
         ] {
             let output = kendex(&home, &project, &args);
             assert!(output.status.success(), "{}", said(&output));
-            assert!(!said(&output).contains("CLAUDE.md"));
         }
     }
 }

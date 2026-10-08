@@ -1,0 +1,1 @@
+- Refresh keeps existing root and nested `CLAUDE.md` imports when it drops their generated-path records, so Claude Code sessions that need the imports can still read the project's instructions.

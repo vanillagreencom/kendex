@@ -58,7 +58,7 @@ Copilot CLI runs each command in those `hooks` beside its own hooks, so a hook i
 
 ## Instruction shim
 
-kendex writes no `CLAUDE.md`. It retires its recorded former shims under the [shared rule](README.md#instruction-shims), and retires the old `.claude/CLAUDE.md` link to the root `AGENTS.md` independently of the root instruction file (`crates/core/src/engine/instruction_shims.rs`).
+kendex writes no `CLAUDE.md`. It leaves former shims with the project under the [shared rule](README.md#instruction-shims), and retires the old `.claude/CLAUDE.md` link to the root `AGENTS.md` independently of the root instruction file (`crates/core/src/engine/instruction_shims.rs`).
 
 [Claude Code reads `AGENTS.md` natively](https://code.claude.com/docs/en/memory#agents-md) from v2.1.277. Bedrock and telemetry-off sessions need v2.1.281. By default, a `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the working directory or above prevents native loading. A nested `AGENTS.md` loads when Claude reads a file there, unless that directory has one of those Claude files. Files under `.agents/` do not load.
 

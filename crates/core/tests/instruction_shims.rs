@@ -1,5 +1,5 @@
-//! Claude reads AGENTS.md natively. Its recorded former shims retire,
-//! while personal files stay untouched. Gemini keeps its settings shim.
+//! Claude reads AGENTS.md natively. Its former shims stay with consumers
+//! without generated-path records. Gemini keeps its settings shim.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -170,149 +170,69 @@ fn record_claude_shims(f: &Fixture, paths: &[&str]) {
     .unwrap();
 }
 
-#[allow(clippy::unwrap_used)]
-fn remove_and_restore_agents(f: &Fixture, paths: &[&str]) {
-    run_git(
-        &f.project,
-        &["rm", "--", "AGENTS.md", "crates/core/AGENTS.md"],
-    );
-    let unresolved = apply_now(f);
-    assert!(touched(f, &unresolved).is_empty());
-    assert!(unresolved.drift.is_empty());
-    for path in paths {
-        let position = f.project.join(path);
-        assert_eq!(shim_bytes(&position), CLAUDE_SHIM);
-        assert!(
-            unresolved
-                .generated
-                .inventory(&f.project)
-                .contains(&position)
-        );
-        assert!(!unresolved.generated.owned(&f.project).contains(&position));
-    }
-    assert!(plan(f).plan.is_empty());
-    assert_eq!(
-        shim_bytes(&f.project.join(".hidden/CLAUDE.md")),
-        CLAUDE_SHIM
-    );
-    assert_eq!(
-        shim_bytes(&f.project.join("untracked/CLAUDE.md")),
-        CLAUDE_SHIM
-    );
-    assert!(
-        unresolved
-            .generated
-            .inventory(&f.project)
-            .contains(&f.project.join("untracked/CLAUDE.md"))
-    );
-    for path in [".hidden/CLAUDE.md", "absent/CLAUDE.md"] {
-        assert!(
-            !unresolved
-                .generated
-                .inventory(&f.project)
-                .contains(&f.project.join(path))
-        );
-    }
-    run_git(
-        &f.project,
-        &[
-            "restore",
-            "--staged",
-            "--worktree",
-            "--",
-            "AGENTS.md",
-            "crates/core/AGENTS.md",
-        ],
-    );
-}
-
 #[test]
 #[allow(clippy::unwrap_used)]
-fn recorded_claude_shims_retire_with_claude_still_declared() {
-    for harnesses in ["\"claude\"", "\"codex\""] {
+fn recorded_claude_shims_stay_with_the_consumer_without_generated_records() {
+    for (harnesses, remove_agents) in [
+        ("\"claude\"", false),
+        ("\"codex\"", false),
+        ("\"claude\"", true),
+    ] {
         let f = fixture(harnesses, true);
         let nested = f.project.join("crates/core");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("AGENTS.md"), "# core\n").unwrap();
         let paths = ["CLAUDE.md", "crates/core/CLAUDE.md"];
         for path in paths {
-            fs::write(f.project.join(path), CLAUDE_SHIM).unwrap();
+            fs::write(f.project.join(path), "@AGENTS.md\n").unwrap();
         }
-        fs::create_dir_all(f.project.join(".hidden")).unwrap();
-        fs::write(f.project.join(".hidden/AGENTS.md"), "# payload\n").unwrap();
-        fs::write(f.project.join(".hidden/CLAUDE.md"), CLAUDE_SHIM).unwrap();
+        record_claude_shims(&f, &paths);
         commit(&f.project);
-        fs::create_dir_all(f.project.join("untracked")).unwrap();
-        fs::write(f.project.join("untracked/AGENTS.md"), "# untracked\n").unwrap();
-        fs::write(f.project.join("untracked/CLAUDE.md"), CLAUDE_SHIM).unwrap();
-        record_claude_shims(
-            &f,
-            &[
-                paths[0],
-                paths[1],
-                ".hidden/CLAUDE.md",
-                "untracked/CLAUDE.md",
-                "absent/CLAUDE.md",
-            ],
-        );
-
-        remove_and_restore_agents(&f, &paths);
-
-        let report = plan(&f);
-        let trashed: Vec<_> = report
-            .plan
-            .ops
-            .iter()
-            .filter_map(|planned| {
-                if let Op::Trash { path, .. } = &planned.op {
-                    Some(path.strip_prefix(&f.project).unwrap().to_str().unwrap())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert_eq!(trashed, paths);
-        let rows: Vec<_> = report
-            .drift
-            .iter()
-            .filter(|row| row.harness == HarnessId::Claude)
-            .map(|row| (row.name.as_str(), row.state))
-            .collect();
-        assert_eq!(
-            rows,
-            [
-                (paths[0], DriftState::Orphaned),
-                (paths[1], DriftState::Orphaned)
-            ]
-        );
-        apply::execute(&f.env, &report.plan).unwrap();
-        for path in paths {
-            assert!(!f.project.join(path).exists());
+        if remove_agents {
+            run_git(
+                &f.project,
+                &["rm", "--", "AGENTS.md", "crates/core/AGENTS.md"],
+            );
         }
-        assert_eq!(
-            shim_bytes(&f.project.join(".hidden/CLAUDE.md")),
-            CLAUDE_SHIM
-        );
-        assert_eq!(
-            shim_bytes(&f.project.join("untracked/CLAUDE.md")),
-            CLAUDE_SHIM
-        );
-        let trash = kendex_core::trash::list(&f.env).unwrap();
-        let bytes: Vec<_> = trash
-            .iter()
-            .map(|entry| shim_bytes(&f.env.trash_dir().join(&entry.name)))
-            .collect();
-        assert_eq!(bytes, [CLAUDE_SHIM, CLAUDE_SHIM]);
-        let again = plan(&f);
-        assert!(again.plan.is_empty());
-        assert!(again.drift.is_empty());
-        assert!(again.instruction_shims.is_empty());
+
+        let report = apply_now(&f);
+        assert!(touched(&f, &report).is_empty());
+        assert!(report.drift.is_empty());
+        assert!(report.instruction_shims.is_empty());
+        let inventory = report.generated.inventory(&f.project);
+        let recorded: Vec<String> =
+            serde_json::from_str(&shim_bytes(&f.project.join(".kendex-generated.json"))).unwrap();
+        for path in paths {
+            let position = f.project.join(path);
+            assert_eq!(shim_bytes(&position), "@AGENTS.md\n");
+            assert!(!inventory.contains(&position));
+            assert!(!report.generated.owned(&f.project).contains(&position));
+            assert!(!recorded.iter().any(|entry| entry == path));
+        }
+        assert!(kendex_core::trash::list(&f.env).unwrap().is_empty());
+        if remove_agents {
+            run_git(
+                &f.project,
+                &[
+                    "restore",
+                    "--staged",
+                    "--worktree",
+                    "--",
+                    "AGENTS.md",
+                    "crates/core/AGENTS.md",
+                ],
+            );
+        }
+        assert!(plan(&f).plan.is_empty());
+        for path in paths {
+            assert_eq!(shim_bytes(&f.project.join(path)), "@AGENTS.md\n");
+        }
     }
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_recorded_claude_read_error_keeps_proof_until_repaired() {
+fn a_former_claude_shim_position_is_not_read_or_removed() {
     let f = fixture("\"claude\"", true);
     let path = f.project.join("CLAUDE.md");
     record_claude_shims(&f, &["CLAUDE.md"]);
@@ -321,21 +241,16 @@ fn a_recorded_claude_read_error_keeps_proof_until_repaired() {
     fs::create_dir(&path).unwrap();
     let report = apply_now(&f);
     assert!(touched(&f, &report).is_empty());
-    assert!(report.drift.iter().any(|row| row.name == "CLAUDE.md"
-        && row.harness == HarnessId::Claude
-        && row.state == DriftState::Conflict));
-    assert!(report.generated.inventory(&f.project).contains(&path));
+    assert!(report.drift.is_empty());
+    assert!(!report.generated.inventory(&f.project).contains(&path));
     assert!(!report.generated.owned(&f.project).contains(&path));
     assert!(path.is_dir());
     assert!(plan(&f).plan.is_empty());
 
     fs::remove_dir(&path).unwrap();
-    fs::write(&path, CLAUDE_SHIM).unwrap();
-    let report = apply_now(&f);
-    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
-    assert!(!path.exists());
-    assert!(!report.generated.inventory(&f.project).contains(&path));
+    fs::write(&path, "@AGENTS.md\n").unwrap();
     assert!(plan(&f).plan.is_empty());
+    assert_eq!(shim_bytes(&path), "@AGENTS.md\n");
 }
 
 #[test]

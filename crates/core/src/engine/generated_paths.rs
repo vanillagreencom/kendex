@@ -81,8 +81,7 @@ pub struct GeneratedPaths {
     /// the project. Commit and restore can only change the named section.
     pub regions: BTreeSet<crate::commit_offer::OwnedRegion>,
     /// The positions of items this pass refused to write — a `Conflict` or
-    /// `Unmanaged` row — as the other two groups would have carried them,
-    /// and recorded Claude shim positions whose retirement is unresolved.
+    /// `Unmanaged` row — as the other two groups would have carried them.
     pub held: BTreeSet<PathBuf>,
     /// Adoption copies checked against declared package templates. Refresh
     /// records their provenance but does not write or restore their YAML.
@@ -399,7 +398,6 @@ pub(super) fn plan(
     scope: &Scope,
     state: &DesiredState,
     shims: &[ShimStanding],
-    retained_shims: &BTreeSet<PathBuf>,
     drift: &[super::DriftRow],
     unrendered: &Unrendered,
     ops: &mut Vec<PlannedOp>,
@@ -430,7 +428,6 @@ pub(super) fn plan(
         });
         kept.list(root, &committed, &mut generated);
     }
-    generated.held.extend(retained_shims.iter().cloned());
     let path = root.join(INVENTORY);
     // A project that renders nothing gets no inventory, and one that
     // already has one keeps it current even when it empties out.

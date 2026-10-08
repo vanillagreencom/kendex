@@ -5,9 +5,9 @@
 //! so the project's Gemini settings name `AGENTS.md` beside its default.
 //! The install record keeps this key ([`crate::lock::Lock::shims`]).
 //!
-//! Claude Code reads `AGENTS.md` natively. Its former whole-file shims are
-//! retired only where exact bytes and the inventory prove kendex wrote
-//! them (`retire`). The old `.claude/CLAUDE.md` link to the root instruction
+//! Claude Code reads `AGENTS.md` natively. Its former whole-file shims stay
+//! with the project for sessions that still need imports, without a generated
+//! path record. The old `.claude/CLAUDE.md` link to the root instruction
 //! file is also retired. Every other Claude instruction file is the person's.
 
 use std::collections::BTreeSet;
@@ -30,9 +30,6 @@ pub const CLAUDE_SHIM: &str = "@AGENTS.md\n";
 
 /// The instruction file every shim points at.
 pub const AGENTS_FILE: &str = "AGENTS.md";
-
-/// The Claude Code shim's name, beside every `AGENTS.md`.
-pub const CLAUDE_SHIM_FILE: &str = "CLAUDE.md";
 
 /// Where the retired convention put its link to the root `AGENTS.md`.
 const OLD_LINK: &str = ".claude/CLAUDE.md";
@@ -67,11 +64,6 @@ pub struct ShimStanding {
     pub name: String,
     pub harness: HarnessId,
     pub state: ShimState,
-}
-
-pub(super) struct PlannedShims {
-    pub standings: Vec<ShimStanding>,
-    pub retained: BTreeSet<PathBuf>,
 }
 
 impl ShimStanding {
@@ -217,8 +209,8 @@ pub(crate) fn recorded_shims(
     Ok(shims)
 }
 
-/// Plan Gemini's settings edit and the retirement of obsolete Claude
-/// shims and links. Gemini's shim retires when its harness leaves the list.
+/// Plan Gemini's settings edit and the retirement of the old Claude link.
+/// Gemini's shim retires when its harness leaves the list.
 ///
 /// `shims`, the keyed shims the record holds, loses each one this pass
 /// takes back and gains each one the plan keeps. A key already naming
@@ -236,9 +228,9 @@ pub(super) fn plan_instruction_shims(
     shims: &mut BTreeSet<KeyedShim>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut super::config_edits::ConfigEditPlan,
-) -> Result<(PlannedShims, Vec<DriftRow>)> {
+) -> Result<(Vec<ShimStanding>, Vec<DriftRow>)> {
     let standings = observe(env, scope, harnesses)?;
-    let (mut drift, retained) = retire::retire(env, scope, harnesses, shims, ops, config_edits)?;
+    let mut drift = retire::retire(env, scope, harnesses, shims, config_edits)?;
     shims.extend(
         standings
             .iter()
@@ -272,13 +264,7 @@ pub(super) fn plan_instruction_shims(
             }
         }
     }
-    Ok((
-        PlannedShims {
-            standings,
-            retained,
-        },
-        drift,
-    ))
+    Ok((standings, drift))
 }
 
 fn gemini_label() -> String {
