@@ -62,6 +62,12 @@ command_rows() {
 2|pre-commit-check: bypass=-nm"$TEXT"|git commit -nm"$TEXT"
 2|pre-commit-check: bypass=-n|git commit --author="$AUTHOR" -n -m x
 0|pre-commit-check: command=unresolved|git commit "-n$OPTION" -m x
+0|pre-commit-check: command=unresolved|git commit "-$OPTION"nm -m x
+0|pre-commit-check: command=unresolved|git commit "-${OPTION}nm" -m x
+0|pre-commit-check: command=unresolved|git commit "-$OPTION"'nm' -m x
+0|pre-commit-check: command=unresolved|git commit "-$OPTION"\n\m -m x
+0|pre-commit-check: command=unresolved|git commit --no-verify"$SUFFIX" -m x
+0|pre-commit-check: command=unresolved|git commit --"$SUFFIX" -n -m x
 2|pre-commit-check: bypass=-n|git commit --message="$TEXT" -n
 2|pre-commit-check: bypass=-n|git commit -m "$(cat message)" -n
 2|pre-commit-check: bypass=-n|git commit -m "`cat message`" -n
@@ -108,11 +114,23 @@ command_rows() {
 2|pre-commit-check: bypass=--config-env=core.hooksPath=HP|git --config-env=core.hooksPath=HP commit -m x
 2|pre-commit-check: bypass=GIT_CONFIG_KEY_0=Core.HooksPath|GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x
 2|pre-commit-check: bypass=core.hooksPath|git config --local core.hooksPath /dev/null; git commit -m x
+0|pre-commit-check: command=unresolved|GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="core.hooksPath$SUFFIX" GIT_CONFIG_VALUE_0=/dev/null git commit -m x
+0|pre-commit-check: command=unresolved|GIT_CONFIG_COUNT="1$SUFFIX" GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x
+0|pre-commit-check: command=unresolved|GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$HOOKS" git commit -m x
+0|pre-commit-check: command=unresolved|git -c "core.hooksPath$SUFFIX=/dev/null" commit -m x
+0|pre-commit-check: command=unresolved|git -c "core.hooksPath=$HOOKS" commit -m x
+0|pre-commit-check: command=unresolved|git -c "user.name=$NAME" commit -n -m x
+0|pre-commit-check: command=unresolved|git --config-env "core.hooksPath$SUFFIX=HP" commit -m x
+0|pre-commit-check: command=unresolved|git -ccore.hooksPath"$SUFFIX"=/dev/null commit -m x
+0|pre-commit-check: command=unresolved|git --config-env=core.hooksPath"$SUFFIX"=HP commit -m x
+0|pre-commit-check: command=unresolved|git config --local "core.hooksPath$SUFFIX" /dev/null; git commit -m x
+0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -m x
 0|-|git commit -m x; git config --local core.hooksPath /dev/null
 2|pre-commit-check: bypass=-n|git commit -m "$TEXT" -n
 0|-|cat <<EOF\ngit commit -n\nEOF
 0|pre-commit-check: command=unresolved|git commit -m $(cat message) -n
 0|pre-commit-check: command=unresolved|git commit -m $TEXT -n
+0|pre-commit-check: command=unresolved|git commit -m $TEXT"$MORE" -n
 0|pre-commit-check: command=unresolved|git commit -m "$@" -n
 0|pre-commit-check: command=unresolved|git commit -m "$(cat message" -n
 0|pre-commit-check: command=unresolved|git commit -m x *
@@ -228,6 +246,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     'git commit -n -m test'
   skill_load_control no-hook-override "$HOOK" 'CALL_COMMIT=1; CALL_BYPASS=$env_config' 'CALL_BYPASS=""' HOOK command_rows \
     'git -c core.hooksPath=/dev/null commit -m x'
+  skill_load_control unknown-is-literal "$HOOK" 'tokenize || TOKEN_ERROR=1' 'for ((index=0; index<${#KINDS[@]}; index++)); do [ "${KINDS[$index]}" != value ] || KINDS[$index]=word; done' HOOK command_rows \
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="core.hooksPath$SUFFIX" GIT_CONFIG_VALUE_0=/dev/null git commit -m x'
+  skill_load_control unknown-prefix "$HOOK" '      if [ "$char" = '\''"'\'' ]; then quote=""; elif [ "$kind" = word ]; then word="$word$char"; fi' \
+    '[ "$kind" != value ] || [ "$char" = '\''"'\'' ] || word="$word$char"' HOOK command_rows \
+    'git commit "-${OPTION}nm" -m x'
   skill_load_control message-is-option "$HOOK" '      --message | --file | --reuse-message | --reedit-message | --template | --author | --date | --cleanup | --fixup | --squash | --trailer | --pathspec-from-file)' 'i=$((i - 1))' HOOK command_rows \
     "git commit --message $NV"
   skill_load_control ordinary-notice "$HOOK" 'TOKEN_ERROR=""' 'message command unresolved' HOOK command_rows \

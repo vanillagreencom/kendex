@@ -116,7 +116,7 @@ quoted_expansion() {
       else
         case "${COMMAND:$i:1}" in '@' | '*' | '{') return 1 ;; esac
       fi
-      raw="$raw${COMMAND:$start:$((i - start))}"; kind=value; return 0 ;;
+      raw="$raw${COMMAND:$start:$((i - start))}"; [ "$kind" = expanded ] || kind=value; return 0 ;;
     '`'*) inner='`'; depth=0 ;;
   esac
   while [ "$i" -lt "${#COMMAND}" ]; do
@@ -164,12 +164,14 @@ quoted_expansion() {
     esac
   done
   [ -n "$closed" ] || return 1
-  raw="$raw${COMMAND:$start:$((i - start))}"; kind=value
+  raw="$raw${COMMAND:$start:$((i - start))}"; [ "$kind" = expanded ] || kind=value
 }
 
 # Keep words and operators distinct, including an empty quoted argument. No
 # eval, glob expansion or shell launch may turn payload data into code. Bash
 # unquoted expansion and unresolved substitutions need context this hook does not own.
+# An unknown argument keeps only its proven prefix. Later literal text cannot
+# establish an option name or a short flag before an unknown value boundary.
 tokenize() {
   local i=0 char next quote="" word="" active="" raw="" kind=word
   TOKENS=(); KINDS=(); RAW=()
@@ -178,17 +180,17 @@ tokenize() {
     i=$((i + 1))
     if [ "$quote" = "'" ]; then
       raw="$raw$char"
-      if [ "$char" = "'" ]; then quote=""; else word="$word$char"; fi
+      if [ "$char" = "'" ]; then quote=""; elif [ "$kind" = word ]; then word="$word$char"; fi
       continue
     fi
     if [ "$char" = '\' ]; then
       [ "$i" -lt "${#COMMAND}" ] || return 1
       next=${COMMAND:$i:1}; i=$((i + 1))
       if [ "$quote" = '"' ]; then
-        case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) word="$word$char" ;; esac
+        case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) [ "$kind" != word ] || word="$word$char" ;; esac
       fi
       raw="$raw$char$next"
-      [ "$next" = $'\n' ] || { word="$word$next"; active=1; }
+      [ "$next" = $'\n' ] || { [ "$kind" != word ] || word="$word$next"; active=1; }
       continue
     fi
     case "$char" in
@@ -198,7 +200,7 @@ tokenize() {
         else
           case "$char${COMMAND:$i:1}" in
             '$(' | '`'*) quoted_expansion || return 1 ;;
-            *) word="$word$char"; raw="$raw$char" ;;
+            *) [ "$kind" != word ] || word="$word$char"; raw="$raw$char" ;;
           esac
           active=1; kind=expanded
         fi
@@ -206,7 +208,7 @@ tokenize() {
     esac
     if [ "$quote" = '"' ]; then
       raw="$raw$char"
-      if [ "$char" = '"' ]; then quote=""; else word="$word$char"; fi
+      if [ "$char" = '"' ]; then quote=""; elif [ "$kind" = word ]; then word="$word$char"; fi
       continue
     fi
     case "$char" in
@@ -214,7 +216,7 @@ tokenize() {
       '#')
         if [ -z "$active" ]; then
           while [ "$i" -lt "${#COMMAND}" ] && [ "${COMMAND:$i:1}" != $'\n' ]; do i=$((i + 1)); done
-        else word="$word$char"; raw="$raw$char"; fi ;;
+        else [ "$kind" != word ] || word="$word$char"; raw="$raw$char"; fi ;;
       ' ' | $'\t' | $'\r' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>')
         case "$word" in
           '' | *[!0-9]*) ;;
@@ -241,10 +243,10 @@ tokenize() {
         # word can change argument count, including which option owns a value.
         case "$char" in
           '{' | '}') [ -z "$active" ] && [ "${COMMAND:$i:1}" = ' ' ] || return 1 ;;
-          *) word="$word$char"; raw="$raw$char"; active=1; kind=expanded; continue ;;
+          *) [ "$kind" != word ] || word="$word$char"; raw="$raw$char"; active=1; kind=expanded; continue ;;
         esac
         word=$char; raw=$char; active=1 ;;
-      *) word="$word$char"; raw="$raw$char"; active=1 ;;
+      *) [ "$kind" != word ] || word="$word$char"; raw="$raw$char"; active=1 ;;
     esac
   done
   [ -z "$quote" ] || return 1
@@ -258,12 +260,14 @@ tokenize() {
 # It never searches option values for a bypass spelling (git-commit and git manuals).
 read_call() {
   local i=0 word rest letter value config="" env_config="" verb="" flag=""
-  local env_count="" prefix_end candidate key_index value_word present word_kind owns_value
+  local env_count="" prefix_end candidate key_index value_word present word_kind owns_value uncertain="" value_kind
   CALL_COMMIT=""; CALL_BYPASS=""; CALL_CONFIG=""; CALL_UNRESOLVED=""
   while [ "$i" -lt "${#ARGS[@]}" ]; do
-    word=${ARGS[$i]}; i=$((i + 1))
+    word=${ARGS[$i]}; word_kind=${ARG_KINDS[$i]}; i=$((i + 1))
+    case "$word" in GIT_CONFIG_*) [ "$word_kind" = word ] || uncertain=1 ;; esac
     case "$word" in
-      GIT_CONFIG_COUNT=*) env_count=${word#*=} ;;
+      GIT_CONFIG_COUNT=*)
+        env_count=""; [ "$word_kind" != word ] || env_count=${word#*=} ;;
       [A-Za-z_]*=*) ;;
       '!' | '{' | '}' | if | then | else | elif | while | until | do | time | -p | command | env) ;;
       *) break ;;
@@ -278,6 +282,7 @@ read_call() {
       for ((candidate=0; candidate<prefix_end; candidate++)); do
         word=${ARGS[$candidate]}
         case "$word" in GIT_CONFIG_KEY_*=*) ;; *) continue ;; esac
+        [ "${ARG_KINDS[$candidate]}" = word ] || { uncertain=1; continue; }
         value=${word#*=}; key_index=${word%%=*}; key_index=${key_index#GIT_CONFIG_KEY_}
         case "$key_index" in '' | *[!0-9]*) continue ;; esac
         [ "$key_index" -lt "$env_count" ] 2>/dev/null || continue
@@ -285,7 +290,10 @@ read_call() {
           [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh])
             present=""
             for ((value_word=0; value_word<prefix_end; value_word++)); do
-              case "${ARGS[$value_word]}" in "GIT_CONFIG_VALUE_$key_index="*) present=1 ;; esac
+              case "${ARGS[$value_word]}" in
+                "GIT_CONFIG_VALUE_$key_index="*)
+                  if [ "${ARG_KINDS[$value_word]}" = word ]; then present=1; else uncertain=1; fi ;;
+              esac
             done
             [ -z "$present" ] || env_config=${ORIGINAL[$candidate]} ;;
         esac
@@ -293,11 +301,13 @@ read_call() {
   esac
   while [ "$i" -lt "${#ARGS[@]}" ]; do
     word=${ARGS[$i]}; i=$((i + 1))
-    [ "${ARG_KINDS[$((i - 1))]}" = word ] || return 0
+    word_kind=${ARG_KINDS[$((i - 1))]}
+    [ "$word_kind" = word ] || { uncertain=1; continue; }
     case "$word" in
       -c | --config-env)
         [ "$i" -lt "${#ARGS[@]}" ] || return 0
-        value=${ARGS[$i]}; config=${ORIGINAL[$i]}; i=$((i + 1)) ;;
+        value=${ARGS[$i]}; config=${ORIGINAL[$i]}; value_kind=${ARG_KINDS[$i]}; i=$((i + 1))
+        [ "$value_kind" = word ] || { uncertain=1; continue; } ;;
       -c?*) value=${word#-c}; config=${ORIGINAL[$((i - 1))]} ;;
       --config-env=*) value=${word#--config-env=}; config=${ORIGINAL[$((i - 1))]} ;;
       -C | --git-dir | --work-tree | --namespace | --super-prefix)
@@ -315,13 +325,16 @@ read_call() {
     # change the hooks used by a later commit in this command.
     while [ "$i" -lt "${#ARGS[@]}" ]; do
       word=${ARGS[$i]}; value=${ORIGINAL[$i]}; i=$((i + 1))
+      [ "${ARG_KINDS[$((i - 1))]}" = word ] || { CALL_UNRESOLVED=1; return 0; }
       case "$word" in
         --local | --global | --worktree | --system | --add | --replace-all | set) continue ;;
         -*) return 0 ;;
       esac
       case "$word" in
         [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh])
-          [ "$i" -ge "${#ARGS[@]}" ] || CALL_CONFIG=$value ;;
+          if [ "$i" -lt "${#ARGS[@]}" ]; then
+            if [ "${ARG_KINDS[$i]}" = word ]; then CALL_CONFIG=$value; else CALL_UNRESOLVED=1; fi
+          fi ;;
       esac
       return 0
     done
@@ -329,7 +342,7 @@ read_call() {
   fi
   [ "$verb" = commit ] || return 0
   CALL_COMMIT=1; CALL_BYPASS=$env_config
-  [ -z "$TOKEN_ERROR" ] || CALL_UNRESOLVED=1
+  [ -z "$TOKEN_ERROR$uncertain" ] || CALL_UNRESOLVED=1
   while [ "$i" -lt "${#ARGS[@]}" ]; do
     word=${ARGS[$i]}; value=${ORIGINAL[$i]}; i=$((i + 1))
     word_kind=${ARG_KINDS[$((i - 1))]}; owns_value=""
@@ -337,6 +350,7 @@ read_call() {
       value)
         case "$word" in
           --*=*) continue ;;
+          --*) CALL_UNRESOLVED=1; continue ;;
           -?*) ;;
           *) CALL_UNRESOLVED=1; continue ;;
         esac ;;
