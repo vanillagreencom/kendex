@@ -117,20 +117,20 @@ BATTERY="$(basename "$(dirname "$TEST_DIR")")"
 
 SELECT=()
 REJECT=()
-# Main run 37769037887 exhausted the macOS deadline. These watch suites
-# share a separate macOS leg; Linux retains the original oversee partition.
+# Main run 37769037887 and merge-group run 37792683384 exhausted the macOS
+# and Linux deadlines. These watch suites share a separate leg on both.
 if [ "${1-}" = --shard ]; then
   shard="${2-}"
   [ "$#" -eq 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
   WATCH=(=oversee_watch =oversee_watch_lifecycle =oversee_watch_terminal =oversee_watch_lanes =oversee_watch_overseer =oversee_watch_overseer_rows)
+  case "${RUNNER_OS:-Linux}" in
+    Linux|macOS) ;;
+    *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
+  esac
   case "$shard" in
     orch-oversee)
       set -- oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report'
-      case "${RUNNER_OS:-Linux}" in
-        Linux) ;;
-        macOS) for arg in "${WATCH[@]}"; do set -- "$@" "!$arg"; done ;;
-        *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
-      esac ;;
+      for arg in "${WATCH[@]}"; do set -- "$@" "!$arg"; done ;;
     orch-oversee-watch) set -- "${WATCH[@]}" ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac

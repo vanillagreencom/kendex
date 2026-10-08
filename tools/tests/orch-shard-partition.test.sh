@@ -191,7 +191,7 @@ selected() { # selected <filter>... ; the suite names that ran, sorted
 }
 status_of() { # status_of <filter>... ; the exit status, output discarded
   local rc=0
-  bash "$SANDBOX/run-all.sh" "$@" >/dev/null 2>&1 || rc=$?
+  RUNNER_OS="${PARTITION_RUNNER_OS:-Linux}" bash "$SANDBOX/run-all.sh" "$@" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 
@@ -289,11 +289,6 @@ one_shard() { # if text ; the shard it names when it names exactly one
 }
 
 for PARTITION_RUNNER_OS in Linux macOS; do
-if [[ "$PARTITION_RUNNER_OS" == Linux ]]; then
-  check "Linux retains the original oversee membership" \
-    "$(selected oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report')" \
-    "$(selected --shard orch-oversee)"
-fi
 filters="$(shard_filters "$WORKFLOW")"
 if [[ -z "$filters" ]]; then
   printf '  FAIL  no step in %s runs run-all.sh, so there is no partition to judge\n' \
@@ -339,19 +334,20 @@ fi
 done
 PARTITION_RUNNER_OS=Linux
 
-# A new oversee suite belongs to the complement on macOS, even when its
+# A new oversee suite belongs to the complement on both platforms, even when its
 # name extends one of the moved suites. The workflow produces both profiles.
 printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_watch_terminal_future.sh"
-PARTITION_RUNNER_OS=macOS
+for PARTITION_RUNNER_OS in Linux macOS; do
 for profile in orch-oversee orch-oversee-watch; do
   kept="$(selected --shard "$profile")"
   if [[ "$profile" == orch-oversee ]]; then
-    grep -qx oversee_watch_terminal_future <<< "$kept" && ok "new oversee suite enters the macOS complement" || bad "new oversee suite lost from macOS complement"
-    ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle leaves the macOS complement" || bad "lifecycle remains in macOS complement"
+    grep -qx oversee_watch_terminal_future <<< "$kept" && ok "new oversee suite enters the $PARTITION_RUNNER_OS complement" || bad "new oversee suite lost from $PARTITION_RUNNER_OS complement"
+    ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle leaves the $PARTITION_RUNNER_OS complement" || bad "lifecycle remains in $PARTITION_RUNNER_OS complement"
   else
-    grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle runs in the macOS watch leg" || bad "lifecycle lost from macOS watch leg"
-    ! grep -qx oversee_watch_terminal_future <<< "$kept" && ok "watch leg owns only the moved whole names" || bad "watch leg claims a new name extension"
+    grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle runs in the $PARTITION_RUNNER_OS watch leg" || bad "lifecycle lost from $PARTITION_RUNNER_OS watch leg"
+    ! grep -qx oversee_watch_terminal_future <<< "$kept" && ok "$PARTITION_RUNNER_OS watch leg owns only the moved whole names" || bad "$PARTITION_RUNNER_OS watch leg claims a new name extension"
   fi
+done
 done
 rm -- "$SANDBOX/oversee_watch_terminal_future.sh"
 # The lifecycle suite must reach the moved leg. Remove its selector from a
@@ -359,8 +355,23 @@ rm -- "$SANDBOX/oversee_watch_terminal_future.sh"
 cp "$SANDBOX/run-all.sh" "$TMP/runner-original"
 sed 's/ =oversee_watch_lifecycle / /' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "lifecycle control changed no selector"
-kept="$(selected --shard orch-oversee-watch)"
-! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "must-fail: missing lifecycle selector fails its moved-leg contract" || bad "lifecycle omission control retained the suite"
+for PARTITION_RUNNER_OS in Linux macOS; do
+  kept="$(selected --shard orch-oversee-watch)"
+  ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "must-fail: missing lifecycle selector fails its $PARTITION_RUNNER_OS moved-leg contract" || bad "$PARTITION_RUNNER_OS lifecycle omission control retained the suite"
+done
+cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
+PARTITION_RUNNER_OS=Windows
+for profile in orch-oversee orch-oversee-watch; do
+  check "$profile refuses an unsupported platform" "1" "$(status_of --shard "$profile")"
+done
+# GitHub's Windows runner is outside the orch shard's supported platforms.
+# Accept it in a disposable runner to prove that the refusal checks fail.
+sed 's/Linux|macOS)/Linux|macOS|Windows)/' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
+cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "platform control changed no refusal"
+for profile in orch-oversee orch-oversee-watch; do
+  check "must-fail: $profile accepts Windows after its platform refusal is removed" \
+    "0" "$(status_of --shard "$profile")"
+done
 cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
 PARTITION_RUNNER_OS=Linux
 
