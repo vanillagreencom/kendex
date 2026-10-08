@@ -32,8 +32,11 @@ checkout the command runs in.
 
 setup     resolve every SLACK_OWNERS address to a Slack user, create the
           private channel or find it by name (--name; default
-          <checkout>-<owner's local part>), or adopt an existing private one
-          by id (--take), invite the owners, write the binding
+          <person>-<repo>-<side>: KENDEX_USER_HANDLE, else KENDEX_USER_EMAIL's
+          local part; origin's repository name, else the checkout's; vm where
+          the orch lane host is hosted, else local), or adopt an existing
+          private one by id (--take), invite the owners, set the channel's
+          purpose where it is empty, write the binding
           tmp/slack/binding.json, and restart the relay unit `install` wrote
           when one stands
 listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
@@ -84,7 +87,8 @@ install   write the systemd user unit for `listen` over the roots given, then
 
 Process settings, read once from the launch checkout's private env and settings
 files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (listen without
---once), SLACK_OWNERS (default KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15),
+--once), SLACK_OWNERS (default KENDEX_USER_EMAIL), KENDEX_USER_HANDLE (setup's
+channel name; default KENDEX_USER_EMAIL's local part), SLACK_POLL_SECONDS (15),
 SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
 SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600) are read per root
 from that root's files, with the original caller exports taking precedence.
@@ -99,6 +103,10 @@ Non-fatal diagnostics on stderr:
   envelope-field=ROOT id=ID field=FIELD
     Missing or invalid line/count fields disable master-read suppression.
     Other invalid fields skip that envelope. The relay continues.
+  handle-from-email=LOCAL
+    KENDEX_USER_HANDLE is unset; setup names the channel after LOCAL.
+  purpose-unset=CHANNEL error=ERROR
+    Slack refused the channel purpose. setup still binds.
 
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"

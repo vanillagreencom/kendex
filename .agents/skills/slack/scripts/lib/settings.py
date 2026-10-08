@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Mapping, Optional
 
-from refusals import Refusal
+from refusals import Refusal, keyed
 
 DEFAULT_API_URL = "https://slack.com/api"
 DEFAULT_POLL_SECONDS = 15
@@ -80,6 +80,20 @@ def owners_from_env() -> List[str]:
         if not EMAIL.match(owner):
             raise Refusal("setting-invalid", f"SLACK_OWNERS={owner}")
     return owners
+
+
+def user_handle() -> str:
+    """The person whose overseer this is: KENDEX_USER_HANDLE, else the local
+    part of KENDEX_USER_EMAIL. Never SLACK_OWNERS, which lists who is invited."""
+    handle = os.environ.get("KENDEX_USER_HANDLE", "").strip()
+    if handle:
+        return handle
+    email = os.environ.get("KENDEX_USER_EMAIL", "").strip()
+    if email == "":
+        raise Refusal("setting-missing", "KENDEX_USER_EMAIL")
+    local = email.split("@", 1)[0]
+    print(keyed("handle-from-email", local), file=sys.stderr, flush=True)
+    return local
 
 
 def load_presence(root: Path) -> Presence:

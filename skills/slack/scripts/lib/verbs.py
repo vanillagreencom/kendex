@@ -18,7 +18,7 @@ from refusals import Refusal, keyed, notice
 from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
-from settings import Settings, load
+from settings import CALLER_ENV, Settings, load, user_handle
 from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
@@ -30,9 +30,101 @@ CHANNEL_NAME = re.compile(r"[^a-z0-9_-]+")
 TOLERATED_INVITE = {"already_in_channel", "cant_invite_self"}
 
 
-def default_channel_name(root: Path, owner: str) -> str:
-    local = owner.split("@", 1)[0]
-    return CHANNEL_NAME.sub("-", f"{root.name}-{local}".lower()).strip("-")[:80]
+# Slack's limit for conversations.setPurpose.
+PURPOSE_LIMIT = 250
+SIDE_PLACE = {"vm": "on the control VM", "local": "on a local machine"}
+LINEAR_WORKSPACE = re.compile(r"https://linear\.app/([^/\s\"]+)/issue/")
+
+
+def default_channel_name(root: Path, person: str, side: str) -> str:
+    """`<person>-<repo>-<side>`, the owner's rule of 2026-09-30: channel names
+    are unique per workspace, so the person and the side keep two overseers
+    of one repository apart."""
+    return CHANNEL_NAME.sub("-", f"{person}-{repo_name(root)}-{side}".lower()).strip("-")[:80]
+
+
+def answer(root: Path, *args: str) -> Optional[str]:
+    """A command's stdout run from the root, None where it does not answer."""
+    try:
+        proc = subprocess.run(
+            list(args), cwd=str(root), env=CALLER_ENV, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def origin_url(root: Path) -> Optional[str]:
+    """origin as a browsable URL: scp form as https, credentials and .git dropped."""
+    url = answer(root, "git", "remote", "get-url", "origin")
+    if not url:
+        return None
+    url = re.sub(r"^[^/@]+@([^:/]+):", r"https://\1/", url)
+    url = re.sub(r"^(\w+://)[^/@]*@", r"\1", url)
+    return re.sub(r"\.git$", "", url.rstrip("/"))
+
+
+def repo_name(root: Path) -> str:
+    url = origin_url(root)
+    return url.rsplit("/", 1)[-1] if url else root.name
+
+
+def lane_side(root: Path) -> str:
+    """`vm` where the root's orch lane host is a hosted fleet, whose overseer
+    runs on a control host; `local` where it resolves local or orch is absent."""
+    script = root / ".agents" / "skills" / "orch" / "scripts" / "lane-host"
+    if not script.is_file():
+        return "local"
+    host = answer(root, str(script), "resolve")
+    if host is None:
+        raise Refusal("setting-invalid", f"root={root} lane-host=unanswered")
+    return "local" if host == "local" else "vm"
+
+
+def purpose_line(root: Path, side: str) -> str:
+    """One line of at most PURPOSE_LIMIT characters: who oversees what where,
+    the repository's own first sentence, and its repository and board links."""
+    lead = f"{repo_name(root)} overseer {SIDE_PLACE[side]}."
+    description = " ".join((answer(root, "gh", "repo", "view", "--json", "description", "-q", ".description") or "").split())
+    sentence = re.match(r"(.+?[.!?])(?:\s|$)", description)
+    sentence_text = sentence.group(1) if sentence else description
+    url = origin_url(root)
+    board = linear_board(root)
+    line = ""
+    for keep_sentence, keep_board in ((True, True), (False, True), (False, False)):
+        links = [f"Repo: {url}"] if url else []
+        if board and keep_board:
+            links.append(f"Board: {board}")
+        parts = [lead, sentence_text if keep_sentence else "", " | ".join(links)]
+        line = " ".join(p for p in parts if p)
+        if len(line) <= PURPOSE_LIMIT:
+            return line
+    return line[:PURPOSE_LIMIT]
+
+
+def linear_board(root: Path) -> Optional[str]:
+    """The team board where the root sets LINEAR_TEAM_PREFIX and the linear
+    skill's cache names the workspace; the team read carries no workspace url."""
+    prefix = answer(root, str(Path(os.environ["SLACK_ORCH_DIR"]) / "scripts" / "orch-env"), "LINEAR_TEAM_PREFIX", "")
+    if not prefix:
+        return None
+    try:
+        workspace = LINEAR_WORKSPACE.search((root / ".cache" / "linear" / "issues.json").read_text())
+    except (OSError, UnicodeDecodeError):
+        return None
+    return f"https://linear.app/{workspace.group(1)}/team/{prefix}" if workspace else None
+
+
+def write_purpose(api: Slack, root: Path, channel: str, side: str) -> None:
+    """The channel's purpose where it is empty: a purpose already set, by hand
+    or by an earlier setup, stands. A refusal here stops nothing."""
+    try:
+        purpose = api.get("conversations.info", channel=channel)["channel"].get("purpose") or {}
+        if not purpose.get("value"):
+            api.post("conversations.setPurpose", channel=channel, purpose=purpose_line(root, side))
+    except Refusal as err:
+        print(keyed("purpose-unset", f"{channel} error={err.error or err.key}"), file=sys.stderr, flush=True)
 
 
 def api_for(settings: Settings) -> Slack:
@@ -45,6 +137,7 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
     settings = load(need_app_token=unit_stands())
     api = api_for(settings)
     ids = resolve_owner_ids(api, settings.owners)
+    side = lane_side(root)
     if take:
         info = api.get("conversations.info", channel=take)["channel"]
         if not info.get("is_private"):
@@ -53,7 +146,7 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
             raise Refusal("slack-channel-unjoined", f"{take} fix=invite the app to the channel, then run setup again")
         channel, channel_name = str(info["id"]), str(info.get("name", take))
     else:
-        channel_name = name or default_channel_name(root, settings.owners[0])
+        channel_name = name or default_channel_name(root, user_handle(), side)
         found = None
         for item in api.paged("conversations.list", "channels", types="private_channel", exclude_archived="true"):
             if item.get("name") == channel_name:
@@ -84,6 +177,7 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
             " fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again",
         )
     write_binding(root, Binding(channel, channel_name, bound_before.bound_at if bound_before else f"{time.time():.6f}", list(settings.owners), ids))
+    write_purpose(api, root, channel, side)
     notice("bound", f"{channel} root={root} name={channel_name} owners={len(ids)}")
     restart_unit()
     return 0

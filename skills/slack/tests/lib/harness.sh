@@ -21,6 +21,7 @@ SK_APP_TOKEN="test-app-token-$$"
 OWNER="brad@example.test"
 OWNER2="ann@example.test"
 OWNERS="$OWNER,$OWNER2"
+HANDLE="bradm"
 SK_PASS=0
 SK_FAIL=0
 SK_URL=""
@@ -229,7 +230,7 @@ sk_run() {
   [ $# -eq 0 ] || shift
   RC=0
   OUT="$(cd "${SK_RUN_FROM:-$SK_TMP/home}" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
-    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" KENDEX_USER_HANDLE="$HANDLE" \
     SLACK_POLL_SECONDS=1 ${vars[@]+"${vars[@]}"} "$SK_BIN" "$@" 2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
   ERR1="$(sed -n '1p' "$SK_TMP/err")"

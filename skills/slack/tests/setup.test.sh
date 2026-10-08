@@ -12,23 +12,30 @@ set -uo pipefail
 
 sk_fake_start
 echo "=== slack setup ==="
+sk_channel_name() { jq -r .channel_name "$1/tmp/slack/binding.json"; } # ROOT
+sk_purpose() { sk_state ".channels[\"$(sk_channel "$1")\"].purpose"; }     # ROOT — its channel's purpose
+set_purposes() { sk_state '[.calls[] | select(. == "conversations.setPurpose")] | length'; }
 
 # --- create, bind, invite -----------------------------------------------------
 ROOT="$(sk_new_root alpha)"
 sk_bind "$ROOT"
 assert_eq "$RC" 0 "setup exits 0 on a fresh workspace"
-assert_eq "$OUT" "slack: bound=C001 root=$ROOT name=alpha-brad owners=2" "setup prints the binding it wrote"
+assert_eq "$OUT" "slack: bound=C001 root=$ROOT name=bradm-alpha-local owners=2" "setup prints the binding it wrote"
 BINDING="$ROOT/tmp/slack/binding.json"
 assert_eq "$(jq -r '[.channel, .channel_name, (.owners | join(",")), .owner_ids["brad@example.test"], .owner_ids["ann@example.test"]] | join(" ")' "$BINDING")" \
-  "C001 alpha-brad $OWNERS U001 U002" "the binding holds the channel, the owners list and the ids it resolved"
+  "C001 bradm-alpha-local $OWNERS U001 U002" "the binding holds the channel, the owners list and the ids it resolved"
 assert_eq "$(jq -r '.bound_at | tonumber > 1700000000' "$BINDING")" "true" "the binding records its moment as a Slack stamp"
 assert_eq "$(sk_state '.channels.C001 | [.name, .is_private, (.members | join(","))] | join(" ")')" \
-  "alpha-brad true UBOT,U001,U002" "the channel is private and every owner is invited"
+  "bradm-alpha-local true UBOT,U001,U002" "the channel is private and every owner is invited"
+
+assert_eq "$(set_purposes)=$(sk_state '.channels.C001.purpose')" "1=alpha overseer on a local machine." \
+  "a create writes the purpose once; with no origin, gh answer or linear cache it is the lead alone"
 
 # --- a second setup finds the channel and creates nothing -------------------
 sk_bind "$ROOT"
 assert_eq "$RC=$(sk_state '[.calls[] | select(. == "conversations.create")] | length')" "0=1" \
   "a second setup finds the channel by name and creates none"
+assert_eq "$(set_purposes)" "1" "a second setup leaves the purpose it wrote"
 
 # --- --name and --take ---------------------------------------------------------
 BETA="$(sk_new_root beta)"
@@ -83,9 +90,71 @@ KAPPA="$(sk_new_root kappa)"
 sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", "times": 1}' >/dev/null
 sk_run -- setup --root "$KAPPA"
 assert_eq "$RC=$(printf '%s' "$ERR1" | sed 's/refused=C[0-9]*/refused=CID/')" \
-  "2=slack: slack-invite-refused=CID error=cant_invite owners=$OWNERS fix=invite the owners to #kappa-brad in Slack, then run setup again" \
+  "2=slack: slack-invite-refused=CID error=cant_invite owners=$OWNERS fix=invite the owners to #bradm-kappa-local in Slack, then run setup again" \
   "an invite Slack refuses is refused with the channel, the owners and the remedy"
 assert_eq "$([ -e "$KAPPA/tmp/slack/binding.json" ] && echo present || echo absent)" "absent" "no binding is written after a refused invite"
+
+# --- the default name: <person>-<repo>-<side> ------------------------------------
+# One row per input: the side from the root's lane host, the repository from
+# origin, the person from KENDEX_USER_HANDLE or the email's local part.
+MU="$(sk_new_root mu)"
+git -C "$MU" remote add origin "https://github.com/acme/Widget.git"
+sk_run ORCH_LANE_HOST="$SK_TMP/provider" SLACK_OWNERS="$OWNER2" -- setup --root "$MU"
+assert_eq "$RC=$(sk_channel_name "$MU")" "0=bradm-widget-vm" \
+  "a provider lane host names the vm side, the repository from origin, the person from the handle over SLACK_OWNERS"
+NU="$(sk_new_root nu)"
+git -C "$NU" remote add origin "git@github.com:acme/gadget.git"
+sk_run -- setup --root "$NU"
+assert_eq "$RC=$(sk_channel_name "$NU")" "0=bradm-gadget-local" "a local lane host names the local side"
+XI="$SK_TMP/xi"
+mkdir -p "$XI" && git -C "$XI" init -q
+sk_run ORCH_LANE_HOST=claude-cloud -- setup --root "$XI"
+assert_eq "$RC=$(sk_channel_name "$XI")" "0=bradm-xi-local" "a root with no orch skill names local, the checkout name standing in for origin"
+OMICRON="$(sk_new_root omicron)"
+sk_run KENDEX_USER_HANDLE= KENDEX_USER_EMAIL="$OWNER2" -- setup --root "$OMICRON"
+assert_eq "$RC=$(sk_channel_name "$OMICRON")=$(printf '%s\n' "$ERR" | grep -c '^slack: handle-from-email=ann$')" "0=ann-omicron-local=1" \
+  "with no handle the email's local part stands in, said once on stderr"
+sk_run KENDEX_USER_HANDLE= -- setup --root "$OMICRON"
+assert_eq "$RC=$ERR1" "2=slack: setting-missing=KENDEX_USER_EMAIL" "with neither the handle nor the email setup is refused"
+
+# --- the purpose: written once, never over one already set -----------------------
+# A gh stub answers the description from GH_DESCRIPTION; the root sets the
+# Linear team and holds a cached issue url naming the workspace.
+mkdir -p "$SK_TMP/gh-bin"
+printf '#!/bin/sh\n[ -n "$GH_DESCRIPTION" ] || exit 1\nprintf "%%s\\n" "$GH_DESCRIPTION"\n' > "$SK_TMP/gh-bin/gh"
+chmod +x "$SK_TMP/gh-bin/gh"
+PI="$(sk_new_root pi)"
+git -C "$PI" remote add origin "https://someone:secret@github.com/acme/widget.git"
+printf '[env]\nLINEAR_TEAM_PREFIX = "WID"\n' > "$PI/kendex.settings.toml"
+mkdir -p "$PI/.cache/linear"
+printf '[{"url": "https://linear.app/acme/issue/WID-1/a-title"}]\n' > "$PI/.cache/linear/issues.json"
+sk_run PATH="$SK_TMP/gh-bin:$PATH" GH_DESCRIPTION="Widgets for everyone. Built with care." -- setup --root "$PI"
+assert_eq "$RC=$(sk_purpose "$PI")" \
+  "0=widget overseer on a local machine. Widgets for everyone. Repo: https://github.com/acme/widget | Board: https://linear.app/acme/team/WID" \
+  "the purpose holds the side, the description's first sentence, the origin without credentials and the board"
+RHO="$(sk_new_root rho)"
+git -C "$RHO" remote add origin "https://github.com/acme/widget.git"
+cp -R "$PI/kendex.settings.toml" "$PI/.cache" "$RHO/"
+# 160 characters: the line fits with the sentence alone or the board alone, not both.
+LONG="$(printf 'w%.0s' $(seq 1 159))."
+sk_run PATH="$SK_TMP/gh-bin:$PATH" GH_DESCRIPTION="$LONG" -- setup --root "$RHO" --name rho-long
+assert_eq "$RC=$(sk_purpose "$RHO")" \
+  "0=widget overseer on a local machine. Repo: https://github.com/acme/widget | Board: https://linear.app/acme/team/WID" \
+  "a line over 250 characters drops the description sentence first"
+sk_ctl /_test/channel '{"id": "C950", "name": "hand-set", "purpose": "Set by hand."}' >/dev/null
+sk_ctl /_test/calls-reset >/dev/null
+SIGMA="$(sk_new_root sigma)"
+sk_run -- setup --root "$SIGMA" --take C950
+assert_eq "$RC=$(set_purposes)=$(sk_purpose "$SIGMA")" "0=0=Set by hand." "a bound channel's purpose already set is never overwritten"
+sk_ctl /_test/channel '{"id": "C951", "name": "empty-purpose"}' >/dev/null
+TAU="$(sk_new_root tau)"
+sk_run -- setup --root "$TAU" --take C951
+assert_eq "$RC=$(sk_purpose "$TAU")" "0=tau overseer on a local machine." "a bound channel with an empty purpose gets one"
+UPSILON="$(sk_new_root upsilon)"
+sk_ctl /_test/fault '{"method": "conversations.setPurpose", "error": "restricted_action", "times": 1}' >/dev/null
+sk_run -- setup --root "$UPSILON"
+assert_eq "$RC=$(printf '%s\n' "$ERR" | sed -n 's/^slack: purpose-unset=C[0-9]* //p')" "0=error=restricted_action" \
+  "a refused setPurpose is a purpose-unset notice and setup still binds"
 
 # --- the private env file alone ------------------------------------------------
 # No SLACK_BOT_TOKEN or SLACK_OWNERS in the process environment: run from the
@@ -104,10 +173,12 @@ sk_run_private "$LAMBDA" setup --root "$LAMBDA"
 assert_eq "$RC=$(printf '%s\n' "$ERR" | sed -n '1,2p' | tr '\n' ' ')" \
   "2=slack: setting-missing=SLACK_BOT_TOKEN slack: setting-missing=SLACK_OWNERS " \
   "with neither the process environment nor a private env file, setup is refused setting-missing"
-printf 'SLACK_BOT_TOKEN=%s\nSLACK_OWNERS=%s\n' "$SK_TOKEN" "$OWNERS" > "$LAMBDA/.env.local"
+printf 'SLACK_BOT_TOKEN=%s\nSLACK_OWNERS=%s\nKENDEX_USER_HANDLE=%s\n' "$SK_TOKEN" "$OWNERS" "$HANDLE" > "$LAMBDA/.env.local"
 sk_run_private "$LAMBDA" setup --root "$LAMBDA"
 assert_eq "$RC=$(jq -r '.owners | join(",")' "$LAMBDA/tmp/slack/binding.json")" "0=$OWNERS" \
   "the private env file alone carries the token and the owners to the relay"
+assert_eq "$(jq -r .channel_name "$LAMBDA/tmp/slack/binding.json")" "bradm-lambda-local" \
+  "the private env file carries KENDEX_USER_HANDLE to the default name"
 
 # --- controls, one mutant per rule ---------------------------------------------
 sk_copy unexported
@@ -150,6 +221,33 @@ sk_bin_reset
 sk_mutant rebind verbs.py 'bound_before\.channel != channel:' 'bound_before.channel != channel and False:'
 sk_run -- setup --root "$IOTA" --take C900
 assert_eq "$RC=$(sk_channel "$IOTA")" "0=C900" "control: the rebind rule gone, a journaled root is bound to another channel"
+sk_bin_reset
+
+sk_mutant shape verbs.py 'f"\{person\}-\{repo_name\(root\)\}-\{side\}"' 'f"{root.name}-{person}"'
+NU2="$(sk_new_root nu2)"
+sk_run -- setup --root "$NU2"
+assert_eq "$RC=$(sk_channel_name "$NU2")" "0=nu2-bradm" "control: the old <checkout>-<owner> shape fails the name row"
+sk_bin_reset
+
+sk_mutant side verbs.py 'return "local" if host == "local" else "vm"' 'return "local"'
+MU2="$(sk_new_root mu2)"
+sk_run ORCH_LANE_HOST="$SK_TMP/provider" -- setup --root "$MU2"
+assert_eq "$RC=$(sk_channel_name "$MU2")" "0=bradm-mu2-local" "control: the side read gone, a hosted fleet's channel is named local"
+sk_bin_reset
+
+sk_mutant keep verbs.py 'if not purpose\.get\("value"\):' 'if True:'
+sk_run -- setup --root "$SIGMA" --take C950
+assert_eq "$RC=$(sk_purpose "$SIGMA")" "0=sigma overseer on a local machine." "control: the empty-purpose rule gone, the hand-set text is overwritten"
+sk_bin_reset
+
+sk_mutant drop verbs.py '\(\(True, True\), \(False, True\), \(False, False\)\)' '((True, True), (True, False), (False, False))'
+sk_ctl /_test/channel '{"id": "C952", "name": "drop-order"}' >/dev/null
+PHI="$(sk_new_root phi)"
+cp -R "$PI/kendex.settings.toml" "$PI/.cache" "$PHI/"
+git -C "$PHI" remote add origin "https://github.com/acme/widget.git"
+sk_run PATH="$SK_TMP/gh-bin:$PATH" GH_DESCRIPTION="$LONG" -- setup --root "$PHI" --take C952
+assert_eq "$RC=$(sk_purpose "$PHI")" "0=widget overseer on a local machine. $LONG Repo: https://github.com/acme/widget" \
+  "control: the board dropped before the sentence, the description stands and the board goes"
 sk_bin_reset
 
 sk_summary

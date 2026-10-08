@@ -23,6 +23,8 @@ kendex add vanillagreencom/kendex --skill slack
 ## How it works
 
 - `slack setup` resolves each owner's email address to a Slack user, creates the private channel or finds it by name, invites the owners and writes the binding under `tmp/slack/` in the checkout.
+- Without `--name`, the channel is named `<person>-<repo>-<side>`, for example `bradm-kendex-vm`: Slack channel names are unique per workspace, so two people's overseers of one repository, or one person's on the control VM and on a laptop, never share a name. The person is `KENDEX_USER_HANDLE`, else the local part of `KENDEX_USER_EMAIL` with one `handle-from-email` line on stderr, never `SLACK_OWNERS`, which lists who is invited. The repository is the last path segment of `origin`, else the checkout's directory name. The side is `vm` where the orch skill's `lane-host resolve` names a hosted fleet, and `local` where it prints `local` or orch is not installed in the checkout. A bound channel is never renamed.
+- `setup` writes the channel's purpose where it is empty, on create or on a channel it binds: `<repo> overseer on the control VM.` or `on a local machine.`, the first sentence of the GitHub description (`gh repo view`), `Repo: <origin URL>` and `| Board: https://linear.app/<workspace>/team/<LINEAR_TEAM_PREFIX>` where the checkout sets the prefix and the linear cache names the workspace. A line over Slack's 250 characters drops the sentence, then the board. A purpose already set is never overwritten; a refused write is a `purpose-unset` line on stderr and setup still binds.
 - `slack listen --root A --root B` is one process for every checkout on one machine. Slack sends each owner message over its one Socket Mode connection as it is posted, and the relay routes it by channel to the bound checkout.
 - On reconnect, history resumes from saved positions and checks retained active threads. The relay opens a dropped connection again. API and mailbox waits do not block acknowledgements.
 - Every `SLACK_POLL_SECONDS` the relay reads each checkout's mailbox for posts and receipt marks.
@@ -78,7 +80,7 @@ settings:
 | `files:write` | Upload a report |
 | `groups:history` | Read a private channel and its threads, and receive its new messages as the `message.groups` event |
 | `groups:read` | Find a private channel by name or id |
-| `groups:write` | Create a private channel and invite the owners |
+| `groups:write` | Create a private channel, set its purpose and invite the owners |
 | `reactions:write` | Mark an owner message as delivered and as read |
 | `users:read`, `users:read.email` | Resolve an owner's email to a user, and name a user an owner mentions |
 
@@ -134,6 +136,7 @@ Other Slack settings are process-wide and use the launch checkout, the first `--
 | `SLACK_BOT_TOKEN` | The bot token of the Slack app; private env file or process environment only | unset: Slack is off |
 | `SLACK_APP_TOKEN` | The app-level token (`connections:write`) that opens the relay's Socket Mode connection; private env file or process environment only | unset: `listen` refuses, and so does `setup` while the unit `install` wrote stands |
 | `SLACK_OWNERS` | Comma-separated email addresses of those whose messages steer | `KENDEX_USER_EMAIL` |
+| `KENDEX_USER_HANDLE` | The person in `setup`'s default channel name, first name plus last initial (`bradm`), beside `KENDEX_USER_EMAIL` in the private env file | the local part of `KENDEX_USER_EMAIL` |
 | `SLACK_POLL_SECONDS` | Seconds between two reads of each mailbox for posts and receipt marks | `15` |
 | `SLACK_THREAD_DAYS` | Journal retention and reconnect lookback in days; live replies have no age limit | `7` |
 | `SLACK_MASTER_FILE` | Per root: the master's presence file; while fresh it holds that root's mailbox posts | empty: no hold |

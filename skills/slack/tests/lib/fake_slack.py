@@ -465,7 +465,15 @@ class Handler(BaseHTTPRequestHandler):
         channel = self.ws.channels.get(params.get("channel", ""))
         if channel is None:
             return self.send_json({"ok": False, "error": "channel_not_found"})
-        self.send_json({"ok": True, "channel": dict(channel, is_member=BOT in channel["members"])})
+        purpose = {"value": channel.get("purpose", "")}
+        self.send_json({"ok": True, "channel": dict(channel, is_member=BOT in channel["members"], purpose=purpose)})
+
+    def m_conversations_setPurpose(self, params):
+        channel = self.ws.channels.get(params.get("channel", ""))
+        if channel is None:
+            return self.send_json({"ok": False, "error": "channel_not_found"})
+        channel["purpose"] = params.get("purpose", "")
+        self.send_json({"ok": True, "purpose": channel["purpose"]})
 
     def m_conversations_invite(self, params):
         channel = self.ws.channels.get(params.get("channel", ""))

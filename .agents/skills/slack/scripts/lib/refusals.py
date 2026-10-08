@@ -17,7 +17,8 @@ EXPLAIN = {
         "The named setting is not set. SLACK_BOT_TOKEN and SLACK_APP_TOKEN,"
         " which `listen` needs for its Socket Mode connection, live in the"
         " private env file or the process environment; SLACK_OWNERS defaults"
-        " to KENDEX_USER_EMAIL. Unset is off, never half on: every missing key"
+        " to KENDEX_USER_EMAIL, and setup's default channel name needs"
+        " KENDEX_USER_HANDLE or KENDEX_USER_EMAIL. Unset is off, never half on: every missing key"
         " is named above before anything runs."
     ),
     "setting-invalid": (
