@@ -308,6 +308,11 @@ kendex_private_env_file() { # OUT_VAR PROJECT_ROOT — project-relative private 
   printf -v "$1" '%s' "$_kendex_named"
 }
 
+# Consumers check this contract before project files can assign caller locals.
+kendex_project_env_supports() { # CAPABILITY
+  [[ "$1" == selected-private-path ]]
+}
+
 kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional output is the selected project-relative path
   local project_root="$1"
   [[ -n "$project_root" ]] || return 0

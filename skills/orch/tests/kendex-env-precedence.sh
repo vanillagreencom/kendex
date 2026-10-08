@@ -460,6 +460,8 @@ for variant in production mutant; do
     selected_result=$(
       unset SECRET KENDEX_ENV_FILE
       source "$selected_lib"
+      kendex_project_env_supports selected-private-path || exit 1
+      if kendex_project_env_supports unknown-capability; then exit 1; fi
       selected_path=unchanged
       if [[ "$form" == legacy ]]; then
         kendex_load_project_env "$PROJ_SELECTED"

@@ -326,32 +326,108 @@ def install_dependencies(row, item):
     remote(row, '''loader="$1/.agents/skills/worktree/scripts/lib/kendex-env.sh"
 load_install_settings() {
   local selected_private
+  unset -f kendex_project_env_supports || return 1
   . "$loader" || return 1
-  kendex_load_project_env "$1" selected_private >&2 || return 1
-  # A remote checkout can still carry a loader that ignores the output argument.
-  if test -z "${selected_private:-}"; then
+  if ! declare -F kendex_project_env_supports >/dev/null ||
+     ! kendex_project_env_supports selected-private-path; then
     printf 'lane-host-ssh: loader-private-path-missing path=%s output=selected-private-path\\n' "$loader" >&2
     return 1
   fi
-  printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private"
+  kendex_load_project_env "$1" selected_private >&2 || return 1
+  printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private" "${WORKTREE_COPIES:-}"
 }
 settings=$(load_install_settings "$1") || exit 1
 # Only printf %q's shell-quoted values enter eval, including paths with spaces.
 eval "settings=($settings)"
 symlinks=${settings[0]}
 private_names=(.env.local "${settings[1]}")
+copy_settings=("${settings[2]}")
 roots=("$1")
 tree=$(cd -- "$1" && .agents/skills/worktree/scripts/worktree path "$2") || exit 1
 if test -d "$tree"; then
   selected=$(load_install_settings "$tree") || exit 1
   eval "selected=($selected)"
   private_names+=("${selected[1]}")
+  copy_settings+=("${selected[2]}")
   roots+=("$tree")
 fi
 private_paths=()
-for root in "${roots[@]}"; do
-  for name in "${private_names[@]}"; do
-    private_paths+=("$root/$name")
+private_copies=()
+for copies in "${copy_settings[@]}"; do
+  read -r -a entries <<<"$copies"
+  private_copies+=(${entries[@]+"${entries[@]}"})
+done
+for ((index = 0; index < ${#roots[@]}; index++)); do
+  roots[$index]=$(cd -P -- "${roots[$index]}" && pwd -P) || exit 1
+done
+protect_private_path() {
+  local path="$1" at target root relative prior contained copy copy_root
+  local chain=() names=()
+  while test -e "$path" || test -L "$path"; do
+    at=$(cd -P -- "${path%/*}" && pwd -P) || return 1
+    path="$at/${path##*/}"
+    contained=false
+    for root in "${roots[@]}"; do
+      case "$path" in
+        "$root"/*)
+          contained=true
+          relative=${path#"$root"/}
+          names=("$relative")
+          break ;;
+      esac
+    done
+    if test "$contained" != true; then
+      printf 'lane-host-ssh: private-protection-unsafe path=%s cause=outside-roots\\n' "$path" >&2
+      return 1
+    fi
+    # WORKTREE_COPIES can reach the same source through a directory alias.
+    # Its destination is a separate file under that configured relative name.
+    for copy in ${private_copies[@]+"${private_copies[@]}"}; do
+      for copy_root in "${roots[@]}"; do
+        if test "$copy_root/$copy" -ef "$path"; then
+          names+=("$copy")
+          break
+        fi
+      done
+    done
+    for relative in "${names[@]}"; do
+      for prior in "${private_names[@]}"; do
+        if test "$prior" = "$relative"; then break; fi
+      done
+      if test "$prior" != "$relative"; then private_names+=("$relative"); fi
+    done
+    for prior in ${chain[@]+"${chain[@]}"}; do
+      if test "$prior" = "$path"; then
+        printf 'lane-host-ssh: private-protection-unsafe path=%s cause=link-cycle\\n' "$path" >&2
+        return 1
+      fi
+    done
+    chain+=("$path")
+    prior=""
+    for prior in ${private_paths[@]+"${private_paths[@]}"}; do
+      if test "$prior" = "$path"; then break; fi
+    done
+    if test "${prior:-}" != "$path"; then private_paths+=("$path"); fi
+    if test -L "$path"; then
+      target=$(readlink -- "$path") || return 1
+      case "$target" in /*) path="$target" ;; *) path="${path%/*}/$target" ;; esac
+      if ! test -e "$path" && ! test -L "$path"; then
+        printf 'lane-host-ssh: private-protection-unsafe path=%s cause=unresolved-link\\n' "$path" >&2
+        return 1
+      fi
+    elif test -f "$path"; then
+      return 0
+    else
+      printf 'lane-host-ssh: private-protection-unsafe path=%s cause=not-file\\n' "$path" >&2
+      return 1
+    fi
+  done
+}
+# Worktree setup can copy a target under a name different from its relative link.
+# Discover that name before moving anything, then protect it in both checkouts.
+for ((index = 0; index < ${#private_names[@]}; index++)); do
+  for root in "${roots[@]}"; do
+    protect_private_path "$root/${private_names[$index]}" || exit 1
   done
 done
 # A reused clone already holds the private file, so delaying its upload alone
@@ -359,16 +435,16 @@ done
 private=$(mktemp -d) || exit 1
 saved_paths=()
 restore_private() {
-  local status=$? index=0 path
-  for path in ${saved_paths[@]+"${saved_paths[@]}"}; do
+  local status=$? index path
+  for ((index = ${#saved_paths[@]} - 1; index >= 0; index--)); do
+    path=${saved_paths[$index]}
     mv -- "$private/$index" "$path" || status=1
-    index=$((index + 1))
   done
   rmdir -- "$private" || status=1
   return "$status"
 }
 trap restore_private EXIT
-for path in "${private_paths[@]}"; do
+for path in ${private_paths[@]+"${private_paths[@]}"}; do
   if test -e "$path" || test -L "$path"; then
     mv -- "$path" "$private/${#saved_paths[@]}"
     saved_paths+=("$path")
