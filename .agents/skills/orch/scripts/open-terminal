@@ -246,8 +246,8 @@ case "$HOST_LAUNCH" in
 esac
 # The brief a --cmd template places as {brief}, read once, here, from the file
 # the caller wrote. The caller never quotes it: start_cmd renders it through
-# lane_single_quote, so the GUI shell, the pane shell and a hosted lane's
-# remote shell each read it back as the file's bytes, less trailing newlines,
+# a local prompt file or lane_single_quote on the hosted path, so each shell
+# reads it back as the file's bytes, less trailing newlines,
 # whatever quote, `$` or backtick it holds. The two halves come as a pair: a
 # brief file with no {brief} would be read and reach no harness, and a {brief}
 # with no file would start the harness on an empty brief. A cloud session takes
@@ -1463,7 +1463,7 @@ merged_commit_for() ( # WT_ID
   [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || cat -- "$err" >&2
   return "$rc"
 )
-start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
+start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
   # MAIL_ID is the worktree id, which is what every line rendered here must
   # name. write_lane_marker binds the lane's mailbox under it and the
   # overseer's `lane-mail send --item` writes under the same id. It equals ITEM
@@ -1473,7 +1473,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # SESSION_ID is what session_id_of printed for the matched transcript, the
   # one reading of it: the resume form below and the lane record carry the
   # same id.
-  local item="$1" mail_id="$2" repo="$3" session_id="${4:-}" wake_dir="${5:-}" line="" exec="" print=""
+  local item="$1" mail_id="$2" repo="$3" session_id="${4:-}" wake_dir="${5:-}" brief_path="${6:-}" line="" exec="" print=""
   if [[ -n "$CMD_TEMPLATE" ]]; then
     # {brief} is filled last and the brief is never scanned again, so a brief
     # naming a placeholder reaches the harness as written. Spliced rather than
@@ -1481,8 +1481,13 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     # matched text.
 
     local text rendered="" quoted brief="$BRIEF_TEXT"
-    if ! text="$(cmd_template_text "$item" "$repo")" || ! quoted="$(lane_single_quote "$brief")"; then
-      return 1
+    text="$(cmd_template_text "$item" "$repo")" || return 1
+    if [[ -n "$brief_path" ]]; then
+      # A new pane can accept input before its shell enables bracketed paste.
+      # Read the prompt at execution so its newlines never enter terminal input.
+      quoted="\"\$(cat -- $(lane_single_quote "$brief_path"))\""
+    else
+      quoted="$(lane_single_quote "$brief")" || return 1
     fi
     while [[ "$text" == *"{brief}"* ]]; do
       rendered+="${text%%\{brief\}*}$quoted"
@@ -2681,7 +2686,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
 # caller checks it, which suspends errexit for this whole body, so every
 # substitution here is checked explicitly.
 launch_finish() {
-  local context_session rc=0
+  local context_session brief_prompt_file="" brief_prompt_dir rc=0
   LANE_MARKER_REASON=marker-failed
   if [[ "$host_pending_step" == selection ]]; then
     record_session="" LAUNCH_ALLOW_ALL=null
@@ -2743,7 +2748,15 @@ launch_finish() {
     fi
     [[ "$wake_reading" != *$'\t'* ]] || WAKE_MODEL="${wake_reading##*$'\t'}"
   fi
-  cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})" || return 1
+  if [[ "$LANE_HOST" == local && -n "$BRIEF_FILE" ]]; then
+    # This snapshot outlives the launcher while a slow pane shell starts.
+    # Its worktree owns the file until worktree removal, as for cloud-prompt.
+    brief_prompt_dir="$(git -C "$wt" rev-parse --absolute-git-dir)" \
+      && brief_prompt_file="$(mktemp "$brief_prompt_dir/local-prompt.XXXXXX")" \
+      && printf '%s' "$BRIEF_TEXT" > "$brief_prompt_file" \
+      || { ot_message brief-prompt-failed "item=$item" >&2; return 1; }
+  fi
+  cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" "${wake_args[0]-}" "$brief_prompt_file")" || return 1
   # The lane record's `allow_all`: whether this copilot command grants the full
   # allow-all mode, the one posture a policy block can take away
   # (lib/copilot-session.sh copilot_session_lane_note). Null for another harness.

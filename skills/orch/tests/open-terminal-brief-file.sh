@@ -205,7 +205,7 @@ assert_eq "rc=$RC ssh=$(grep -cxF "clear; ssh 'lane.example'" "$RUN/tmux.log") h
 QUOTE_OT="$(mutant_scripts brief-double-quoted open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/brief-double-quoted" init -q
 orch_fixture_shared_libs "$TMP_ROOT/brief-double-quoted"
-mutate_file "$QUOTE_OT" 'quoted="$(lane_single_quote "$brief")"' 'quoted="\"$brief\""'
+mutate_file "$QUOTE_OT" 'quoted="\"\$(cat -- $(lane_single_quote "$brief_path"))\""' 'quoted="\"$brief\""'
 run_ot "$QUOTE_OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" KEN-4
 line="$(gui_line)" || line=""
 assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=altered" \
@@ -218,8 +218,8 @@ git -C "$TMP_ROOT/brief-pi-append" init -q
 git -C "$TMP_ROOT/brief-pi-append" config gc.auto 0
 git -C "$TMP_ROOT/brief-pi-append" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/brief-pi-append"
-mutate_file "$APPEND_OT" 'local text rendered="" quoted brief="$BRIEF_TEXT"' \
-  'local text rendered="" quoted brief="${BRIEF_TEXT}"; if [[ "$HARNESS" == pi ]]; then brief+=" As your first step, arm the mailbox monitor .agents/skills/orch/scripts/lane-mail watch --item $mail_id through bg_task per watch-delivery.md."; fi'
+mutate_file "$APPEND_OT" 'printf '\''%s'\'' "$BRIEF_TEXT" > "$brief_prompt_file"' \
+  'printf '\''%s'\'' "$BRIEF_TEXT As your first step, arm the mailbox monitor .agents/skills/orch/scripts/lane-mail watch --item $wt_id through bg_task per watch-delivery.md." > "$brief_prompt_file"'
 ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" || exit 1
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \

@@ -805,6 +805,14 @@ jobs:
             command -v tmux >/dev/null || { sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y tmux; }
           fi
 
+          if [[ '${{ matrix.shard }}' == orch-terminal ]]; then
+            if [[ "$RUNNER_OS" == macOS ]]; then
+              command -v fish >/dev/null || brew install fish
+            else
+              command -v fish >/dev/null || { sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y fish; }
+            fi
+          fi
+
       # run-all.sh prints its own `orch tests: N/M file(s) FAILED:` block
       # naming every red suite, which is this shard's FAILED SUITES report.
       - name: orch suites — the open-terminal launch path
