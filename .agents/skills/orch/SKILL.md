@@ -29,7 +29,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ### Proposals
 
-- A kendex `Proposal:` comment, per `skills/orch/references/skill-rules.md` § Coordination, Tracked issue creation, carries a `Symptom:` line (where, when and what broke) or an `Owner:` line (the owner's note or ask) beside `Reached by:`, at every source and priority. The proposal sweep skips one with neither, per the project-management skill's § Intake.
+- A kendex `Proposal:` comment, per `skills/orch/references/skill-rules.md` § Coordination, Tracked issue creation, carries a `Symptom:` line (where, when and what broke) or an `Owner:` line (the owner's note or ask) beside `Reached by:`, at every source and priority. audit-issues § 6 declines one with neither, per the project-management skill's § Intake.
 
 <!-- kendex:project-instructions:end -->
 

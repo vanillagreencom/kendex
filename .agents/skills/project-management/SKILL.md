@@ -31,16 +31,14 @@ File a kendex issue only when its body names one of these two, in addition to th
 
 For kendex, `templates/issue-description-template.md` keeps the `**Symptom**:` header at every priority and from every source where a failure happened. Its rule that drops the line outside a review-born priority-2 filing does not apply here.
 
-Each step that decides a create carries the two lines:
+Intake decides only whether new work is filed. A create that groups or splits work already filed or already approved is never skipped or declined under Intake: a coordination parent per `templates/parent-issue-template.md` Rule 7, a tpm-audit § 7.0 hierarchy-contract child, a decomposed child, a research issue or spike for an existing item, or a roadmap child of an approved plan. Such a create carries its source item's `**Symptom**:` or `**Owner**:` line when the source has one. A child of an approved plan names, on its `**Owner**:` line, the approval that admitted the plan: the roadmap-plan § 5 answer or the audit-issues § 6 approval. Otherwise it needs neither line.
 
-- A lane's `Proposal:` comment carries a `Symptom:` or an `Owner:` line beside `Reached by:`.
-- tpm-audit § 10 fills `create_fields.symptom` or `create_fields.owner` on every kendex `create`. audit-issues § 7.2 writes them to the `**Symptom**:` and `**Owner**:` headers.
-- tpm-audit § 10 and proposal-sweep § 2 mark a candidate with neither line `skip`, naming this rule. Any other filing workflow declines it with one line in its report.
+audit-issues applies Intake to every kendex create it executes, whatever producer built its input and whatever `create_fields` that producer filled:
 
-Structural creates follow the lines of the work they hold:
+- § 6, in `ask` and `auto` mode alike, shows each new-work candidate with the Symptom or Owner text it rests on: a line in its proposal comment, its source item or its `create_fields`, or the owner's ask in this session. It declines a candidate with neither, naming this rule.
+- § 7.2 writes the `**Symptom**:` and `**Owner**:` headers of every kendex create from that text.
 
-- A coordination parent, per `templates/parent-issue-template.md` Rule 7 (a roadmap layer, an audit bundle, the merge-pr rebundle), holds no work of its own and needs neither line.
-- A child or a research spike minted from an item or a plan copies that item's `**Symptom**:` or `**Owner**:` line. A roadmap the owner approved at roadmap-plan § 5 names that approval on each child's `**Owner**:` line.
+No producer marks a candidate `skip` under this rule. A create the primary session runs outside audit-issues applies the same check and headers at its own create.
 
 The 2026-10-08 backlog read canceled these four kinds, each filed with neither line:
 
