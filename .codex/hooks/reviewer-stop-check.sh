@@ -399,8 +399,10 @@ path_identity() { # -> JSON {artifact, edits, rows}
       def canonical($path):
         ([$names[] | . as $name | select(.path == $path or (.submodule and ($path | startswith($name.path + "/"))))]
           | sort_by(.path | length) | last | .identity) // $path;
-      {artifact: canonical($physical[$artifact]),
-       edits: ([$edits[] | canonical($physical[.])] | unique),
+      # The report is one physical file, even inside a dirty submodule.
+      # Remove its evidence before descendants share the gitlink identity.
+      {artifact: $physical[$artifact],
+       edits: ([$edits[] | $physical[.] | select(. != $physical[$artifact]) | canonical(.)] | unique),
        rows: [$rows[] | . + {identity: canonical($physical[$root + "/" + .path])}]}' <<<"$resolved"
 }
 IDENTITIES=$(path_identity 2>&1) || refuse path unreadable "$IDENTITIES"

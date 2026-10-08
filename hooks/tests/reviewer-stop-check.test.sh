@@ -810,6 +810,30 @@ path_rows() { # TAG
           alias-dot-parent) path="$alias/../src/lib.rs" ;;
         esac
         ;;
+      report-module*)
+        seed="$(new_repo "seed-$tag$n")"
+        rm -- "$artifact"
+        rmdir -- "$repo/tmp"
+        printf '# no ignored paths\n' >"$repo/.gitignore"
+        fgit -C "$repo" -c protocol.file.allow=always submodule add -q "$seed" tmp
+        fgit -C "$repo" add -A
+        fgit -C "$repo" commit -q -m report-module
+        t="$(transcript_for "$repo")"
+        path="$artifact"
+        case "$kind" in
+          report-module-edit*) path="$repo/tmp/src/lib.rs" ;;
+          report-module-other) path="$repo/src/other.rs" ;;
+        esac
+        if [[ "$kind" = *alias ]]; then
+          alias="$TMP_ROOT/alias-$tag$n"
+          ln -s -- "$repo" "$alias"
+          [ -L "$alias" ] || { echo "path rows: symlink=not-created" >&2; exit 2; }
+          path="$alias/${path#"$repo/"}"
+          t="$(transcript_for "$alias")"
+        fi
+        # The reviewer workflow writes its report before completion.
+        edit_in "$t" "$artifact" Write
+        ;;
       module*)
         seed="$(new_repo "seed-$tag$n")"
         fgit -C "$repo" -c protocol.file.allow=always submodule add -q "$seed" module
@@ -849,6 +873,8 @@ path_rows() { # TAG
       '{type:"event_msg",payload:{type:"item_completed",item:{type:"FileChange",id:"patch-1",status:"completed",
         changes:{($path):{type:"update",unified_diff:"",move_path:(if $kind == "rename-both" then $move else null end)}}}}}' >>"$t"
     case "$kind" in
+      report-module | report-module-alias) ;;
+      report-module*) printf 'changed\n' >>"$repo/tmp/src/lib.rs" ;;
       alias-deleted) rm -- "$repo/src/lib.rs" ;;
       alias-deleted-directory) rm -rf -- "$repo/src" ;;
       module-deleted) rm -- "$repo/module/src/lib.rs" ;;
@@ -892,6 +918,11 @@ a rename with backslashes retains literal identity|rename-backslash|rc=2 first=r
 a rename with an arrow retains literal identity|rename-arrow|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a rename with final newlines retains literal identity|rename-newline|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a rename with Git control escapes retains literal identity|rename-control|rc=2 first=reviewer-stop-check: worktree=@REPO@
+writing only the report in a submodule passes|report-module|rc=0 first=-
+another edit beside the report in a submodule blocks|report-module-edit|rc=2 first=reviewer-stop-check: worktree=@REPO@
+writing only the report through a submodule alias passes|report-module-alias|rc=0 first=-
+another edit beside the report through a submodule alias blocks|report-module-edit-alias|rc=2 first=reviewer-stop-check: worktree=@REPO@
+writing a submodule report cannot attribute another agent's edit|report-module-other|rc=0 first=-
 a submodule descendant identifies the tracked submodule|module|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a deleted submodule descendant identifies the tracked submodule|module-deleted|rc=2 first=reviewer-stop-check: worktree=@REPO@
 a removed submodule retains descendant attribution|module-removed|rc=2 first=reviewer-stop-check: worktree=@REPO@
@@ -914,13 +945,17 @@ rows_control path_rows logical-ancestors \
   "a checkout alias retains a deleted tracked file" \
   "a checkout alias retains a deleted parent directory" \
   "a parent component after a directory alias keeps physical meaning" \
-  "a checkout alias identifies a submodule descendant"
+  "a checkout alias identifies a submodule descendant" \
+  "writing only the report through a submodule alias passes" \
+  "another edit beside the report through a submodule alias blocks"
 rows_control path_rows submodule-descendant-ignored \
   '.submodule and ($path | startswith($name.path + "/"))' 'false' \
   "a submodule descendant identifies the tracked submodule" \
   "a deleted submodule descendant identifies the tracked submodule" \
   "a removed submodule retains descendant attribution" \
   "a checkout alias identifies a submodule descendant" \
+  "another edit beside the report in a submodule blocks" \
+  "another edit beside the report through a submodule alias blocks" \
   "a renamed submodule retains its source descendant identity" \
   "a renamed submodule retains its destination descendant identity"
 rows_control path_rows ordinary-descendant-counts \
@@ -938,6 +973,15 @@ rows_control path_rows rename-source-ignored \
   "a rename with final newlines retains literal identity" \
   "a rename with Git control escapes retains literal identity" \
   "a renamed submodule retains its source descendant identity"
+rows_control path_rows report-gitlink-exempt \
+  'artifact: $physical[$artifact]' 'artifact: canonical($physical[$artifact])' \
+  "another edit beside the report in a submodule blocks" \
+  "another edit beside the report through a submodule alias blocks"
+rows_control path_rows report-evidence-collapsed \
+  'select(. != $physical[$artifact])' '.' \
+  "writing only the report in a submodule passes" \
+  "writing only the report through a submodule alias passes" \
+  "writing a submodule report cannot attribute another agent's edit"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not
