@@ -30,7 +30,7 @@ control_replace scripts/lib/common.sh 1 \
     '    if ! result=$(graphql_pages "$query" "$vars" projectMilestones || true); then'
 
 # Resolve a name with no project rather than refusing it.
-control_expect "a milestone name with no project to scope it is refused before any lookup"
+control_expect "a milestone name with no project to scope it is refused before any milestone lookup"
 control_replace scripts/lib/common.sh 1 \
     '    if [ -z "$milestone_ref" ] || [ -n "$project_scope" ]; then' \
     '    if true; then'

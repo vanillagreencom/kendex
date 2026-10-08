@@ -1,96 +1,116 @@
 #!/usr/bin/env bash
-# a project name that matches both a canceled and a live
-# project must resolve to the live one.
-#
-# Linear keeps a canceled project under the name a live one reuses, and the
-# name query returns both in no fixed order. resolve_project_id took nodes[0],
-# so `issues create --project "<name>"` landed the issue in whichever the API
-# happened to list first — silently, since a create carrying a valid project id
-# succeeds either way. The fixture lists the canceled twin first, which is the
-# order the old code got wrong.
-
+# Surface: issue project-name selection, including canceled twins and team scope.
+# Inputs: scripts/linear.sh, scripts/commands/issues.sh, scripts/lib/*.sh.
+# Linear permits reused project names in different teams and within one team.
+# The fixture applies the query's team filter, so removing it returns the foreign
+# project first. Every row checks the write or refusal, not the query spelling.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
-
-# GIT_DIR outranks -C, so where it is inherited `git -C "$TMP_ROOT" init` below
-# re-inits the ambient repository and leaves no fixture repo at all. Git sets it
-# for a hook run in a linked worktree; a hook in the main checkout gets
-# GIT_INDEX_FILE instead. Reaching the developer's real cache needs GIT_WORK_TREE
-# or core.worktree inherited as well, so all four go, which is the house rule in
-# the repository's AGENTS.md. Unsetting at suite scope covers git and the CLI alike.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
-# The CLI resolves its project from git rev-parse --show-toplevel, so the
-# fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
-# Proof the isolation held. Without the unset the line above re-inits the
-# ambient repository and leaves no fixture repo behind, and a run that goes on
-# from there is writing somewhere nobody sandboxed, so this stops the suite
-# rather than recording a failure and continuing.
-if [[ ! -d "$TMP_ROOT/.git" ]]; then
-  assert_stop "the fixture repository is the one git init created" \
-    "no repository at $TMP_ROOT/.git: a git environment variable redirected git init"
-fi
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
+set -euo pipefail
 config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
-printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
-
+printf '%s\n' "$payload" >>"${CURL_PAYLOAD_LOG:?}"
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  ref="$(jq -r '.variables.name' <<<"$payload")"
+  jq -cn --arg ref "$ref" '{data:{teams:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:(if $ref == "HT" then "ht-team" else "cc-team" end),key:$ref,name:$ref}]}}}'
   ;;
 *"projects(filter:"*)
-  printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"dead-uuid","state":"canceled"},{"id":"live-uuid","state":"backlog"}]}}}___HTTP_CODE___200'
+  name="$(jq -r '.variables.name' <<<"$payload")"
+  if [[ "$name" == Boom ]]; then
+    printf '%s' '{"errors":[{"message":"lookup unavailable"}]}'
+  else
+    team="$(jq -r '.variables.teamId // empty' <<<"$payload")"
+    case "$query" in *'accessibleTeams: {some: {id: {eq: $teamId}}}'*) ;; *) team="" ;; esac
+    jq -cn --arg name "$name" --arg team "$team" '
+      def project($id; $state; $team): {id:$id,state:$state,teams:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{name:$team}]}};
+      [project("dead-uuid"; "canceled"; "CC") + {name:"Dup",team:"cc-team"},
+       project("foreign-uuid"; "backlog"; "HT") + {name:"Dup",team:"ht-team"},
+       project("live-uuid"; "backlog"; "CC") + {name:"Dup",team:"cc-team"},
+       project("twin-one"; "started"; "CC") + {name:"Twin",team:"cc-team"},
+       project("twin-two"; "backlog"; "CC") + {name:"Twin",team:"cc-team"},
+       project("foreign-only"; "backlog"; "HT") + {name:"Foreign",team:"ht-team"},
+       project("dead-only"; "canceled"; "CC") + {name:"Canceled",team:"cc-team"}]
+      | [.[] | select(.name == $name and ($team == "" or .team == $team))]
+      | {data:{projects:{pageInfo:{hasNextPage:false,endCursor:null},nodes:.}}}'
+  fi
   ;;
 *"issueLabels(filter:"*)
-  printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-uuid"}]}}}'
+  ;;
+*"issue(id:"*)
+  ref="$(jq -r '.variables.id' <<<"$payload")"
+  jq -cn --arg ref "$ref" '{data:{issue:{id:($ref + "-uuid"),identifier:$ref,team:(if $ref == "CC-2" then null else {id:(if ($ref | startswith("HT-")) or $ref == "CC-3" then "ht-team" else "cc-team" end)} end),project:null}}}'
   ;;
 *"issueCreate(input:"*)
-  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"live-uuid","name":"Dup"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-900","createdAt":"2026-09-02T00:00:00Z","updatedAt":"2026-09-02T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","team":{"name":"CC"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
   ;;
-*)
-  printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'
+*"issueUpdate"*)
+  printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"iss-uuid","identifier":"CC-1"}}}}'
   ;;
+*) printf '%s' '{"errors":[{"message":"unexpected query"}]}' ;;
 esac
+printf '%s' '___HTTP_CODE___200'
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
 PAYLOAD_LOG="$TMP_ROOT/payloads.jsonl"
-: >"$PAYLOAD_LOG"
+CREATE='issues create --title t --labels agent:rust --priority 3 --description d'
+# label|configured team|command|status|project IDs written|structured refusal
+ROWS='
+canceled twins lose to the live project in the configured team|CC|$CREATE --project Dup|0|live-uuid|-
+same-name projects in two teams resolve under the explicit create team||$CREATE --team HT --project Dup|0|foreign-uuid|-
+update uses the issue team when the configured team is absent||issues update HT-1 --project Dup|0|foreign-uuid|-
+update uses the live issue team rather than an old identifier prefix|CC|issues update CC-3 --project Dup|0|foreign-uuid|-
+bulk-update resolves the same project name separately for each issue team||issues bulk-update CC-1 HT-1 --project Dup|0|live-uuid,foreign-uuid|-
+ambiguous live names refuse with every candidate and its team|CC|$CREATE --project Twin|1||AMBIGUOUS_PROJECT
+update refuses ambiguous live names before writing||issues update CC-1 --project Twin|1||AMBIGUOUS_PROJECT
+foreign-only project names cannot assign an issue to another team|CC|$CREATE --project Foreign|1||-
+a name with only canceled matches refuses|CC|$CREATE --project Canceled|1||-
+a project UUID passes through without a project lookup|CC|$CREATE --project 11111111-2222-3333-4444-555555555555|0|11111111-2222-3333-4444-555555555555|uuid
+an existing issue without a team refuses name resolution||issues update CC-2 --project Dup|1||ISSUE_TEAM_MISSING
+a failed project lookup refuses before writing|CC|$CREATE --project Boom|1||-
+'
 
-run_create() {
-  (
-    cd "$TMP_ROOT" && \
-    PATH="$TMP_ROOT/bin:$PATH" \
-      LINEAR_API_KEY_OVERRIDE=test-token LINEAR_REQUIRE_REACH= \
-      CURL_PAYLOAD_LOG="$PAYLOAD_LOG" \
-      bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues create \
-        --title t \
-        --team Claude \
-        --project Dup \
-        --labels agent:rust \
-        --priority 3 \
-        --description d
-  ) >"$TMP_ROOT/create.out" 2>"$TMP_ROOT/create.err"
-}
-
-rc=0
-run_status rc run_create
-
-assert_eq "issues create succeeds when a canceled project shares the name (canceled-first)" \
-  "$rc" 0
-
-assert "the issueCreate payload carries the live project id, not the canceled one (canceled-first)" \
-  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.projectId == "live-uuid")' \
-  "$PAYLOAD_LOG" >/dev/null
+while IFS='|' read -r label team args want_rc want_projects refusal; do
+  [[ -n "$label" ]] || continue
+  : >"$PAYLOAD_LOG"
+  eval "set -- $args"
+  rc=0
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_TEAM="$team" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$PAYLOAD_LOG" \
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" "$@") \
+    >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+  projects="$(jq -rs '[.[] | select(.query | test("issue(Create|Update)")) | .variables.input.projectId] | join(",")' "$PAYLOAD_LOG")"
+  assert_eq "$label" "$rc:$projects" "$want_rc:$want_projects"
+  sed -n '/^{/p' "$TMP_ROOT/err" >"$TMP_ROOT/errors.jsonl"
+  case "$refusal" in
+  AMBIGUOUS_PROJECT)
+    assert "$label lists both project IDs with team names" \
+      jq -se 'any(.[]; .code == "AMBIGUOUS_PROJECT" and .project == "Twin" and .team_id == "cc-team"
+        and (.candidates | sort_by(.id)) == [{id:"twin-one",teams:["CC"]},{id:"twin-two",teams:["CC"]}])' "$TMP_ROOT/errors.jsonl" >/dev/null
+    ;;
+  ISSUE_TEAM_MISSING)
+    assert "$label names the missing issue team" jq -se 'any(.[]; .code == "ISSUE_TEAM_MISSING" and .issue == "CC-2")' \
+      "$TMP_ROOT/errors.jsonl" >/dev/null
+    ;;
+  uuid)
+    assert "$label sends no project query" jq -se 'all(.[]; (.query | contains("projects(filter:")) | not)' "$PAYLOAD_LOG" >/dev/null
+    ;;
+  esac
+done <<<"$ROWS"

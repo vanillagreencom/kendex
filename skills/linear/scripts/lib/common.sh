@@ -934,7 +934,7 @@ linear_guard_create_team() {
 }
 
 # Resolve project name or UUID to UUID
-# Usage: resolve_project_id "Project name" or resolve_project_id "uuid-here"
+# Usage: resolve_project_id "Project name" [team-uuid] or resolve_project_id "uuid-here"
 #
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order, so nodes[0] handed writes the
@@ -942,7 +942,7 @@ linear_guard_create_team() {
 # issue nobody could find. PROJECT_PICK_JQ (lib/formatters.sh) states the rule
 # that settles it and every other spelling of the lookup.
 resolve_project_id() {
-    local project_ref="$1"
+    local project_ref="$1" team_id="${2:-}"
 
     # Check if it's already a UUID
     if [[ "$project_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -955,7 +955,11 @@ resolve_project_id() {
     # "no such project" from "only canceled ones".
     local query='query GetProject($name: String!, $after: String) { projects(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id state } } }'
     local variables
-    variables=$(jq -nc --arg name "$project_ref" '{name: $name}')
+    variables=$(jq -nc --arg name "$project_ref" '{name: $name}') || return 1
+    if [[ -n "$team_id" ]]; then
+        query='query GetProject($name: String!, $teamId: ID!, $after: String) { projects(filter: {name: {eq: $name}, accessibleTeams: {some: {id: {eq: $teamId}}}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id state teams { pageInfo { hasNextPage endCursor } nodes { name } } } } }'
+        variables=$(jq -nc --arg name "$project_ref" --arg teamId "$team_id" '{name: $name, teamId: $teamId}') || return 1
+    fi
     local result
     # A FAILED query is an API failure (rate limit, outage); "Project not
     # found" is only true of a lookup that succeeded and matched nothing.
@@ -963,6 +967,23 @@ resolve_project_id() {
         jq -nc --arg name "$project_ref" \
             '{error: ("Could not resolve project \"" + $name + "\": Linear API request failed (see previous error)")}' >&2
         return 1
+    fi
+
+    # Linear permits multiple live projects with one name in the same team.
+    # Choosing the first would assign an issue to an arbitrary project.
+    if [[ -n "$team_id" ]]; then
+        local candidates candidate_count
+        candidates=$(jq -c "$PROJECT_PICK_JQ"'[.projects.nodes[]? | select(project_is_live)]' <<<"$result") || return 1
+        candidate_count=$(jq 'length' <<<"$candidates") || return 1
+        if [[ "$candidate_count" -gt 1 ]]; then
+            jq -c --arg ref "$project_ref" --arg team_id "$team_id" \
+                '. as $candidates | {code: "AMBIGUOUS_PROJECT", project: $ref, team_id: $team_id,
+                  candidates: [$candidates[] | {id, teams: [.teams.nodes[]?.name]}],
+                  error: ("Project name is ambiguous: " + $ref + "; matches: "
+                    + ($candidates | map(.id + " (" + ([.teams.nodes[]?.name] | join(", ")) + ")") | join(", "))
+                    + "; pass a project UUID to target one")}' <<<"$candidates" >&2
+            return 1
+        fi
     fi
 
     # PROJECT_PICK_JQ (lib/formatters.sh) is the rule; this is one of its

@@ -1289,6 +1289,10 @@ create_issue() {
     # The first request: the checks above need none, so they refuse first.
     linear_guard_create_team "$explicit_team" || return 1
 
+    # The same team id scopes project names, labels and the issue mutation.
+    local team_id
+    team_id=$(resolve_team_id "$team") || return 1
+
     # Resolve --project and --milestone BEFORE uploading: each can still
     # refuse — an unknown project, a milestone name with no project, an
     # ambiguous one, a failed lookup — and a refusal after the upload strands
@@ -1296,7 +1300,7 @@ create_issue() {
     # yield are what the input below carries.
     local project_id=""
     if [ -n "$project" ]; then
-        project_id=$(resolve_project_id "$project")
+        project_id=$(resolve_project_id "$project" "$team_id") || return 1
         if [ -z "$project_id" ]; then
             return 1
         fi
@@ -1315,12 +1319,6 @@ create_issue() {
     if [ -n "$assignee" ]; then
         assignee_id=$(resolve_assignee_id "$assignee") || return 1
     fi
-
-    # Shared resolver: it passes a team UUID straight through and tells an API
-    # failure apart from a genuine miss. Its id scopes every label lookup
-    # below, so an unknown team refuses here, before any of them or an upload.
-    local team_id
-    team_id=$(resolve_team_id "$team") || return 1
 
     # Handle labels (warn + skip on miss per label — EXCEPT agent:* labels:
     # the routing guard's promise is routed-or-refused, so an agent label
@@ -1795,7 +1793,11 @@ update_issue() {
     # after the upload strands the asset in Linear storage.
     local project_id=""
     if [ -n "$project" ]; then
-        project_id=$(resolve_project_id "$project")
+        if [[ -z "$team_id" && ! "$project" =~ $LINEAR_UUID_PATTERN ]]; then
+            jq -cn --arg issue "$issue_id" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
+            return 1
+        fi
+        project_id=$(resolve_project_id "$project" "$team_id") || return 1
         if [ -z "$project_id" ]; then
             return 1
         fi
