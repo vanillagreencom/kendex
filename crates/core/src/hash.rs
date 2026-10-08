@@ -660,6 +660,13 @@ pub fn relevant_sections(
                 }
             }
         }
+        ItemKind::Command => {
+            for key in shared_keys {
+                if let Some(text) = manifest.command_instructions.get(key) {
+                    push("command-instructions", key, text);
+                }
+            }
+        }
         ItemKind::Agent => {
             for (class, selector) in &manifest.model_classes {
                 push("model-classes", class, selector);

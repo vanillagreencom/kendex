@@ -215,3 +215,40 @@ fn a_legacy_agent_label_renders_under_the_current_name() {
         assert!(!text.contains("agent:engineer"), "{harness:?}: {text}");
     }
 }
+
+/// Every command record's `source_hash`, keyed by its lock entry.
+#[allow(clippy::unwrap_used)]
+fn source_hashes(f: &Fixture) -> Vec<(String, String)> {
+    let lock: Value =
+        serde_json::from_str(&fs::read_to_string(f.project.join(".kendex-lock.json")).unwrap())
+            .unwrap();
+    command_tools(&f.scope)
+        .into_iter()
+        .map(|harness| {
+            let key = format!("command:code-scrub:{}", harness.name());
+            let hash = lock["entries"][&key]["sourceHash"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{key} records no source hash"))
+                .to_owned();
+            (key, hash)
+        })
+        .collect()
+}
+
+/// The instructions are an input of the installation, so the record of
+/// it moves when they do: a changed instruction is a changed install,
+/// told apart from the person editing the installed copy.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn changed_instructions_move_every_record_s_source_hash() {
+    let f = fixture(INSTRUCTED);
+    apply_now(&f);
+    let before = source_hashes(&f);
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(&manifest, text.replace("behind a flag", "behind two flags")).unwrap();
+    apply_now(&f);
+    for ((key, old), (_, new)) in before.iter().zip(source_hashes(&f)) {
+        assert_ne!(*old, new, "{key}");
+    }
+}
