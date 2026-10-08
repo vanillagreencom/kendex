@@ -304,7 +304,7 @@ required_contexts() {
     local pr_num="$1" repo="${2:-}" base="" rules="" classic="" branch_json=""
     local path="{owner}/{repo}" repo_arg=() fallback=false
     local head="${3:-}" runs workflow checks resolved repo_id evidence state
-    local source definition definitions revision source_repo source_sha candidates nodes files matched bindings='[]' claimed_runs='[]' run suite
+    local source sources source_names definition definitions revision source_repo source_sha candidates nodes files matched bindings='[]' claimed_runs='[]' run suite
     if [ -n "$repo" ]; then
         path="$repo"
         repo_arg=(--repo "$repo")
@@ -344,31 +344,13 @@ required_contexts() {
             return 0
         fi
         while IFS= read -r workflow; do
-            # The rules API names a source repository and revision. The run's
-            # repository instead binds execution to the consumer. Neither can
-            # substitute for the other, even when workflow paths are identical.
-            # Source proof uses WorkflowRun.file (GraphQL Actions reference):
-            # https://docs.github.com/en/graphql/reference/actions#workflowrunfile
-            if ! source=$(jq -er '.repository_id | select(type == "number" and . > 0 and . == floor)' <<<"$workflow") \
-                || ! source=$(gh api "repositories/$source" 2>/dev/null) \
-                || ! definition=$(jq -ce --argjson rule "$workflow" '
-                    select(.id == $rule.repository_id and (.full_name | type) == "string" and (.full_name | test("^[^/]+/[^/]+$")))
-                    | {rule: $rule, repository: .full_name,
-                       revision: ($rule.sha // $rule.ref // .default_branch)}
-                    | select((.rule.path | type) == "string" and (.rule.path | length) > 0
-                             and (.revision | type) == "string" and (.revision | length) > 0)' <<<"$source" 2>/dev/null) \
-                || ! source_repo=$(jq -r '.repository' <<<"$definition") \
-                || ! revision=$(jq -r '.revision | @uri' <<<"$definition"); then
+            # The rules API names the source identity; the run repository
+            # binds execution to the consumer. Validate each independently.
+            if ! jq -e '
+                (.repository_id | type == "number" and . > 0 and . == floor)
+                and (.path | type == "string" and length > 0)' >/dev/null 2>&1 <<<"$workflow"; then
                 echo '{"state":"unreadable","contexts":[]}'
                 return 0
-            fi
-            source_sha=$(jq -r '.rule.sha // ""' <<<"$definition") || return 1
-            if [ -z "$source_sha" ]; then
-                if ! source_sha=$(gh api "repos/$source_repo/commits/$revision" --jq '.sha' 2>/dev/null) \
-                    || ! jq -en --arg sha "$source_sha" '$sha | test("^[0-9a-fA-F]{40}$")' >/dev/null 2>&1; then
-                    echo '{"state":"unreadable","contexts":[]}'
-                    return 0
-                fi
             fi
             if ! candidates=$(jq -ce --argjson workflow "$workflow" --arg head "$head" --argjson repo_id "$repo_id" '
                 [.[] | select((.path | split("@")[0]) == $workflow.path and .head_sha == $head
@@ -382,7 +364,7 @@ required_contexts() {
             matched='[]'
             if [ "$nodes" != '[]' ]; then
                 if ! files=$(gh api graphql --input <(jq -cn --argjson ids "$nodes" '{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}') 2>/dev/null) \
-                    || ! matched=$(jq -ce --slurpfile candidates <(printf '%s\n' "$candidates") --argjson definition "$definition" --argjson claimed_runs "$claimed_runs" --arg sha "$source_sha" '
+                    || ! files=$(jq -ce --slurpfile candidates <(printf '%s\n' "$candidates") '
                         if (.errors // [] | length) > 0 or (.data.nodes | type) != "array" then error("unreadable workflow files") else .data.nodes end
                         | . as $nodes
                         | [$candidates[0][] | . as $run
@@ -393,7 +375,60 @@ required_contexts() {
                                 or $execution.runAttempt != ($run.run_attempt // 1)
                                 or $file.viewerCanReadRepository != true
                                 or ($file.path | type) != "string" or ($file.repositoryName | type) != "string"
-                                or ($file.repositoryFileUrl | type) != "string" then error("unreadable source proof") else . end
+                                or ($file.repositoryFileUrl | type) != "string"
+                                or ($file.repositoryName | test("^[^/]+/[^/]+$") | not)
+                             then error("unreadable source proof") else $suite end]' <<<"$files" 2>/dev/null) \
+                    || ! source_names=$(jq -r 'map(.workflowRun.file.repositoryName) | unique_by(ascii_downcase)[]' <<<"$files"); then
+                    echo '{"state":"unreadable","contexts":[]}'
+                    return 0
+                fi
+                sources='[]'
+                # WorkflowRun.file.repositoryName supplies owner/name, not a
+                # short name. The documented repository lookup returns its ID:
+                # https://docs.github.com/en/rest/repos/repos#get-a-repository
+                # https://docs.github.com/en/graphql/reference/actions#workflowrunfile
+                while IFS= read -r source_repo; do
+                    if ! source=$(gh api "repos/$source_repo" 2>/dev/null) \
+                        || ! source=$(jq -ce --arg name "$source_repo" '
+                            select((.id | type == "number" and . > 0 and . == floor)
+                                   and (.full_name | type) == "string"
+                                   and (.full_name | ascii_downcase) == ($name | ascii_downcase))' <<<"$source" 2>/dev/null); then
+                        echo '{"state":"unreadable","contexts":[]}'
+                        return 0
+                    fi
+                    sources=$(jq -cn --argjson sources "$sources" --argjson source "$source" '$sources + [$source]') || return 1
+                done <<<"$source_names"
+                if ! source=$(jq -ce --argjson rule "$workflow" '
+                    map(select(.id == $rule.repository_id))
+                    | if length > 1 then error("ambiguous source repository") else .[0] // {} end' <<<"$sources" 2>/dev/null); then
+                    echo '{"state":"unreadable","contexts":[]}'
+                    return 0
+                fi
+                if [ "$source" != '{}' ]; then
+                    if ! definition=$(jq -ce --argjson rule "$workflow" '
+                            select((.full_name | type) == "string" and (.full_name | test("^[^/]+/[^/]+$")))
+                            | {rule: $rule, repository: .full_name,
+                               revision: ($rule.sha // $rule.ref // .default_branch)}
+                            | select((.rule.path | type) == "string" and (.rule.path | length) > 0
+                                     and (.revision | type) == "string" and (.revision | length) > 0)' <<<"$source" 2>/dev/null) \
+                        || ! source_repo=$(jq -r '.repository' <<<"$definition") \
+                        || ! revision=$(jq -r '.revision | @uri' <<<"$definition"); then
+                        echo '{"state":"unreadable","contexts":[]}'
+                        return 0
+                    fi
+                    source_sha=$(jq -r '.rule.sha // ""' <<<"$definition") || return 1
+                    if [ -z "$source_sha" ]; then
+                        if ! source_sha=$(gh api "repos/$source_repo/commits/$revision" --jq '.sha' 2>/dev/null) \
+                            || ! jq -en --arg sha "$source_sha" '$sha | test("^[0-9a-fA-F]{40}$")' >/dev/null 2>&1; then
+                            echo '{"state":"unreadable","contexts":[]}'
+                            return 0
+                        fi
+                    fi
+                    if ! matched=$(jq -ce --slurpfile candidates <(printf '%s\n' "$candidates") --argjson definition "$definition" --argjson claimed_runs "$claimed_runs" --arg sha "$source_sha" '
+                        . as $nodes
+                        | [$candidates[0][] | . as $run
+                           | ([$nodes[] | select(.id == $run.check_suite_node_id)] | .[0]) as $suite
+                           | $suite.workflowRun.file as $file
                            | select($file.path == $definition.rule.path
                                     and ($file.repositoryName | ascii_downcase) == ($definition.repository | ascii_downcase)
                                     and ($file.repositoryFileUrl ==
@@ -405,8 +440,9 @@ required_contexts() {
                            # this claim so freshness cannot reuse them as proof.
                            | if ($claimed_runs | index($run.id)) != null then error("ambiguous source definition") else . end
                            | $run]' <<<"$files" 2>/dev/null); then
-                    echo '{"state":"unreadable","contexts":[]}'
-                    return 0
+                        echo '{"state":"unreadable","contexts":[]}'
+                        return 0
+                    fi
                 fi
             fi
             # Select freshness only among executions that prove this complete

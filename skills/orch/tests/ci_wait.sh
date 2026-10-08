@@ -129,8 +129,9 @@ case "${1:-}" in
       fi
       exit 0
     fi
-    if [[ -n "${STUB_REQUIRED_WORKFLOW:-}" && "${2:-}" == repositories/999 ]]; then
-      echo '{"id":999,"full_name":"org/source","default_branch":"main"}'
+    if [[ -n "${STUB_REQUIRED_WORKFLOW:-}" && "${2:-}" == repos/org/source ]]; then
+      [[ "${STUB_SOURCE_EXIT:-0}" == 0 ]] || exit "$STUB_SOURCE_EXIT"
+      jq -cn --argjson id "${STUB_SOURCE_ID:-999}" '{id:$id,full_name:"org/source",default_branch:"main"}'
       exit 0
     fi
     if [[ -n "${STUB_REQUIRED_WORKFLOW:-}" && "${2:-}" == repos/org/source/commits/* ]]; then
@@ -775,6 +776,8 @@ table "$JSON --required-only" \
   "optional same-name pending cannot hold the confirmation clock|||$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-same-pending.json,STUB_PR_CHECKS_EXIT=8|rc=0 verdict=pass failed=0 pending=0 elapsed_seconds=90" \
   "optional same-name queued cannot hold required work|||$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-same-queued.json,STUB_PR_CHECKS_EXIT=8|rc=0 verdict=pass failed=0 pending=0 elapsed_seconds=90" \
   "unreadable source metadata holds required work|||$WORKFLOW_PENDING,STUB_WORKFLOW_FILES_EXIT=1|$WORKFLOW_HOLD" \
+  "unreadable documented source lookup holds required work|||$WORKFLOW_PENDING,STUB_SOURCE_EXIT=1|$WORKFLOW_HOLD" \
+  "a source repository ID mismatch holds required work|||$WORKFLOW_PENDING,STUB_SOURCE_ID=888|$WORKFLOW_HOLD" \
   "a wrong source pin holds required work|||$WORKFLOW_PENDING,STUB_WORKFLOW_SOURCE_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|$WORKFLOW_HOLD" \
   "an active required workflow holds with every visible job green|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-active.json|$WORKFLOW_HOLD stderr~ci-wait:+required-workflow-unreadable=false" \
   "required workflow completion during the wait releases its hold|||$WORKFLOW_GREEN,STUB_PR_CHECKS_SEQUENCE=green,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-active.json,STUB_ACTIONS_RUNS_RELEASE_AFTER=2,STUB_ACTIONS_RUNS_RELEASE_FIXTURE=$TMP_ROOT/runs-required-completed.json|rc=0 status=complete verdict=pass pending=0" \

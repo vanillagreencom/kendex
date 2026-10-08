@@ -240,6 +240,10 @@ word() {
       case "$v" in
         matched) ;;
         source-unreadable) W_ENV+=("STUB_WORKFLOW_FILES_EXIT=1") ;;
+        source-lookup-unreadable|source-id-mismatch)
+          W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999}]}}]')
+          if [[ "$v" == source-id-mismatch ]]; then W_ENV+=("STUB_SOURCE_ID=888"); else W_ENV+=("STUB_SOURCE_EXIT=1"); fi
+          ;;
         source-null) W_ENV+=('STUB_WORKFLOW_FILES={"data":{"nodes":[null]}}') ;;
         source-repository-collision|source-pin-collision|source-ref-collision)
           W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":999,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"path":".github/workflows/request-copilot-review.yml","repository_id":888,"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}}]')
@@ -427,7 +431,7 @@ calls() {
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
       "api user"*) out="$out,user" ;;
       "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
-      "auth status"*|"repo view"*|"api repos/"*|"api repositories/"*|"api graphql --input "*|"api graphql"*reviewThreads*|"api graphql"*viewer*|"pr view 123 --json baseRefName"*) ;;
+      "auth status"*|"repo view"*|"api repos/"*|"api graphql --input "*|"api graphql"*reviewThreads*|"api graphql"*viewer*|"pr view 123 --json baseRefName"*) ;;
       *) out="$out,?($line)" ;;
     esac
   done < <(awk '/^(pr|api|auth|repo) / { if (call != "") print call; call = $0; next }

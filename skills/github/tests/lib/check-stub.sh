@@ -133,11 +133,11 @@ case "${1:-}" in
             prev="$a"
         done
         case "${2:-}" in
-            'repositories/'*)
+            'repos/org/source' | 'repos/org/other')
                 [[ "${STUB_SOURCE_EXIT:-0}" == 0 ]] || exit "$STUB_SOURCE_EXIT"
-                id=${2#repositories/}
-                case "$id" in 123) source_name=owner/repo ;; 999) source_name=org/source ;; 888) source_name=org/other ;; *) exit 1 ;; esac
-                jq -cn --argjson id "$id" --arg name "$source_name" '{id:$id,full_name:$name,default_branch:"main"}'
+                source_name=${2#repos/}
+                case "$source_name" in org/source) id=999 ;; org/other) id=888 ;; esac
+                jq -cn --argjson id "${STUB_SOURCE_ID:-$id}" --arg name "$source_name" '{id:$id,full_name:$name,default_branch:"main"}'
                 exit 0 ;;
             'repos/'*'/commits/'*)
                 [[ "${STUB_SOURCE_REVISION_EXIT:-0}" == 0 ]] || exit "$STUB_SOURCE_REVISION_EXIT"
@@ -223,7 +223,7 @@ case "${1:-}" in
                     --arg default "${STUB_DEFAULT_BRANCH:-main}" \
                     --argjson pushless "${STUB_REPO_PUSHLESS:-false}" \
                     '($methods | split(" ")) as $m
-                    | {id: $id, allow_auto_merge: $auto, default_branch: $default}
+                    | {id: $id, full_name: "owner/repo", allow_auto_merge: $auto, default_branch: $default}
                     + if $pushless then {} else {allow_squash_merge: ($m | index("squash") != null), allow_merge_commit: ($m | index("merge") != null), allow_rebase_merge: ($m | index("rebase") != null), delete_branch_on_merge: $deletes} end')
                 if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$repo_json"; else printf '%s\n' "$repo_json"; fi
                 exit 0
