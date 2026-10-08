@@ -92,8 +92,15 @@ The long pass's events, checked and reported in this order:
                              own), and stops: the successor runs a watch of
                              its own
   EVENT overseer-walled <pane> window=<window> passes=<N> succession=<on|off>
-        source=<rows|account|pane>
-                             the same session read `walled`: from `rows`, a
+        source=<auth|rows|account|pane>
+                             the session read `walled`:
+                             from `auth`, a login failure in the current
+                             pane turn. From `rows`, Claude Code's
+                             authentication_failed StopFailure is also a
+                             login wall. Both recover on the first pass,
+                             even with usage room or a previous successful
+                             row. No account mark confirmation is required.
+                             For usage limits, from `rows`, a
                              StopFailure row whose error is `rate_limit`,
                              standing unless its account measures room, its
                              message, or message=unrecorded, under the line; from `account`, a live
@@ -121,7 +128,7 @@ The long pass's events, checked and reported in this order:
                              same two channels. The successor is launched
                              through `oversee-succeed --walled-pane`, which
                              picks its account afresh and never reopens on the
-                             spent one; the line it built is on the watch's
+                             walled one; the line it built is on the watch's
                              stderr under the event. Where no account
                              qualifies, one `overseer-recovery-blocked` notice
                              naming the account and when its binding bucket

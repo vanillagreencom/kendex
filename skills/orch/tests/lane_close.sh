@@ -424,7 +424,8 @@ walled_screen() { # RESET
   printf '%s\n\n%s\n%s\n' '⏺ I will keep going.' "You've hit your session limit · resets $1" "$CLAUDE_COMPOSER" >"$SCREEN"
 }
 codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
-copilot_screen() { cp -- "$PANE_FIXTURES/copilot-idle.txt" "$SCREEN"; }
+# The capture is signed out. Shutdown cases need only its neutral composer.
+copilot_screen() { sed -n '/^─/,$p' "$PANE_FIXTURES/copilot-idle.txt" > "$SCREEN"; }
 
 # A local lane's harness: a real process, so the SIGTERM and its exit are
 # real, started detached so init reaps it rather than this shell holding it as

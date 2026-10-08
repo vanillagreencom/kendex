@@ -1012,12 +1012,12 @@ assert_eq "rc=$RC launched=$(succeed_calls --dead-pane) noted=$(grep -c "^overse
   "rc=0 launched=0 noted=1" \
   "an overseer pane the adapter answers gone launches nothing and names why once" "$ERR"
 
-# A usage-limit scan the adapter could not run leaves the fallback reading
-# unread: a provider behind a grep that fails on the limit pattern alone.
+# A wall scan the adapter could not run leaves the fallback reading unread.
+# The grep failure reaches the combined usage and authentication scan.
 LIMIT_BIN="$TMP_ROOT/limit-scan-bin"
 mkdir -p "$LIMIT_BIN"
 # shellcheck source=../scripts/lib/lane-state.sh
-LIMIT_RE="$(source "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE")"
+LIMIT_RE="$(source "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE|$AUTH_FAILURE_RE")"
 cat > "$LIMIT_BIN/grep" <<STUB
 #!/usr/bin/env bash
 for arg in "\$@"; do [[ "\$arg" != $(printf '%q' "$LIMIT_RE") ]] || exit 2; done

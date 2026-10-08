@@ -74,8 +74,9 @@ printf '5006 fish\n' > "$STUB_DIR/kids-105.txt"
 printf '2' > "$STUB_DIR/probe-fail-5006"
 
 # The screens, each named for what a lane showing it is doing. The Codex and
-# Copilot ones are the byte-exact captures under fixtures/, the Copilot ones off
-# Copilot CLI 1.0.88 in a tmux pane; the Claude ones are the shapes
+# Copilot authentication screens are whole captures from a signed-out CLI
+# 1.0.88 in a tmux pane. Composer inputs keep only its frame and footer.
+# The Claude ones are the shapes
 # oversee_watch_lanes.sh already pins, kept whole here so a row's premise is
 # visible beside it.
 screen_for() {
@@ -90,8 +91,10 @@ screen_for() {
     codex_idle) cat "$CODEX_PANES/codex-idle-after-turn.txt" ;;
     codex_working) cat "$CODEX_PANES/codex-working.txt" ;;
     claude_dialog) cat "$CODEX_PANES/claude-dialog-permission.txt" ;;
-    copilot_idle) cat "$CODEX_PANES/copilot-idle.txt" ;;
-    copilot_draft) cat "$CODEX_PANES/copilot-composer-draft.txt" ;;
+    copilot_idle) sed -n '/^─/,$p' "$CODEX_PANES/copilot-idle.txt" ;;
+    copilot_draft) sed -n '/^─/,$p' "$CODEX_PANES/copilot-composer-draft.txt" ;;
+    copilot_signed_out_idle) cat "$CODEX_PANES/copilot-idle.txt" ;;
+    copilot_signed_out_draft) cat "$CODEX_PANES/copilot-composer-draft.txt" ;;
     copilot_working) cat "$CODEX_PANES/copilot-working.txt" ;;
     copilot_trust) cat "$CODEX_PANES/copilot-dialog-trust.txt" ;;
     pi_working) cat "$CODEX_PANES/pi-working.txt" ;;
@@ -148,9 +151,24 @@ the same for the codex screen a live session between tool calls draws|listed|cod
 a process read that says idle agrees with the marker and the lane is idle|listed|claude|100|idle|idle||idle
 a copilot composer with its frame's rule under it is idle|listed|node|100|copilot_idle|||idle
 a copilot composer holding a draft is the same live input|listed|node|100|copilot_draft|||idle
+a signed-out copilot capture is walled despite its idle composer|listed|node|100|copilot_signed_out_idle|||walled
+a signed-out copilot capture is walled despite its draft|listed|node|100|copilot_signed_out_draft|||walled
 a copilot footer running a command is a turn in flight|listed|node|100|copilot_working|||working
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
 ROWS
+
+# A disabled classifier leaves the signed-out capture at the composer rung.
+# Both inputs came from the no-login KEN-1985 host, not a signed-in session.
+COPILOT_AUTH_MUTANT="$(mutant_scripts copilot-auth lib/lane-state.sh)" || exit 1
+mutate_file "$COPILOT_AUTH_MUTANT/lib/lane-state.sh" 'AUTH_FAILURE_RE=' "AUTH_FAILURE_RE='a^' AUTH_FAILURE_RE_DISABLED="
+for screen in copilot_signed_out_idle copilot_signed_out_draft; do
+  copilot_auth_control="$(
+    source "$COPILOT_AUTH_MUTANT/lib/lane-state.sh"
+    lane_state row_state listed node 100 "$(screen_for "$screen")"
+    printf '%s' "$row_state"
+  )" || exit 1
+  assert_eq "$copilot_auth_control" idle "control: without auth classification the $screen wall assertion fails"
+done
 
 # Control: a walk that stops at the pane's own children reads the shell a
 # resume script left as the lane, the pane that held lane-close to its timeout.
@@ -209,6 +227,7 @@ while IFS='|' read -r name screen want; do
 done <<'ROWS'
 a claude composer is the harness up|idle|yes
 an idle copilot composer is the harness up|copilot_idle|yes
+a signed-out copilot composer is still the harness up|copilot_signed_out_idle|yes
 a copilot command in flight is the harness up|copilot_working|yes
 copilot's folder-trust dialog is not|copilot_trust|no
 a Pi compact working screen is the harness up|pi_working|yes
@@ -641,17 +660,19 @@ wake_state() {
   esac
 }
 
-# watch_event SCREEN PID CMD — the same screen put to oversee-watch, as the
-# lane event it emits. Two runs: the watch debounces its exited and idle
-# reports, and the second run is where a debounced one goes out.
+# watch_event SCREEN PID CMD [first]: the lane event for this screen.
+# The default waits for debounced events. first reads one watch pass.
 watch_event() {
-  local out
+  local out loops=2
   screen_for "$1" > "$STUB_DIR/pane-gh-2.txt"
   printf '%s\n' "$2" > "$STUB_DIR/panepid-gh-2.txt"
   printf '%s\n' "$3" > "$STUB_DIR/cmd-gh-2.txt"
   printf 'gh-2\n' > "$STUB_DIR/windows.txt"
-  out="$(run_watch -- gh-2 2>/dev/null || true)"
-  out+=$'\n'"$(run_watch -- gh-2 2>/dev/null || true)"
+  [[ "${4:-}" != first ]] || loops=1
+  out="$(run_watch -- --max-loops "$loops" gh-2 2>/dev/null || true)"
+  if [[ "${4:-}" != first ]]; then
+    out+=$'\n'"$(run_watch -- gh-2 2>/dev/null || true)"
+  fi
   case "$out" in
     *"EVENT usage-limit gh-2"*) printf 'usage-limit' ;;
     *"EVENT lane-asking gh-2"*) printf 'lane-asking' ;;
@@ -696,18 +717,26 @@ ROWS
 
 # A Copilot lane, whose pane reads node, its npm loader: the watch alone, since
 # the wake does not take the harness and the lane's monitor is its own wake.
-while IFS='|' read -r screen event; do
+while IFS='|' read -r screen event pass; do
   [[ -n "$screen" ]] || continue
   new_case "agree-$screen"
   export STUB_DIR
   printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"
-  assert_eq "$(watch_event "$screen" 100 node)" "$event" \
+  assert_eq "$(watch_event "$screen" 100 node "$pass")" "$event" \
     "the watch reads the $screen screen as $event"
 done <<'ROWS'
 copilot_idle|idle-after-return
+copilot_signed_out_idle|usage-limit|first
+copilot_signed_out_draft|usage-limit|first
 copilot_trust|lane-asking
 copilot_working|none
 ROWS
+
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/copilot-auth/github"
+new_case agree-copilot-auth-control
+export STUB_DIR
+assert_eq "$(WATCH_BIN="$COPILOT_AUTH_MUTANT/oversee-watch" watch_event copilot_signed_out_idle 100 node first)" none \
+  "control: without auth classification the first-pass usage-limit assertion fails"
 
 # The PRODUCER of `unjudged`, not the word. The two § states rows above hand it
 # to the judge as an argument; nothing there runs `lane_session_state`, which is

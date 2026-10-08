@@ -232,9 +232,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')" \
   "0| cause=process-probe probe=3" \
   "inspect names a child probe that could not run and its exit status"
 # Both scans failing on one pass are both named: the probe as above and a grep
-# that fails on the usage-limit pattern alone.
+# that fails on the combined usage and authentication scan.
 # shellcheck source=../scripts/lib/lane-state.sh
-LIMIT_RE="$(source "$SRC_DIR/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE")"
+LIMIT_RE="$(source "$SRC_DIR/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE|$AUTH_FAILURE_RE")"
 cat > "$PROBE_BIN/grep" <<STUB
 #!/usr/bin/env bash
 for arg in "\$@"; do [[ "\$arg" != $(printf '%q' "$LIMIT_RE") ]] || exit 2; done
