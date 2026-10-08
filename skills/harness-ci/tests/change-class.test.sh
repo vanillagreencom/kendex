@@ -265,6 +265,12 @@ while IFS='|' read -r label variation help_mode extra expected; do
   mkdir -p "$repo/.github/workflows"
   cp "$released_template" "$repo/.github/workflows/kendex-refresh.yml"
   case "$variation" in
+    symlink)
+      # A consumer PR can replace its workflow with a link to released bytes.
+      rm "$repo/.github/workflows/kendex-refresh.yml"
+      MSYS=winsymlinks:nativestrict ln -s "$released_template" \
+        "$repo/.github/workflows/kendex-refresh.yml"
+      [ -L "$repo/.github/workflows/kendex-refresh.yml" ] || exit 1 ;;
     byte-edited) printf '#' >>"$repo/.github/workflows/kendex-refresh.yml" ;;
     unreleased)
       printf '\n# caller not published at its pin\n' >>"$repo/.github/workflows/kendex-refresh.yml" ;;
@@ -300,6 +306,7 @@ while IFS='|' read -r label variation help_mode extra expected; do
     assert_eq "$label ownership refusal" "$want" "$(sed -n 's/^class: //p' <<<"$caller_err")"
   fi
   case "$variation" in
+    symlink) symlink_head="$(git -C "$repo" rev-parse HEAD)" ;;
     commit-pin)
       commit_pin_head="$(git -C "$repo" rev-parse HEAD)"
       assert_eq "$label grants no release fetch" '' "$(cat "$SANDBOX/release-fetches")" ;;
@@ -311,6 +318,7 @@ while IFS='|' read -r label variation help_mode extra expected; do
 done <<'CALLERS'
 adopted released caller|released|supported||render
 adopted released caller with legacy verifier|released|legacy||render
+symlink to released caller|symlink|supported||standard
 byte-edited caller|byte-edited|supported||standard
 unpublished caller bytes|unreleased|supported||standard
 unavailable release|unavailable|supported||standard
@@ -324,6 +332,16 @@ caller and excluded workflow with legacy verifier|released|legacy|.github/workfl
 caller and excluded workflow with supporting verifier|released|supported|.github/workflows/ci.yml|render
 CALLERS
 require_rows change-class-released-caller "$caller_rows"
+
+reset_case
+git -C "$repo" checkout -q --detach "$symlink_head"
+set_verifier clean
+symlink_mutant="$(mutant symlink-caller change-class \
+  '  [ -f "$proof_tree/$1" ] && [ ! -L "$proof_tree/$1" ] || return 1' \
+  '  [ -f "$proof_tree/$1" ] || return 1')"
+PATH="$release_bin:$stub_bin:$PATH" CHANGE_CLASS="$symlink_mutant" assert_class \
+  'must-fail: following a symlink caller wrongly grants render' render \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 reset_case
 git -C "$repo" checkout -q --detach "$commit_pin_head"
