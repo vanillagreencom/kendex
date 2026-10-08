@@ -14,6 +14,7 @@ import tempfile
 import tarfile
 import time
 import unittest
+from unittest import mock
 
 PACKAGE = Path(__file__).resolve().parents[2]
 
@@ -35,6 +36,7 @@ class SshHostTests(unittest.TestCase):
                         SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
                         HOME=str(self.root),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
+        self.git_env = {key: self.env[key] for key in ("HOME", "PATH", "REAL_GIT")}
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
@@ -430,7 +432,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
                      ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org",
                                     "commit", "--allow-empty", "-qm", "state scripts")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
-                           check=True, capture_output=True)
+                           env=self.git_env, check=True, capture_output=True)
         # The prune's disk decision is independent of this machine's free space.
         self.executable(self.bin / "df", "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 100 1 99 1%% /\\n'\n")
         created = self.create(harness=harness)
@@ -477,7 +479,7 @@ rc=0
         self.assertEqual(state["worktree"], str(path))
         self.assertEqual(state["pre_delegate_sha"], subprocess.run(
             [self.env["REAL_GIT"], "-C", str(path), "rev-parse", "HEAD"],
-            check=True, capture_output=True).stdout.decode().strip())
+            env=self.git_env, check=True, capture_output=True).stdout.decode().strip())
         self.assertEqual(state["recovery_round_id"], state["dev_round_id"])
         self.assertEqual(state["round_prunes"][state["dev_round_id"]],
                          dict(action="below-mark", used_pct=1, mark_pct=75, bytes=0))
@@ -492,12 +494,18 @@ rc=0
         self.assertIn(b"round-prune: state-missing=dev_round_id\n", refused.stderr)
 
     def test_hosted_prefix_carries_state_for_each_harness(self):
-        for harness in ("claude", "codex", "pi", "copilot"):
-            with self.subTest(harness=harness):
-                fields, path, run = self.hosted_state_launch(harness)
-                self.assert_hosted_state(fields, path, run)
-                closed = self.call("close", "--item", "TEST-1")
-                self.assertEqual(closed.returncode, 0, closed.stderr)
+        caller_home = self.root / "caller-home"
+        caller_home.mkdir()
+        caller_config = caller_home / ".gitconfig"
+        caller_config.write_text("[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = " +
+                                 str(caller_home / "missing-signer") + "\n")
+        with mock.patch.dict(os.environ, HOME=str(caller_home), GIT_CONFIG_GLOBAL=str(caller_config)):
+            for harness in ("claude", "codex", "pi", "copilot"):
+                with self.subTest(harness=harness):
+                    fields, path, run = self.hosted_state_launch(harness)
+                    self.assert_hosted_state(fields, path, run)
+                    closed = self.call("close", "--item", "TEST-1")
+                    self.assertEqual(closed.returncode, 0, closed.stderr)
 
     def test_control_prefix_without_state_export_fails_the_state_contract(self):
         original = self.script.read_text()
