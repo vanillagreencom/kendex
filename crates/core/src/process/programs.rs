@@ -293,7 +293,7 @@ impl Hardened {
             ScriptEnvironment::Installed => (program.to_owned(), cwd.to_owned(), None),
             ScriptEnvironment::Trusted => {
                 let boundary = crate::guard::Repo::execution_boundary(cwd)?;
-                let trusted = crate::paths::canonical(program)
+                let trusted = std::fs::canonicalize(program)
                     .map_err(|error| CoreError::io(program, error))?;
                 let parent = trusted
                     .parent()
@@ -303,8 +303,8 @@ impl Hardened {
                         why: "trusted checker directory is inside the checked branch".to_owned(),
                     })?;
                 let path = trusted_tool_path(program, &boundary)?;
-                let parent = parent.to_owned();
-                (trusted, parent, Some(path))
+                let parent = crate::paths::reduced(parent);
+                (crate::paths::reduced(&trusted), parent, Some(path))
             }
         };
         // Windows executable lookup can search cwd before PATH. Pin the
@@ -347,8 +347,9 @@ fn trusted_tool_path(program: &Path, boundary: &Path) -> Result<OsString> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let directories: Vec<_> = std::env::split_paths(&inherited)
         .filter(|directory| directory.is_absolute())
-        .filter_map(|directory| crate::paths::canonical(&directory).ok())
+        .filter_map(|directory| std::fs::canonicalize(&directory).ok())
         .filter(|directory| directory.is_dir() && !directory.starts_with(boundary))
+        .map(|directory| crate::paths::reduced(&directory))
         .collect();
     // env/bash treat an empty PATH entry as cwd. Refuse before spawning when
     // filtering leaves no directories, rather than reintroduce project code.

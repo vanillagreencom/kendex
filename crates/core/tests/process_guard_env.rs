@@ -514,80 +514,183 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
     }
 }
 
-/// The branch boundary refuses a sibling checker before interpreter lookup,
-/// on every platform, for the marker forms Git writes for worktrees.
+/// Construction excludes branch-owned checkers and tools before interpreter
+/// lookup. Windows runs also exercise its differing long and short prefixes.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one isolated construction table covers checker, tool and discovery-ceiling comparisons"
+)]
 fn trusted_scripts_exclude_enclosing_worktrees() {
     use kendex_core::error::CoreError;
     use kendex_core::process::ScriptEnvironment;
     use std::path::PathBuf;
 
     const ROOT: &str = "KENDEX_TEST_PORTABLE_BOUNDARY_ROOT";
-    let Some(base) = std::env::var_os(ROOT) else {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = rooted(&tmp);
-        let tools = base.join("safe-tools");
-        std::fs::create_dir(&tools).unwrap();
-        // Construction needs an available Windows interpreter. This fixture
-        // never executes it, so a file is sufficient for executable lookup.
-        std::fs::write(tools.join("sh.exe"), "interpreter").unwrap();
-        let mut environment = vec![
-            (ROOT, base.as_os_str().to_owned()),
-            ("PATH", tools.into_os_string()),
-        ];
-        environment.extend(test_util::fixture_env(&base.join("home")));
-        let output = test_util::reexecute_test(
-            module_path!(),
-            "trusted_scripts_exclude_enclosing_worktrees",
-            &environment,
-        )
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(
-            std::fs::read(base.join("portable-proof")).unwrap(),
-            b"verified"
-        );
+    const PROJECT: &str = "KENDEX_TEST_PORTABLE_BOUNDARY_PROJECT";
+    const PROGRAM: &str = "KENDEX_TEST_PORTABLE_BOUNDARY_PROGRAM";
+    const EXPECTED: &str = "KENDEX_TEST_PORTABLE_BOUNDARY_EXPECTED";
+    if let Some(base) = std::env::var_os(ROOT) {
+        let project = PathBuf::from(std::env::var_os(PROJECT).unwrap());
+        let program = PathBuf::from(std::env::var_os(PROGRAM).unwrap());
+        let launch =
+            Hardened::package_script(&program, Vec::new(), &project, ScriptEnvironment::Trusted);
+        match std::env::var(EXPECTED).unwrap().as_str() {
+            "accepted" => assert!(launch.is_ok()),
+            "refused" => assert!(matches!(launch, Err(CoreError::CommandNotStarted { .. }))),
+            _ => panic!("invalid fixture expectation"),
+        }
+        std::fs::write(PathBuf::from(base).join("portable-proof"), "verified").unwrap();
         return;
-    };
-    let base = PathBuf::from(base);
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let base = rooted(&tmp);
+    let safe = base.join("safe-tools");
     let external = base.join("external/checker");
     std::fs::create_dir_all(external.parent().unwrap()).unwrap();
     std::fs::write(&external, "checker").unwrap();
-    for (case, gitfile) in [("checkout", false), ("linked", true)] {
-        let repo = base.join(case);
+    let component = "nested-project".repeat(8);
+    for (marker, gitfile) in [("checkout", false), ("linked", true)] {
+        let repo = base.join(marker);
         let project = repo.join("app");
-        let program = repo.join("skills/checker");
-        std::fs::create_dir_all(&project).unwrap();
-        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
-        std::fs::write(&program, "checker").unwrap();
+        let long = repo.join(&component).join(&component).join(&component);
+        let short_checker = repo.join("skills/checker");
+        let long_checker = long.join("skills/checker");
+        let tools = repo.join("tools");
+        let long_tools = long.join("tools");
+        let ceiling = repo.join("ceiling");
+        let ceiling_project = ceiling.join(&component).join(&component).join(&component);
+        for directory in [
+            &project,
+            &long,
+            &ceiling_project,
+            &safe,
+            &tools,
+            &long_tools,
+        ] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        for checker in [&short_checker, &long_checker] {
+            std::fs::create_dir_all(checker.parent().unwrap()).unwrap();
+            std::fs::write(checker, "checker").unwrap();
+        }
+        // Construction selects a Windows interpreter but never executes it.
+        for directory in [&safe, &tools, &long_tools] {
+            std::fs::write(directory.join("sh.exe"), "interpreter").unwrap();
+        }
         if gitfile {
             std::fs::write(repo.join(".git"), "gitdir: ../metadata\n").unwrap();
         } else {
             std::fs::create_dir(repo.join(".git")).unwrap();
         }
-        assert!(
-            matches!(
-                Hardened::package_script(
-                    &program,
-                    Vec::new(),
-                    &project,
-                    ScriptEnvironment::Trusted
-                ),
-                Err(CoreError::CommandNotStarted { .. })
+        #[cfg(windows)]
+        {
+            // Scope and discovery produce these reduced paths. The fixture
+            // must cross the prefix boundary for the regression to be reached.
+            assert_ne!(
+                kendex_core::paths::canonical(&short_checker).unwrap(),
+                std::fs::canonicalize(&short_checker).unwrap()
+            );
+            assert_eq!(
+                kendex_core::paths::canonical(&long_checker).unwrap(),
+                std::fs::canonicalize(&long_checker).unwrap()
+            );
+        }
+        for (case, project, checker, path, ceiling, expected) in [
+            (
+                "sibling-checker",
+                &project,
+                &short_checker,
+                &safe,
+                None,
+                "refused",
             ),
-            "{case}"
-        );
-        assert!(
-            Hardened::package_script(&external, Vec::new(), &project, ScriptEnvironment::Trusted)
-                .is_ok(),
-            "{case}: external checker"
-        );
+            (
+                "external-checker",
+                &project,
+                &external,
+                &safe,
+                None,
+                "accepted",
+            ),
+            (
+                "long-project-short-checker",
+                &long,
+                &short_checker,
+                &safe,
+                None,
+                "refused",
+            ),
+            (
+                "short-project-long-checker",
+                &project,
+                &long_checker,
+                &safe,
+                None,
+                "refused",
+            ),
+            (
+                "long-project-short-tools",
+                &long,
+                &external,
+                &tools,
+                None,
+                "refused",
+            ),
+            (
+                "short-project-long-tools",
+                &project,
+                &external,
+                &long_tools,
+                None,
+                "refused",
+            ),
+            (
+                "long-project-external-tools",
+                &long,
+                &external,
+                &safe,
+                None,
+                "accepted",
+            ),
+            (
+                "long-project-short-ceiling",
+                &ceiling_project,
+                &short_checker,
+                &tools,
+                Some(&ceiling),
+                "accepted",
+            ),
+        ] {
+            let mut environment = test_util::fixture_env(&base.join("home")).to_vec();
+            environment.extend([
+                (ROOT, base.as_os_str().to_owned()),
+                (PROJECT, project.as_os_str().to_owned()),
+                (PROGRAM, checker.as_os_str().to_owned()),
+                (EXPECTED, expected.into()),
+                ("PATH", path.as_os_str().to_owned()),
+            ]);
+            if let Some(ceiling) = ceiling {
+                environment.push(("GIT_CEILING_DIRECTORIES", ceiling.as_os_str().to_owned()));
+            }
+            let output = test_util::reexecute_test(
+                module_path!(),
+                "trusted_scripts_exclude_enclosing_worktrees",
+                &environment,
+            )
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{marker}: {case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                std::fs::read(base.join("portable-proof")).unwrap(),
+                b"verified"
+            );
+            std::fs::remove_file(base.join("portable-proof")).unwrap();
+        }
     }
-    std::fs::write(base.join("portable-proof"), "verified").unwrap();
 }
