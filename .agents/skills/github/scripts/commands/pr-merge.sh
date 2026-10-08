@@ -273,9 +273,10 @@ Terminal and mutation rules:
   ci_optional_failed: warning, which blocks nothing — GitHub merges over it. A
   required context that has registered no check on the head is ci_pending:
   "<context> (missing)", the state GitHub itself is in while it waits. A base
-  that requires nothing, whose protection cannot be read, or whose ruleset
-  carries a rule gating the merge on a check it does not name, counts every
-  check as before.
+  that requires nothing or whose whole required set cannot be resolved
+  counts every check. Readable required workflows contribute job check names
+  from completed runs on the head. Unfinished required workflows and
+  unreadable workflow evidence keep the all-check fallback.
 
   head_runs contains the authoritative workflow run plus runs referenced by
   custom commit statuses. checks is the same snapshot consumed by

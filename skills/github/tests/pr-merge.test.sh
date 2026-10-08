@@ -58,11 +58,14 @@ a silent failure names gh and its exit code|state-err:silent4|check|0|merge=fals
 "
 
 # Required workflow names come from its head run's check suite, not its file
-# name or display name. The red required job is the narrowing control.
+# name or display name. An unfinished run has only partial job evidence.
 WORKFLOW_CHECK="view:state,view:mergeable,checks,view:head,view:reviews"
 mutant_copy workflow-drop '                          then $checks[] | "ctx:" + .name' '                          then $checks[] | "ignored:" + .name' lib/ci-run-correlation.sh >/dev/null
+mutant_copy workflow-unfinished '                | if length > 0 and all(.[]; .status == "completed"' '                | if length > 0 and all(.[]; true' lib/ci-run-correlation.sh >/dev/null
+mutant_copy workflow-wrong-suite '                  then map(.check_suite_id) | unique[]' '                  then map(.repository.id) | unique[]' lib/ci-run-correlation.sh >/dev/null
 run_table "required workflows" "\
-a required workflow adds its checks while red CodeQL stays optional|checks:workflow-optional-red workflow:matched|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[ci_optional_failed: CodeQL (FAILURE)] $KEYS|mergeable;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>
+a required workflow adds its checks while red CodeQL stays optional|checks:workflow-optional-red workflow:matched|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[ci_optional_failed: CodeQL (FAILURE)] $KEYS|mergeable;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>|check-mutant:workflow-wrong-suite
+an unfinished matched workflow with successful registered jobs keeps every check required|checks:workflow-optional-red workflow:in-progress|check|0|merge=false transient=false $OPEN runs=- issues=[ci_failed: CodeQL (FAILURE)] warnings=[] $KEYS|blocked;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>|check-mutant:workflow-unfinished
 later run and check pages supply required workflow evidence|checks:workflow-optional-red workflow:paged|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[ci_optional_failed: CodeQL (FAILURE)] $KEYS|mergeable;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>
 the required workflow own red check blocks|checks:workflow-required-red workflow:matched|check|0|merge=false transient=false $OPEN runs=- issues=[ci_failed: Request review (FAILURE)] warnings=[] $KEYS|blocked;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>
 must-fail: dropping workflow contexts makes the required red job optional|checks:workflow-required-red workflow:matched|check-mutant:workflow-drop|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[ci_optional_failed: Request review (FAILURE)] $KEYS|mergeable;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>

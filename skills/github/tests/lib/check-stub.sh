@@ -140,7 +140,11 @@ case "${1:-}" in
                 ;;
             'repos/{owner}/{repo}/check-suites/'*'/check-runs?per_page=100')
                 [[ "${STUB_WORKFLOW_CHECKS_EXIT:-0}" == 0 ]] || exit "$STUB_WORKFLOW_CHECKS_EXIT"
-                printf '%s\n' "${STUB_WORKFLOW_CHECKS:-[]}"
+                suite=${2#repos/\{owner\}/\{repo\}/check-suites/}
+                suite=${suite%%/*}
+                jq -ce --arg suite "$suite" '
+                    if has($suite) then .[$suite] else error("unmatched check suite") end
+                ' <<<"${STUB_WORKFLOW_CHECKS:-null}"
                 exit 0
                 ;;
             # An installation token (ghs_) has no user: gh's integration 403.

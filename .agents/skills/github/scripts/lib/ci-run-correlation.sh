@@ -309,13 +309,16 @@ required_contexts() {
         fi
         while IFS= read -r workflow; do
             case "$workflow" in workflow:*) workflow=${workflow#workflow:} ;; *) continue ;; esac
-            # A matching path in another repository cannot prove the source
-            # of a ruleset workflow. Keep the all-check fallback in that case.
+            # A matching path in another repository cannot prove the source.
+            # GitHub can register dependent jobs later while a run is unfinished,
+            # so only completed matching runs can prove the whole required set.
             if ! suites=$(jq -er --argjson workflow "$workflow" --arg head "$head" '
                 [.[] | select(.path == $workflow.path and .head_sha == $head
-                              and .repository.id == $workflow.repository_id) | .check_suite_id]
-                | if length > 0 and all(.[]; type == "number" and . > 0)
-                  then unique[] else error("required workflow has no check suite") end' <<<"$runs" 2>/dev/null); then
+                              and .repository.id == $workflow.repository_id)]
+                | if length > 0 and all(.[]; .status == "completed"
+                    and (.check_suite_id | type == "number" and . > 0))
+                  then map(.check_suite_id) | unique[]
+                  else error("required workflow evidence is unfinished or missing") end' <<<"$runs" 2>/dev/null); then
                 echo '[]'
                 return 0
             fi

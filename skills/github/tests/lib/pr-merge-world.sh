@@ -87,6 +87,7 @@
 #          dropped, `{word}` macros expanded (see err_macro)
 #   calls  `calls=<each gh call by kind, in order> auth=<the GH_TOKEN each
 #          call saw, distinct values in order>`
+#   control optional mutant argv: the same row assertion must reject it
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -224,22 +225,23 @@ word() {
     rule-type:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg t "$v" '[{type: $t}, {type: "required_status_checks", parameters: {required_status_checks: [{context: "Lint"}]}}]' <<<null)") ;;
     workflow:*)
       W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":123}]}}]'
-        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]'
-        'STUB_WORKFLOW_CHECKS=[{"total_count":1,"check_runs":[{"name":"Request review"}]}]')
+        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]'
+        'STUB_WORKFLOW_CHECKS={"500":[{"total_count":1,"check_runs":[{"name":"Request review"}]}]}')
       case "$v" in
         matched) ;;
-        paged) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":499}]},{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]'
-          'STUB_WORKFLOW_CHECKS=[{"total_count":2,"check_runs":[{"name":"Request review"}]},{"total_count":2,"check_runs":[{"name":"Lint"}]}]') ;;
+        in-progress) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"in_progress"}]}]') ;;
+        paged) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":499,"status":"completed"}]},{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]'
+          'STUB_WORKFLOW_CHECKS={"500":[{"total_count":2,"check_runs":[{"name":"Request review"}]},{"total_count":2,"check_runs":[{"name":"Lint"}]}]}') ;;
         second-missing) W_ENV+=('STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/request-copilot-review.yml","repository_id":123},{"path":".github/workflows/second.yml","repository_id":123}]}}]') ;;
         runs-fail) W_ENV+=("STUB_WORKFLOW_RUNS_EXIT=1") ;;
         checks-fail) W_ENV+=("STUB_WORKFLOW_CHECKS_EXIT=1") ;;
         missing) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":0,"workflow_runs":[]}]') ;;
-        partial-runs) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]') ;;
-        partial-checks) W_ENV+=('STUB_WORKFLOW_CHECKS=[{"total_count":2,"check_runs":[{"name":"Request review"}]}]') ;;
-        wrong-path) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500}]}]') ;;
-        wrong-head) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"old-head","check_suite_id":500}]}]') ;;
-        wrong-repository) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":999},"head_sha":"test-head","check_suite_id":500}]}]') ;;
-        empty-checks) W_ENV+=('STUB_WORKFLOW_CHECKS=[{"total_count":0,"check_runs":[]}]') ;;
+        partial-runs) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":2,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]') ;;
+        partial-checks) W_ENV+=('STUB_WORKFLOW_CHECKS={"500":[{"total_count":2,"check_runs":[{"name":"Request review"}]}]}') ;;
+        wrong-path) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/optional.yml","repository":{"id":123},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]') ;;
+        wrong-head) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":123},"head_sha":"old-head","check_suite_id":500,"status":"completed"}]}]') ;;
+        wrong-repository) W_ENV+=('STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"path":".github/workflows/request-copilot-review.yml","repository":{"id":999},"head_sha":"test-head","check_suite_id":500,"status":"completed"}]}]') ;;
+        empty-checks) W_ENV+=('STUB_WORKFLOW_CHECKS={"500":[{"total_count":0,"check_runs":[]}]}') ;;
         *) echo "UNKNOWN-WORKFLOW: $v" >&2; exit 2 ;;
       esac
       ;;
@@ -475,11 +477,11 @@ assert_mutant_fails() { # GOT WANT NAME
 }
 
 run_table() {
-  local title="$1" rows="$2" n=0 label world argv rc out err want got row field
+  local title="$1" rows="$2" n=0 label world argv rc out err want got row field control expected
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
-    IFS='|' read -r label world argv rc out err want <<<"$row"
+    IFS='|' read -r label world argv rc out err want control <<<"$row"
     for field in "$label" "$world" "$argv" "$rc" "$out" "$err" "$want"; do
       [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
@@ -492,7 +494,11 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err") $want" "$label"
+    expected="rc=$rc out=$out err=$(err_text "$err") $want"
+    assert_eq "$got" "$expected" "$label"
+    if [[ -n "$control" ]]; then
+      assert_mutant_fails "$(run "$control")" "$expected" "$label"
+    fi
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
