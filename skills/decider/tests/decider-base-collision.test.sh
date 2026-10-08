@@ -393,13 +393,54 @@ build_dup_files() { # one D035 row, two D035 documents, no remote; local main is
   commit_all "$1/work" base
 }
 
-build_revisit() { # DIR CELL: the working INDEX's Revisit When cell
-  new_repo "$1/work" main
+write_revisit_index() { # REPO ROW... — each ROW is ID,RATIONALE,REVISIT; rows start on line 3
+  local repo="$1" row id rationale revisit
+  shift
   {
     printf '%s\n' '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |'
     printf '%s\n' '|------|----|----------|----------|-----------|--------------|--------|------|'
-    printf '| 2026-01-10 | D034 | PROJ-1 | Decision D034 | Reason | %s | Active | [Full](D034-first.md) |\n' "$2"
-  } >"$1/work/docs/decisions/INDEX.md"
+    for row in "$@"; do
+      IFS=, read -r id rationale revisit <<<"$row"
+      printf '| 2026-01-10 | %s | PROJ-1 | Decision %s | %s | %s | Active | [Full](%s-first.md) |\n' \
+        "$id" "$id" "$rationale" "$revisit" "$id"
+    done
+  } >"$repo/docs/decisions/INDEX.md"
+}
+
+build_revisit() { # DIR CELL: the lane adds D034 with this Revisit When cell; local main is the base
+  new_repo "$1/work" main
+  write_revisit_index "$1/work"
+  commit_all "$1/work" base
+  write_revisit_index "$1/work" "D034,Reason,$2"
+}
+
+build_revisit_legacy() { # the base and the lane hold D034 with None; the lane edits only D035
+  new_repo "$1/up" main
+  write_revisit_index "$1/up" "D034,Reason,None" "D035,Reason,When the API changes"
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  write_revisit_index "$1/work" "D034,Reason,None" "D035,Reason rewritten,When the API changes"
+}
+
+build_revisit_added() { # DIR CELL: beside the base's legacy None D034, the lane adds D035 with this cell
+  new_repo "$1/up" main
+  write_revisit_index "$1/up" "D034,Reason,None"
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  write_revisit_index "$1/work" "D034,Reason,None" "D035,Reason,$2"
+}
+
+build_revisit_edited() { # the lane rewrites the base's None D034's Rationale and keeps None
+  new_repo "$1/up" main
+  write_revisit_index "$1/up" "D034,Reason,None"
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  write_revisit_index "$1/work" "D034,Reason rewritten,None"
+}
+
+build_revisit_unread() { # no base resolves, and the committed D034 reads None
+  new_repo "$1/work" trunk
+  write_revisit_index "$1/work" "D034,Reason,None"
   commit_all "$1/work" base
 }
 
@@ -537,6 +578,11 @@ check-revisit-none-case~revisit:  NONE  ~~check~~1~~error=revisit-missing id=D03
 check-revisit-dash~revisit:—~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="—"
 check-revisit-condition~revisit:  The API supports revoking a token  ~~check~~0~~
 check-revisit-token-in-condition~revisit:When none of the clients need the API~~check~~0~~
+check-revisit-legacy-untouched~revisit_legacy~~check~~0~~
+check-revisit-added-none~revisit_added:None~~check~~1~~error=revisit-missing id=D035 path=docs/decisions/INDEX.md line=4 value="None"
+check-revisit-added-empty~revisit_added:~~check~~1~~error=revisit-missing id=D035 path=docs/decisions/INDEX.md line=4 value=""
+check-revisit-edited-none~revisit_edited~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None"
+check-revisit-base-unread~revisit_unread~~check~~1~~error=revisit-missing id=D034 path=docs/decisions/INDEX.md line=3 value="None";error=base-unverified ref=origin/HEAD,origin/main,main reason=unresolved
 check-fetch-failed-index-absent~first_index_offline~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed
 check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
 check-not-a-repository~no_repo~~check~~0~~notice=base-unverified ref=none reason=not-a-repository
@@ -627,7 +673,9 @@ check-index-absent~    index-absent) text=~    index-absent) refuse=1; text=~a b
 check-fetch-failed~    fetch-failed) refuse=1; text=~    fetch-failed) text=~a stale base copy that check passes
 check-malformed-row~  ROW_INVALID_KIND=error~  ROW_INVALID_KIND=notice~a skipped working-tree row that check passes
 check-malformed-base-row~|| BASE_ROWS_SKIPPED=1~|| BASE_ROWS_SKIPPED=0~a skipped base row that check passes
-check-revisit-empty~.[] | select(.revisit | ascii_downcase |~.[] | select(false) | select(.revisit | ascii_downcase |~a removed Revisit condition guard
+check-revisit-empty~    | select(.revisit | ascii_downcase |~    | select(false) | select(.revisit | ascii_downcase |~a removed Revisit condition guard
+check-revisit-legacy-untouched~any($held[]; . == $row) | not~true~a Revisit guard that judges rows the base holds unchanged
+check-revisit-edited-none~any($held[]; . == $row)~any($held[]; .id == $row.id)~a base comparison that exempts an edited row by its ID
 check-not-a-repository~    not-a-repository) text=~    not-a-repository) refuse=1; text=~a directory outside a repository that check refuses
 check-configured-unresolved~  if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then~  if false; then~a configured base ref that is ignored
 check-blob-missing~rev-parse --verify --quiet "$BASE_REF:$BASE_PATH"~cat-file -e "$BASE_REF:$BASE_PATH"~a presence test that needs the blob

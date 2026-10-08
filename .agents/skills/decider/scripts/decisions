@@ -63,10 +63,12 @@ Actions:
                        history refuses the rename (error=rename-unverified).
                        It also refuses an INDEX row, here or on the
                        base, that it could not parse
-                       (error=index-row-invalid), and a working INDEX row
-                       with an empty Revisit When cell or a placeholder
-                       (error=revisit-missing). How a base that could not
-                       be read is judged: DECISIONS_BASE_REF. Exits 0 with
+                       (error=index-row-invalid), and an INDEX row this
+                       branch adds or edits, against the base branch's
+                       INDEX.md, with an empty Revisit When cell or a
+                       placeholder (error=revisit-missing). How a base
+                       that could not be read is judged:
+                       DECISIONS_BASE_REF. Exits 0 with
                        no finding; a notice= line may still print on stderr
 
 Options:
@@ -829,10 +831,16 @@ cmd_check() {
   local rows dups dup ids id f files fields file_count found=0
   ROW_INVALID_KIND=error
   rows="$(parse_index)" || found=1
+  read_base_index
 
   # INDEX authors use placeholders before they choose a revisit condition.
+  # A row the base holds unchanged is history this change does not rewrite;
+  # an unread base leaves BASE_ROWS empty, so every row is judged.
   local invalid_revisits revisit_row
-  invalid_revisits="$(jq -c '.[] | select(.revisit | ascii_downcase |
+  invalid_revisits="$(jq -c --argjson base "$BASE_ROWS" '
+    ($base | map(del(.line, .path))) as $held
+    | .[] | select(del(.line, .path) as $row | any($held[]; . == $row) | not)
+    | select(.revisit | ascii_downcase |
     . == "" or . == "not specified" or . == "none" or . == "\u2014")' <<<"$rows")" || return 1
   while IFS= read -r revisit_row; do
     [[ -n "$revisit_row" ]] || continue
@@ -871,7 +879,6 @@ cmd_check() {
   # Independently allocated IDs can have identical row text. A filename change
   # is a rename only when both sides inherited one record and each renamed
   # side replaces its original document; a removed number stays reserved.
-  read_base_index
   report_base check || found=1
   [[ "$BASE_ROWS_SKIPPED" -eq 0 ]] || found=1
   local collisions collision ancestor_rows='[]' old_link old_path path link base_link base_old_path
