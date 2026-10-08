@@ -173,7 +173,8 @@ quoted_expansion() {
 # An unknown argument keeps only its proven prefix. Later literal text cannot
 # establish an option name or a short flag before an unknown value boundary.
 tokenize() {
-  local i=0 char next quote="" word="" active="" raw="" kind=word
+  local i=0 char next quote="" word="" active="" raw="" kind=word operator_kind
+  READER_STATE=incomplete
   TOKENS=(); KINDS=(); RAW=()
   while [ "$i" -lt "${#COMMAND}" ]; do
     char=${COMMAND:$i:1}
@@ -233,11 +234,21 @@ tokenize() {
             case "${COMMAND:$i:1}" in '<' | '(') return 1 ;; esac ;;
           '>') [ "${COMMAND:$i:1}" != '(' ] || return 1 ;;
         esac
-        case "$char${COMMAND:$i:1}" in
-          '>&' | '<&' | '>>' | '>|') char="$char${COMMAND:$i:1}"; i=$((i + 1)) ;;
+        operator_kind=separator
+        case "$char" in
+          '<' | '>') operator_kind=redirect ;;
+          '&') [ "${COMMAND:$i:1}" != '>' ] || operator_kind=redirect ;;
         esac
+        if [ "$operator_kind" = redirect ]; then
+          case "$char${COMMAND:$i:1}" in
+            '>&' | '<&' | '>>' | '>|' | '&>') char="$char${COMMAND:$i:1}"; i=$((i + 1)) ;;
+          esac
+          if [ "$char" = '&>' ] && [ "${COMMAND:$i:1}" = '>' ]; then
+            char="$char>"; i=$((i + 1))
+          fi
+        fi
         word=""; raw=""; active=""; kind=word
-        TOKENS[${#TOKENS[@]}]=$char; KINDS[${#KINDS[@]}]=operator; RAW[${#RAW[@]}]=$char ;;
+        TOKENS[${#TOKENS[@]}]=$char; KINDS[${#KINDS[@]}]=$operator_kind; RAW[${#RAW[@]}]=$char ;;
       '*' | '?' | '[' | '{' | '}')
         # Standalone braces delimit command groups. Brace/glob expansion in a
         # word can change argument count, including which option owns a value.
@@ -253,6 +264,10 @@ tokenize() {
   if [ -n "$active" ]; then
     TOKENS[${#TOKENS[@]}]=$word; KINDS[${#KINDS[@]}]=$kind; RAW[${#RAW[@]}]=$raw
   fi
+  # Only a separator or a fully read end completes a call. Tokens from the
+  # failing call cannot prove an option; completed calls keep their results.
+  TOKENS[${#TOKENS[@]}]=''; KINDS[${#KINDS[@]}]=separator; RAW[${#RAW[@]}]=''
+  READER_STATE=complete
 }
 
 # Git's documented global and commit option interfaces own these argument
@@ -260,8 +275,8 @@ tokenize() {
 # It never searches option values for a bypass spelling (git-commit and git manuals).
 read_call() {
   local i=0 word rest letter value config="" env_config="" verb="" flag=""
-  local env_count="" prefix_end candidate key_index value_word present word_kind owns_value uncertain="" value_kind
-  CALL_COMMIT=""; CALL_BYPASS=""; CALL_CONFIG=""; CALL_UNRESOLVED=""
+  local env_count="" prefix_end candidate key_index value_word present word_kind owns_value uncertain="" value_kind unresolved=""
+  CALL_RESULT=other; CALL_BYPASS=""; CALL_CONFIG=""
   while [ "$i" -lt "${#ARGS[@]}" ]; do
     word=${ARGS[$i]}; word_kind=${ARG_KINDS[$i]}; i=$((i + 1))
     case "$word" in GIT_CONFIG_*) [ "$word_kind" = word ] || uncertain=1 ;; esac
@@ -325,7 +340,7 @@ read_call() {
     # change the hooks used by a later commit in this command.
     while [ "$i" -lt "${#ARGS[@]}" ]; do
       word=${ARGS[$i]}; value=${ORIGINAL[$i]}; i=$((i + 1))
-      [ "${ARG_KINDS[$((i - 1))]}" = word ] || { CALL_UNRESOLVED=1; return 0; }
+      [ "${ARG_KINDS[$((i - 1))]}" = word ] || { CALL_RESULT=config-unavailable; return 0; }
       case "$word" in
         --local | --global | --worktree | --system | --add | --replace-all | set) continue ;;
         -*) return 0 ;;
@@ -333,7 +348,9 @@ read_call() {
       case "$word" in
         [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh])
           if [ "$i" -lt "${#ARGS[@]}" ]; then
-            if [ "${ARG_KINDS[$i]}" = word ]; then CALL_CONFIG=$value; else CALL_UNRESOLVED=1; fi
+            if [ "${ARG_KINDS[$i]}" = word ]; then
+              CALL_CONFIG=$value; CALL_RESULT=config
+            else CALL_RESULT=config-unavailable; fi
           fi ;;
       esac
       return 0
@@ -341,8 +358,8 @@ read_call() {
     return 0
   fi
   [ "$verb" = commit ] || return 0
-  CALL_COMMIT=1; CALL_BYPASS=$env_config
-  [ -z "$TOKEN_ERROR$uncertain" ] || CALL_UNRESOLVED=1
+  CALL_RESULT=commit; CALL_BYPASS=$env_config
+  [ -z "$uncertain" ] || unresolved=1
   while [ "$i" -lt "${#ARGS[@]}" ]; do
     word=${ARGS[$i]}; value=${ORIGINAL[$i]}; i=$((i + 1))
     word_kind=${ARG_KINDS[$((i - 1))]}; owns_value=""
@@ -350,20 +367,20 @@ read_call() {
       value)
         case "$word" in
           --*=*) continue ;;
-          --*) CALL_UNRESOLVED=1; continue ;;
+          --*) unresolved=1; continue ;;
           -?*) ;;
-          *) CALL_UNRESOLVED=1; continue ;;
+          *) unresolved=1; continue ;;
         esac ;;
-      expanded) CALL_UNRESOLVED=1; continue ;;
+      expanded) unresolved=1; continue ;;
     esac
     case "$word" in
       --) break ;;
       --dry-run | --short | --porcelain | --long | --help | -h)
-        CALL_COMMIT=""; CALL_BYPASS=""; return 0 ;;
+        CALL_RESULT=other; CALL_BYPASS=""; return 0 ;;
       --no-verify | --no-veri | --no-verif) [ -n "$flag" ] || flag=$value ;;
       --verify) flag="" ;;
       --message | --file | --reuse-message | --reedit-message | --template | --author | --date | --cleanup | --fixup | --squash | --trailer | --pathspec-from-file)
-        [ "${ARG_KINDS[$i]:-word}" != expanded ] || CALL_UNRESOLVED=1
+        [ "${ARG_KINDS[$i]:-word}" != expanded ] || unresolved=1
         i=$((i + 1)) ;;
       --*=* | --*) ;;
       -?*)
@@ -375,36 +392,41 @@ read_call() {
             m | F | c | C | t)
               owns_value=1
               if [ -z "$rest" ] && [ "$word_kind" = word ]; then
-                [ "${ARG_KINDS[$i]:-word}" != expanded ] || CALL_UNRESOLVED=1
+                [ "${ARG_KINDS[$i]:-word}" != expanded ] || unresolved=1
                 i=$((i + 1))
               fi
               break ;;
             S | u) owns_value=1; break ;;
           esac
         done
-        [ "$word_kind" != value ] || [ -n "$owns_value" ] || CALL_UNRESOLVED=1 ;;
+        [ "$word_kind" != value ] || [ -n "$owns_value" ] || unresolved=1 ;;
       *) continue ;;
     esac
   done
   [ -n "$CALL_BYPASS" ] || CALL_BYPASS=$flag
+  [ -z "$unresolved" ] || CALL_RESULT=commit-unavailable
 }
 
-TOKEN_ERROR=""
-tokenize || TOKEN_ERROR=1
-COMMIT=""; BYPASS=""; CONFIG_BYPASS=""; MOVES=""; UNRESOLVED=""; ARGS=(); ORIGINAL=(); ARG_KINDS=(); target=""
+tokenize || [ "$READER_STATE" = incomplete ]
+COMMIT=""; BYPASS=""; CONFIG_BYPASS=""; CONFIG_STATE=clear; MOVES=""; UNAVAILABLE=""; ARGS=(); ORIGINAL=(); ARG_KINDS=(); target=""
 for ((index=0; index<${#TOKENS[@]}; index++)); do
   token=${TOKENS[$index]}
-  if [ "${KINDS[$index]}" = operator ]; then
-    case "$token" in
-      '<' | '>' | '<&' | '>&' | '>>' | '>|') target=1; continue ;;
-    esac
+  if [ "${KINDS[$index]}" = redirect ]; then
+    target=1
+  elif [ "${KINDS[$index]}" = separator ]; then
     if [ "${#ARGS[@]}" -gt 0 ]; then
       read_call
-      [ -z "$CALL_COMMIT" ] || COMMIT=1
-      [ -z "$CALL_UNRESOLVED" ] || UNRESOLVED=1
-      [ -n "$BYPASS" ] || BYPASS=$CALL_BYPASS
-      [ -z "$CALL_COMMIT" ] || [ -n "$BYPASS" ] || BYPASS=$CONFIG_BYPASS
-      [ -z "$CALL_CONFIG" ] || CONFIG_BYPASS=$CALL_CONFIG
+      case "$CALL_RESULT" in
+        commit)
+          COMMIT=1
+          if [ "$CONFIG_STATE" = unavailable ]; then UNAVAILABLE=1
+          elif [ -z "$BYPASS" ]; then BYPASS=${CALL_BYPASS:-$CONFIG_BYPASS}; fi ;;
+        commit-unavailable) COMMIT=1; UNAVAILABLE=1 ;;
+        config) CONFIG_BYPASS=$CALL_CONFIG; CONFIG_STATE=set ;;
+        config-unavailable) CONFIG_STATE=unavailable ;;
+        other) ;;
+        *) exit 1 ;;
+      esac
     fi
     ARGS=(); ORIGINAL=(); ARG_KINDS=(); target=""
   elif [ -n "$target" ]; then
@@ -414,35 +436,29 @@ for ((index=0; index<${#TOKENS[@]}; index++)); do
     ARGS[${#ARGS[@]}]=$token; ORIGINAL[${#ORIGINAL[@]}]=${RAW[$index]}; ARG_KINDS[${#ARG_KINDS[@]}]=${KINDS[$index]}
   fi
 done
-if [ "${#ARGS[@]}" -gt 0 ]; then
-  read_call
-  [ -z "$CALL_COMMIT" ] || COMMIT=1
-  [ -z "$CALL_UNRESOLVED" ] || UNRESOLVED=1
-  [ -n "$BYPASS" ] || BYPASS=$CALL_BYPASS
-  [ -z "$CALL_COMMIT" ] || [ -n "$BYPASS" ] || BYPASS=$CONFIG_BYPASS
-  [ -z "$CALL_CONFIG" ] || CONFIG_BYPASS=$CALL_CONFIG
-fi
-[ -n "$COMMIT" ] || exit 0
-[ -z "$UNRESOLVED" ] || { message command unresolved; exit 0; }
+[ "$READER_STATE" = complete ] || UNAVAILABLE=1
 
-HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
-  [ -z "$MOVES" ] || message judged "$PWD"
-  exit 0
-}
-HOOKS_PATH_STATUS=0
-git config --get core.hooksPath >/dev/null 2>&1 || HOOKS_PATH_STATUS=$?
-ARMED=""
-if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
-  && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
-  && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
-  && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
-  ARMED=1
+ARMED=""; HOOKS_DIR=""
+if [ -n "$COMMIT" ]; then
+  if HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null); then
+    HOOKS_PATH_STATUS=0
+    git config --get core.hooksPath >/dev/null 2>&1 || HOOKS_PATH_STATUS=$?
+    if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
+      && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
+      && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
+      && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
+      ARMED=1
+    fi
+  else HOOKS_DIR=""; fi
 fi
-if [ -n "$ARMED" ]; then
-  [ -n "$BYPASS" ] || exit 0
+if [ -n "$ARMED" ] && [ -n "$BYPASS" ]; then
   message bypass "$BYPASS"
   exit 2
 fi
+[ -z "$UNAVAILABLE" ] || { message command unresolved; exit 0; }
+[ -n "$COMMIT" ] || exit 0
+[ -n "$HOOKS_DIR" ] || { [ -z "$MOVES" ] || message judged "$PWD"; exit 0; }
+[ -z "$ARMED" ] || exit 0
 message unarmed "$PWD"
 COMMON=$(git rev-parse --git-common-dir 2>/dev/null) || { message setup consent; exit 0; }
 GIT_DIR_LOCAL=$(git rev-parse --git-dir 2>/dev/null) || { message setup consent; exit 0; }

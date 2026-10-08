@@ -19,12 +19,18 @@ PAYLOAD_TOOLS=jq,cat,grep
 PAYLOAD_NAME=pre-commit-check
 ARMED="$(new_repo armed)"; arm "$ARMED" pre-commit commit-msg
 UNARMED="$(new_repo unarmed)"
+# The portability scan reads fixture text as code. Joining these data pieces
+# lets the Bash 3.2 suite test the command spelling Bash 4 callers can send.
+APPEND_BOTH='&>'">"
 
 command_rows() {
   local row status key form
   while IFS='|' read -r status key form; do
     [ -n "$status" ] || continue
     form=${form//NOVERIFY/$NV}; key=${key//NOVERIFY/$NV}
+    form=${form//APPEND_BOTH/$APPEND_BOTH}
+    form=${form//HEREDOC_MESSAGE/$'cat <<EOF >msg\ngit commit -n\nEOF'}
+    form=${form//HEREDOC_COMMIT/$'cat <<EOF >msg\nmessage\nEOF\ngit commit -n -F msg'}
     run_hook "$ARMED" "$(jq -nc --arg c "$form" '{tool_input:{command:$c}}')"
     assert_eq "rc=$rc first=$(first_line)" "rc=$status first=$key" "$form"
   done <<'ROWS'
@@ -43,6 +49,14 @@ command_rows() {
 2|pre-commit-check: bypass=-n|git commit -m x 2>&1 -n
 2|pre-commit-check: bypass=-n|2>/dev/null git commit -m x -n
 2|pre-commit-check: bypass=-n|git commit -m x >>log -n
+2|pre-commit-check: bypass=-n|git commit -m x &>/dev/null -n
+2|pre-commit-check: bypass=-n|git commit -m x APPEND_BOTH/dev/null -n
+2|pre-commit-check: bypass=-n| &>/dev/null git commit -m x -n
+2|pre-commit-check: bypass=-n| APPEND_BOTH/dev/null git commit -m x -n
+0|-|git commit -m x &>NOVERIFY
+0|-|git commit -m x APPEND_BOTH-n
+0|-|git commit -m "&>/dev/null -n"
+0|-|git commit -F "APPEND_BOTHNOVERIFY"
 0|-|2 >log git commit -n
 0|-|"2">log git commit -n
 2|pre-commit-check: bypass=NOVERIFY|git commit -m 'explain NOVERIFY' NOVERIFY
@@ -127,7 +141,21 @@ command_rows() {
 0|pre-commit-check: command=unresolved|git config --local core.hooksPath "$HOOKS"; git commit -m x
 0|-|git commit -m x; git config --local core.hooksPath /dev/null
 2|pre-commit-check: bypass=-n|git commit -m "$TEXT" -n
-0|-|cat <<EOF\ngit commit -n\nEOF
+0|pre-commit-check: command=unresolved|HEREDOC_COMMIT
+0|pre-commit-check: command=unresolved|HEREDOC_MESSAGE
+0|pre-commit-check: command=unresolved|cd "${REPO:-.}" && git commit -n -m wip
+0|pre-commit-check: command=unresolved|echo ${X:-y}; git commit -n -m x
+0|pre-commit-check: command=unresolved|echo {a,b}; git commit -n -m x
+2|pre-commit-check: bypass=-n|git commit -n -m x; echo {a,b}
+2|pre-commit-check: bypass=-n|git commit -n -m x; echo {a,b}; git commit -n -m y
+2|pre-commit-check: bypass=-n|git commit -n -m x; git commit -m $TEXT -n
+2|pre-commit-check: bypass=-n|git commit -n -m x; git config core.hooksPath "$HOOKS"
+2|pre-commit-check: bypass=-n|git commit -m $TEXT -n; git commit -n -m x
+0|pre-commit-check: command=unresolved|git commit -m x; echo {a,b}
+0|pre-commit-check: command=unresolved|git commit -n -m x ${X:-y}
+0|pre-commit-check: command=unresolved|git commit -n -m "${TEXT:-x}"
+0|-|echo {a,b}
+0|-|echo "${TEXT:-x}"
 0|pre-commit-check: command=unresolved|git commit -m $(cat message) -n
 0|pre-commit-check: command=unresolved|git commit -m $TEXT -n
 0|pre-commit-check: command=unresolved|git commit -m $TEXT"$MORE" -n
@@ -230,6 +258,9 @@ context_rows() {
     done <<'ROWS'
 tools|git commit -m test|unarmed=REPO
 tools|git commit -m $TEXT -n|command=unresolved
+tools|cd "${REPO:-.}" && git commit -n -m wip|command=unresolved
+tools|echo ${X:-y}; git commit -n -m x|command=unresolved
+tools|echo {a,b}; git commit -n -m x|command=unresolved
 tools|invalid|payload=invalid-json
 no-jq|git commit -m test|missing-tools=jq
 no-cat|git commit -m test|missing-tools=cat
@@ -244,17 +275,29 @@ context_rows
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control no-short-flag "$HOOK" 'letter=${rest:0:1}; rest=${rest:1}' 'letter=x' HOOK command_rows \
     'git commit -n -m test'
-  skill_load_control no-hook-override "$HOOK" 'CALL_COMMIT=1; CALL_BYPASS=$env_config' 'CALL_BYPASS=""' HOOK command_rows \
+  skill_load_control no-hook-override "$HOOK" 'CALL_RESULT=commit; CALL_BYPASS=$env_config' 'CALL_BYPASS=""' HOOK command_rows \
     'git -c core.hooksPath=/dev/null commit -m x'
-  skill_load_control unknown-is-literal "$HOOK" 'tokenize || TOKEN_ERROR=1' 'for ((index=0; index<${#KINDS[@]}; index++)); do [ "${KINDS[$index]}" != value ] || KINDS[$index]=word; done' HOOK command_rows \
+  skill_load_control unknown-is-literal "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' 'for ((index=0; index<${#KINDS[@]}; index++)); do [ "${KINDS[$index]}" != value ] || KINDS[$index]=word; done' HOOK command_rows \
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="core.hooksPath$SUFFIX" GIT_CONFIG_VALUE_0=/dev/null git commit -m x'
   skill_load_control unknown-prefix "$HOOK" '      if [ "$char" = '\''"'\'' ]; then quote=""; elif [ "$kind" = word ]; then word="$word$char"; fi' \
     '[ "$kind" != value ] || [ "$char" = '\''"'\'' ] || word="$word$char"' HOOK command_rows \
     'git commit "-${OPTION}nm" -m x'
   skill_load_control message-is-option "$HOOK" '      --message | --file | --reuse-message | --reedit-message | --template | --author | --date | --cleanup | --fixup | --squash | --trailer | --pathspec-from-file)' 'i=$((i - 1))' HOOK command_rows \
     "git commit --message $NV"
-  skill_load_control ordinary-notice "$HOOK" 'TOKEN_ERROR=""' 'message command unresolved' HOOK command_rows \
+  skill_load_control ordinary-notice "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' 'message command unresolved' HOOK command_rows \
     'echo "$HOME git"'
+  skill_load_control redirect-is-separator "$HOOK" '        if [ "$operator_kind" = redirect ]; then' 'operator_kind=separator' HOOK command_rows \
+    'git commit -m x &>/dev/null -n' "git commit -m x $APPEND_BOTH/dev/null -n"
+  skill_load_control redirect-target-is-option "$HOOK" '    target=1' 'target=""' HOOK command_rows \
+    "git commit -m x &>$NV" "git commit -m x $APPEND_BOTH-n"
+  skill_load_control no-partial-notice "$HOOK" '[ "$READER_STATE" = complete ] || UNAVAILABLE=1' 'UNAVAILABLE=""' HOOK command_rows \
+    'cd "${REPO:-.}" && git commit -n -m wip' 'echo ${X:-y}; git commit -n -m x'
+  skill_load_control lose-completed-result "$HOOK" '[ "$READER_STATE" = complete ] || UNAVAILABLE=1' \
+    'if [ "$READER_STATE" = incomplete ]; then BYPASS=""; fi' HOOK command_rows \
+    'git commit -n -m x; echo {a,b}'
+  skill_load_control incomplete-is-complete "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' \
+    'if [ "$READER_STATE" = incomplete ]; then TOKENS[${#TOKENS[@]}]=""; KINDS[${#KINDS[@]}]=separator; RAW[${#RAW[@]}]=""; fi' HOOK command_rows \
+    'git commit -n -m x ${X:-y}' 'git commit -n -m "${TEXT:-x}"'
   skill_load_control no-notice-context "$HOOK" '  local text=$NOTICE' 'return 0' HOOK context_rows \
     'registered claude tools unarmed=REPO context equals the keyed diagnostic'
   skill_load_control stop-at-path "$HOOK" '      *) continue ;;' 'break' HOOK command_rows \
