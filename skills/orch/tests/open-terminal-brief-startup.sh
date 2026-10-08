@@ -20,8 +20,9 @@ REAL_SLEEP="$(command -v sleep)" || exit 1
 # launcher execution and readback, including a broken fixture's waits.
 if [[ "${1:-}" == --case ]]; then
   ROOT="$2" OT="$3" HARNESS="$4" SHELL_BIN="$5"
-  mkdir -p "$ROOT/socket" "$ROOT/home/.config/fish" "$ROOT/bin" "$ROOT/real-bin"
-  tm() { env -i PATH="$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 SHELL="$BASH" TMUX_TMPDIR="$ROOT/socket" "$REAL_TMUX" "$@"; }
+  mkdir -p "$ROOT/home/.config/fish" "$ROOT/bin" "$ROOT/real-bin"
+  # macOS temp paths leave too little room for tmux's default socket suffix.
+  tm() { env -i PATH="$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
   trap 'tm kill-server 2>/dev/null || true' EXIT
   trap 'exit 143' TERM
   ot_stub_bin "$ROOT/bin"
@@ -38,7 +39,7 @@ if [[ "$1" == paste-buffer ]]; then
   for i in {1..100}; do [[ ! -f "$root/startup-entered" ]] || break; "$real_sleep" 0.02; done
   [[ -f "$root/startup-entered" && ! -f "$root/startup-released" ]] || exit 70
 fi
-"$real_tmux" "$@"
+"$real_tmux" -S "$root/s" "$@"
 if [[ "$1" == send-keys && "${!#}" == Enter ]]; then
   printf x > "$root/startup-gate"
 fi
@@ -61,7 +62,10 @@ WRAPPER
   for n in {1..8}; do
     printf 'paragraph-%s: ' "$n"
     printf '%s ' $'Keep the agent\'s $HOME and `whoami`, "done", a & b, C:\\tmp, 100%s and {brief}.'
-    printf 'scope status instructions %.0s' {1..18}
+    # One physical line exceeds the canonical terminal input bound. Short
+    # lines can be drained after the gate opens before the queued paste fills
+    # that bound, so their loss depends on the shell's startup speed.
+    printf 'scope status instructions %.0s' {1..256}
     printf '\n\n'
   done > "$ROOT/brief"
   printf '%s\n' 'STARTUP_BRIEF_TAIL' >> "$ROOT/brief"
@@ -73,13 +77,12 @@ WRAPPER
     *) exit 2 ;;
   esac
   env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 LINEAR_TEAM= \
-    WORKTREE_CLI="$ROOT/bin/worktree" TMUX_TMPDIR="$ROOT/socket" ORCH_TMUX_SESSION=fixture \
+    WORKTREE_CLI="$ROOT/bin/worktree" ORCH_TMUX_SESSION=fixture \
     ORCH_LANE_HOST=local OT_WT_LOG="$ROOT/worktree.log" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     "$OT" --tmux --harness "$HARNESS" --cmd "$ROOT/harness $flags $QUESTION_OFF_ALL {brief}" \
     --brief-file "$ROOT/brief" KEN-1 > "$ROOT/launch.log" 2>&1
   for i in {1..100}; do [[ ! -f "$ROOT/received" ]] || break; "$REAL_SLEEP" 0.02; done
   [[ -f "$ROOT/startup-entered" && -f "$ROOT/startup-released" ]] || exit 71
-  tm capture-pane -p -J -S - -t fixture:KEN-1 > "$ROOT/screen"
   if [[ -f "$ROOT/received" ]]; then
     cmp -s "$ROOT/received" "$ROOT/expected" || exit 1
     # The argv recorder includes every argument, including the full prompt.
@@ -125,11 +128,14 @@ ROWS
 
 run_case old-inline "$OLD/open-terminal" codex "$REAL_FISH"
 assert_eq "$RC" 1 'control: the original inline brief fails the same full-message readback' "$RUN/log"
-if [[ -f "$RUN/startup-released" && -f "$RUN/screen" ]] \
-  && ! grep -F 'STARTUP_BRIEF_TAIL' "$RUN/screen" >/dev/null; then
-  pass 'control: startup completed after paste and the terminal lost the brief tail'
+if [[ -f "$RUN/startup-released" ]] \
+  && { [[ ! -f "$RUN/argv" && ! -f "$RUN/received" ]] \
+    || { [[ -f "$RUN/argv" && -f "$RUN/received" ]] && ! cmp -s "$RUN/received" "$RUN/expected"; }; }; then
+  # The launch command clears the screen even after successful delivery.
+  # The tail can survive an earlier lost paragraph, so compare the full brief.
+  pass 'control: startup completed after paste without complete brief delivery'
 else
-  fail 'control: startup completed after paste and the terminal lost the brief tail'
+  fail 'control: startup completed after paste without complete brief delivery'
 fi
 printf '\npass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
