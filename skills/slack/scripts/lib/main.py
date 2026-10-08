@@ -34,7 +34,8 @@ setup     resolve every SLACK_OWNERS address to a Slack user, create the
           private channel or find it by name (--name; default
           <person>-<repo>-<side>: KENDEX_USER_HANDLE, else KENDEX_USER_EMAIL's
           local part; origin's repository name, else the checkout's; vm where
-          the orch lane host is hosted, else local), or adopt an existing
+          the orch lane host is hosted, else local; a bound checkout keeps
+          its channel), or adopt an existing
           private one by id (--take), invite the owners, set the channel's
           purpose where it is empty, write the binding
           tmp/slack/binding.json, and restart the relay unit `install` wrote

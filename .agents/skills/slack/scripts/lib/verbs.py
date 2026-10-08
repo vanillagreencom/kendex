@@ -39,8 +39,14 @@ LINEAR_WORKSPACE = re.compile(r"https://linear\.app/([^/\s\"]+)/issue/")
 def default_channel_name(root: Path, person: str, side: str) -> str:
     """`<person>-<repo>-<side>`, the owner's rule of 2026-09-30: channel names
     are unique per workspace, so the person and the side keep two overseers
-    of one repository apart."""
-    return CHANNEL_NAME.sub("-", f"{person}-{repo_name(root)}-{side}".lower()).strip("-")[:80]
+    of one repository apart. Slack's 80-character cap shortens the repository
+    alone, so the person and the side always stand."""
+    head, tail = slug(person)[:40], slug(side)
+    return f"{head}-{slug(repo_name(root))[:80 - len(head) - len(tail) - 2].strip('-')}-{tail}"
+
+
+def slug(text: str) -> str:
+    return CHANNEL_NAME.sub("-", text.lower()).strip("-")
 
 
 def answer(root: Path, *args: str) -> Optional[str]:
@@ -138,6 +144,14 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
     api = api_for(settings)
     ids = resolve_owner_ids(api, settings.owners)
     side = lane_side(root)
+    if not name and not take:
+        # A bound root keeps its channel, under whatever name it now has:
+        # the default name changes with its inputs, the binding does not.
+        try:
+            take = read_binding(root).channel
+        except Refusal as err:
+            if err.key != "root-unbound":
+                raise
     if take:
         info = api.get("conversations.info", channel=take)["channel"]
         if not info.get("is_private"):

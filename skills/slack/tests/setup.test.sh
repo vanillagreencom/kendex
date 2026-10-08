@@ -110,11 +110,26 @@ XI="$SK_TMP/xi"
 mkdir -p "$XI" && git -C "$XI" init -q
 sk_run ORCH_LANE_HOST=claude-cloud -- setup --root "$XI"
 assert_eq "$RC=$(sk_channel_name "$XI")" "0=bradm-xi-local" "a root with no orch skill names local, the checkout name standing in for origin"
+LONGREPO="$(printf 'r%.0s' $(seq 1 90))"
+PSI="$(sk_new_root psi)"
+git -C "$PSI" remote add origin "https://github.com/acme/$LONGREPO.git"
+sk_run -- setup --root "$PSI"
+PSI_NAME="$(sk_channel_name "$PSI")"
+assert_eq "$RC=${#PSI_NAME}=${PSI_NAME%%-*}=${PSI_NAME##*-}" "0=80=bradm=local" \
+  "Slack's 80-character cap shortens the repository and keeps the person and the side"
+CHI="$(sk_new_root chi)"
+sk_run -- setup --root "$CHI" --name chi-old-shape
+CHI_CH="$(sk_channel "$CHI")"
+sk_ctl /_test/channel "{\"id\": \"$CHI_CH\", \"name\": \"renamed-by-hand\", \"members\": [\"UBOT\", \"U001\", \"U002\"]}" >/dev/null
+CREATES="$(sk_state '[.calls[] | select(. == "conversations.create")] | length')"
+sk_run -- setup --root "$CHI"
+assert_eq "$RC=$(sk_channel "$CHI")=$(sk_channel_name "$CHI")=$(sk_state '[.calls[] | select(. == "conversations.create")] | length')" \
+  "0=$CHI_CH=renamed-by-hand=$CREATES" "a bound root keeps its channel, renamed in Slack, and setup creates none"
 OMICRON="$(sk_new_root omicron)"
 sk_run KENDEX_USER_HANDLE= KENDEX_USER_EMAIL="$OWNER2" -- setup --root "$OMICRON"
 assert_eq "$RC=$(sk_channel_name "$OMICRON")=$(printf '%s\n' "$ERR" | grep -c '^slack: handle-from-email=ann$')" "0=ann-omicron-local=1" \
   "with no handle the email's local part stands in, said once on stderr"
-sk_run KENDEX_USER_HANDLE= -- setup --root "$OMICRON"
+sk_run KENDEX_USER_HANDLE= -- setup --root "$(sk_new_root omicron2)"
 assert_eq "$RC=$ERR1" "2=slack: setting-missing=KENDEX_USER_EMAIL" "with neither the handle nor the email setup is refused"
 
 # --- the purpose: written once, never over one already set -----------------------
@@ -223,7 +238,7 @@ sk_run -- setup --root "$IOTA" --take C900
 assert_eq "$RC=$(sk_channel "$IOTA")" "0=C900" "control: the rebind rule gone, a journaled root is bound to another channel"
 sk_bin_reset
 
-sk_mutant shape verbs.py 'f"\{person\}-\{repo_name\(root\)\}-\{side\}"' 'f"{root.name}-{person}"'
+sk_mutant shape verbs.py "return f\"\{head\}-\{slug\(repo_name\(root\)\)\[:80 - len\(head\) - len\(tail\) - 2\]\.strip\('-'\)\}-\{tail\}\"" 'return slug(f"{root.name}-{person}")'
 NU2="$(sk_new_root nu2)"
 sk_run -- setup --root "$NU2"
 assert_eq "$RC=$(sk_channel_name "$NU2")" "0=nu2-bradm" "control: the old <checkout>-<owner> shape fails the name row"
@@ -248,6 +263,19 @@ git -C "$PHI" remote add origin "https://github.com/acme/widget.git"
 sk_run PATH="$SK_TMP/gh-bin:$PATH" GH_DESCRIPTION="$LONG" -- setup --root "$PHI" --take C952
 assert_eq "$RC=$(sk_purpose "$PHI")" "0=widget overseer on a local machine. $LONG Repo: https://github.com/acme/widget" \
   "control: the board dropped before the sentence, the description stands and the board goes"
+sk_bin_reset
+
+sk_mutant reuse verbs.py 'take = read_binding\(root\)\.channel' 'take = None'
+sk_run -- setup --root "$CHI"
+assert_eq "$RC=$(sk_channel_name "$CHI")" "0=bradm-chi-local" "control: the binding not reused, a bound root moves to a new default channel"
+sk_bin_reset
+
+sk_mutant cap verbs.py "return f\"\{head\}-\{slug\(repo_name\(root\)\)\[:80 - len\(head\) - len\(tail\) - 2\]\.strip\('-'\)\}-\{tail\}\"" 'return f"{head}-{slug(repo_name(root))}-{tail}"[:80]'
+PSI2="$(sk_new_root psi2)"
+git -C "$PSI2" remote add origin "https://github.com/acme/$LONGREPO.git"
+sk_run -- setup --root "$PSI2"
+PSI2_NAME="$(sk_channel_name "$PSI2")"
+assert_eq "$RC=$PSI2_NAME" "0=bradm-$(printf 'r%.0s' $(seq 1 74))" "control: a tail cut drops the side from a long repository's name"
 sk_bin_reset
 
 sk_summary
