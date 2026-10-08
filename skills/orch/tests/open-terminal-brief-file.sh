@@ -13,6 +13,7 @@
 # The refusals, each with its control: a --brief-file with no {brief}, a
 # {brief} with no --brief-file, a path that is not a readable file, a file
 # holding only whitespace, and a {brief} inside a quote or behind a backslash.
+# A local brief snapshot that cannot be created also refuses the launch.
 # The inline-brief rows, balanced and unbalanced, are
 # open-terminal-claude-handoff.sh's.
 set -uo pipefail
@@ -266,6 +267,57 @@ mutant() {
   orch_fixture_shared_libs "$TMP_ROOT/$1"
   mutate_file "$MUTANT_OT" "$2" "$3"
 }
+
+echo "=== a failed local brief snapshot opens no terminal ==="
+# open-terminal creates this snapshot after the worktree. Fail that mktemp
+# alone so the fixture reaches the refusal when the disk cannot create it.
+PROMPT_FAIL_BIN="$TMP_ROOT/prompt-fail-bin"
+PROMPT_FAIL_LOG="$TMP_ROOT/prompt-fail.log"
+REAL_MKTEMP="$(command -v mktemp)" || exit 1
+mkdir -p "$PROMPT_FAIL_BIN"
+cat > "$PROMPT_FAIL_BIN/mktemp" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  */local-prompt.XXXXXX)
+    printf '%s\n' "$1" >> "$OT_PROMPT_FAIL_LOG"
+    exit 1
+    ;;
+esac
+exec "$OT_REAL_MKTEMP" "$@"
+STUB
+chmod +x "$PROMPT_FAIL_BIN/mktemp"
+run_prompt_failure() {
+  local opened=no
+  : > "$PROMPT_FAIL_LOG"
+  run_ot "$1" "TMUX=;PATH=$PROMPT_FAIL_BIN:$OT_STUB_BIN:$PATH;OT_REAL_MKTEMP=$REAL_MKTEMP;OT_PROMPT_FAIL_LOG=$PROMPT_FAIL_LOG" \
+    --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" KEN-5
+  # A successful control waits for the detached terminal stub to acknowledge
+  # the launch before the refusal assertion reads its capture.
+  if [[ "$RC" -eq 0 ]]; then gui_line >/dev/null || exit 1; fi
+  [[ ! -e "$RUN/gui" ]] || opened=yes
+  PROMPT_FAILURE_GOT="rc=$RC diagnostic=$(grep -cxF 'open-terminal: brief-prompt-failed item=KEN-5' <<<"$OUT") snapshot=$(wc -l < "$PROMPT_FAIL_LOG" | tr -d '[:space:]') opened=$opened"
+}
+assert_prompt_failure_refused() {
+  assert_eq "$PROMPT_FAILURE_GOT" "rc=1 diagnostic=1 snapshot=1 opened=no" \
+    "a failed local brief snapshot reports its key, fails the launch and opens no terminal" "$OUT"
+}
+run_prompt_failure "$OT"
+assert_prompt_failure_refused
+
+mutant brief-prompt-failure '|| { ot_message brief-prompt-failed "item=$item" >&2; return 1; }' \
+  '|| { ot_message brief-prompt-failed "item=$item" >&2; :; }'
+run_prompt_failure "$MUTANT_OT"
+assert_eq "$PROMPT_FAILURE_GOT" "rc=0 diagnostic=1 snapshot=1 opened=yes" \
+  "control: the failed snapshot still reports its key but opens a terminal without its refusal" "$OUT"
+CONTROL_RC=0
+(
+  FAIL=0
+  assert_prompt_failure_refused
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/prompt-failure-assertion.out" 2>&1 || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" "1" \
+  "control: the same snapshot refusal assertion fails when the launch continues" "$TMP_ROOT/prompt-failure-assertion.out"
 
 INLINE_CMD="$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL 'an inline brief'"
 refusal_row "a brief file beside a command with no {brief} is refused, since it would reach no harness" \
