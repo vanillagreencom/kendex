@@ -97,8 +97,6 @@ finish() {
   exit "$1"
 }
 
-# The per-harness backgrounding paragraph under --wait is an intentional twin
-# of review-artifact-check's: each --help is self-contained, so edit both.
 usage() {
   cat << 'EOF'
 Usage:
@@ -114,8 +112,9 @@ returns the moment the receipt is written, independent of any return-message
 delivery, and a deadline return is the escalation trigger. Backgrounding per
 harness: Claude Code runs it as a background shell (the exit wake IS the
 event); Pi runs it under bg_task, which emits no exit wake, so pair it with
-the per-wake check; Codex and OpenCode run it via scheduled re-entry, or fall
-back to the per-wake check alone.
+the per-wake check. Codex uses references/codex-runtime.md, Delegated round
+wait. OpenCode runs it via scheduled re-entry, or falls back to the per-wake
+check alone.
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit

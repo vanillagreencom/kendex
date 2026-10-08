@@ -3561,8 +3561,10 @@ check_lanes() {
     bounded_tail "$below"
     PASS_EVENT=1
   done
-  # The round is over and nobody is driving: the harness is up, at its input
-  # prompt, with nothing in flight. Two consecutive passes, because the screen
+  # The harness is up at its input prompt with nothing in flight. Codex is
+  # reported on the first pass: an agent return cannot start its next turn,
+  # and that return changes the screen while the lane remains parked. Other
+  # harnesses take two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same; the first is
   # a `lane-idle` row, as for lane-exited above. The second pass reports it and
   # marks the row, so a lane left at the same screen is reported once, however
@@ -3620,7 +3622,7 @@ check_lanes() {
       die state-read-failed "" "lane=$lane" "row=lane-idle"
     fi
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
-    if [[ "$prior" == "$screen_key" ]]; then
+    if [[ "$prior" == "$screen_key" ]] || grep -Eq -- "$CODEX_MARKER_RE" <<<"$below"; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
       # The lane's closing report, which decides whether it is free for
       # another launch. Below the last turn is the round that just ended,

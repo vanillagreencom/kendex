@@ -49,6 +49,8 @@ screen() {
     answered_dialog) printf '%b\n' '⏺ I found two ways to do this.' "$DIALOG" '❯ go with the first one' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
     live_dialog) printf '%b\n' '❯ go ahead and refactor it' '⏺ I found two ways to do this.' "$DIALOG" > "$pane" ;;
     idle) printf '%b\n' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
+    codex_delegated) printf '%s\n' '› Implement the issue' '• Delegated round to /root/runtime.' '› Ask Codex to do anything' > "$pane" ;;
+    codex_returned) printf '%s\n' '› Implement the issue' '• Delegated round to /root/runtime.' '• Completed /root/runtime' '› Ask Codex to do anything' > "$pane" ;;
     # a lane that finished by removing its own worktree: the shell it falls
     # back to cannot resolve its cwd, so every prompt it draws repeats the
     # hook chain's failure under the one line the overseer is owed
@@ -127,6 +129,11 @@ lane() {
   case "$1" in
     claude) ;;
     codex) printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    codex_live_round)
+      lane codex
+      mkdir -p "$STATE_DIR"
+      printf '%s\n' '{"dev_round_id":"300-2","dev_delegated_at":300,"child_sessions":{"runtime":{"status":"active","agent_id":"/root/runtime"}}}' \
+        > "$STATE_DIR/workflow-state-issue-2.json" ;;
     agent_confine) printf 'agent-confine\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
     bash) printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
     # a login shell reports itself as -bash
@@ -420,6 +427,9 @@ echo "=== idle-after-return: the round is over and nobody is driving ==="
 # below the last user turn is work in flight now, and a submitted turn's
 # marker above it is not the composer the lane is sitting at.
 lane_table \
+  "an idle Codex lane with a live delegated round is reported on the first long pass|new|codex_delegated|codex_live_round|1|rc=0 first=EVENT+idle-after-return+gh-2" \
+  "the unchanged idle screen is reported only once|cont|codex_delegated|codex|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false" \
+  "a completion line changes the idle screen and is reported on that first long pass|cont|codex_returned|codex|1|first=EVENT+idle-after-return+gh-2" \
   "an idle prompt on two consecutive passes is the event, its closing lines following|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 tail=3 out~the+PR+is+merged=true" \
   "a codex lane that finished its turn is idle too, the marker alone deciding|new|codex:codex-idle-after-turn|codex|2|first=EVENT+idle-after-return+gh-2" \
   "a codex lane at a fresh composer is idle too|new|codex:codex-composer-idle|codex|2|first=EVENT+idle-after-return+gh-2" \
@@ -515,11 +525,19 @@ MUTANT_SCRIPTS="$(mutant_scripts mutant/orch lib/lane-state.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
 mutate_file "$MUTANT_SCRIPTS/lib/lane-state.sh" "MODEL_CAPACITY='Selected model is at capacity'" "MODEL_CAPACITY='__never_model_capacity__'"
 WATCH_BIN="$MUTANT_SCRIPTS/oversee-watch" lane_table \
-  "control: without the classifier the first capacity pass emits nothing|new|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false" \
-  "control: without the classifier the second pass records idle|cont|codex:codex-model-capacity|codex|1|first=EVENT+idle-after-return+gh-2 out~EVENT+model-capacity=false"
+  "control: without the classifier the first capacity pass records idle|new|codex:codex-model-capacity|codex|1|first=EVENT+idle-after-return+gh-2 out~EVENT+model-capacity=false"
 # The shipped watch over the idle row the mutant's second pass left.
 WATCH_BIN="$REPO_ROOT/skills/orch/scripts/oversee-watch" lane_table \
   "an old idle row cannot suppress the first capacity event|cont|codex:codex-model-capacity|codex|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false"
+
+IDLE_SCRIPTS="$(mutant_scripts idle-debounce/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/idle-debounce/github"
+mutate_file "$IDLE_SCRIPTS/oversee-watch" \
+  '[[ "$prior" == "$screen_key" ]] || grep -Eq -- "$CODEX_MARKER_RE" <<<"$below"' \
+  '[[ "$prior" == "$screen_key" ]]'
+WATCH_BIN="$IDLE_SCRIPTS/oversee-watch" lane_table \
+  "control: the old debounce misses the first long pass with a live round|new|codex_delegated|codex_live_round|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false" \
+  "control: a completion line restarts that debounce and misses another long pass|cont|codex_returned|codex|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

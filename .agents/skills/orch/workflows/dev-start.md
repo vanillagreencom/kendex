@@ -83,7 +83,7 @@ Then read the near-ceiling lines. Both templates below render one `Near-ceiling:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
 ```
 
-Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session:
 

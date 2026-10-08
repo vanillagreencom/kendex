@@ -420,7 +420,8 @@ The long pass's events, checked and reported in this order:
                              at capacity. Nothing follows the line: the
                              remedy is one continuation line back to the lane
   EVENT idle-after-return <lane> [<copilot note>]
-                             the live harness sits idle on two passes; the
+                             Codex sits idle on the first long pass; other
+                             harnesses sit idle on two passes. The
                              lane's closing lines follow, and the note is
                              lane-asking's. A Pi lane is idle,
                              working or walled by the last row its own

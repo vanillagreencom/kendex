@@ -98,6 +98,20 @@ Start and Resume each return an `exit_code` once the command ended inside their 
 
 A session that exits 2 with a `dev-validate-run: [REASON]` line was refused and is never resumed: `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). Once a `state=started` line is read, never end the turn while that run has printed no `state=done`, `state=timeout` or `state=lost` line. What each line means is the dev skill's SKILL.md § Long-Running Validation.
 
+## Delegated round wait
+
+Codex starts no turn when a collaboration agent returns after its caller ended the turn. This includes hosted lanes, whose mailbox wake is unavailable. Keep the delegation's watchdog inside the current turn until it records an artifact verdict or reaches the round deadline. The round token, deadline, acceptance and escalation stay in [skill-rules.md § Round Closure](skill-rules.md#round-closure).
+
+Launch the single `dev-artifact-check` watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
+
+```bash
+sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/dev-artifact-check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID]
+```
+
+A fix round appends `--expect-items-from-round`. This replaces the background watchdog, rather than adding a second one. Hold its completion through [waiter-launch.md § Completion](waiter-launch.md#completion), using `exec_command` and empty `write_stdin` polls in this turn. A tool return with a `session_id` requires another poll; one with an `exit_code` ended that command. A poll timeout requires the completion route's retry while `wait.exit` is empty. An agent's return message does not release this wait.
+
+Read `wait.exit` and `wait.log` once the completion file is nonempty. Apply Round Closure's refusal and replacement rules when the watchdog returned no verdict. Otherwise run the delegating workflow's acceptance table on the artifact verdict or deadline result. Continue the workflow in this turn. The generic lane-notice instruction to end a turn while waiting on an agent does not apply to this wait.
+
 ## Lane mailbox
 
 A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. The overseer follows each `lane-mail send` to a Codex lane with `open-terminal --wake` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)), which resumes the lane's newest session in print mode with one line that runs `lane-mail inbox`. Codex publishes no idle signal, so the wake refuses a lane whose Codex process still runs, as `working` or `unjudged` ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)). The wake refuses a hosted Codex lane as `wake-invalid`. Mail to a Codex lane the wake refuses takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
