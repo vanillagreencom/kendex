@@ -1224,6 +1224,21 @@ host_lm drain --item PROOF-1 --root "$REMOTE_ROOT" --host --after 0 --receipts
 assert_eq "$RC=$(grep -c '^touch ' "$STUB_LOG" || :)" "0=0" \
   "a successful cat proves later absent files without a touch"
 
+# SSH can fail between the mailbox read and its numbering read. Earlier
+# success cannot classify that later transport error as a readable host.
+numbering_read_error() {
+  : > "$STUB_LOG"
+  HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=255
+    LANE_HOST_STUB_CAT_PATH="$REMOTE_ROOT/tmp/lane-mail/PROOF-1/to-lane.jsonl.numbering"
+    LANE_HOST_STUB_TOUCH_STATUS=1)
+  host_lm drain --item PROOF-1 --root "$REMOTE_ROOT" --host --after 0 --receipts
+}
+numbering_read_error
+assert_eq "$RC=$ERR=$OUT" "2=lane-mail: host-unreachable=PROOF-1 state=unknown=" \
+  "a transport failure after a successful mailbox read still refuses an unreachable host"
+assert_eq "$(grep -c '^touch ' "$STUB_LOG" || :)" "1" \
+  "a later numbering read error takes a fresh host probe"
+
 # A transfer that dies partway adds nothing, and the send says so.
 new_lane hosted_append
 append_survives
@@ -1311,6 +1326,18 @@ HOST_ENV=(LANE_HOST_STUB_STATUS=2)
 host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0 --receipts
 assert_eq "$RC=$(count_line)" "0=count=0" \
   "control: without the first probe an unreachable host reads as empty"
+unset LANE_MAIL_BIN
+
+mutant later_error_without_probe \
+  'if [ "$rc" -ne 2 ] || [ "$LM_HOST_ANSWERED" -eq 0 ]; then lm_host_answers; fi' \
+  'if [ "$LM_HOST_ANSWERED" -eq 0 ]; then
+  if [ "$rc" -ne 2 ] || [ "$LM_HOST_ANSWERED" -eq 0 ]; then lm_host_answers; fi
+  fi'
+numbering_read_error
+assert_eq "$RC=$ERR=$OUT" "2=lane-mail: mail-read-failed=PROOF-1=" \
+  "control: skipping a later error probe gives an unreachable host the read-failed key"
+assert_eq "$(grep -c '^touch ' "$STUB_LOG" || :)" "0" \
+  "control: the later error probe is absent after a successful read"
 unset LANE_MAIL_BIN
 
 # The overseer answer through the cursor-backed read the watch makes, from
