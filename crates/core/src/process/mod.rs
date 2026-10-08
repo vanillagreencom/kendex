@@ -147,6 +147,7 @@ const MATERIALISING: &[&str] = &[
 ];
 
 mod programs;
+pub use programs::ScriptEnvironment;
 
 /// One line of git's answer under `path`: the whole trimmed output, which
 /// is empty exactly when a `status --porcelain` has nothing to say. `None`

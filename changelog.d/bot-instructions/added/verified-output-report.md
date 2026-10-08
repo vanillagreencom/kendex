@@ -1,1 +1,1 @@
-- The checker can report verified output files for refresh classification, including disabled installations.
+- The checker can report verified regular output files for refresh classification, including disabled installations, and refuses output links.

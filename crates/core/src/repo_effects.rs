@@ -93,7 +93,12 @@ fn launch_script(
     argv: Vec<std::ffi::OsString>,
     index: Option<&std::path::Path>,
 ) -> crate::error::Result<crate::guard::GuardReport> {
-    let mut script = crate::process::Hardened::package_script(program, argv, repo);
+    let mut script = crate::process::Hardened::package_script(
+        program,
+        argv,
+        repo,
+        crate::process::ScriptEnvironment::Installed,
+    )?;
     if let Some(index) = index {
         script = script.env("GIT_INDEX_FILE", &index.to_string_lossy());
     }
@@ -154,9 +159,12 @@ pub(crate) fn run_trusted_script_program(
     argv: Vec<std::ffi::OsString>,
 ) -> crate::error::Result<crate::guard::GuardReport> {
     let (repo, program, _) = resolve_script(scope, root, program)?;
-    script_report(crate::process::Hardened::trusted_checker(
-        &program, argv, repo,
-    ))
+    script_report(crate::process::Hardened::package_script(
+        &program,
+        argv,
+        repo,
+        crate::process::ScriptEnvironment::Trusted,
+    )?)
 }
 
 /// Whether kendex recorded arming this package's declared effect here.

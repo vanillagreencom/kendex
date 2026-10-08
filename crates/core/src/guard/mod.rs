@@ -354,8 +354,13 @@ fn run_installer(
         repo.worktree.as_os_str().to_owned(),
     ];
     argv.extend(args.iter().map(OsString::from));
-    let mut script =
-        Hardened::package_script(&installed.script, argv, &repo.worktree).timeout(timeout);
+    let mut script = Hardened::package_script(
+        &installed.script,
+        argv,
+        &repo.worktree,
+        crate::process::ScriptEnvironment::Installed,
+    )?
+    .timeout(timeout);
     if let Some(cap) = max_output {
         script = script.max_output(cap);
     }

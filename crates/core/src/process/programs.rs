@@ -13,6 +13,14 @@ use std::path::Path;
 use std::process::Stdio;
 
 use super::{Hardened, owned};
+use crate::error::{CoreError, Result};
+
+/// Installed scripts keep their caller's settings; trusted verification reads
+/// project content without letting that project select the tools it executes.
+pub enum ScriptEnvironment {
+    Installed,
+    Trusted,
+}
 
 impl Hardened {
     /// Documented stdio app-server RPC, with the target account's inherited auth.
@@ -230,16 +238,17 @@ impl Hardened {
     /// is why naming `sh` there is correct rather than a hope about POSIX
     /// compatibility. The package's own bash-3.2 suite keeps them inside
     /// what that build accepts.
-    fn shell_script(program: &Path, args: Vec<OsString>) -> Hardened {
+    fn shell_script(program: &Path, args: Vec<OsString>, interpreter: Option<&Path>) -> Hardened {
         #[cfg(unix)]
         {
+            let _ = interpreter;
             Hardened::spawning(program.as_os_str(), args)
         }
         #[cfg(not(unix))]
         {
             let mut argv = vec![program.as_os_str().to_owned()];
             argv.extend(args);
-            Hardened::new("sh", argv)
+            Hardened::spawning(interpreter.unwrap_or(Path::new("sh")).as_os_str(), argv)
         }
     }
 
@@ -258,7 +267,7 @@ impl Hardened {
     /// program is never a name a committed file chose: it is the installed
     /// package's own script, at a path this crate derived.
     pub fn guard_hook(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
-        let mut hardened = Hardened::shell_script(program, args);
+        let mut hardened = Hardened::shell_script(program, args, None);
         hardened.command.stdin(Stdio::inherit());
         hardened.command.current_dir(cwd);
         hardened
@@ -271,32 +280,87 @@ impl Hardened {
     /// inherited `GIT_DIR` or `GIT_INDEX_FILE` would outrank that and send
     /// them at a different repository — writing hooks into one repo while
     /// reporting about another.
-    pub fn package_script(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
-        let mut hardened = Hardened::shell_script(program, args);
-        hardened.scrub_git_redirects();
-        hardened.command.current_dir(cwd);
-        hardened
-    }
-
-    /// The trusted bot checker reads an installed package as data. Caller
-    /// settings must not inject shell startup code or Python imports into it.
-    pub(crate) fn trusted_checker(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
-        let mut hardened = Hardened::shell_script(program, args);
-        hardened.command.env_clear();
-        // PATH locates bash, Python and git. Windows needs SystemRoot to load
-        // system libraries. No package setting or interpreter import path is
-        // part of this read-only check's contract.
-        #[cfg(windows)]
-        let inherited = ["PATH", "SystemRoot"];
-        #[cfg(not(windows))]
-        let inherited = ["PATH"];
-        for variable in inherited {
-            if let Some(value) = std::env::var_os(variable) {
-                hardened.command.env(variable, value);
+    /// Trusted checkers receive the project through absolute arguments and
+    /// run beside their own program, so Windows descendant lookup cannot
+    /// search the checked project's current directory.
+    pub fn package_script(
+        program: &Path,
+        args: Vec<OsString>,
+        cwd: &Path,
+        environment: ScriptEnvironment,
+    ) -> Result<Hardened> {
+        let (program, launch_cwd, tool_path) = match environment {
+            ScriptEnvironment::Installed => (program.to_owned(), cwd.to_owned(), None),
+            ScriptEnvironment::Trusted => {
+                let project =
+                    crate::paths::canonical(cwd).map_err(|error| CoreError::io(cwd, error))?;
+                let trusted = crate::paths::canonical(program)
+                    .map_err(|error| CoreError::io(program, error))?;
+                let parent = trusted
+                    .parent()
+                    .filter(|parent| !parent.starts_with(&project))
+                    .ok_or_else(|| CoreError::CommandNotStarted {
+                        label: program.display().to_string(),
+                        why: "trusted checker directory is inside the checked project".to_owned(),
+                    })?;
+                let path = trusted_tool_path(program, &project)?;
+                let parent = parent.to_owned();
+                (trusted, parent, Some(path))
+            }
+        };
+        // Windows executable lookup can search cwd before PATH. Pin the
+        // interpreter using the same directories its descendants will see.
+        #[cfg(not(unix))]
+        let interpreter = tool_path
+            .as_ref()
+            .map(|path| {
+                std::env::split_paths(path)
+                    .map(|directory| directory.join("sh.exe"))
+                    .find(|candidate| crate::fs::is_executable(candidate))
+                    .ok_or_else(|| CoreError::CommandNotStarted {
+                        label: program.display().to_string(),
+                        why: "trusted PATH contains no sh.exe interpreter".to_owned(),
+                    })
+            })
+            .transpose()?;
+        #[cfg(unix)]
+        let interpreter: Option<std::path::PathBuf> = None;
+        let mut hardened = Hardened::shell_script(&program, args, interpreter.as_deref());
+        match tool_path {
+            None => hardened.scrub_git_redirects(),
+            Some(path) => {
+                hardened.command.env_clear();
+                hardened.command.env("PATH", path);
+                // Windows needs SystemRoot to load system libraries.
+                #[cfg(windows)]
+                if let Some(value) = std::env::var_os("SystemRoot") {
+                    hardened.command.env("SystemRoot", value);
+                }
+                hardened.command.env("PYTHONNOUSERSITE", "1");
             }
         }
-        hardened.command.env("PYTHONNOUSERSITE", "1");
-        hardened.command.current_dir(cwd);
-        hardened
+        hardened.command.current_dir(launch_cwd);
+        Ok(hardened)
     }
+}
+
+fn trusted_tool_path(program: &Path, project: &Path) -> Result<OsString> {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let directories: Vec<_> = std::env::split_paths(&inherited)
+        .filter(|directory| directory.is_absolute())
+        .filter_map(|directory| crate::paths::canonical(&directory).ok())
+        .filter(|directory| directory.is_dir() && !directory.starts_with(project))
+        .collect();
+    // env/bash treat an empty PATH entry as cwd. Refuse before spawning when
+    // filtering leaves no directories, rather than reintroduce project code.
+    if directories.is_empty() {
+        return Err(CoreError::CommandNotStarted {
+            label: program.display().to_string(),
+            why: "trusted PATH contains no tool directories outside the checked project".to_owned(),
+        });
+    }
+    std::env::join_paths(directories).map_err(|error| CoreError::CommandNotStarted {
+        label: program.display().to_string(),
+        why: format!("cannot construct trusted PATH: {error}"),
+    })
 }

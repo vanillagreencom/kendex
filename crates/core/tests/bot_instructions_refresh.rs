@@ -512,7 +512,15 @@ fn package_run(root: &Path, package_rel: &str, args: &[&str]) -> std::process::O
     let script = root.join(package_rel).join("scripts/bot-instructions");
     let mut argv: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
     argv.extend(["--repo".into(), root.as_os_str().to_owned()]);
-    Hardened::package_script(&script, argv, root).run().unwrap()
+    Hardened::package_script(
+        &script,
+        argv,
+        root,
+        kendex_core::process::ScriptEnvironment::Installed,
+    )
+    .unwrap()
+    .run()
+    .unwrap()
 }
 
 /// Commit what the fixture staged, so a later change reads as one.

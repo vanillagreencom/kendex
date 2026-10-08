@@ -8,7 +8,7 @@ import shlex
 
 from .constants import CODE_REVIEW_TREE, EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, RenderError
-from . import globs, marker, render, render_markdown
+from . import fsutil, globs, marker, render, render_markdown
 
 # Every root-level path this package may have written, plus
 # `.macroscope/approvability.md`, the one Macroscope read path it never
@@ -135,7 +135,7 @@ def _drift_finding(ctx, message, path):
     return Finding("drift", message + where + remedy)
 
 
-def _readable(ctx, path, out):
+def _readable(ctx, path, out, *, whole_file=False):
     """One produced path's bytes, or `_UNREADABLE` with the finding recorded.
 
     A path this package produces whose bytes it cannot decode differs from a
@@ -144,6 +144,17 @@ def _readable(ctx, path, out):
     finding count, and no remedy.
     """
     try:
+        if whole_file:
+            entry = ctx.tree.read_output(path)
+            if entry is None:
+                return None
+            if not entry.regular:
+                out.append(_drift_finding(ctx,
+                    "the current TOML produces a regular file but this entry is not regular",
+                    path,
+                ))
+                return _UNREADABLE
+            return fsutil.decode_text(entry.raw, path)
         return ctx.read(path)
     except RenderError as exc:
         out.append(_drift_finding(ctx,
@@ -158,7 +169,7 @@ def drift(ctx, out):
     vanishes; between those moments the repo's behavior does not match its
     source, and the edit's author has no reason to suspect it."""
     for path, rendered in sorted(ctx.build.files.items()):
-        actual = _readable(ctx, path, out)
+        actual = _readable(ctx, path, out, whole_file=True)
         if actual is _UNREADABLE:
             continue
         if actual is None:

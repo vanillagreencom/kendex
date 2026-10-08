@@ -11,10 +11,23 @@ decide what the staged outputs were compared against.
 A file absent from the index is that absence, not its worktree copy.
 """
 
+import os
+import stat
 import subprocess
+from dataclasses import dataclass
 
 from . import fsutil
 from .errors import ManifestError, SourceUnavailable
+
+
+@dataclass(frozen=True)
+class OutputEntry:
+    mode: int
+    raw: bytes | None
+
+    @property
+    def regular(self):
+        return stat.S_ISREG(self.mode)
 
 
 class Worktree:
@@ -24,6 +37,23 @@ class Worktree:
 
     def read(self, rel):
         return fsutil.read_text(self.root, rel)
+
+    def read_output(self, rel):
+        path = os.path.join(self.root, rel)
+        try:
+            mode = os.lstat(path).st_mode
+            if not stat.S_ISREG(mode):
+                return OutputEntry(mode, None)
+            # Whole-file ownership covers the final entry itself. Installed
+            # doctrine and inputs use read(), whose link support is separate.
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            with os.fdopen(os.open(path, flags), "rb") as fh:
+                mode = os.fstat(fh.fileno()).st_mode
+                return OutputEntry(mode, fh.read() if stat.S_ISREG(mode) else None)
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        except OSError as exc:
+            raise SourceUnavailable(f"read output {rel}", f"cannot read ({exc.strerror})") from exc
 
     def walk(self, prefix):
         return fsutil.walk(self.root, prefix)
@@ -72,6 +102,20 @@ class Index:
             # absent from the index — the state `--staged` exists to judge.
             return None
         return fsutil.decode_text(done.stdout, rel)
+
+    def read_output(self, rel):
+        self._ensure_repo()
+        entries = _git(self.root, ["ls-files", "--stage", "-z", "--", rel])
+        matching = [entry.split("\t", 1)[0].split()
+                    for entry in entries if entry.split("\t", 1)[1] == rel]
+        if not matching:
+            return None
+        if len(matching) != 1 or matching[0][2] != "0":
+            raise SourceUnavailable(f"read output {rel}", "the index entry is unresolved")
+        mode, oid, _stage = matching[0]
+        mode = int(mode, 8)
+        raw = _run(self.root, ["cat-file", "blob", oid]).stdout if stat.S_ISREG(mode) else None
+        return OutputEntry(mode, raw)
 
     def walk(self, prefix):
         return [p for p in self.tracked() if p.startswith(prefix + "/")]

@@ -317,6 +317,7 @@ fi
 
 # kendex verify consumes only a successful JSON report. Whole-file ownership
 # includes the generated Copilot file but excludes the shared AGENTS region.
+case "$(uname -s)" in MINGW* | MSYS*) export MSYS=winsymlinks:nativestrict ;; esac
 json_repo="$(bi_rendered_repo exit-json)" || exit 1
 owned_report() {
   python3 -c 'import json, sys
@@ -375,6 +376,66 @@ if [ "$json_status" -eq 0 ] && owned_report <"$BI_TMP/json-unchecked"; then
 else
   bad 'control: bypassing comparison turns the failed-output refusal red' "exit $json_status"
 fi
+
+# Git checkout restores output links. A link's target can hold the exact
+# render bytes, so content comparison alone cannot grant whole-file ownership.
+entry_mutant="$(bi_mutant json-output-type scripts/lib/validators_repo.py \
+  '        if whole_file:' '        if False and whole_file:')" || exit 1
+while IFS='|' read -r entry_kind mode; do
+  entry_repo="$(bi_rendered_repo "exit-json-entry-$entry_kind-$mode")" || exit 1
+  output_path='.github/copilot-instructions.md'
+  case "$entry_kind" in
+    link)
+      cp "$entry_repo/$output_path" "$entry_repo/copilot-data.md" || exit 1
+      rm "$entry_repo/$output_path" || exit 1
+      ln -s ../copilot-data.md "$entry_repo/$output_path" || exit 1
+      [ -L "$entry_repo/$output_path" ] || exit 1
+      bi_commit "$entry_repo"
+      ;;
+    blob-link)
+      # The index can store a symlink blob with the exact rendered contents.
+      # This isolates entry-type refusal from a content-difference refusal.
+      output_oid="$(git -C "$entry_repo" rev-parse "HEAD:$output_path")" || exit 1
+      git -C "$entry_repo" update-index --cacheinfo "120000,$output_oid,$output_path" || exit 1
+      ;;
+    regular) ;;
+    *) exit 1 ;;
+  esac
+  case "$mode" in worktree) set -- ;; staged) set -- --staged ;; *) exit 1 ;; esac
+  "$BI" check --json "$@" --repo "$entry_repo" \
+    >"$BI_TMP/entry-report" 2>"$BI_TMP/entry-findings"
+  json_status=$?
+  if [ "$entry_kind" = regular ]; then
+    if [ "$json_status" -eq 0 ] && owned_report <"$BI_TMP/entry-report"; then
+      ok "$mode: a regular whole-file output receives verified ownership"
+    else
+      bad "$mode: a regular whole-file output receives verified ownership" "exit $json_status"
+    fi
+  else
+    bi_out="$(cat "$BI_TMP/entry-findings")"
+    if [ "$json_status" -eq 1 ] && [ ! -s "$BI_TMP/entry-report" ] && [ "$(bi_fired)" = 'drift ' ]; then
+      ok "$mode $entry_kind: a nonregular output receives no owned paths"
+    else
+      bad "$mode $entry_kind: a nonregular output receives no owned paths" "exit $json_status: $bi_out"
+    fi
+    if [ "$entry_kind" = blob-link ] || [ "$mode" = worktree ]; then
+      "$entry_mutant" check --json "$@" --repo "$entry_repo" \
+        >"$BI_TMP/entry-control" 2>"$BI_TMP/entry-control-findings"
+      json_status=$?
+      if [ "$json_status" -eq 0 ] && owned_report <"$BI_TMP/entry-control"; then
+        ok "$mode $entry_kind control: byte-only reads turn the entry refusal red"
+      else
+        bad "$mode $entry_kind control: byte-only reads turn the entry refusal red" "exit $json_status"
+      fi
+    fi
+  fi
+done <<'EOF'
+regular|worktree
+regular|staged
+link|worktree
+link|staged
+blob-link|staged
+EOF
 
 # The trusted checker reads a disabled installed package as data. The rename
 # must preserve the canonical render markers and verified whole-file paths.
