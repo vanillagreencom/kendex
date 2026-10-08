@@ -1,0 +1,1 @@
+- Codex callers keep reviewer watchdog waits in the current turn, so a delayed review artifact can continue the review without an external wake.

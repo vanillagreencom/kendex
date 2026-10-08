@@ -39,8 +39,6 @@ usage_error() {
   finish 2
 }
 
-# The per-harness backgrounding paragraph under --wait is an intentional twin
-# of dev-artifact-check's: each --help is self-contained, so edit both.
 usage() {
   cat << 'EOF'
 Usage:
@@ -65,12 +63,15 @@ until a FRESH artifact lands (valid returns immediately; a fresh rejection is
 confirmed once after one interval, then returned) or SECS elapse. "missing"
 and "stale" both keep polling: a prior round's artifact on disk is the normal
 state while the current reviewer works. A deadline return (missing/stale) is
-the escalation trigger. Arm it in the background at delegation and the caller
-wakes the moment the reviewer writes, independent of any return-message
-delivery. Backgrounding per harness: Claude Code runs it as a background shell
-(the exit wake IS the event); Pi runs it under bg_task, which emits no exit
-wake, so pair it with the per-wake check; Codex and OpenCode run it via
-scheduled re-entry, or fall back to the per-wake check alone.
+the escalation trigger. Arm one watchdog per incomplete reviewer at delegation.
+Codex launches it through references/waiter-launch.md's job runner and holds
+completion in the current turn with exec_command and empty write_stdin polls
+until wait.exit is nonempty, per references/codex-runtime.md's Reviewer round
+wait. Codex starts no turn after a detached exit or a collaboration return.
+review-pr.md section 3.2 owns each wait's budget and re-arming after every action.
+Claude Code runs it as a background shell (the exit wake IS the event); Pi runs
+it under bg_task, which emits no exit wake, so pair it with the per-wake check;
+OpenCode uses scheduled re-entry, or the per-wake check alone.
 
 Path mode (--path): prints the canonical artifact path for the agent with a
 real UTC timestamp ([WORKTREE]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json) and
