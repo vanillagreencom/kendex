@@ -103,12 +103,12 @@ lane_hosted_state_path() {
 }
 
 # lane_hosted_state_dir LANE_HOST_CLI ITEM ROOT SCRATCH — sets
-# LANE_HOSTED_STATE_DIR to the state directory the hosted lane at ROOT
-# resolves for itself, as workflow-state resolves it there: ORCH_STATE_DIR
+# LANE_HOSTED_STATE_DIR to an older hosted launch's state directory at ROOT,
+# where its state is absent at the location workflow-state --help names: ORCH_STATE_DIR
 # from ROOT's kendex.settings.toml, then .kendex/settings.toml, then its
 # private env file, .env.local unless those name another as KENDEX_ENV_FILE,
-# the later winning, else tmp. A hosted launch sets no ORCH_STATE_DIR, and the
-# caller's own names a directory on the caller's machine, never the lane's.
+# the later winning, else tmp. The caller's ORCH_STATE_DIR names a directory
+# on the caller's machine, never the lane's.
 # Each settings file is read as data, in a subshell, as `workflow-state
 # --no-private-env` reads another checkout's. The private env file is shell
 # the lane sources and this machine never runs, so only a literal
@@ -224,7 +224,7 @@ lane_archived_state() {
 # state directory of its own checkout, ROOT, where ROOT is a directory, so a
 # lane of another repository reads from that repository, and of the caller's
 # checkout where ROOT is gone or unrecorded; a hosted lane's is in the state
-# directory lane_hosted_state_dir reads for ROOT, joined to its clone, read
+# directory the launch uses, with lane_hosted_state_dir's older-launch fallback, read
 # through the probe above with ORCH_LANE_HOST set to HOST; STATE_DIR is the
 # local lane's alone. ARCHIVE, where given, is the `kept=` archive of a
 # hosted lane's close: where the host answers that the lane's worktree is
@@ -275,6 +275,15 @@ lane_hosted_item_state() {
     3) printf '%s\n' "$3/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$4/state.err"; return 2 ;;
     *) return "$rc" ;;
   esac
+  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$2"
+  rc=0
+  lane_host_fetch "$1" "$2" "$LANE_HOSTED_STATE_PATH" "$4/item-state.json" "$4/state.err" || rc=$?
+  case "$rc" in
+    0) LANE_ITEM_STATE="$(jq -c . -- "$4/item-state.json" 2>"$4/state.err")" || return 2; return 0 ;;
+    1) ;;
+    *) return "$rc" ;;
+  esac
+  rc=0
   lane_hosted_state_dir "$1" "$2" "$3" "$4" || return $?
   lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$2"
   lane_host_fetch "$1" "$2" "$LANE_HOSTED_STATE_PATH" "$4/item-state.json" "$4/state.err" || rc=$?

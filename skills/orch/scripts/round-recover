@@ -83,8 +83,7 @@
 #
 # --state-dir DIR is the workflow-state directory the round's state is read
 # from and the fresh round id is minted in, passed to workflow-state as its own
-# --state-dir; without it, workflow-state's State directory rule decides. A lane
-# that keeps its state in its own worktree passes it.
+# --state-dir; without it, workflow-state's State directory rule decides.
 
 set -euo pipefail
 

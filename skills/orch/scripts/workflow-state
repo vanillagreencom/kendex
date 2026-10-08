@@ -1025,9 +1025,8 @@ handoff_verdict() { # WORD FILE — the verdict line, the one place its text liv
 # The places an item's handoff record is read, as HANDOFF_FILES: the state
 # file the State directory rule resolves, then the item's file in <root>/tmp,
 # where root is --worktree or, with neither it nor --state-dir named, the
-# linked worktree the caller runs in. A lane whose launch forbids writing the
-# main checkout passes `--state-dir <worktree>/tmp` to every orch command, so
-# its record stands there and never in the rule's directory. Returns 1 where
+# linked worktree the caller runs in. The fallback also reads records written
+# before hosted launches carried the state environment. Returns 1 where
 # the caller's checkout cannot be resolved; exits 2 on arguments it does not
 # take.
 handoff_places() { # ISSUE_ID [--worktree ROOT]
@@ -1732,11 +1731,13 @@ and so the rule any caller naming no --state-dir reads; first match wins:
   3. tmp
   A relative path joins the main checkout, or the working directory outside
   Git; an absolute path stays unchanged.
+  A hosted SSH launch exports ORCH_STATE_DIR as the absolute path to its
+  worktree's tmp/. State-aware scripts and hooks inherit it. Local launches
+  keep the default main-checkout directory.
 
 Handoff record: handoff-standing and handoff-resume read the item's file in
 the State directory above, then in <root>/tmp, where root is --worktree or,
-with neither it nor --state-dir named, the linked worktree the caller runs in:
-a lane whose launch forbids writing the main checkout keeps its state there.
+with neither it nor --state-dir named, the linked worktree the caller runs in.
 
 Dependencies:
   jq               JSON processing

@@ -1,0 +1,1 @@
+- Hosted SSH lanes give scripts and hooks their own workflow state directory. Recovery, delegation, host reads, and close archives use that state.

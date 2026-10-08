@@ -397,7 +397,7 @@ fi''', row["clone"])
     record = '{ lane_identity_record "$F" || { printf \'lane-host-ssh: identity-record-failed path=%s\\n\' "$F" >&2; exit 1; }; }'
     if args.harness == "claude":
         put(row, remote_account + "/setup-token", (account / "setup-token").read_bytes())
-        prefix = "exec " + shlex.join(["bash", "-c",
+        prefix = shlex.join(["bash", "-c",
             '. "$2" && ' + record.replace("$F", "$3") + ' && CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$4"',
             "lane-host", remote_account + "/setup-token", *identity])
     else:
@@ -407,11 +407,11 @@ fi''', row["clone"])
         if args.harness != "copilot":
             put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = {"codex": "CODEX_HOME", "copilot": "COPILOT_HOME"}.get(args.harness, "PI_CODING_AGENT_DIR")
-        prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " " + shlex.join(["bash", "-c",
+        prefix = "env " + shlex.quote(name + "=" + remote_account) + " " + shlex.join(["bash", "-c",
             '. "$1" && ' + record.replace("$F", "$2") + ' && exec bash -lc "$3"', "lane-host", *identity])
     # The caller's folder trust and hook approval land where each harness reads
     # them; Claude's relative path resolves in the SSH session's remote home.
-    # A copilot lane places no file: its prefix sets COPILOT_HOME alone, and its
+    # A copilot lane places no file: its prefix sets COPILOT_HOME, and its
     # folder trust is the COPILOT_ALLOW_ALL=true its start command carries where
     # it names --allow-all or --yolo (lib/lane-launch.sh lane_copilot_env).
     approval = {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}.get(args.harness)
@@ -434,6 +434,7 @@ fi''', row["clone"])
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item)
         raise SystemExit(1)
+    prefix = "exec env " + shlex.quote("ORCH_STATE_DIR=" + path + "/tmp") + " " + prefix
     # The item marker is local to this clone; it is not part of the install record.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
     # The launch record lane-mail-check reads, written by its one owner out of
@@ -457,10 +458,9 @@ exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
 def archive_tmp(row, item, worktree_path):
     """Preserve remaining lane records locally before close removes their worktree.
 
-    The item's workflow state goes with them wherever the lane's settings and
-    private env file put its state directory, as the clone's own workflow-state
-    resolves it from the worktree, or the clone once the worktree is gone: the
-    lane's own resolution, on the lane's own host. The archive's
+    The item's workflow state goes with them under the launch environment's
+    rule in workflow-state --help. Older launches can keep it where their
+    settings and private env file placed it. The archive's
     `lane-host-state` member names that file's member, or is an empty line
     where the lane wrote none, so a reader takes the state the lane resolved,
     never another copy of the same name. A resolution that fails stops close,
@@ -476,9 +476,12 @@ state="" member="" from="$2"
 test -d "$from" || from="$1"
 states="$1/.agents/skills/orch/scripts/workflow-state"
 if test -x "$states"; then
-  if ! state=$(cd "$from" && "$states" path "$3"); then
-    printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
-    exit 1
+  state="$2/tmp/workflow-state-$3.json"
+  if ! test -f "$state"; then
+    if ! state=$(cd "$from" && "$states" path "$3"); then
+      printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
+      exit 1
+    fi
   fi
   names=(lane-host-state)
   if test -f "$state"; then
@@ -702,8 +705,8 @@ remove; that refusal, and an untracked render the temporary index cannot read,
 exit 3 and keep the static host. Any path outside the
 clone's generated inventory refuses close with exit 3 and keeps the static host.
 Before worktree removal, close archives remaining clone/tmp
-and worktree/tmp directories, and the item's workflow state where the lane's
-settings place it outside them, with a lane-host-state member naming that
+and worktree/tmp directories, and the item's workflow state, falling back to
+an older launch's settings when needed, with a lane-host-state member naming that
 state's member, under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 (FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
 close, as does a state directory the clone's workflow-state cannot resolve,
