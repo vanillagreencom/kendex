@@ -226,16 +226,20 @@ run, or a cancelled run with no newer or fresher sibling, stays terminal.
 A missing replacement reaches the timeout rather than passing.
 
 In default mode, or when --required-only cannot narrow the required set,
-the head's Actions run list must also show no non-completed run
-before a settled green rollup can pass. An active run or an unreadable
+the head's Actions run list must also show no non-completed run and no
+failed latest workflow attempt before a settled green rollup can pass.
+Latest means greatest updated_at, then run id; a later all-skipped dispatch
+does not replace a substantive outcome. An active run or an unreadable
 head/run lookup keeps the verdict pending, even if the only visible check
 is a completed review-request check or earlier polls saw checks in progress.
 Failed and invalid lookups report their diagnostic category on stderr.
 With a known required set, --required-only completes when those contexts
 have passed, regardless of active optional workflows.
 
-A rollup of settled checks with at least one passed, none ever seen in
-progress, is either the prior run's leftovers or CI that finished before the
+A head change clears observed progress and the confirmation window. A push
+during the checks read discards that snapshot. A rollup of settled checks
+with at least one passed, none seen in progress on this head, is either
+the prior run's leftovers or CI that finished before the
 wait started. It completes once the stale window has measured consecutive
 polls showing one unchanged rollup of every check's name and state (every
 required check's, under --required-only): 90
@@ -587,6 +591,7 @@ fi
 # IN_PROGRESS/PENDING, proving a fresh run was observed, or after the window
 # below has measured one unchanged settled rollup.
 seen_in_progress=false
+confirmation_head=""
 STALE_WINDOW=90  # seconds; wall clock, because poll_interval is the caller's
 # The rollup being held and the elapsed second it was first seen; an empty key
 # means no streak is open.
@@ -645,7 +650,23 @@ get_failed_run_id() {
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
 }
 
-# Decide whether a settled verdict is terminal. `gh pr checks` can omit
+read_checks_head() {
+  local head_sha
+  if ! head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>"$checks_stderr"); then
+    ci_message head-read-failed >&2
+    cat "$checks_stderr" >&2
+    return 1
+  fi
+  if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
+    ci_message head-response-invalid >&2
+    return 1
+  fi
+  printf '%s\n' "$head_sha"
+}
+
+# Decide whether a settled verdict is terminal. Returns {state, failed};
+# failed names Actions failures absent from the green check rollup.
+# `gh pr checks` can omit
 # dispatch-event suites from the head rollup, so correlate failing checks
 # against the Actions run list for the current head:
 #   active     - the failing run is re-running, or ANY substantive-event run
@@ -658,7 +679,8 @@ get_failed_run_id() {
 #                them and let the surviving statuses decide.
 #   terminal   - no such newer run, the newest one itself failed or was
 #                cancelled, or a failure cannot be attributed to a run.
-#   settled    - no failures and no current-head run remains active.
+#   settled    - no failures, no current-head run remains active, and the
+#                latest substantive attempt per workflow ended green.
 #   unavailable - the head or its run list could not be read. A pass waits;
 #                 a failure remains terminal, as with unattributable failures.
 # A green rollup with no failures still needs this read: after a head push,
@@ -683,22 +705,16 @@ get_failed_run_id() {
 # updated_at postdates the failing run's settlement — proof its results
 # overwrote the frozen ones rather than preceding them.
 superseding_run_state() {
-  local classes="$1" head_sha runs_json
-  if ! head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>"$checks_stderr"); then
-    ci_message head-read-failed >&2
-    cat "$checks_stderr" >&2
-    echo "unavailable"
+  local classes="$1" runs_json
+  if [ -z "$checks_head" ]; then
+    echo '{"state":"unavailable","failed":[]}'
     return 0
   fi
-  if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
-    ci_message head-response-invalid >&2
-    echo "unavailable"
-    return 0
-  fi
+  local head_sha="$checks_head"
   if ! runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" --paginate --slurp 2>"$checks_stderr"); then
     ci_message actions-read-failed >&2
     cat "$checks_stderr" >&2
-    echo "unavailable"
+    echo '{"state":"unavailable","failed":[]}'
     return 0
   fi
   # GitHub caps head_sha searches at 1,000 runs. At that bound, or when
@@ -712,16 +728,26 @@ superseding_run_state() {
     | [$runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]
   ' 2>/dev/null <<<"$runs_json"); then
     ci_message actions-response-invalid >&2
-    echo "unavailable"
+    echo '{"state":"unavailable","failed":[]}'
     return 0
   fi
-  jq -rs "$CI_RUN_JQ_DEFS"'
+  jq -rs --arg repo "$REPO" "$CI_RUN_JQ_DEFS"'
     .[0] as $runs | .[1]
     |
     def substantive:
       ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
     if (.failed | length) == 0 then
-        if any($runs[]; (.status // "") != "completed") then "active" else "settled" end
+        if any($runs[]; (.status // "") != "completed") then {state: "active", failed: []}
+        else
+          ($runs | group_by(.workflow_id) | map(
+            (map(select(.conclusion != "skipped"))) as $substantive
+            | (if ($substantive | length) > 0 then $substantive else . end)
+            | max_by([(.updated_at // ""), .id]))) as $latest
+          | [$latest[] | select((.conclusion // "") | IN("success", "neutral", "skipped") | not)
+             | {name: ("Actions run " + (.id | tostring)), state: ((.conclusion // "unknown") | ascii_upcase),
+                bucket: "fail", link: ("https://github.com/" + $repo + "/actions/runs/" + (.id | tostring))}] as $failed
+          | {state: (if ($failed | length) > 0 then "terminal" else "settled" end), failed: $failed}
+        end
       else
         ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
         | [ .failed[]
@@ -747,10 +773,10 @@ superseding_run_state() {
             end
         end
     ]
-    | if any(.[]; . == "terminal") then "terminal"
+    | (if any(.[]; . == "terminal") then "terminal"
       elif any(.[]; . == "active") then "active"
       else "superseded"
-      end
+      end) | {state: ., failed: []}
       end
   ' <<<"$runs_json
 $classes"
@@ -787,6 +813,7 @@ update_elapsed
 while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
   no_checks_due=false
   settled_this_poll=false  # only the settled-check window below sets it true
+  before_checks_head=$(read_checks_head) || before_checks_head=""
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
   checks_status=0
   set +e
@@ -798,6 +825,24 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
     ci_message checks-failed "$@" >&2
     cat "$checks_stderr" >&2
     exit 1
+  fi
+
+  checks_head=$(read_checks_head) || checks_head=""
+  if [ -n "$before_checks_head" ] && [ -n "$checks_head" ] && [ "$before_checks_head" != "$checks_head" ]; then
+    # gh pr checks reads the live PR, not a supplied commit. A push during
+    # that request leaves its response unbound; the next poll reads it again.
+    seen_in_progress=false
+    stale_key=""
+    confirmation_head="$checks_head"
+    last_check_classes='{"pending":[{"name":"current-head Actions","state":"EXPECTED"}],"failed":[],"passed":[]}'
+    poll_sleep "$POLL_INTERVAL"
+    continue
+  fi
+  [ -n "$before_checks_head" ] || checks_head=""
+  if [ -z "$checks_head" ] || [ "$checks_head" != "$confirmation_head" ]; then
+    seen_in_progress=false
+    stale_key=""
+    confirmation_head="$checks_head"
   fi
 
   # Handle no checks / empty response (only reached when gh succeeded)
@@ -930,7 +975,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
 
   # Track if we've observed a fresh run (guards against stale-check race)
   if [ "$pending_count" -gt 0 ]; then
-    seen_in_progress=true
+    [ -z "$checks_head" ] || seen_in_progress=true
   fi
 
   # Check for failure (only when all checks have settled). Before declaring
@@ -941,7 +986,8 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
   if [ "$failed_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
     supersede_state="terminal"
     if jq -e 'all(.failed[]; (.link // "") | test("/actions/runs/[0-9]+"))' >/dev/null 2>&1 <<<"$check_classes"; then
-      supersede_state=$(superseding_run_state "$check_classes" || echo "terminal")
+      run_confirmation=$(superseding_run_state "$check_classes")
+      supersede_state=$(jq -r '.state' <<<"$run_confirmation")
     fi
     case "$supersede_state" in
       active)
@@ -951,7 +997,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
         # same shape scope_current_run gives a stale aggregate status.
         check_classes=$(jq -c '.pending += (.failed | map(.state = "EXPECTED" | .bucket = "pending")) | .failed = []' <<<"$check_classes")
         last_check_classes="$check_classes"
-        seen_in_progress=true
+        [ -z "$checks_head" ] || seen_in_progress=true
         poll_sleep "$POLL_INTERVAL"
         continue
         ;;
@@ -990,8 +1036,16 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
     # green rollup nor progress seen on an earlier head proves CI has ended.
     # A known required set already names every context that blocks the merge;
     # optional workflows cannot postpone its passed result.
-    if ! $REQUIRED_ONLY || [ "$REQUIRED_CONTEXTS" = '[]' ]; then
-      supersede_state=$(superseding_run_state "$check_classes" || echo "unavailable")
+    if [ -z "$checks_head" ] || ! $REQUIRED_ONLY || [ "$REQUIRED_CONTEXTS" = '[]' ]; then
+      run_confirmation=$(superseding_run_state "$check_classes")
+      supersede_state=$(jq -r '.state' <<<"$run_confirmation")
+      if [ "$supersede_state" = "terminal" ]; then
+        check_classes=$(jq -cs '.[0].failed += .[1].failed | .[0]' <<<"$check_classes
+$run_confirmation")
+        last_check_classes="$check_classes"
+        emit_result "complete" "$check_classes"
+        exit 1
+      fi
       if [ "$supersede_state" != "settled" ]; then
         check_classes=$(jq -c '.pending += [{name: "current-head Actions", state: "EXPECTED", bucket: "pending"}]' <<<"$check_classes")
         last_check_classes="$check_classes"

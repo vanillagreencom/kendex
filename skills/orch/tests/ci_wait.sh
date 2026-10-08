@@ -172,7 +172,11 @@ case "${1:-}" in
             printf 'HTTP 403: Resource not accessible by integration\n' >&2
             exit "$STUB_HEAD_EXIT"
           fi
-          if [[ -n "${STUB_NEXT_HEAD_SHA:-}" ]] && [[ "$(cat "$STUB_PR_CHECKS_COUNT_FILE")" -gt 1 ]]; then
+          if [[ -n "${STUB_HEAD_DURING_CHECKS:-}" && -f "$STUB_PR_CHECKS_COUNT_FILE.pushed" ]]; then
+            echo "$STUB_HEAD_DURING_CHECKS"
+            exit 0
+          fi
+          if [[ -n "${STUB_NEXT_HEAD_SHA:-}" ]] && [[ "$(cat "$STUB_CLOCK")" -ge "$((STUB_RUN_STARTED + 30))" ]]; then
             echo "$STUB_NEXT_HEAD_SHA"
             exit 0
           fi
@@ -189,6 +193,7 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "checks" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      [[ -z "${STUB_HEAD_DURING_CHECKS:-}" ]] || : > "$STUB_PR_CHECKS_COUNT_FILE.pushed"
       if [[ -n "${STUB_PR_CHECKS_FIXTURE:-}" ]]; then
         cat "$STUB_PR_CHECKS_FIXTURE"
         exit "${STUB_PR_CHECKS_EXIT:-0}"
@@ -371,6 +376,7 @@ run_wait() {
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
     env -u GH_REPO ${env_args[@]+"${env_args[@]}"} \
         STUB_GH_API_USER_COUNT_FILE="$RUN/api-user-calls" \
+        STUB_RUN_STARTED="$(cat "$STUB_CLOCK")" \
         STUB_PR_CHECKS_COUNT_FILE="$RUN/checks-polls" \
         STUB_REPO_ARG_FILE="$RUN/repo-arg" \
         STUB_ACTIONS_RUNS_QUERY_FILE="$RUN/runs-query" \
@@ -660,6 +666,11 @@ table "$JSON" \
   "progress on the old head cannot pass request-only checks on the new head|||STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$DEFAULT_HEAD,STUB_NEXT_HEAD_SHA=$NEXT_HEAD,$ACTIVE|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300 runs_head=$NEXT_HEAD" \
   "completed substantive CI releases the request-only rollup after confirmation|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-completed.json|rc=0 status=complete verdict=pass check.request=SUCCESS pending=0" \
   "CI completing during the wait starts a fresh confirmation window|||STUB_PR_CHECKS_SEQUENCE=request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$NEXT_HEAD,$ACTIVE,STUB_ACTIONS_RUNS_RELEASE_AFTER=2,STUB_ACTIONS_RUNS_RELEASE_FIXTURE=$TMP_ROOT/runs-request-only-completed.json|rc=0 status=complete verdict=pass pending=0 elapsed_seconds=150" \
+  "progress on the old head needs confirmation on a request-only new head|||STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_NEXT_HEAD_SHA=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=120" \
+  "a new head restarts even an unchanged green rollup|||STUB_PR_CHECKS_SEQUENCE=green,STUB_NEXT_HEAD_SHA=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=120" \
+  "the new head can register and finish during confirmation|||STUB_PR_CHECKS_SEQUENCE=pending:request:pending:green,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_NEXT_HEAD_SHA=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=90" \
+  "same-head progress still completes immediately|||STUB_PR_CHECKS_SEQUENCE=pending:green|rc=0 status=complete verdict=pass elapsed_seconds=30" \
+  "a push during the check request discards the unbound snapshot|||STUB_PR_CHECKS_SEQUENCE=green,STUB_HEAD_DURING_CHECKS=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=120" \
   "a known required build passes while optional docs is active||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=0 status=complete verdict=pass check.build=SUCCESS check.docs=absent check.current-head+Actions=absent pending=0 rollup.build=true rollup.docs=false elapsed_seconds=90" \
   "an unreadable required set keeps the Actions hold||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_REQUIRED_READ_EXIT=1,$OPTIONAL|rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=EXPECTED runs_head=$NEXT_HEAD elapsed_seconds=300" \
   "a missing required build stays pending with only the request check visible||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,$REQUEST,$OPTIONAL|rc=1 status=timeout verdict=pending check.build+(missing)=EXPECTED check.request=absent" \
@@ -667,6 +678,17 @@ table "$JSON" \
   "an unreadable Actions array stays pending|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-unreadable.json|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED stderr~ci-wait:+actions-response-invalid=true" \
   "a failed head read preserves its cause and stays pending|||$REQUEST,STUB_HEAD_EXIT=1|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED runs_head=none stderr~ci-wait:+head-read-failed=true lookup_http_status=403" \
   "an unreadable head stays pending|||STUB_PR_CHECKS_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=unknown|rc=1 status=timeout verdict=pending check.current-head+Actions=EXPECTED runs_head=none stderr~ci-wait:+head-response-invalid=true"
+
+echo "=== the latest Actions workflow outcome decides a green rollup ==="
+jq '.workflow_runs[0].conclusion = "failure"' "$TMP_ROOT/runs-request-only-completed.json" > "$TMP_ROOT/runs-request-only-failed.json"
+jq '.workflow_runs += [.workflow_runs[0] + {id: (.workflow_runs[0].id + 1), conclusion: "success"}]' "$TMP_ROOT/runs-request-only-failed.json" > "$TMP_ROOT/runs-request-newer-success.json"
+jq '.workflow_runs += [.workflow_runs[0] + {id: (.workflow_runs[0].id + 1), conclusion: "skipped"}]' "$TMP_ROOT/runs-request-only-failed.json" > "$TMP_ROOT/runs-request-newer-skipped.json"
+table "$JSON" \
+  "a failed latest run fails even when the rollup carries only the review request|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-failed.json|rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE elapsed_seconds=0" \
+  "a newer successful run replaces the earlier failure|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-success.json|rc=0 status=complete verdict=pass failed=0 elapsed_seconds=90" \
+  "a later skipped dispatch cannot erase a substantive failure|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-skipped.json|rc=1 status=complete verdict=fail check.Actions+run+37737962683=FAILURE" \
+  "a successful rerun with the older run id replaces the failed newer dispatch|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json|rc=0 status=complete verdict=pass failed=0 elapsed_seconds=90" \
+  "a failed latest rerun stays terminal|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 status=complete verdict=fail"
 
 echo "=== every Actions page must finish before a green rollup passes ==="
 # GitHub returns at most 100 runs per page and caps head_sha searches at
@@ -728,6 +750,38 @@ for row in "${control_rows[@]}"; do
   control_rc=$?
   set -e
   assert_eq "$control_rc" 1 "the pending assertion rejects the $label control"
+  rm "$TMP_ROOT/repo/.agents/skills/orch"
+  ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+done
+
+echo "=== controls reject progress carry-over and false Actions conclusions ==="
+head_reset='if [ -z "$checks_head" ] || [ "$checks_head" != "$confirmation_head" ]; then'
+control_rows=(
+  "head progress~$head_reset~if false; then~STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_NEXT_HEAD_SHA=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"
+  "head window~$head_reset~if false; then~STUB_PR_CHECKS_SEQUENCE=green,STUB_NEXT_HEAD_SHA=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"
+  "same-head completion~if [ \"\$seen_in_progress\" = true ]; then~if [ \"\$seen_in_progress\" = false ]; then~STUB_PR_CHECKS_SEQUENCE=pending:green~rc=0 verdict=pass elapsed_seconds=30"
+  "snapshot head~[ \"\$before_checks_head\" != \"\$checks_head\" ]~false~STUB_PR_CHECKS_SEQUENCE=green,STUB_HEAD_DURING_CHECKS=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"
+  "failed Actions outcome~select((.conclusion // \"\") | IN(\"success\", \"neutral\", \"skipped\") | not)~select(false)~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-failed.json~rc=1 verdict=fail elapsed_seconds=0"
+  "newer successful run~max_by([(.updated_at // \"\"), .id]))) as \$latest~min_by([(.updated_at // \"\"), .id]))) as \$latest~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-newer-success.json~rc=0 verdict=pass elapsed_seconds=90"
+  "rerun activity~max_by([(.updated_at // \"\"), .id]))) as \$latest~max_by(.id))) as \$latest~$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json~rc=0 verdict=pass elapsed_seconds=90"
+)
+for row in "${control_rows[@]}"; do
+  IFS='~' read -r label match replacement env expect <<<"$row"
+  [[ "$control_source" == *"$match"* && "${control_source#*"$match"}" != *"$match"* ]] || { echo 'ci_wait: control-match=invalid' >&2; exit 1; }
+  mutant="${control_source/"$match"/"$replacement"}"
+  [[ "$mutant" != "$control_source" ]] || { echo 'ci_wait: control-edit=unchanged' >&2; exit 1; }
+  printf '%s\n' "$mutant" > "$TMP_ROOT/control/skills/orch/scripts/ci-wait"
+  chmod +x "$TMP_ROOT/control/skills/orch/scripts/ci-wait"
+  rm "$TMP_ROOT/repo/.agents/skills/orch"
+  ln -s "$TMP_ROOT/control/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+  # shellcheck disable=SC2086
+  run_wait "$env" $JSON
+  actual=$(observe "$expect")
+  set +e
+  ( FAIL=0; assert_eq "$actual" "$expect" "$label"; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/control/assertion.log"
+  control_rc=$?
+  set -e
+  assert_eq "$control_rc" 1 "the contract assertion rejects the $label control" "$TMP_ROOT/control/assertion.log"
   rm "$TMP_ROOT/repo/.agents/skills/orch"
   ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 done
