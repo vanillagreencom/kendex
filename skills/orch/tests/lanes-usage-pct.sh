@@ -128,11 +128,13 @@ range='and . >= 0 and . <= 1e12'
 for spec in claude:sclaude:type:round claude:nclaude:range:round codex:scodex:type:floor codex:ncodex:range:floor \
   claude:nclaude:order:round claude:sclaude:whole: codex:scodex:whole:; do
   IFS=':' read -r harness lane rule op <<<"$spec"
+  [[ -z "$op" ]] || op='if $rounding == "unrounded" then . else '"$op"' end'
+  range_then="$range"$'\n\t\t                 then '
   dir="$(mutant_scripts "mutant-pct-$harness-$rule" lib/lane-usage.sh)" || exit 1
   case "$harness:$rule" in
     *:type) mutate_file "$dir/lib/lane-usage.sh" "then $op else null end;" "then $op else 0 end;" ;;
-    *:range) mutate_file "$dir/lib/lane-usage.sh" "$range then $op" "then $op" ;;
-    claude:order) mutate_file "$dir/lib/lane-usage.sh" "$range then $op else null end;" \
+    *:range) mutate_file "$dir/lib/lane-usage.sh" "$range_then$op" "then $op" ;;
+    claude:order) mutate_file "$dir/lib/lane-usage.sh" "$range_then$op else null end;" \
       "then $op | (if (. > 1e12 or . < 0) then null else . end) else null end;" ;;
     claude:whole) mutate_file "$dir/lib/lane-usage.sh" 'if $unread then null' 'if false then null' ;;
     codex:whole) mutate_file "$dir/lib/lane-usage.sh" '(if any(.[]; .pct == null) then' '(if false then' ;;

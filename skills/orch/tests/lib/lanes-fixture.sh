@@ -136,10 +136,11 @@ STUB
   chmod +x "$path"
 }
 
-# claude_usage SESSION_PCT WEEKLY_PCT MODEL_PCT MODEL_LABEL — a usage body.
+# claude_usage SESSION_PCT WEEKLY_PCT MODEL_PCT MODEL_LABEL [SESSION_RESET]: a usage body.
 claude_usage() {
-  jq -n --argjson s "$1" --argjson w "$2" --argjson m "$3" --arg lbl "$4" '{
-    five_hour: {utilization: $s, resets_at: "2099-07-27T06:00:00Z"},
+  jq -n --argjson s "$1" --argjson w "$2" --argjson m "$3" --arg lbl "$4" \
+    --arg reset "${5:-2099-07-27T06:00:00Z}" '{
+    five_hour: {utilization: $s, resets_at: $reset},
     seven_day: {utilization: $w, resets_at: "2099-08-01T06:00:00Z"},
     limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: $lbl}}}]

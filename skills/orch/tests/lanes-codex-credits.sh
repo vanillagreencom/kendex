@@ -195,17 +195,20 @@ echo "=== an account on its credits carries no plan-window wall forecast ==="
 # usage_rate_state and projected_wall_minutes off this record for its rate
 # mark, so an account on its credits carries neither.
 RATE_STORE="$TMP_ROOT/rate-store"
+RATE_RESET="$(( $(date +%s) + 86400 ))"
 rate_samples() { # LANES_SCRIPT
   rm -rf -- "${RATE_STORE:?}"
   local w
   for w in 99 100; do
-    codex_body "$w" 62300 true false false > "$FIXTURE_DIR/.codex.json"
+    codex_body "$w" 62300 true false false "$RATE_RESET" \
+      | jq --argjson reset "$RATE_RESET" '.rate_limit.primary_window.reset_at = $reset' > "$FIXTURE_DIR/.codex.json" || return 1
     (cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
       OVERSEE_WATCH_STATE_DIR="$RATE_STORE" ORCH_STATE_DIR="$TMP_ROOT/rate-fleet" "$(dirs codex)" \
       "$1" list --harness codex --json --no-cache >/dev/null) || return 1
     [[ "$w" == 100 ]] || age_usage_record "$RATE_STORE" "$H/.codex" 900
   done
-  codex_body 100 62300 true false false > "$FIXTURE_DIR/.codex.json"
+  codex_body 100 62300 true false false "$RATE_RESET" \
+    | jq --argjson reset "$RATE_RESET" '.rate_limit.primary_window.reset_at = $reset' > "$FIXTURE_DIR/.codex.json" || return 1
 }
 rate_samples "$LANES" || { echo "lanes-codex-credits: rate-samples=failed" >&2; exit 1; }
 table \

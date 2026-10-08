@@ -59,15 +59,17 @@ ot_stub_bin "$OT_BIN"
 
 # Three claude accounts: a at 20 percent used, b at 30, c at 60, each binding
 # on its 5-hour window, and w binding on its weekly window at 86.
+# A reset within an hour keeps each session claim's charge at one hour.
+SESSION_RESET="$(jq -nr --argjson now "$("$BIN/date" +%s)" '$now + 1800 | todate')" || exit 1
 new_home spread
 for lane in a:20 b:30 c:60; do
   make_lane "$H" "${lane%%:*}claude" 3600
-  claude_usage "${lane#*:}" 10 5 Opus > "$FIXTURE_DIR/.${lane%%:*}claude.json"
+  claude_usage "${lane#*:}" 10 5 Opus "$SESSION_RESET" > "$FIXTURE_DIR/.${lane%%:*}claude.json"
 done
 make_lane "$H" wclaude 3600
-claude_usage 10 86 5 Opus > "$FIXTURE_DIR/.wclaude.json"
+claude_usage 10 86 5 Opus "$SESSION_RESET" > "$FIXTURE_DIR/.wclaude.json"
 make_lane "$H" mclaude 3600
-claude_usage 10 20 84 Opus > "$FIXTURE_DIR/.mclaude.json"
+claude_usage 10 20 84 Opus "$SESSION_RESET" > "$FIXTURE_DIR/.mclaude.json"
 make_codex_token_lane "$H/.1codex" 3600
 # Its reset is ten hours past the suite clock, beyond the five-hour bound on
 # the session charge, so every row charges the full five hours.

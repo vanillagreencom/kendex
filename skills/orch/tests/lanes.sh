@@ -1365,7 +1365,7 @@ make_codex_lane "$H/.1codex"
 make_codex_lane "$H/.2codex"
 make_lane "$H" claude 3600
 for c in codex:80 1codex:50 2codex:10; do
-  jq -n --argjson p "${c#*:}" '{rate_limit: {primary_window: {used_percent: $p, reset_at: 1785000000, limit_window_seconds: 18000}}}' \
+  jq -n --argjson p "${c#*:}" '{rate_limit: {primary_window: {used_percent: $p, reset_at: ("2099-07-25T17:20:00Z" | fromdateiso8601), limit_window_seconds: 18000}}}' \
     > "$FIXTURE_DIR/.${c%%:*}.json"
 done
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -2020,12 +2020,12 @@ unlabeled_usage() { # PERCENT RESET
               scope: {model: {}}}]}'
 }
 stage_raw_rate reset-crossing \
-  "$(unlabeled_usage 80 2026-08-02T06:00:00Z)" \
-  "$(unlabeled_usage 60 2026-07-26T06:00:00Z)"
+  "$(unlabeled_usage 80 2099-08-02T06:00:00Z)" \
+  "$(unlabeled_usage 60 2099-07-26T06:00:00Z)"
 table "samples from different quota windows never form a rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=one-sample claude.projected_wall_minutes=null"
 stage_raw_rate unlabeled-model \
-  "$(unlabeled_usage 80 2026-08-02T06:00:00Z)" \
-  "$(unlabeled_usage 60 2026-08-02T06:00:00Z)"
+  "$(unlabeled_usage 80 2099-08-02T06:00:00Z)" \
+  "$(unlabeled_usage 60 2099-08-02T06:00:00Z)"
 table "an unlabeled model bucket matches its prior raw null identity|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.projected_wall_minutes=10"
 
 # An account bound by its Fable window, read twice ten minutes apart through
@@ -2046,10 +2046,10 @@ FABLE_RATE="pick --lane $H/.claude --harness claude --model claude-fable-5-1 --j
 fable_env() { printf 'ORCH_LANE_DIRS=%s;OVERSEE_WATCH_STATE_DIR=%s' "$H/.claude" "$TMP_ROOT/model-identity-$1"; }
 stage_raw_rate fable-drift \
   "$(fable_usage 45 2099-08-01T06:00:00.100000+00:00 'Fable 5.1')" \
-  "$(fable_usage 40 2026-08-01T05:59:59.900000+00:00 'Fable 5.1')"
+  "$(fable_usage 40 2099-08-01T05:59:59.900000+00:00 'Fable 5.1')"
 stage_raw_rate fable-reset \
   "$(fable_usage 45 2099-08-01T06:00:00Z 'Fable 5.1')" \
-  "$(fable_usage 30 2026-07-25T06:00:00Z 'Fable 5.1')"
+  "$(fable_usage 30 2099-07-25T06:00:00Z 'Fable 5.1')"
 stage_raw_rate fable-label \
   "$(fable_usage 45 2099-08-01T06:00:00Z 'Fable 5.1')" \
   "$(fable_usage 40 2099-08-01T06:00:00Z 'fable-5.1')"
@@ -2211,7 +2211,7 @@ new_home hosted-accounts
 make_dead_lane "$H" claude
 HOST_FIXTURE="$TEST_DIR/fixtures/lane-host"
 HOST_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log"
-printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\tmodel-resets=2026-08-02T06:00:00Z\n' \
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\tmodel-resets=2099-08-02T06:00:00Z\n' \
   "$H/.claude" > "$TMP_ROOT/accounts-ok.tsv"
 printf 'account=%s\tharness=claude\tweekly-pct=abc\n' "$H/.claude" > "$TMP_ROOT/accounts-junk.tsv"
 # The provider's own status for the account. No other fixture sets the field, so
@@ -2252,7 +2252,7 @@ table \
   "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
   "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.session_5h_pct=3 last.weekly_pct=8 last.headroom_pct=89" \
-  "the hosted reading carries its deciding model bucket and reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=2026-08-02T06:00:00Z" \
+  "the hosted reading carries its deciding model bucket and reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=2099-08-02T06:00:00Z" \
   "a status the provider reports is the host row's status, not this parser's default|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-dead.tsv|list --harness claude --json|through=claude:local,claude:host last.status=expired last.headroom_pct=null" \
   "a provider that fails the verb it implements says so, and the listing stays this machine's reading|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
   "a percentage this script cannot read drops that row rather than listing it as room|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \

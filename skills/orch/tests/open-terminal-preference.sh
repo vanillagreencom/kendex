@@ -200,7 +200,9 @@ done
 # shared windows Opus spends still have room after it. No picker is stubbed.
 make_lane "$TMP_ROOT/home" claude
 mkdir -p "$TMP_ROOT/usage"
-claude_usage 10 20 94 'Fable 5.1' > "$TMP_ROOT/usage/.claude.json"
+# The session charge stays at one hour while the model's weekly charge walls Fable.
+SESSION_RESET="$(jq -nr --argjson now "$(date +%s)" '$now + 1800 | todate')" || exit 1
+claude_usage 10 20 94 'Fable 5.1' "$SESSION_RESET" > "$TMP_ROOT/usage/.claude.json"
 make_fetcher "$TMP_ROOT/fetch"
 WAIT_BIN="$TMP_ROOT/wait-bin"
 mkdir -p "$WAIT_BIN"

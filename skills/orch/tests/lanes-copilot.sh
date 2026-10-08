@@ -68,7 +68,7 @@ pool() {
   local extra='{}'
   [[ $# -lt 3 ]] || extra="$3"
   jq -nc --argjson e "$1" --argjson r "$2" --argjson x "$extra" \
-    '{copilot_plan: "business", quota_reset_date_utc: "2026-10-01",
+    '{copilot_plan: "business", quota_reset_date_utc: "2099-10-01",
       quota_snapshots: {premium_interactions: ({entitlement: $e, remaining: $r, credits_used: ($e - $r),
         overage_permitted: true, overage_count: 0, unlimited: false, token_based_billing: true,
         percent_remaining: 99} + $x)}}'
@@ -84,7 +84,7 @@ copilot_account 1copilot "$(pool 1000000 900000 '{"credits_used":318085}')"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
 # Equal resets keep the chooser row focused on unlimited room, not its bonus.
-copilot_account 4copilot '{"quota_reset_date_utc":"2026-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
+copilot_account 4copilot '{"quota_reset_date_utc":"2099-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
 copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100}}}'
 copilot_account 6copilot "$(pool 0 0)"
 copilot_account 7copilot '{"quota_snapshots":{"premium_interactions":{"entitlement":"1000000","remaining":900000}}}'
@@ -96,7 +96,7 @@ run_lanes list --harness copilot --local --json
 while IFS='|' read -r label alias field want; do
   assert_eq "$(record "$alias" "$field")" "$want" "$label"
 done <<'ROWS'
-a pool with room binds the monthly bucket, used share from remaining over entitlement|1copilot|[.status, .monthly_pct, .headroom_pct, .binding_bucket, .binding_resets_at]|["ok",10,90,"monthly","2026-10-01T00:00:00Z"]
+a pool with room binds the monthly bucket, used share from remaining over entitlement|1copilot|[.status, .monthly_pct, .headroom_pct, .binding_bucket, .binding_resets_at]|["ok",10,90,"monthly","2099-10-01T00:00:00Z"]
 the plan is the endpoint's own|1copilot|.plan|"business"
 a pool at zero is spent whatever overage it permits|2copilot|[.monthly_pct, .headroom_pct, .credits.overage_permitted]|[100,0,true]
 one credit left rounds up to a spent share|3copilot|.monthly_pct|100
@@ -407,7 +407,7 @@ assert_eq "$(jq -r '[.[] | select(.harness == "copilot") | .alias] | join(",")' 
   "list names Copilot accounts among all harnesses"
 
 echo "=== a provider row reports a Copilot account's monthly pool ==="
-printf 'account=%s\tharness=copilot\tmonthly-pct=97\tmonthly-resets=2026-10-01T00:00:00Z\n' "$TMP_ROOT/hosted" \
+printf 'account=%s\tharness=copilot\tmonthly-pct=97\tmonthly-resets=2099-10-01T00:00:00Z\n' "$TMP_ROOT/hosted" \
   > "$TMP_ROOT/accounts.tsv"
 ROW_ENV=(ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_LOG="$TMP_ROOT/accounts.log" \
   LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts.tsv")
@@ -536,7 +536,7 @@ mkdir -p "$H/.pi1"
 PI_MODEL=(--harness pi --model github-copilot/gpt-5)
 pi_row() { # NAME PCT [STATUS]
   if [[ -n "$2" ]]; then
-    printf 'account=%s\tharness=pi\tmonthly-pct=%s\tmonthly-resets=2026-10-07T00:00:00Z\n' "$H/.pi1" "$2"
+    printf 'account=%s\tharness=pi\tmonthly-pct=%s\tmonthly-resets=2099-10-07T00:00:00Z\n' "$H/.pi1" "$2"
   else
     printf 'account=%s\tharness=pi\tstatus=%s\tdetail=http-403-forbidden\n' "$H/.pi1" "$3"
   fi > "$TMP_ROOT/pi-$1.tsv"
@@ -587,13 +587,13 @@ pi_verdict() {
 }
 PI_READ='[.config_dir, .measured_through, .monthly_pct, .binding_bucket, .binding_resets_at]'
 pi_run room - pick "${PI_MODEL[@]}" --json
-assert_eq "rc=$RC $(pi_fields "$PI_READ")" "rc=0 [\"$H/.pi1\",\"host\",40,\"monthly\",\"2026-10-07T00:00:00Z\"]" \
+assert_eq "rc=$RC $(pi_fields "$PI_READ")" "rc=0 [\"$H/.pi1\",\"host\",40,\"monthly\",\"2099-10-07T00:00:00Z\"]" \
   "a provider row alone is a candidate, with no hand-set number, its reset as binding_resets_at"
 pi_run room 99/100 pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '[.measured_through, .monthly_pct]')" 'rc=0 ["host",40]' \
   "the provider's reading replaces a walled override for the same root"
 pi_run walled 1/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
-assert_eq "rc=$RC $(pi_fields '[.measured_through, .wall, .binding_resets_at]')" 'rc=3 ["host",97,"2026-10-07T00:00:00Z"]' \
+assert_eq "rc=$RC $(pi_fields '[.measured_through, .wall, .binding_resets_at]')" 'rc=3 ["host",97,"2099-10-07T00:00:00Z"]' \
   "a walled provider row refuses the named form even where the override has room, dated by its reset"
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '[.measured_through, .monthly_pct]') local=$(grep -c '^lanes: pick-local-reading' <<<"$ERR")" 'rc=0 ["stated",10] local=0' \
@@ -667,7 +667,7 @@ lanes_control ctl-pi-override lib/lane-model.sh 'if $h == "pi" then (if .headroo
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
   "control: under the unreachable rule a refused Pi row hides the override"
-lanes_control ctl-pi-all lanes '		[[ "$want:$harness" != all:pi || "$mode" == cache ]] || continue' ''
+lanes_control ctl-pi-all lanes '		[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue' ''
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 1 "control: without the all filter list shows the Pi row"
 lanes_control ctl-pi-fix lanes 'lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2' ':; } >&2'

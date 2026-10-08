@@ -314,14 +314,15 @@ table \
 # 5-hour window at 60 with room, but the one lane already live on it charged
 # 50 an hour, which projects 110. The second row is the inverse, the same lane
 # with nothing live on it.
-claude_usage 60 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+SESSION_RESET="$(jq -nr --argjson now "$(date +%s)" '$now + 1800 | todate')" || exit 1
+claude_usage 60 20 10 'Fable 5.1' "$SESSION_RESET" > "$FIXTURE_DIR/.claude.json"
 table \
   "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude KEN-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
   "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude KEN-1642|rc=0 launched=1 walled=none"
 # Fable's weekly window sits below the launch threshold until a live claim
 # charges the burn scaled by 5/168. Opus spends only the shared windows, which
 # still have room after the charge. `run_ot` seeds the same real claim as above.
-claude_usage 10 20 94 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+claude_usage 10 20 94 'Fable 5.1' "$SESSION_RESET" > "$FIXTURE_DIR/.claude.json"
 NAMED_PREFERENCE='ORCH_LANE_PREFERENCE=claude:fable:high,claude:opus:high;cmd=claude;ORCH_LANE_BURN_PCT_PER_HOUR=50'
 table \
   "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work KEN-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
