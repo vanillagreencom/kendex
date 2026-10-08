@@ -8,6 +8,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "48d23ec77e130af97e8708f45da0b52bf2bd2dc7ef875a841e75b06ce70e3ace",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "d083b4f425fb7962b85e4b590fb95ef4dd7cef5a04a77cef85353aae4ecd5760",
       "enabled": true,
       "upstreamSkills": [
@@ -38,6 +42,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "ab54329d171d9ad9085bdc6418607f99b146a610b44f86ea44bf7e6bf9f30631",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "da4ad7c0fcac8d73602b52c51472d748bd76209aebe250dc6bd4c730aabf40dd",
       "enabled": true,
       "upstreamSkills": [
@@ -68,6 +76,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "626b63e977e97cd19f32791bb0ffb92f4e81ab5cda974c2309fcd9e19ab5d456",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "49bf7122ad7e0d2241902187f649f47854dc82f6f69aa35560d9e0052c0ffef6",
       "enabled": true,
       "upstreamSkills": [
@@ -98,6 +110,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c2d21c88a9ca05342d7e6aa13c30c56922f8ab13c8f235b7cf5c2f5629eb7255",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "e025ac055331078f814bd4e235272db544c3139b6c0014d19d59dbfc6973862a",
       "enabled": true,
       "upstreamSkills": [
@@ -128,6 +144,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "1844a8a81d59200f495d151b63ee217e4908355af705ed302cfceac269f7c529",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "6ca629291df71d862a0e40b9261560c45e0b3fa5b1eadfb4ff08ff8667981586",
       "enabled": true,
       "upstreamSkills": [
@@ -159,6 +179,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "1e28c81bc714c0a7bada2f68c4323d62a59a411c0c6b4d68408a0d07933b0ad9",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "31aaef97f284629dd9bc047186afc42a00606b70e7f380b645494d8ae72f142c",
       "enabled": true,
       "upstreamSkills": [
@@ -190,6 +214,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f45f071e6b7f189f0508ee2d95c67ae67f35d4b138ad6994ef9f8a1d7a34c13b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "de422e3c66a34096d67259fd21ee52f117cedcc5c997631550f5b785fb7237ef",
       "enabled": true,
       "upstreamSkills": [
@@ -221,6 +249,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "0350ad2bf86acf18bf6d761be66b28b7ec303581bc004af4e40cd0fc393263d0",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "8fe0bbab174d802fc60a51a084acf0a0fca9facef2306234e3ccd9cd916eddbb",
       "enabled": true,
       "upstreamSkills": [
@@ -252,6 +284,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "0adf07da3d00f3283592262c9ae0e67687d28fe4f0543630ddcdd461b2a95d59",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "3e13898852df0ce79470f89c150e8a5cd5781ba848f07c3026cb8c7b56a37697",
       "enabled": true,
       "upstreamSkills": [
@@ -284,6 +320,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "d86ea658b800b50417975e59092e07aab40ba972d0db6b0abfc7da2871fba48f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "43c390b7b12943c1c681a9ad72309db1a190aadbe73dc8fee9f51a118a9f59c7",
       "enabled": true,
       "upstreamSkills": [
@@ -316,6 +356,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "4635ebd5bdfacdcfc92ed372e7867d5aed98fe558b5cf35b139f701c29044c6e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "d00bbe138b93055e0da670e89c7593939f08687fc60db00a79a49c211274e22c",
       "enabled": true,
       "upstreamSkills": [
@@ -348,6 +392,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "cb9855eb15721e16b97dcd23bb972c6c067468bda2cee1979fd39d0f4c135cef",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b505598aa0e8365092f969bfd6d155024e542b50755326be32910ffdaf0e8350",
       "enabled": true,
       "upstreamSkills": [
@@ -380,6 +428,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c897b5221771f82e629134f591b7723a397b6e0354a903029dfd335e132bef6c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4b260ee359fb61722bf789dc00519c44ec8cde4d9793aaa4aab38c91b7ab955b",
       "enabled": true,
       "upstreamSkills": [
@@ -406,6 +458,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "3ecc4071c2e614453d996b5c534d99c69a6d08eefd5868637dd7783ddd243176",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "93ee1d0edfbb8a003836003a94e4e4862421b6312fb35bc2100107e8f0432dd8",
       "enabled": true,
       "upstreamSkills": [
@@ -432,6 +488,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a746415957e592456b49a996846cb62be0eac496d36a3e729404493714d318e5",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "11a927904e3c36a65b76c2b06f61b1386a530820edb58b7b53e8e9f5c3759492",
       "enabled": true,
       "upstreamSkills": [
@@ -458,6 +518,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "fb1e354c6e2de18f3170d1eb6ebdd58624ec57a92b9ed7dc10e4f5bf9d619db4",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "e656a6f9d824560a811626cbf83629eef2fcab127271c855d6489d1c78cd0d5d",
       "enabled": true,
       "upstreamSkills": [
@@ -484,6 +548,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "bd59138c42d01bc6136580a2d205cfc7fc96182a6152f00919e4c38511ce0f93",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "862ebb55bc1d02d1eca83a14c7cb9ca90a14fae21a870007c9b2a1c4ddeb87d9",
       "enabled": true,
       "upstreamSkills": [
@@ -512,6 +580,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dbdc950e364991f1c3f32ca96f49c9fa7ffaeb1ee86adf51e31b0cec3b267635",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ad37e99735ed8d4c81fa628e6487cf25cfe983963dc7f0614e2152486c863608",
       "enabled": true,
       "upstreamSkills": [
@@ -540,6 +612,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "0d83b716c4bfb155b7c773c9159e74e1181a3a21b45e03cc4df68ee8a0f95dba",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2ec476396835f021784eed63f7c631806a61f12a26083745dd6a0dabed472628",
       "enabled": true,
       "upstreamSkills": [
@@ -568,6 +644,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "37d5a500c074677733b99221e1c158a91ddd4edfc11f2a7043ccfb0a7595b0c7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "0d75c24a9b44fb6430ef77ceb89b1f6c921b18a7844e6be32b401084e7ebfa45",
       "enabled": true,
       "upstreamSkills": [
@@ -596,6 +676,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "04d2a91af45205e92f84908c364a5047bd827b1a59fc0f8e4128b596fac7d7ff",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "988866dee337396d1a0c3d8c9d89f3456c973292a94f06e3cd758c8771aac4cd",
       "enabled": true,
       "upstreamSkills": [
@@ -621,6 +705,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "6ec14c89b252520ea6c461bf6bdd7bffae5cc3b432c08d05ed264f0353ad3dc7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ed2d3d2747dd1c565e7fdc9218827c30865abcb7966773d5e75c7b74fa9add24",
       "enabled": true,
       "upstreamSkills": [
@@ -646,6 +734,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "d3dbb4ae30f7741e4e9644069bf8173fbdb896ac678857a220c19587083fe0a5",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "35c1d7da516d5b12789f8773256dc8f5d28ff89d1b82d352c9a0ba5b73dcc7e0",
       "enabled": true,
       "upstreamSkills": [
@@ -671,6 +763,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f81e011a5dfbd99f445e59b7feaff90a9f91f8f1ebe48ad2fa221d8db402d7bd",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "1a02309f058bd2c8532996a06d305820c6d4fbe07699bbdbf5431135d633af07",
       "enabled": true,
       "upstreamSkills": [
@@ -696,6 +792,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "ef989f9eed07e4ef1ec59091ae216391cde7b1a56bc331739ce84acce2af6a65",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "831e9ff4d4d79e549f22e8873cb8c9809c4e83eb44b1d5520016026c87dd2046",
       "enabled": true,
       "upstreamSkills": [
@@ -721,6 +821,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "3665f3194f857c291d28d614e9be5823eaa16dda1afad7cf581a869955c2c151",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "c54199f1b2c91ed2203c1764cfddf1cc51bb7d970982fa67e58775a1e410149d",
       "enabled": true,
       "upstreamSkills": [
@@ -746,6 +850,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "ad82e84e924da39577154099ec1c7d2f9d37b83d38ad8311c9dad5b207892e0d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "f509541c47401e872c8b9eba9f03a120553b02450914e37f223d1226c863a273",
       "enabled": true,
       "upstreamSkills": [
@@ -771,6 +879,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "359f9e38b8d50dd9705f799ca84ae2afe598fe0d571280dc7513c2f4f7b8ca6d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "6a7c362390ddf8b5bfa723458a5c4c48fcf159babefff09d51bf4f4393dbcac3",
       "enabled": true,
       "upstreamSkills": [
@@ -796,6 +908,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f1df780388f5bcbb56edb96c5a8ea5ae76a851bf8fd00ee87e99589405c38e47",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "16dcd57776d412eb5ff8dab1774517379c62ad112d00586c68c019f18937e7b0",
       "enabled": true,
       "upstreamSkills": [
@@ -821,6 +937,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "23c0f8c554ca18b17803316de4bfef00306e46561086582dd64ae21839b17b88",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ef35d9bd6e0a54c66c9bda9b992683bfc5c75d7d5680af3a944660724a4ae5ef",
       "enabled": true,
       "upstreamSkills": [
@@ -846,6 +966,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e76b098579b1104304fcaf76b2068fbf05a61f614f9944efbefe899319245001",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ad8137e0f36a46b1dd777d6b29bf411edf61d0a6a5550d48ddcbcf224e1ab2db",
       "enabled": true,
       "upstreamSkills": [
@@ -871,6 +995,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "6a83dc3ec05a2b14c8793975c0e619889aa35f4b64e5e19be6282cc76a1a7f7a",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5dbb24ea902a87568a223d74ea421edf7b64062402eb4f0b96c0af511463b8d0",
       "enabled": true,
       "upstreamSkills": [
@@ -896,6 +1024,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "8e36dcd84c92735a8d68f693cd2d7de9c27fe3a1092052e2c97290f9c84217c7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "47d0a614358c5398b7a551b513694f08a46f4ba769c1065f9f22bba5f5a84dc3",
       "enabled": true,
       "upstreamSkills": [
@@ -921,6 +1053,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "fc89ac138a6f39e32b303187cb1feb2583cb35af033f758f6b010d3aba595f86",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2c9371d9fe0db3595e65401f50b747cb6924e2c4f3519bef7a7a9a5f75df2e66",
       "enabled": true,
       "upstreamSkills": [
@@ -946,6 +1082,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e1d45d9f70bd36440bac1ed23525ddc56882085f2c1c009241f81199fd7b5800",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4fd68072a18c65f690518743036c358d12c7437a9641fd00bdce82a97474d5a9",
       "enabled": true,
       "upstreamSkills": [
@@ -971,6 +1111,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2769c33a895070d9649e30d93e65bbae0c6a9660d3b15b6259622c3e32405cc6",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "60d917a3e7ea1b65cc7b0a5d8c6b669c62b5e892b0733fcc6b07ae6ab93740df",
       "enabled": true,
       "upstreamSkills": [
@@ -996,6 +1140,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9da2e73c5f45fab67ca5871027c57c71938d1aa14dbab1fbf886f7fc899fa6bc",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "e1b2bac5a12a66c4383d80010a978b99ff6e3d3d484c6088eed357e1d2940f7f",
       "enabled": true,
       "upstreamSkills": [
@@ -1021,6 +1169,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "1a0d39d0b724538a0dee7404f8cfe3dc520fb898f78b5d5c45ec78aefe6d5025",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b79b2d83be9b114b157d5eedf25eb4bb4b0ea396dc14aa96f416ed81cbdaa10e",
       "enabled": true,
       "upstreamSkills": [
@@ -1046,6 +1198,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "1ea089e5bd8d49161cc570f4d1100507a85fb123ae7f68c7e00003b924d495ee",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "36d0e8b2d04d335e711dd4151e40d601931471ac7fcf4e3d5a1ae7250099a2e5",
       "enabled": true,
       "upstreamSkills": [
@@ -1071,6 +1227,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f7176bcef72f62668992c0bbffb784d23b0e29c98a9c40ee6bdd8bc95208d386",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "e3e2765c0b03045c0edea8e0cf83a9fcf675519c220fe8982a0321979be4ae23",
       "enabled": true,
       "upstreamSkills": [
@@ -1096,6 +1256,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "1888580d931182856b4264c3799e4fe8e8722dededbad27cd62e2bc726854381",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "d0e4589d67aabbde052fad6ddf01a18f77e14cdbc392348a8213010f97f46740",
       "enabled": true,
       "upstreamSkills": [
@@ -1121,6 +1285,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "4d7b4baac3c4e70fb3c0bcc72828103f68196afcbc5cc982cbe518b183b4e29c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ee58e7b4c12cc8bab657d4d4969ddb6f40b4f7d82ec6bba4a751c7db99a75a4a",
       "enabled": true,
       "upstreamSkills": [
@@ -1146,6 +1314,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "d1786e42b2bbe82bb4eebf5e53e8ef31f41a49445bb429499a8dd9593c454699",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2e6bbe26e83b77eeefb4fb58f0e6db072871154f30b9057f8ba0d4cff5225ad9",
       "enabled": true,
       "upstreamSkills": [
@@ -1171,6 +1343,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "696578242068f995220c6fcc41e552ac15217ea05121df84824aae508d36bfab",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "541f1bdfa862a7599d382cfb0269ebd28724b2a570c4035094164e9967e369e9",
       "enabled": true,
       "upstreamSkills": [
@@ -1196,6 +1372,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "598f9c2dc1c87e0a6adcd34643e44b77cd9949cc6f310e97c1a81db7425b26ef",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "d16b90a6e14f30691ece96a5ad0e56a98b9f3c6b737c7cb4d1653ec3f1526e9c",
       "enabled": true,
       "upstreamSkills": [
@@ -1221,6 +1401,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "268cf76b175eb3a4c79cc1cd062f26f2a93e3227b278614cc8aec5c4f6ea6161",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "086989f28d32076e1ec6194daf0c0268508f25f627962e9870185eafedfbcd3d",
       "enabled": true,
       "upstreamSkills": [
@@ -1246,6 +1430,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "fddda2bb7cce1eb9f46ac41f6f0f222dbc117f84c84cb5c9a0c9636452ad3fc0",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2e1a20107042c0d5b124e93518f5241e03d0fc10b6a92f7695ef80eb47942df5",
       "enabled": true,
       "upstreamSkills": [
@@ -1271,6 +1459,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "b04a0b6f0986fd95acd91f6b048c980ee4bbbefbb6220a9854e2410a02461c12",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "f1b35fa035c5c0df767fcfd0ba8441388cf0e14862b544e71cb506ef9d6c2459",
       "enabled": true,
       "upstreamSkills": [
@@ -1296,6 +1488,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "d79ef284349c7ed8f6451d3e47476be370994c5ce679b63248cbe7bcce27ff59",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "bfef19aacc7a1f5f05d6b890022850ec86d5e1192b4ea888b9a284abe31a3e91",
       "enabled": true,
       "upstreamSkills": [
@@ -1321,6 +1517,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "5bcf46b57857552f327808098b860b9bacc30fa5d4792aa7ce159963579bcb2b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "bef4a9de2f64cef4c22129ca25914396d61d14cdaaa808a69c7e4ee3f5f5f87e",
       "enabled": true,
       "upstreamSkills": [
@@ -1346,6 +1546,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "12ae706b8d5ae4b8c9b6fa378ca6829530e1c706cb416ac7c8eca2812dfb0b44",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ae76d0cc7d0841f1f865eb4c38e25c37df60fcf370b339905badb7dd8c4e7821",
       "enabled": true,
       "upstreamSkills": [
@@ -1371,6 +1575,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "88bd6ae62e30085d9e1d8182f1c4835ece8b61eafb4825becf5374f472714445",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "08830f84f14e16fafbb7862dfb3df4787de1df417ae398f8a7065e1485183118",
       "enabled": true,
       "upstreamSkills": [
@@ -1396,6 +1604,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "22fa9d62bcd9f730b58e2c8fb9bcb43b8e87fcab6d7b001d6664cf7a8de3bc99",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "83d804d02999a553e98b610b509d7914d32d922d870ce92ddb774921bc2eb402",
       "enabled": true,
       "upstreamSkills": [
@@ -1421,6 +1633,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "7719535d8a3c89d9c6794f168d365f80fa9ced50336e7cd7e62cabe8da82cc3a",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4828990ed0ccb9617c606c45a8e179c75f4c0c473f7e3451f45e0d7594c890cb",
       "enabled": true,
       "upstreamSkills": [
@@ -1446,6 +1662,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "932f4f38bb0d9a00c527cd071ea5b5082afe1e4dc35b7a411b693a470160e20f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "164bd68e0bfc8da2f6632f128abcb33c2a024b190dd72e8e7d1bfd5839416138",
       "enabled": true,
       "upstreamSkills": [
@@ -1471,6 +1691,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2d6442e711c760e6efb923e15be98d6a846b679ca2795b34002bcffd4f067a12",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "d25726892cb8041409ae2995fea10a2c072fe949fcc6c79e4ffd79f605349827",
       "enabled": true,
       "upstreamSkills": [
@@ -1496,6 +1720,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "28bcdc450426017104e5a6963ecb3ab8d2f4331046adf2c0038341a20f7fecbc",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b519a3cbe1a616e1fe89ea84bbca3de48520b51388988a2f1071767604169503",
       "enabled": true,
       "upstreamSkills": [
@@ -1526,6 +1754,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a9c7a0bdbdf3741d45d855c9deb8a65036293020844d98541fda02b3fdc47a47",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "0443a94a8a6affd625db442146528f8002ff596f2d993f93b99537c0b48893db",
       "enabled": true,
       "upstreamSkills": [
@@ -1556,6 +1788,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "434bb68f63a85343151e3b4002d12e0d5a15879f58cf400125b1ae3a1f15e4f8",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4b1fa4a2c1eff4076573685fd43e53fe5e5fd8a070af5cc24bf5e2dbdf0b0ebd",
       "enabled": true,
       "upstreamSkills": [
@@ -1586,6 +1822,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "d37e8b79ec6373fda161e5f4a6b3799b4967076b838b6cc97f107c4a8c65fd10",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "cc1c15287061ee6e31cf5c9f5d3844152ee6af605c254aa593a163e8ffa2fc54",
       "enabled": true,
       "upstreamSkills": [
@@ -1616,6 +1856,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2693bd2d1dd7f036a9271c2bb4bdae063e1431e5585cf6fcd6b0d0509c65c8d2",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "c8bec0399c646b6d26094c1d24b717477ccc9bf9f0c6cccdf4f1dc5590614344",
       "enabled": true,
       "upstreamSkills": [
@@ -1646,6 +1890,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a1570d1d41220598ce88b06319f513b86aa9e9e3c0ef716c0dd869671236f488",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "6253d08c0faaa1f5ddd6c0abbbdca0c6b34934247a5b7229d4abdddcd9238afe",
       "enabled": true,
       "upstreamSkills": [
@@ -1676,6 +1924,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "ed3525cc5c624800498ca22c3d5f8dff27be7fcb74c75e4088e0707c1b14d869",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ac8cc46243b10fefb6f0e4ff781680da7633d54efa525f2310560a5f09f63cda",
       "enabled": true,
       "upstreamSkills": [
@@ -1706,6 +1958,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2b5f09dc6d1244aa002cb9758a65c8c9e9eb81481f4bdd2e439c76f3f637210d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b66da9f273cf896602be0897293182bd8846bf5df5f965b6c93958bfbcf9f180",
       "enabled": true,
       "upstreamSkills": [
@@ -1736,6 +1992,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "0dcd6efcdb0a970409147aac4df3144aa867d2327fd0c9ccc40f49acca0ec380",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4f8f73850356ac635986c11cc34801f1d31e78e028efd3938f5a50d7868f530c",
       "enabled": true,
       "upstreamSkills": [
@@ -1762,6 +2022,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c81b1ad326ded256f0c1cfb5174d6ba11dd00275dc7f4047ec4822e79d81fa7b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "56f5cb4ce168a76d1f9403626744d92b37173b64c8e37482b47d8fccc10ba665",
       "enabled": true,
       "upstreamSkills": [
@@ -1788,6 +2052,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "d55eace6844efc80c8b4d9b5fadff323633a33be70ea7e826b1fdc6a11a2e415",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "8e54b2d323c432c0c549fc78f4345530ce3fc723b7312aefea44b8d872f5f896",
       "enabled": true,
       "upstreamSkills": [
@@ -1814,6 +2082,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "40cc36746105b221a5039a6632bf6d9cbd2a65d497934056c8d5b02e8059c0e1",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "1f6c85b2578b40d1c01c67dff6f31b633aa271d55c5d38229fe4cdecf5956d9c",
       "enabled": true,
       "upstreamSkills": [
@@ -1840,6 +2112,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "13ac3882e90930e05c741e8981dab27ba52b095dec4c518312fc624995d02cde",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "3f94212285b44933822b41907a516c928c0b8e9f15d4285d6b5bd187776a63d2",
       "enabled": true,
       "upstreamSkills": [
@@ -1870,6 +2146,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "b5e58b96768f30379319bdb672e6d25fb103795f3bb776d75300d00e92b34fde",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "67033659b2dfd00846809f95ca253a7511487090c5a7bae72260a240998099d7",
       "enabled": true,
       "upstreamSkills": [
@@ -1900,6 +2180,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "70cac7977b0f9a50a035f21fc8450c72bcce0db4a2357fdcb3d54cd1ac6ac2d8",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2ac0c28927f7b434ffcce45f7c9c61229b914504aba579dc499f7c28124e3890",
       "enabled": true,
       "upstreamSkills": [
@@ -1930,6 +2214,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "3ae020f2fa87db04da6f41b58c7d0a1c1aa38f0a7ae3e4c080f1b04946647abe",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "401a39e5d4c6ddd458d862cbc4d5f626ec2ecf4ca42f9dbea462230015562458",
       "enabled": true,
       "upstreamSkills": [
@@ -1960,6 +2248,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "090d14e12d3899afece6cf22f3a5009185669a65ee7e7361f26c0d6d814c1d8f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "560826f1c45636b8b7d08090e9c635ea227ae8405975afe0960e794dbcba0766",
       "enabled": true,
       "upstreamSkills": [
@@ -1989,6 +2281,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "1e0510cc868afb9d72a032a2ec5f4462ddf9febcb9c046b5e4bb732b9b89fe45",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b639cbfed27eb67b200d2acb2f0a55d2ac5b5b4c003306afe492289f02f55c1f",
       "enabled": true,
       "upstreamSkills": [
@@ -2018,6 +2314,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9436af841da33c48b0f861f2146ebf5e8ff311805fc815fbb1fbb8c6b7759928",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "d61470ca286272ed8a474f461fa46148570e5b3012c62400e53fdd7181c8772b",
       "enabled": true,
       "upstreamSkills": [
@@ -2047,6 +2347,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "98d4ee0fceb7ac6420b4640c18d6d36393f6e6fe8b40cf7a6a884e9e49f09dbe",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "589b796bdede8cd3b6fe507c9b8264a346aef10d40364029f7c4e1d4f1694008",
       "enabled": true,
       "upstreamSkills": [
@@ -2076,6 +2380,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
       "emitted": {
@@ -2107,6 +2415,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
       "emitted": {
@@ -2138,6 +2450,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
       "emitted": {
@@ -2169,6 +2485,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
       "enabled": true,
       "emitted": {
@@ -2200,6 +2520,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
       "emitted": {
@@ -2234,6 +2558,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
       "emitted": {
@@ -2268,6 +2596,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
       "emitted": {
@@ -2302,6 +2634,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
       "enabled": true,
       "emitted": {
@@ -2336,6 +2672,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
       "emitted": {
@@ -2370,6 +2710,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
       "emitted": {
@@ -2404,6 +2748,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
       "emitted": {
@@ -2438,6 +2786,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
       "enabled": true,
       "emitted": {
@@ -2472,6 +2824,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
@@ -2506,6 +2862,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
@@ -2540,6 +2900,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
@@ -2574,6 +2938,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "866a755a18ca6db792c7f3a996a93af589f24e0a195641815febb4d60f0b0dfd",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ca999e7da4344f065e6b4655657f75211c829f267a7930a05caad89970325d60",
       "enabled": true,
       "emitted": {
@@ -2608,6 +2976,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2030d43af8b0d9b5b9b26d67400254c59f0f123cf263d6aa5702c6627d8d477c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b7982aa2057df71591db0c08a2f568aa1a9e1d5920d1c067d34d267be2a8e628",
       "enabled": true,
       "emitted": {
@@ -2639,6 +3011,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2030d43af8b0d9b5b9b26d67400254c59f0f123cf263d6aa5702c6627d8d477c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b7982aa2057df71591db0c08a2f568aa1a9e1d5920d1c067d34d267be2a8e628",
       "enabled": true,
       "emitted": {
@@ -2670,6 +3046,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2030d43af8b0d9b5b9b26d67400254c59f0f123cf263d6aa5702c6627d8d477c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b7982aa2057df71591db0c08a2f568aa1a9e1d5920d1c067d34d267be2a8e628",
       "enabled": true,
       "emitted": {
@@ -2701,6 +3081,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "2030d43af8b0d9b5b9b26d67400254c59f0f123cf263d6aa5702c6627d8d477c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b7982aa2057df71591db0c08a2f568aa1a9e1d5920d1c067d34d267be2a8e628",
       "enabled": true,
       "emitted": {
@@ -2732,6 +3116,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "385fc729583f78e37cd0f3ff3cc9113866c1f83fe66da5dee0ce0a67a9a62290",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "9236d45df618885b33d3b263ea26f932959338e602c2b3bc232abdc95ccd5f68",
       "enabled": true,
       "emitted": {
@@ -2759,6 +3147,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "408ba6746c0c134362eb039af4be12a65c858031a775671aa4a97f9813deaf9e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "72e60f982dc166784c4c7d25eae1f8a96a68870d5686665657af6b63eb4b09c1",
       "enabled": true,
       "emitted": {
@@ -2799,6 +3191,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "408ba6746c0c134362eb039af4be12a65c858031a775671aa4a97f9813deaf9e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "72e60f982dc166784c4c7d25eae1f8a96a68870d5686665657af6b63eb4b09c1",
       "enabled": true,
       "emitted": {
@@ -2839,6 +3235,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "408ba6746c0c134362eb039af4be12a65c858031a775671aa4a97f9813deaf9e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "72e60f982dc166784c4c7d25eae1f8a96a68870d5686665657af6b63eb4b09c1",
       "enabled": true,
       "emitted": {
@@ -2879,6 +3279,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "408ba6746c0c134362eb039af4be12a65c858031a775671aa4a97f9813deaf9e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "72e60f982dc166784c4c7d25eae1f8a96a68870d5686665657af6b63eb4b09c1",
       "enabled": true,
       "emitted": {
@@ -2919,6 +3323,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "7eb186d4beeb20bf2a3aecc01100d99e7b61135b23ea0ac872dc3fe0a95cf380",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "ce5bcb0647ea15f65708dabb294cf6d8ec7e2e789209222da611de635c0efd6b",
       "enabled": true,
       "emitted": {
@@ -2955,6 +3363,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "bd7dc41f1d1414d80965d1fe5299c44ef6bf27d29b0a673df1dd5b88f9e2eac6",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5fa04c96825575820f0800a7693dcebbb7174492c61f5d9c4a62f8eba8ddab01",
       "enabled": true,
       "emitted": {
@@ -2982,6 +3394,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "bd7dc41f1d1414d80965d1fe5299c44ef6bf27d29b0a673df1dd5b88f9e2eac6",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5fa04c96825575820f0800a7693dcebbb7174492c61f5d9c4a62f8eba8ddab01",
       "enabled": true,
       "emitted": {
@@ -3009,6 +3425,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c72272377d69931f8804e718b9310c7a5f05441b7fddba2484adbbb8604f2540",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "bf87d2dec7f4198c5b0813172dd8dfc47daed69cab6817903ec5170d9759c4e0",
       "enabled": true,
       "emitted": {
@@ -3090,6 +3510,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c72272377d69931f8804e718b9310c7a5f05441b7fddba2484adbbb8604f2540",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "bf87d2dec7f4198c5b0813172dd8dfc47daed69cab6817903ec5170d9759c4e0",
       "enabled": true,
       "emitted": {
@@ -3153,6 +3577,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c72272377d69931f8804e718b9310c7a5f05441b7fddba2484adbbb8604f2540",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "bf87d2dec7f4198c5b0813172dd8dfc47daed69cab6817903ec5170d9759c4e0",
       "enabled": true,
       "emitted": {
@@ -3216,6 +3644,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c72272377d69931f8804e718b9310c7a5f05441b7fddba2484adbbb8604f2540",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "bf87d2dec7f4198c5b0813172dd8dfc47daed69cab6817903ec5170d9759c4e0",
       "enabled": true,
       "emitted": {
@@ -3288,6 +3720,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
       "emitted": {
@@ -3324,6 +3760,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
       "emitted": {
@@ -3360,6 +3800,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
       "emitted": {
@@ -3396,6 +3840,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "5c31b598150b747239868dce442ce9eeca125b17f2b4d825a16fb6fe99acb5ae",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "65b898114946a7b8e514293ec85f6be10632c0f6b20afc675ce751fbd4979281",
       "enabled": true,
       "emitted": {
@@ -3432,6 +3880,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
       "emitted": {
@@ -3468,6 +3920,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
       "emitted": {
@@ -3504,6 +3960,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
       "emitted": {
@@ -3540,6 +4000,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "72057cf3b0388f85677146e8b4f5dec9f49b8563d825c7864b04506f4c0aee55",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b01b7d977de3535b43228a154ab3f2af0d10e7a575fc002501b5ca8a99e3d8c5",
       "enabled": true,
       "emitted": {
@@ -3576,6 +4040,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9cfb9a5bc52fce1d9905393dae32b71b4e7f4e46a2faf395e2013b90d1d45cf7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "602384c51f33f872c736fe92b4afcc4f14c1b117ddf54e2a5da66750dc1131cc",
       "enabled": true,
       "emitted": {
@@ -3610,6 +4078,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9cfb9a5bc52fce1d9905393dae32b71b4e7f4e46a2faf395e2013b90d1d45cf7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "602384c51f33f872c736fe92b4afcc4f14c1b117ddf54e2a5da66750dc1131cc",
       "enabled": true,
       "emitted": {
@@ -3644,6 +4116,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9cfb9a5bc52fce1d9905393dae32b71b4e7f4e46a2faf395e2013b90d1d45cf7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "602384c51f33f872c736fe92b4afcc4f14c1b117ddf54e2a5da66750dc1131cc",
       "enabled": true,
       "emitted": {
@@ -3678,6 +4154,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9cfb9a5bc52fce1d9905393dae32b71b4e7f4e46a2faf395e2013b90d1d45cf7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "602384c51f33f872c736fe92b4afcc4f14c1b117ddf54e2a5da66750dc1131cc",
       "enabled": true,
       "emitted": {
@@ -3712,6 +4192,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "3435741fbc8d0a78229347c483ad7c79cd2c5044cf1c830a1243b80f61f1d583",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "fe03cb9033e5c51421d20cba12e9d658f7fafa20c25383861487cf4b69df294c",
       "enabled": true,
       "emitted": {
@@ -3739,6 +4223,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "3435741fbc8d0a78229347c483ad7c79cd2c5044cf1c830a1243b80f61f1d583",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "fe03cb9033e5c51421d20cba12e9d658f7fafa20c25383861487cf4b69df294c",
       "enabled": true,
       "emitted": {
@@ -3766,6 +4254,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "26090ae471accc49d86a2b1c10fd364b72df1ce4f6a767fd10e82318770d3105",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "62c07146838d6a9a0e1d7640c1c0e9f937746bca757a729720e3ad7a1f88e0e3",
       "enabled": true,
       "emitted": {
@@ -3793,6 +4285,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "26090ae471accc49d86a2b1c10fd364b72df1ce4f6a767fd10e82318770d3105",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "62c07146838d6a9a0e1d7640c1c0e9f937746bca757a729720e3ad7a1f88e0e3",
       "enabled": true,
       "emitted": {
@@ -3820,6 +4316,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "26090ae471accc49d86a2b1c10fd364b72df1ce4f6a767fd10e82318770d3105",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "62c07146838d6a9a0e1d7640c1c0e9f937746bca757a729720e3ad7a1f88e0e3",
       "enabled": true,
       "emitted": {
@@ -3847,6 +4347,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "66d7e727b137cb0132727c237670fe458fa61c0c5f342e08058b76b14c1aef36",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a1e69476630841bdfd318ff31ac4b30d3bd0892bce1f80b5c6336bc5be554eb7",
       "enabled": true,
       "emitted": {
@@ -3881,6 +4385,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "66d7e727b137cb0132727c237670fe458fa61c0c5f342e08058b76b14c1aef36",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a1e69476630841bdfd318ff31ac4b30d3bd0892bce1f80b5c6336bc5be554eb7",
       "enabled": true,
       "emitted": {
@@ -3915,6 +4423,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "66d7e727b137cb0132727c237670fe458fa61c0c5f342e08058b76b14c1aef36",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "a1e69476630841bdfd318ff31ac4b30d3bd0892bce1f80b5c6336bc5be554eb7",
       "enabled": true,
       "emitted": {
@@ -3949,6 +4461,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
@@ -3985,6 +4501,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
@@ -4021,6 +4541,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
@@ -4057,6 +4581,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "60b1e3d6c9f585510897e1d227abf685c3b9371723d5b97002c811012e956e57",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7d5c243c42da9efb7e04abd80599ea170838a48767dfd11b845e6ce5fa9d8c81",
       "enabled": true,
       "emitted": {
@@ -4093,6 +4621,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c82fdd3abd19b87cac8a6bbe1af920136e0706a2718532e3870724e897567780",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5e2f5050fc7c0f83761b27ba4c26e5ad3ac864684c0a67871a66da866eb19a76",
       "enabled": true,
       "emitted": {
@@ -4129,6 +4661,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c82fdd3abd19b87cac8a6bbe1af920136e0706a2718532e3870724e897567780",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5e2f5050fc7c0f83761b27ba4c26e5ad3ac864684c0a67871a66da866eb19a76",
       "enabled": true,
       "emitted": {
@@ -4165,6 +4701,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c82fdd3abd19b87cac8a6bbe1af920136e0706a2718532e3870724e897567780",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5e2f5050fc7c0f83761b27ba4c26e5ad3ac864684c0a67871a66da866eb19a76",
       "enabled": true,
       "emitted": {
@@ -4201,6 +4741,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "c82fdd3abd19b87cac8a6bbe1af920136e0706a2718532e3870724e897567780",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5e2f5050fc7c0f83761b27ba4c26e5ad3ac864684c0a67871a66da866eb19a76",
       "enabled": true,
       "emitted": {
@@ -4237,6 +4781,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "160b17b2caae1517c8281555cba513d4d4c601a89ed0a5f7dd67efd5baf10239",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b8b45405b138b78c2d744599447ae0bed42224f1c44fbbaa76502ea62e469f58",
       "enabled": true,
       "emitted": {
@@ -4273,6 +4821,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "160b17b2caae1517c8281555cba513d4d4c601a89ed0a5f7dd67efd5baf10239",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b8b45405b138b78c2d744599447ae0bed42224f1c44fbbaa76502ea62e469f58",
       "enabled": true,
       "emitted": {
@@ -4309,6 +4861,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a334bd710c5b926e24b2dd2a066d3b4dcd6747030a111bf7cabcc545ea242ad7",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "aef159fccc05e981efe1a0b7b4d14e1030ed3e9a39e39ec4a6e5ac5e4938e6fa",
       "enabled": true,
       "emitted": {
@@ -4343,6 +4899,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e7f66ca851f04258d3315f61009e4a924e74027be8d1ae473cac9a55066e1c7c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "624507734669ac7e340f9b451cd46c9ea478fd9a7d7ae8c403f5cfc523c1a771",
       "enabled": true,
       "emitted": {
@@ -4370,6 +4930,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e7f66ca851f04258d3315f61009e4a924e74027be8d1ae473cac9a55066e1c7c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "624507734669ac7e340f9b451cd46c9ea478fd9a7d7ae8c403f5cfc523c1a771",
       "enabled": true,
       "emitted": {
@@ -4397,6 +4961,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e7f66ca851f04258d3315f61009e4a924e74027be8d1ae473cac9a55066e1c7c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "624507734669ac7e340f9b451cd46c9ea478fd9a7d7ae8c403f5cfc523c1a771",
       "enabled": true,
       "emitted": {
@@ -4424,6 +4992,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4445,6 +5017,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4464,6 +5040,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4483,6 +5063,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4502,6 +5086,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "8e8c90f441815d9e7874b12b2e5290bec48b3d57e33771d2f9a7a2101e1c6657",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5cb35f8c58da4b1abce5e5eea06308422465f66efed8671cc1af4e482a0eb688",
       "enabled": true,
       "emitted": {
@@ -4534,6 +5122,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "8e8c90f441815d9e7874b12b2e5290bec48b3d57e33771d2f9a7a2101e1c6657",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5cb35f8c58da4b1abce5e5eea06308422465f66efed8671cc1af4e482a0eb688",
       "enabled": true,
       "emitted": {
@@ -4565,6 +5157,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "8e8c90f441815d9e7874b12b2e5290bec48b3d57e33771d2f9a7a2101e1c6657",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5cb35f8c58da4b1abce5e5eea06308422465f66efed8671cc1af4e482a0eb688",
       "enabled": true,
       "emitted": {
@@ -4596,6 +5192,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "8e8c90f441815d9e7874b12b2e5290bec48b3d57e33771d2f9a7a2101e1c6657",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "5cb35f8c58da4b1abce5e5eea06308422465f66efed8671cc1af4e482a0eb688",
       "enabled": true,
       "emitted": {
@@ -4627,6 +5227,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "acd01bd75c54a043137d24920af8e6bb5a6475158330a0a657b625ec92d6c54e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "297a39aeffd6d52e74e442da8247c861448b9611401ef4311b0fbe5503a22360",
       "enabled": true,
       "emitted": {
@@ -4677,6 +5281,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "acd01bd75c54a043137d24920af8e6bb5a6475158330a0a657b625ec92d6c54e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "297a39aeffd6d52e74e442da8247c861448b9611401ef4311b0fbe5503a22360",
       "enabled": true,
       "emitted": {
@@ -4726,6 +5334,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "acd01bd75c54a043137d24920af8e6bb5a6475158330a0a657b625ec92d6c54e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "297a39aeffd6d52e74e442da8247c861448b9611401ef4311b0fbe5503a22360",
       "enabled": true,
       "emitted": {
@@ -4775,6 +5387,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "acd01bd75c54a043137d24920af8e6bb5a6475158330a0a657b625ec92d6c54e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "297a39aeffd6d52e74e442da8247c861448b9611401ef4311b0fbe5503a22360",
       "enabled": true,
       "emitted": {
@@ -4824,6 +5440,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "74a0aab79f53aab13a07bc276f99fa9eed70ff3a3affd8e40035185ae6367714",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "213e3d0fe3738b5a82a1e6c9453458a92b73938069b9d2ae1e9650d51b8ec0da",
       "enabled": true,
       "emitted": {
@@ -4897,6 +5517,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "74a0aab79f53aab13a07bc276f99fa9eed70ff3a3affd8e40035185ae6367714",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "213e3d0fe3738b5a82a1e6c9453458a92b73938069b9d2ae1e9650d51b8ec0da",
       "enabled": true,
       "emitted": {
@@ -4960,6 +5584,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "74a0aab79f53aab13a07bc276f99fa9eed70ff3a3affd8e40035185ae6367714",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "213e3d0fe3738b5a82a1e6c9453458a92b73938069b9d2ae1e9650d51b8ec0da",
       "enabled": true,
       "emitted": {
@@ -5023,6 +5651,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "74a0aab79f53aab13a07bc276f99fa9eed70ff3a3affd8e40035185ae6367714",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "213e3d0fe3738b5a82a1e6c9453458a92b73938069b9d2ae1e9650d51b8ec0da",
       "enabled": true,
       "emitted": {
@@ -5086,6 +5718,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "eb66719ec3aa75d3f7c97a6e683e3465d5e1fc6fbf23632eeead53e7fd70b215",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7425ad0cfb6c0cafc7406a1ffc3497c28b4f756b7ef6f8a74b04ba8dd39f2b62",
       "enabled": true,
       "emitted": {
@@ -5136,6 +5772,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "eb66719ec3aa75d3f7c97a6e683e3465d5e1fc6fbf23632eeead53e7fd70b215",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7425ad0cfb6c0cafc7406a1ffc3497c28b4f756b7ef6f8a74b04ba8dd39f2b62",
       "enabled": true,
       "emitted": {
@@ -5185,6 +5825,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "eb66719ec3aa75d3f7c97a6e683e3465d5e1fc6fbf23632eeead53e7fd70b215",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7425ad0cfb6c0cafc7406a1ffc3497c28b4f756b7ef6f8a74b04ba8dd39f2b62",
       "enabled": true,
       "emitted": {
@@ -5234,6 +5878,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "eb66719ec3aa75d3f7c97a6e683e3465d5e1fc6fbf23632eeead53e7fd70b215",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "7425ad0cfb6c0cafc7406a1ffc3497c28b4f756b7ef6f8a74b04ba8dd39f2b62",
       "enabled": true,
       "emitted": {
@@ -5283,6 +5931,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dd0ef609862d2b5057237fe87b7b6fc71604c4a8947763209b95fdcc2864aaf1",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "09b682812ce84cdd60f2c2b95fe2ac01a252a59337894d94906d0a175cd2e798",
       "enabled": true,
       "emitted": {
@@ -5306,6 +5958,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dd0ef609862d2b5057237fe87b7b6fc71604c4a8947763209b95fdcc2864aaf1",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "09b682812ce84cdd60f2c2b95fe2ac01a252a59337894d94906d0a175cd2e798",
       "enabled": true,
       "emitted": {
@@ -5328,6 +5984,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dd0ef609862d2b5057237fe87b7b6fc71604c4a8947763209b95fdcc2864aaf1",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "09b682812ce84cdd60f2c2b95fe2ac01a252a59337894d94906d0a175cd2e798",
       "enabled": true,
       "emitted": {
@@ -5350,6 +6010,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dd0ef609862d2b5057237fe87b7b6fc71604c4a8947763209b95fdcc2864aaf1",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "09b682812ce84cdd60f2c2b95fe2ac01a252a59337894d94906d0a175cd2e798",
       "enabled": true,
       "emitted": {
@@ -5372,6 +6036,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "7965f24f9868ac87adf8f1eaf5491fbc254e26a4b9e6607b52de4439d9040e0c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "81d2858cf155920b092036294ea649861481188b82f70448637a2c154333d397",
       "enabled": true,
       "emitted": {
@@ -5395,6 +6063,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "7965f24f9868ac87adf8f1eaf5491fbc254e26a4b9e6607b52de4439d9040e0c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "81d2858cf155920b092036294ea649861481188b82f70448637a2c154333d397",
       "enabled": true,
       "emitted": {
@@ -5417,6 +6089,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "7965f24f9868ac87adf8f1eaf5491fbc254e26a4b9e6607b52de4439d9040e0c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "81d2858cf155920b092036294ea649861481188b82f70448637a2c154333d397",
       "enabled": true,
       "emitted": {
@@ -5439,6 +6115,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "7965f24f9868ac87adf8f1eaf5491fbc254e26a4b9e6607b52de4439d9040e0c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "81d2858cf155920b092036294ea649861481188b82f70448637a2c154333d397",
       "enabled": true,
       "emitted": {
@@ -5461,6 +6141,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a276de3b6e42882ccd2e40d1408ba521bc12c82be551275b0838183c3ef4031f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "c5d8a8c0f2f12418fab393da27ea3bbac428e822607686d619834d1599347c98",
       "enabled": true,
       "emitted": {
@@ -5493,6 +6177,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a276de3b6e42882ccd2e40d1408ba521bc12c82be551275b0838183c3ef4031f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "c5d8a8c0f2f12418fab393da27ea3bbac428e822607686d619834d1599347c98",
       "enabled": true,
       "emitted": {
@@ -5524,6 +6212,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a276de3b6e42882ccd2e40d1408ba521bc12c82be551275b0838183c3ef4031f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "c5d8a8c0f2f12418fab393da27ea3bbac428e822607686d619834d1599347c98",
       "enabled": true,
       "emitted": {
@@ -5555,6 +6247,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "a276de3b6e42882ccd2e40d1408ba521bc12c82be551275b0838183c3ef4031f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "c5d8a8c0f2f12418fab393da27ea3bbac428e822607686d619834d1599347c98",
       "enabled": true,
       "emitted": {
@@ -5586,6 +6282,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f771972c3d1e2c0485bba87bb5a211f6a7a4e34dfab1152a01f35c70a67cd78e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4cc48c102474d1b120ca0848d761d41beb7717c284b720e64649d80f44146230",
       "enabled": true,
       "emitted": {
@@ -5616,6 +6316,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f771972c3d1e2c0485bba87bb5a211f6a7a4e34dfab1152a01f35c70a67cd78e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4cc48c102474d1b120ca0848d761d41beb7717c284b720e64649d80f44146230",
       "enabled": true,
       "emitted": {
@@ -5645,6 +6349,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f771972c3d1e2c0485bba87bb5a211f6a7a4e34dfab1152a01f35c70a67cd78e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4cc48c102474d1b120ca0848d761d41beb7717c284b720e64649d80f44146230",
       "enabled": true,
       "emitted": {
@@ -5674,6 +6382,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "f771972c3d1e2c0485bba87bb5a211f6a7a4e34dfab1152a01f35c70a67cd78e",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4cc48c102474d1b120ca0848d761d41beb7717c284b720e64649d80f44146230",
       "enabled": true,
       "emitted": {
@@ -5703,6 +6415,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "44372be8582d3188b867d69b6c1d6ce3a4845ebb1e10d64705ad1b27e28350cc",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2b0e0183b96efe0237fef82ee04cf86842e40e0eab52f6da4bb963c8cd34af11",
       "enabled": true,
       "emitted": {
@@ -5744,6 +6460,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "44372be8582d3188b867d69b6c1d6ce3a4845ebb1e10d64705ad1b27e28350cc",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2b0e0183b96efe0237fef82ee04cf86842e40e0eab52f6da4bb963c8cd34af11",
       "enabled": true,
       "emitted": {
@@ -5784,6 +6504,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "44372be8582d3188b867d69b6c1d6ce3a4845ebb1e10d64705ad1b27e28350cc",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2b0e0183b96efe0237fef82ee04cf86842e40e0eab52f6da4bb963c8cd34af11",
       "enabled": true,
       "emitted": {
@@ -5824,6 +6548,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "44372be8582d3188b867d69b6c1d6ce3a4845ebb1e10d64705ad1b27e28350cc",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2b0e0183b96efe0237fef82ee04cf86842e40e0eab52f6da4bb963c8cd34af11",
       "enabled": true,
       "emitted": {
@@ -5863,8 +6591,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1f04cd29bc98d4ec30e5eb9781d1f03d3a4893ca1d7b6edbe76ac36ca5a53095",
-      "renderedHash": "e53c29d6ffa93e91cf4cc72c4de73cc05415eaa5c3bb175dbcd1eb600d41a833",
+      "sourceHash": "d0e5546f9dea22850d4568ac10c7b497b701e393f0527b8bbef91e04a9bdb95d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "df1c463bf7733e44e9123a44975f229cc0bd2f345fcb644522edbae26cb07376",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5940,8 +6672,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1f04cd29bc98d4ec30e5eb9781d1f03d3a4893ca1d7b6edbe76ac36ca5a53095",
-      "renderedHash": "e53c29d6ffa93e91cf4cc72c4de73cc05415eaa5c3bb175dbcd1eb600d41a833",
+      "sourceHash": "d0e5546f9dea22850d4568ac10c7b497b701e393f0527b8bbef91e04a9bdb95d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "df1c463bf7733e44e9123a44975f229cc0bd2f345fcb644522edbae26cb07376",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6016,8 +6752,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1f04cd29bc98d4ec30e5eb9781d1f03d3a4893ca1d7b6edbe76ac36ca5a53095",
-      "renderedHash": "e53c29d6ffa93e91cf4cc72c4de73cc05415eaa5c3bb175dbcd1eb600d41a833",
+      "sourceHash": "d0e5546f9dea22850d4568ac10c7b497b701e393f0527b8bbef91e04a9bdb95d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "df1c463bf7733e44e9123a44975f229cc0bd2f345fcb644522edbae26cb07376",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6092,8 +6832,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1f04cd29bc98d4ec30e5eb9781d1f03d3a4893ca1d7b6edbe76ac36ca5a53095",
-      "renderedHash": "e53c29d6ffa93e91cf4cc72c4de73cc05415eaa5c3bb175dbcd1eb600d41a833",
+      "sourceHash": "d0e5546f9dea22850d4568ac10c7b497b701e393f0527b8bbef91e04a9bdb95d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "df1c463bf7733e44e9123a44975f229cc0bd2f345fcb644522edbae26cb07376",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6168,8 +6912,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "bbc7cf3df478ceadb2fe0da9c9359a115bcbe9722c1adcaed3fc23e8eb3f279c",
-      "renderedHash": "0fb5047fa001018cd300e757ca2caeef5461c16fe71925021b6a50ef9286a2c2",
+      "sourceHash": "7e208e93976f28b5c1e294a98b6e2bd5747524278345b43e6e78453141d24e46",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "f3f066813c28ca8d450f4fa048947ba3b3ea3cdc344f83e7f5995544e867987f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6197,8 +6945,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "bbc7cf3df478ceadb2fe0da9c9359a115bcbe9722c1adcaed3fc23e8eb3f279c",
-      "renderedHash": "0fb5047fa001018cd300e757ca2caeef5461c16fe71925021b6a50ef9286a2c2",
+      "sourceHash": "7e208e93976f28b5c1e294a98b6e2bd5747524278345b43e6e78453141d24e46",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "f3f066813c28ca8d450f4fa048947ba3b3ea3cdc344f83e7f5995544e867987f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6225,8 +6977,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "bbc7cf3df478ceadb2fe0da9c9359a115bcbe9722c1adcaed3fc23e8eb3f279c",
-      "renderedHash": "0fb5047fa001018cd300e757ca2caeef5461c16fe71925021b6a50ef9286a2c2",
+      "sourceHash": "7e208e93976f28b5c1e294a98b6e2bd5747524278345b43e6e78453141d24e46",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "f3f066813c28ca8d450f4fa048947ba3b3ea3cdc344f83e7f5995544e867987f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6253,8 +7009,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "bbc7cf3df478ceadb2fe0da9c9359a115bcbe9722c1adcaed3fc23e8eb3f279c",
-      "renderedHash": "0fb5047fa001018cd300e757ca2caeef5461c16fe71925021b6a50ef9286a2c2",
+      "sourceHash": "7e208e93976f28b5c1e294a98b6e2bd5747524278345b43e6e78453141d24e46",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "f3f066813c28ca8d450f4fa048947ba3b3ea3cdc344f83e7f5995544e867987f",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6282,6 +7042,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "b98026f3c1d461afbb844c704153c3710df030a7587541b0bb9f69d29018916b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "535677bba36ff0bd5f212ee677c234f5b75652df9965e84a2b8a14ac8c43f14f",
       "enabled": true,
       "emitted": {
@@ -6305,6 +7069,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "b98026f3c1d461afbb844c704153c3710df030a7587541b0bb9f69d29018916b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "535677bba36ff0bd5f212ee677c234f5b75652df9965e84a2b8a14ac8c43f14f",
       "enabled": true,
       "emitted": {
@@ -6327,6 +7095,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "b98026f3c1d461afbb844c704153c3710df030a7587541b0bb9f69d29018916b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "535677bba36ff0bd5f212ee677c234f5b75652df9965e84a2b8a14ac8c43f14f",
       "enabled": true,
       "emitted": {
@@ -6349,6 +7121,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "b98026f3c1d461afbb844c704153c3710df030a7587541b0bb9f69d29018916b",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "535677bba36ff0bd5f212ee677c234f5b75652df9965e84a2b8a14ac8c43f14f",
       "enabled": true,
       "emitted": {
@@ -6371,6 +7147,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "4915110a4ef10b3cee1c1176b2b6b7ef1f22b2085d2fbd32bddac9ec1dd5f98d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "fcf7b008406f08f1d95bdf650bbf8d1a5b036ee89e49634d4f0c9034b16fda08",
       "enabled": true,
       "emitted": {
@@ -6403,6 +7183,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "4915110a4ef10b3cee1c1176b2b6b7ef1f22b2085d2fbd32bddac9ec1dd5f98d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "fcf7b008406f08f1d95bdf650bbf8d1a5b036ee89e49634d4f0c9034b16fda08",
       "enabled": true,
       "emitted": {
@@ -6434,6 +7218,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "4915110a4ef10b3cee1c1176b2b6b7ef1f22b2085d2fbd32bddac9ec1dd5f98d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "fcf7b008406f08f1d95bdf650bbf8d1a5b036ee89e49634d4f0c9034b16fda08",
       "enabled": true,
       "emitted": {
@@ -6465,6 +7253,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "4915110a4ef10b3cee1c1176b2b6b7ef1f22b2085d2fbd32bddac9ec1dd5f98d",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "fcf7b008406f08f1d95bdf650bbf8d1a5b036ee89e49634d4f0c9034b16fda08",
       "enabled": true,
       "emitted": {
@@ -6495,8 +7287,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "91f53edcca67621650dbee333bf1a958b41571f876f0b63305845e601fe87c35",
-      "renderedHash": "f1179f32088262a491885876d43b68a33e34c39c14382ccbf82e7faff04a1eba",
+      "sourceHash": "c3211325f8df7a3b73709d5d8a704d3fba5fc0e9d080f8e9d0981566b251cf44",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "569d96f9337240fbeb7e6de71b83e5311b636c5fd7d1fc19ae00f42693e4a6d3",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6581,8 +7377,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "91f53edcca67621650dbee333bf1a958b41571f876f0b63305845e601fe87c35",
-      "renderedHash": "f1179f32088262a491885876d43b68a33e34c39c14382ccbf82e7faff04a1eba",
+      "sourceHash": "c3211325f8df7a3b73709d5d8a704d3fba5fc0e9d080f8e9d0981566b251cf44",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "569d96f9337240fbeb7e6de71b83e5311b636c5fd7d1fc19ae00f42693e4a6d3",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6666,8 +7466,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "91f53edcca67621650dbee333bf1a958b41571f876f0b63305845e601fe87c35",
-      "renderedHash": "f1179f32088262a491885876d43b68a33e34c39c14382ccbf82e7faff04a1eba",
+      "sourceHash": "c3211325f8df7a3b73709d5d8a704d3fba5fc0e9d080f8e9d0981566b251cf44",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "569d96f9337240fbeb7e6de71b83e5311b636c5fd7d1fc19ae00f42693e4a6d3",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6742,8 +7546,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "91f53edcca67621650dbee333bf1a958b41571f876f0b63305845e601fe87c35",
-      "renderedHash": "f1179f32088262a491885876d43b68a33e34c39c14382ccbf82e7faff04a1eba",
+      "sourceHash": "c3211325f8df7a3b73709d5d8a704d3fba5fc0e9d080f8e9d0981566b251cf44",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "569d96f9337240fbeb7e6de71b83e5311b636c5fd7d1fc19ae00f42693e4a6d3",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6819,6 +7627,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6840,6 +7652,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6859,6 +7675,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6878,6 +7698,10 @@
       "source": "in-place",
       "sourceRepo": "in-place",
       "sourceHash": "fb10e3dda831e9c47844d7f9652c61076f50cf9ce966b463f88cc9fb83eef388",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6897,6 +7721,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9dd67b9b29613d609dfeaf434d33a5526c866193903cabe8b88d58d0d1c4b5ee",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "262d8b3b45c4eba0b86ff1cf90d8e35ebf786294f1e0e4877ef9bf98ad06d67e",
       "enabled": true,
       "emitted": {
@@ -6927,6 +7755,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9dd67b9b29613d609dfeaf434d33a5526c866193903cabe8b88d58d0d1c4b5ee",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "262d8b3b45c4eba0b86ff1cf90d8e35ebf786294f1e0e4877ef9bf98ad06d67e",
       "enabled": true,
       "emitted": {
@@ -6956,6 +7788,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9dd67b9b29613d609dfeaf434d33a5526c866193903cabe8b88d58d0d1c4b5ee",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "262d8b3b45c4eba0b86ff1cf90d8e35ebf786294f1e0e4877ef9bf98ad06d67e",
       "enabled": true,
       "emitted": {
@@ -6985,6 +7821,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "9dd67b9b29613d609dfeaf434d33a5526c866193903cabe8b88d58d0d1c4b5ee",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "262d8b3b45c4eba0b86ff1cf90d8e35ebf786294f1e0e4877ef9bf98ad06d67e",
       "enabled": true,
       "emitted": {
@@ -7014,6 +7854,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "65623cd528428d6f042b8570d50a67f0052368ba9d768cc13eee5cd33fa14390",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2ff0efde552a3ad14ae18089baa215b66a7e858d1bf7c0a3cee5be388ad616bb",
       "enabled": true,
       "emitted": {
@@ -7037,6 +7881,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "65623cd528428d6f042b8570d50a67f0052368ba9d768cc13eee5cd33fa14390",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2ff0efde552a3ad14ae18089baa215b66a7e858d1bf7c0a3cee5be388ad616bb",
       "enabled": true,
       "emitted": {
@@ -7059,6 +7907,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "65623cd528428d6f042b8570d50a67f0052368ba9d768cc13eee5cd33fa14390",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2ff0efde552a3ad14ae18089baa215b66a7e858d1bf7c0a3cee5be388ad616bb",
       "enabled": true,
       "emitted": {
@@ -7081,6 +7933,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "65623cd528428d6f042b8570d50a67f0052368ba9d768cc13eee5cd33fa14390",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "2ff0efde552a3ad14ae18089baa215b66a7e858d1bf7c0a3cee5be388ad616bb",
       "enabled": true,
       "emitted": {
@@ -7103,6 +7959,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dab316840802a65565153dc3c516d22dfe8d9ff383a9c222cac13974133d4d26",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4086edcba10b05eba4c5cdffc4deb33bca0e0a6000dbae70654623083c574a4a",
       "enabled": true,
       "emitted": {
@@ -7135,6 +7995,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dab316840802a65565153dc3c516d22dfe8d9ff383a9c222cac13974133d4d26",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4086edcba10b05eba4c5cdffc4deb33bca0e0a6000dbae70654623083c574a4a",
       "enabled": true,
       "emitted": {
@@ -7166,6 +8030,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dab316840802a65565153dc3c516d22dfe8d9ff383a9c222cac13974133d4d26",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4086edcba10b05eba4c5cdffc4deb33bca0e0a6000dbae70654623083c574a4a",
       "enabled": true,
       "emitted": {
@@ -7197,6 +8065,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "dab316840802a65565153dc3c516d22dfe8d9ff383a9c222cac13974133d4d26",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "4086edcba10b05eba4c5cdffc4deb33bca0e0a6000dbae70654623083c574a4a",
       "enabled": true,
       "emitted": {
@@ -7227,8 +8099,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5dc7653df87d2c0301b6ecf0d5f88cd9ce7b6e55d4f43e30123bc925c39c7c4b",
-      "renderedHash": "c72f3bc34f58e1b6a21b81090bcd2f11f16eb3c85cca4818fec76529b1a20eb6",
+      "sourceHash": "94b21acfcbd26719075af3a11e24c7974693d7bfd9139cebbd3419bfc8e456ba",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "c1af4e5b53c38ea090d404ca9a4563c041882dfe44bf15f2c0cb6063d6f2c8f0",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7268,8 +8144,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5dc7653df87d2c0301b6ecf0d5f88cd9ce7b6e55d4f43e30123bc925c39c7c4b",
-      "renderedHash": "c72f3bc34f58e1b6a21b81090bcd2f11f16eb3c85cca4818fec76529b1a20eb6",
+      "sourceHash": "94b21acfcbd26719075af3a11e24c7974693d7bfd9139cebbd3419bfc8e456ba",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "c1af4e5b53c38ea090d404ca9a4563c041882dfe44bf15f2c0cb6063d6f2c8f0",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7308,8 +8188,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5dc7653df87d2c0301b6ecf0d5f88cd9ce7b6e55d4f43e30123bc925c39c7c4b",
-      "renderedHash": "c72f3bc34f58e1b6a21b81090bcd2f11f16eb3c85cca4818fec76529b1a20eb6",
+      "sourceHash": "94b21acfcbd26719075af3a11e24c7974693d7bfd9139cebbd3419bfc8e456ba",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "c1af4e5b53c38ea090d404ca9a4563c041882dfe44bf15f2c0cb6063d6f2c8f0",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7348,8 +8232,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5dc7653df87d2c0301b6ecf0d5f88cd9ce7b6e55d4f43e30123bc925c39c7c4b",
-      "renderedHash": "c72f3bc34f58e1b6a21b81090bcd2f11f16eb3c85cca4818fec76529b1a20eb6",
+      "sourceHash": "94b21acfcbd26719075af3a11e24c7974693d7bfd9139cebbd3419bfc8e456ba",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "c1af4e5b53c38ea090d404ca9a4563c041882dfe44bf15f2c0cb6063d6f2c8f0",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7389,6 +8277,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "84b86552f35fc2e99e8a5b8ec85dab379eb193bcef5fd93c700304c5dd40f002",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "71204b5f9dade189720522882d2865b7eb5908f3931fb7c08f9a2100be35158a",
       "enabled": true,
       "emitted": {
@@ -7421,6 +8313,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "84b86552f35fc2e99e8a5b8ec85dab379eb193bcef5fd93c700304c5dd40f002",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "71204b5f9dade189720522882d2865b7eb5908f3931fb7c08f9a2100be35158a",
       "enabled": true,
       "emitted": {
@@ -7452,6 +8348,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "84b86552f35fc2e99e8a5b8ec85dab379eb193bcef5fd93c700304c5dd40f002",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "71204b5f9dade189720522882d2865b7eb5908f3931fb7c08f9a2100be35158a",
       "enabled": true,
       "emitted": {
@@ -7483,6 +8383,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "84b86552f35fc2e99e8a5b8ec85dab379eb193bcef5fd93c700304c5dd40f002",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "71204b5f9dade189720522882d2865b7eb5908f3931fb7c08f9a2100be35158a",
       "enabled": true,
       "emitted": {
@@ -7514,6 +8418,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "09edf873a1d2254561fed98e2b570346cda2568078b4542df622ceecee4f3b7f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "66beb2608a1f4f567eeb06160ecfea9031994c64111a7332cc39d36532f06605",
       "enabled": true,
       "emitted": {
@@ -7537,6 +8445,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "09edf873a1d2254561fed98e2b570346cda2568078b4542df622ceecee4f3b7f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "66beb2608a1f4f567eeb06160ecfea9031994c64111a7332cc39d36532f06605",
       "enabled": true,
       "emitted": {
@@ -7559,6 +8471,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "09edf873a1d2254561fed98e2b570346cda2568078b4542df622ceecee4f3b7f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "66beb2608a1f4f567eeb06160ecfea9031994c64111a7332cc39d36532f06605",
       "enabled": true,
       "emitted": {
@@ -7581,6 +8497,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "09edf873a1d2254561fed98e2b570346cda2568078b4542df622ceecee4f3b7f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "66beb2608a1f4f567eeb06160ecfea9031994c64111a7332cc39d36532f06605",
       "enabled": true,
       "emitted": {
@@ -7603,6 +8523,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "49bc3e84b5d2c69eb36a9c7eae6530e6676b58c1a3ebf53b0c3872ec48b97dd8",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "097d01489c7d50f021851f6501d1d3c04deb2560b08389001d79d206b678f1b0",
       "enabled": true,
       "emitted": {
@@ -7626,6 +8550,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "49bc3e84b5d2c69eb36a9c7eae6530e6676b58c1a3ebf53b0c3872ec48b97dd8",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "097d01489c7d50f021851f6501d1d3c04deb2560b08389001d79d206b678f1b0",
       "enabled": true,
       "emitted": {
@@ -7648,6 +8576,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "49bc3e84b5d2c69eb36a9c7eae6530e6676b58c1a3ebf53b0c3872ec48b97dd8",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "097d01489c7d50f021851f6501d1d3c04deb2560b08389001d79d206b678f1b0",
       "enabled": true,
       "emitted": {
@@ -7670,6 +8602,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "49bc3e84b5d2c69eb36a9c7eae6530e6676b58c1a3ebf53b0c3872ec48b97dd8",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "097d01489c7d50f021851f6501d1d3c04deb2560b08389001d79d206b678f1b0",
       "enabled": true,
       "emitted": {
@@ -7692,6 +8628,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "14568dbcc82f21c9736ffae0179322ebf11ae732dd75d7e9afc84aa24ce31110",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "1dae4ef40935e7694beba8c851cc750e84ae889c95aba4bc1462727c25fbfe51",
       "enabled": true,
       "emitted": {
@@ -7733,6 +8673,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "14568dbcc82f21c9736ffae0179322ebf11ae732dd75d7e9afc84aa24ce31110",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "1dae4ef40935e7694beba8c851cc750e84ae889c95aba4bc1462727c25fbfe51",
       "enabled": true,
       "emitted": {
@@ -7773,6 +8717,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "14568dbcc82f21c9736ffae0179322ebf11ae732dd75d7e9afc84aa24ce31110",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "1dae4ef40935e7694beba8c851cc750e84ae889c95aba4bc1462727c25fbfe51",
       "enabled": true,
       "emitted": {
@@ -7804,6 +8752,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "14568dbcc82f21c9736ffae0179322ebf11ae732dd75d7e9afc84aa24ce31110",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "1dae4ef40935e7694beba8c851cc750e84ae889c95aba4bc1462727c25fbfe51",
       "enabled": true,
       "emitted": {
@@ -7844,6 +8796,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e09b14a56a3d11f1b9e4e6d5e8ddd5bd0214a6d80e9e68a60e06e4b87e98434f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b1f53810aa3452b50cb90dec3782394508ccd8fcdcbe18da6adafe06a83f8412",
       "enabled": true,
       "emitted": {
@@ -7867,6 +8823,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e09b14a56a3d11f1b9e4e6d5e8ddd5bd0214a6d80e9e68a60e06e4b87e98434f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b1f53810aa3452b50cb90dec3782394508ccd8fcdcbe18da6adafe06a83f8412",
       "enabled": true,
       "emitted": {
@@ -7889,6 +8849,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e09b14a56a3d11f1b9e4e6d5e8ddd5bd0214a6d80e9e68a60e06e4b87e98434f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b1f53810aa3452b50cb90dec3782394508ccd8fcdcbe18da6adafe06a83f8412",
       "enabled": true,
       "emitted": {
@@ -7911,6 +8875,10 @@
       "source": ".",
       "sourceRepo": ".",
       "sourceHash": "e09b14a56a3d11f1b9e4e6d5e8ddd5bd0214a6d80e9e68a60e06e4b87e98434f",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
       "renderedHash": "b1f53810aa3452b50cb90dec3782394508ccd8fcdcbe18da6adafe06a83f8412",
       "enabled": true,
       "emitted": {
@@ -7930,7 +8898,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "e034ce69d2874e9f7e40d4973d685d51b1ad1639"
+      "commit": "f24599cab98369094567af9dd1668706a348507c"
     }
   }
 }
