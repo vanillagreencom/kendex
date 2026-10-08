@@ -1,0 +1,1 @@
+- Consumer refresh disarms an armed rolling pull request before it pushes a new head, so the old arm cannot merge that head before its review; a disarm GitHub refuses stops the run.

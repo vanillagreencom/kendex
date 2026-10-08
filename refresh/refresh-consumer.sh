@@ -57,8 +57,7 @@ fi
 # the queue already holds; only a read after GitHub refuses a write, or the
 # refusal itself, can establish the lifecycle at that write. Sets reason to
 # merged, closed, queued, armed, branch-gone or active for the pull request
-# in pr; a failed or malformed read exits. An armed pull request defers
-# nothing: GitHub has not taken the branch until the queue holds it.
+# in pr; a failed or malformed read exits.
 refresh_lifecycle() {
   local has_pr=false push_state
   if [ -n "$pr" ]; then has_pr=true; fi
@@ -92,9 +91,20 @@ refresh_lifecycle() {
 }
 # GitHub refuses a push to a branch the queue holds. A queued, merged or
 # closed pull request ends the run before any refresh, push, body update or
-# auto-merge change.
+# auto-merge change. An armed one is disarmed first: the arm survives a push,
+# and the queue does not re-check approval, so the old arm could merge the
+# new head before its review. The arm after publication re-arms that head.
 if [ -n "$pr" ]; then
   refresh_lifecycle
+  if [ "$reason" = armed ] && ! gh pr merge "$pr" --repo "$GH_REPO" --disable-auto; then
+    refresh_lifecycle
+    case "$reason" in
+      queued | merged | closed) ;;
+      *)
+        printf 'refresh-error=disarm pr=%s value=%s\n' "$pr" "$reason" >&2
+        exit 1 ;;
+    esac
+  fi
   case "$reason" in
     queued | merged | closed)
       printf 'refresh-state=deferred reason=%s\n' "$reason"

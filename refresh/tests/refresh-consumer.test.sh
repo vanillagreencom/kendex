@@ -119,7 +119,9 @@ case "$*" in
         esac
         jq -cn --arg state "$arm_state" --arg head "$head" --argjson queued "$queued" --argjson armed "$armed" \
           '{data:{repository:{ref:{target:{oid:$head}},pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-07T03:00:00Z"} else null end)}}}}' >"$TEST_STATE/arm-state.json" ;;
-      *' --disable-auto '*) rm -f -- "$TEST_STATE/armed" ;;
+      *' --disable-auto '*)
+        [ "${TEST_DISARM_MODE:-pass}" != refused ] || { printf 'GraphQL: disarm refused\n' >&2; exit 1; }
+        rm -f -- "$TEST_STATE/armed" ;;
       *) exit 2 ;;
     esac ;;
   'pr close '*) : ;;
@@ -1240,33 +1242,44 @@ reset_default
 git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 # The run reads the open rolling pull request once at start. A queued, merged
-# or closed one ends the run before the refresh; an armed or active one goes
-# on. The queued push row above starts active and enters the queue before
-# the push, which the post-refusal read defers.
+# or closed one ends the run before the refresh; an active one goes on, and
+# an armed one goes on once disarmed. The queued push row above starts active
+# and enters the queue before the push, which the post-refusal read defers.
 cp "$runner" "$TMP/start-runner"
 for row in \
   'queued|OPEN|true|false|pass|0|queued' \
   'merged|MERGED|false|false|pass|0|merged' \
   'closed|CLOSED|false|false|pass|0|closed' \
   'armed|OPEN|false|true|pass|0|armed' \
+  'armed-disarm-refused|OPEN|false|true|pass|1|disarm' \
   'active|OPEN|false|false|pass|0|active' \
   'query-failure|OPEN|false|false|fail|1|query'; do
   IFS='|' read -r name pr_state queued armed START_QUERY expected reason <<<"$row"
   jq -cn --arg state "$pr_state" --argjson queued "$queued" --argjson armed "$armed" \
     '{data:{repository:{ref:{target:{oid:"abc"}},pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-02T01:09:07Z"} else null end)}}}}' >"$TMP/state/start-state.json"
-  controls=""
-  [ "$name" != queued ] || controls=no-defer
+  DISARM_MODE=pass
+  [ "$name" != armed-disarm-refused ] || DISARM_MODE=refused
+  case "$name" in
+    queued) controls=no-defer ;;
+    armed) controls=no-disarm ;;
+    armed-disarm-refused) controls=disarm-open ;;
+    *) controls="" ;;
+  esac
   for mutation in none $controls; do
     reset_default
     if [ "$mutation" != none ]; then
-      python3 - "$runner" <<'START_CONTROL'
+      python3 - "$runner" "$mutation" <<'START_CONTROL'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
-old = '    queued | merged | closed)\n      printf'
+old, new = {
+    'no-defer': ('    queued | merged | closed)\n      printf', '    no-start-defer)\n      printf'),
+    'no-disarm': ('  if [ "$reason" = armed ] && ! gh pr merge', '  if false && ! gh pr merge'),
+    'disarm-open': ('" >&2\n        exit 1 ;;\n    esac\n  fi', '" >&2 ;;\n    esac\n  fi'),
+}[sys.argv[2]]
 assert s.count(old) == 1
-changed = s.replace(old, '    no-start-defer)\n      printf') + '\n# ' + old.split('\n')[0] + '\n'
+changed = s.replace(old, new) + '\n# ' + old.split('\n')[0] + '\n'
 assert changed != s
 p.write_text(changed)
 START_CONTROL
@@ -1288,7 +1301,7 @@ START_CONTROL
     fi
   done
 done
-unset START_QUERY
+unset START_QUERY DISARM_MODE
 cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
 reset_default
 git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
