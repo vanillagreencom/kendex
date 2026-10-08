@@ -114,10 +114,12 @@
 #            cause=base-inventory-absent: every read behind it succeeded, and
 #            the proof it lacks is one the verify document does not give:
 #            base_owned does not name the path, or the document carries no
-#            base_owned. The shared refresh caller is also owned when its
-#            bytes equal the released template at the shared workflow revision
-#            it pins. The proof fetches public catalog data into its private
-#            store. An unavailable release or an edited caller owns nothing.
+#            base_owned. A recorded shared refresh caller first takes ownership
+#            from a passing verifier position. Without verifier ownership, the
+#            released-template fallback requires byte equality at the exact
+#            release tag its shared workflow pins. A commit pin, unavailable
+#            release or edited caller grants no fallback ownership. Caller
+#            ownership contract: SKILL.md § Shared refresh caller ownership.
 #            Any other
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
@@ -960,9 +962,9 @@ base_owned() { jq -e --arg path "$1" '(.base_owned // []) | any(.[]; .path as $o
 # Every position a passing row printed, one per line: what it owns, the
 # foreign judgement or `-`, and the path.
 named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.owns, (.foreign // "-"), .path] | @tsv' <<<"$VERIFY_JSON"; }
-# The shared refresh caller is adopted from a release checkout and has no
-# engine inventory row. Adoption accepts older shipped copies for replacement;
-# the class needs the stricter equality with the revision this caller uses.
+# Without verifier ownership, the shared refresh caller needs release proof.
+# Adoption accepts older shipped copies for replacement; this fallback needs
+# equality with the release revision this caller uses.
 RENDER_WORKFLOW_CHECKED=false
 released_workflow_owned() { # PATH
   local pin history="$work/release-history" template=skills/review-gate/templates/kendex-refresh.yml
