@@ -147,6 +147,29 @@ mod tests {
         );
     }
 
+    /// YAML closes frontmatter with `...` as well as `---`; the block goes
+    /// after either, so the tool still reads the command's own metadata.
+    #[test]
+    fn instructions_land_after_a_dot_terminated_frontmatter() {
+        let manifest: Manifest = toml::from_str(
+            "schema = 6\n[command-instructions]\nship = \"Keep the merge review.\"\n",
+        )
+        .unwrap();
+        let bytes = with_instructions(
+            b"---\ndescription: Ship it\n...\n\nSteps.\n",
+            &manifest,
+            "ship",
+        );
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(
+            body.starts_with("---\ndescription: Ship it\n...\n"),
+            "{body}"
+        );
+        assert!(body.contains("Keep the merge review."), "{body}");
+        let table: toml::Table = gemini(&bytes, "ship").unwrap().parse().unwrap();
+        assert_eq!(table["description"].as_str(), Some("Ship it"));
+    }
+
     #[test]
     fn a_description_comes_from_frontmatter_then_prose_then_the_name() {
         assert_eq!(

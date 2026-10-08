@@ -1,0 +1,1 @@
+- A skill or command whose frontmatter closes with YAML's `...` keeps that frontmatter first when project instructions are added, instead of having the instructions block written above it.
