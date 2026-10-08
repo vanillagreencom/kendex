@@ -26,17 +26,30 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 File a kendex issue only when its body names one of these two, in addition to the Creation bar in § Disposition:
 
-- **A failure that happened**: a `Symptom:` line that names where it broke, when, and what broke.
-- **An owner request**: an `Owner:` line that names the owner's note or ask.
+- **A failure that happened**: a `**Symptom**:` header that names where it broke, when, and what broke.
+- **An owner request**: an `**Owner**:` header, placed right after `**Reached by**:`, that names the owner's note or ask. That `**Reached by**:` line names the same ask, as § Disposition says of an owner-directed item.
 
-Decline a candidate with neither, with one line in the report. The 2026-10-08 backlog read canceled these four kinds, each filed with neither line:
+For kendex, `templates/issue-description-template.md` keeps the `**Symptom**:` header at every priority and from every source where a failure happened. Its rule that drops the line outside a review-born priority-2 filing does not apply here.
+
+Each step that decides a create carries the two lines:
+
+- A lane's `Proposal:` comment carries a `Symptom:` or an `Owner:` line beside `Reached by:`.
+- tpm-audit § 10 fills `create_fields.symptom` or `create_fields.owner` on every kendex `create`. audit-issues § 7.2 writes them to the `**Symptom**:` and `**Owner**:` headers.
+- tpm-audit § 10 and proposal-sweep § 2 mark a candidate with neither line `skip`, naming this rule. Any other filing workflow declines it with one line in its report.
+
+Structural creates follow the lines of the work they hold:
+
+- A coordination parent, per `templates/parent-issue-template.md` Rule 7 (a roadmap layer, an audit bundle, the merge-pr rebundle), holds no work of its own and needs neither line.
+- A child or a research spike minted from an item or a plan copies that item's `**Symptom**:` or `**Owner**:` line. A roadmap the owner approved at roadmap-plan § 5 names that approval on each child's `**Owner**:` line.
+
+The 2026-10-08 backlog read canceled these four kinds, each filed with neither line:
 
 - A post-merge reading's remainder filed as a new item (KEN-3369, KEN-3371, KEN-3375). The reading stays on its originating item, per § Disposition.
 - A plan follow-up that proposes a migration with no failing action (KEN-2360, KEN-2361, KEN-2362).
 - An audit item that reclassifies a correct refusal (KEN-2378, KEN-2397).
 - A scanner or grammar extension with no live failure (KEN-2207, KEN-3285).
 
-An organization setup request, one that names a host, account, repository or person of this organization, is not filed as asked. Restate it as a need any catalog consumer has, or return it to its sender for routing to fleet or to the consumer that owns the setup.
+An organization setup request, one that names a host, account, repository or person of this organization, is not filed as asked. Restate it as a need any catalog consumer has. Otherwise return it to its sender with its destination named: the overseer, or the repository or Linear team that owns this organization's setup.
 
 `issues create` checks neither line, apart from its review-born priority-2 `Symptom:` refusal. The author applies this rule.
 

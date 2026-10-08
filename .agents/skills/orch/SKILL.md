@@ -27,6 +27,10 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 - The owner's time zone is Pacific (America/Los_Angeles). Write a time in it as `9:29 pm`, per rule 3 of `skills/orch/references/communication-modes.md` § Owner messages.
 - The owner's night, for rule 7 there, is 11 pm to 8 am Pacific.
 
+### Proposals
+
+- A kendex `Proposal:` comment, per `skills/orch/references/skill-rules.md` § Coordination, Tracked issue creation, carries a `Symptom:` line (where, when and what broke) or an `Owner:` line (the owner's note or ask) beside `Reached by:`, at every source and priority. The proposal sweep skips one with neither, per the project-management skill's § Intake.
+
 <!-- kendex:project-instructions:end -->
 
 # Orchestration
