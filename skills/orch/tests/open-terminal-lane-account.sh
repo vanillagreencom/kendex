@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A fresh --cmd launch through a real tmux pane. Inputs: open-terminal,
+# Fresh and replacement --cmd launches through a real tmux pane. Inputs: open-terminal,
 # lane-launch, lane-cap, workflow-state and the shared launcher fixtures.
 # The claude wrapper either preserves the picked account or overwrites it as
 # dotfiles account wrappers do. The launched child records its environment
@@ -17,11 +17,12 @@ REAL_TMUX="$(command -v tmux)" || { echo 'lane-account: tmux-missing' >&2; exit 
 
 if [[ "${1:-}" == --case ]]; then
   ROOT="$2" OT="$3" MODE="$4"
-  mkdir -p "$ROOT/bin" "$ROOT/home/.nclaude" "$ROOT/home/.claude" "$ROOT/real-bin"
+  mkdir -p "$ROOT/bin" "$ROOT/home/.nclaude" "$ROOT/home/.eclaude" "$ROOT/home/.claude" "$ROOT/real-bin"
   ot_stub_bin "$ROOT/bin"
   printf '#!%s\ncase "${1:-}" in check) exit 0 ;; list) echo "[]" ;; esac\n' "$BASH" > "$ROOT/bin/lanes"
   chmod +x "$ROOT/bin/lanes"
-  printf '#!%s\nexec %q -S %q "$@"\n' "$BASH" "$REAL_TMUX" "$ROOT/s" > "$ROOT/real-bin/tmux"
+  printf '#!%s\nif [[ "${1:-}" == kill-window && -f %q ]]; then exit 1; fi\nexec %q -S %q "$@"\n' \
+    "$BASH" "$ROOT/close-fails" "$REAL_TMUX" "$ROOT/s" > "$ROOT/real-bin/tmux"
   chmod +x "$ROOT/real-bin/tmux"
   tm() { env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
   trap 'tm kill-server 2>/dev/null || true' EXIT
@@ -34,18 +35,34 @@ if [[ "${1:-}" == --case ]]; then
   chmod +x "$ROOT/bin/claude-real"
   {
     printf '#!%s\n' "$BASH"
-    [[ "$MODE" != wrong ]] || printf 'export CLAUDE_CONFIG_DIR=%q\n' "$ROOT/home/.claude"
+    printf '[[ ! -f %q ]] || export CLAUDE_CONFIG_DIR=%q\n' "$ROOT/wrong-account" "$ROOT/home/.claude"
     printf 'exec %q "$@"\n' "$ROOT/bin/claude-real"
   } > "$ROOT/bin/claude"
   chmod +x "$ROOT/bin/claude"
   ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$ROOT/state" "$PWD"
-  RC=0
-  env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" ORCH_TMUX_SESSION=fixture \
-    LINEAR_TEAM= ORCH_LANE_HOST=local WORKTREE_CLI="$ROOT/bin/worktree" LANES_CLI="$ROOT/bin/lanes" \
-    OT_WT_LOG="$ROOT/worktree.log" ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SETTLE_MS=1 \
-    OVERSEE_WATCH_STATE_DIR="$ROOT/claims" \
-    "$OT" --tmux --state-dir "$ROOT/state" --harness claude --lane "$ROOT/home/.nclaude" \
-    --cmd "claude --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" KEN-1 > "$ROOT/launch.log" 2>&1 || RC=$?
+  launch() { # LOG LANE ITEM [FLAGS]
+    local log="$1" lane="$2" item="$3"
+    shift 3
+    RC=0
+    env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" ORCH_TMUX_SESSION=fixture \
+      LINEAR_TEAM= ORCH_LANE_HOST=local WORKTREE_CLI="$ROOT/bin/worktree" LANES_CLI="$ROOT/bin/lanes" \
+      OT_WT_LOG="$ROOT/worktree.log" OT_WT_FIXED="$ROOT/worktree-$item" ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SETTLE_MS=1 \
+      ORCH_OVERSEER_LANES=1 OVERSEE_WATCH_STATE_DIR="$ROOT/claims" \
+      "$OT" --tmux --state-dir "$ROOT/state" --harness claude --lane "$lane" \
+      --cmd "claude --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$@" "$item" > "$log" 2>&1 || RC=$?
+  }
+  [[ "$MODE" != wrong ]] || touch "$ROOT/wrong-account"
+  launch "$ROOT/launch.log" "$ROOT/home/.nclaude" KEN-1
+  if [[ "$MODE" == relaunch || "$MODE" == close-fails ]]; then
+    [[ "$RC" -eq 0 ]] || exit 72
+    "$SCRIPTS_DIR/workflow-state" --state-dir "$ROOT/state" get oversee \
+      '[.lanes[] | select(.item == "KEN-1")] | first' > "$ROOT/prior"
+    mv -- "$ROOT/launch.log" "$ROOT/first-launch.log"
+    rm -- "$ROOT/account"
+    touch "$ROOT/wrong-account"
+    [[ "$MODE" != close-fails ]] || touch "$ROOT/close-fails"
+    launch "$ROOT/launch.log" "$ROOT/home/.eclaude" KEN-1 --relaunch
+  fi
   # Baseline controls return before the child starts. Its account file is the
   # acknowledgement that this row reached the real exec path.
   for i in {1..100}; do [[ ! -f "$ROOT/account" ]] || break; sleep 0.02; done
@@ -54,9 +71,26 @@ if [[ "${1:-}" == --case ]]; then
   panes="$(tm list-panes -a -F '#{window_name}')"
   present=false
   ! grep -qxF KEN-1 <<<"$panes" || present=true
-  record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$ROOT/state" get oversee '[.lanes[]? | select(.item == "KEN-1") | .status] | first // "none"')"
-  jq -cn --argjson rc "$RC" --arg account "${account##*/}" --argjson pane "$present" --arg record "$record" \
-    '{rc:$rc,account:$account,pane:$pane,record:$record}' > "$ROOT/result"
+  record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$ROOT/state" get oversee '[.lanes[]? | select(.item == "KEN-1")] | first // null')"
+  extra='{}'
+  if [[ -f "$ROOT/prior" ]]; then
+    retained="$(jq -cn --slurpfile prior "$ROOT/prior" --argjson record "$record" \
+      '{prior_account: ($record.account == $prior[0].account), prior_harness: ($record.harness == $prior[0].harness),
+        mail_root: ($record.mail_root == $prior[0].mail_root), record_unchanged: ($record == $prior[0])}')"
+    refused_rc="$RC"
+    rm -- "$ROOT/wrong-account"
+    launch "$ROOT/next-launch.log" "$ROOT/home/.nclaude" KEN-2
+    next_record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$ROOT/state" get oversee \
+      '[.lanes[]? | select(.item == "KEN-2") | .status] | first // "none"')"
+    panes="$(tm list-panes -a -F '#{window_name}')"
+    next_present=false
+    ! grep -qxF KEN-2 <<<"$panes" || next_present=true
+    extra="$(jq -cn --argjson retained "$retained" --argjson next_rc "$RC" --arg next_record "$next_record" \
+      --argjson next_pane "$next_present" '$retained + {next_rc:$next_rc,next_record:$next_record,next_pane:$next_pane}')"
+    RC="$refused_rc"
+  fi
+  jq -cn --argjson rc "$RC" --arg account "${account##*/}" --argjson pane "$present" --argjson record "$record" \
+    --argjson extra "$extra" '{rc:$rc,account:$account,pane:$pane,record: ($record.status // "none")} + $extra' > "$ROOT/result"
   exit
 fi
 
@@ -67,6 +101,11 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 CONTROL="$(mutant_scripts custom-unchecked lib/lane-launch.sh)"
 orch_fixture_shared_libs "${CONTROL%/scripts}"
 mutate_file "$CONTROL/lib/lane-launch.sh" "printf 'custom\n'; return;" "printf 'unchecked\n'; return;"
+STOP_CONTROL="$(mutant_scripts relaunch-stop open-terminal)"
+orch_fixture_shared_libs "${STOP_CONTROL%/scripts}"
+mutate_file "$STOP_CONTROL/open-terminal" \
+  '[[ "$RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true' \
+  '[[ "$HOST_RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true'
 
 run_case() { # NAME SCRIPT MODE EXPECT
   local name="$1" script="$2" mode="$3" want="$4" rc=0 actual=missing
@@ -74,9 +113,11 @@ run_case() { # NAME SCRIPT MODE EXPECT
   mkdir -p "$RUN"
   env -i PATH="$PATH" HOME="$TMP_ROOT" timeout 20 "$BASH" "$TEST_DIR/open-terminal-lane-account.sh" \
     --case "$RUN" "$script" "$mode" > "$RUN/log" 2>&1 || rc=$?
-  [[ ! -f "$RUN/launch.log" ]] || cat "$RUN/launch.log" >> "$RUN/log"
+  for log in first-launch launch next-launch; do
+    [[ ! -f "$RUN/$log.log" ]] || cat "$RUN/$log.log" >> "$RUN/log"
+  done
   [[ ! -f "$RUN/result" ]] || actual="$(cat "$RUN/result")"
-  assert_eq "child=$rc $actual" "child=0 $want" "$name: a real fresh launch reports its actual account and fleet record" "$RUN/log"
+  assert_eq "child=$rc $actual" "child=0 $want" "$name: real account, pane, record and fleet admission" "$RUN/log"
 }
 
 run_case preserved "$SCRIPTS_DIR/open-terminal" preserved '{"rc":0,"account":".nclaude","pane":true,"record":"running"}'
@@ -86,6 +127,13 @@ if ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_process_env_readable ); th
   done <<ROWS
 wrong-account|$SCRIPTS_DIR/open-terminal|{"rc":1,"account":".claude","pane":false,"record":"none"}
 control-unchecked|$CONTROL/open-terminal|{"rc":0,"account":".claude","pane":true,"record":"running"}
+ROWS
+  while IFS='|' read -r name script mode want; do
+    run_case "$name" "$script" "$mode" "$want"
+  done <<ROWS
+relaunch-wrong|$SCRIPTS_DIR/open-terminal|relaunch|{"rc":1,"account":".claude","pane":false,"record":"stopped","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":false,"next_rc":0,"next_record":"running","next_pane":true}
+relaunch-close-fails|$SCRIPTS_DIR/open-terminal|close-fails|{"rc":1,"account":".claude","pane":true,"record":"running","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":true,"next_rc":1,"next_record":"none","next_pane":false}
+control-relaunch-stop|$STOP_CONTROL/open-terminal|relaunch|{"rc":1,"account":".claude","pane":false,"record":"running","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":true,"next_rc":1,"next_record":"none","next_pane":false}
 ROWS
 else
   printf '  skip wrong-account observations: no readable process environment\n'

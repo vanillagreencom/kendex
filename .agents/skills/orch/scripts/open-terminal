@@ -1620,13 +1620,13 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
 
 # How a resolved lane reaches the launched harness, and whether the pane can be
 # read back to confirm it, are lib/lane-launch.sh's one decision, shared with
-# every other launcher. Asked once per item and answered for local claude and
-# codex launches only: a --host launch runs its command on another machine,
+# every other launcher. Asked once per item for local account launches:
+# a --host launch runs its command on another machine,
 # where this PATH answers about the wrong one, and a --cmd template is the
 # caller's own command, not ours to rewrite.
 #
-# A --cmd template keeps the env prefix, which lane_launch_line renders for it
-# under the `unchecked` form. A HOSTED launch carries no lane env prefix at
+# A local --cmd template keeps the env prefix under the `custom` form, and its
+# account is read back. A HOSTED launch carries no lane env prefix at
 # all: its credential reaches the sandbox through `lane-host create`, which
 # takes the config dir as --account, so there is nothing local to prefix and
 # nothing local to read back.
@@ -3238,15 +3238,17 @@ launch_handoff() {
   ot_message lane-preparing "item=$item" "log=$log"
 }
 
-# Ends a foreground hosted relaunch in a fleet whose open_tmux failed after its
+# Ends a foreground relaunch in a fleet whose open_tmux failed after its
 # window opened, UNTAKEN_PANE. The window closes first, which retires its claim
 # and ends whatever the pane runs, and the record is written stopped only once
 # that close succeeded: a close that failed returns 1 with the record as it
 # read, tmux-failed naming the cause. lane_record_write keeps the fields the
 # next relaunch's route is judged on.
 launch_stop() {
+  local mail_root="$wt"
+  [[ "$LANE_HOST" == local ]] || mail_root="$remote_path"
   tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
-  lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" stopped && return 0
+  lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$mail_root" "" "$launched_at" stopped && return 0
   ot_message record-stop-failed "item=$item" "state=oversee" >&2
   return 1
 }
@@ -3701,11 +3703,11 @@ for raw in "${ITEMS[@]}"; do
         preparing=$((preparing + 1))
         continue
       fi
-      # Only a hosted relaunch whose open_tmux failed after its window opened
+      # Only a relaunch whose open_tmux failed after its window opened
       # ends through launch_stop. Any other failure keeps its record as it
       # read: a window that never opened started nothing, and one that opened
       # and took, record-write-failed after it, stands.
-      [[ "$HOST_RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true
+      [[ "$RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true
       [[ "$LANE_HOST" == local ]] || host_launch_ready || { failed=$((failed + 1)); continue; }
       failed=$((failed + 1))
       continue
