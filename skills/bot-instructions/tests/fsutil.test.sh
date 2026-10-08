@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pull request checkouts can put special-file links in the orphan scan.
-# A parent deadline bounds both open and read; a memory limit contains the
-# original /dev/zero read in the disposable current-read control.
+# A parent deadline bounds both open and read. /dev/null reaches EOF, so
+# the disposable current-read control cannot consume unbounded memory.
 
 . "$(dirname "$0")/lib/harness.sh"
 case "$(uname -s)" in MINGW* | MSYS*) export MSYS=winsymlinks:nativestrict ;; esac
@@ -27,14 +27,13 @@ target = root / "retired.md"
 target.write_bytes((root / ".github/instructions/code-review.md").read_bytes())
 fifo = root / "input.fifo"
 os.mkfifo(fifo)
-assert Path("/dev/zero").is_char_device(), "/dev/zero is required by this probe"
+device = Path("/dev/null")
+assert device.is_char_device(), "/dev/null is required by this probe"
 
 # Only the child reads the potentially blocking path. No FIFO writer exists.
 # The child selects the environment it needs for Python and git discovery.
 child = """
-import resource
 import sys
-resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
 sys.path.insert(0, sys.argv[1])
 from lib import cli
 sys.exit(cli.main(["check", "--repo", sys.argv[2]]))
@@ -51,6 +50,8 @@ def check(scripts):
     except subprocess.TimeoutExpired:
         return None, "deadline"
     first = done.stderr.splitlines()
+    if first and not first[0].startswith("bot-instructions: "):
+        sys.stderr.write(done.stderr)
     return done.returncode, first[0] if first else ""
 
 def refused(result):
@@ -58,8 +59,9 @@ def refused(result):
 
 # A clean starting tree rules out an unrelated unreadable source. The
 # regular link must produce an orphan finding, which proves its bytes read.
-assert check(package / "scripts")[0] == 0, "fixture does not check clean"
-for kind, destination in (("regular", target), ("device", Path("/dev/zero")), ("fifo", fifo)):
+baseline = check(package / "scripts")
+assert baseline[0] == 0, ("fixture does not check clean", baseline)
+for kind, destination in (("regular", target), ("device", device), ("fifo", fifo)):
     link.symlink_to(destination)
     assert link.is_symlink(), f"{kind}: fixture did not create a link"
     try:
@@ -69,7 +71,8 @@ for kind, destination in (("regular", target), ("device", Path("/dev/zero")), ("
         else:
             assert refused(actual), (kind, actual)
             control = check(current_read.parent)
-            assert not refused(control), (kind, "current-read control survived", control)
+            expected_control = (0, "") if kind == "device" else (None, "deadline")
+            assert control == expected_control, (kind, "current-read control", control)
             print(f"control: {kind} current read rejected: {control}")
             if kind == "fifo":
                 control = check(blocking_open.parent)

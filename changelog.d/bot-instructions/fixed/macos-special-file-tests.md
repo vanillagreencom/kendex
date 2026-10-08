@@ -1,0 +1,1 @@
+- Fix the macOS file-check test while keeping device and FIFO refusal controls.
