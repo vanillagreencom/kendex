@@ -628,7 +628,8 @@ table "$JSON" \
 
 echo "=== settled green checks respect the required set and current-head CI ==="
 # GitHub can register only request-copilot-review's successful check while
-# the new head's pull_request workflow is active. The budget exceeds the
+# the new head's workflow is active, including a push or manual dry run
+# from publish-homebrew.yml. The budget exceeds the
 # stale window, both without visible progress and after an older head showed
 # progress. Completed CI releases the hold; an unreadable read cannot do so.
 # Separate pull_request workflows can finish a required build while optional
@@ -639,6 +640,11 @@ REQUEST="STUB_PR_CHECKS_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$NEXT
 ACTIVE="STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-request-only-active.json"
 jq '.workflow_runs[0].status = "queued"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-queued.json"
 jq '.workflow_runs[0].status = "completed" | .workflow_runs[0].conclusion = "success"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-completed.json"
+jq '.workflow_runs[0].event = "push" | .workflow_runs[0].status = "queued"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-push-queued.json"
+jq '.workflow_runs[0].event = "push"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-push-active.json"
+jq '.workflow_runs[0].event = "workflow_dispatch" | .workflow_runs[0].status = "queued"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-manual-queued.json"
+jq '.workflow_runs[0].event = "workflow_dispatch"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-request-only-manual-active.json"
+jq '.workflow_runs[0].event = "workflow_dispatch"' "$TMP_ROOT/runs-request-only-completed.json" > "$TMP_ROOT/runs-request-only-manual-completed.json"
 printf '{"workflow_runs":null}\n' > "$TMP_ROOT/runs-unreadable.json"
 jq '.workflow_runs[0].name = "Docs"' "$FX/runs-request-only-active.json" > "$TMP_ROOT/runs-optional-docs.json"
 printf '[{"name":"build","state":"SUCCESS","bucket":"pass"},{"name":"docs","state":"IN_PROGRESS","bucket":"pending"}]\n' > "$TMP_ROOT/required-build-optional-docs.json"
@@ -646,6 +652,11 @@ OPTIONAL="STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-optional-docs.json,STUB_HEAD_
 table "$JSON" \
   "an unchanged request-only rollup stays pending beyond the stale window|||$REQUEST,$ACTIVE|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED failed=0 elapsed_seconds=300 runs_head=$NEXT_HEAD" \
   "a queued substantive run also holds the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-queued.json|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED" \
+  "a queued push run holds the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-push-queued.json|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300" \
+  "an in-progress push run holds the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-push-active.json|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300" \
+  "a queued manual run holds the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-manual-queued.json|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300" \
+  "an in-progress manual run holds the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-manual-active.json|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300" \
+  "a completed manual run releases the request-only rollup|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-manual-completed.json|rc=0 status=complete verdict=pass check.request=SUCCESS pending=0 elapsed_seconds=90" \
   "progress on the old head cannot pass request-only checks on the new head|||STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$DEFAULT_HEAD,STUB_NEXT_HEAD_SHA=$NEXT_HEAD,$ACTIVE|rc=1 status=timeout verdict=pending check.request=SUCCESS check.current-head+Actions=EXPECTED elapsed_seconds=300 runs_head=$NEXT_HEAD" \
   "completed substantive CI releases the request-only rollup after confirmation|||$REQUEST,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-request-only-completed.json|rc=0 status=complete verdict=pass check.request=SUCCESS pending=0" \
   "CI completing during the wait starts a fresh confirmation window|||STUB_PR_CHECKS_SEQUENCE=request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_HEAD_SHA=$NEXT_HEAD,$ACTIVE,STUB_ACTIONS_RUNS_RELEASE_AFTER=2,STUB_ACTIONS_RUNS_RELEASE_FIXTURE=$TMP_ROOT/runs-request-only-completed.json|rc=0 status=complete verdict=pass pending=0 elapsed_seconds=150" \

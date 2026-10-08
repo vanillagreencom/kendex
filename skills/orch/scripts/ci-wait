@@ -226,7 +226,7 @@ run, or a cancelled run with no newer or fresher sibling, stays terminal.
 A missing replacement reaches the timeout rather than passing.
 
 In default mode, or when --required-only cannot narrow the required set,
-the head's Actions run list must also show no active substantive-event run
+the head's Actions run list must also show no non-completed run
 before a settled green rollup can pass. An active run or an unreadable
 head/run lookup keeps the verdict pending, even if the only visible check
 is a completed review-request check or earlier polls saw checks in progress.
@@ -658,11 +658,12 @@ get_failed_run_id() {
 #                them and let the surviving statuses decide.
 #   terminal   - no such newer run, the newest one itself failed or was
 #                cancelled, or a failure cannot be attributed to a run.
-#   settled    - no failures and no substantive-event run remains active.
+#   settled    - no failures and no current-head run remains active.
 #   unavailable - the head or its run list could not be read. A pass waits;
 #                 a failure remains terminal, as with unattributable failures.
 # A green rollup with no failures still needs this read: after a head push,
-# GitHub can expose only a completed review-request check while CI is active.
+# GitHub can expose only a completed review-request check while any current-head
+# workflow is active, including push and manual dispatches.
 # Substantive events are the PR-driving dispatches: pull_request,
 # pull_request_review, pull_request_review_comment, merge_group. Anything
 # unattributable stays terminal so the waiter still fails closed, and a
@@ -719,10 +720,11 @@ superseding_run_state() {
     |
     def substantive:
       ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
-    ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
-    | if (.failed | length) == 0 then
-        if $head_in_flight then "active" else "settled" end
-      else [ .failed[]
+    if (.failed | length) == 0 then
+        if any($runs[]; (.status // "") != "completed") then "active" else "settled" end
+      else
+        ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
+        | [ .failed[]
       | runid as $rid
       | if $rid == null then "terminal"
         else
