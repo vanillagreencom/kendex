@@ -929,9 +929,9 @@ jobs:
       # One parse pass under a real Bash 3.2 over that roster and tools/. On
       # the Linux leg the shell comes from the bash:3.2 image under the
       # runner's Docker; on the macOS leg the PATH set above already leads to
-      # /bin/bash 3.2 and no container is started. The early report belongs to
-      # `tools/guard --full`, which runs this lane at development completion
-      # and so before any leg here. These two are independent entries of one
+      # /bin/bash 3.2 and no container is started. `tools/guard --full` also
+      # runs this lane when explicitly requested. Development completion uses
+      # a range and leaves this parse to CI. These are independent entries of one
       # matrix with no ordering between them, so neither is guaranteed to run
       # first; the Linux one is the faster by the figures above and normally
       # answers sooner.
@@ -1749,7 +1749,7 @@ jobs:
           GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && github.token || '' }}
 
   # The app ships on macOS. tools/guard --full checks the core and CLI Apple
-  # targets at development completion; these shards execute the tests on the
+  # targets when explicitly requested; these shards execute the tests on the
   # platform.
   cargo-macos:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}

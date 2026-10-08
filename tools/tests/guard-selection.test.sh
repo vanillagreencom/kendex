@@ -131,12 +131,80 @@ else
   bad 'input-note control changes the guard'
 fi
 
+# Reader comparisons can fail while the files remain readable. Normal runs
+# must run the whole set; scoped runs must refuse the unavailable evidence.
+git -C "$R" reset -q --hard "$BASE"
+printf '# Tools\n' > "$R/tools/README.md"
+git -C "$R" add tools/README.md
+git -C "$R" commit -q -m reader
+BASE="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main "$BASE"
+READER_GREP="$(command -v grep)"
+READER_SED="$(command -v sed)"
+mkdir -p "$TMP/reader-bin"
+cat > "$TMP/reader-bin/grep" <<'SH'
+#!/usr/bin/env bash
+if [ "${2:-}" = -e ] && [[ ${1:-} == -q[FE] ]]; then
+  count=0
+  [ ! -f "$READER_CALLS" ] || read -r count < "$READER_CALLS"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$READER_CALLS"
+  [ "$count" != "$READER_FAILURE" ] || exit 2
+fi
+exec "$READER_GREP" "$@"
+SH
+cat > "$TMP/reader-bin/sed" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  's/[]['*) [ "$READER_FAILURE" != sed ] || { printf 'sed\n' > "$READER_CALLS"; exit 2; } ;;
+esac
+exec "$READER_SED" "$@"
+SH
+chmod +x "$TMP/reader-bin/grep" "$TMP/reader-bin/sed"
+reader_failure() { # INPUT SCOPED FAILURE GUARD
+  git -C "$R" reset -q --hard "$BASE"
+  printf '# changed\n' >> "$R/$1"
+  : > "$SUITE_LOG"
+  rm -f -- "$TMP/reader-calls"
+  RC=0
+  OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    PATH="$TMP/reader-bin:$PATH" READER_GREP="$READER_GREP" READER_SED="$READER_SED" \
+    READER_CALLS="$TMP/reader-calls" READER_FAILURE="$3" DEV_VALIDATE_SCOPED="$2" SUITE_LOG="$SUITE_LOG" \
+    "$4" --selection --range "$BASE" 2>&1)" || RC=$?
+}
+for failure in 1 2 3 4 sed; do
+  for row in 'tools/README.md|false' '.github/workflows/skill-tests.yml|false' '.github/workflows/skill-tests.yml|true'; do
+    IFS='|' read -r input scoped <<<"$row"
+    reader_failure "$input" "$scoped" "$failure" "$GUARD"
+    if [ "$scoped" = true ]; then
+      [ "$RC" -ne 0 ] && [ ! -s "$SUITE_LOG" ] && [[ $OUT == *'guard: mapped-suites=2 '* ]] \
+        && ok "reader $failure failure refuses scoped input $input" || bad "reader $failure failure refuses scoped input $input" "$OUT"
+    else
+      [ "$RC" -eq 0 ] && [[ $OUT == *'all reason=unreadable '* ]] && [ ! -s "$SUITE_LOG" ] \
+        && ok "reader $failure failure selects all for $input" || bad "reader $failure failure selects all for $input" "$OUT"
+    fi
+  done
+done
+# The same injected failures must redden the contract when they are accepted
+# as no match. Keep all comparisons so the control still reaches the error.
+if mutant_guard 's/^        \*) return 2 ;;$/        *) ;; /; s/^  token=\(.*\) || return 2$/  token=\1 || true/'; then
+  for failure in 1 sed; do
+    reader_failure .github/workflows/skill-tests.yml true "$failure" "$MUTANT_TOOLS/guard"
+    [ -s "$SUITE_LOG" ] && [[ $OUT != *'guard: mapped-suites=2 '* ]] \
+      && ok "control: accepting reader $failure failure loses scoped refusal" || bad "control: accepting reader $failure failure loses scoped refusal" "$OUT"
+  done
+else
+  bad 'reader-failure control changes the guard'
+fi
+
 # Exercise the shipped aggregate assertion through range selection. This
 # isolated checkout keeps one tools suite so the routing fixture cannot
 # select itself while proving a workflow defect.
 actual="$TMP/aggregate-checkout"
 mkdir -p "$actual"
-git -C "$REPO" archive HEAD | tar -x -C "$actual"
+git -C "$REPO" ls-files -z > "$TMP/aggregate-files"
+tar -C "$REPO" --null -T "$TMP/aggregate-files" -cf "$TMP/aggregate-tree.tar"
+tar -xf "$TMP/aggregate-tree.tar" -C "$actual"
 for suite in "$actual"/tools/tests/*.sh; do
   case "${suite##*/}" in ci-aggregate.test.sh | run-all.sh) ;; *) rm -- "$suite" ;; esac
 done

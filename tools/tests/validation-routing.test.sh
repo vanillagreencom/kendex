@@ -64,6 +64,50 @@ for mode in full ci; do
     && ok "the runner's $mode request keeps local execution on range" || bad "the runner's $mode request keeps local execution on range" "$OUT"
 done
 
+# A committed documentation change must reach its reader when CI refuses
+# coverage. Passing HEAD as the base would hide the failing reader.
+printf 'tmp/\n' > "$R/.gitignore"
+git -C "$R" add -A
+git -C "$R" commit -q -m before-document
+BASE="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main "$BASE"
+mkdir -p "$R/docs" "$R/tools/tests"
+printf 'clean\n' > "$R/docs/routing.md"
+cat > "$R/tools/tests/routing-reader.test.sh" <<'SH'
+#!/usr/bin/env bash
+doc=docs/routing.md
+cat "$doc" >/dev/null
+printf 'reader\n' >> "$READER_LOG"
+grep -Fxq broken "$doc" && exit 1
+exit 0
+SH
+git -C "$R" add docs/routing.md tools/tests/routing-reader.test.sh
+git -C "$R" commit -q -m document-reader
+BASE="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main "$BASE"
+printf 'broken\n' > "$R/docs/routing.md"
+git -C "$R" add docs/routing.md
+git -C "$R" commit -q -m broken-document
+READER_LOG="$TMP/reader-log"
+export READER_LOG
+branch="$("$REPO/skills/orch/scripts/resolve-base-branch" "$R")"
+merge_base="$(git -C "$R" merge-base HEAD "origin/$branch")"
+for base in "$merge_base" HEAD; do
+  : > "$ROUTE_LOG"
+  : > "$READER_LOG"
+  RC=0
+  OUT="$(cd "$R" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_SELECTION_CMD \
+    PATH="$R/bin:$PATH" "$REPO/skills/orch/scripts/dev-validate-run" --worktree "$R" --validate-mode ci --base "$base" --poll 1 2>&1)" || RC=$?
+  if [ "$base" = HEAD ]; then
+    [ "$RC" -eq 0 ] && [ ! -s "$READER_LOG" ] && [[ $OUT == *validate=pass* ]] \
+      && ok 'control: HEAD hides the committed document failure' || bad 'control: HEAD hides the committed document failure' "$OUT"
+  else
+    [ "$RC" -ne 0 ] && [ "$(cat "$READER_LOG")" = reader ] && grep -qF -- "--range $BASE" "$ROUTE_LOG" \
+      && [[ $OUT == *validate=FAILING* ]] \
+      && ok 'CI fallback reaches the failing committed document reader' || bad 'CI fallback reaches the failing committed document reader' "$OUT"
+  fi
+done
+
 # Private settings regress each executable route. The same assertions redden.
 for setting in DEV_VALIDATE_CMD DEV_VALIDATE_SELECTION_CMD; do
   cp "$REPO/kendex.settings.toml" "$R/kendex.settings.toml"

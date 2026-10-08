@@ -24,7 +24,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ### Validation routing
 
-- In submit-pr § 1.1, reuse a passing local range result for the current commit before the first push. After the pull request opens, request validation with `dev-validate-run --validate-mode ci --base HEAD`. A failed local result blocks publication. CI and the merge queue hold the full validation record.
+- In submit-pr § 1.1, reuse a passing local range result for the current commit before the first push. After the pull request opens, resolve its base branch with `resolve-base-branch`, then resolve the branch merge base with `git merge-base HEAD origin/<base-branch>`. Request validation with `dev-validate-run --validate-mode ci --base <merge-base>`. A failed base lookup or local result blocks publication. Fix rounds keep their delegated round base. CI and the merge queue hold the full validation record.
 
 ### Owner messages
 
