@@ -64,8 +64,12 @@ elif ($f == research) then {data: {issues: page([
     issue("KEN-4"; "Done"; "completed"; ["research"]; {project: null, archivedAt: "2026-10-01T00:00:00.000Z"})])}}
 elif ($f.parent.state != null) then {data: {issues: page([
     issue("KEN-5"; "Todo"; "unstarted"; []; {project: null, parent: {id: "uuid-KEN-7", identifier: "KEN-7", title: "KEN-7"}}),
+    issue("KEN-8"; "Verifying"; "started"; []; {project: null, parent: {id: "uuid-KEN-7", identifier: "KEN-7", title: "KEN-7"}}),
     issue("KEN-6"; "Todo"; "unstarted"; []; {project: null, parent: {id: "uuid-KEN-7", identifier: "KEN-7", title: "KEN-7"},
         archivedAt: "2026-10-01T00:00:00.000Z", trashed: true})])}}
+elif ($f.parent.id != null) then {data: {issues: page([
+    $f.parent.id.in[] | select(. == "uuid-KEN-5")
+    | issue("KEN-9"; "Verifying"; "started"; []; {project: null, parent: {id: "uuid-KEN-5", identifier: "KEN-5", title: "KEN-5"}})])}}
 elif ($f.id != null) then {data: {issues: page([$f.id.in[] | select(. == "uuid-KEN-7")
     | issue("KEN-7"; "In Review"; "started"; []; {project: null})])}}
 else {data: {issues: page([])}} end)
@@ -77,7 +81,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 rc=0
 : >"$TMP_ROOT/calls"
 out=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" LINEAR_API_KEY_OVERRIDE=test-key \
-    CALLS="$TMP_ROOT/calls" bash .agents/skills/linear/scripts/linear.sh session-status --research-days 14 \
+    CALLS="$TMP_ROOT/calls" "$BASH" .agents/skills/linear/scripts/linear.sh session-status --research-days 14 \
     2>"$TMP_ROOT/err") || rc=$?
 assert_eq "session-status succeeds" "$rc" 0
 assert_jq "the research read asks for completed research updated since the cut" "$(jq -cs . "$TMP_ROOT/calls")" \
@@ -89,3 +93,6 @@ assert_eq "the research cut lies --research-days days back" \
 assert_jq "a research issue the research read returns is counted" "$out" '.research.count == 1'
 assert_jq "an archived or trashed project issue reaches no section" "$out" '[.issues.actionable[].id] == ["KEN-1"]'
 assert_jq "a trashed pending child is left out of pr_blockers" "$out" '[.pr_blockers[].id] == ["KEN-5"]'
+
+assert_jq "Verifying is absent from development blocker items" "$out" '[.pr_blockers[].id] | index("KEN-8") == null'
+assert_jq "Verifying is absent from development blocker child work" "$out" '[.pr_blockers[].children[].id] | index("KEN-9") == null'

@@ -15,6 +15,7 @@ trap 'rm -rf "${TMP:?}"' EXIT
 # sibling linear path, where it looks for the CLI.
 mkdir -p "$TMP/skills/orch" "$TMP/skills/linear/scripts"
 cp -R "$SKILL_DIR/scripts" "$TMP/skills/orch/scripts"
+cp -R "$SKILL_DIR/../linear/scripts/lib" "$TMP/skills/linear/scripts/lib"
 RW="$TMP/skills/orch/scripts/reconcile-work-items"
 cat >"$TMP/skills/linear/scripts/linear.sh" <<'STUB'
 #!/usr/bin/env bash

@@ -449,6 +449,18 @@ The long pass's events, checked and reported in this order:
                              settings. Reported on every long pass while it
                              stays due, so it stops once a report is written;
                              read only with --state
+  EVENT verifying-deadline <item> box=<N> deadline=<UTC>
+                             an open post-merge box reached its UTC deadline.
+                             Read its evidence, tick it and complete the same
+                             item, or comment failure and move it In Progress.
+                             A deadline alone does not prove failure. Emitted
+                             once per standing item/overdue-box set; ticking,
+                             leaving Verifying or changing deadlines resets it.
+  verifying <item> box=<N> deadline=<UTC> reading=<JSON> where=<JSON> why=<JSON>
+                             every open post-merge box from the long pass's
+                             tracker read, before active/queued lane filtering.
+                             Printed with the event block or heartbeat. An item
+                             with none prints verifying <item> boxes=0.
   EVENT heartbeat            --max-loops long passes with no event, after
                              the repeated parked-merged lines above. A line
                              `  failing <item> <key>` follows for every lane
@@ -474,7 +486,8 @@ The long pass's events, checked and reported in this order:
                              unjudged harness=<h>>` per item the tracker holds
                              as work the fleet owes that launch_queue lacks:
                              with LINEAR_TEAM, the team's In Progress and In
-                             Review items, one live read, a priority of 0 (none)
+                             Review items, from the long pass's one live read
+                             that also supplies Verifying boxes. A priority of 0 (none)
                              printed `-`; with none, every open PR of the first
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
@@ -1042,6 +1055,8 @@ ow_message() { # REASON FIELD=VALUE...
     time-failed) text='The current UTC time could not be read.' ;;
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
+    missing-linear) text='The tracker path requires the linear skill checklist library beside orch.' ;;
+    verifying-invalid) text='The Verifying item has invalid post-merge metadata or an open branch-provable box. Correct its checklist before verification.' ;;
     owed-roster-invalid) text='The account listing read for the owed items could not be put to them, so the heartbeat names none.' ;;
     owed-accounts-unread) text='lanes list failed under this host, so the owed items on it read unjudged this heartbeat. Its own words follow.' ;;
     merged-search-truncated) text='The merged pull requests naming the item in their title or body, since --since, reached the search limit, so the item'"'"'s own pull request may be past it and its merge unreported. No merged event is judged from a partial list.' ;;

@@ -3637,8 +3637,8 @@ check_report() {
 
 # The work the fleet owes and its launch queue lacks, one `owed` line per item,
 # as OWED_LINES. The tracker is the membership and launch_queue only the
-# order: with LINEAR_TEAM, every team item In Progress or In Review, one live
-# read; with none, every open pull request in the item repository, the first
+# order: with LINEAR_TEAM, every team item In Progress, In Review or
+# Verifying, one live read. Verifying is handled before development filtering; with none, every open pull request in the item repository, the first
 # --repo, whose head is a GitHub item's branch, issue-N, read whole by a
 # listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
 # pass a short set as the whole one. An item is owed nothing while its record
@@ -3665,6 +3665,7 @@ check_report() {
 # Without --state there is no queue to compare.
 OWED_PR_LIMIT=1000
 OWED_LINES=""
+VERIFYING_LINES=""
 # The heartbeat's own caches: one listing per host, one verdict per host,
 # harness and model, and the answers owed_accounts and owed_wall hand back.
 OWED_ACCOUNTS=""
@@ -3673,13 +3674,14 @@ OWED_LISTING=""
 OWED_VERDICT=""
 owed_read() {
   OWED_LINES=""
+  VERIFYING_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
   local errf="$WORK_DIR/owed.err" out items rows rc=0 n
   local id state priority lane host harness model delivery key verdict line asked answer
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review" --max --format=safe 2>"$errf")" || rc=$?
+    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review,Verifying" --max --format=safe 2>"$errf")" || rc=$?
     [[ "$rc" -eq 0 ]] \
       || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
     # Linear's priority 0 is No priority, which ranks after Low: it prints `-`.
@@ -3688,8 +3690,8 @@ owed_read() {
       | map(
           if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$"))) then .
           else error("tracker-field field=id value=\(.id | tojson)") end
-          | {id, priority: (if .priority == null or .priority == 0 then "-" else .priority end),
-             state: ({"In Progress": "in-progress", "In Review": "in-review"}[.state? | strings]
+          | {id, description: (.description // ""), priority: (if .priority == null or .priority == 0 then "-" else .priority end),
+             state: ({"In Progress": "in-progress", "In Review": "in-review", "Verifying": "verifying"}[.state? | strings]
                // error("tracker-field field=state value=\(.state | tojson)"))})' <<<"$out" 2>"$errf")" \
       || die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM"
   else
@@ -3701,6 +3703,11 @@ owed_read() {
     items="$(awk -F'\t' '$2 ~ /^issue-[0-9]+$/ { print $2 }' <<<"$out" \
       | jq -Rnc '[inputs | {id: ., state: "open-pr", priority: "-"}]' 2>"$errf")" \
       || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
+  fi
+  if [[ -n "${LINEAR_TEAM:-}" ]]; then
+    verifying_read "$items"
+    items="$(jq -c 'map(select(.state != "verifying"))' <<<"$items")" \
+      || die tracker-list-invalid "" "team=$LINEAR_TEAM"
   fi
   # One row per owed item on the unit separator, since a model id is the
   # launcher's to spell: id, state, priority, lane, then the host, harness and
@@ -3776,6 +3783,53 @@ owed_accounts() { # HOST
   OWED_ACCOUNTS+="$host"$'\t'"$OWED_LISTING"$'\n'
 }
 
+# Verification uses the same inventory as owed work, before queue and active
+# lane filtering. Deadlines remain per box in the issue description.
+verifying_read() { # SAFE_ITEMS
+  local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
+  local rows row id desc parsed lines overdue prior state="${PW_SEEN[0]}"
+  rows="$(jq -c '.[] | select(.state == "verifying")' <<<"$1")" \
+    || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+  # Rebuild deadline rows from the complete read. Leaving Verifying or ticking
+  # a box clears its edge key, so a later overdue box is new attention.
+  state="$(awk -F'\t' '$1 != "verifying-deadline" { print }' <<<"$state")"
+  if [[ -z "$rows" ]]; then
+    lane_row_commit "$state"
+    return 0
+  fi
+  [[ -r "$lib" ]] || die missing-linear "" "path=$lib"
+  # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
+  source "$lib"
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    id="$(jq -r '.id' <<<"$row")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+    desc="$(jq -r '.description + "."' <<<"$row")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+    parsed="$(done_when_parse "${desc%.}" '[]')" || die verifying-invalid "" "issue=$id"
+    jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<"$parsed" >/dev/null \
+      || die verifying-invalid "$parsed" "issue=$id"
+    lines="$(jq -r --arg id "$id" '
+      .boxes[] | select(.post_merge and (.checked | not))
+      | "verifying \($id) box=\(.number) deadline=\(.deadline) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)"' <<<"$parsed")" \
+      || die verifying-invalid "" "issue=$id"
+    [[ -n "$lines" ]] || lines="verifying $id boxes=0"
+    VERIFYING_LINES+="$lines"$'\n'
+    overdue="$(jq -r --argjson now "$PASS_NOW" '
+      .boxes[] | select(.post_merge and (.checked | not) and .deadline_epoch <= $now)
+      | "box=\(.number) deadline=\(.deadline)"' <<<"$parsed")" || die verifying-invalid "" "issue=$id"
+    [[ -n "$overdue" ]] || continue
+    prior="$(lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id")" \
+      || die state-read-failed "" "row=verifying-deadline" "issue=$id"
+    state="$(lane_row_set verifying-deadline "$state" "$id" "${overdue//$'\n'/|}")"
+    [[ "$prior" != "${overdue//$'\n'/|}" ]] || continue
+    while IFS= read -r row; do
+      echo "EVENT verifying-deadline $id $row"
+    done <<<"$overdue"
+    PASS_EVENT=1
+  done <<<"$rows"
+  VERIFYING_LINES="${VERIFYING_LINES%$'\n'}"
+  lane_row_commit "$state"
+}
+
 # The wall verdict of one host, harness and model, as OWED_VERDICT. `lanes
 # pick` judges it under that host exactly as a launch there is judged. Exit 0
 # is room; exit 3 with walled accounts is a wall, dated by the refusal's own
@@ -3838,7 +3892,6 @@ heartbeat() {
     open="$(security_mark_open "$baseline" "$repo" "$open")" || die state-read-failed "" "path=$file" "row=bot-fix"
     open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
-  owed_read
   hands="$(parked_merged_owed "$baseline")" || die state-read-failed "" "path=$file" "row=merged"
   # The current fleet's alone: a row clears on the item's next good read,
   # and an item that left the fleet is read no more.
@@ -3858,6 +3911,7 @@ heartbeat() {
     echo "account-roster accounts=$(grep -c . <<<"$ACCOUNT_ROSTER" || true)"
     [[ -z "$ACCOUNT_ROSTER" ]] || awk -F'\t' '{ print "account " $3 }' <<<"$ACCOUNT_ROSTER"
   fi
+  [[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"
   [[ -z "$OWED_LINES" ]] || printf '%s\n' "$OWED_LINES"
   pr_watch_context
   exit 0
@@ -3875,7 +3929,7 @@ heartbeat() {
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
 LONG_RETURNS=(LONG_EVENT LONG_FAILED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC)
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES)
 long_pass() {
   local i state_file
   PASS_EVENT=0
@@ -3904,6 +3958,7 @@ long_pass() {
     check_lane_long
     check_lanes
     check_accounts
+    owed_read
     check_report
   fi
   # Under names of their own, so sourcing them cannot overwrite the news this
@@ -4103,6 +4158,7 @@ run_end() {
     exit 2
   fi
   if [[ "$PASS_EVENT" -eq 1 ]]; then
+    [[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"
     pr_watch_context
     exit 0
   fi

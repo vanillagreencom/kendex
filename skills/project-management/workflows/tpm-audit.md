@@ -32,7 +32,9 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **issues**: read the JSON file and extract `TRACKER` (plus `REPOSITORY` for github) from the delegation's `Tracker:` line or the file's `tracker` field, following [audit-issues-input.md § Tracker](../schemas/audit-issues-input.md#tracker) for required context and inference. Extract `WORKTREE`, `PARENT_ISSUE`, `SOURCE`, `INPUT_ITEMS` from `items[]`, and the optional research-complete fields `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and `hierarchy_contract` (binding — § 7.0).
 
-**Done and Canceled issues are historical records.** Never recommend a change to their labels, agent, priority, or state — whichever set they arrive in, they take no disposition. They participate in relation analysis and duplicate detection as § 1.5 comparison evidence, which is the only way a Canceled issue reaches the analysis at all. Only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
+**Verifying issues retain live checks on the same merged item.** Keep them out of development candidate sets. Read them in the comparison inventory for relation and duplicate analysis.
+
+**Done and Canceled issues are historical records.** Never recommend a change to their labels, agent, priority, or state — whichever set they arrive in, they take no disposition. They participate in relation analysis and duplicate detection as § 1.5 comparison evidence, which is the only way a Canceled issue reaches the analysis at all. Only Backlog, Todo, In Progress, and In Review issues are candidates for development fixes. Verifying issues retain their post-merge checks and deadlines on the same item. The overseer handles them through the orch verification route.
 
 For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the requested ID in § 1.4. Analyze the resolved tracker issue, not a proposed creation; preserve its input `index` and `identifier` in the issue-mode output. Proposed entries use their supplied fields.
 
@@ -71,7 +73,7 @@ Fetch every project in ONE command. `projects list --state` matches one state ty
 ### 1.4 Fetch Input Issues
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Done" --max   # project mode
+.agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Verifying,Done" --max   # project mode
 .agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review" --max               # team mode
 .agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe                                     # issues mode, one call
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
@@ -98,7 +100,7 @@ gh issue view [N] --repo [REPOSITORY] --json body,comments                      
 Fetch the full backlog in ONE command:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done,Canceled" --max
+.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying,Done,Canceled" --max
 ```
 
 Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparing anything against it. Never loop `--project` over the projects from § 1.3. In team mode this is the § 1.4 input fetch with `Done` and `Canceled` added. `Canceled` is here as comparison evidence and nowhere else — a duplicate an issue already has, a relation it already carries, a child § 7.3 must count — never as an audit input. Neither state takes a disposition (§ 1.1), and the § 6 sweep proposes cancellations only from this set's active rows.

@@ -34,13 +34,16 @@ case "$query" in
   printf '%s' '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-1","body":"ok","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"},"issue":{"identifier":"CC-720","updatedAt":"2026-07-14T00:00:00Z"}}}}}___HTTP_CODE___200'
   ;;
 *"workflowStates(filter:"*)
-  printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-done"}]}}}___HTTP_CODE___200'
+  state="$(jq -r '.variables.name' <<<"$payload")"
+  if [[ "$state" == Verifying ]]; then state_id=state-verifying; else state_id=state-done; fi
+  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id}]}}}'
+  printf '___HTTP_CODE___200'
   ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
-  jq -cj --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:$d,state:{name:"In Review",type:"started"},assignee:null,project:null,projectMilestone:null,cycle:null,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
+  jq -cj --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:$d,state:{name:"Done",type:"completed"},assignee:null,project:null,projectMilestone:null,cycle:null,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
   printf '___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
@@ -48,7 +51,7 @@ case "$query" in
     printf '%s' '{"errors":[{"message":"update refused"}]}___HTTP_CODE___200'
     exit 0
   fi
-  jq -cj --argjson d "$description" '{data:{issueUpdate:{success:true,issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:(.variables.input.description // $d),state:{name:"Done",type:"completed"},assignee:null,project:null,projectMilestone:null,cycle:null,parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload"
+  jq -cj --argjson d "$description" '{data:{issueUpdate:{success:true,issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} else {name:"Done",type:"completed"} end),assignee:null,project:null,projectMilestone:null,cycle:null,parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload"
   printf '___HTTP_CODE___200'
   ;;
 *)
@@ -65,7 +68,7 @@ run_complete() { # DESCRIPTION_FILE PAYLOAD_LOG ARG...
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
     CURL_PAYLOAD_LOG="$payload_log" DESCRIPTION_FILE="$description_file" \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@")
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@")
 }
 
 # The issueUpdate payloads in LOG, one compact JSON object per line.
@@ -150,3 +153,58 @@ assert_jq "a Done-when with no box completes with zero ticked" "$out" \
   '.success == true and .done_when_checked == 0'
 assert_jq "a Done-when with no box sends no description" "$(updates "$log")" \
   '.variables.input.stateId == "state-done" and (.variables.input | has("description") | not)'
+
+
+# Real API updates decide Done/Verifying from the remaining boxes, including
+# the integration already setting Done. The expected state IDs are literal.
+merged=2026-10-01T00:00:00Z
+post='Post-merge: Read deployment health; Where: live service health; Why after merge: the service runs the merged release; Deadline: 2026-10-04T00:00:00Z'
+verification="$TMP_ROOT/verification.md"
+printf '%s\n' '## Done when' '- [ ] branch proof' "- [ ] $post" >"$verification"
+for row in '1|state-verifying|false' 'all|state-done|true'; do
+  IFS='|' read -r met expected checked <<<"$row"
+  log="$TMP_ROOT/verification-$met.jsonl"
+  rc=0
+  out="$(run_complete "$verification" "$log" CC-720 --post-merge-at "$merged" --done-when-met "$met" 2>"$TMP_ROOT/verification.err")" || rc=$?
+  assert_eq "post-merge $met completes successfully" "$rc" 0
+  update="$(updates "$log")"
+  assert_jq "post-merge $met sends the expected state ID" "$update" ".variables.input.stateId == \"$expected\""
+  assert_jq "post-merge $met preserves the open verification box" "$update" ".variables.input.description | contains(\"- [$([[ "$checked" == true ]] && echo x || echo ' ')] Post-merge:\")"
+done
+# Ordinary explicit completion still permits an open acceptance box.
+log="$TMP_ROOT/ordinary.jsonl"
+out="$(run_complete "$verification" "$log" CC-720 --done-when-met 1 2>"$TMP_ROOT/ordinary.err")"
+assert_jq "ordinary completion keeps Done semantics" "$(updates "$log")" '.variables.input.stateId == "state-done" and (.variables.input.description | contains("- [ ] Post-merge:"))'
+# CRLF is normalized before both numbering and deadline parsing.
+crlf="$TMP_ROOT/crlf.md"
+sed 's/$/\r/' "$verification" >"$crlf"
+log="$TMP_ROOT/crlf.jsonl"
+rc=0
+out="$(run_complete "$crlf" "$log" CC-720 --post-merge-at "$merged" --done-when-met 1 2>"$TMP_ROOT/crlf.err")" || rc=$?
+assert_eq "CRLF post-merge checklist is accepted" "$rc" 0
+assert_jq "CRLF checklist remains Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying" and (.variables.input.description | contains("\r") | not)'
+
+# Independent refusals must precede both the summary and the state mutation.
+# Columns: name | description's post-merge body | branch box checked | rule.
+while IFS='|' read -r name body branch rule; do
+  printf '%s\n' '## Done when' "- [$branch] branch proof" "- [ ] $body" >"$TMP_ROOT/invalid.md"
+  log="$TMP_ROOT/invalid-$name.jsonl"
+  rc=0
+  run_complete "$TMP_ROOT/invalid.md" "$log" CC-720 --post-merge-at "$merged" --summary proof \
+    >"$TMP_ROOT/invalid.out" 2>"$TMP_ROOT/invalid.err" || rc=$?
+  assert_ne "post-merge refuses $name" "$rc" 0
+  assert_not "post-merge $name refuses before any write" jq -se 'any(.[]; (.query | contains("commentCreate")) or (.query | contains("issueUpdate")))' "$log"
+  assert_jq "post-merge $name identifies its rule" "$(cat "$TMP_ROOT/invalid.err")" "$rule"
+done <<'ROWS'
+branch|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-02T00:00:00Z| |.error == "post-merge-checklist" and .unmet_branch_boxes == [1]
+fields|Post-merge: Read health; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
+late|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-04T00:00:01Z|x|.errors[0].rule == "post-merge-window"
+early|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-01T00:00:00Z|x|.errors[0].rule == "post-merge-window"
+date|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-09-31T12:00:00Z|x|.errors[0].rule == "post-merge-fields"
+ROWS
+# An invalid merge timestamp refuses before any API request.
+log="$TMP_ROOT/merge-timestamp.jsonl"
+rc=0
+run_complete "$verification" "$log" CC-720 --post-merge-at invalid >"$TMP_ROOT/stamp.out" 2>"$TMP_ROOT/stamp.err" || rc=$?
+assert_ne "invalid merge timestamp refuses" "$rc" 0
+assert_not "invalid merge timestamp refuses before any request" test -s "$log"

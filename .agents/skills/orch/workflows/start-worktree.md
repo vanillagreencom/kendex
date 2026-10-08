@@ -25,7 +25,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
    ```
 
-   A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked child: name the live blockers.
+   A Verifying item stops development preparation here. Its live readings belong to the overseer. A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked child: name the live blockers.
 
 4. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 
@@ -122,6 +122,15 @@ Both rows end at the caller's review step: § 3 here, or [small.md](small.md) §
 
 ## 4. Submit
 
+Before submit-pr can arm the PR, move a Linear development item to In Review. Read the item live first. A Done or Verifying item skips this mutation and continues through the existing merged-PR route in merge-pr. This state write belongs before arming because an armed PR can merge while submit-pr runs.
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
+```
+
+**GitHub** skips both Linear commands. A failed live read stops this state step.
+
 **Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, then writes § 3's verdict line and routes the pushed head, and its step 5 arms the head once § 3 has returned.
 
 ## 5. Finalize
@@ -148,15 +157,7 @@ Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 
 ### 5.1 Post Summary
 
-**Run Workflow**: `⤵ workflows/post-summary.md § 1-3 → § 5.2` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `pr_number` from § 4.
-
-### 5.2 Move The Issue To In Review
-
-**Skip if** `TRACKER=github`.
-
-```bash
-.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
-```
+**Run Workflow**: `⤵ workflows/post-summary.md § 1-3 → § 5.3` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `pr_number` from § 4.
 
 ### 5.3 Session Summary
 

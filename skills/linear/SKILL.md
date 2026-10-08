@@ -114,7 +114,7 @@ Normalized issue lists, gets, bulk gets, bundles, recursive children, relation r
 
 ## Option Behavior
 
-What each option accepts: `issues --help`. Refused before any write, on the create and update paths alike: `--cycle` on a non-UUID, `--project`/`--milestone`/`--assignee` on a reference that matches nothing, and `--priority` on an out-of-range value. Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled"). Verify with `statuses list`.
+What each option accepts: `issues --help`. Refused before any write, on the create and update paths alike: `--cycle` on a non-UUID, `--project`/`--milestone`/`--assignee` on a reference that matches nothing, and `--priority` on an out-of-range value. Resolve state names from `statuses list` for the issue's team. Verifying is a started state after In Review. It holds merged work with an open post-merge Done-when box. It is verification work for the overseer, not a development launch.
 
 A **name** selects one project on `issues create` / `update` / `bulk-update --project`, `projects get`, `projects list-dependencies`, `milestones --project`, and `initiatives add-project` / `remove-project`. There a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
 
@@ -124,7 +124,7 @@ A **name** selects one project on `issues create` / `update` / `bulk-update --pr
 - `issues activate` assigns an issue nobody is assigned to the user whose email is `KENDEX_USER_EMAIL`, in the same mutation, and never replaces an assignee. It says which happened in one stderr line, `assignee-set`, `assignee-kept` or `assignee-skipped` with its `cause=`, and in the result's `assignee` field; a skip still activates, and a failed issue read, users lookup or update fails the activation with no line (lines: `issues --help`). `--assignee` on create and update takes the same address form: a value containing `@` matches a user's whole email, case-insensitively; a user id is sent as given.
 - `issues bulk-update` is non-atomic: on partial failure it emits `partial: true` with per-issue results and exits non-zero.
 - `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command.
-- `issues complete` posts an optional summary before setting "Done". Its default output is JSON; `--format ids` or `--format=ids` prints only the identifier. A failed state update after a posted summary exits nonzero and reports on stderr in either format.
+- `issues complete` posts an optional summary before setting Done. With `--post-merge-at`, it validates the checklist against the merged PR's `mergedAt` and sets Verifying while a post-merge box remains open. It requires every branch-provable box to be checked. Each post-merge box uses the project-management skill's Done-when form and a deadline after merge and at most three days later. Without that option, explicit completion keeps its ordinary Done behavior. Its default output is JSON; `--format ids` or `--format=ids` prints only the identifier. A failed state update after a posted summary exits nonzero and reports on stderr in either format.
 
 ## validate-completion
 

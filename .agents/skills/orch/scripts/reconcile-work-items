@@ -5,7 +5,7 @@
 # never re-read. READ-ONLY: prints findings, mutates nothing; the caller
 # decides what to fix.
 #
-# Three checks over every issue of the project's LINEAR_TEAM, or of every team
+# Checks over every issue of the project's LINEAR_TEAM, or of every team
 # the Linear API key reaches where none is set, read live through the linear
 # skill (`issues list --max [--team]`, archived and trashed issues excluded):
 #   container-parked  a parent in a non-terminal state whose non-canceled
@@ -17,6 +17,10 @@
 #   done-unchecked    a Done item whose description still carries unchecked
 #                     `- [ ]` acceptance criteria — a partial-scope PR's
 #                     `Closes` magic word closed it
+#   verifying-overdue a Verifying post-merge box whose UTC deadline has passed
+#   verifying-empty   a Verifying issue with no open post-merge box
+#   verifying-invalid a Verifying description missing required box metadata or
+#                     still holding open branch-provable work
 #
 # Exit codes: 0 nothing to reconcile; 1 findings; 2 config/collection error.
 #
@@ -65,7 +69,10 @@ message() {
     invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
     container-parked) printf 'All non-canceled children are Done. Close the parent or state why it remains open.\n' ;;
     started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
-    done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. File each unmet box as its own item, or tick it with evidence.\n' ;;
+    done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
+    verifying-invalid) printf 'The Verifying checklist has invalid metadata or an open branch-provable box. Correct the item with evidence.\n' ;;
+    verifying-empty) printf 'The Verifying item has no open post-merge box. Complete the item.\n' ;;
+    verifying-overdue) printf 'The post-merge box has passed its deadline. Read its evidence and complete it, or record failure and return the item to In Progress.\n' ;;
     findings) printf 'The tracker state differs from the work.\n' ;;
     clean) printf 'Every issue state matches its work.\n' ;;
   esac
@@ -92,6 +99,10 @@ command -v jq >/dev/null 2>&1 || config_error missing-command command=jq
 
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 [ -x "$LINEAR" ] || config_error missing-linear "path=$LINEAR"
+CHECKLIST_LIB="$SCRIPT_DIR/../../linear/scripts/lib/issue-validation.sh"
+[ -r "$CHECKLIST_LIB" ] || config_error missing-linear "path=$CHECKLIST_LIB"
+# shellcheck source=../../../linear/scripts/lib/issue-validation.sh
+source "$CHECKLIST_LIB"
 TMPD="$(mktemp -d)" || config_error temporary-directory command=mktemp
 trap 'rm -rf -- "${TMPD:?}"' EXIT
 # A failed or partial read refuses: the linear skill reads every page or
@@ -142,7 +153,7 @@ done <"$TMPD/containers"
 now_epoch="$(date -u +%s)" || config_error clock-failed command=date
 jq -r '
   .[] | select((.trashed // false) == false and .archivedAt == null)
-  | select(.state.type == "started")
+  | select(.state.type == "started" and .state.name != "Verifying")
   | [.identifier, .title, .state.name, .updatedAt] | @tsv
 ' "$ISSUES" >"$TMPD/started" || config_error scan-failed scan=started
 while IFS=$'\t' read -r iid ititle istate iupdated; do
@@ -182,6 +193,33 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
   fi
   note started-stale "issue=$iid" "state=$istate" "age-hours=$age_hours" "pr=$pr_state" "title=$ititle"
 done <"$TMPD/started"
+
+# --- verifying ---------------------------------------------------------------
+jq -c '.[] | select((.trashed // false) == false and .archivedAt == null and .state.name == "Verifying")' \
+  "$ISSUES" >"$TMPD/verifying" || config_error scan-failed scan=verifying
+while IFS= read -r row; do
+  [ -n "$row" ] || continue
+  iid="$(jq -r '.identifier' <<<"$row")" || config_error scan-failed scan=verifying
+  description="$(jq -r '(.description // "") + "."' <<<"$row")" || config_error scan-failed scan=verifying
+  checklist="$(done_when_parse "${description%.}" '[]')" || config_error scan-failed scan=verifying
+  if ! jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<"$checklist" >/dev/null; then
+    note verifying-invalid "issue=$iid"
+    continue
+  fi
+  open_count="$(jq '[.boxes[] | select(.post_merge and (.checked | not))] | length' <<<"$checklist")" \
+    || config_error scan-failed scan=verifying
+  if [ "$open_count" -eq 0 ]; then
+    note verifying-empty "issue=$iid"
+    continue
+  fi
+  overdue="$(jq -r --argjson now "$now_epoch" '.boxes[]
+    | select(.post_merge and (.checked | not) and .deadline_epoch <= $now)
+    | "box=\(.number) deadline=\(.deadline)"' <<<"$checklist")" || config_error scan-failed scan=verifying
+  while IFS= read -r box; do
+    [ -n "$box" ] || continue
+    note verifying-overdue "issue=$iid" "$box"
+  done <<<"$overdue"
+done <"$TMPD/verifying"
 
 # --- done-unchecked ----------------------------------------------------------
 jq -r '

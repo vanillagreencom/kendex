@@ -330,23 +330,29 @@ Use the output as `MAIN_REPO_ROOT`.
 
 2. **Complete the issue and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
-   The lane owns tracker completion; the overseer does not substitute for it.
+   The lane owns completion after merge. The overseer owns the remaining post-merge checks on the same item.
 
-   Give every remainder from a cut its own issue or bundle before completion. A Done-when box that needs time, a deploy or the owner after merge gets its own item under [skill-rules.md § Coordination](../references/skill-rules.md#coordination), related to `[ISSUE]`. Move the box text into that item and remove the box from `[ISSUE]` with `issues update [ISSUE] --description-file [DESCRIPTION_FILE]` before completion.
+   Give every development remainder from a cut its own issue or bundle before completion. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's SKILL.md § Rules states. Each box names its reading, location, why the branch cannot prove it, and a UTC deadline no later than three days after merge.
 
-   A merged PR with a closing word leaves `[ISSUE]` Done; Linear's GitHub integration sets that state. When `[ISSUE]` was extracted, read it live and run the completion command to tick only the boxes the merge proves on the default branch. Never write a started state onto a Done item during merge completion. After a later failed check, the overseer or the owner reopens the item with evidence in a comment or files a bug.
+   Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and use the completion command below. It sets Done when no post-merge box remains open, and Verifying otherwise, including when the integration already set Done. The merge lane never writes In Review or In Progress. The overseer records evidence and ticks each verified box. A failed check gets an evidence comment before the overseer returns the same item to In Progress.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues get [ISSUE]
    ```
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --done-when-met [MET_BOXES]
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json mergedAt --jq .mergedAt
+   ```
+
+   Use that live UTC timestamp as `[MERGED_AT]`. An absent or unreadable timestamp is a tracker-completion failure.
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES]
    ```
 
    A rate-limited completion is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds, never recorded as a failed step.
 
-   `[MET_BOXES]` is the `## Done when` boxes that check found on the default branch: `all` when it found every box, otherwise their numbers in section order from 1, comma-separated. A section that holds no checkbox, only plain bullets, takes `all`, which ticks nothing and sets Done.
+   `[MET_BOXES]` names only boxes with recorded proof. Use `all` only when every box has proof. Otherwise use their numbers in section order from 1, comma-separated. When no new box has proof, omit `--done-when-met`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 

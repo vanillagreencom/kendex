@@ -470,7 +470,7 @@ get_session_status() {
             .parent.identifier as $parent_id |
             ($all[] | select(.identifier == $parent_id)) as $parent_issue |
             select($parent_issue.state.name == "In Review") |
-            select(.state.name != "In Review") |
+            select(.state.name != "In Review" and .state.name != "Verifying") |
             {
                 id: .identifier,
                 title,
@@ -481,7 +481,7 @@ get_session_status() {
                 parent_title: ($parent_issue.title // ""),
                 children: (
                     children_flat(0) |
-                    [.[] | select(.state_type != "completed" and .state_type != "canceled")]
+                    [.[] | select(.state_type != "completed" and .state_type != "canceled" and .state != "Verifying")]
                 )
             }
         ]

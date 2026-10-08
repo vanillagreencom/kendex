@@ -21,3 +21,13 @@ control_expect 'the research cut lies --research-days days back'
 control_replace scripts/commands/session-status.sh 1 \
     '    research_date=$(linear_utc_days_ago "$research_days") || return 1' \
     '    research_date=$(linear_utc_days_ago 1) || return 1'
+
+control_expect 'Verifying is absent from development blocker items'
+control_replace scripts/commands/session-status.sh 1 \
+    '            select(.state.name != "In Review" and .state.name != "Verifying") |' \
+    '            select(.state.name != "In Review") |'
+
+control_expect 'Verifying is absent from development blocker child work'
+control_replace scripts/commands/session-status.sh 1 \
+    '                    [.[] | select(.state_type != "completed" and .state_type != "canceled" and .state != "Verifying")]' \
+    '                    [.[] | select(.state_type != "completed" and .state_type != "canceled")]'

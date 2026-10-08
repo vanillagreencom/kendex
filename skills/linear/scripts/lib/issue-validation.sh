@@ -229,3 +229,45 @@ require_issue_reach() {
 
 	return 0
 }
+
+# One parser owns checklist numbering, ticking, and post-merge deadlines.
+# merge-pr supplies GitHub's mergedAt; watch and reconcile consume the same
+# per-box deadline in the description without a second tracker field.
+# Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT]
+done_when_parse() {
+    jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" '
+        def utc_epoch:
+            . as $stamp
+            | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then
+                (try (fromdateiso8601 | select((todateiso8601) == $stamp)) catch null) // null
+              else null end;
+        ($merged | if . == "" then null else utc_epoch end) as $merge_epoch
+        | reduce ($desc | gsub("\r\n"; "\n") | split("\n"))[] as $line
+            ({out: [], section: false, boxes: [], ticked: 0};
+            (if ($line | test("^## Done when\\s*$")) then .section = true
+             elif ($line | startswith("## ")) then .section = false
+             else . end)
+            | if .section and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
+                ((.boxes | length) + 1) as $n
+                | ($line | test("^\\s*[-*] \\[ \\]")) as $open
+                | ($open and ($met == "all" or ($met | any(.[]; . == $n)))) as $tick
+                | ($line | sub("^\\s*[-*] \\[[ xX]\\]\\s*"; "")) as $body
+                | ($body | startswith("Post-merge:")) as $post
+                | (if $post then
+                    (try ($body | capture("^Post-merge: (?<reading>.+); Where: (?<where>.+); Why after merge: (?<why>.+); Deadline: (?<deadline>[^; ]+)$")) catch null) // {}
+                   else {} end) as $fields
+                | ($fields.deadline // "" | utc_epoch) as $deadline_epoch
+                | .boxes += [({number: $n, checked: (($open | not) or $tick), post_merge: $post,
+                               text: $body, deadline_epoch: $deadline_epoch} + $fields)]
+                | if $tick then .out += [$line | sub("\\[ \\]"; "[x]")] | .ticked += 1
+                  else .out += [$line] end
+              else .out += [$line] end)
+        | . as $r
+        | {description: ($r.out | join("\n")), ticked: $r.ticked, boxes: $r.boxes,
+           missing: (if $met == "all" then [] else [$met[] | select(. > ($r.boxes | length))] | unique end),
+           errors: [$r.boxes[] | select(.post_merge)
+                | if .deadline_epoch == null or any([.reading, .where, .why][]; test("\\S") | not) then {box: .number, rule: "post-merge-fields"}
+                  elif $merged != "" and .deadline_epoch != null and ($merge_epoch == null or .deadline_epoch <= $merge_epoch or .deadline_epoch > ($merge_epoch + 259200))
+                    then {box: .number, rule: "post-merge-window"}
+                  else empty end]}'
+}

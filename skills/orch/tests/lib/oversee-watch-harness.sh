@@ -46,6 +46,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/repo/.agents/skills/linear"
 # Load-bearing on the caller: these `git -C` calls, and `run_watch`'s child
 # below, are only sandboxed because the suite sourcing this harness sourced
 # lib/git-env.sh first. `-C` does not neutralize an inherited git environment.
@@ -524,6 +525,7 @@ cat > "$TMP_ROOT/bin/linear-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
+printf '%s\n' "$*" >> "$STUB_DIR/tracker.args.all"
 states=""
 args=("$@")
 for i in "${!args[@]}"; do

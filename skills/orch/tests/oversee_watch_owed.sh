@@ -152,7 +152,7 @@ echo "=== oversee-watch owed items ==="
 world owed
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review --max --format=safe" \
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying --max --format=safe" \
   "the owed items are one live read of the team's In Progress and In Review items" "$ERR"
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
@@ -267,6 +267,116 @@ object|{"id":"KEN-2","state":"In Progress"}
 bad_id|[{"id":"KEN 2","state":"In Progress","priority":2}]
 ROWS
 
+
+# Verifying membership comes from the same read as owed development. KEN-1
+# has an active record and KEN-4 is queued; both still print every box.
+verifying_world() {
+  world "$1"
+  local description
+  description='## Done when
+- [x] branch proof
+- [ ] Post-merge: Read deployed health; Where: live service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z
+- [ ] Post-merge: Read consumer refresh; Where: consumer PR; Why after merge: needs rollout; Deadline: 2026-10-03T00:00:00Z'
+  jq --arg d "$description" 'map(if .id == "KEN-1" or .id == "KEN-4" then .state = "Verifying" | .description = $d else . end)' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/verifying.json"
+  mv -- "$STUB_DIR/verifying.json" "$STUB_DIR/tracker.out"
+  jq -nr '"2026-10-02T00:00:00Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+}
+verification_lines() { awk '/^verifying /' <<<"$OUT"; }
+verification_events() { awk '/^EVENT verifying-deadline /' <<<"$OUT"; }
+want_lines='verifying KEN-1 box=2 deadline=2026-10-02T00:00:00Z reading="Read deployed health" where="live service" why="needs deployment"
+verifying KEN-1 box=3 deadline=2026-10-03T00:00:00Z reading="Read consumer refresh" where="consumer PR" why="needs rollout"
+verifying KEN-4 box=2 deadline=2026-10-02T00:00:00Z reading="Read deployed health" where="live service" why="needs deployment"
+verifying KEN-4 box=3 deadline=2026-10-03T00:00:00Z reading="Read consumer refresh" where="consumer PR" why="needs rollout"'
+want_events='EVENT verifying-deadline KEN-1 box=2 deadline=2026-10-02T00:00:00Z
+EVENT verifying-deadline KEN-4 box=2 deadline=2026-10-02T00:00:00Z'
+verifying_world verifying_deadline
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(verification_events)" "rc=0 $want_events" "the deadline raises attention for active and queued verification" "$ERR"
+assert_eq "$(verification_lines)" "$want_lines" "every Verifying box and deadline remains visible" "$ERR"
+assert_eq "$(owed KEN-1)$(owed KEN-4)" "--" "Verifying never becomes owed development" "$ERR"
+# The next pass has the same deadline keys: it prints the boxes at heartbeat
+# without a second deadline event or another tracker inventory read.
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(verification_events)" "rc=0 " "a standing deadline emits once" "$ERR"
+assert_eq "$(verification_lines)" "$want_lines" "the heartbeat carries the same Verifying inventory" "$ERR"
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying --max --format=safe" "verification shares the owed inventory" "$ERR"
+assert_eq "$(wc -l <"$STUB_DIR/tracker.args.all" | tr -d ' ')" 2 "two passes use two inventory reads" "$ERR"
+verifying_world verifying_future
+jq -nr '"2026-10-01T23:59:59Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(verification_events)" "rc=0 " "a future deadline raises no event" "$ERR"
+assert_eq "$(verification_lines)" "$want_lines" "future checks stay visible" "$ERR"
+# A malformed box fails the read instead of losing verification silently.
+verifying_world verifying_invalid
+jq 'map(if .id == "KEN-1" then .description = "## Done when\n- [ ] Post-merge: Read health" else . end)' \
+  "$STUB_DIR/tracker.out" >"$STUB_DIR/invalid.json"
+mv -- "$STUB_DIR/invalid.json" "$STUB_DIR/tracker.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC key=$(grep -c '^oversee-watch: verifying-invalid issue=KEN-1$' "$ERR" || true)" "rc=2 key=1" "invalid verification refuses the pass" "$ERR"
+
+# The watcher refuses a Verifying item that still has branch work. This is
+# distinct from a post-merge box whose required deadline fields are absent.
+verifying_world verifying_branch_open
+jq 'map(if .id == "KEN-1" then .description |= sub("\\[x\\] branch proof"; "[ ] branch proof") else . end)' \
+  "$STUB_DIR/tracker.out" >"$STUB_DIR/branch-open.json"
+mv -- "$STUB_DIR/branch-open.json" "$STUB_DIR/tracker.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC key=$(grep -c '^oversee-watch: verifying-invalid issue=KEN-1$' "$ERR" || true)" "rc=2 key=1" "open branch work refuses verification" "$ERR"
+for validation in fields branch; do
+  MUTANT_DIR="$TMP_ROOT/verifying-validation-$validation"
+  MUTANT_WATCH="$(mutant_scripts "verifying-validation-$validation/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  old="jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<\"\$parsed\" >/dev/null"
+  if [[ "$validation" == fields ]]; then
+    new="jq -e 'all(.boxes[]; .checked or .post_merge)' <<<\"\$parsed\" >/dev/null"
+    description='## Done when
+- [ ] Post-merge: Read health'
+  else
+    new="jq -e '(.errors | length) == 0' <<<\"\$parsed\" >/dev/null"
+    description='## Done when
+- [ ] branch proof
+- [ ] Post-merge: Read health; Where: service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z'
+  fi
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  verifying_world "verifying_validation_$validation"
+  jq --arg d "$description" 'map(if .id == "KEN-1" then .description = $d else . end)' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/validation.json"
+  mv -- "$STUB_DIR/validation.json" "$STUB_DIR/tracker.out"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC" "rc=0" "control: missing $validation check violates verification refusal" "$ERR"
+done
+
+# Must-fail controls retain the executable watch and change one rule each.
+for control in membership event filter; do
+  MUTANT_DIR="$TMP_ROOT/verifying-mutant-$control"
+  MUTANT_WATCH="$(mutant_scripts "verifying-mutant-$control/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  case "$control" in
+    membership) mutate_file "$MUTANT_WATCH" 'In Progress,In Review,Verifying' 'In Progress,In Review' ;;
+    event) mutate_file "$MUTANT_WATCH" 'and .deadline_epoch <= $now' 'and false' ;;
+    filter) mutate_file "$MUTANT_WATCH" 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"' 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"; VERIFYING_LINES=""' ;;
+  esac
+  verifying_world "verifying_control_$control"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  if [[ "$control" == filter ]]; then
+    if [[ "$(verification_lines)" != "$want_lines" ]]; then
+      pass "control: the missing boxes violate the listing contract"
+    else
+      fail "control: the missing boxes violate the listing contract" "$OUT"
+    fi
+  else
+    if [[ "$(verification_events)" != "$want_events" ]]; then
+      pass "control: $control violates the deadline event contract"
+    else
+      fail "control: $control violates the deadline event contract" "$OUT"
+    fi
+  fi
+  assert_eq "rc=$RC" "rc=0" "control: $control reaches the watch result" "$ERR"
+done
+
 echo "=== must-fail controls ==="
 # Rows, on `@` since the replaced text carries `|`: the world it runs in @
 # name @ text the mutant replaces @ its replacement @ item, or `notices` @ the
@@ -278,6 +388,7 @@ while IFS='@' read -r setup name old new item want; do
   MUTANT_DIR="$TMP_ROOT/owed-mutant-$MUTANT_N"
   MUTANT_WATCH="$(mutant_scripts "owed-mutant-$MUTANT_N/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   mutate_file "$MUTANT_WATCH" "$old" "$new"
   "$setup" "owed_mutant_$name"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"

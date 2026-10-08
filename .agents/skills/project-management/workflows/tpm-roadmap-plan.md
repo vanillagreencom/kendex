@@ -58,7 +58,7 @@ Store `id`, `name`, `state`, `description`, `content` per project.
 Fetch every project's issues in ONE command — never loop `--project` per project:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
+.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying,Done" --max
 ```
 
 Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison, for the in-scope rows alone.
