@@ -152,6 +152,57 @@ assert_contains "$out" "Hosted question" "the hosted ask's text follows its even
 assert_contains "$(cat "$STUB_DIR/host.log")" "$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl" \
   "the transport call log names the remote path the pass read" "$err"
 
+# The launcher can start a hosted lane before either mailbox file exists.
+# The watch also reads lane state. Each mailbox invocation gets its own log,
+# so those separate reads do not count as mail probes.
+hosted_absent_passes() { # MAIL_READER: sets PROBE_COUNTS
+  local reader="$1" pass_number=0 log out err
+  new_case mail_hosted_absent
+  mail_reset KEN-10
+  REMOTE_ROOT=/srv/lane/ken-10
+  REMOTE_DISK="$STUB_DIR/remote"
+  mkdir -p "$REMOTE_DISK$REMOTE_ROOT"
+  printf 'gitdir: /srv/clone/.git/worktrees/ken-10\n' > "$REMOTE_DISK$REMOTE_ROOT/.git"
+  cat > "$STUB_DIR/lane-mail-reader" <<'MAIL_READER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == drain ]]; then
+  # The parent suite owns these logs until it reads their counts.
+  LANE_HOST_STUB_LOG="$(mktemp -- "$MAIL_PASS_LOG.XXXXXX")"
+  export LANE_HOST_STUB_LOG
+fi
+exec "$MAIL_PASS_READER" "$@"
+MAIL_READER
+  chmod +x "$STUB_DIR/lane-mail-reader"
+  err="$STUB_DIR/probes.err"
+  out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+    LANE_HOST_STUB_DIR="$REMOTE_DISK" OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-reader" \
+    MAIL_PASS_READER="$reader" MAIL_PASS_LOG="$STUB_DIR/mail-pass" -- \
+    --max-loops 2 --item KEN-10 --hosted "KEN-10=$REMOTE_ROOT" 2>"$err")"
+  assert_eq "$(head -1 <<<"$out")" 'EVENT heartbeat loops=2 interval=0s since=none' \
+    "an absent hosted mailbox stays silent through repeated mail passes" "$err"
+  PROBE_COUNTS=""
+  for log in "$STUB_DIR"/mail-pass.*; do
+    [[ -f "$log" ]] || continue
+    pass_number=$((pass_number + 1))
+    PROBE_COUNTS="$PROBE_COUNTS $(awk '/^touch / { count++ } END { print count + 0 }' "$log")"
+  done
+  assert_le 3 "$pass_number" "the real reader completed at least three hosted mail passes" "$err"
+}
+hosted_absent_passes "$LANE_MAIL"
+for PROBES in $PROBE_COUNTS; do
+  assert_le "$PROBES" 1 "each hosted mail pass probes an absent mailbox at most once"
+done
+
+ABSENT_MUTANT="$(mutant_scripts absent/orch lane-mail)/lane-mail" || exit 1
+mutate_file "$ABSENT_MUTANT" \
+  'if [ "$rc" -ne 2 ] || [ "$LM_HOST_ANSWERED" -eq 0 ]; then lm_host_answers; fi' \
+  'lm_host_answers'
+hosted_absent_passes "$ABSENT_MUTANT"
+for PROBES in $PROBE_COUNTS; do
+  assert_le 2 "$PROBES" "control: without host proof a mail pass takes repeated probes"
+done
+
 new_case mail_hosted_invalid
 err="$TMP_ROOT/hosted-bad"
 out="$(run_watch -- --max-loops 1 --item KEN-10 --hosted 'KEN 10=/srv' 2>"$err")" && rc=0 || rc=$?

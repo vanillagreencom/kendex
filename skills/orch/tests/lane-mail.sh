@@ -1006,7 +1006,7 @@ host_lm() { # ARGS... — HOST_ENV adds stub knobs
   OUT="$(cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
     LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_LIB="$REPO_ROOT/skills/orch/scripts/lib" \
     ${HOST_ENV[@]+"${HOST_ENV[@]}"} \
-    "$LANE_MAIL" "$@" 2>"$TMP_ROOT/err")" || RC=$?
+    "${LANE_MAIL_BIN:-$LANE_MAIL}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(head -n 1 "$TMP_ROOT/err")"
   HOST_ENV=()
 }
@@ -1202,6 +1202,28 @@ host_lm drain --item TEST-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=TEST-1 state=hosted" \
   "an unreachable host's refusal carries the state its provider reports"
 
+# A drain starts with to-lane.jsonl. No prior cat or probe has proved this host.
+while IFS='|' read -r label cat_status host_status expected; do
+  HOST_ENV=(LANE_HOST_STUB_CAT_STATUS="$cat_status" LANE_HOST_STUB_STATUS="$host_status")
+  host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0 --receipts
+  assert_eq "$RC=$ERR=$OUT" "2=lane-mail: $expected=" \
+    "$label refuses before it prints an empty mailbox"
+done <<'READ_FAILURES'
+read-error|1|0|mail-read-failed=KEN-2
+transport-error|255|0|mail-read-failed=KEN-2
+all-verbs-exit-2|0|2|host-unreachable=KEN-2 state=unknown
+READ_FAILURES
+
+# A successful mailbox read proves a missing numbering sidecar and cursor.
+PROOF_BOX="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/PROOF-1"
+mkdir -p "$PROOF_BOX"
+: > "$PROOF_BOX/to-lane.jsonl"
+: > "$STUB_LOG"
+HOST_ENV=(LANE_HOST_STUB_TOUCH_STATUS=2)
+host_lm drain --item PROOF-1 --root "$REMOTE_ROOT" --host --after 0 --receipts
+assert_eq "$RC=$(grep -c '^touch ' "$STUB_LOG" || :)" "0=0" \
+  "a successful cat proves later absent files without a touch"
+
 # A transfer that dies partway adds nothing, and the send says so.
 new_lane hosted_append
 append_survives
@@ -1281,6 +1303,15 @@ mutant_lib() {
   MUTANT_LIB="$dir/lib"
   MUTANT_LIB_BIN="$dir/lane-mail"
 }
+
+mutant first_missing_without_proof \
+  'if [ "$rc" -ne 2 ] || [ "$LM_HOST_ANSWERED" -eq 0 ]; then lm_host_answers; fi' \
+  'if [ "$rc" -ne 2 ]; then lm_host_answers; fi'
+HOST_ENV=(LANE_HOST_STUB_STATUS=2)
+host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0 --receipts
+assert_eq "$RC=$(count_line)" "0=count=0" \
+  "control: without the first probe an unreachable host reads as empty"
+unset LANE_MAIL_BIN
 
 # The overseer answer through the cursor-backed read the watch makes, from
 # the start of PEER_A's mailbox: its peek hands the peer's answer over.

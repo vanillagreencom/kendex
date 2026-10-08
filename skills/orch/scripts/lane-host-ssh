@@ -32,8 +32,14 @@ def notice(key, **values):
 
 def remote(row, script, *args, data=None, accept=()):
     """Run Bash through SSH; quote every argument for the remote login shell."""
+    control_dir = Path.home() / ".cache" / "kendex-ssh"
+    control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    control_dir.chmod(0o700)
     command = shlex.join(["bash", "-c", "set -euo pipefail\n" + script, "lane-host-ssh", *args])
-    result = subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "--", row["target"], command],
+    # Keep the master past the mail interval; OpenSSH reconnects if it is gone.
+    result = subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlMaster=auto",
+                             "-o", "ControlPersist=60", "-o", f"ControlPath={control_dir}/%C",
+                             "--", row["target"], command],
                             input=data if data is not None else b"", stdout=subprocess.PIPE)
     if result.returncode != 0 and result.returncode not in accept:
         notice("remote-failed", target=row["target"], exit=result.returncode)

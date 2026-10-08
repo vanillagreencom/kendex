@@ -461,6 +461,8 @@ caller's own record.
 A hosted read that fails is never read as an empty mailbox. `lane-host cat`
 exits 2 for a file that is not there, and the dispatcher exits 2 for a host it
 refuses, so a failed read confirms the host with `lane-host touch` first. A
+successful read or probe proves later absent files in the same invocation;
+every other failed read still probes. A
 failed probe is `host-unreachable`, carrying the host's `state=` from
 `lane-host list` because a stopped host is started and a gone one relaunched.
 A probe that answers reads 2 as a mailbox the lane has not opened and every
@@ -1061,15 +1063,17 @@ lm_one_spelling() {
 [ "$HOST" -eq 1 ] || lm_one_spelling
 
 # A transport call that failed is a host out of reach or a provider that
-# answered and declined, and only the probe tells them apart. It runs for every
-# failed call, exit 2 included: the dispatcher refuses a host it cannot use
-# with that same 2. An unreachable host is refused here, carrying the state an
+# answered and declined, and only the probe tells them apart. The dispatcher
+# refuses a host it cannot use with the same 2 as an absent file. An unreachable
+# host is refused here, carrying the state an
 # operator acts on; a host that answers returns, and the caller names what its
-# own verb could not do.
+# own verb could not do. A successful read or probe also proves later missing
+# files in this invocation; a non-2 failure still takes a fresh probe.
+LM_HOST_ANSWERED=0
 lm_host_answers() {
   local probe_rc=0
   "$SCRIPT_DIR/lane-host" touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
-  [ "$probe_rc" -ne 0 ] || return 0
+  [ "$probe_rc" -ne 0 ] || { LM_HOST_ANSWERED=1; return 0; }
   lm_host_busy "$probe_rc" "$WORK_DIR/probe.err"
   REFUSE_EXTRA="state=$(lm_host_state)"
   refuse host-unreachable "$ITEM" "$(cat -- "$WORK_DIR/probe.err")"
@@ -1107,6 +1111,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
   fi
   "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
   if [ "$rc" -eq 0 ]; then
+    LM_HOST_ANSWERED=1
     case "$1" in
       "$TO_LANE" | "$TO_OVERSEER")
         lm_fetch "$1.numbering" "$2.numbering"
@@ -1117,7 +1122,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
     return 0
   fi
   lm_host_busy "$rc" "$WORK_DIR/host.err"
-  lm_host_answers
+  if [ "$rc" -ne 2 ] || [ "$LM_HOST_ANSWERED" -eq 0 ]; then lm_host_answers; fi
   [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
   # The host answers and the file is not there: a lane that has not opened its
   # mailbox. The failed read wrote whatever it managed; start from nothing.

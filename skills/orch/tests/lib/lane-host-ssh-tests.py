@@ -33,6 +33,7 @@ class SshHostTests(unittest.TestCase):
         self.env.update(REAL_GIT=shutil.which("git"), REAL_CHMOD=shutil.which("chmod"),
                         REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
                         SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
+                        HOME=str(self.root),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
@@ -173,6 +174,54 @@ exec git "$@"
                       "commit", "-qm", "seed render")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
                            check=True, capture_output=True)
+
+    def connection_reuse(self):
+        """Model key exchanges at the OpenSSH option boundary, not real SSH latency."""
+        self.executable(self.bin / "ssh", '''#!/usr/bin/env python3
+import hashlib, os, pathlib, subprocess, sys
+words = sys.argv[1:]
+options = dict(words[i + 1].split("=", 1) for i, word in enumerate(words) if word == "-o")
+target = words[words.index("--") + 1]
+path = options.get("ControlPath")
+socket = pathlib.Path(path.replace("%C", hashlib.sha1(target.encode()).hexdigest())) if path else None
+reuse = options.get("ControlMaster") == "auto" and int(options.get("ControlPersist", "0")) > 20
+if not reuse or socket is None or not socket.exists():
+    with open(os.environ["SSH_TEST_EXCHANGES"], "a") as log:
+        log.write("exchange\\n")
+    if reuse and socket is not None:
+        socket.touch()
+child_env = {key: os.environ[key] for key in ("HOME", "PATH")}
+sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=child_env).returncode)
+''')
+        path = self.root / "read-file"
+        path.write_bytes(b"remote bytes\n")
+        log = self.root / "exchanges"
+        env = dict(SSH_TEST_EXCHANGES=str(log), SSH_TEST_BASH=shutil.which("bash"))
+        for _ in range(2):
+            result = self.call("cat", "--item", "TEST-1", str(path), **env)
+            self.assertEqual((result.returncode, result.stdout), (0, path.read_bytes()), result.stderr)
+        return log, path, env
+
+    def test_cat_reuses_connection_and_reconnects_after_socket_removal(self):
+        log, path, env = self.connection_reuse()
+        self.assertEqual(log.read_text().splitlines(), ["exchange"])
+        directory = self.root / ".cache/kendex-ssh"
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        for socket in directory.iterdir():
+            socket.unlink()
+        result = self.call("cat", "--item", "TEST-1", str(path), **env)
+        self.assertEqual((result.returncode, result.stdout), (0, path.read_bytes()), result.stderr)
+        self.assertEqual(log.read_text().splitlines(), ["exchange", "exchange"])
+
+    def test_control_cat_without_connection_reuse_exchanges_each_time(self):
+        original = self.script.read_text()
+        rule = '"ControlMaster=auto"'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(rule, '"ControlMaster=no"'))
+            log, _, _ = self.connection_reuse()
+        self.assertEqual(log.read_text().splitlines(), ["exchange", "exchange"])
 
     def test_prepare_reuse_and_account_protocol(self):
         first = self.create()
