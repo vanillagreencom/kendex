@@ -96,8 +96,17 @@ commit() { git -C "$R" commit -qm "${1:-seed}"; }
 echo "=== a credential is refused at its path, line and rule id, without its value ==="
 repo staged
 put "notes/a file.txt" "one\naws = $CRED\n"
-row "a staged credential is refused at its line under --staged, the default" \
-  "rc=1 secrets: secret=notes/a file.txt:2:aws-access-token" "$R"
+# Bash can update LINES after the lane selects its added-line function.
+# A DEBUG trap makes that update deterministic without a terminal resize.
+TERMINAL_ENV="$TMP/terminal-lines.bash"
+printf '%s\n' "trap 'LINES=24' DEBUG" >"$TERMINAL_ENV"
+while IFS='|' read -r label lines bash_env; do
+  row "$label" \
+    "rc=1 secrets: secret=notes/a file.txt:2:aws-access-token" "$lines" "$bash_env" "$R"
+done <<ROWS
+a staged credential is refused at its line under --staged, the default|LINES=|BASH_ENV=
+a terminal row count cannot replace the staged scan function|LINES=24|BASH_ENV=$TERMINAL_ENV
+ROWS
 carries "$CRED"
 assert_eq "the output never carries the value" "absent" "$HAS"
 STAGED="$R"
@@ -437,7 +446,10 @@ gg_mutant LANE secrets 'gg_message secret "${PATHS[$n]}:$start:$rule"' 'gg_messa
 lane "$STAGED"
 carries "$CRED"
 assert_eq "control: a lane that prints the matched line carries the value" "present" "$HAS"
-gg_mutant LANE secrets 'if [ -n "$LINES" ]; then' 'if false; then'
+gg_mutant LANE secrets '*) "$GG_LINE_WRITER" "$1"' '*) "$LINES" "$1"'
+row "control: using the terminal row count as the scan function stops the scan" \
+  "rc=127 " LINES=24 "BASH_ENV=$TERMINAL_ENV" "$STAGED"
+gg_mutant LANE secrets 'if [ -n "$GG_LINE_WRITER" ]; then' 'if false; then'
 row "control: without the added-line filter the committed credential fails the staged change" \
   "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$OLD_CRED"
 gg_mutant LANE secrets '$2 >= s && $2 <= e' '$2 == s'

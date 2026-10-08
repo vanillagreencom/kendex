@@ -1,0 +1,1 @@
+- The secrets check completes in a terminal when Bash updates its row count during the scan.
