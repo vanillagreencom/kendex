@@ -163,11 +163,17 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
   GG_MD_MODE=staged
 }
 
-# Load the lane's path globs and the shared excludes list.
-gg_md_load_paths() { # LANE KEY DEFAULT
-  local raw excludes
+# Load the lane's path globs and the shared excludes list. EXTRA-KEY names a
+# setting whose globs are added to KEY's list, the default or the replacing
+# value alike, so a consumer adding one glob does not restate the rest; the
+# union is what an empty list is refused on and what the messages echo.
+gg_md_load_paths() { # LANE KEY DEFAULT [EXTRA-KEY]
+  local raw extra="" excludes
   raw="$(gg_setting "$2" "$3")" || exit 2
-  gg_load_path_globs "$raw" "$1" "$2" || exit 2
+  if [ -n "${4:-}" ]; then
+    extra="$(gg_setting "$4" "")" || exit 2
+  fi
+  gg_load_path_globs "$raw${extra:+ $extra}" "$1" "$2" || exit 2
   excludes="$(gg_resolve_path "" COMMIT_GUARDS_MD_EXCLUDES "$GG_MD_EXCLUDES_DEFAULT" excludes)" || exit 2
   gg_load_excludes "$excludes"
 }

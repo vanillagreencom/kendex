@@ -22,6 +22,7 @@ MDR="$SKILL_DIR/scripts/md-refs"
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_SOURCE_PATHS COMMIT_GUARDS_MD_EXCLUDES \
+  COMMIT_GUARDS_MD_REFS_PATHS_EXTRA COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA \
   COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE \
   DECISIONS_DIR DECISION_ID_PREFIX DECISION_ID_WIDTH 2>/dev/null || true
 
@@ -429,6 +430,12 @@ fx_dec_symlink() { repo dec-symlink; put docs/decisions/real.md '# D008\n'; ln -
 fx_newline_src() { world_src newline-src; put "one"$'\n'"two.sh" "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
 # A shell carrier whose quote never closes, the opener past line 1.
 fx_unclosed_quote() { world_src unclosed-quote; put bin/q.sh "$SH"'# AGENTS.md \302\247 Rules\necho '"'"'open\n'; }
+# A dead citation in a default source and one in a suffixless script no
+# default glob names, so a row shows which lists the run read.
+fx_extra() { world_src "$1"; put bin/helper.sh "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; put bin/fleet "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
+fx_extra_docs() { world_src "$1"; put docs/guide.md '[dead](nope.md)\n'; }
+FLEET_DEAD="$(dead bin/fleet 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)")"
+HELPER_DEAD="$(dead bin/helper.sh 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)")"
 UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1"
 run_rows \
   "a citation in comment text resolves|fx_comment_ok comment-ok||--all|rc=0 $(clean 1 2 1)" \
@@ -458,7 +465,15 @@ run_rows \
   "a citation landing on a skipped source names that path|fx_symlink_cited||--all|rc=0 $(skip a.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
   "--verbose names a skipped path a reference lands on once|fx_symlink_linked symlink-linked-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
   "a decision ID landing on a skipped record names it|fx_dec_symlink|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md docs/decisions/*.md|--all|rc=0 $(skip docs/decisions/D008-scope.md symlink);$(clean 1 2 0 "$DEC_YES" "$(unmeasured 1 symlink=1)")" \
-  "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS"
+  "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS" \
+  "and so is one left empty by an empty extra|fx_comment_ok empty-union|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS" \
+  "the source extra adds to the default list|fx_extra extra-default|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$HELPER_DEAD;$(failed 2 2 2 2)" \
+  "control: without it the default list does not read the suffixless script|fx_extra extra-unset||--all|rc=1 $HELPER_DEAD;$(failed 1 1 2 1)" \
+  "the source extra adds to a replacing list, not to the default it replaced|fx_extra extra-replaced|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=*.rs,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$(failed 1 1 2 1)" \
+  "an extra fills an emptied replacing list|fx_extra extra-emptied|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$(failed 1 1 2 1)" \
+  "the document extra adds to the default list|fx_extra_docs extra-docs|COMMIT_GUARDS_MD_REFS_PATHS_EXTRA=docs/*.md|--all|rc=1 $(dead docs/guide.md 1 "$(untracked '](nope.md)' docs/nope.md)");$(failed 1 1 3)" \
+  "control: without it the default list does not read that document|fx_extra_docs extra-docs-unset||--all|rc=0 $(clean 0 2)" \
+  "an extra is checked as the list is|fx_comment_ok extra-absolute|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=/etc/x|--all|rc=2 ${ERR}path-absolute=md-refs:/etc/x"
 # The notice's explanation opens with the reader's cause at the opener's
 # line and says no citation in the file was judged, so the citation is not
 # what an author edits.
@@ -475,7 +490,7 @@ fx_staged_live() { seeded staged-live; put docs/architecture/overview.md '[live]
 fx_touched_staged() { seeded touched-staged; put AGENTS.md '[dead](nope.md) again\n'; }
 fx_target_in_index() { repo "$1"; put ok.md '# OK\n'; commit seed; put ok.md '# Renamed\n'; commit rename-heading; put AGENTS.md '[a](ok.md#ok)\n'; }
 fx_target_deleted() { fx_target_in_index target-deleted; git -C "$R" rm -q --cached ok.md; }
-fx_excluded() { repo excluded; put AGENTS.md '[dead](missing.md)\n'; put tools/md-excludes 'AGENTS.md\tvendored instructions\n'; }
+fx_excluded() { repo "${1:-excluded}"; put AGENTS.md '[dead](missing.md)\n'; put tools/md-excludes 'AGENTS.md\tvendored instructions\n'; }
 fx_not_excluded() { repo not-excluded; put AGENTS.md '[dead](missing.md)\n'; }
 fx_heading_renamed() { repo "$1"; put guide.md '# Guide\n\n## Install\n'; put AGENTS.md '[setup](guide.md#install)\n'; commit seed; put guide.md '# Guide\n\n## Setup\n'; }
 fx_target_removed() { fx_heading_renamed target-removed; git -C "$R" rm -qf guide.md; }
@@ -487,6 +502,7 @@ run_rows \
   "a target outside the staged set is still read from the index for its headings|fx_target_in_index target-in-index||--staged|rc=1 $(dead AGENTS.md 1 "$(noslug '](ok.md#ok)' ok.md ok)");$(failed 1 1 1)" \
   "a link to a file the commit deletes is dead|fx_target_deleted||--staged|rc=1 $(dead AGENTS.md 1 "$(untracked '](ok.md#ok)' ok.md)");$(failed 1 1 1)" \
   "the staged scan excludes the declared document, and the verdict echoes both path settings|fx_excluded|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=*.sh|--staged|rc=0 $(nomatch "$PATHS_DEFAULT" '*.sh')" \
+  "and echoes each list with its extra|fx_excluded excluded-extra|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=*.sh,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet,COMMIT_GUARDS_MD_REFS_PATHS_EXTRA=docs/*.md|--staged|rc=0 $(nomatch "$PATHS_DEFAULT docs/*.md" '*.sh bin/fleet')" \
   "control: the same staged reference fails without its exclusion|fx_not_excluded||--staged|rc=1 $(dead AGENTS.md 1 "$(untracked '](missing.md)' missing.md)");$(failed 1 1 1)" \
   "renaming only the target heading finds an unchanged caller|fx_heading_renamed heading-renamed|||rc=1 $(dead AGENTS.md 1 "$(noslug '](guide.md#install)' guide.md install)");$(failed 1 1 1)" \
   "deleting only the target finds an unchanged caller|fx_target_removed|||rc=1 $(dead AGENTS.md 1 "$(untracked '](guide.md#install)' guide.md)");$(failed 1 1 1)"
