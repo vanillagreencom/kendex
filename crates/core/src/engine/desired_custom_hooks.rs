@@ -15,22 +15,32 @@ use crate::lock::{Reason, entry_key};
 use crate::manifest::{Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 
+// Existing locks use this identity in every scope. A display filename must
+// not turn a refresh into a change of source.
+const PROVENANCE: &str = "kendex.toml [[custom-hooks]]";
+
+pub(super) fn provenance_label(env: &Env, scope: &Scope, provenance: &str) -> String {
+    match provenance == PROVENANCE {
+        true => format!(
+            "{} [[custom-hooks]]",
+            crate::manifest::manifest_file_name(env, scope)
+        ),
+        false => provenance.to_owned(),
+    }
+}
+
 pub(super) fn desired_custom_hooks(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     state: &mut DesiredState,
 ) {
-    let provenance = format!(
-        "{} [[custom-hooks]]",
-        crate::manifest::manifest_file_name(env, scope)
-    );
     let names = custom_hook_names(manifest);
     for (hook, name) in manifest.custom_hooks.iter().zip(names) {
         let spec = HookSpec::custom(hook, name.clone());
         state
             .processed
-            .insert((ItemKind::Hook, name.clone()), provenance.clone());
+            .insert((ItemKind::Hook, name.clone()), PROVENANCE.to_owned());
         // The entry's own list outranks the scope defaults, the same way a
         // declared item's does: a hook adopted from one tool names that
         // tool, and a scope whose defaults have not caught up must still
@@ -107,7 +117,7 @@ pub(super) fn desired_custom_hooks(
                 enabled: hook.enabled,
                 method: Method::Copy,
                 source_name: "custom".to_owned(),
-                provenance: provenance.clone(),
+                provenance: PROVENANCE.to_owned(),
                 source_commit: None,
                 recorded_fork: false,
                 hash: hash_bytes(

@@ -7,6 +7,7 @@ use crate::ui;
 use kendex_core::apply::Op;
 use kendex_core::engine::{DroppedDeclaration, EngineReport, ops};
 use kendex_core::env::Env;
+use kendex_core::manifest::manifest_file_name;
 use kendex_core::model::{ItemKind, Scope};
 
 /// What a removal does with the declaration.
@@ -115,7 +116,8 @@ fn remove_scope(
     if !takes_anything(&report) {
         return Ok(None);
     }
-    say_split(&report, mode);
+    let file = manifest_file_name(env, scope);
+    say_split(&report, mode, &file);
     let applied = {
         let _removing = ui::spinner("removing");
         super::engine_common::apply_report(env, &report)?
@@ -129,7 +131,7 @@ fn remove_scope(
     }
     if matches!(mode, Removal::KeepDeclaration) {
         say(&format!(
-            "{}: kendex.toml unchanged; refresh installs what it declares again",
+            "{}: {file} unchanged; refresh installs what it declares again",
             scope_label(scope)
         ));
     }
@@ -159,18 +161,18 @@ fn takes_anything(report: &EngineReport) -> bool {
 /// survived and why. The planner's reason for a removal reads as disowning
 /// ("the declaration does not include it"), so with the declaration kept only the kept
 /// rows carry theirs.
-fn say_split(report: &EngineReport, mode: Removal) {
+fn say_split(report: &EngineReport, mode: Removal, file: &str) {
     if let Some(disowned) = &report.disowned {
         for dropped in &disowned.dropped {
             let declared = match dropped {
                 DroppedDeclaration::Item { kind, name } => format!("{} {name}", kind.name()),
                 DroppedDeclaration::Bundle { name } => format!("bundle {name}"),
             };
-            note(&format!("dropping {declared} from kendex.toml"));
+            note(&format!("dropping {declared} from {file}"));
         }
         for (kind, name) in &disowned.suppressed {
             note(&format!(
-                "keeping {} {name} removed: [suppressed] in kendex.toml",
+                "keeping {} {name} removed: [suppressed] in {file}",
                 kind.name()
             ));
         }

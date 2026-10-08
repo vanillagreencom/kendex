@@ -93,6 +93,73 @@ const BUNDLE: &str = "starter";
 const EVERY_TOOL: &str = "";
 const CLAUDE_ONLY: &str = "# harnesses: [claude]\n";
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hook_pin_remedies_name_the_scope_manifest() {
+    for (catalog, file) in [(true, "kendex-local.toml"), (false, "kendex.toml")] {
+        for (header, pin, remedy) in [
+            (
+                EVERY_TOOL,
+                "[\"claude\"]",
+                "leaves out copilot, where kendex would write the hook with no pin; drop the pin, or add copilot to it",
+            ),
+            (
+                CLAUDE_ONLY,
+                "[\"claude\", \"copilot\"]",
+                "names copilot, which the hook's own harnesses line leaves out; drop the pin, or take copilot off it",
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let project = home.join("consumer");
+            let source = home.join("catalog");
+            write(&source.join("kendex.toml"), "is_source_catalog = true\n");
+            write(
+                &source.join("hooks/guard.sh"),
+                &format!(
+                    "#!/bin/sh\n# ---\n# name: guard\n# description: checks\n# event: PreToolUse\n{header}# ---\ntrue\n"
+                ),
+            );
+            write(
+                &project.join(file),
+                &format!(
+                    "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[hooks.guard]\nsource = \"cat\"\nharnesses = {pin}\n",
+                    source_path(&source)
+                ),
+            );
+            if catalog {
+                write(&project.join("kendex.toml"), "is_source_catalog = true\n");
+            }
+            fs::create_dir_all(project.join(".claude")).unwrap();
+            fs::create_dir_all(project.join(".github")).unwrap();
+            let applied = kendex(&home, &project, &["apply", "-y", "--leave"]);
+            assert!(applied.status.success(), "{}", said(&applied));
+            let verified = kendex(
+                &home,
+                &project,
+                &["verify", "--scope", "project", "--strict", "--json"],
+            );
+            let printed = said(&verified);
+            assert!(verified.status.success(), "{printed}");
+            let document: Document = serde_json::from_slice(&verified.stdout).unwrap();
+            let row = document
+                .rows
+                .iter()
+                .find(|row| row.state == State::Notice && row.name == HOOK)
+                .unwrap();
+            let detail = row.detail.as_deref().unwrap();
+            assert_eq!(detail, format!("its harnesses pin in {file} {remedy}"));
+            assert!(
+                printed.contains(&format!("its harnesses pin in {file} {remedy}")),
+                "{printed}"
+            );
+            if catalog {
+                assert!(!detail.contains("kendex.toml"));
+            }
+        }
+    }
+}
+
 /// One consumer: the hook's own harnesses line, the pin on its
 /// declaration, and what apply and verify make of them.
 struct Case {

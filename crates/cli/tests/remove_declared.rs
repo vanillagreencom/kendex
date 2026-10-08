@@ -33,6 +33,51 @@ fn plant(project: &std::path::Path, text: &str) {
 
 #[test]
 #[allow(clippy::unwrap_used)]
+fn removal_messages_name_the_scope_manifest() {
+    for (catalog, file) in [(true, "kendex-local.toml"), (false, "kendex.toml")] {
+        for (name, keep, expected) in [
+            ("dev", false, format!("dropping skill dev from {file}")),
+            (
+                "dev",
+                true,
+                format!("{file} unchanged; refresh installs what it declares again"),
+            ),
+            (
+                "github",
+                false,
+                format!("keeping skill github removed: [suppressed] in {file}"),
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let project = project(&tmp);
+            if catalog {
+                fs::rename(project.join("kendex.toml"), project.join(file)).unwrap();
+                fs::write(project.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+            }
+            let mut args = vec!["remove", name, "--scope", "project", "--leave"];
+            if keep {
+                args.push("--keep-declaration");
+            } else {
+                args.push("--sweep");
+            }
+            let removed = kendex(&home, &project, &args);
+            let said = format!(
+                "{}{}",
+                String::from_utf8_lossy(&removed.stdout),
+                String::from_utf8_lossy(&removed.stderr)
+            );
+            assert!(removed.status.success(), "{catalog} {name}: {said}");
+            assert!(said.contains(&expected), "{catalog} {name}: {said}");
+            if catalog {
+                assert!(!said.contains("kendex.toml"), "{name}: {said}");
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
 fn a_removal_drops_a_declaration_with_nothing_installed_and_writes_nothing_for_an_unknown_name() {
     // (name removed, flags, planted in kendex.toml, whether the removal
     // takes the planted text back out)

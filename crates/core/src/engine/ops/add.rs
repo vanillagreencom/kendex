@@ -550,7 +550,9 @@ pub(super) fn ensure_item_source(
         .entries
         .values()
         .find(|entry| entry.kind == kind && entry.name == name && entry.source != source_name)
-        .map(|entry| entry.source_repo.clone())
+        .map(|entry| {
+            crate::engine::desired_custom_hooks::provenance_label(env, scope, &entry.source_repo)
+        })
         .or_else(|| {
             manifest
                 .declared(kind)

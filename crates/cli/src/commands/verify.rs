@@ -375,7 +375,14 @@ fn check_scope(
     declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
     kept_bundle_rows(&report, &placer, &named, tally, style);
     failed_hook_delivery_rows(&lock, &report, &placer, &named, tally, style);
-    pinned_hook_rows(&report, &placer, &named, tally, style);
+    pinned_hook_rows(
+        &report,
+        &placer,
+        &named,
+        tally,
+        style,
+        &kendex_core::manifest::manifest_file_name(env, &scope),
+    );
     installation_rows(env, &lock, &report, &placer, &named, tally, style);
     for shim in &report.instruction_shims {
         if !named(&shim.name) {
@@ -560,6 +567,7 @@ fn pinned_hook_rows(
     named: &dyn Fn(&str) -> bool,
     tally: &mut Tally,
     style: &Style,
+    file: &str,
 ) {
     for pinned in report
         .pinned_hooks
@@ -569,10 +577,10 @@ fn pinned_hook_rows(
         let harness = pinned.harness.name();
         let detail = match pinned.pin {
             Pin::LeavesOut => format!(
-                "its harnesses pin in kendex.toml leaves out {harness}, where kendex would write the hook with no pin; drop the pin, or add {harness} to it"
+                "its harnesses pin in {file} leaves out {harness}, where kendex would write the hook with no pin; drop the pin, or add {harness} to it"
             ),
             Pin::NamesExcluded => format!(
-                "its harnesses pin in kendex.toml names {harness}, which the hook's own harnesses line leaves out; drop the pin, or take {harness} off it"
+                "its harnesses pin in {file} names {harness}, which the hook's own harnesses line leaves out; drop the pin, or take {harness} off it"
             ),
         };
         ui::stderr(&style.report_row(

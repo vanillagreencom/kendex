@@ -55,16 +55,16 @@ pub struct ManifestRead {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn get_manifest(scope: Scope) -> Result<ManifestRead, String> {
-    let env = env()?;
-    let path = manifest::manifest_path(&env, &scope);
+    read_manifest(&env()?, &scope)
+}
+
+fn read_manifest(env: &Env, scope: &Scope) -> Result<ManifestRead, String> {
+    let path = manifest::manifest_path(env, scope);
     let (manifest, base) = manifest::read_for_mutation(&path).map_err(|e| e.to_string())?;
     Ok(ManifestRead {
         manifest,
         base,
-        file: path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| manifest::MANIFEST_FILE.to_owned()),
+        file: manifest::manifest_file_name(env, scope),
     })
 }
 
@@ -199,7 +199,32 @@ fn write_customize(
     settings: Option<CoreSettingsDraft>,
     secrets: Option<CoreSecretsDraft>,
 ) -> Result<AuditView, WriteRefused> {
-    let path = manifest::manifest_path(env, &scope);
+    let (report, targets) = plan_customize(env, &scope, draft, settings, secrets)?;
+    // The bound preconditions refuse a file that moved between the checks
+    // above and the write itself, and that refusal is the same answer the
+    // checks give — so it reaches the editor as the same choice.
+    //
+    // Through the one executor: a manifest saved with a package deleted out
+    // of it takes that package away, and its declared uninstaller has to run
+    // while its scripts are still on disk. Nothing here reasons about
+    // whether this route can remove: it can, through a refused rendering,
+    // whatever the planning options say about orphans.
+    let undone = crate::repo_effects::execute(env, &report)
+        .map_err(|refused| refused_write(refused, &targets))?;
+    Ok(AuditView {
+        undone,
+        ..view(env, &scope)
+    })
+}
+
+fn plan_customize(
+    env: &Env,
+    scope: &Scope,
+    draft: Option<(Manifest, Base)>,
+    settings: Option<CoreSettingsDraft>,
+    secrets: Option<CoreSecretsDraft>,
+) -> Result<(engine::EngineReport, Vec<std::path::PathBuf>), WriteRefused> {
+    let path = manifest::manifest_path(env, scope);
     // One read answers both questions: whether the file is still the one
     // the copy came from, and whether there is a file at all — the moment
     // first-creation seeding happens. A file that cannot be read is a
@@ -231,7 +256,7 @@ fn write_customize(
                 true => draft,
                 false => on_first_creation(
                     draft,
-                    ops::manifest_for_mutation(env, &scope).map_err(|e| e.to_string())?,
+                    ops::manifest_for_mutation(env, scope).map_err(|e| e.to_string())?,
                 ),
             };
             // A custom hook's name is its identity everywhere downstream;
@@ -251,7 +276,7 @@ fn write_customize(
     // planned costs the person nothing, and the op's own precondition
     // catches a writer that lands after it.
     if let Some(settings) = settings {
-        if let Some(root) = settings_root(&scope) {
+        if let Some(root) = settings_root(scope) {
             let file = kendex_core::settings_seed::settings_file_path(&root);
             settings.base.verify(&file).map_err(refusal)?;
             targets.push(file);
@@ -262,7 +287,7 @@ fn write_customize(
     // settings file's: a save that names a different private file is
     // about a file the settings read never covered.
     if let Some(secrets) = secrets {
-        if let Some(root) = settings_root(&scope) {
+        if let Some(root) = settings_root(scope) {
             let file = root.join(&secrets.file);
             secrets.base.verify(&file).map_err(refusal)?;
             targets.push(file);
@@ -276,9 +301,9 @@ fn write_customize(
         // every other read-only pass does with it.
         None => current.clone().unwrap_or_default(),
     };
-    let lock = load_lock(&lock_path(env, &scope)).map_err(|e| e.to_string())?;
+    let lock = load_lock(&lock_path(env, scope)).map_err(|e| e.to_string())?;
     let mut report =
-        engine::plan_scope(env, &scope, &planned, &lock, &options).map_err(|e| e.to_string())?;
+        engine::plan_scope(env, scope, &planned, &lock, &options).map_err(|e| e.to_string())?;
     if let Some((manifest, claimed)) = edited
         && !engine::persists_manifest(&report.plan.ops)
     {
@@ -290,7 +315,8 @@ fn write_customize(
             .insert(
                 0,
                 PlannedOp {
-                    description: "Save kendex.toml".into(),
+                    description: format!("Save {}", manifest::manifest_file_name(env, scope))
+                        .into(),
                     op: Op::WriteManifest {
                         pre: Pre::from(&claimed),
                         path: path.clone(),
@@ -302,21 +328,7 @@ fn write_customize(
                 message: error.to_string(),
             })?;
     }
-    // The bound preconditions refuse a file that moved between the checks
-    // above and the write itself, and that refusal is the same answer the
-    // checks give — so it reaches the editor as the same choice.
-    //
-    // Through the one executor: a manifest saved with a package deleted out
-    // of it takes that package away, and its declared uninstaller has to run
-    // while its scripts are still on disk. Nothing here reasons about
-    // whether this route can remove: it can, through a refused rendering,
-    // whatever the planning options say about orphans.
-    let undone = crate::repo_effects::execute(env, &report)
-        .map_err(|refused| refused_write(refused, &targets))?;
-    Ok(AuditView {
-        undone,
-        ..view(env, &scope)
-    })
+    Ok((report, targets))
 }
 
 /// How a write the executor refused reaches the page.

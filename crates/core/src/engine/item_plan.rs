@@ -87,7 +87,7 @@ pub(super) fn plan_item(
     let existing = lock.entries.get(&item.key);
 
     if let Some(entry) = existing
-        && let Some(detail) = rebound(entry, &item.provenance, item.recorded_fork)
+        && let Some(detail) = rebound(env, scope, entry, &item.provenance, item.recorded_fork)
     {
         drift.push(row(DriftState::Conflict, detail));
         kept.keep(new_lock, &item.key, entry);
@@ -207,16 +207,23 @@ pub(super) fn plan_item(
 /// row's detail where the record is not the declaration's, and `None`
 /// where the declaration may write over the record. The item pass asks it
 /// of what it writes, and `plan_pass::plan_rebound` of every other record.
-pub(super) fn rebound(entry: &LockEntry, provenance: &str, recorded_fork: bool) -> Option<String> {
+pub(super) fn rebound(
+    env: &Env,
+    scope: &Scope,
+    entry: &LockEntry,
+    provenance: &str,
+    recorded_fork: bool,
+) -> Option<String> {
     let sanctioned = entry.source_repo == provenance
         || entry.source_repo == crate::manifest::LOCAL_SOURCE_NAME
         || (provenance == crate::manifest::LOCAL_SOURCE_NAME && recorded_fork);
     if sanctioned {
         return None;
     }
+    let installed = super::desired_custom_hooks::provenance_label(env, scope, &entry.source_repo);
+    let declared = super::desired_custom_hooks::provenance_label(env, scope, provenance);
     Some(format!(
-        "installed from {} but now set to come from {provenance} — remove it first",
-        entry.source_repo
+        "installed from {installed} but now set to come from {declared} — remove it first"
     ))
 }
 

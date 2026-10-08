@@ -1,4 +1,4 @@
-//! Scope filenames in plans, report lines, remedies and provenance.
+//! Scope filenames in plans, report lines, remedies and source labels.
 //! KEN-1711 requires these message assertions and ordinary-project controls.
 
 #![cfg(unix)]
@@ -376,27 +376,157 @@ fn adopt_and_detach_plans_name_the_declaring_file() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn custom_hook_provenance_names_the_declaring_file() {
+fn custom_hook_refresh_preserves_shipped_ownership() {
     for (catalog, file) in SCOPES {
-        let w = world(
-            catalog,
-            file,
-            "[[custom-hooks]]\nname = \"custom\"\nevent = \"SessionStart\"\ncommand = \"./check.sh\"\nagents = \"all\"\n",
-        );
-        let report = audit(&w.env, &w.scope).unwrap();
-        let lock = report
-            .plan
-            .ops
-            .iter()
-            .find_map(|op| match &op.op {
-                Op::WriteLock { lock, .. } => Some(lock),
-                _ => None,
-            })
+        for action in ["unchanged", "command", "disabled", "harness removed"] {
+            let w = world(
+                catalog,
+                file,
+                "[[custom-hooks]]\nname = \"custom\"\nevent = \"SessionStart\"\ncommand = \"./check.sh\"\nagents = \"all\"\n",
+            );
+            let report = audit(&w.env, &w.scope).unwrap();
+            apply::execute(&w.env, &report.plan).unwrap();
+            let mut lock =
+                kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
+            let key = "hook:custom:claude";
+            // The identity already shipped, independently of the scope's display name.
+            lock.entries.get_mut(key).unwrap().source_repo =
+                "kendex.toml [[custom-hooks]]".to_owned();
+            let mut declared = manifest::load_current(&w.project.join(file))
+                .unwrap()
+                .unwrap();
+            match action {
+                "unchanged" => {}
+                "command" => declared.custom_hooks[0].command = "./new-check.sh".to_owned(),
+                "disabled" => declared.custom_hooks[0].enabled = false,
+                "harness removed" => {
+                    declared.custom_hooks[0].harnesses = Some(vec!["copilot".to_owned()])
+                }
+                _ => unreachable!(),
+            }
+            let report = engine::plan_scope(
+                &w.env,
+                &w.scope,
+                &declared,
+                &lock,
+                &PlanOptions {
+                    remove_orphans: true,
+                    ..PlanOptions::current()
+                },
+            )
             .unwrap();
-        assert_eq!(
-            lock.entries["hook:custom:claude"].source_repo,
-            format!("{file} [[custom-hooks]]")
-        );
+            assert!(
+                !report
+                    .drift
+                    .iter()
+                    .any(|row| row.name == "custom" && row.state == engine::DriftState::Conflict),
+                "{catalog} {action}"
+            );
+            apply::execute(&w.env, &report.plan).unwrap();
+            let installed = fs::read_to_string(w.project.join(".claude/settings.json"))
+                .unwrap_or_else(|error| {
+                    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+                    "{}".to_owned()
+                });
+            let settings: serde_json::Value = serde_json::from_str(&installed).unwrap();
+            let registrations = settings["hooks"]["SessionStart"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            match action {
+                "unchanged" | "command" => {
+                    assert_eq!(
+                        registrations[0]["hooks"][0]["command"],
+                        if action == "command" {
+                            "./new-check.sh"
+                        } else {
+                            "./check.sh"
+                        }
+                    );
+                    let after =
+                        kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope))
+                            .unwrap();
+                    assert_eq!(
+                        after.entries[key].source_repo,
+                        "kendex.toml [[custom-hooks]]"
+                    );
+                }
+                "disabled" | "harness removed" => {
+                    assert!(registrations.is_empty(), "{catalog} {action}")
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn custom_hook_source_conflict_names_the_declaring_file() {
+    for (catalog, file) in SCOPES {
+        for withheld in [false, true] {
+            let w = world(
+                catalog,
+                file,
+                "[[custom-hooks]]\nname = \"custom\"\nevent = \"SessionStart\"\ncommand = \"./check.sh\"\nagents = \"all\"\n",
+            );
+            let report = audit(&w.env, &w.scope).unwrap();
+            apply::execute(&w.env, &report.plan).unwrap();
+            let lock =
+                kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
+            write(
+                &w.source,
+                "hooks/custom.sh",
+                "#!/bin/sh\n# ---\n# name: custom\n# event: SessionStart\n# description: checks\n# harnesses: [claude]\n# ---\ntrue\n",
+            );
+            let refused = ops::add(
+                &w.env,
+                &w.scope,
+                &ops::AddRequest {
+                    source: Some("cat".to_owned()),
+                    hooks: vec!["custom".to_owned()],
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+            match refused {
+                kendex_core::error::CoreError::SourceCollision { existing, .. } => {
+                    assert_message(&existing, &format!("{file} [[custom-hooks]]"), file);
+                }
+                other => panic!("expected source collision: {other}"),
+            }
+            declare(
+                &w,
+                "",
+                &format!(
+                    "[hooks.custom]\nsource = \"cat\"\nharnesses = [\"{}\"]\n",
+                    if withheld { "copilot" } else { "claude" }
+                ),
+            );
+            let declared = manifest::load_current(&w.project.join(file))
+                .unwrap()
+                .unwrap();
+            let report =
+                engine::plan_scope(&w.env, &w.scope, &declared, &lock, &PlanOptions::current())
+                    .unwrap();
+            let conflict = report
+                .drift
+                .iter()
+                .find(|row| row.name == "custom" && row.state == engine::DriftState::Conflict)
+                .unwrap();
+            assert_message(
+                &conflict.detail,
+                &format!("installed from {file} [[custom-hooks]]"),
+                file,
+            );
+            apply::execute(&w.env, &report.plan).unwrap();
+            let kept =
+                kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
+            assert_eq!(
+                kept.entries["hook:custom:claude"].source_repo,
+                "kendex.toml [[custom-hooks]]"
+            );
+        }
     }
 }
 

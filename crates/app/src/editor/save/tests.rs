@@ -7,6 +7,49 @@ use std::collections::BTreeMap;
 
 use crate::test_util::source_path;
 
+#[test]
+fn the_editor_reads_and_saves_the_scope_manifest_name() {
+    use crate::test_util::rooted;
+    for (catalog, file) in [(true, "kendex-local.toml"), (false, "kendex.toml")] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, kendex_core::env::FakeOs::Linux);
+        let project = home.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        if catalog {
+            std::fs::write(project.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        }
+        let path = project.join(file);
+        std::fs::write(&path, format!("schema = {MANIFEST_SCHEMA}\n")).unwrap();
+        let scope = Scope::Project { root: project };
+        let read = read_manifest(&env, &scope).unwrap();
+        assert_eq!(read.file, file);
+        let (report, _) = plan_customize(
+            &env,
+            &scope,
+            Some((read.manifest.unwrap(), read.base)),
+            None,
+            None,
+        )
+        .unwrap();
+        let op = report
+            .plan
+            .ops
+            .iter()
+            .find(|op| matches!(op.op, Op::WriteManifest { .. }))
+            .unwrap();
+        assert_eq!(op.line(), format!("Save {file}"));
+        // The operation's description also reaches a real failed apply.
+        std::fs::write(&path, format!("schema = {MANIFEST_SCHEMA}\n# changed\n")).unwrap();
+        let refusal = crate::repo_effects::execute(&env, &report).unwrap_err();
+        let message = refusal.to_string();
+        assert!(message.contains(&format!("Save {file}")), "{message}");
+        if catalog {
+            assert!(!message.contains("Save kendex.toml"), "{message}");
+        }
+    }
+}
+
 /// A project scope with no kendex.toml at all: the state the editor opens
 /// an empty draft for, and the one a first save creates the file from.
 fn scope_without_manifest() -> (tempfile::TempDir, Env, Scope) {

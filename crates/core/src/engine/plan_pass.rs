@@ -317,7 +317,7 @@ pub(super) fn plan_not_written(
     new_lock: &mut Lock,
     kept: &mut KeptAsIs,
 ) -> Result<BTreeSet<String>> {
-    let mut decided = plan_rebound(scope, manifest, lock, state, drift, new_lock, kept);
+    let mut decided = plan_rebound(env, scope, manifest, lock, state, drift, new_lock, kept);
     let refused = plan_refusals(
         env,
         scope,
@@ -344,7 +344,9 @@ pub(super) fn plan_not_written(
 /// tool — is the conflict it would be where the plan writes. The record stays, the row says to remove it first and why
 /// nothing replaces it here, and no later pass takes it. Returns the keys
 /// of the records this pass kept.
+#[allow(clippy::too_many_arguments)]
 fn plan_rebound(
+    env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
@@ -369,9 +371,10 @@ fn plan_rebound(
             continue;
         };
         let recorded_fork = manifest.recorded_fork(entry.kind, &entry.name);
-        let Some(detail) = item_plan::rebound(entry, provenance, recorded_fork) else {
+        let Some(detail) = item_plan::rebound(env, scope, entry, provenance, recorded_fork) else {
             continue;
         };
+        let provenance = super::desired_custom_hooks::provenance_label(env, scope, provenance);
         let detail = match refused.get(key) {
             Some(reason) => format!("{reason} — {detail}"),
             None => format!(
