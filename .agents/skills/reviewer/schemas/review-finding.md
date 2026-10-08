@@ -98,7 +98,7 @@ Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A revi
 
 ## Measurement Claims
 
-`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Your mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing) belongs in `.summary`; the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no `percentiles` value above zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
+`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Your mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing) belongs in `.summary`; the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`. An instruction-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
 
 Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the `blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
 
@@ -116,5 +116,5 @@ Example per-agent payloads:
 | Agent | qa_metadata key | Required fields |
 |-------|-----------------|-----------------|
 | safety audit | `safety` | `tool_results`, `unsafe_block_count`, `violations[]` |
-| performance QA | `perf_qa` | `percentiles`, `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
+| performance QA | `perf_qa` | `percentiles` (or `metric_kind: "instruction_count"` with `instruction_counts`), `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
 | architecture review | `arch_review` | `dimension_scores`, `overall_score`, `pass` |

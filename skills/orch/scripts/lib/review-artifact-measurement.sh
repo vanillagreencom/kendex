@@ -68,8 +68,13 @@ measurement_declaration() {
 # The PERF PAYLOAD — checked by requiring evidence rather than by detecting its
 # absence, because absence has too many spellings (missing key, [], null
 # leaves, "0ms" strings) and every one of them is what a harness that produced
-# nothing most naturally emits. A perf_qa payload must carry a percentiles
-# block with at least one numeric leaf above zero.
+# nothing most naturally emits. A perf_qa payload must carry the evidence its
+# metric produces, with at least one numeric leaf above zero: `percentiles` for
+# a latency metric (`metric_kind` absent or "latency"), `instruction_counts`
+# for "instruction_count". An instruction-count instrument measures no latency
+# distribution: its counts are its samples, and percentiles demanded of it
+# could only be fabricated or excused by declaring a successful instrument
+# failed. A kind this gate cannot judge is refused, never waved through.
 #
 # CARRIERS: `.summary` and `.qa_metadata` only — the places an artifact states
 # its OWN evidence. blockers[]/suggestions[]/questions[] describe the code under
@@ -103,21 +108,32 @@ zero_sample_detail() {
         )
       | (add // []) ;
 
+    def evidence_zero($field; $v; $name):
+      "review-artifact-check: perf_evidence field=qa_metadata.perf_qa.\($field)" as $at
+      | if ($v == null)
+          then ["\($at) state=missing\nThe benchmark payload requires \($name)."]
+        elif ((($v | type) != "object") and (($v | type) != "array"))
+          then ["\($at) type=\($v | type)\nThe \($name) must be an object or an array."]
+        elif (($v | length) == 0)
+          then ["\($at) count=0\nThe \($name) must contain measurements."]
+        elif (([$v | .. | numbers | select(. > 0)] | length) == 0)
+          then ["\($at) positive_values=0\nThe \($name) must contain a measured value above zero."]
+        else [] end ;
+
     def perf_zero:
       ((.qa_metadata? // {}) | if type == "object" then (.perf_qa? // null) else null end) as $pq
       | if ($pq == null) then []
         elif (($pq | type) != "object")
           then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa type=\($pq | type)\nThe benchmark payload must be an object."]
-        else ($pq.percentiles?) as $p
-          | if ($p == null)
-              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles state=missing\nThe benchmark payload requires percentiles."]
-            elif ((($p | type) != "object") and (($p | type) != "array"))
-              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles type=\($p | type)\nPercentiles must be an object or an array."]
-            elif (($p | length) == 0)
-              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles count=0\nPercentiles must contain measurements."]
-            elif (([$p | .. | numbers | select(. > 0)] | length) == 0)
-              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles positive_values=0\nPercentiles must contain a measured value above zero."]
-            else [] end
+        else ($pq.metric_kind? | if . == null then "latency" else . end) as $kind
+          | if $kind == "latency"
+              then evidence_zero("percentiles"; $pq.percentiles?; "percentiles")
+            elif $kind == "instruction_count"
+              then evidence_zero("instruction_counts"; $pq.instruction_counts?; "instruction counts")
+            elif ($kind | type) != "string"
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind type=\($kind | type)\nmetric_kind must be \"latency\" or \"instruction_count\"."]
+            else ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind value=\($kind | @json)\nmetric_kind must be \"latency\" or \"instruction_count\"."]
+            end
         end ;
 
     ( [ cites[] | select(.den == 0)

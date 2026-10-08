@@ -204,7 +204,49 @@ wrapped_table '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers
   "perf_qa itself not an object^\"benchmarks ran\"^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa=true detail~type:string=true" \
   "one real number among zeros is accepted^{\"percentiles\":{\"p50\":0,\"p99\":4.2}}^rc=0 ok=true reason=valid" \
   "a populated array is accepted^{\"percentiles\":[1.5,2.5]}^rc=0 ok=true reason=valid" \
-  "no perf_qa payload at all is accepted^null^rc=0 ok=true reason=valid"
+  "no perf_qa payload at all is accepted^null^rc=0 ok=true reason=valid" \
+  "an explicit latency kind still requires percentiles^{\"metric_kind\":\"latency\",\"percentiles\":{},\"instruction_counts\":{\"a\":{\"baseline\":10,\"current\":10}}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.percentiles=true detail~count:0=true" \
+  "an explicit latency kind with a measured percentile is accepted^{\"metric_kind\":\"latency\",\"percentiles\":{\"p99\":4.2}}^rc=0 reason=valid" \
+  "an unknown metric kind is refused and named^{\"metric_kind\":\"throughput\",\"percentiles\":{\"p99\":4.2}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.metric_kind=true detail~value:\"throughput\"=true" \
+  "a non-string metric kind is refused^{\"metric_kind\":1,\"percentiles\":{\"p99\":4.2}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.metric_kind=true detail~type:number=true" \
+  "measured percentiles do not stand in for missing instruction counts^{\"metric_kind\":\"instruction_count\",\"percentiles\":{\"p99\":4.2}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~state:missing=true"
+
+echo "=== perf payload: an instruction-count metric is judged on its counts ==="
+# An instruction-count instrument measures no latency distribution, so its
+# artifact carries empty percentiles truthfully and is judged on
+# instruction_counts, under the same refusals a latency payload gets: every
+# spelling of "counted nothing" is still a zero sample.
+IC_COUNTS='{"bench_a":{"baseline":1204883,"current":1204883},"bench_b":{"baseline":88231,"current":88231}}'
+IC_TEMPLATE='{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":{"metric_kind":"instruction_count","unit":"instructions","percentiles":{},"regression_pct":0,"regressions":[],"platform":"linux","baseline_sha":"abc",%s}}}'
+wrapped_table "$IC_TEMPLATE" \
+  "measured counts with empty percentiles are valid, no declaration needed^\"instruction_counts\":$IC_COUNTS^rc=0 ok=true reason=valid measurement_failed=ABSENT measurement_suppressed=ABSENT" \
+  "counts missing entirely^\"threshold_pct\":5^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~state:missing=true" \
+  "counts null^\"instruction_counts\":null^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~state:missing=true" \
+  "counts an empty object^\"instruction_counts\":{}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~count:0=true" \
+  "counts an empty array^\"instruction_counts\":[]^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~count:0=true" \
+  "counts all zero^\"instruction_counts\":{\"bench_a\":{\"baseline\":0,\"current\":0}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~positive_values:0=true" \
+  "counts a bare string^\"instruction_counts\":\"12 benchmarks\"^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~type:string=true"
+
+# Must-fail control: a disposable copy of the validator with the metric
+# dispatch removed is today's validator, which required percentiles of every
+# metric. It must reject the measured instruction-count artifact the table
+# above accepts, or the accepting row proves nothing about the dispatch.
+CONTROL="$TMP_ROOT/control"
+mkdir -p "$CONTROL"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$CONTROL/scripts"
+CONTROL_LIB="$CONTROL/scripts/lib/review-artifact-measurement.sh"
+dispatch='($pq.metric_kind? | if . == null then "latency" else . end) as $kind'
+[[ "$(grep -cF -- "$dispatch" "$CONTROL_LIB")" == 1 ]] || { echo "control: the metric dispatch is not in the copied lib once" >&2; exit 1; }
+before="$(cksum < "$CONTROL_LIB")"
+DISPATCH="$dispatch" perl -0pi -e 's/\Q$ENV{DISPATCH}\E/"latency" as \$kind/' "$CONTROL_LIB"
+[[ "$(cksum < "$CONTROL_LIB")" != "$before" ]] || { echo "control: the copied lib did not change" >&2; exit 1; }
+fresh_run
+# shellcheck disable=SC2059
+printf "$IC_TEMPLATE" "\"instruction_counts\":$IC_COUNTS" > "$F"
+CHECK="$CONTROL/scripts/review-artifact-check" run_check --file %F
+assert_eq "$(observe "rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.percentiles=true")" \
+  "rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.percentiles=true" \
+  "control: a percentile-only validator rejects a measured instruction-count artifact" "$ERR"
 
 echo "=== the declaration: top-level, substantive, and mechanically visible ==="
 # The escape must not require adopting the qa shape (following the rejection's
