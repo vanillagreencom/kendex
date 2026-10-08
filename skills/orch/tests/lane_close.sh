@@ -1195,7 +1195,7 @@ assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=
   'rc=1 failed=1 skipped=0 kill=0 status=running' 'under --keep-sandbox the removed-worktree answer refuses, since the kept sandbox keeps the harness'
 
 echo '=== an idle lane whose merge cycle is recorded closes while its item stays open ==='
-# A merged lane whose item stays open for a box the overseer checks itself.
+# A merged lane whose item has been reopened after a later failed check.
 # SCRIPT closes it with the record carrying pull request CYCLE's merge, or no
 # cycle for -, its worktree as WHERE says:
 #   hosted-gone      the close-out removed it: cat finds no .git, and the stop

@@ -332,9 +332,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
    The lane owns tracker completion; the overseer does not substitute for it.
 
-   Complete `[ISSUE]` only when its Done-when is on the default branch, not only because a merged PR carries its number, and give every remainder from a cut its own issue or bundle before completion.
+   Give every remainder from a cut its own issue or bundle before completion. A Done-when box that needs time, a deploy or the owner after merge gets its own item under [skill-rules.md § Coordination](../references/skill-rules.md#coordination), related to `[ISSUE]`. Move the box text into that item and remove the box from `[ISSUE]` with `issues update [ISSUE] --description-file [DESCRIPTION_FILE]` before completion.
 
-   When `[ISSUE]` was extracted, read it live. For a live state, run the completion command only after the default-branch Done-when check passes. A completed state takes the same check, because Linear's GitHub integration sets Done from the PR's `Closes` line at merge: when the issue's `## Done when` section still holds an unchecked box that check found met, run the same completion command, which sets Done again and ticks those boxes; with no such box, skip the write.
+   A merged PR with a closing word leaves `[ISSUE]` Done; Linear's GitHub integration sets that state. When `[ISSUE]` was extracted, read it live and run the completion command to tick only the boxes the merge proves on the default branch. Never write a started state onto a Done item during merge completion. After a later failed check, the overseer or the owner reopens the item with evidence in a comment or files a bug.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues get [ISSUE]

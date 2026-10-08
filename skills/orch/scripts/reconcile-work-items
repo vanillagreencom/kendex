@@ -64,8 +64,8 @@ message() {
     clock-failed) printf 'The current time could not be read.\n' ;;
     invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
     container-parked) printf 'All non-canceled children are Done. Close the parent or state why it remains open.\n' ;;
-    started-stale) printf 'The started issue has passed the stale threshold. Finish its lifecycle or restate its scope.\n' ;;
-    done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Reopen it or record completion evidence.\n' ;;
+    started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
+    done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. File each unmet box as its own item, or tick it with evidence.\n' ;;
     findings) printf 'The tracker state differs from the work.\n' ;;
     clean) printf 'Every issue state matches its work.\n' ;;
   esac
