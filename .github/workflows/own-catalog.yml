@@ -22,6 +22,7 @@ jobs:
     with:
       path: .
       strict: true
+      timeout-minutes: 10
       # Exercise this branch's CI scripts, never a binary built from it.
       ref: ${{ github.sha }}
 

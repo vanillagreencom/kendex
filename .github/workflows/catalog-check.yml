@@ -53,11 +53,16 @@ on:
         description: kendex revision to read the CI scripts from (the engine is always the latest release)
         type: string
         default: main
+      timeout-minutes:
+        description: Job time limit in minutes (GitHub requires it in the called workflow)
+        type: number
+        default: 360
 
 jobs:
   check:
     name: kendex check
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
     steps:

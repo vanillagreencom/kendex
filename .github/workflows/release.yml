@@ -59,6 +59,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -257,6 +258,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     name: ${{ github.ref == 'refs/heads/main' && 'main' || 'publish' }}
     concurrency:
       group: release-publish-${{ github.run_id }}
@@ -472,6 +474,7 @@ jobs:
     needs: publish
     if: needs.publish.outputs.channel != ''
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     concurrency:
       group: release-channel-${{ needs.publish.outputs.channel }}
       cancel-in-progress: false
