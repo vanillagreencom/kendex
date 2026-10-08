@@ -447,7 +447,7 @@ fn withhold_requirers(
     expansion: &Expansion,
     state: &DesiredState,
 ) {
-    spread_upward(manifest_file, wanted);
+    spread_upward(manifest_file, wanted, state);
     withhold_kept_retired(manifest_file, wanted, state);
     withhold_orphans(wanted, expansion);
 }
@@ -514,7 +514,9 @@ fn withhold_kept_retired(
                         .and_then(|theirs| theirs.withheld.get(&harness))
                         .is_some_and(|because| match because {
                             Withholding::Retired | Withholding::Requires => true,
-                            Withholding::Orphaned | Withholding::Unanswered => false,
+                            Withholding::Orphaned
+                            | Withholding::Unanswered
+                            | Withholding::RevConflict => false,
                         })
                 });
                 if let Some(companion) = gone {
@@ -581,7 +583,7 @@ struct Companion {
 /// per pass, and a reason outranking the one already held for the tool
 /// replaces it ([`Withholding`]). A companion orphaned by its requirers'
 /// withholding spreads nothing back.
-fn spread_upward(manifest_file: &str, wanted: &mut BTreeMap<Node, Wanted>) {
+fn spread_upward(manifest_file: &str, wanted: &mut BTreeMap<Node, Wanted>, state: &DesiredState) {
     loop {
         let mut spread: Vec<(Node, Companion)> = Vec::new();
         for ((kind, parent), found) in wanted.iter() {
@@ -605,6 +607,13 @@ fn spread_upward(manifest_file: &str, wanted: &mut BTreeMap<Node, Wanted>) {
                         Some(Withholding::Requires) => Withholding::Requires,
                         Some(Withholding::Retired) => Withholding::Retired,
                         Some(Withholding::Unanswered) => Withholding::Unanswered,
+                        Some(Withholding::RevConflict) => match state
+                            .recorded_enabled
+                            .contains(&crate::lock::entry_key(*dep_kind, dep, *harness))
+                        {
+                            true => Withholding::RevConflict,
+                            false => Withholding::Requires,
+                        },
                         Some(Withholding::Orphaned) | None => continue,
                     };
                     if found.withheld.get(harness) < Some(&because) {
@@ -642,7 +651,13 @@ fn spread_upward(manifest_file: &str, wanted: &mut BTreeMap<Node, Wanted>) {
             found.withhold_for(tools.iter().copied(), because, &(dep_kind, dep.clone()));
             found.answered.push(finding(
                 manifest_file,
-                &NotWritten::Withheld,
+                &match because {
+                    Withholding::RevConflict => NotWritten::HeldRevConflict,
+                    Withholding::Orphaned
+                    | Withholding::Unanswered
+                    | Withholding::Retired
+                    | Withholding::Requires => NotWritten::Withheld,
+                },
                 kind,
                 dep_kind,
                 &parent,
@@ -1304,7 +1319,7 @@ fn companion(
             ));
         }
         if kind == ItemKind::Hook && armed {
-            wanted.withhold(tools, Withholding::Requires);
+            wanted.withhold(tools, reason.withholding());
         }
     }
     Dep {
@@ -1390,14 +1405,21 @@ fn finding(
             ),
             format!("pin the items that bring {dep} in to the same revision, or unpin them"),
         ),
+        NotWritten::HeldRevConflict => (
+            format!(
+                "{parent} is held with its required companion {dep}, which stays installed on {tools} under a revision conflict"
+            ),
+            format!("pin the items that bring {dep} in to the same revision, or unpin them"),
+        ),
     };
     warn(kind, parent, message, remediation)
 }
 
 /// Every requirer has been walked, so what the loop could not know yet is
 /// settled: the revision each companion is wanted at, and so which one is
-/// wanted at two and written at neither. Asked once more of the one answer,
-/// for every tool a companion was counted on.
+/// wanted at two and written at neither. A recorded companion still runs;
+/// its requirers stay beside it. Asked once more of the one answer, for
+/// every tool a companion was counted on.
 fn settle_after_walk(
     env: &Env,
     scope: &Scope,
@@ -1431,7 +1453,7 @@ fn settle_after_walk(
         }
         for (refused, dep_kind, dep, source) in settled {
             for (reason, tools) in refused {
-                found.withhold(tools.iter().copied(), Withholding::Requires);
+                found.withhold(tools.iter().copied(), reason.withholding());
                 found.findings.push(finding(
                     &crate::manifest::manifest_file_name(env, scope),
                     &reason,

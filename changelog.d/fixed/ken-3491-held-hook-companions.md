@@ -1,0 +1,1 @@
+- Keep installed hooks armed when a required companion stays installed because it is requested at conflicting revisions.

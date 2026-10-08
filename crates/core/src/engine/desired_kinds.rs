@@ -74,7 +74,8 @@ pub(super) fn declared(
 ///   name, or nowhere to register;
 /// - wanted at two revisions: the expansion recorded a revision
 ///   disagreement (`Expansion::report_rev_disagreements`) and
-///   `holds::hold_rev_conflict` writes nothing for it.
+///   `holds::hold_rev_conflict` writes nothing for it. An enabled recorded
+///   copy still runs, so its requirers keep their records too.
 ///
 /// The two the manifest answers — kept removed, declared for other tools —
 /// hold wherever the item is asked about, including the tools a set
@@ -106,6 +107,23 @@ pub(super) enum NotWritten {
     OwnHarnessesLine { declared: bool },
     Undeliverable(String),
     RevConflict,
+    HeldRevConflict,
+}
+
+impl NotWritten {
+    pub(super) fn withholding(&self) -> super::desired::Withholding {
+        match self {
+            Self::HeldRevConflict => super::desired::Withholding::RevConflict,
+            Self::KeptRemoved
+            | Self::SwitchedOff
+            | Self::UnreadableHeader(_)
+            | Self::OtherTools
+            | Self::Withheld
+            | Self::OwnHarnessesLine { .. }
+            | Self::Undeliverable(_)
+            | Self::RevConflict => super::desired::Withholding::Requires,
+        }
+    }
 }
 
 /// [`NotWritten`] for one hook on one tool. `header` is the hook's own
@@ -179,11 +197,14 @@ fn past_pin(
     pinned: bool,
     harness: HarnessId,
 ) -> Option<NotWritten> {
-    if state
-        .withheld
-        .contains_key(&(kind, name.to_owned(), harness))
-    {
-        return Some(NotWritten::Withheld);
+    if let Some(because) = state.withheld.get(&(kind, name.to_owned(), harness)) {
+        // A dependency hold must not hide this item's own revision
+        // conflict: the item pass still reports it and keeps its record.
+        if *because != super::desired::Withholding::RevConflict
+            || !state.rev_conflicts.contains(&(kind, name.to_owned()))
+        {
+            return Some(NotWritten::Withheld);
+        }
     }
     if let Some(own) = header {
         if !own.applies_to(harness) {
@@ -196,7 +217,15 @@ fn past_pin(
         }
     }
     if state.rev_conflicts.contains(&(kind, name.to_owned())) {
-        return Some(NotWritten::RevConflict);
+        return Some(
+            match state
+                .recorded_enabled
+                .contains(&entry_key(kind, name, harness))
+            {
+                true => NotWritten::HeldRevConflict,
+                false => NotWritten::RevConflict,
+            },
+        );
     }
     None
 }
@@ -252,7 +281,10 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             // Written: parked under `.disabled` when off, and held by
             // `holds::hold_rev_conflict` when wanted at two revisions,
             // which writes nothing and says so in the plan.
-            None | Some(NotWritten::SwitchedOff | NotWritten::RevConflict) => {}
+            None
+            | Some(
+                NotWritten::SwitchedOff | NotWritten::RevConflict | NotWritten::HeldRevConflict,
+            ) => {}
             // The declaration is the person's own list, and a set that
             // carries the hook to more tools than it names does not widen
             // it; a name kept removed is theirs the same way. Neither
@@ -441,7 +473,8 @@ fn pin_records(ctx: &ItemCtx, state: &mut DesiredState, hook: &HookSpec) {
                 | NotWritten::Withheld
                 | NotWritten::OwnHarnessesLine { declared: false }
                 | NotWritten::Undeliverable(_)
-                | NotWritten::RevConflict,
+                | NotWritten::RevConflict
+                | NotWritten::HeldRevConflict,
             ) => continue,
         };
         if state.judge_pins {

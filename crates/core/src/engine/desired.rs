@@ -338,6 +338,9 @@ pub struct DesiredState {
     /// The entry keys of the record this pass read: where a retired item
     /// is kept ([`Retirement::kept`]).
     pub(super) recorded: BTreeSet<String>,
+    /// Recorded installations that still run when a revision conflict
+    /// holds their files and registrations unchanged.
+    pub(super) recorded_enabled: BTreeSet<String>,
     /// What each switched-on installation in that record required on its
     /// tool when it was written, read off its companions' `RequiredBy`
     /// reasons: what a retired hook kept as recorded still runs with,
@@ -461,6 +464,9 @@ pub enum Withholding {
     /// orphan like any other, disposed of by `removal::orphans` under the
     /// plan's options: kept, taken, or held for the person's edits.
     Orphaned,
+    /// A required companion stays installed under a revision conflict.
+    /// Keep this hook's recorded files and registrations beside it.
+    RevConflict,
     /// A hook it requires is set to come from a catalog that says nothing
     /// of it this pass (`expansion::Offer::Silent`), and the manifest alone
     /// does not refuse it. Whether that hook would run cannot be told, so
@@ -496,7 +502,7 @@ impl Withholding {
     pub fn takes(self) -> bool {
         match self {
             Withholding::Orphaned | Withholding::Retired | Withholding::Requires => true,
-            Withholding::Unanswered => false,
+            Withholding::Unanswered | Withholding::RevConflict => false,
         }
     }
 
@@ -509,7 +515,7 @@ impl Withholding {
             Withholding::Retired => {
                 Some("withheld: a retirement leaves it without a hook it requires")
             }
-            Withholding::Orphaned | Withholding::Unanswered => None,
+            Withholding::Orphaned | Withholding::Unanswered | Withholding::RevConflict => None,
         }
     }
 }
@@ -740,6 +746,7 @@ fn compute(
         prune_retired,
         removal_filter: removal_filter.map(<[_]>::to_vec),
         recorded: lock.entries.keys().cloned().collect(),
+        recorded_enabled: recorded_enabled(lock),
         recorded_requires: recorded_requires(lock),
         ..DesiredState::default()
     };
@@ -893,6 +900,14 @@ fn inline(env: &Env, scope: &Scope, manifest: &Manifest, state: &mut DesiredStat
             )),
         );
     }
+}
+
+fn recorded_enabled(lock: &Lock) -> BTreeSet<String> {
+    lock.entries
+        .iter()
+        .filter(|(_, entry)| entry.enabled)
+        .map(|(key, _)| key.clone())
+        .collect()
 }
 
 /// [`DesiredState::recorded_requires`] from `lock`: each companion's
