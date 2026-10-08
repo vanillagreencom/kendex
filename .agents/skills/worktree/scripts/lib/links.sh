@@ -6,8 +6,35 @@
 #
 # Sourced by scripts/worktree after lib/messages.sh and lib/kendex-env.sh: the
 # refusals here call worktree_message and the paths come from the loaded project
-# configuration. The git-hook auto-repair installer stays in that script, beside
-# the hook text it writes.
+# configuration. orch also uses the setup-path parsing helpers before hiding
+# provisioned private copies. The git-hook auto-repair installer stays in the
+# worktree script, beside the hook text it writes.
+
+strip_trailing_slashes() {
+  local path="$1"
+  while [[ "$path" != "/" && "$path" == */ ]]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "$path"
+}
+
+normalize_worktree_config_path() {
+  local var="$1" path="$2"
+  path="$(strip_trailing_slashes "$path")"
+  if [[ -z "$path" || "$path" == "." || "$path" == /* || "$path" == *\\* || "$path" == *'*'* || "$path" == *\?* || "$path" == *'['* || "$path" == *']'* || "$path" == */../* || "$path" == ../* || "$path" == */.. || "$path" == ".." || "$path" == */./* || "$path" == ./* || "$path" == */. ]]; then
+    worktree_message config-path-invalid "$var=$2" "Error: invalid $var entry '$2'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components." >&2
+    return 1
+  fi
+  printf '%s\n' "$path"
+}
+
+split_worktree_config_words() {
+  local value="$1"
+  local IFS=$' \t\n'
+  WORKTREE_CONFIG_WORDS=()
+  [[ -n "$value" ]] || return 0
+  read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
+}
 
 # Idempotently append a worktree-relative path to the COMMON git-dir's
 # info/exclude so git treats the symlink we lay down as ignored content.

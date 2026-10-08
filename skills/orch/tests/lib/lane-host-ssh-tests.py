@@ -119,7 +119,8 @@ esac
 ''')
         # create reads the clone's settings through the worktree command's own loader.
         (wt.parent / "lib").mkdir()
-        shutil.copy2(PACKAGE.parent / "worktree/scripts/lib/kendex-env.sh", wt.parent / "lib/kendex-env.sh")
+        for name in ("kendex-env.sh", "messages.sh", "links.sh"):
+            shutil.copy2(PACKAGE.parent / f"worktree/scripts/lib/{name}", wt.parent / "lib" / name)
         scripts = self.source / ".agents/skills/orch/scripts"
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base", "lane-marker"):
@@ -1080,24 +1081,27 @@ touch node_modules/dep
         self.executable(self.source / provision_script, (PACKAGE.parent / "worktree/scripts/worktree").read_text())
         self.seed_source(provision_script, (self.source / provision_script).read_text())
         for library in (PACKAGE.parent / "worktree/scripts/lib").glob("*.sh"):
-            if library.name != "kendex-env.sh":
+            if library.name not in ("kendex-env.sh", "messages.sh", "links.sh"):
                 self.seed_source(f".agents/skills/worktree/scripts/lib/{library.name}", library.read_text())
         self.seed_source(".gitignore", ".env.local\nconfig/\nalias\n.cache/\ntmp/\n")
         rows = (
-            ("root settings", "root", "none", 0, False),
-            ("nested settings with copies", "nested", "copy", 0, False),
-            ("parent selector with copies and failed npm", "parent", "copy", 7, False),
-            ("linked private files", "root", "link", 0, False),
-            ("private file changes the selector", "root", "copy", 0, True),
-            ("different clone and worktree selectors", "divergent", "copy", 0, False),
-            ("different selectors with failed npm", "divergent", "copy", 7, False),
-            ("shipped copy and relative link", "root", "relative", 0, False),
-            ("shipped copy and relative link with failed npm", "root", "relative", 7, False),
-            ("named link with a different target", "root", "target-link", 0, False),
-            ("shipped copy through a directory alias", "root", "alias-copy", 0, False),
-            ("directory-alias copy with failed npm", "root", "alias-copy", 7, False),
+            ("root settings", "root", "none", 0, False, ""),
+            ("nested settings with copies", "nested", "copy", 0, False, ""),
+            ("parent selector with copies and failed npm", "parent", "copy", 7, False, ""),
+            ("linked private files", "root", "link", 0, False, ""),
+            ("private file changes the selector", "root", "copy", 0, True, ""),
+            ("different clone and worktree selectors", "divergent", "copy", 0, False, ""),
+            ("different selectors with failed npm", "divergent", "copy", 7, False, ""),
+            ("shipped copy and relative link", "root", "relative", 0, False, ""),
+            ("shipped copy and relative link with failed npm", "root", "relative", 7, False, ""),
+            ("named link with a different target", "root", "target-link", 0, False, ""),
+            ("shipped copy through a directory alias", "root", "alias-copy", 0, False, "alias/shared.env"),
+            ("directory-alias copy with failed npm", "root", "alias-copy", 7, False, "alias/shared.env"),
+            ("normalized directory-alias copy", "root", "alias-copy", 0, False, "alias/shared.env/"),
+            ("normalized directory-alias copy with failed npm", "root", "alias-copy", 7, False, "alias/shared.env/"),
+            ("normalized copy declared only by the retained worktree", "worktree-copies", "alias-copy", 0, False, "alias/shared.env/"),
         )
-        for index, (name, selector, provision, status, changes_selector) in enumerate(rows):
+        for index, (name, selector, provision, status, changes_selector, copy_declaration) in enumerate(rows):
             chosen_name = ".env.local" if provision == "relative" else relative
             if provision == "alias-copy":
                 chosen_name = "config/private.env"
@@ -1107,9 +1111,9 @@ touch node_modules/dep
                             'WORKTREE_COPIES = "shared.env"\nWORKTREE_RELATIVE_SYMLINKS = ".env.local=shared.env"\n')
             elif provision == "alias-copy":
                 settings = (f'[env]\nWORKTREE_SYMLINKS = "ui/node_modules"\nINSTALL_CASE = "{index}"\n'
-                            'WORKTREE_COPIES = ".env.local config/private.env alias/shared.env"\n')
+                            f'WORKTREE_COPIES = ".env.local config/private.env {copy_declaration}"\n')
             selection = f'KENDEX_ENV_FILE = "{chosen_name}"\n'
-            self.seed_source("kendex.settings.toml", settings + (selection if selector in ("root", "divergent") else ""))
+            self.seed_source("kendex.settings.toml", settings + (selection if selector in ("root", "divergent", "worktree-copies") else ""))
             self.seed_source(".kendex/settings.toml", f'[env]\nINSTALL_CASE = "{index}"\n' + (selection if selector == "nested" else ""))
             self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
             self.row["clone"] = str(self.root / f"private-clone-{index}")
@@ -1142,6 +1146,12 @@ touch node_modules/dep
                 if provision == "alias-copy":
                     (clone / "alias").symlink_to(".", target_is_directory=True)
                     env["SSH_TEST_COPY_RELATIVE"] = "alias/shared.env"
+                    if selector == "worktree-copies":
+                        produced = subprocess.run([shutil.which("bash"), str(clone / provision_script), "fix-links", str(tree)],
+                                                  cwd=clone, env=dict(self.env, **env), capture_output=True)
+                        self.assertEqual(produced.returncode, 0, produced.stderr)
+                        self.assertEqual((tree / "alias/shared.env").read_bytes(), contents)
+                        self.seed_source("kendex.settings.toml", settings.replace(copy_declaration, "") + selection)
                 if provision == "target-link":
                     shutil.copy2(target, tree / "shared.env")
                     copied = tree / chosen_name
@@ -1175,6 +1185,7 @@ touch node_modules/dep
                               for private_name in private_names if (clone / private_name).is_symlink()}
             mark = len(self.log_since(0))
             installed = self.create("--reuse", **env, SSH_TEST_NPM_FAIL=str(status))
+            self.last_private_install_result = installed
             self.assertEqual(installed.returncode, status, (name, installed.stderr))
             calls = [line for line in self.log_since(mark) if line.startswith("npm ")]
             self.assertEqual(calls, [f"npm ci --no-audit --no-fund in {clone / 'ui'}"])
@@ -1228,6 +1239,112 @@ touch node_modules/dep
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
                 self.private_install_cases()
+
+    def test_control_install_using_raw_copy_declarations_exposes_credentials(self):
+        original = self.script.read_text()
+        fragment = '    copy=$(normalize_worktree_config_path WORKTREE_COPIES "$entry") || exit 1'
+        self.assertEqual(original.count(fragment), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(fragment, '    copy="$entry"'))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.private_install_cases()
+            self.assertEqual(self.last_private_install_result.returncode, 91)
+
+    def test_install_refuses_unavailable_copy_support_before_project_settings(self):
+        support = ".agents/skills/worktree/scripts/lib"
+        originals = {name: (self.source / support / name).read_text() for name in ("messages.sh", "links.sh")}
+        self.fake_npm()
+        self.seed_source("kendex.settings.toml", '[env]\nWORKTREE_SYMLINKS = "ui/node_modules"\nKENDEX_ENV_FILE = "config/private.env"\n')
+        self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
+        contents = 'SECRET=copy-support-fixture\ntouch "$SSH_TEST_SUPPORT_MARKER"\n'
+        self.seed_source("config/private.env", contents)
+        older_links = originals["links.sh"]
+        for function in ("strip_trailing_slashes", "normalize_worktree_config_path", "split_worktree_config_words"):
+            start = older_links.index(function + "() {\n")
+            end = older_links.index("\n}\n", start) + len("\n}\n")
+            block = older_links[start:end]
+            self.assertEqual(older_links.count(block), 1)
+            older_links = older_links.replace(block, "")
+        rows = (("messages.sh", None, "unreadable", ""),
+                ("links.sh", None, "unreadable", ""),
+                ("links.sh", older_links, "missing-helper", "strip_trailing_slashes"))
+        for index, (name, body, cause, helper) in enumerate(rows):
+            for restore_name, original in originals.items():
+                path = self.source / support / restore_name
+                if not path.exists() or path.read_text() != original:
+                    self.seed_source(f"{support}/{restore_name}", original)
+            if body is None:
+                for args in (("rm", "--", f"{support}/{name}"),
+                             ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "remove support")):
+                    subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
+                                   env=self.git_env, check=True, capture_output=True)
+            else:
+                self.seed_source(f"{support}/{name}", body)
+            self.row["clone"] = str(self.root / f"unavailable-copy-support-{index}")
+            self.inventory.write_text(json.dumps([self.row]))
+            marker = self.root / f"copy-settings-loaded-{index}"
+            mark = len(self.log_since(0)) if (self.root / "calls").exists() else 0
+            inherited = {f"BASH_FUNC_{function}%%": "() { return 0; }"
+                         for function in ("strip_trailing_slashes", "normalize_worktree_config_path", "split_worktree_config_words")}
+            result = self.create(SSH_TEST_SUPPORT_MARKER=str(marker), **inherited)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            remote_library = Path(self.row["clone"]) / support / name
+            fields = [line.split() for line in result.stderr.splitlines()
+                      if line.startswith(b"lane-host-ssh: copy-support-unavailable ")]
+            # The control plane consumes this support diagnostic.
+            expected = [b"lane-host-ssh:", b"copy-support-unavailable", *f"path={remote_library}".encode().split(),
+                        f"cause={cause}".encode()]
+            if helper:
+                expected.append(f"helper={helper}".encode())
+            self.assertEqual(fields, [expected])
+            self.assertFalse(marker.exists())
+            self.assertEqual([line for line in self.log_since(mark) if line.startswith("npm ")], [])
+            self.assertEqual((Path(self.row["clone"]) / "config/private.env").read_text(), contents)
+
+    def test_control_unavailable_copy_support_loads_project_settings(self):
+        original = self.script.read_text()
+        fragment = 'load_copy_support || exit 1'
+        self.assertEqual(original.count(fragment), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(fragment, ':'))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.test_install_refuses_unavailable_copy_support_before_project_settings()
+            self.assertTrue((self.root / "copy-settings-loaded-0").exists())
+
+    def test_install_rejects_invalid_copy_paths_without_installing(self):
+        self.fake_npm()
+        self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
+        for index, declaration in enumerate(("../outside.env", "./shared.env", "config/*.env")):
+            self.seed_source("kendex.settings.toml", f'[env]\nWORKTREE_SYMLINKS = "ui/node_modules"\nWORKTREE_COPIES = "{declaration}"\n')
+            self.row["clone"] = str(self.root / f"invalid-copy-path-{index}")
+            self.inventory.write_text(json.dumps([self.row]))
+            mark = len(self.log_since(0)) if (self.root / "calls").exists() else 0
+            result = self.create()
+            self.last_invalid_copy_result = result
+            self.assertEqual(result.returncode, 1, result.stderr)
+            fields = [line for line in result.stderr.splitlines()
+                      if line.startswith(b"worktree-config-path-invalid: ")]
+            # worktree_message exposes the rejected setting as a stable record.
+            self.assertEqual(fields, [f"worktree-config-path-invalid: WORKTREE_COPIES={declaration}".encode()])
+            self.assertEqual([line for line in self.log_since(mark) if line.startswith("npm ")], [])
+            clone_private = Path(self.row["clone"]) / ".env.local"
+            self.assertEqual(clone_private.read_bytes(), (self.source / ".env.local").read_bytes())
+
+    def test_control_raw_copy_paths_bypass_the_worktree_path_refusal(self):
+        original = self.script.read_text()
+        fragment = '    copy=$(normalize_worktree_config_path WORKTREE_COPIES "$entry") || exit 1'
+        self.assertEqual(original.count(fragment), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "lane-host-ssh"
+            self.executable(self.script, original.replace(fragment, '    copy="$entry"'))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.test_install_rejects_invalid_copy_paths_without_installing()
+            self.assertEqual(self.last_invalid_copy_result.returncode, 0)
 
     def test_install_refuses_private_targets_outside_both_checkouts(self):
         self.fake_npm()

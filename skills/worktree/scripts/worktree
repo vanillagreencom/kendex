@@ -138,6 +138,10 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 CALLER_ENV_NAMES="$(compgen -e)"
 kendex_load_project_env "$PROJECT_ROOT"
 
+# Worktree link setup, health and repair.
+# shellcheck source=lib/links.sh
+source "$SCRIPT_DIR/lib/links.sh"
+
 GITHUB_AUTH_LIB="$SCRIPT_DIR/../../github/scripts/lib/gh-auth.sh"
 if [[ -f "$GITHUB_AUTH_LIB" ]]; then
   # shellcheck source=../../github/scripts/lib/gh-auth.sh
@@ -853,14 +857,6 @@ parse_push_args() {
   done
 }
 
-strip_trailing_slashes() {
-  local path="$1"
-  while [[ "$path" != "/" && "$path" == */ ]]; do
-    path="${path%/}"
-  done
-  printf '%s\n' "$path"
-}
-
 # One path segment in the alphabet an issue ID is spelled in: a name composed
 # under the worktree base dir that cannot climb out of it or name a subtree.
 is_path_segment() {
@@ -873,24 +869,6 @@ validate_issue_id() {
     worktree_message issue-invalid "$issue" "Error: invalid issue ID '$issue'. Use letters, numbers, '.', '_', or '-' only; start with a letter/number and do not include '..'." >&2
     return 1
   fi
-}
-
-normalize_worktree_config_path() {
-  local var="$1" path="$2"
-  path="$(strip_trailing_slashes "$path")"
-  if [[ -z "$path" || "$path" == "." || "$path" == /* || "$path" == *\\* || "$path" == *'*'* || "$path" == *\?* || "$path" == *'['* || "$path" == *']'* || "$path" == */../* || "$path" == ../* || "$path" == */.. || "$path" == ".." || "$path" == */./* || "$path" == ./* || "$path" == */. ]]; then
-    worktree_message config-path-invalid "$var=$2" "Error: invalid $var entry '$2'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components." >&2
-    return 1
-  fi
-  printf '%s\n' "$path"
-}
-
-split_worktree_config_words() {
-  local value="$1"
-  local IFS=$' \t\n'
-  WORKTREE_CONFIG_WORDS=()
-  [[ -n "$value" ]] || return 0
-  read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
 }
 
 path_is_under_path() {
@@ -1263,10 +1241,6 @@ current_checkout_path_for_issue() {
   [[ -n "$current_branch" && "$current_branch" == "$expected_branch" ]] || return 1
   printf '%s\n' "$current_root"
 }
-
-# Worktree link setup, health and repair.
-# shellcheck source=lib/links.sh
-source "$SCRIPT_DIR/lib/links.sh"
 
 # ─── Git-hook auto-repair ────────────────────────────────────────────────────
 #

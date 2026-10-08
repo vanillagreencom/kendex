@@ -324,6 +324,28 @@ def install_dependencies(row, item):
     directory to install in.
     """
     remote(row, '''loader="$1/.agents/skills/worktree/scripts/lib/kendex-env.sh"
+load_copy_support() {
+  local support="${loader%/*}" library helper
+  unset -f worktree_message strip_trailing_slashes normalize_worktree_config_path split_worktree_config_words || return 1
+  for library in "$support/messages.sh" "$support/links.sh"; do
+    if ! test -r "$library"; then
+      printf 'lane-host-ssh: copy-support-unavailable path=%s cause=unreadable\\n' "$library" >&2
+      return 1
+    fi
+    . "$library" || return 1
+  done
+  for helper in worktree_message strip_trailing_slashes normalize_worktree_config_path split_worktree_config_words; do
+    if ! declare -F "$helper" >/dev/null; then
+      case "$helper" in
+        worktree_message) library="$support/messages.sh" ;;
+        *) library="$support/links.sh" ;;
+      esac
+      printf 'lane-host-ssh: copy-support-unavailable path=%s cause=missing-helper helper=%s\\n' "$library" "$helper" >&2
+      return 1
+    fi
+  done
+}
+load_copy_support || exit 1
 load_install_settings() {
   local selected_private
   unset -f kendex_project_env_supports || return 1
@@ -354,8 +376,11 @@ fi
 private_paths=()
 private_copies=()
 for copies in "${copy_settings[@]}"; do
-  read -r -a entries <<<"$copies"
-  private_copies+=(${entries[@]+"${entries[@]}"})
+  split_worktree_config_words "$copies" || exit 1
+  for entry in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    copy=$(normalize_worktree_config_path WORKTREE_COPIES "$entry") || exit 1
+    private_copies+=("$copy")
+  done
 done
 for ((index = 0; index < ${#roots[@]}; index++)); do
   roots[$index]=$(cd -P -- "${roots[$index]}" && pwd -P) || exit 1
