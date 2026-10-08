@@ -252,6 +252,22 @@ The long pass's events, checked and reported in this order:
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
+  EVENT main-push-failing <repo> workflow=skill-tests.yml run=<run-id> jobs=<JSON array> cause=<line>
+                             the latest completed push on main failed or
+                             timed out. jobs= lists failed or timed-out job
+                             names in sorted order. cause= is the first
+                             failing suite line from the failed-step log,
+                             without gh's job, step and timestamp prefix;
+                             unread means no such line was available.
+                             Reported in the long pass that reads it, once
+                             per changed jobs or failing suite. Suite timing
+                             and passing-test counts do not change that key.
+                             A later run with the same failures stays quiet.
+                             A completed run with
+                             no failure clears the incident. A failed run or
+                             jobs read prints main-push-unread on stderr and
+                             keeps the incident intact. A failed log read
+                             prints that notice and reports cause=unread
   EVENT security-alert <repo> kind=<dependabot|code-scanning|secret-scanning>
         number=<N> [severity=<s>] <package|rule>=<name> [manifest=<path>]
         [scope=<scope>] [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
@@ -957,6 +973,7 @@ Environment:
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff,
                               account, outside-contribution, refresh-failing,
+                              main-push-failing,
                               security-alert, bot-fix and
                               security-alerts-unread rows; the mail pass's
                               file beside the first one holds
@@ -1019,6 +1036,7 @@ ow_message() { # REASON FIELD=VALUE...
     start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     start-stall-unread) text='The lane status file could not be read through lane-host, so whether the lane started settles nothing this pass: no start-stalled goes out for it and its row stands. The exit is lane_host_fetch'"'"'s: 2 a failed read, 4 no lane-host slot.' ;;
     refresh-unread) text='The refresh run list or failed-step log could not be read. A failed run-list read leaves the baseline intact; a failed log read reports cause=unread. The watch continues.' ;;
+    main-push-unread) text='The main-push run list, jobs or failed-step log could not be read. An unread run list or jobs leaves the incident intact; an unread log reports cause=unread. The watch continues.' ;;
     refresh-stale) text='GitHub answered the refresh run list with a page that judges nothing: newest= is the run it was checked against, the one the watch last read or, for a pair opening an incident or with none read, the newest completed run in the unfiltered list, none when it has none, and read= the newest run the page holds, none for an empty page. No pair is reported and none is cleared. The watch continues.' ;;
     refresh-order-unknown) text='The refresh run-list judgement named an order other than newer, same, older or unrecorded, so the run list cannot be judged.' ;;
     lane-rows-unread) text='The Pi lane session rows could not be read, so the lane reads unjudged this pass and its pane is not read in their place. The exit is lane_host_fetch'"'"'s for a hosted lane, 2 a failed read and 4 no lane-host slot; 0 is a file this read reached and could not read, or whose last row names an event no writer writes, and 2 on a local lane is a record naming no mail_root.' ;;

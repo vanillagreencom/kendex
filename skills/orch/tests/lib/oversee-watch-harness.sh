@@ -91,6 +91,11 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   completed-run list, every run completed), refresh-all.<SLUG>.err fails it;
 #   refresh-log.<RUN>.txt is the failed-step log (default: empty);
 #   refresh-log.<RUN>.err fails that log with the file's stderr.
+#   main-push.<SLUG>.json is the Skill Tests run history (default: []),
+#   filtered by branch, event and status and capped by the list's limit;
+#   main-push.<SLUG>.err fails that list. main-jobs.<RUN>.json supplies jobs,
+#   main-jobs.<RUN>.err fails that read. main-log.<RUN>.txt and .err supply
+#   or fail the failed-step log of a main-push run.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
 #   workflows.<SLUG>.err fails that list with the file's stderr.
 #   dependabot.json, code-scanning.json, secret-scanning.json
@@ -138,14 +143,37 @@ case "${1:-} ${2:-}" in
     echo "owner/repo"; exit 0 ;;
   "run list" | "run view")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
-    verb="$2"; run="${3:-}"; repo=""; status=""
+    verb="$2"; run="${3:-}"; repo=""; status=""; workflow=""; branch=""; event=""; limit=20; fields=""
     while [[ $# -gt 0 ]]; do
       if [[ "$1" == --repo ]]; then repo="$2"; shift; fi
       if [[ "$1" == --status ]]; then status="$2"; shift; fi
+      if [[ "$1" == --workflow ]]; then workflow="$2"; shift; fi
+      if [[ "$1" == --branch ]]; then branch="$2"; shift; fi
+      if [[ "$1" == --event ]]; then event="$2"; shift; fi
+      if [[ "$1" == --limit ]]; then limit="$2"; shift; fi
+      if [[ "$1" == --json ]]; then fields="$2"; shift; fi
       shift
     done
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
-    if [[ "$verb" == list && -z "$status" ]]; then
+    if [[ "$verb" == list && "$workflow" == skill-tests.yml ]]; then
+      src="$STUB_DIR/main-push.$slug"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      if [[ -f "$src.json" ]]; then
+        jq -c --arg branch "$branch" --arg event "$event" --arg status "$status" --argjson limit "$limit" '
+          if type == "array" then map(select(
+            ($branch == "" or .headBranch == $branch) and
+            ($event == "" or .event == $event) and
+            ($status == "" or .status == $status)))[:$limit] else . end' "$src.json"
+      else printf '[]\n'; fi
+    elif [[ "$verb" == view && "$fields" == jobs ]]; then
+      src="$STUB_DIR/main-jobs.$run"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      if [[ -f "$src.json" ]]; then cat "$src.json"; else printf '{"jobs":[]}\n'; fi
+    elif [[ "$verb" == view && -f "$STUB_DIR/main-jobs.$run.json" ]]; then
+      src="$STUB_DIR/main-log.$run"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      [[ ! -f "$src.txt" ]] || cat "$src.txt"
+    elif [[ "$verb" == list && -z "$status" ]]; then
       src="$STUB_DIR/refresh-all.$slug"
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       [[ ! -f "$src.json" ]] || { cat "$src.json"; exit 0; }
@@ -838,8 +866,8 @@ refresh_watch() {
   run_watch ORCH_OVERSEER_MARK_REPEAT=2 -- --max-loops 1 "$@" \
     >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || REFRESH_RC=$?
   REFRESH_EVENTS="$(awk '/^EVENT refresh-failing /' "$STUB_DIR/out")"
-  REFRESH_LISTS="$(awk '/^run list .* --status completed / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
-  REFRESH_ALL_LISTS="$(awk '/^run list / && !/ --status / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
+  REFRESH_LISTS="$(awk '/^run list .* --workflow kendex-refresh.yml --status completed / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
+  REFRESH_ALL_LISTS="$(awk '/^run list .* --workflow kendex-refresh.yml / && !/ --status / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
   REFRESH_LOG_REQUESTS="$(awk '/^run view /' "$STUB_DIR/gh.calls")"
   REFRESH_HEARTBEATS="$(awk '/^EVENT heartbeat / { n++ } END { print n+0 }' "$STUB_DIR/out")"
   REFRESH_NOTICES="$(awk '/^oversee-watch: refresh-unread / { n++ } END { print n+0 }' "$STUB_DIR/err")"
