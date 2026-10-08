@@ -1011,7 +1011,7 @@ fn every_writing_verb_prints_the_score_beside_the_write() {
             Some("[critical]"),
         ),
         (
-            &["adopt", "skill", "deploy"],
+            &["adopt", "skill", "deploy", "--harness", "claude"],
             |home| {
                 let project = home.join("dev/app");
                 fs::create_dir_all(project.join(".claude/skills/deploy")).unwrap();
@@ -1027,7 +1027,7 @@ fn every_writing_verb_prints_the_score_beside_the_write() {
             Some("[critical]"),
         ),
         (
-            &["adopt", "skill", "deploy"],
+            &["adopt", "skill", "deploy", "--harness", "claude"],
             |home| {
                 let project = home.join("dev/app");
                 fs::create_dir_all(project.join(".claude/skills/deploy")).unwrap();

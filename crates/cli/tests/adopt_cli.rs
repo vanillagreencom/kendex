@@ -222,7 +222,7 @@ fn adoption_targets_scope_defaults_or_the_explicit_selection() {
         if expected.contains(&HarnessId::Claude) {
             assert!(claude.is_symlink(), "{case}");
             assert_eq!(
-                fs::canonicalize(claude).unwrap(),
+                kendex_core::paths::canonical(&claude).unwrap(),
                 project.join(".agents/skills/deploy"),
                 "{case}"
             );

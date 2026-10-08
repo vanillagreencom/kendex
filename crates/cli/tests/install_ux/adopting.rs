@@ -12,7 +12,7 @@ const HAND_MADE: &str =
 #[test]
 fn adopting_a_claude_skill_moves_it_into_the_shared_home() {
     let world = World::new(&["claude"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude"]);
     super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
     super::write(&world.at(".claude/skills/release/notes.md"), "Notes.\n");
 
@@ -41,7 +41,7 @@ fn adopting_a_claude_skill_moves_it_into_the_shared_home() {
 #[test]
 fn refresh_maintains_an_adopted_skill_without_touching_its_content() {
     let world = World::new(&["claude"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude"]);
     super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
     world.run(&["adopt", "skill", "release"]);
 
@@ -62,7 +62,7 @@ fn refresh_maintains_an_adopted_skill_without_touching_its_content() {
 #[allow(clippy::unwrap_used)]
 fn an_adopted_skill_clones() {
     let world = World::new(&["claude"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude"]);
     super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
     world.run(&["adopt", "skill", "release"]);
     world.commit_all("adopt release");
@@ -82,7 +82,7 @@ fn an_adopted_skill_clones() {
 #[test]
 fn adopting_a_hook_rewrites_only_its_own_registration() {
     let world = World::new(&["claude"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude"]);
     super::write(
         &world.at(".claude/settings.json"),
         r#"{
@@ -247,7 +247,7 @@ fn adoption_moves_the_script_a_command_runs_and_nothing_else() {
     ];
     for (what, planted, command, name, moved, recorded) in rows {
         let world = World::new(&["claude"]);
-        world.declare_catalog();
+        world.declare_no_items(&["claude"]);
         super::write(&world.at(planted), "#!/bin/sh\nexit 0\n");
         super::write(
             &world.at(".claude/settings.json"),
@@ -277,7 +277,7 @@ fn adoption_moves_the_script_a_command_runs_and_nothing_else() {
 #[test]
 fn tools_disagreeing_under_one_name_are_refused() {
     let world = World::new(&["claude", "codex"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude", "codex"]);
     super::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
     super::write(
         &world.at(".claude/settings.json"),
@@ -308,7 +308,7 @@ fn tools_disagreeing_under_one_name_are_refused() {
 #[test]
 fn a_hook_a_declaration_cannot_express_is_refused() {
     let world = World::new(&["claude"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude"]);
     super::write(
         &world.at(".claude/settings.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "env": {"TOKEN": "x"}}]}]}}"#,
@@ -324,7 +324,7 @@ fn a_hook_a_declaration_cannot_express_is_refused() {
 #[test]
 fn an_adopted_hook_keeps_its_timeout() {
     let world = World::new(&["claude"]);
-    world.declare_catalog();
+    world.declare_no_items(&["claude"]);
     super::write(
         &world.at(".claude/settings.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 45}]}]}}"#,
@@ -346,7 +346,7 @@ fn an_adopted_hook_keeps_its_timeout() {
 #[test]
 fn a_copilot_hook_is_found_in_its_own_document_and_named_in_fleet_words() {
     let world = World::new(&["copilot"]);
-    world.declare_catalog();
+    world.declare_no_items(&["copilot"]);
     super::write(
         &world.at(".github/hooks/mine.json"),
         r#"{"version": 1, "hooks": {"preToolUse": [{"type": "command", "command": ".github/hooks/guard.sh", "matcher": "shell"}]}}"#,
@@ -378,8 +378,7 @@ fn registering_a_project_reports_what_it_could_manage() {
         &["project", "add", &world.project.display().to_string()],
     );
     assert!(said.contains("release"), "{said}");
-    // Runnable as printed: the tool the row is about, and the project it is
-    // in — `adopt` acts on the current project and defaults to Claude Code.
+    // The adoption command names the tool and the current project.
     assert!(said.contains("--harness claude"), "{said}");
     // Shell-quoted, so a project path holding a space is still one path.
     assert!(
