@@ -182,7 +182,7 @@ for control in routing model settings grammar command permission; do
       observe 'codex:gpt-6.1-sol:high' none cmd 'claude --dangerously-skip-permissions {brief}' claude
       assert_eq "$OBS" '1|launch-question-tool-missing|none|none|none|no|codex:gpt-6.1-sol' 'control: the model-free fallback row turns red without harness settings' ;;
     grammar)
-      mutate_file "$OT" 'ol_preference_entries "$ORCH_LANE_PREFERENCE" || {' 'ol_preference_entries "$ORCH_LANE_PREFERENCE" || true; false && {'
+      mutate_file "$OT" 'ol_preference_entries "$ORCH_LANE_PREFERENCE" lane || {' 'ol_preference_entries "$ORCH_LANE_PREFERENCE" lane || true; false && {'
       observe 'pi:github-copilot/gpt-6.1-sol:high,pi:bare:high' none flags ''
       assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' 'control: the invalid-entry row turns red without refusal' ;;
     command)
@@ -284,5 +284,90 @@ for surface in batch wait; do
     fi
   done
 done
+# The real chooser judges the grant even when the fleet normally uses a
+# Daytona provider. Every row starts with plan room so only grant eligibility
+# determines whether the launch falls through to Codex.
+git -C "$REPO" remote add origin https://github.com/owner/repo.git
+cp "$TEST_DIR/fixtures/lane-host" "$REPO/daytona"
+make_lane "$TMP_ROOT/home" claude
+make_codex_lane "$TMP_ROOT/home/.codex"
+mkdir -p "$TMP_ROOT/cloud-usage"
+printf '{"rate_limit":{"primary_window":{"used_percent":10,"reset_at":4102444800},"secondary_window":{"used_percent":20,"reset_at":4102444800}}}\n' > "$TMP_ROOT/cloud-usage/.codex.json"
+printf 'Session started: https://claude.ai/code/session_01PREFERENCE\n' > "$TMP_ROOT/cloud-screen"
+printf 'Working (esc to interrupt)\n' > "$TMP_ROOT/host-screen"
+printf 'dev@lane:~$\n' > "$TMP_ROOT/ssh-screen"
+CLOUD_PREF='claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high'
+cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
+  local row="$1" root="${2:-$REPO/scripts}" pref="${3:-$CLOUD_PREF}" remaining=20 lock=null expiry='2099-11-04T00:00:00Z' repos='claude=owner/repo' rc=0 brief_args=()
+  case "$row" in floor) remaining=5 ;; locked) lock='"overage"' ;; expired) expiry='2020-11-04T00:00:00Z' ;; no-repo) repos='' ;; esac
+  claude_usage 10 20 10 Opus | jq --argjson remaining "$remaining" --argjson lock "$lock" --arg expiry "$expiry" \
+    '. + {iguana_necktie: {limit_dollars:250,remaining_dollars:$remaining,locked_reason:$lock,resets_at:$expiry}}' \
+    > "$TMP_ROOT/cloud-usage/.claude.json"
+  RUN="$TMP_ROOT/cloud-run"
+  rm -rf -- "${RUN:?}"
+  mkdir -p "$RUN/remote/srv/lane"
+  printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$RUN/remote/srv/lane/.git"
+  ot_fleet_state "$REPO/scripts/workflow-state" "$RUN/state" "$REPO" || exit 1
+  [[ "$row" == no-brief ]] || brief_args=(--brief-file "$TMP_ROOT/brief")
+  (cd -- "$REPO" && env -i PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" LANES_HOME="$TMP_ROOT/home" \
+    ORCH_LANE_HOST="$REPO/daytona" ORCH_LANE_PREFERENCE="$pref" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 \
+    ORCH_LANE_CLOUD_REPOS="$repos" ORCH_LANE_DIRS="$TMP_ROOT/home/.claude:$TMP_ROOT/home/.codex" \
+    ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/cloud-usage" ORCH_LANES_USAGE_TTL=0 \
+    OVERSEE_WATCH_STATE_DIR="$RUN/claims" ORCH_TMUX_SESSION=stub ORCH_OVERSEER_LANES=3 \
+    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 WORKTREE_CLI="$BIN/worktree" LANES_CLI="$root/lanes" \
+    OT_WT_LOG="$RUN/worktrees" OT_TMUX_LOG="$RUN/tmux" OT_TMUX_PANES="$RUN/panes" OT_TMUX_SERVER_PID="$$" \
+    OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=1 OT_SCREEN_FILE="$TMP_ROOT/cloud-screen" OT_HARNESS_SCREEN="$TMP_ROOT/host-screen" OT_SSH_SCREEN="$TMP_ROOT/ssh-screen" \
+    LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host" OT_SLEEP_INSTANT=1 \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$root/open-terminal" --tmux --state-dir "$RUN/state" --harness claude --lane auto \
+    --cmd 'claude --dangerously-skip-permissions {brief}' ${brief_args[@]+"${brief_args[@]}"} CC-21 \
+    > "$RUN/out" 2> "$RUN/err") || rc=$?
+  local record key=none
+  record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee \
+    '.lanes // [] | map([.harness,.kind,.host,.model,.preference_entry,(.session_id // "none")] | join("|")) | join(",")')"
+  if [[ "$rc" -ne 0 ]]; then
+    key="$(sed -n 's/^open-terminal: \([^ ]*\).*/\1/p' "$RUN/err")"; key="${key%%$'\n'*}"
+  fi
+  CLOUD_OBS="$rc|$key|$record"
+}
+CLOUD_WANT="0|none|claude|claude-cloud|claude-cloud|claude-opus-5-5|claude@claude-cloud:claude-opus-5-5:high|session_01PREFERENCE"
+SSH_WANT="0|none|codex|ssh|$REPO/daytona|gpt-6.1-sol|codex:gpt-6.1-sol:high|none"
+for row in room floor locked expired no-repo no-brief; do
+  cloud_observe "$row"
+  want="$SSH_WANT"
+  case "$row" in room) want="$CLOUD_WANT" ;; no-brief) want='1|cloud-brief-missing|' ;; esac
+  assert_eq "$CLOUD_OBS" "$want" "hosted preference: $row" "$RUN/err"
+done
+# A legacy entry still uses the fleet host. An entry naming local changes
+# only its own route, without changing the configured fleet host.
+cloud_observe floor "$REPO/scripts" 'codex:gpt-6.1-sol:high'
+assert_eq "$CLOUD_OBS" "$SSH_WANT" 'legacy entry retains the Daytona host' "$RUN/err"
+cloud_observe floor "$REPO/scripts" 'codex@local:gpt-6.1-sol:high'
+assert_eq "$CLOUD_OBS" '0|none|codex|local||gpt-6.1-sol|codex@local:gpt-6.1-sol:high|none' 'entry host local overrides the fleet host' "$RUN/err"
+
+# Each control removes one independent grant condition or host selection in a
+# disposable copy. The same launch observation must then differ from its row.
+for control in host floor locked expired no-repo credit-only grammar; do
+  file=lib/lane-model.sh
+  case "$control" in host) file=open-terminal ;; grammar) file=lib/overseer-launch.sh ;; esac
+  root="$(mutant_scripts "cloud-control-$control" "$file")"
+  orch_fixture_shared_libs "$TMP_ROOT/cloud-control-$control"
+  git -C "$TMP_ROOT/cloud-control-$control" init -q
+  git -C "$TMP_ROOT/cloud-control-$control" config gc.auto 0
+  git -C "$TMP_ROOT/cloud-control-$control" config maintenance.auto false
+  git -C "$TMP_ROOT/cloud-control-$control" remote add origin https://github.com/owner/repo.git
+  case "$control" in
+    host) mutate_file "$root/$file" 'LANE_HOST="${OL_ENTRY_HOST:-$preference_host}"' 'LANE_HOST="$preference_host"'; row=room; want="$CLOUD_WANT" ;;
+    floor) mutate_file "$root/$file" 'and $c.remaining_dollars > $cloud_floor and' 'and'; row=floor; want="$SSH_WANT" ;;
+    locked) mutate_file "$root/$file" ' and $c.locked_reason == null' ''; row=locked; want="$SSH_WANT" ;;
+    expired) mutate_file "$root/$file" ' and $e > $now' ''; row=expired; want="$SSH_WANT" ;;
+    no-repo) mutate_file "$root/$file" 'else . + {verdict: "cloud-repo-unset"} end;' 'else . end;'; row=no-repo; want="$SSH_WANT" ;;
+    credit-only) mutate_file "$root/$file" 'elif $pool == "cloud-credit" then' 'elif false then'; row=floor; want="$SSH_WANT" ;;
+    grammar) mutate_file "$root/$file" '"${2:-}" != lane ||' 'true ||'; row=room; want="$CLOUD_WANT" ;;
+  esac
+  cloud_observe "$row" "$root"
+  if [[ "$CLOUD_OBS" != "$want" ]]; then pass "control: $control changes the hosted preference result"
+  else fail "control: $control leaves the hosted preference result unchanged"; fi
+done
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

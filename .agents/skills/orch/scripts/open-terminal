@@ -212,81 +212,7 @@ if [[ -z "$LANE_HOST" ]]; then
   LANE_HOST="$(cd "${PROJECT_ROOT:-$PWD}" && "$SCRIPT_DIR/lane-host" resolve)" || host_rc=$?
   [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
 fi
-# A relaunch onto a provider that already holds this item. Its transcripts are
-# on the host, so the harness finds its own newest session there and this
-# machine's session store is never scanned for it — the one thing this shape
-# decides on its own, and every read of it below is that lookup.
-#
-# The usage gate below is NOT decided here. Whether this machine's copy of the
-# account governs the resumed session depends on what the provider says it
-# holds, which the gate asks for itself: `create` receives the account's config
-# dir on a relaunch too, and a provider re-seeding the host from it sends that
-# copy again.
-HOST_RELAUNCH=false
-[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
-# The host kind's capability line, read once: the launch arm is its `launch`,
-# and every lane record carries its `kind`. A cloud session runs Claude Code's
-# own cloud from this checkout, so it takes the claude harness and the
-# --brief-file the overseer wrote, the item's whole task: the session reaches
-# no tracker to read it from. That brief is one item's, so the launch takes one
-# item, and its relaunch is fresh, which this build does not make.
-host_caps_rc=0
-lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || host_caps_rc=$?
-[[ "$host_caps_rc" -eq 0 ]] || { ot_message host-capabilities-failed "host=$LANE_HOST" "exit=$host_caps_rc" >&2; exit 1; }
-lane_capability HOST_KIND kind
-lane_capability HOST_LAUNCH launch
-case "$HOST_LAUNCH" in
-  window | ssh) ;;
-  cloud-session)
-    [[ "$HARNESS" == claude && -z "$CMD_TEMPLATE" && "$RELAUNCH" != true && ${#ITEMS[@]} -eq 1 ]] \
-      || { ot_message cloud-session-invalid "host=$LANE_HOST" "harness=$HARNESS" "relaunch=$RELAUNCH" "items=${#ITEMS[@]}" >&2; exit 1; }
-    [[ -n "$BRIEF_FILE" ]] || { ot_message cloud-brief-missing "host=$LANE_HOST" >&2; exit 1; } ;;
-  cloud-task) ot_message kind-unbuilt "kind=$HOST_KIND" >&2; exit 1 ;;
-  *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; exit 1 ;;
-esac
-# The brief a --cmd template places as {brief}, read once, here, from the file
-# the caller wrote. The caller never quotes it: start_cmd renders it through
-# a local prompt file or lane_single_quote on the hosted path, so each shell
-# reads it back as the file's bytes, less trailing newlines,
-# whatever quote, `$` or backtick it holds. The two halves come as a pair: a
-# brief file with no {brief} would be read and reach no harness, and a {brief}
-# with no file would start the harness on an empty brief. A cloud session takes
-# the file alone, as its whole task. cat's own complaint is dropped so the
-# keyed line is the first one; the path it names is the cause.
-BRIEF_TEXT=""
-if [[ -n "$BRIEF_FILE" ]]; then
-  [[ "$CMD_TEMPLATE" == *"{brief}"* || "$HOST_LAUNCH" == cloud-session ]] || { ot_message brief-unreferenced "option=--brief-file" >&2; exit 1; }
-  BRIEF_TEXT="$(cat -- "$BRIEF_FILE" 2>/dev/null)" || { ot_message brief-file-unreadable "path=$BRIEF_FILE" >&2; exit 1; }
-  # A brief of whitespace alone starts a harness with nothing to do, which the
-  # launch reports as a lane opened while it holds its seat idle.
-  [[ "$BRIEF_TEXT" == *[![:space:]]* ]] || { ot_message brief-file-empty "path=$BRIEF_FILE" >&2; exit 1; }
-elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
-  ot_message brief-file-missing "option=--cmd" >&2
-  exit 1
-fi
-# The launch brief is the declared interface, not a harness status read.
-# The tier is the orch workflow the launched command runs: the template with
-# the brief it places, or with no template open-terminal's own, which runs
-# start. A command naming none records the tier the brief's item-tier line
-# states, and with no line none: a launch states no tier it did not judge. A
-# cloud session runs Claude Code's cloud, no orch workflow, so orch words its
-# brief quotes from the issue are never its tier. Its brief carries the
-# issue's text, which can quote an earlier result, so only a whole line of the
-# brief is that line, and two distinct ones are no tier. The item-tier line
-# retains the inputs without calling a tracker or classifying the item again.
-# Older callers supply no line, so their inputs are explicitly unknown.
-if [[ "$HOST_LAUNCH" == cloud-session ]]; then RUN_TEXT=""
-else RUN_TEXT="${CMD_TEMPLATE:-/orch start}"$'\n'"$BRIEF_TEXT"; fi
-LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
-  def count: if . == "-" then null else tonumber end;
-  ([ $run | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb) as $verb
-  | "tier=(?<tier>micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)" as $re
-  | (if $verb == null then [ $text | splits("\n") | capture("^[[:space:]]*(?<line>" + $re + ")[[:space:]]*$") ] | unique | if length == 1 then first else null end
-     else [ $text | capture($re) ] | first end) as $inputs
-  | {tier: (if $verb == null then $inputs.tier elif $verb == "start" then "standard" else $verb end),
-     tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
-')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
-[[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
+preference_host="$LANE_HOST"
 # Prints the record `lanes pick --json` judged the lane on; pick_record_env
 # reads the launch prefix from it.
 pick_auto_lane() {
@@ -408,7 +334,7 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
   PREFERENCE_ACTIVE=true
   # shellcheck source=lib/overseer-launch.sh
   source "$SCRIPT_DIR/lib/overseer-launch.sh"
-  ol_preference_entries "$ORCH_LANE_PREFERENCE" || {
+  ol_preference_entries "$ORCH_LANE_PREFERENCE" lane || {
     ot_message invalid-preference "entry=$OL_BAD_ENTRY" >&2; exit 1;
   }
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
@@ -444,6 +370,7 @@ preference_select() {
         "source=$preference_harness" "target=$OL_ENTRY_HARNESS" >&2
       continue
     fi
+    LANE_HOST="${OL_ENTRY_HOST:-$preference_host}"
     LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL"
     preference_rc=0
     preference_record="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
@@ -461,12 +388,28 @@ preference_select() {
     "$OL_ENTRY_MODEL" "$preference_harness" ${preference_input[@]+"${preference_input[@]}"} || {
     ot_message lane-resolution-failed "entry=$PREFERENCE_ENTRY" "step=$OL_REASON" >&2; return 1;
   }
-  if [[ -n "$CMD_INPUT" ]]; then
+  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || {
+    ot_message host-capabilities-failed "host=$LANE_HOST" >&2; return 1;
+  }
+  lane_capability HOST_KIND kind
+  lane_capability HOST_LAUNCH launch
+  CMD_TEMPLATE=""
+  if [[ "$HOST_LAUNCH" == cloud-session ]]; then
+    # The cloud takes the issue brief itself, not an orch command template.
+    LAUNCH_FLAGS=""
+    for preference_word in ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; do
+      [[ "$preference_word" == '{brief}' ]] || LAUNCH_FLAGS+="${LAUNCH_FLAGS:+ }$preference_word"
+    done
+  elif [[ -n "$CMD_INPUT" || -n "$BRIEF_FILE" ]]; then
     CMD_TEMPLATE="$OL_ENTRY_HARNESS"
     for preference_word in ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; do
       if [[ "$preference_word" == '{brief}' ]]; then CMD_TEMPLATE+=" {brief}"
       else CMD_TEMPLATE+=" $(printf %q "$preference_word")"; fi
     done
+    if [[ "$CMD_TEMPLATE" != *"{brief}"* && ( -z "$CMD_INPUT" || "$CMD_INPUT" == *"{brief}"* ) ]]; then
+      CMD_TEMPLATE+=" {brief}"
+    fi
+    LAUNCH_FLAGS=""
   else
     LAUNCH_FLAGS="${OL_FLAGS[*]+${OL_FLAGS[*]}}"
   fi
@@ -474,8 +417,88 @@ preference_select() {
   case "$LANE" in ''|auto|auto:*) LANE=auto ;; esac
   if [[ -n "$preference_pi_root" ]]; then PI_CODING_AGENT_DIR="$preference_pi_root"
   else unset PI_CODING_AGENT_DIR; fi
-  launch_judge
+  return 0
 }
+if [[ "$PREFERENCE_ACTIVE" == true ]]; then preference_select || exit 1; fi
+
+# A relaunch onto a provider that already holds this item. Its transcripts are
+# on the host, so the harness finds its own newest session there and this
+# machine's session store is never scanned for it — the one thing this shape
+# decides on its own, and every read of it below is that lookup.
+#
+# The usage gate below is NOT decided here. Whether this machine's copy of the
+# account governs the resumed session depends on what the provider says it
+# holds, which the gate asks for itself: `create` receives the account's config
+# dir on a relaunch too, and a provider re-seeding the host from it sends that
+# copy again.
+HOST_RELAUNCH=false
+[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
+# The host kind's capability line, read once: the launch arm is its `launch`,
+# and every lane record carries its `kind`. A cloud session runs Claude Code's
+# own cloud from this checkout, so it takes the claude harness and the
+# --brief-file the overseer wrote, the item's whole task: the session reaches
+# no tracker to read it from. That brief is one item's, so the launch takes one
+# item, and its relaunch is fresh, which this build does not make.
+host_caps_rc=0
+[[ "$PREFERENCE_ACTIVE" == true ]] || lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || host_caps_rc=$?
+[[ "$host_caps_rc" -eq 0 ]] || { ot_message host-capabilities-failed "host=$LANE_HOST" "exit=$host_caps_rc" >&2; exit 1; }
+lane_capability HOST_KIND kind
+lane_capability HOST_LAUNCH launch
+host_launch_judge() {
+case "$HOST_LAUNCH" in
+  window | ssh) ;;
+  cloud-session)
+    [[ "$HARNESS" == claude && -z "$CMD_TEMPLATE" && "$RELAUNCH" != true && ${#ITEMS[@]} -eq 1 ]] \
+      || { ot_message cloud-session-invalid "host=$LANE_HOST" "harness=$HARNESS" "relaunch=$RELAUNCH" "items=${#ITEMS[@]}" >&2; return 1; }
+    [[ -n "$BRIEF_FILE" ]] || { ot_message cloud-brief-missing "host=$LANE_HOST" >&2; return 1; } ;;
+  cloud-task) ot_message kind-unbuilt "kind=$HOST_KIND" >&2; return 1 ;;
+  *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; return 1 ;;
+esac
+}
+host_launch_judge || exit 1
+# The brief a --cmd template places as {brief}, read once, here, from the file
+# the caller wrote. The caller never quotes it: start_cmd renders it through
+# a local prompt file or lane_single_quote on the hosted path, so each shell
+# reads it back as the file's bytes, less trailing newlines,
+# whatever quote, `$` or backtick it holds. The two halves come as a pair: a
+# brief file with no {brief} would be read and reach no harness, and a {brief}
+# with no file would start the harness on an empty brief. A cloud session takes
+# the file alone, as its whole task. cat's own complaint is dropped so the
+# keyed line is the first one; the path it names is the cause.
+BRIEF_TEXT=""
+if [[ -n "$BRIEF_FILE" ]]; then
+  [[ "$CMD_TEMPLATE" == *"{brief}"* || "$HOST_LAUNCH" == cloud-session ]] || { ot_message brief-unreferenced "option=--brief-file" >&2; exit 1; }
+  BRIEF_TEXT="$(cat -- "$BRIEF_FILE" 2>/dev/null)" || { ot_message brief-file-unreadable "path=$BRIEF_FILE" >&2; exit 1; }
+  # A brief of whitespace alone starts a harness with nothing to do, which the
+  # launch reports as a lane opened while it holds its seat idle.
+  [[ "$BRIEF_TEXT" == *[![:space:]]* ]] || { ot_message brief-file-empty "path=$BRIEF_FILE" >&2; exit 1; }
+elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
+  ot_message brief-file-missing "option=--cmd" >&2
+  exit 1
+fi
+# The launch brief is the declared interface, not a harness status read.
+# The tier is the orch workflow the launched command runs: the template with
+# the brief it places, or with no template open-terminal's own, which runs
+# start. A command naming none records the tier the brief's item-tier line
+# states, and with no line none: a launch states no tier it did not judge. A
+# cloud session runs Claude Code's cloud, no orch workflow, so orch words its
+# brief quotes from the issue are never its tier. Its brief carries the
+# issue's text, which can quote an earlier result, so only a whole line of the
+# brief is that line, and two distinct ones are no tier. The item-tier line
+# retains the inputs without calling a tracker or classifying the item again.
+# Older callers supply no line, so their inputs are explicitly unknown.
+if [[ "$HOST_LAUNCH" == cloud-session ]]; then RUN_TEXT=""
+else RUN_TEXT="${CMD_TEMPLATE:-/orch start}"$'\n'"$BRIEF_TEXT"; fi
+LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
+  def count: if . == "-" then null else tonumber end;
+  ([ $run | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb) as $verb
+  | "tier=(?<tier>micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)" as $re
+  | (if $verb == null then [ $text | splits("\n") | capture("^[[:space:]]*(?<line>" + $re + ")[[:space:]]*$") ] | unique | if length == 1 then first else null end
+     else [ $text | capture($re) ] | first end) as $inputs
+  | {tier: (if $verb == null then $inputs.tier elif $verb == "start" then "standard" else $verb end),
+     tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
+')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
+[[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
 [[ "$RELAUNCH" != true ]] || RECORD_MODE=relaunch
@@ -783,8 +806,7 @@ if LAUNCH_PERMISSION_SPELLINGS="$(launch_choice_permission_spellings "$LAUNCH_HA
 fi
 
 }
-if [[ "$PREFERENCE_ACTIVE" == true ]]; then preference_select || exit 1
-else launch_judge || exit 1; fi
+launch_judge || exit 1
 
 # Each bound is validated wherever a tmux launch will READ it, and nowhere
 # else: a broken tmux-only setting must not abort a launch that never consults
@@ -3296,6 +3318,8 @@ lane_rejudge() { # ITEM
   local next record rc=0
   if [[ "$PREFERENCE_ACTIVE" == true ]]; then
     preference_select || return 1
+    host_launch_judge || return 1
+    launch_judge || return 1
     LANE_ENV="$PREFERENCE_LANE_ENV"
     ! lane_value_error "$LANE_ENV" || return 1
     ot_message lane-selected "lane=$LANE_ENV"

@@ -126,7 +126,8 @@
 #         `limit_dollars` above 0, `locked_reason` null and E ahead, E the
 #         earlier of the credit's `resets_at` and the account's
 #         ORCH_LANE_RETIRE date. It is `room` whatever its plan windows read;
-#         at or below the floor it takes their verdict. Tier 1 is every
+#         spent, locked or expired credit is walled, and unread credit is
+#         unmeasured. A cloud-credit host spends no plan window. Tier 1 is every
 #         refilling window; tier 2 a balance with no expiry, the Codex credits
 #         above. E is 0 outside tier 0; S is the credit's share left times the
 #         reset bonus of its hours to E in tier 0, selection_score in tier 1
@@ -965,7 +966,7 @@ message() {
       ;;
     cloud-credit-unread)
       printf 'lanes: cloud-credit-unread account=%s\n' "$1"
-      printf '%s\n' "the account's usage body carries no iguana_necktie credit with numeric dollars and an expiry, so it is judged on its plan windows and spends no credit first"
+      printf '%s\n' "the account's usage body carries no iguana_necktie credit with numeric dollars and an expiry, so this cloud-credit host cannot select it"
       ;;
     cloud-repo-unset)
       printf 'lanes: cloud-repo-unset account=%s repo=%s\n' "$1" "$2"

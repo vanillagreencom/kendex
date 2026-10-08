@@ -307,12 +307,14 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # models change; no code holds another order. Empty names no entries.
 # ORCH_OVERSEER_PREFERENCE = "claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
 
-# Lane defaults use the same entry grammar above. open-terminal walks them
-# through lanes pick only when --cmd and --launch-flags name no model.
-# The first eligible entry with room supplies the harness, model and effort.
+# Lane defaults use harness[@host]:model:effort. @host names a host kind or
+# provider executable path for that entry; without it, the caller's --host or
+# resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar above.
+# open-terminal walks lanes pick only when --cmd and --launch-flags name no model.
+# The first eligible entry with room supplies the harness, host, model and effort.
 # Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
-# ORCH_LANE_PREFERENCE = ""
+# ORCH_LANE_PREFERENCE = "claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
 
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.

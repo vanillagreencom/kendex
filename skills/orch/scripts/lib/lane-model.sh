@@ -390,6 +390,8 @@ def with_lane_tier($pool; $cloud_floor; $retire; $now):
        and $c.limit_dollars > 0 and $e > $now
     then . + {verdict: "room", _tier: 0, _expires: $e,
               _score: (100 * $c.remaining_dollars / $c.limit_dollars * (1 + 1 / (1 + ($e - $now) / 3600)))}
+    elif $pool == "cloud-credit" then
+      . + {verdict: (if $read then "walled" else "unmeasured" end), _tier: 0, _expires: ($e // 0), _score: 0}
     elif .binding_bucket == "credits" then . + {_tier: 2, _expires: 0, _score: .credits.balance}
     else . + {_tier: 1, _expires: 0, _score: .selection_score} end;
 

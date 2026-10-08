@@ -63,7 +63,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict comparison and independent token limit: [context rule](references/oversee-events.md#judgement-rules) | `90` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and `lane-mail-check` refuses its turn end, Codex credits exempt: `lanes --help` | `3` |
 | `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order; grammar: [guide](kendex.settings.toml.example) § Fleet. Empty names none | `claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high` |
-| `ORCH_LANE_PREFERENCE` | Default-model order; explicit models keep the caller's route. [Lane preference](references/lane-directive.md#lane-preference) | unset |
+| `ORCH_LANE_PREFERENCE` | `harness[@host]:model:effort` entries in default-model order. Each named host applies to its entry; an omitted host keeps the caller's route. Explicit models keep that route. [Lane preference](references/lane-directive.md#lane-preference) | unset |
 | Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`: [guide](kendex.settings.toml.example) § Talking to you | |
 | `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one: `oversee-watch --help` | `on` |
 | `ORCH_OVERSEER_DEAD_PASSES` | Watch passes that read the overseer exited or walled before it is reported: `oversee-watch --help` | `2` |

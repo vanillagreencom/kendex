@@ -1,0 +1,1 @@
+- Lane preferences can select a host per entry. Repositories with a Claude cloud grant can spend it first and fall back to Codex when the grant is exhausted, locked, expired or unavailable for the repository.

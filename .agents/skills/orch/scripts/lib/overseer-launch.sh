@@ -120,6 +120,7 @@ ol_preference() {
 
 # ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's or ORCH_LANE_PREFERENCE's
 # comma-separated `harness:model:effort` entries, into OL_ENTRIES, with
+# an optional @host after the harness only in lane mode, for open-terminal.
 # OL_NAMED the count. `harness` is claude, codex, copilot or pi; `model` is
 # the model the harness's `--model` word takes, on pi its own `provider/id`;
 # `effort` is the level as that harness spells it, on pi its thinking level.
@@ -137,8 +138,8 @@ OL_REFUSED_ENTRIES=()
 OL_DEPRECATED_ENTRIES=()
 OL_DEPRECATION_WARNED=0
 OL_DEPRECATION_CONVERTED=0
-ol_preference_entries() { # VALUE
-  local rest="$1" entry LC_ALL=C status=0
+ol_preference_entries() { # VALUE [lane]
+  local rest="$1" entry parsed_entry host head LC_ALL=C status=0
   OL_ENTRIES=()
   OL_NAMED=0
   OL_BAD_ENTRY=""
@@ -148,6 +149,18 @@ ol_preference_entries() { # VALUE
   while [[ -n "$rest" ]]; do
     entry="${rest%%,*}"
     rest="${rest#*,}"
+    parsed_entry="$entry"
+    head="${entry%%:*}"
+    if [[ "$head" == *@* ]]; then
+      host="${head#*@}"
+      if [[ "${2:-}" != lane || ! "$host" =~ ^[a-zA-Z0-9_./~-]+$ ]]; then
+        (( status != 0 )) || OL_BAD_ENTRY="$entry"
+        OL_REFUSED_ENTRIES+=("$entry")
+        status=1
+        continue
+      fi
+      parsed_entry="${head%%@*}:${entry#*:}"
+    fi
     if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then
       OL_DEPRECATED_ENTRIES+=("$entry")
       if (( ! OL_DEPRECATION_WARNED )); then
@@ -155,8 +168,8 @@ ol_preference_entries() { # VALUE
         OL_DEPRECATION_WARNED=1
       fi
       entry="${entry%%:*}::${entry##*:}"
-    elif ! [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \
-       || "$entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]; then
+    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \
+       || "$parsed_entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]; then
       (( status != 0 )) || OL_BAD_ENTRY="$entry"
       OL_REFUSED_ENTRIES+=("$entry")
       status=1
@@ -211,7 +224,7 @@ ol_pi_model() { # MODEL...
 }
 
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
-# OL_ENTRY_HARNESS, OL_ENTRY_MODEL and OL_ENTRY_EFFORT. A normalized numeric
+# OL_ENTRY_HARNESS, OL_ENTRY_HOST, OL_ENTRY_MODEL and OL_ENTRY_EFFORT. A normalized numeric
 # entry has no model word and uses the caller's launch or observed model, which
 # is spelled for the caller's harness: ol_entry_permitted skips such an entry
 # naming another harness rather than hand that spelling to its CLI. The
@@ -219,12 +232,17 @@ ol_pi_model() { # MODEL...
 # so nothing here holds a model list to check a name against: the launch line
 # carries the model the entry names, and a name its harness does not know is
 # the setting's to fix.
-OL_ENTRY_HARNESS="" OL_ENTRY_MODEL="" OL_ENTRY_EFFORT=""
+OL_ENTRY_HARNESS="" OL_ENTRY_HOST="" OL_ENTRY_MODEL="" OL_ENTRY_EFFORT=""
 # oversee-succeed supplies the observed model before account measurement,
 # which deliberately drops codex's model to judge its binding bucket.
 OL_PREFERENCE_CALLER_MODEL=""
 ol_entry_model() { # ENTRY
   IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"
+  OL_ENTRY_HOST=""
+  if [[ "$OL_ENTRY_HARNESS" == *@* ]]; then
+    OL_ENTRY_HOST="${OL_ENTRY_HARNESS#*@}"
+    OL_ENTRY_HARNESS="${OL_ENTRY_HARNESS%%@*}"
+  fi
   [[ -n "$OL_ENTRY_MODEL" ]] || OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"
 }
 
