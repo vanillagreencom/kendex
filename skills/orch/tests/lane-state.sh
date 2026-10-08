@@ -496,7 +496,9 @@ PY
   PROCESS_LIVE_ONE=$!
   (cd "$PROCESS_ROOT" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 1; done') &
   PROCESS_LIVE_TWO=$!
-  python3 -c 'import os,time; open("/proc/self/comm","w").write("kz ) state\n"); time.sleep(30)' &
+  PROCESS_WEIRD_READY="$PROCESS_ROOT/weird-ready"
+  python3 -c 'import sys,time; open("/proc/self/comm","w").write("kz ) state\n"); open(sys.argv[1],"w").close(); time.sleep(30)' \
+    "$PROCESS_WEIRD_READY" &
   PROCESS_WEIRD=$!
   PROCESS_FIXTURE_PIDS+=" $PROCESS_LIVE_ONE $PROCESS_LIVE_TWO $PROCESS_WEIRD"
   process_fixture_cleanup() {
@@ -517,7 +519,16 @@ PY
     sleep 0.02
   done
   assert_eq "$PROCESS_ZOMBIE_STATE" Z "the state reader finds a zombie after the command name's last parenthesis"
-  assert_eq "$(lane_process_state "$PROCESS_WEIRD")" S \
+  # Until the fixture's ready file exists it may still be running its write (R).
+  PROCESS_WEIRD_STATE=""
+  for _process_try in {1..100}; do
+    if [[ -e "$PROCESS_WEIRD_READY" ]]; then
+      PROCESS_WEIRD_STATE="$(lane_process_state "$PROCESS_WEIRD")" || PROCESS_WEIRD_STATE=error
+      [[ "$PROCESS_WEIRD_STATE" != S ]] || break
+    fi
+    sleep 0.02
+  done
+  assert_eq "$PROCESS_WEIRD_STATE" S \
     "the state reader handles spaces and a closing parenthesis in the command name"
 
   PROCESS_OWNED_RC=0
