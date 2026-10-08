@@ -22,6 +22,7 @@ TMP_ROOT="$(mktemp -d)" || { echo 'pre-commit-world: scratch=mktemp-failed' >&2;
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'pre-commit-world: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+OUT_FILE="$TMP_ROOT/stdout"
 # Anything a fixture's own script writes when something runs it. Nothing
 # should: this hook defers or refuses, and never stands in.
 RAN_LOG="$TMP_ROOT/ran.log"
@@ -40,9 +41,10 @@ done
 run_hook() {
   local dir="$1" payload="$2"
   set +e
-  (cd -- "$dir" && env -i HOME="$TMP_ROOT" PATH="$NO_KENDEX_BIN" "$BASH" "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
+  (cd -- "$dir" && env -i HOME="$TMP_ROOT" PATH="$NO_KENDEX_BIN" "$BASH" "$HOOK" <<<"$payload") >"$OUT_FILE" 2>"$ERR_FILE"
   rc=$?
   set -e
+  out="$(cat "$OUT_FILE")"
   err="$(cat "$ERR_FILE")"
   log="$(cat "$RAN_LOG")"
 }

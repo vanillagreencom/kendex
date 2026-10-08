@@ -26,13 +26,13 @@ The push check is there because Git runs no hook when it replays a commit. A reb
 
 ## Git hooks
 
-The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook requires these Git hooks before it allows a commit.
+The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook allows commits when these Git hooks are absent. It reports the missing setup with a consent route, or a main-checkout owner route for a linked worktree. Git checks run only after setup is armed.
 
 Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).
 
 ## Setup
 
-Requires Git, awk, jq 1.7 or newer (jq 1.6 refuses every generated-path inventory) and standard POSIX tools, plus ruff or pyflakes in a repository with Python files, and gitleaks 8.19 or newer for the credential scan. Where those tools are installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names) and [CHECKS.md § secrets](CHECKS.md#secrets). Bash 3.2 is supported. Run `bash .agents/skills/commit-guards/scripts/install-git-hooks`, which needs no kendex, or `kendex guard install` in each fresh clone, then `bash .agents/skills/commit-guards/scripts/install-git-hooks --check` or `kendex guard check` to check the hooks. Git never clones hooks: until they are armed, a commit from a terminal runs no checks, and an agent session with the `pre-commit-check` hook is refused.
+Requires Git, awk, jq 1.7 or newer (jq 1.6 refuses every generated-path inventory) and standard POSIX tools, plus ruff or pyflakes in a repository with Python files, and gitleaks 8.19 or newer for the credential scan. Where those tools are installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names) and [CHECKS.md § secrets](CHECKS.md#secrets). Bash 3.2 is supported. Run `bash .agents/skills/commit-guards/scripts/install-git-hooks`, which needs no kendex, or `kendex guard install` in each fresh clone, then `bash .agents/skills/commit-guards/scripts/install-git-hooks --check` or `kendex guard check` to check the hooks. Git never clones hooks: until they are armed, commits run no Git checks. The `pre-commit-check` harness hook allows the command and reports the setup route. Obtain the repository owner’s consent before setup runs repository scripts.
 
 Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Each resolves environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; a `.env` file is never read. Per-check flags (`--excludes`, `--baseline`) override every source; relative paths are repo-root-relative.
 
