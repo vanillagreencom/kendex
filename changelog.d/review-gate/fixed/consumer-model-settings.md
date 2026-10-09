@@ -1,0 +1,1 @@
+- Consumer refresh settings reports keep model selection in the consumer's model and provider configuration.

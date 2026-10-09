@@ -254,38 +254,29 @@ if [ "$3" = present ]; then
   ol_preference_entries "$preference" || parse_status=$?
   [ "$parse_status" -le 1 ] || exit "$parse_status"
 fi
-# List committed [env] values that pin Fable or Astra, and every committed
-# [env] setting as key and value pairs for the retired-settings match; the
-# report warns and changes no exit. A comment, another table and a private
-# override are not committed [env] values.
-deprecated_models=()
+# List every committed [env] setting as key and value pairs for the
+# retired-settings match. The report warns and changes no exit. A comment,
+# another table and a private override are not committed [env] values.
 committed=()
 if [ -f kendex.settings.toml ]; then
   table="$(rg_env_table kendex.settings.toml)"
   assignment='^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*"([^"]*)"'
-  shopt -s nocasematch
   while IFS= read -r line; do
     [[ $line =~ $assignment ]] || continue
     key="${BASH_REMATCH[1]}" value="${BASH_REMATCH[2]}"
     committed+=("$key" "$value")
-    if [[ $value == *gpt-6-astra* || $value == *fable* ]]; then
-      deprecated_models+=("$key = \"$value\"")
-    fi
   done <<<"$table"
 fi
 jq -cn --argjson refused_count "${#OL_REFUSED_ENTRIES[@]}" \
   --argjson deprecated_count "${#OL_DEPRECATED_ENTRIES[@]}" \
-  --argjson models_count "${#deprecated_models[@]}" --args \
-  '($refused_count + $deprecated_count) as $models_start |
-   ($models_start + $models_count) as $committed_start |
+  --args \
+  '($refused_count + $deprecated_count) as $committed_start |
    {refused: $ARGS.positional[:$refused_count],
-    deprecated: $ARGS.positional[$refused_count:$models_start],
-    deprecated_models: $ARGS.positional[$models_start:$committed_start],
+    deprecated: $ARGS.positional[$refused_count:$committed_start],
     committed: ($ARGS.positional[$committed_start:] |
       [range(0; length; 2) as $i | {(.[$i]): .[$i + 1]}] | add // {})}' \
   -- ${OL_REFUSED_ENTRIES[@]+"${OL_REFUSED_ENTRIES[@]}"} \
   ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"} \
-  ${deprecated_models[@]+"${deprecated_models[@]}"} \
   ${committed[@]+"${committed[@]}"}
 SETTINGS_PARSE
 then
@@ -301,10 +292,10 @@ while IFS= read -r line || [ -n "$line" ]; do
   settings_lines=$((settings_lines + 1))
   if [ "$settings_lines" -ne 1 ] || ! jq -e -s '
     length == 1 and (.[0] | type == "object" and
-      keys == ["committed", "deprecated", "deprecated_models", "refused"] and
+      keys == ["committed", "deprecated", "refused"] and
       (.refused | type == "array") and (.deprecated | type == "array") and
-      (.deprecated_models | type == "array") and (.committed | type == "object") and
-      all(.refused[], .deprecated[], .deprecated_models[], .committed[]; type == "string"))
+      (.committed | type == "object") and
+      all(.refused[], .deprecated[], .committed[]; type == "string"))
   ' <<<"$line" >/dev/null; then
     settings_output=invalid
   fi

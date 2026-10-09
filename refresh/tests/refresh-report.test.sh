@@ -20,7 +20,7 @@ import sys
 
 skill, root = map(Path, sys.argv[1:3])
 real_cli = sys.argv[3]
-# Refresh-consumer owns the parse. This mode only formats its three arrays.
+# Refresh-consumer owns the parse. This mode only formats its diagnostics.
 reporter = skill / 'refresh-report.py'
 astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
 fable = 'ORCH_OVERSEER_PREFERENCE = "claude:Fable:high"'
@@ -31,8 +31,6 @@ def settings(refused=(), deprecated=(), models=(), script=reporter):
  result = settings_run(dict(refused=refused, deprecated=deprecated, deprecated_models=models), script)
  assert result.returncode == 0, result.stderr
  return result.stdout
-def model_rows(out):
- return [line for line in out.splitlines() if line.startswith('- <code>')]
 for refused, deprecated, present in [
  ([], [], False),
  ([], ['claude:1:high'], True),
@@ -46,19 +44,10 @@ for refused, deprecated, present in [
  assert '<script>' not in out and '`bad' not in out
  assert '## Deprecated models' not in out
  if not present: assert out == ''
-# Each pinned setting is one row, in the order the scan read the file.
-for models, rows in [
- ([astra], ['- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>']),
- ([fable], ['- <code>ORCH_OVERSEER_PREFERENCE = &quot;claude:Fable:high&quot;</code>']),
- ([fable, astra, 'X = "fable <b> `x` y"'], ['- <code>ORCH_OVERSEER_PREFERENCE = &quot;claude:Fable:high&quot;</code>',
-                                          '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>',
-                                          '- <code>X = &quot;fable &lt;b&gt; &#96;x&#96; y&quot;</code>']),
-]:
- out = settings(models=models)
- assert out.count('## Deprecated models\n') == 1 and '## Settings' not in out, out
- assert model_rows(out) == rows, out
-both = settings(deprecated=['claude:1:high'], models=[astra])
-assert both.index('## Settings') < both.index('## Deprecated models') and len(model_rows(both)) == 1
+# Older runners can still send model rows. They produce no report.
+legacy_models = [astra, fable, 'X = "fable <b> `x` y"']
+assert settings(models=legacy_models) == ''
+assert settings(deprecated=['claude:1:high'], models=legacy_models) == settings(deprecated=['claude:1:high'])
 source = reporter.read_text()
 # The settings mode reads the package's retired list beside its scripts
 # directory, so a mutant runs from the same layout.
@@ -71,21 +60,21 @@ two_keys = dict(refused=[], deprecated=['claude:1:high'])
 legacy = settings_run(two_keys)
 assert legacy.returncode == 0, legacy.stderr
 assert legacy.stdout.count('ORCH_OVERSEER_PREFERENCE:') == 1 and '## Deprecated models' not in legacy.stdout
-needle = 'entries.get("deprecated_models", [])'
+needle = '    retired = json.loads(RETIRED.read_text())\n'
 assert source.count(needle) == 1
-strict = mutants / 'strict-report.py'
-strict.write_text(source.replace(needle, 'entries["deprecated_models"]'))
-assert 'KeyError' in settings_run(two_keys, strict).stderr
-for needle, refused, deprecated, models in [
- ('    if rows:\n', [], ['claude:1:high'], []),
- ('    if models:\n', [], [], [astra]),
-]:
+restored = mutants / 'model-report.py'
+restored.write_text(source.replace(needle, '''    models = [f"- {code(entry)}" for entry in entries.get("deprecated_models", [])]
+    if models:
+        sections.append("## Deprecated models\\n\\n" + "\\n".join(models))
+''' + needle))
+assert settings(models=legacy_models, script=restored) != ''
+for needle, refused, deprecated in [('    if rows:\n', [], ['claude:1:high'])]:
  assert source.count(needle) == 1
  mutant = mutants / 'settings-report.py'
  changed = source.replace(needle, '# ' + needle + '    if False:\n')
  assert changed != source
  mutant.write_text(changed)
- assert settings(refused, deprecated, models, mutant) == ''
+ assert settings(refused, deprecated, script=mutant) == ''
 # Consumer settings: a retired key, a retired default under its own key and
 # each classifier note make one row; a current value, a retired value under
 # another key and an unlisted key make none. Rows are untrusted text.
@@ -102,7 +91,7 @@ consumer_rows = [
   [gate, '- <code>queue-only: path=a &lt;b&gt; &#96;x&#96; y</code>']),
 ]
 def consumer(committed, notes, script=reporter):
- entries = dict(refused=[], deprecated=[], deprecated_models=[], committed=committed)
+ entries = dict(refused=[], deprecated=[], committed=committed)
  if notes is not None: entries['notes'] = notes
  result = settings_run(entries, script)
  assert result.returncode == 0, result.stderr

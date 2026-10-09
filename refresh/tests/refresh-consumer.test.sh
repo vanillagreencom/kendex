@@ -581,47 +581,89 @@ reset_default
 cp "$TMP/settings-runner" "$runner"
 commit "$repo"
 git -C "$repo" push -q origin main
-# A committed Fable or Astra pin is a warning: the run publishes and arms as a
-# clean render does. Comments, other tables and clean values add no row.
+# Model values stay committed and produce no report on either route.
 cp "$runner" "$TMP/models-runner"
 cp "$repo/kendex.settings.toml" "$TMP/models-settings"
-for mode in report control; do
+for mode in render current control; do
   reset_default
+  cp "$TMP/models-runner" "$runner"
   cat >"$repo/kendex.settings.toml" <<'TOML'
 [env]
 ORCH_OVERSEER_PREFERENCE = "claude:opus:high"
 # SECOND_OPINION_CODEX_MODEL = "gpt-6-astra"
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra" # pinned
+SECOND_OPINION_CODEX_CMD = "codex exec -m GpT-6-AsTrA" # pinned
 SECOND_OPINION_CLAUDE_MODEL = "claude-opus-5-5"
 REVIEW_MODEL = "FaBlE"
 [other]
 OTHER_MODEL = "fable"
 TOML
-  if [ "$mode" = control ]; then
-    file_edit "$repo" refresh/refresh-consumer.sh 1 \
-      '^      deprecated_models\+=\(' 's/^      deprecated_models+=(/      : # &/'
-  fi
+  python3 - "$runner" "$TMP/state/settings.json" "$mode" <<'PY_MODELS'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+needle = 'report_settings() {\n'
+assert s.count(needle) == 1
+changed = s.replace(needle, needle + '  cp "$TMP/settings.json" "' + sys.argv[2] + '"\n')
+assert changed != s
+s = changed
+if sys.argv[3] == 'control':
+    # Restore the removed producer's matcher and field in a disposable runner.
+    for old, new in [
+        ('committed=()\n', 'deprecated_models=()\ncommitted=()\n'),
+        ('    committed+=("$key" "$value")\n', r'''    committed+=("$key" "$value")
+    shopt -s nocasematch
+    if [[ $value == *gpt-6-astra* || $value == *fable* ]]; then
+      deprecated_models+=("$key = \"$value\"")
+    fi
+'''),
+        ('  --args \\\n', '  --argjson models_count "${#deprecated_models[@]}" --args \\\n'),
+        ('($refused_count + $deprecated_count) as $committed_start |',
+         '($refused_count + $deprecated_count) as $models_start |\n   ($models_start + $models_count) as $committed_start |'),
+        ('deprecated: $ARGS.positional[$refused_count:$committed_start],',
+         'deprecated: $ARGS.positional[$refused_count:$models_start],\n    deprecated_models: $ARGS.positional[$models_start:$committed_start],'),
+        ('  ${committed[@]+"${committed[@]}"}',
+         '  ${deprecated_models[@]+"${deprecated_models[@]}"} \\\n  ${committed[@]+"${committed[@]}"}'),
+        ('keys == ["committed", "deprecated", "refused"]',
+         'keys == ["committed", "deprecated", "deprecated_models", "refused"]'),
+    ]:
+        assert s.count(old) == 1, old
+        changed = s.replace(old, new)
+        assert changed != s
+        s = changed
+p.write_text(s)
+PY_MODELS
   commit "$repo"
   git -C "$repo" push -q origin main
-  rm -f -- "$repo/.env.local" "$TMP/state/armed"
+  rm -f -- "$repo/.env.local" "$TMP/state/armed" "$TMP/state/settings.json"
   : >"$TMP/state/calls"
-  run_refresh "models-$mode" pass render
-  rows="$(grep -F -- '- <code>' "$TMP/state/body")" || rows=""
-  if [ "$mode" = report ]; then
-    printf -v expected '%s\n%s' \
-      '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' \
-      '- <code>REVIEW_MODEL = &quot;FaBlE&quot;</code>'
-    if refresh_class_matches render pushed cause=renders-match-their-sources PATCH &&
-        grep -qxF '## Deprecated models' "$TMP/state/body" && [ "$rows" = "$expected" ] &&
-        ! grep -qxF '## Settings' "$TMP/state/body"; then
-      ok 'committed Fable and Astra pins appear under Deprecated models and the render still arms'
-    else bad 'deprecated model report' "$OUT"; fi
-  elif [ "$RC" -eq 0 ] && ! grep -qxF '## Deprecated models' "$TMP/state/body"; then
-    ok 'control: dropped model scan turns the Deprecated models assertion red'
-  else bad 'deprecated model scan control' "$OUT"; fi
-  reset_default
-  cp "$TMP/models-runner" "$runner"
+  case "$mode" in
+    current) run_refresh current pass render ;;
+    *) run_refresh "models-$mode" pass render ;;
+  esac
+  case "$mode" in
+    control)
+      if [ "$RC" -eq 0 ] && jq -e '.deprecated_models == [
+          "SECOND_OPINION_CODEX_CMD = \"codex exec -m GpT-6-AsTrA\"", "REVIEW_MODEL = \"FaBlE\""]' "$TMP/state/settings.json" >/dev/null &&
+          ! jq -e 'keys == ["committed", "deprecated", "refused"]' "$TMP/state/settings.json" >/dev/null; then
+        ok 'control: restored fixed-name model producer turns the settings-object assertion red'
+      else bad 'fixed-name model matcher control' "$OUT"; fi ;;
+    *)
+      report="$TMP/state/body"
+      [ "$mode" != current ] || report="$TMP/state/summary"
+      if [ "$RC" -eq 0 ] && ! grep -qF '<code>' "$report" &&
+          jq -e 'keys == ["committed", "deprecated", "refused"] and
+            .committed == {"ORCH_OVERSEER_PREFERENCE":"claude:opus:high",
+              "SECOND_OPINION_CODEX_CMD":"codex exec -m GpT-6-AsTrA",
+              "SECOND_OPINION_CLAUDE_MODEL":"claude-opus-5-5", "REVIEW_MODEL":"FaBlE"}' "$TMP/state/settings.json" >/dev/null &&
+          { if [ "$mode" = current ]; then grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT";
+            else refresh_class_matches render pushed cause=renders-match-their-sources PATCH; fi; }; then
+        ok "$mode keeps mixed-case model values in the settings object with no report"
+      else bad "$mode model values" "$OUT"; fi ;;
+  esac
 done
+reset_default
+cp "$TMP/models-runner" "$runner"
 cp "$TMP/models-settings" "$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
@@ -750,7 +792,7 @@ for mode in absent absent-control current current-control; do
   cp "$TMP/summary-runner" "$runner"
   case "$mode" in
     absent*) rm -f -- "$repo/kendex.settings.toml" ;;
-    current*) printf '[env]\nSECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"\n' >"$repo/kendex.settings.toml" ;;
+    current*) printf '[env]\nPR_REVIEW_GATE = "on"\n' >"$repo/kendex.settings.toml" ;;
   esac
   case "$mode" in
     absent-control)
@@ -781,13 +823,12 @@ for mode in absent absent-control current current-control; do
     current)
       if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
           grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" &&
-          grep -qxF '## Deprecated models' "$TMP/state/summary" &&
-          grep -qxF -- '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' "$TMP/state/summary"; then
-        ok 'a run with no render change reports the Astra pin in its run summary'
-      else bad 'no-change deprecated model summary' "$OUT"; fi ;;
+          grep -qF -- '<code>PR_REVIEW_GATE</code>' "$TMP/state/summary"; then
+        ok 'a run with no render change reports a retired setting in its run summary'
+      else bad 'no-change retired-setting summary' "$OUT"; fi ;;
     current-control)
       if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
-          ! grep -qxF '## Deprecated models' "$TMP/state/summary"; then
+          ! grep -qF '<code>PR_REVIEW_GATE</code>' "$TMP/state/summary"; then
         ok 'control: a dropped summary append turns the no-change warning assertion red'
       else bad 'no-change summary append control' "$OUT"; fi ;;
   esac
@@ -1418,8 +1459,8 @@ for row in 'absent|absent' 'parser-update|install' 'first-install|install' 'toke
     if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body" &&
         grep -qxF "refresh-settings=orch-absent value=$repo/.agents/skills/orch" <<<"$OUT" &&
         grep -qF -- '- <code>PR_REVIEW_GATE</code>' "$TMP/state/body" &&
-        grep -qxF -- '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' "$TMP/state/body"; then
-      ok 'absent optional orch refreshes without Settings and still names a retired setting and an Astra pin'
+        ! grep -qF -- '<code>SECOND_OPINION_CODEX_CMD' "$TMP/state/body"; then
+      ok 'absent optional orch refreshes without preference diagnostics and still names a retired setting'
     else bad 'absent optional orch' "$OUT"; fi
   elif [ "$RC" -eq 0 ] && grep -qF 'deprecated entry <code>claude:1:high</code>' "$TMP/state/body"; then
     ok "$name uses the credential-free release parser"
@@ -1500,7 +1541,7 @@ for output in noise extra-field empty; do
   cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
   case "$output" in
     noise) printf '\nprintf "not-json\\n"\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
-    extra-field) printf '\nprintf '\''{"refused":[],"deprecated":[],"deprecated_models":[],"extra":true}\\n'\''\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
+    extra-field) printf '\nprintf '\''{"refused":[],"deprecated":[],"committed":{},"extra":true}\\n'\''\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
     empty) printf '\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
   esac
   reset_default

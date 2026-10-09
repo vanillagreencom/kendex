@@ -37,9 +37,7 @@ upstream-unfiled record, including paths outside the inventory.
 Log lines go to stderr.
 
 --settings formats ol_preference_entries' refused and deprecated arrays from
-refresh-consumer as a pull request Settings section, and its
-deprecated_models array, committed `KEY = "value"` settings that pin Fable or
-Astra, as a Deprecated models section. Its committed object, every
+refresh-consumer as a pull request Settings section. Its committed object, every
 committed [env] `KEY = "value"` setting, is matched against the package's
 retired-settings.json: a key listed under keys, or a value listed under
 values for its key, a shipped default since replaced. Those rows and the
@@ -90,13 +88,6 @@ def settings_report():
     if rows:
         sections.append("## Settings\n\n" + "\n".join(rows) + "\n\n"
                         "A setting joins this report by exposing its existing parse the same way.")
-    # The refreshed reporter can run under an older installed runner whose
-    # parse emits only the refused and deprecated arrays.
-    models = [f"- {code(entry)}" for entry in entries.get("deprecated_models", [])]
-    if models:
-        sections.append("## Deprecated models\n\n" + "\n".join(models) + "\n\n"
-                        "These committed `kendex.settings.toml` settings pin Fable or Astra. "
-                        "Remove the pin or name a current model.")
     retired = json.loads(RETIRED.read_text())
     committed = entries.get("committed", {})
     stale = [f"- {code(key)}: retired; no package reads it." for key in committed if key in retired["keys"]]
