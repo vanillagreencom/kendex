@@ -32,6 +32,7 @@ body() {
   case "$1" in
     pass) printf '{"verdict":"pass","items":[]}' ;;
     action) printf '{"verdict":"action_required","items":[{"category":"fix"}]}' ;;
+    multi_value) printf '{"verdict":"pass","items":[]}\n{"verdict":"action_required","items":[]}' ;;
     noverdict) printf '{"items":[]}' ;;
     notjson) printf 'not json' ;;
     noreview) printf '{"verdict":"pass","summary":"No review was actually performed","qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' ;;
@@ -206,6 +207,8 @@ table \
   "another agent's fresh artifact does not count|review-reviewer-arch-1@after=pass|$GLOB|rc=1 reason=missing" \
   "an artifact older than the boundary is stale and named|$Q-1@before=pass|$GLOB|rc=1 ok=false path=$Q-1.json reason=stale" \
   "an mtime equal to the boundary is fresh in glob mode too|$Q-1@at=pass|$GLOB|rc=0 ok=true reason=valid" \
+  "two complete values are invalid in glob mode|$Q-1@after=multi_value|$GLOB|rc=1 ok=false reason=invalid diagnostic=value_count detail~count:2=true" \
+  "two complete values are terminal with an older fresh valid sibling|$Q-0@after=pass;$Q-1@later=multi_value|$GLOB|rc=1 ok=false path=$Q-1.json reason=invalid diagnostic=value_count detail~count:2=true" \
   "a fresh artifact without a verdict is invalid and named|$Q-1@before=pass;$Q-2@after=noverdict|$GLOB|rc=1 path=$Q-2.json reason=invalid" \
   "a fresh valid artifact wins over stale and invalid siblings|$Q-1@before=pass;$Q-2@after=noverdict;$Q-3@later=action|$GLOB|rc=0 ok=true path=$Q-3.json reason=valid" \
   "a newest unparseable file falls back to the older fresh valid one|$Q-3@later=action;$Q-4@later2=notjson|$GLOB|rc=0 ok=true path=$Q-3.json reason=valid"
@@ -216,6 +219,7 @@ echo "=== file mode validates one path, the boundary optional ==="
 # freshness before the verdict.
 table \
   "a valid file|F@none=pass|--file %F|rc=0 ok=true path=review-external-F.json reason=valid" \
+  "two complete values are invalid in file mode|F@none=multi_value|--file %F|rc=1 ok=false reason=invalid diagnostic=value_count detail~count:2=true" \
   "an old mtime validates without a boundary|F@before=pass|--file %F|rc=0 ok=true reason=valid" \
   "an mtime before the boundary is stale|F@before=pass|--file %F %D|rc=1 ok=false path=review-external-F.json reason=stale" \
   "an mtime after the boundary is fresh|F@after=pass|--file %F %D|rc=0 ok=true reason=valid" \

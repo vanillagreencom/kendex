@@ -29,6 +29,7 @@ artifact_detail() {
     mtime) printf 'review-artifact-check: mtime path=%s\nThe artifact timestamp could not be read, so its freshness is unknown. Refusing rather than judging it against the boundary.\n' "$1" ;;
     declined_state) printf 'review-artifact-check: declined_state issue=%s\nworkflow-state could not read this key'"'"'s declined_items, so no finding can be judged a repeat. Refusing rather than reporting every finding as new.\n' "$1" ;;
     verdict) printf 'review-artifact-check: verdict field=verdict state=missing_or_null\nEvery review artifact must carry verdict: pass or action_required.\n' ;;
+    value_count) printf 'review-artifact-check: value_count count=%s\nAn artifact must hold exactly one JSON object, as workflow-state update --slurpfile requires.\n' "$1" ;;
     result) printf 'review-artifact-check: result state=unusable\nThe artifact check produced no usable JSON result.\n%s\n' "$1" ;;
     *) printf 'review-artifact-check: diagnostic code=%s\nUnknown diagnostic code.\n' "$code" >&2; return 1 ;;
   esac
@@ -98,7 +99,8 @@ reason meanings when ok=false:
   missing    no matching artifact found (glob) / file does not exist (--file)
   stale      artifact mtime < delegated_at_epoch (glob mode, or --file when the
              optional boundary is supplied)
-  invalid    artifact fails `jq -e '.verdict'`, OR a content gate could not
+  invalid    artifact holds more than one JSON value, fails `jq -e '.verdict'`,
+             OR a content gate could not
              run at all (a torn read of a non-atomically written artifact, a
              broken jq) — `detail` carries jq's own diagnostic. A gate that
              could not answer is never reported as "nothing found".
@@ -347,6 +349,10 @@ if [[ "${1:-}" == "--file" ]]; then
       finish 1
     fi
   fi
+  if ! artifact_value_count_gate "$file"; then
+    emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
+    finish 1
+  fi
   verdict_rc=0
   jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
   if [[ "$verdict_rc" -ne 0 ]]; then
@@ -424,26 +430,28 @@ while IFS= read -r file; do
     fi
     continue
   fi
-  verdict_rc=0
-  jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
-  if [[ "$verdict_rc" -ne 0 ]]; then
-    if [[ -z "$fail_path" ]]; then
-      fail_path="$file"
-      reason="invalid"
-      if [[ "$verdict_rc" -eq 1 ]]; then
-        fail_detail="$(artifact_detail verdict)"
-      else
-        fail_detail="$(gate_failure_detail "$verdict_rc")"
+  if artifact_value_count_gate "$file"; then
+    verdict_rc=0
+    jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
+    if [[ "$verdict_rc" -ne 0 ]]; then
+      if [[ -z "$fail_path" ]]; then
+        fail_path="$file"
+        reason="invalid"
+        if [[ "$verdict_rc" -eq 1 ]]; then
+          fail_detail="$(artifact_detail verdict)"
+        else
+          fail_detail="$(gate_failure_detail "$verdict_rc")"
+        fi
       fi
+      continue
     fi
-    continue
-  fi
-  if artifact_content_gates "$file"; then
-    # Same rule as --file mode, and the reason this one is explicit is visible
-    # two callers up: --wait reads this function through a command substitution,
-    # where errexit is suspended for the outer command.
-    emit true "$file" "$review_artifact_reason" || return 1
-    return 0
+    if artifact_content_gates "$file"; then
+      # Same rule as --file mode, and the reason this one is explicit is visible
+      # two callers up: --wait reads this function through a command substitution,
+      # where errexit is suspended for the outer command.
+      emit true "$file" "$review_artifact_reason" || return 1
+      return 0
+    fi
   fi
   if ! disposition_allows_fallback; then
     emit false "$file" "$review_artifact_reason" "$review_artifact_detail"

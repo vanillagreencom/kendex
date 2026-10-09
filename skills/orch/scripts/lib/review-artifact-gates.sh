@@ -184,6 +184,21 @@ gate_filter() {
   return 0
 }
 
+# second-opinion's single-lane writer can emit multiple complete values.
+# Those values describe this run, so an older sibling cannot answer them.
+# An unreadable or empty write keeps the existing verdict-read route.
+artifact_value_count_gate() {
+  local count
+  count="$(gate_filter "$1" 'length' --slurp)" || return 0
+  if (( count > 1 )); then
+    review_artifact_measurement_failed=""
+    review_artifact_measurement_suppressed=""
+    reject_terminal invalid "$(artifact_detail value_count "$count")"
+    return 1
+  fi
+  return 0
+}
+
 # gate_failure_detail <jq_exit_code>
 # The diagnostic for a gate that could not run, read from the error channel.
 gate_failure_detail() {

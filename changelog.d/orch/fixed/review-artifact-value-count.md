@@ -1,0 +1,1 @@
+- Review checks reject files with multiple JSON values before state import. An older review file cannot replace this rejection.
