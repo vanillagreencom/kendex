@@ -47,6 +47,7 @@ case "$*" in
     if [[ "$MODE" == moved && "$(cat "$READS")" -ge 1 ]]; then head="$HEAD_B"; fi
     [[ "$MODE" != invalid-head ]] || head=null
     case "$MODE" in timeline-old-review*|timeline-newer-request*|timeline-overlap*|timeline-cancelled|timeline-paired-*|timeline-rereview-*|timeline-start-overlap|timeline-review-replay|timeline-alias-replay|timeline-boundary-null|timeline-review-null) head="$HEAD_B" ;; esac
+    case "$MODE" in timeline-cancel-owner*) head=cccccccccccccccccccccccccccccccccccccccc ;; esac
     echo "$head"
     ;;
   'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
@@ -75,6 +76,21 @@ case "$*" in
           {event:"head_ref_force_pushed",commit_id:(if $mode == "timeline-boundary-null" then null else $head end),created_at:"2026-10-09T07:20:00Z"}]]'
         ;;
 
+      timeline-cancel-owner*)
+        # GitHub CLI supports --remove-reviewer @copilot; boundaries use captured REST fields.
+        jq -nc --arg a "$HEAD_A" --arg b "$HEAD_B" --arg mode "$MODE" '
+          def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
+          def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
+          def rev($id;$head;$at): {event:"reviewed",id:$id,commit_id:$head,user:{login:"Copilot",type:"Bot"},state:"commented",submitted_at:$at};
+          [[{event:"committed",sha:"cccccccccccccccccccccccccccccccccccccccc",committer:{date:"2026-10-09T06:00:00Z"}},
+            {event:"head_ref_force_pushed",commit_id:$a,created_at:"2026-10-09T06:50:00Z"},req(73;"2026-10-09T07:00:00Z"),work(75;"2026-10-09T07:00:35Z"),
+            {event:"review_request_removed",created_at:"2026-10-09T07:01:00Z",requested_reviewer:{login:"Copilot",type:"Bot"}},
+            {event:"head_ref_force_pushed",commit_id:$b,created_at:"2026-10-09T07:20:00Z"},req(74;"2026-10-09T07:23:47Z"),work(78;"2026-10-09T07:24:22Z")],
+           (if $mode == "timeline-cancel-owner-late" then [rev(81;$a;"2026-10-09T07:25:00Z")]
+            else [rev(82;$b;"2026-10-09T07:27:06Z")] end),
+           (if $mode == "timeline-cancel-owner-newer" then [req(79;"2026-10-09T07:30:00Z"),work(80;"2026-10-09T07:30:35Z")] else [] end),
+           (if $mode == "timeline-cancel-owner-both" then [rev(81;$a;"2026-10-09T07:31:00Z")] else [] end)]'
+        ;;
       timeline-paired-*|timeline-rereview-*|timeline-start-overlap|timeline-review-replay|timeline-alias-replay)
         jq -nc --arg a "$HEAD_A" --arg b "$HEAD_B" --arg mode "$MODE" '
           def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
@@ -193,6 +209,10 @@ rows=(
   'timeline-old-review-ordinary|3|0|none|none|none|0'
   'timeline-newer-request-ordinary|3|1|expired|none|74|3'
   'timeline-cancelled|3|1|expired|none|74|3'
+  'timeline-cancel-owner-completed|3|0|none|none|none|0'
+  'timeline-cancel-owner-both|3|0|none|none|none|0'
+  'timeline-cancel-owner-late|3|1|expired|none|74|3'
+  'timeline-cancel-owner-newer|3|1|expired|none|79|3'
   'timeline-paired-completed|3|0|none|none|none|0'
   'timeline-paired-cancelled|3|0|none|none|none|0'
   'timeline-rereview-completed|3|0|none|none|none|0'
@@ -304,6 +324,16 @@ cp "$TMP_ROOT/wait.pristine" "$SCRIPT"
 mutate "$READER" '$event.commit_id == $head' 'true'
 run_wait timeline-overlap 3
 assert_eq "$(field state)" none 'must-fail: an old-head completion cannot release the newer request'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" '
+                             owner: .tip,' '
+                             owner: (if .tip == $head then $head else null end),'
+run_wait timeline-cancel-owner-completed 3
+assert_eq "$(field state)" expired 'must-fail: historical head ownership cannot depend on the live head'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" 'sort_by(.owner != $event.commit_id)' 'sort_by(false)'
+run_wait timeline-cancel-owner-completed 3
+assert_eq "$(field state)" expired 'must-fail: a cancelled older request cannot claim a matching-head completion'
 cp "$TMP_ROOT/reader.pristine" "$READER"
 mutate "$READER" '($unassigned | length) > 0' 'false and ($unassigned | length) > 0'
 run_wait timeline-old-review-ordinary 3

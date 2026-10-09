@@ -31,6 +31,9 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
   # Keep request instances through overlaps; work-start advances one instance.
   # Review identity, not its commit hash, owns a completion, so a re-review of
   # the same head can close another instance. Unanswered work stays pending.
+  # Retain historical boundary heads. A matching completion owns its instance
+  # before a cancelled older instance can claim it. Without a matching boundary,
+  # retain the chronological fallback: ordinary pushes have no boundary event.
   # Push boundaries identify the new tip; committed rows use commit dates.
   timeline=$(gh api "repos/$1/issues/$3/timeline?per_page=100" --paginate --slurp) || return $?
   jq -ce --arg head "$2" --argjson checks "$checks" '
@@ -45,7 +48,7 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
            elif seen($event) then .
            else .seen += [[$event.event, $event.id]] |
                 .cycles += [{id: $event.id, started_at: $event.created_at,
-                             owner: (if .tip == $head then $head else null end),
+                             owner: .tip,
                              phase: "requested", pending: true}] end
       elif $event.event == "copilot_work_started"
       then if ($event.id | type) != "number" or ($event.created_at | type) != "string"
@@ -57,11 +60,11 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
                 if ($requests | length) > 0
                 then .cycles |= map(if .id == $requests[0].id then .phase = "started" else . end)
                 else .cycles += [{id: $event.id, started_at: $event.created_at,
-                                  owner: (if .tip == $head then $head else null end),
+                                  owner: .tip,
                                   phase: "started", pending: true}] end
            end
       elif $event.event == "review_request_removed" and ($event.requested_reviewer.login | copilot)
-      # Keep cancelled unknown cycles as possible owners of a late completion.
+      # Keep cancelled cycles as possible owners of a late completion.
       then .cycles |= map(.pending = false)
       elif $event.event == "reviewed" and ($event.user.login | copilot)
       then if ($event.id | type) != "number" or ($event.commit_id | type) != "string" or
@@ -71,7 +74,8 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
            else .seen += [[$event.event, $event.id]] |
              if $event.commit_id == $head
              then .cycles |= map(select(.started_at > $event.submitted_at))
-             else [.cycles[] | select(.owner == null and .started_at <= $event.submitted_at)] as $unassigned |
+             else ([.cycles[] | select(.owner != $head and .started_at <= $event.submitted_at)] |
+                   sort_by(.owner != $event.commit_id)) as $unassigned |
                if ($unassigned | length) > 0
                then .cycles |= map(select(.id != $unassigned[0].id)) else . end
              end
