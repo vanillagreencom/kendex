@@ -374,5 +374,57 @@ else
   pass "the assertion flags § 4 recording no review_fix_round"
 fi
 
+# --- a fix diff's panel against first_panel ------------------------
+# A rereview_panel or verification_panel holding every first_panel reviewer
+# is refused as panel-copy unless `domain_reasons` names, per first_panel
+# reviewer, why the fix diff concerns that domain. The first row is KEN-3449's
+# copy: a nonempty free-text `reason` and nothing else. A refused rereview
+# write spends no budget; verification spends none either way.
+FIRST='{"agents": ["reviewer-arch", "reviewer-correctness", "reviewer-error", "reviewer-security", "reviewer-quality", "reviewer-test", "reviewer-doc"], "reason": "first cycle"}'
+ALL='"reviewer-arch", "reviewer-correctness", "reviewer-error", "reviewer-security", "reviewer-quality", "reviewer-test", "reviewer-doc"'
+WHY='"reviewer-arch": "a", "reviewer-correctness": "c", "reviewer-error": "e", "reviewer-security": "s", "reviewer-quality": "q", "reviewer-test": "t"'
+COPY_REASON='"reason": "Covers both unreviewed fix commits since accepted implementation"'
+# field|panel|verdict|rereview_cycles after
+COPY_ROWS=(
+  "rereview_panel|{\"agents\": [$ALL], $COPY_REASON, \"external\": true}|panel-copy rc=1|0"
+  "rereview_panel|{\"agents\": [$ALL, \"reviewer-perf\"], $COPY_REASON}|panel-copy rc=1|0"
+  "rereview_panel|{\"agents\": [$ALL], $COPY_REASON, \"domain_reasons\": {$WHY}}|panel-copy rc=1|0"
+  "rereview_panel|{\"agents\": [$ALL], $COPY_REASON, \"domain_reasons\": {$WHY, \"reviewer-doc\": \"\"}}|panel-copy rc=1|0"
+  "rereview_panel|{\"agents\": [$ALL], $COPY_REASON, \"domain_reasons\": \"every domain\"}|panel-copy rc=1|0"
+  "rereview_panel|{\"agents\": [\"reviewer-correctness\", \"reviewer-test\"], \"reason\": \"fix diff\", \"external\": true}| rc=0|1"
+  "rereview_panel|{\"agents\": [$ALL], $COPY_REASON, \"domain_reasons\": {$WHY, \"reviewer-doc\": \"d\"}}| rc=0|1"
+  "verification_panel|{\"agents\": [$ALL], $COPY_REASON}|panel-copy rc=1|0"
+  "verification_panel|{\"agents\": [\"reviewer-error\"], \"reason\": \"fix diff\"}| rc=0|0"
+  "verification_panel|{\"agents\": [$ALL], $COPY_REASON, \"domain_reasons\": {$WHY, \"reviewer-doc\": \"d\"}}| rc=0|0"
+)
+# copy_verdict [SCRIPT] N FIELD PANEL — a fresh item with FIRST recorded, then
+# the set's first stderr key, its status and the re-review count after it.
+copy_verdict() {
+  local bin=() n field panel err rc=0 sdc
+  [[ "$1" != /* ]] || { bin=("$1"); shift; }
+  n="$1" field="$2" panel="$3"
+  sdc="$TMP_ROOT/state-copy-$n-${#bin[@]}"
+  ws "${bin[@]}" --state-dir "$sdc" init KEN-C --worktree "$REPO_ROOT" --branch ken-c >/dev/null
+  ws "${bin[@]}" --state-dir "$sdc" set KEN-C first_panel "$FIRST" >/dev/null
+  err="$(ws "${bin[@]}" --state-dir "$sdc" set KEN-C "$field" "$panel" 2>&1 >/dev/null)" || rc=$?
+  printf '%s rc=%s|%s' "$(sed -n '1s/^workflow-state: \([a-z-]*\).*/\1/p' <<<"$err")" "$rc" \
+    "$(ws "${bin[@]}" --state-dir "$sdc" get KEN-C .rereview_cycles)"
+}
+n=0
+for row in "${COPY_ROWS[@]}"; do
+  IFS='|' read -r field panel want count <<<"$row"
+  n=$((n + 1))
+  assert_eq "$(copy_verdict "$n" "$field" "$panel")" "$want|$count" "panel-copy row $n: $field"
+done
+
+# The check disabled: the KEN-3449 copy goes through and spends the budget.
+COPY_WS="$(mutant_scripts copy-blind workflow-state)/workflow-state" || exit 1
+mutate_file "$COPY_WS" 'if [[ -n "$uncovered" ]]; then' 'if false && [[ -n "$uncovered" ]]; then'
+IFS='|' read -r field panel want count <<<"${COPY_ROWS[0]}"
+got="$(copy_verdict "$COPY_WS" 0 "$field" "$panel")"
+[[ "$got" != "$want|$count" ]] \
+  && pass "the panel-copy rows flag a workflow-state that accepts a first_panel copy (got $got)" \
+  || fail "the panel-copy rows MISSED a workflow-state that accepts a first_panel copy" "got=$got"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

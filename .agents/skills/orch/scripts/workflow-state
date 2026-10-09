@@ -222,6 +222,10 @@ state_message() {
       printf 'workflow-state: panel-external field=%s\n' "$field"
       printf '%s\n' "workflow-state: a small item's review panel says whether the external lane runs, as \"external\": true or false (small.md § 3); $field not set"
       ;;
+    panel-copy)
+      printf 'workflow-state: panel-copy field=%s uncovered=%s\n' "$field" "$uncovered"
+      printf '%s\n' "workflow-state: this panel holds every first_panel reviewer; a fix diff's panel is the domains it touches and the defect classes it fixed (review-pr § 4), so a full copy gives \"domain_reasons\": {agent: why the fix diff concerns it} for each first_panel reviewer; $field not set"
+      ;;
     cycle-cap)
       printf 'workflow-state: cycle-cap count=%s limit=%s\n' "$(jq -r '.entered' <<<"$report")" "$cap"
       printf '%s\n' "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker, and per suggestion § 4 made a blocker, records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them"
@@ -852,6 +856,24 @@ cmd_set() {
         agents=$(jq -r '((.agents // []) | length) + (if .external then 1 else 0 end)' <<<"$value") || return 1
         if (( agents > SMALL_TIER_PANEL_MAX )); then
             state_message panel-bound "$@" >&2
+            return 1
+        fi
+    fi
+    if [[ "$field" =~ ^(rereview|verification)_panel$ && "$value" == "{"* ]]; then
+        # A fix diff's panel is the domains it touches and the defect classes
+        # it fixed (review-pr § 4); one holding every first_panel agent names,
+        # in `domain_reasons`, why the fix diff concerns each. The free-text
+        # `reason` every panel carries cannot tell a scoped copy from a reflex.
+        local uncovered
+        uncovered=$(jq -r --argjson panel "$value" '
+            (.first_panel.agents // []) as $first
+            | ($panel.agents | if type == "array" then . else [] end) as $agents
+            | ($panel.domain_reasons | if type == "object" then . else {} end) as $why
+            | if ($first | length) > 0 and ($first - $agents | length) == 0
+              then [$first[] | select(($why[.] | type) != "string" or $why[.] == "")] | join(",")
+              else "" end' "$state_file") || return 1
+        if [[ -n "$uncovered" ]]; then
+            state_message panel-copy "$@" >&2
             return 1
         fi
     fi
@@ -1591,7 +1613,11 @@ EOF
                                 verification_panel is refused as
                                 panel-external unless its "external" is true
                                 or false, and as panel-bound when its agents,
-                                plus one for "external": true, exceed 3
+                                plus one for "external": true, exceed 3. A
+                                rereview_panel or verification_panel holding
+                                every first_panel agent is refused as
+                                panel-copy unless its "domain_reasons" maps
+                                each of them to a nonempty string
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
   new-round-id <issue_id> <field>  Generate a unique per-delegation round token,

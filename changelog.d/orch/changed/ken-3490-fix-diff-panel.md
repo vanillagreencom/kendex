@@ -1,0 +1,1 @@
+- Scope a fix round's re-review and verification panels to the domains the fix diff touches and the defect classes it fixed, and refuse a panel copying every first-panel reviewer unless it says, per reviewer, why the fix diff concerns that domain.

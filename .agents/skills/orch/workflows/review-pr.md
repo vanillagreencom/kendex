@@ -345,11 +345,13 @@ At cap 0 (bare `cap REVIEW_MAX_CYCLES` prints `0`), a § 4 fix round or a submit
 | No files changed | → § 5 |
 | Anything else | → § 2 with caller context `agents` = the scoped panel below |
 
-The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. Select domains generously from the changed paths and their changes. Run every reviewer the diff plausibly concerns; omit reviewers with nothing to read. Record the scoping:
+The scoped panel is the reviewers whose domains the fix diff touches, the reviewers whose defect classes the round fixed (the blocker finders), and external review when available. A domain counts when the fix diff changes code or text that reviewer reads, not when the item's first diff did; omit reviewers with nothing in the fix diff to read. Record the scoping:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
 ```
+
+A panel holding every `first_panel` reviewer adds `"domain_reasons": {"[AGENT]": "[WHY THE FIX DIFF CONCERNS THIS DOMAIN]", ...}` with one entry per `first_panel` reviewer; `workflow-state` refuses a full copy without it as `panel-copy`.
 
 **The loop ends** when two consecutive cycles surface no new blocker, at this section's cap-0 exit, or when the At The Cap check ends it (the `rereview_panel` write raises `rereview_cycles`, refusing at the cap). The cap bounds NEW cycles, never verification, apart from that exit: a fix diff no reviewer has seen gets one focused verification pass, the `rereview_panel` rule scoped to that diff, and this loop's last fix round has budget for it; past the budget such a pass takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 

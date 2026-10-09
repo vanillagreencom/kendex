@@ -42,6 +42,10 @@ panel() { # N [EXTERNAL] — a panel of N reviewers, the external lane's marker
   printf '{"agents": [%s], "reason": "test"%s}' "$agents" "$external"
 }
 
+# A first panel no fix-diff panel below copies, so only the tier and the cap
+# judge them; workflow-state-cycle-cap.sh owns the panel-copy refusal.
+neutral_first() { ws set "$1" first_panel '{"agents": ["rev-first"], "reason": "test", "external": false}'; }
+
 echo
 echo "--- workflow-state tier bounds ---"
 
@@ -71,11 +75,13 @@ for row in "${ROWS[@]}"; do
   ws head-budget take "$issue" review-wait h1 >/dev/null
   assert_eq "$(ws head-budget take "$issue" review-wait h1)" "$want_wait" "tiers $tiers: the third review-wait take"
   assert_eq "$(set_verdict "$issue" first_panel "$(panel 4)")" "$want_first" "tiers $tiers: a first panel of four"
+  neutral_first "$issue"
   assert_eq "$(set_verdict "$issue" verification_panel "$(panel 4)")" "$want_verify" "tiers $tiers: a verification panel of four"
   assert_eq "$(set_verdict "$issue" first_panel "$(panel 3)")" " rc=0" "tiers $tiers: a first panel of three"
   assert_eq "$(set_verdict "$issue" first_panel "$(panel 2 true)")" " rc=0" "tiers $tiers: two reviewers and the external lane"
   assert_eq "$(set_verdict "$issue" first_panel "$(panel 3 true)")" "$want_external" "tiers $tiers: three reviewers and the external lane"
   assert_eq "$(set_verdict "$issue" first_panel "$(panel 1 -)")" "$want_unmarked" "tiers $tiers: a panel with no external marker"
+  neutral_first "$issue"
   assert_eq "$(set_verdict "$issue" rereview_panel "$(panel 4)")" "$want_rereview" "tiers $tiers: a re-review panel of four"
   assert_eq "$(ws get "$issue" '.rereview_cycles // 0')" "$want_count" "tiers $tiers: the re-review count after it"
   assert_eq "$(set_verdict "$issue" rereview_panel "$(panel 1)")" "$want_next" "tiers $tiers: the next re-review"
