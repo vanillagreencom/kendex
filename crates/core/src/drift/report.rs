@@ -426,7 +426,6 @@ pub struct CheckReport {
     /// checked directory already reaches it.
     ///
     /// Set for a checked project that is a linked git worktree.
-    /// The main checkout's project is named in the command.
     /// The worktree's own project
     /// is what a bare verb typed there writes, so it is never named.
     ///
