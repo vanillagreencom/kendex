@@ -117,7 +117,9 @@
 #        overseer's own account and exactly one other account has room. Its
 #        `mark-reached` line always carries `headroom`, this overseer's own
 #        reading, which at the default shows why that account was not
-#        counted. A qualifying judgement reads ORCH_OVERSEER_PREFERENCE and
+#        counted. A caller with room at a setting below 2 runs no count,
+#        because the mark cannot fire there.
+#        A qualifying judgement reads ORCH_OVERSEER_PREFERENCE and
 #        can refuse at exit 1 as the walk does: `invalid-preference` or
 #        `lanes-failed`.
 #        The CONTEXT mark is judged only on the reading --context hands in,
@@ -1238,7 +1240,10 @@ walk_entries() {
 # header's step 2 says why the mark is never set against the first.
 QUALIFYING_TOTAL=""
 chosen=""
-if (( JUDGES )) && (( SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger ]]; then
+if [[ "$CALLER_STATE" == has-room ]] && (( SUCCESSOR_ACCOUNTS < 2 )); then
+  QUALIFYING_STATE=inert
+fi
+if (( JUDGES )) && (( SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger && "$QUALIFYING_STATE" != inert ]]; then
   capacity_rc=0
   ol_pick_record "$CALLER_HARNESS" "$CALLER_MODEL" "$HEADROOM_TRIGGER" "$CALLER_CFG" || capacity_rc=$?
   case "$capacity_rc" in
@@ -1296,7 +1301,7 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
           "succession=$SUCCESSION"
         exit 0
       fi
-      if (( SUCCESSOR_ACCOUNTS > 0 )) && [[ "$QUALIFYING_STATE" != measured ]]; then
+      if (( SUCCESSOR_ACCOUNTS > 0 )) && [[ "$QUALIFYING_STATE" != measured && "$QUALIFYING_STATE" != inert ]]; then
         message mark-unmeasured kind=qualifying reason=unreadable \
           "succession=$SUCCESSION"
         exit 0

@@ -1453,6 +1453,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 # reads one on the same two accounts.
 EXCLUSIVECTL="$(mutant_scripts exclusivectl oversee-succeed)" || exit 1
 mutate_file "$EXCLUSIVECTL/oversee-succeed" \
+  '&& "$CALLER_STATE" != at-trigger && "$QUALIFYING_STATE" != inert' '&& "$CALLER_STATE" != at-trigger'
+mutate_file "$EXCLUSIVECTL/oversee-succeed" \
   '[[ "$CALLER_STATE" != has-room ]] || QUALIFYING_TOTAL=$((QUALIFYING_COUNT + 1))' ''
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$EXCLUSIVECTL/oversee-succeed" \
@@ -1591,6 +1593,61 @@ SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingequal '' --c
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=50" \
   "an equal-headroom successor does not fire the qualifying-set trigger"
+
+# The Stop hook and oversee-watch consume these mark lines. Log the real
+# chooser's calls to prove an inert mark avoids the capacity scan.
+PICKLOG="$(mutant_scripts qualifying-picks lanes)" || exit 1
+cp -p -- "$PICKLOG/lanes" "$PICKLOG/lanes-real"
+cat > "$PICKLOG/lanes" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >> "$TMP_ROOT/qualifying-picks.log"
+exec "$PICKLOG/lanes-real" "\$@"
+WRAPPER
+for pick_row in \
+  'two|1|60|context-below-mark tokens=100000 window=1000000 mark=50 headroom=40|caller' \
+  'one|1|none|mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none|capacity' \
+  'equal|2|50|context-below-mark tokens=100000 window=1000000 mark=50 headroom=50|capacity'; do
+  IFS='|' read -r pick_name pick_bound pick_usage pick_want pick_calls <<<"$pick_row"
+  claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  if [[ "$pick_usage" == none ]]; then
+    mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
+  else
+    claude_usage "$pick_usage" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  fi
+  new_caller "$UNDER_MARK"
+  : > "$TMP_ROOT/qualifying-picks.log"
+  SUCCESSOR_ACCOUNTS="$pick_bound" LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$PICKLOG/oversee-succeed" \
+    run_succeed "pick-$pick_name" '' --check-marks
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: $pick_want" "qualifying pick row $pick_name"
+  picks="$(grep '^pick ' "$TMP_ROOT/qualifying-picks.log")"
+  assert_eq "$(sed -n 1p <<<"$picks")" \
+    "pick --lane $H/.claude --harness claude --min-headroom-pct $TRIGGER --model claude-fable-5-1 --json" \
+    "qualifying $pick_name reads the caller first"
+  if [[ "$pick_calls" == caller ]]; then
+    assert_eq "$(wc -l <<<"$picks" | tr -d ' ')" 1 "an inert qualifying mark runs only the caller pick"
+  else
+    assert_contains "$(sed -n 2p <<<"$picks")" '--for-overseer' "qualifying $pick_name reads capacity second"
+  fi
+  [[ "$pick_usage" != none ]] || mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
+done
+PICKCTL="$(mutant_scripts qualifying-pickctl oversee-succeed)" || exit 1
+rm -- "$PICKCTL/lanes"
+cp -p -- "$PICKLOG/lanes" "$PICKCTL/lanes"
+mutate_file "$PICKCTL/oversee-succeed" \
+  '&& "$CALLER_STATE" != at-trigger && "$QUALIFYING_STATE" != inert' '&& "$CALLER_STATE" != at-trigger'
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+: > "$TMP_ROOT/qualifying-picks.log"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$PICKCTL/oversee-succeed" \
+  run_succeed qualifying-pickctl '' --check-marks
+picks="$(grep '^pick ' "$TMP_ROOT/qualifying-picks.log")"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  '0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40' \
+  'control: removing the skip preserves the below-mark line'
+assert_eq "$(wc -l <<<"$picks" | tr -d ' ')" 2 'control: removing the skip fails the one-pick bound'
+assert_contains "$(sed -n 2p <<<"$picks")" '--for-overseer' 'control: the extra pick scans successor capacity'
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # A known harness remains enough to judge account triggers when its context
 # line is absent. The account read receives no model, and the context reading
