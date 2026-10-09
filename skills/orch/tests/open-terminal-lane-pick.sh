@@ -39,6 +39,9 @@ table \
   "no lane under the threshold: nothing launched, no worktree created|$CHOICE_CMD|--harness claude --lane auto --lane-max-pct 15 KEN-1|rc=1 launched=nolog creates=nolog" \
   "an explicit --lane that is not a directory is refused|$CHOICE|--harness claude --lane /nonexistent/lane KEN-1|rc=1 launched=nolog" \
   "an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD|--harness claude --lane nosuchlane KEN-1|rc=1 launched=nolog" \
+  "a shared alias launches its first account when a later account is excluded|ORCH_LANE_ALIASES=claude=work,eclaude=work;ORCH_LANE_EXCLUDE=eclaude;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=0 launched=1 cmd_lane=claude refused=none" \
+  "a shared alias launches its first account when a later account is retired|ORCH_LANE_ALIASES=claude=work,eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=0 launched=1 cmd_lane=claude refused=none" \
+  "a shared alias skips an excluded first account|ORCH_LANE_ALIASES=claude=work,eclaude=work;ORCH_LANE_EXCLUDE=claude;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=0 launched=1 cmd_lane=eclaude refused=none" \
   "a retired lane named by its alias is refused before anything launches|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=1 launched=nolog refused=lane=work" \
   "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude;$CHOICE_CMD|--harness claude --lane $H/.eclaude KEN-1|rc=1 launched=nolog refused=lane=$H/.eclaude" \
   "an excluded lane's alias is refused even beside a same-named cwd directory|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$COLLIDE;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=1 launched=nolog refused=lane=work" \
@@ -75,6 +78,19 @@ control_rc=0
 assert_eq "$RC:$control_rc:$(grep -cx 'list --local --json' "$TMP_ROOT/alias-lanes.log" || true)" '0:1:1' \
   "the alias assertion rejects the base behavior's list call"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
+
+# The same resolution owner handles check's direct callers and the launcher.
+shared_scripts="$(mutant_scripts shared-alias lanes)" || exit 1
+mutate_file "$shared_scripts/lanes" 'check_names="${check_dir:-$LANE_ARG}"' 'check_names="$LANE_ARG"'
+mutate_file "$shared_scripts/lanes" '[[ -z "$check_dir" && "$LANE_ARG" != */* ]]' '[[ "$LANE_ARG" != */* ]]'
+for sibling_policy in 'ORCH_LANE_EXCLUDE=eclaude' 'ORCH_LANE_RETIRE=eclaude=2000-01-01'; do
+  run_ot "ORCH_LANE_ALIASES=claude=work,eclaude=work;$sibling_policy;LANES_CLI=$shared_scripts/lanes;$CHOICE_CMD" \
+    --harness claude --lane work KEN-1
+  control_rc=0
+  ( FAIL=0; assert_eq "$(observe 'rc=0 launched=1 cmd_lane=claude')" 'rc=0 launched=1 cmd_lane=claude' 'shared alias launch'; [[ "$FAIL" == 0 ]] ) \
+    > "$TMP_ROOT/shared-alias-control.log" || control_rc=$?
+  assert_eq "$RC:$control_rc" '1:1' "the shared alias launch assertion rejects broad refusal under $sibling_policy"
+done
 
 # The separator-bearing path cannot ride through a table row's word split.
 run_ot "$CHOICE_CMD" --harness claude --lane "$TABBED" KEN-21
