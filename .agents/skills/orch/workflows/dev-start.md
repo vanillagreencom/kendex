@@ -59,7 +59,7 @@ gh issue view [N] --json labels --jq '.labels[].name'
 
 Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before choosing a stored dev agent or starting a replacement. Persistence follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle).
 
-Before EVERY implementation delegation, including each group's delegation in bundled mode, run these four as separate tool calls; the third is the round-start prune, [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+Before EVERY implementation delegation, including each group's delegation in bundled mode, stamp the round and apply the cleanup condition in [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Run each selected command as a separate tool call:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
@@ -68,6 +68,8 @@ Before EVERY implementation delegation, including each group's delegation in bun
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
+
+Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
 
 ```bash
 .agents/skills/orch/scripts/round-prune [ISSUE_ID]

@@ -55,6 +55,10 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 ### Consumer refresh review
 
 - This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages (KEN-3338). Each consumer's committed `kendex.settings.toml` `[env]` declares `REVIEW_GATE_REFRESH_REVIEW = "overseer"`, `REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh"` and `REVIEW_GATE_REFRESH_AUTHOR = "vanillagreen-fleet-lanes[bot]"`. A consumer without them gets a Copilot request on that head; add them there through a lane in that repository.
+
+### Cargo round cleanup
+
+At each development round boundary, run the owner-scoped worktree cleanup policy for Cargo output. Use ORCH_ROUND_PRUNE_DISK_PCT as the configured disk threshold. Prune only the owned worktree target directory. If CARGO_TARGET_DIR is elsewhere, report the separate cleanup need and do not delete another owner's output. Use `.agents/skills/orch/scripts/round-prune` between the round-id and delegation-time stamps.
 '''
 project-management = '''
 ### Intake

@@ -232,11 +232,13 @@ Group the `fix set` by `agent`. Before stamping each group's round, read the tar
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] [PR_NUMBER] --json state
 ```
 
-Then stamp the round as separate tool calls immediately before delegating, the round-start prune between the two stamps, arming the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+Then stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
+
+Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
 
 ```bash
 .agents/skills/orch/scripts/round-prune [ISSUE_ID]

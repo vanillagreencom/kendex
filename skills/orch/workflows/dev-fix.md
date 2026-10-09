@@ -85,11 +85,13 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
 
    Set `[PR_OPEN]` to `true` when `state` is `OPEN`, and `false` for `status=no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation. The record's `pr_open` rule in [dev-round.md](../schemas/dev-round.md) owns the validation mode.
 
-   **Stamp the round**, as separate tool calls immediately before delegating, the round-start prune between the two stamps, then arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+   **Stamp the round**, as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
+
+   Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
 
    ```bash
    .agents/skills/orch/scripts/round-prune [ISSUE_ID]

@@ -5,8 +5,9 @@
 #
 # Usage: round-prune [--state-dir DIR] STATE_KEY
 #
-# The orchestrator runs it after `workflow-state new-round-id` and before the
-# `dev_delegated_at` stamp and the delegation, so no validation run is in
+# When the consumer selects Cargo round cleanup, the orchestrator runs it
+# after `workflow-state new-round-id` and before the `dev_delegated_at` stamp
+# and the delegation, so no validation run is in
 # flight in the worktree: the prune happens between rounds and a validation run
 # deletes nothing. It resolves its own target from the state and the tree, so
 # no workflow passes one: the round id from workflow state, and the linked

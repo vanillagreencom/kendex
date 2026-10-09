@@ -46,6 +46,11 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 ### Consumer refresh review
 
 - This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages (KEN-3338). Each consumer's committed `kendex.settings.toml` `[env]` declares `REVIEW_GATE_REFRESH_REVIEW = "overseer"`, `REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh"` and `REVIEW_GATE_REFRESH_AUTHOR = "vanillagreen-fleet-lanes[bot]"`. A consumer without them gets a Copilot request on that head; add them there through a lane in that repository.
+
+### Cargo round cleanup
+
+At each development round boundary, run the owner-scoped worktree cleanup policy for Cargo output. Use ORCH_ROUND_PRUNE_DISK_PCT as the configured disk threshold. Prune only the owned worktree target directory. If CARGO_TARGET_DIR is elsewhere, report the separate cleanup need and do not delete another owner's output. Use `.agents/skills/orch/scripts/round-prune` between the round-id and delegation-time stamps.
+
 <!-- kendex:project-instructions:end -->
 
 # Orchestration
@@ -118,7 +123,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `worktree-push` | Push an issue worktree via `worktree push`, reconciling rebased SHAs in workflow state in the same call; `--check-live-round` answers whether a fix round is in flight and pushes nothing |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time; `--cut` records a reviewer or orchestrator scope choice |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id |
-| `round-prune` | At a dev round's start, prune the item worktree's build output under its own lease when the disk is at or past `ORCH_ROUND_PRUNE_DISK_PCT`, recording the bytes in `round_prunes` |
+| `round-prune` | Consumer-selected Cargo cleanup at round start; [Round Closure](references/skill-rules.md#round-closure) owns its policy and contract |
 | `round-recover` | Close a stalled dev round from the idle agent's transcript: write the report as the artifact, or mint one re-delegation's round id |
 | `dev-validate-run` | Run `DEV_VALIDATE_CMD`, or with `--validate-mode range --base REF` `DEV_VALIDATE_RANGE_CMD`, or with `--validate-mode ci --base REF` nothing where the pull request's base branch requires the context `DEV_VALIDATE_CI_CONTEXT` names and the change class says the pull request CI checks the change, detached under `DEV_VALIDATE_TIMEOUT_SECS`, with the change class as `DEV_VALIDATE_CLASS`, and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait`, `--record`, `--resolve-mode`, `--last-pass`, `--live` and `--stop` poll, read and end runs, per `--help`. The route every harness validates through |
 | `restack-skip` | Say whether a restacked head skips its range re-test: no conflict, or only version fields and changelog entries conflicted, per `--help` |
