@@ -1,1 +1,1 @@
-- Keep parked lanes while their recorded pull request is open, and resume merged lanes whose Done item still has an unchecked completion box. Retain unfinished stopped lanes after a failed resume.
+- Keep parked lanes while their recorded pull request is open, and resume merged lanes whose Done item still has an unchecked completion box. Retain PR identity through recovery so a failed resume cannot close a lane whose PR is still open.

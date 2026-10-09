@@ -683,6 +683,8 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
 assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 host=.* status=stopped$' <<<"$OUT" || true) creates=$(grep -c '^create ' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first')" \
   "rc=75 started=1 creates=1 status=stopped parked=false" \
   "a create that fails after a confirmed start leaves the record stopped with parked dropped, the sandbox being up"
+assert_eq "$(record CC-65 | jq -c ' .pending_pr | {pr,repo,head}')" '{"pr":65,"repo":"o/r","head":"abc"}' \
+  "failed create keeps the PR wait after the sandbox starts"
 # The control: a copy of the launcher whose unpark drops the park without
 # keeping it, beside links to its helpers in a git repo of its own.
 UNPAUSED_OT="$(mutant_scripts unpaused open-terminal)/open-terminal" || exit 1
@@ -690,7 +692,7 @@ git -C "$TMP_ROOT/unpaused" init -q
 git -C "$TMP_ROOT/unpaused" config gc.auto 0
 git -C "$TMP_ROOT/unpaused" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/unpaused"
-mutate_file "$UNPAUSED_OT" '  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end) | del(.parked);'"'" '  else . end) | del(.parked);'"'"
+mutate_file "$UNPAUSED_OT" '  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end)' '  else . end)'
 "$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" '(.lanes[] | select(.item == "CC-65")) |= (del(.pauses) | .status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: $at})' >/dev/null
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot SCRIPT="$UNPAUSED_OT" --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
@@ -704,6 +706,8 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
   run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
 assert_eq "rc=$RC start=$(grep -c '^start ' "$TMP_ROOT/host.log" || true) creates=$(grep -c '^create --item CC-65 .*--relaunch $' "$TMP_ROOT/host.log" || true)" \
   "rc=0 start=0 creates=1" "a stopped record's relaunch starts no sandbox"
+assert_eq "$(record CC-65 | jq -c ' .pending_pr | {pr,repo,head}')" '{"pr":65,"repo":"o/r","head":"abc"}' \
+  "a later successful relaunch retains the same PR wait"
 
 # The two reads ahead of the marker. A provider answers a file it does not
 # have with a status and no line of its own, and the gitfile reader prints

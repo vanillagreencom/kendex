@@ -1328,9 +1328,11 @@ launch_ambient_codex_home() {
 
 # unpark(AT): a lane record with its `parked` dropped and, where that park
 # carried its time, the park appended to `pauses` as {from, to: AT, cause}.
-# The one spelling of ending a park, for both writes that end one.
+# The PR wait outlives sandbox parking. This owner transfers its identity
+# once and later launch writes keep it until close or a new park replaces it.
 UNPARK_JQ='def unpark($at): (if .parked.at == null then .
-  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end) | del(.parked);'
+  else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end)
+  | (if .parked == null then . else .pending_pr = (.parked | {pr, repo, head}) end) | del(.parked);'
 
 # One lane record per item in the oversee workflow state WORKFLOW_STATE_ARGS
 # addresses, which is what oversee-watch --state reads the live fleet from.
@@ -1370,6 +1372,8 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # relaunch that has not taken.
 # The park it drops is kept as one of the record's `pauses`, closed at the
 # resume, since oversee-cycle reads a lane's parked time from them.
+# Its PR identity stays in pending_pr across all later writes: a confirmed
+# sandbox start or harness create does not prove that the pull request ended.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is

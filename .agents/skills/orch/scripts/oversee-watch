@@ -1156,7 +1156,7 @@ close_hosted_lane() { # ITEM [--if-terminal]
 }
 
 # Stopped and parked records have no pane or mailbox to watch. Read the close
-# verb's terminal judge, including a parked PR and Done-when boxes, on every
+# verb's terminal judge, including a retained PR wait and Done-when boxes, on every
 # fleet pass, and keep only provider refusals:
 # user-owned changes need an overseer's action, not another provider call.
 check_terminal_lanes() {
@@ -1194,7 +1194,7 @@ check_terminal_lanes() {
       || die state-read-failed "" "item=$item" "row=merged"
     cycle_pr="$(jq -r '.cycle.pr // empty' <<<"$record")" \
       || die state-invalid "" "path=$STATE_FILE" "field=cycle"
-    recorded_merge="$(jq -r 'if .parked.pr != null then "\(.parked.repo | ascii_downcase)#\(.parked.pr)" else "" end' <<<"$record")" \
+    recorded_merge="$(jq -r '(.parked // .pending_pr) | if .pr != null then "\(.repo | ascii_downcase)#\(.pr)" else "" end' <<<"$record")" \
       || die state-invalid "" "path=$STATE_FILE" "field=parked"
     merged_repo="$(jq -r '(.repo // "") | ascii_downcase' <<<"$record")" \
       || die state-invalid "" "path=$STATE_FILE" "field=repo"

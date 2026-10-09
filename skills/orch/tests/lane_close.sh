@@ -1890,6 +1890,25 @@ LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 read=1 host=0' 'an initial tmux pane read failure closes nothing'
 
+# A resolved full close releases PR identity. Failure retains it for retry.
+RELEASE_CONTROL="$(mutant pending-release 'del(.pending_pr, .parked)' 'del(.parked)')"
+for owner in "$SCRIPT" "$RELEASE_CONTROL"; do
+  write_state stopped claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"
+  jq '.lanes[0].pending_pr={pr:7,repo:"owner/repo",head:"abc123"}' "$STATE" >"$STATE.next"
+  mv -- "$STATE.next" "$STATE"
+  run_close "$owner"
+  expected=false
+  [[ "$owner" == "$SCRIPT" ]] || expected=true
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pending=$(jq -r '.lanes[0] | has("pending_pr")' "$STATE")" \
+    "rc=0 status=done pending=$expected" 'full close releases the PR identity; the release control retains it'
+done
+write_state stopped claude /host linear owner/repo; : >"$ROWS"; printf '\n' >"$SCREEN"
+jq '.lanes[0].pending_pr={pr:7,repo:"owner/repo",head:"abc123"}' "$STATE" >"$STATE.next"
+mv -- "$STATE.next" "$STATE"
+LANE_CLOSE_HOST_STATUS=9 run_close "$SCRIPT"
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pending=$(jq -r '.lanes[0].pending_pr.pr' "$STATE")" \
+  'rc=9 status=stopped pending=7' 'provider failure keeps the PR identity for retry'
+
 echo '=== exit and finalization failures keep the record nonterminal ==='
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_NO_EXIT=1 run_close "$SCRIPT"
@@ -1918,6 +1937,19 @@ echo '=== --park stops a clean merge wait: harness, window, then sandbox ==='
 working_screen() { printf '› run\n  press to interrupt\n' >"$SCREEN"; }
 park_count() { grep -c -- '^stop-sandbox --item KEN-1 host=' "$HOST_CALLS" || true; }
 prwatch_count() { awk 'END { print NR + 0 }' "$LANE_CLOSE_PRWATCH_CALLS"; }
+# A new explicit park acquires the PR it just judged, replacing a prior wait.
+REPLACE_CONTROL="$(mutant pending-replace '| del(.pending_pr)) else error("lane record disappeared") end' '| .) else error("lane record disappeared") end')"
+for owner in "$SCRIPT" "$REPLACE_CONTROL"; do
+  write_state running codex /host linear owner/repo; write_panes python; working_screen
+  jq '.lanes[0].pending_pr={pr:99,repo:"old/repo",head:"old"}' "$STATE" >"$STATE.next"
+  mv -- "$STATE.next" "$STATE"
+  run_close "$owner" --park --pr 7
+  expected=false
+  [[ "$owner" == "$SCRIPT" ]] || expected=true
+  assert_eq "rc=$RC pr=$(jq -r '.lanes[0].parked.pr' "$STATE") repo=$(jq -r '.lanes[0].parked.repo' "$STATE") pending=$(jq -r '.lanes[0] | has("pending_pr")' "$STATE")" \
+    "rc=0 pr=7 repo=owner/repo pending=$expected" 'a new park replaces the old PR wait; the replacement control leaves it behind'
+done
+
 write_state running codex /host linear owner/repo; write_panes python; working_screen
 run_close "$SCRIPT" --park --pr 7
 # The order the judge and the stop run in is the call logs' order: the

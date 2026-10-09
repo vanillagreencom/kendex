@@ -317,9 +317,10 @@ any full close. A list that fails or names the item keeps mail-read-failed.
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
 
---terminal-state reads the tracker through the recorded identity. A parked
-record with an open recorded pull request reads open. A parked or stopped
-completed Linear item with an unchecked Done-when box also reads open.
+--terminal-state reads the tracker and retained pull request identity. An
+open recorded pull request reads open, including after recovery leaves the
+lane stopped or running. A completed Linear item with an unchecked Done-when
+box reads open for parked or stopped lanes and lanes retaining a PR wait.
 It prints open, completed or canceled
 and exits 0. A failed tracker, pull request or checklist read exits 2.
 --if-terminal closes only if that judge answers terminal. An open item exits
@@ -484,7 +485,7 @@ esac
 update_status() { # STATUS
   "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
     --arg item "$ITEM" --arg status "$1" \
-    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item) | .status) = $status else error("lane record disappeared") end' \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = $status | if $status == "done" then del(.pending_pr, .parked) else . end) else error("lane record disappeared") end' \
     >/dev/null
 }
 
@@ -646,13 +647,20 @@ tracker_read() { # OUT_VAR COMMAND...
 TRACKER_CAUSE=""
 ITEM_END=""
 tracker_terminal() {
-  local value number state reason pr_repo pr_number description checklist
+  local value number state reason pr_repo pr_number description checklist pending_pr=null
   TRACKER_CAUSE=""
-  if [[ "$status" == parked && "$TERMINAL_MODE" != close ]]; then
-    # Tracker integration can close the item before its queued PR merges.
-    pr_repo="$(jq -er '.parked.repo | strings | select(length > 0)' <<<"$record")" \
+  if [[ "$TERMINAL_MODE" != close ]]; then
+    # A resumed sandbox can be stopped or running while its PR is still open.
+    # The record owns that wait independently of its provider status. A legacy
+    # parked record with no identity still refuses rather than skipping it.
+    pending_pr="$(jq -c 'if .parked != null then .parked elif .pending_pr != null then .pending_pr elif .status == "parked" then {} else null end' <<<"$record")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
-    pr_number="$(jq -er '.parked.pr | numbers | select(. > 0)' <<<"$record")" \
+  fi
+  if [[ "$pending_pr" != null ]]; then
+    # Tracker integration can close the item before its queued PR merges.
+    pr_repo="$(jq -er '.repo | strings | select(length > 0)' <<<"$pending_pr")" \
+      || { TRACKER_CAUSE=parked-record-invalid; return 2; }
+    pr_number="$(jq -er '.pr | numbers | select(. > 0)' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
     tracker_read state env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' \
       || { TRACKER_CAUSE=pr-read-failed; return 2; }
@@ -676,7 +684,7 @@ tracker_terminal() {
       [[ -n "$state" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
       case "$state" in
         completed)
-          if [[ "$TERMINAL_MODE" != close && ( "$status" == parked || "$status" == stopped ) ]]; then
+          if [[ "$TERMINAL_MODE" != close && ( "$status" == parked || "$status" == stopped || "$pending_pr" != null ) ]]; then
             # GitHub integration marks Done at merge before lane close-out
             # ticks branch proof or schedules an open post-merge box.
             # open-terminal unpark writes stopped before create --relaunch;
@@ -837,7 +845,7 @@ park_sandbox() {
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
     --arg item "$ITEM" --arg pr "$PARK_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
-    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = {pr: ($pr | tonumber), head: $head, repo: $repo, at: $at}) else error("lane record disappeared") end' \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = {pr: ($pr | tonumber), head: $head, repo: $repo, at: $at} | del(.pending_pr)) else error("lane record disappeared") end' \
     >/dev/null || { message state-write-failed "item=$ITEM" "status=parked" >&2; exit 1; }
   message parked "${fields[@]}" "head=$PARK_HEAD" "status=parked"
   exit 0
