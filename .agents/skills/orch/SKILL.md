@@ -50,7 +50,6 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 ### Cargo round cleanup
 
 At each development round boundary, run the owner-scoped worktree cleanup policy for Cargo output. Use ORCH_ROUND_PRUNE_DISK_PCT as the configured disk threshold. Prune only the owned worktree target directory. If CARGO_TARGET_DIR is elsewhere, report the separate cleanup need and do not delete another owner's output. Use `.agents/skills/orch/scripts/round-prune` between the round-id and delegation-time stamps.
-
 <!-- kendex:project-instructions:end -->
 
 # Orchestration
