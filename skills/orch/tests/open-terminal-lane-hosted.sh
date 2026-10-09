@@ -63,7 +63,7 @@ assert_eq "$(observe 'rc=0 creates=1 launched=1') calls=$(host_call)" \
   "a cloud-only fleet admits the explicit local landing command" "$OUT"
 CLOUD_OWNER="$(mutant_scripts ctl-cloud-landing-capability/orch lane-host)/lane-host" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-cloud-landing-capability/orch"
-mutate_file "$CLOUD_OWNER" 'pool=cloud-credit\tland=handoff' 'pool=cloud-credit\tland=lane'
+mutate_file "$CLOUD_OWNER" '\tpool=cloud-credit\tland=handoff' '\tpool=cloud-credit\tland=lane'
 CLOUD_CAPABILITIES="$(env ORCH_LANE_HOST=claude-cloud "$CLOUD_OWNER" capabilities)" || exit 1
 CLOUD_LAND="$(printf '%s\n' "$CLOUD_CAPABILITIES" | tr '\t' '\n' | sed -n 's/^land=//p')"
 CLOUD_CONTROL="$(FAIL=0; assert_eq "$CLOUD_LAND" handoff 'local landing exception' > "$TMP_ROOT/cloud-landing-control"; printf '%s' "$FAIL")"

@@ -378,9 +378,34 @@ jq -n --argjson now "$NOW" '{five_hour: {utilization: 80, resets_at: null},
 table \
   "a session wall with no stated reset is undated, not dated to the weekly reset|ORCH_LANE_DIRS=$H/.uclaude|claim:u:5||$PICK|rc=3 walled=1 walled_resets_at=null"
 CTRL="$(mutant_scripts mutant-reset-stand-in lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'if .projected_window == null then .binding_resets_at else .projected_window.resets_at end' '.projected_window.resets_at // .binding_resets_at'
+mutate_file "$CTRL/lib/lane-model.sh" 'elif .projected_window == null then .binding_resets_at else .projected_window.resets_at end' 'else .projected_window.resets_at // .binding_resets_at end'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: the binding reset standing in dates an unknown session wall to the weekly reset|ORCH_LANE_DIRS=$H/.uclaude|claim:u:5||$PICK|rc=3 walled=1 walled_resets_at=$(jq -nr --argjson now "$NOW" '$now + 288000 | todate')"
+# The source judge emits elif and retry_at. A partial target must leave that
+# source intact rather than planting a syntax failure beside the wrong reset.
+mutation_target_result() { # HELPER OLD NEW
+  local file="$TMP_ROOT/mutation-target" out rc=0 unchanged=false key=none
+  cp -- "$TEST_DIR/../scripts/lib/lane-model.sh" "$file" || return 1
+  out="$("$BASH" -c 'source "$1"; mutate_file "$2" "$3" "$4"' _ "$1" "$file" "$2" "$3" 2>&1)" || rc=$?
+  cmp -s -- "$TEST_DIR/../scripts/lib/lane-model.sh" "$file" && unchanged=true
+  case "$out" in 'mutate_file: target=partial-token '*) key=partial-token ;; esac
+  printf 'rc=%s unchanged=%s key=%s\n' "$rc" "$unchanged" "$key"
+}
+BOUNDARY_CONTROL="$TMP_ROOT/mutation-boundary-control.sh"
+cp -- "$TEST_DIR/lib/growth-state.sh" "$BOUNDARY_CONTROL" || exit 1
+mutate_file "$BOUNDARY_CONTROL" '!$splits_token or die' '1 or !$splits_token or die'
+while IFS='|' read -r label old new; do
+  [[ -n "$label" ]] || continue
+  result="$(mutation_target_result "$TEST_DIR/lib/growth-state.sh" "$old" "$new")" || exit 1
+  assert_eq "$result" 'rc=1 unchanged=true key=partial-token' "a $label target refuses without changing the judge"
+  result="$(mutation_target_result "$BOUNDARY_CONTROL" "$old" "$new")" || exit 1
+  assert_eq "$result" 'rc=0 unchanged=false key=none' "control: disabling word boundaries admits the $label target"
+  boundary_fail="$(FAIL=0; assert_eq "$result" 'rc=1 unchanged=true key=partial-token' 'mutation boundary' > "$TMP_ROOT/mutation-boundary-assertion"; printf '%s' "$FAIL")"
+  assert_eq "$boundary_fail" 1 "control: the admitted $label target fails the unchanged-judge assertion"
+done <<'TARGETS'
+keyword suffix|if .projected_window == null then .binding_resets_at else .projected_window.resets_at end|.projected_window.resets_at // .binding_resets_at
+field prefix|.refusal.retry_a|.refusal.retry_
+TARGETS
 # Control: with no deciding window in the output, r's wall dates to the
 # weekly reset days away.
 CTRL="$(mutant_scripts mutant-window-unnamed lib/lane-model.sh)" || exit 1

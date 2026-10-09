@@ -49,6 +49,8 @@ mutant_scripts() {
 # it can run the unchanged control. FILE is a private copy. A symlink is
 # refused because editing through it would rewrite the shipped script and
 # editing around it would leave the mutant unmutated.
+# OLD must include a complete word at either edge: replacing if inside elif
+# changes a different keyword. Include surrounding syntax for partial words.
 mutate_file() {
   local file="$1" old="$2" new="$3"
   [[ ! -L "$file" ]] || { printf 'mutate_file: symlink %s\n' "$file" >&2; exit 1; }
@@ -63,6 +65,12 @@ mutate_file() {
     close $input or die "mutate_file: close=$! file=$file\n";
     my $count = () = $before =~ /\Q$old\E/g;
     $count == 1 or die "mutate_file: matches=$count file=$file\n";
+    my $start = index($before, $old);
+    my $left = substr($before, 0, $start);
+    my $right = substr($before, $start + length($old));
+    my $splits_token = ($old =~ /\A[A-Za-z0-9_]/ && $left =~ /[A-Za-z0-9_]\z/)
+                    || ($old =~ /[A-Za-z0-9_]\z/ && $right =~ /\A[A-Za-z0-9_]/);
+    !$splits_token or die "mutate_file: target=partial-token file=$file\n";
     my $after = $before;
     $after =~ s/\Q$old\E/$new/;
     $after ne $before or die "mutate_file: changed=no file=$file\n";
