@@ -6,8 +6,10 @@
 # rendered files in .kendex-generated.json. Carrier packages and in-place
 # sources stay outside that inventory and always run product checks.
 # `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
-# `--mode render-candidate` permits new head-owned paths only to decide whether
-# to install render-proof prerequisites. It never authorizes a CI skip.
+# `--mode render-candidate` permits new head-owned paths and the adopted refresh
+# caller without an inventory entry to gate render-proof prerequisites. It
+# never authorizes a CI skip. Caller contract: ../SKILL.md § Shared refresh
+# caller ownership.
 #
 # Usage:
 #   harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
@@ -91,8 +93,10 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
 
   --mode    harness (default): accept generated harness files.
             docs: accept docs/, changelog.d/, and root .md or .markdown files.
-            render-candidate: permit new head-owned paths for prerequisites
-            only. No CI skip is authorized; change-class must prove render.
+            render-candidate: permit new head-owned paths and the adopted
+            refresh caller without an inventory entry for prerequisites only.
+            No CI skip is authorized; change-class must prove render.
+            Caller contract: ../SKILL.md, Shared refresh caller ownership.
   --event   pull_request | merge_group | push. Any other event answers false.
   --base    the base endpoint: the PR base sha, the merge group's base sha,
             or a push's `before` sha.
@@ -423,8 +427,8 @@ names_only_change() { # -> prints `names-only added=N removed=M roots=R,...`, or
 if grep -qxF .kendex-generated.json <<<"$changed"; then
   inventory_change="$(names_only_change)" || inventory_change=""
 fi
-# Candidate ownership grants installation only. The normal harness verdict
-# still refuses gains; change-class must prove every new path from real renders.
+# Candidacy grants installation only. The normal harness verdict still refuses
+# gains; change-class must prove ownership under ../SKILL.md's render contract.
 if [ "$classification" != render-candidate ]; then
   printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
     .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)

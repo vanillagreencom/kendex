@@ -97,11 +97,11 @@
 # the judged package supplies doctrine data only.
 # The classes, first match winning:
 #
-#   render   every changed path is a file kendex generated, `kendex verify`
-#            reports files checked and none failed, and every changed path is
-#            owned by a position a passing row of that run printed: a file it
-#            owns whole, a tree it owns whole, or keys inside a shared file
-#            whose rest that run says did not move since the range's base.
+#   render   every changed path has trusted render ownership, `kendex verify`
+#            reports files checked and none failed. Each changed path needs a
+#            passing verifier position or the caller proof below. A position
+#            owns a file whole, a tree whole, or keys inside a shared file whose
+#            rest that run says did not move since the range's base.
 #            A removed path needs base inventory membership, absence from the
 #            verified head inventory, and trusted base whole-file ownership:
 #            the document's `base_owned`, the whole files and trees the base
@@ -116,10 +116,8 @@
 #            base_owned does not name the path, or the document carries no
 #            base_owned. A recorded shared refresh caller first takes ownership
 #            from a passing verifier position. Without verifier ownership, the
-#            released-template fallback requires byte equality at the exact
-#            release tag its shared workflow pins. A commit pin, unavailable
-#            release or edited caller grants no fallback ownership. Caller
-#            ownership contract: ../SKILL.md § Shared refresh caller ownership.
+#            release fallback follows the caller ownership contract:
+#            ../SKILL.md § Shared refresh caller ownership.
 #            Any other
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
@@ -227,9 +225,9 @@
 # cause=source-mirror-missing with those remedy fields. It grants no class
 # until the caller refreshes the mirror and the proof passes.
 #
-# Only the render class reads kendex state, after harness-only answers
-# harness_only=true or refuses only a generated ownership gain. The caller
-# prepares the judged checkout's sources.
+# Only the render class reads kendex state. The caller prepares the judged
+# checkout's sources. The render proof can also own the adopted refresh caller
+# under ../SKILL.md § Shared refresh caller ownership.
 #
 # A measured class needs --event pull_request or --event merge_group and an
 # orch beside this package carrying the measurement contract below; any other
@@ -783,8 +781,7 @@ fi
 # lane", never "this is a product diff whose size may be measured". Only two
 # of its causes are raised AFTER it has read every changed path against an
 # inventory it could read: a path that inventory does not carry, and an
-# ownership gain. The first reaches the size rules; the gain reaches the
-# render proof, which must establish ownership of every changed path.
+# ownership gain. A render class must prove ownership of every changed path.
 # They keep their `harness-note:` line. Every other cause is a
 # refusal to read something: the inventory at an endpoint, the inventory's
 # shape, a changed path, a path lookup, the diff, the endpoints, the event.
@@ -978,8 +975,8 @@ base_owned() { jq -e --arg path "$1" '(.base_owned // []) | any(.[]; .path as $o
 # foreign judgement or `-`, and the path.
 named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.owns, (.foreign // "-"), .path] | @tsv' <<<"$VERIFY_JSON"; }
 # Without verifier ownership, the shared refresh caller needs release proof.
-# Adoption accepts older shipped copies for replacement; this fallback needs
-# equality with the release revision this caller uses.
+# Adoption accepts older shipped copies for replacement; this fallback judges
+# the pinned release under ../SKILL.md § Shared refresh caller ownership.
 RENDER_WORKFLOW_CHECKED=false
 released_workflow_owned() { # PATH
   local pin history="$work/release-history" template=skills/review-gate/templates/kendex-refresh.yml
@@ -1033,7 +1030,7 @@ render_paths_covered() { # [narrow]
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     # Legacy verify can own engine positions, but cannot lift exclusions
-    # outside the inventory. Release equality owns only the adopted caller.
+    # outside the inventory. Release proof owns only the adopted caller.
     if [ "${1:-}" = narrow ] && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then
       change_class_path "$path" narrow
       if [ "$CHANGE_CLASS_PATH" = standard ]; then

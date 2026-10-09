@@ -25,7 +25,7 @@ Run the classifier to decide whether CI can skip product checks. Commit `.kendex
 
 Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.md). Workflow shapes to copy: [references/wiring.md](references/wiring.md).
 
-Use `--mode render-candidate` only to gate the engine installation and mirror refresh. It prints `render_candidate=true|false`, permits new head-owned paths, and grants no CI skip. `change-class` must prove render before CI skips product checks.
+Use `--mode render-candidate` only to gate the engine installation and mirror refresh. It prints `render_candidate=true|false` and grants no CI skip. It permits new head-owned paths and the adopted caller under the [caller ownership contract](#shared-refresh-caller-ownership). `change-class` must prove render before CI skips product checks.
 
 Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
 
