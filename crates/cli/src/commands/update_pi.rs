@@ -220,7 +220,8 @@ pub fn settle_scope(
 /// carries, and its installed copy is absent or byte-equal to that source
 /// (`Missing`), or the record holds it from the same origin, its installed
 /// copy is still the bytes that record completed, and the source moved
-/// away from them (`Stale`). `pi_ext::install` runs `npm install` for a
+/// away from them (`Stale`). `pi_ext::install` runs `npm ci` with a package
+/// lock, or `npm install` without one, for a
 /// package declaring dependencies, and with it that package's own
 /// lifecycle scripts; a refresh settles on the strength of a fetch it just
 /// made, and running a script that arrived with that fetch is running a

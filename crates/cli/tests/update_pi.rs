@@ -14,12 +14,20 @@ use kendex_core::process::Hardened;
 // allow-unwrap-in-tests does not reach them.
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+    kendex_command(home, cwd, args)
+        .output()
+        .expect("kendex binary runs")
+}
+
+#[allow(clippy::expect_used)]
+fn kendex_command(home: &Path, cwd: &Path, args: &[&str]) -> Command {
     let mut paths = vec![home.join("bin")];
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
     let path = std::env::join_paths(paths).expect("fixture PATH joins");
-    Command::new(env!("CARGO_BIN_EXE_kendex"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
         .args(args)
         .current_dir(cwd)
         .env_clear()
@@ -29,9 +37,8 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
             "KENDEX_GIT_BASE",
             format!("file://{}", home.join("git").display()),
         )
-        .env("PATH", path)
-        .output()
-        .expect("kendex binary runs")
+        .env("PATH", path);
+    command
 }
 
 #[allow(clippy::unwrap_used)]
@@ -322,6 +329,333 @@ fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
         let repaired = kendex(&root, &project, &["update-pi", "--scope", "project"]);
         assert!(repaired.status.success(), "{repaired:?}");
         assert_npm_repaired(&root, &project);
+    }
+}
+
+/// Real npm resolves only this registry. The broken dev release reproduces
+/// the producer in KEN-3607; the unlocked row also proves its ETARGET cause.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn npm_installs_the_locked_runtime_tree_without_resolving_new_dev_releases() {
+    use npm_registry::Row;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let registry = npm_registry::Registry::new(&root);
+    for row in [
+        Row::Locked,
+        Row::Unlocked,
+        Row::StaleLock,
+        Row::BrokenUnlocked,
+    ] {
+        let project = root.join(format!("dev/{row:?}"));
+        let source = registry.source(&project, row);
+        let output = registry.run(&root, &project);
+        npm_registry::assert_result(
+            row,
+            &output,
+            &source,
+            &project.join(".pi/packages/pi-widgets"),
+        );
+        if output.status.success() {
+            let second = registry.run(&root, &project);
+            assert!(second.status.success());
+            assert!(String::from_utf8_lossy(&second.stderr).contains("all pi packages up to date"));
+        }
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod npm_registry {
+    use super::*;
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
+
+    pub(super) struct Registry {
+        address: SocketAddr,
+        worker: Option<JoinHandle<()>>,
+        environment: Vec<(&'static str, String)>,
+        packuments: BTreeMap<String, Value>,
+    }
+
+    impl Drop for Registry {
+        fn drop(&mut self) {
+            let shutdown = TcpStream::connect(self.address)
+                .and_then(|mut connection| connection.write_all(b"GET /shutdown HTTP/1.1\r\n\r\n"));
+            let result = self.worker.take().unwrap().join();
+            if !thread::panicking() {
+                shutdown.expect("registry shutdown sent");
+                result.expect("registry worker completed");
+            }
+        }
+    }
+
+    impl Registry {
+        pub(super) fn new(root: &Path) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let registry_url = format!("http://{address}");
+            let userconfig = root.join("npmrc");
+            write(&userconfig, "");
+            let npm_environment = vec![
+                ("npm_config_registry", registry_url.clone()),
+                (
+                    "npm_config_cache",
+                    root.join("npm-cache").display().to_string(),
+                ),
+                ("npm_config_userconfig", userconfig.display().to_string()),
+                (
+                    "npm_config_globalconfig",
+                    root.join("global-npmrc").display().to_string(),
+                ),
+                ("npm_config_fetch_retries", "0".to_owned()),
+                ("npm_config_fetch_timeout", "1000".to_owned()),
+            ];
+            let (packuments, responses) = pack(root, &registry_url, &npm_environment);
+            Self {
+                address,
+                worker: Some(serve(listener, responses)),
+                environment: npm_environment,
+                packuments,
+            }
+        }
+
+        pub(super) fn source(&self, project: &Path, row: Row) -> std::path::PathBuf {
+            let source = project.join("catalog/pi-extensions/pi-widgets");
+            write(
+                &project.join("kendex.toml"),
+                "schema = 6\n[sources.cat]\npath = \"catalog\"\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            );
+            let mut manifest = json!({
+                "name": "pi-widgets", "version": "1.0.0",
+                "dependencies": {"dep": "^1.0.0"},
+                "devDependencies": {"devtool": "^1.0.0", "peer": "^1.0.0"},
+                "peerDependencies": {"peer": "^1.0.0"},
+                "peerDependenciesMeta": {"peer": {"optional": true}},
+                "pi": {"extensions": ["index.js"]},
+            });
+            let mut packages = json!({"": manifest.clone()});
+            for name in ["dep", "devtool", "peer"] {
+                let package = &self.packuments[name]["versions"]["1.0.0"];
+                let mut entry = json!({
+                    "version": "1.0.0", "resolved": package["dist"]["tarball"],
+                    "integrity": package["dist"]["integrity"],
+                });
+                if name != "dep" {
+                    entry["dev"] = json!(true);
+                }
+                packages[format!("node_modules/{name}")] = entry;
+            }
+            let lock = json!({
+                "name": "pi-widgets", "version": "1.0.0", "lockfileVersion": 3,
+                "requires": true, "packages": packages,
+            });
+            match row {
+                Row::Locked => write(&source.join("package-lock.json"), &lock.to_string()),
+                Row::StaleLock => {
+                    write(&source.join("package-lock.json"), &lock.to_string());
+                    manifest["dependencies"]["dep"] = json!("^1.1.0");
+                }
+                Row::Unlocked => {
+                    manifest["devDependencies"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("devtool");
+                }
+                Row::BrokenUnlocked => {}
+            }
+            write(&source.join("package.json"), &manifest.to_string());
+            write(&source.join("index.js"), "export const version = 1;\n");
+            source
+        }
+
+        pub(super) fn run(&self, root: &Path, project: &Path) -> Output {
+            kendex_command(root, project, &["update-pi", "--scope", "project"])
+                .envs(self.environment.iter().map(|(key, value)| (*key, value)))
+                .output()
+                .unwrap()
+        }
+    }
+
+    fn pack(
+        root: &Path,
+        registry_url: &str,
+        npm_environment: &[(&str, String)],
+    ) -> (BTreeMap<String, Value>, BTreeMap<String, Vec<u8>>) {
+        let mut packuments = BTreeMap::<String, Value>::new();
+        let mut responses = BTreeMap::<String, Vec<u8>>::new();
+        for (name, version, dependencies) in [
+            ("dep", "1.0.0", json!({})),
+            ("dep", "1.1.0", json!({})),
+            ("devtool", "1.0.0", json!({})),
+            ("devtool", "1.1.0", json!({"gone": "^2.0.0"})),
+            ("gone", "1.0.0", json!({})),
+            ("peer", "1.0.0", json!({})),
+        ] {
+            let directory = root.join(format!("packed/{name}-{version}"));
+            let mut manifest =
+                json!({"name": name, "version": version, "dependencies": dependencies});
+            write(&directory.join("package.json"), &manifest.to_string());
+            let packed = Command::new("npm")
+                .args(["pack", "--json", "--ignore-scripts", "--offline"])
+                .current_dir(&directory)
+                .env_clear()
+                .envs(test_util::fixture_env(root))
+                .env("PATH", std::env::var_os("PATH").unwrap())
+                .envs(npm_environment.iter().map(|(key, value)| (*key, value)))
+                .output()
+                .expect("real npm is required for the registry fixture");
+            assert!(
+                packed.status.success(),
+                "{}",
+                String::from_utf8_lossy(&packed.stderr)
+            );
+            let metadata: Value = serde_json::from_slice(&packed.stdout).unwrap();
+            let filename = metadata[0]["filename"].as_str().unwrap();
+            let route = format!("/{name}/-/{filename}");
+            manifest["dist"] = json!({
+                "tarball": format!("{registry_url}{route}"),
+                "integrity": metadata[0]["integrity"],
+            });
+            responses.insert(route, fs::read(directory.join(filename)).unwrap());
+            let packument = packuments
+                .entry(name.to_owned())
+                .or_insert_with(|| json!({"name": name, "dist-tags": {}, "versions": {}}));
+            packument["dist-tags"]["latest"] = json!(version);
+            packument["versions"][version] = manifest;
+        }
+        for (name, packument) in &packuments {
+            responses.insert(format!("/{name}"), serde_json::to_vec(packument).unwrap());
+        }
+        (packuments, responses)
+    }
+
+    fn serve(listener: TcpListener, responses: BTreeMap<String, Vec<u8>>) -> JoinHandle<()> {
+        thread::spawn(move || {
+            for connection in listener.incoming() {
+                let mut connection = connection.unwrap();
+                connection
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                connection
+                    .set_write_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                let mut reader = BufReader::new(&connection);
+                let mut request = String::new();
+                if reader.read_line(&mut request).unwrap() == 0 {
+                    continue;
+                }
+                let route = request.split_whitespace().nth(1).unwrap();
+                if route == "/shutdown" {
+                    break;
+                }
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
+                        break;
+                    }
+                }
+                let missing = br#"{"error":"not_found"}"#;
+                let (status, body) = match responses.get(route) {
+                    Some(body) => ("200 OK", body.as_slice()),
+                    None => ("404 Not Found", missing.as_slice()),
+                };
+                let headers = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    if route.ends_with(".tgz") {
+                        "application/octet-stream"
+                    } else {
+                        "application/json"
+                    },
+                    body.len()
+                );
+                if let Err(error) = connection
+                    .write_all(headers.as_bytes())
+                    .and_then(|()| connection.write_all(body))
+                {
+                    // npm cancels requests for dependencies it omits.
+                    assert!(matches!(
+                        error.kind(),
+                        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                    ));
+                }
+            }
+        })
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub(super) enum Row {
+        Locked,
+        Unlocked,
+        StaleLock,
+        BrokenUnlocked,
+    }
+    pub(super) fn assert_result(row: Row, output: &Output, source: &Path, installed: &Path) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let modules = installed.join("node_modules");
+        match row {
+            Row::Locked | Row::Unlocked => {
+                assert!(output.status.success(), "{row:?}: {stderr}");
+                let dependency: Value =
+                    serde_json::from_slice(&fs::read(modules.join("dep/package.json")).unwrap())
+                        .unwrap();
+                assert_eq!(
+                    dependency["version"],
+                    match row {
+                        Row::Locked => "1.0.0",
+                        Row::Unlocked => "1.1.0",
+                        Row::StaleLock | Row::BrokenUnlocked => unreachable!(),
+                    }
+                );
+                assert!(!modules.join("devtool").exists(), "{row:?}");
+                assert!(!modules.join("peer").exists(), "{row:?}");
+                if matches!(row, Row::Locked) {
+                    assert_eq!(
+                        fs::read(installed.join("package-lock.json")).unwrap(),
+                        fs::read(source.join("package-lock.json")).unwrap()
+                    );
+                } else {
+                    assert!(!installed.join("package-lock.json").exists());
+                }
+            }
+            Row::StaleLock | Row::BrokenUnlocked => {
+                assert!(!output.status.success(), "{row:?}");
+                assert!(
+                    !modules.join("dep").exists(),
+                    "{row:?}: a fresh install followed failure"
+                );
+                // The issue explicitly requires the human recovery command to
+                // identify the operation that failed.
+                let recovery = match row {
+                    Row::StaleLock => {
+                        assert!(stderr.contains("EUSAGE"), "{stderr}");
+                        assert!(
+                            stderr.contains(
+                                "Invalid: lock file's dep@1.0.0 does not satisfy dep@1.1.0"
+                            ),
+                            "{stderr}"
+                        );
+                        "ci --omit=dev --legacy-peer-deps --no-audit --no-fund"
+                    }
+                    Row::BrokenUnlocked => {
+                        assert!(stderr.contains("ETARGET"), "{stderr}");
+                        assert!(stderr.contains("gone@^2.0.0"), "{stderr}");
+                        "install --omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund"
+                    }
+                    Row::Locked | Row::Unlocked => unreachable!(),
+                };
+                assert!(
+                    stderr.contains(&format!(
+                        "Recovery: `cd '{}' && npm {recovery}`",
+                        installed.display()
+                    )),
+                    "{stderr}"
+                );
+            }
+        }
     }
 }
 
