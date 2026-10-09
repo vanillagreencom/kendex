@@ -16,8 +16,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### orch
 
+- Claude cloud sessions use a separate per-overseer cap, set by `ORCH_OVERSEER_CLOUD_LANES`. Cloud sessions no longer consume fleet lane slots. Their landing lanes still use the fleet cap.
 - Account records include their retirement date. `lanes list --cache-only` reads cached usage and credits without usage requests, token renewal, or provider account calls.
+- Wait for Copilot work before reading findings or requesting approval, close pending timeline work after a later Copilot review, and hold fallback notices while its review is running.
 - Progress reports list recorded direct pushes under Landed and count their items toward the report cadence.
+- Skip the successor account scan when an overseer has room and its qualifying mark cannot fire. Keep the below-mark result for this settled check.
 - Consumer refresh approval reads the latest proof from an unchanged consumer CI workflow and checks its engine version, pull request and measured diff. It fetches the remote proof commits without moving the checkout and accepts repeated matching range records. It accepts normal Actions log bytes privately. A different kendex build on the overseer host no longer rejects a proved refresh.
 
 ## [1.14.2] - 2026-10-09

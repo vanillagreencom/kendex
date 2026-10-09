@@ -1,1 +1,0 @@
-- Wait for Copilot work before reading findings or requesting approval, close pending timeline work after a later Copilot review, and hold fallback notices while its review is running.
