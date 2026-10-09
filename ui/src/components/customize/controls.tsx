@@ -101,7 +101,10 @@ export function CommitInput({
       value={text}
       placeholder={placeholder}
       onChange={(event) => setText(event.target.value)}
-      onBlur={() => onCommit(text)}
+      onBlur={() => {
+        // An unchanged blank can represent an explicit empty permission list.
+        if (text !== value) onCommit(text);
+      }}
     />
   );
 }

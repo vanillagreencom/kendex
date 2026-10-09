@@ -10,7 +10,11 @@ import type {
 import { commands } from "@/bindings";
 import { placeFacts, placesSource } from "@/lib/customized-places";
 import { groupItems } from "@/lib/derive";
-import { emptyDraft, setInstruction } from "@/lib/editor-draft";
+import {
+  emptyDraft,
+  setFrontmatterField,
+  setInstruction,
+} from "@/lib/editor-draft";
 import { markFor } from "@/lib/package-mark";
 import { scopeKey } from "@/lib/scope";
 import { placeRead } from "@/test/settings-read";
@@ -149,6 +153,58 @@ describe("editor store", () => {
       { scope: "global" },
       {
         manifest: setInstruction(emptyDraft(), "skill-instructions", "gh", "x"),
+        base: "b1",
+      },
+      null,
+      null,
+    );
+  });
+
+  it("saves carried empty permissions after an optional scalar is cleared", async () => {
+    // Agent transfer records these empty lists to keep the source's permissions.
+    const permissions = {
+      "role-deny-tools": [],
+      "allowed-subagents": [],
+      "allow-tools": [],
+    };
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: {
+        manifest: {
+          ...emptyDraft(),
+          "agent-frontmatter": { pi: { engineer: permissions } },
+        },
+        base: "b1",
+        file: "kendex.toml",
+      },
+    });
+    await useEditorStore.getState().load();
+    const editColor = (color: string | null) =>
+      useEditorStore
+        .getState()
+        .edit((draft) =>
+          setFrontmatterField(draft, "pi", "engineer", "color", color),
+        );
+    editColor("blue");
+    editColor(null);
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      {
+        manifest: expect.objectContaining({
+          "agent-frontmatter": {
+            pi: {
+              engineer: expect.objectContaining({
+                ...permissions,
+                color: null,
+              }),
+            },
+          },
+        }),
         base: "b1",
       },
       null,

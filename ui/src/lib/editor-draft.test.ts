@@ -171,6 +171,51 @@ describe("setFrontmatterField", () => {
     expect(cleared["agent-frontmatter"]).toBeUndefined();
   });
 
+  it("preserves carried replacement lists through load, scalar clear and save", () => {
+    // Agent transfer writes explicit empty lists to suppress catalog defaults.
+    const fields = [
+      "role-deny-tools",
+      "allowed-subagents",
+      "allow-tools",
+    ] as const;
+    for (const field of fields) {
+      for (const value of [[], ["Read"]]) {
+        const loaded = toDraft({
+          schema: MANIFEST_SCHEMA,
+          "agent-frontmatter": { pi: { engineer: { [field]: value } } },
+        });
+        expect(loaded["agent-frontmatter"]?.pi.engineer[field]).toEqual(value);
+        const colored = setFrontmatterField(
+          loaded,
+          "pi",
+          "engineer",
+          "color",
+          "blue",
+        );
+        const cleared = setFrontmatterField(
+          colored,
+          "pi",
+          "engineer",
+          "color",
+          null,
+        );
+        expect(cleared["agent-frontmatter"]?.pi.engineer[field]).toEqual(value);
+        // The bindings send this draft as JSON to save_customize.
+        const saved = JSON.parse(JSON.stringify(cleared));
+        expect(saved["agent-frontmatter"].pi.engineer[field]).toEqual(value);
+        expect(saved["agent-frontmatter"].pi.engineer.color).toBeNull();
+        const reset = setFrontmatterField(
+          cleared,
+          "pi",
+          "engineer",
+          field,
+          null,
+        );
+        expect(reset["agent-frontmatter"]).toBeUndefined();
+      }
+    }
+  });
+
   it("prunes an emptied list but keeps other fields", () => {
     let next = setFrontmatterField(draft(), "pi", "orch", "pane", true);
     next = setFrontmatterField(next, "pi", "orch", "deny-tools", ["Bash"]);

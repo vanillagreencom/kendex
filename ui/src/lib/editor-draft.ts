@@ -165,9 +165,8 @@ export function setInstruction(
 }
 
 function isUnset(overrides: DraftFrontmatter): boolean {
-  return Object.values(overrides).every(
-    (value) => value === null || (Array.isArray(value) && value.length === 0),
-  );
+  // Empty replacement lists retain permission intent carried from a catalog.
+  return Object.values(overrides).every((value) => value === null);
 }
 
 export function setFrontmatterField<K extends keyof DraftFrontmatter>(
