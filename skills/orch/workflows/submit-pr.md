@@ -208,13 +208,22 @@ At 2 or more → § 3.2 with the note "max re-submit cycles reached, the re-subm
 
 ### 3.2 Golden Baselines
 
-**Skip if** the issue does not carry the `design` label (`linear.sh issues get [ISSUE_ID] --format=compact`, or `gh issue view [N] --json labels`).
+**Skip if** the consumer's `[skill-instructions].orch`, injected into the installed `SKILL.md` Project Instructions, selects no baseline policy. Continue to § 4 without capture, a baseline commit or a push. An issue label alone grants none of them.
 
-Capture golden baselines in the worktree with the project's visual QA tooling; if the project has no baseline-capable target, skip and report why. Commit and push without retriggering CI:
+With a selected policy, apply its capture criterion and visual QA target. If the criterion does not hold, continue to § 4. If no baseline-capable target exists, report why and continue to § 4 without capture. Apply the policy's approval, host and isolation gate before capture; an unmet gate continues to § 4 without capture.
+
+Only after those conditions pass, capture with the selected target in the worktree, then stage and inspect:
 
 ```bash
 git -C [WT_PATH] add [BASELINE_PATH]/
-git -C [WT_PATH] commit -m "chore: update golden baselines [skip ci]"
+git -C [WT_PATH] diff --cached --name-only
+git -C [WT_PATH] diff --cached
+```
+
+Only a separately selected baseline-only CI exception permits a CI skip, with the subject that exception names. Verify that every staged file is a baseline file before using it. Staged product code takes no exception: commit under the normal commit rules and return to § 2's normal submission path. With only baseline files staged but no selected exception, use normal CI and the normal commit rules for `[BASELINE_SUBJECT]`. With no staged changes, continue to § 4. Otherwise commit the separate baseline change and push, still under the selected capture policy:
+
+```bash
+git -C [WT_PATH] commit -m "[BASELINE_SUBJECT]"
 .agents/skills/worktree/scripts/worktree push [WT_PATH] --no-rebase
 ```
 
