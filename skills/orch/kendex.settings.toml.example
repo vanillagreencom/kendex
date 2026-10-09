@@ -11,6 +11,7 @@ ORCH_STATE_DIR = "tmp"
 # keep archives before removing records. An empty value uses FLEET_DIR/archive,
 # or $HOME/.fleet/archive when FLEET_DIR is unset. Set an absolute path outside
 # linked worktrees and state or mailbox folders so archives survive cleanup.
+# A configured value requires Python and a readable Git worktree list.
 # Relative paths and ~ are refused. TOML does not expand shell variables.
 # ORCH_ARCHIVE_ROOT = "/path/to/archives"
 

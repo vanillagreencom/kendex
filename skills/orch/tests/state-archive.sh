@@ -21,12 +21,12 @@ cat > "$TMP_ROOT/write.sh" <<'SCRIPT'
 set -euo pipefail
 SCRIPT_DIR=$1
 . "$SCRIPT_DIR/lib/state-archive.sh"
-archive_write "${ARCHIVE_TEST_REPO:-$PWD/repo}" "${ARCHIVE_TEST_REMOVED:-$PWD/tmp}" records '{"kept":true}' "$PWD/input" || exit 1
+archive_write "${ARCHIVE_TEST_REPO:-$PWD}" "${ARCHIVE_TEST_REMOVED:-$PWD/tmp}" records '{"kept":true}' "$PWD/input" || exit 1
 printf '%s\n' "$ARCHIVE"
 SCRIPT
 
 while IFS='|' read -r name layer expected; do
-    project="$TMP_ROOT/$name"
+    project="$TMP_ROOT/$name/repo"
     mkdir -p "$project/home" "$project/.kendex"
     git -C "$project" init -q
     git -C "$project" config gc.auto 0
@@ -68,7 +68,7 @@ ROWS
 MUTANT="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-root lib/state-archive.sh)" || exit 1
 mutate_file "$MUTANT/lib/state-archive.sh" 'ARCHIVE_DIR="$root/${repo_root##*/}/oversee"' \
     'ARCHIVE_DIR="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"'
-project="$TMP_ROOT/settings"
+project="$TMP_ROOT/settings/repo"
 got="$(cd -- "$project" && env -i PATH="$PATH" HOME="$project/home" FLEET_DIR="$project/fleet" \
     "$BASH" "$TMP_ROOT/write.sh" "$MUTANT")"
 [[ "${got%/*}" != "$project/settings archive/repo/oversee" ]] \
@@ -103,6 +103,51 @@ assert_eq "$rc" 0 'control: ignoring the failed read breaks the refusal assertio
 [[ -s "$TMP_ROOT/control.out" ]] && pass 'control: the failed read now creates an archive' \
     || fail 'control: the failed read now creates an archive'
 
+# Local default archives predate the Python resolver and work outside Git.
+mkdir -p "$CONTROL_ROOT/no-python-bin" "$CONTROL_ROOT/default/repo"
+for tool in bash dirname git mkdir mktemp tar gzip rm cat; do
+    ln -s "$(command -v "$tool")" "$CONTROL_ROOT/no-python-bin/$tool"
+done
+project="$CONTROL_ROOT/default/repo"
+printf 'default archive bytes\n' > "$project/input"
+while IFS='|' read -r name fleet expected; do
+    args=("PATH=$CONTROL_ROOT/no-python-bin" "HOME=$project/home" "ORCH_ARCHIVE_ROOT=")
+    [[ "$fleet" == unset ]] || args+=("FLEET_DIR=$fleet")
+    got="$(cd -- "$project" && env -i "${args[@]}" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS")"
+    assert_eq "${got%/*}" "$project/$expected/repo/oversee" "$name: default works without Python outside Git"
+    assert_eq "$(tar -xOzf "$got" "${project#/}/input")" 'default archive bytes' "$name: default archive keeps input"
+done <<ROWS
+home|unset|home/.fleet/archive
+absolute|$project/fleet|fleet/archive
+relative|fleet|fleet/archive
+ROWS
+mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts default-python lib/state-archive.sh)" || exit 1
+mutate_file "$mutant/lib/state-archive.sh" "printf '%s\\n' \"\$root\"" \
+    'python3 -c '\''import sys; print(sys.argv[1])'\'' "$root"'
+rc=0
+(cd -- "$project" && env -i PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" ORCH_ARCHIVE_ROOT= \
+    "$BASH" "$TMP_ROOT/write.sh" "$mutant") > "$TMP_ROOT/default-control.out" 2> "$TMP_ROOT/default-control.err" || rc=$?
+assert_eq "$rc" 1 'control: default Python dependency breaks the default archive assertion'
+[[ ! -s "$TMP_ROOT/default-control.out" ]] && pass 'control: default Python dependency writes no archive' \
+    || fail 'control: default Python dependency writes no archive'
+rc=0
+(cd -- "$project" && env -i PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" \
+    ORCH_ARCHIVE_ROOT="$CONTROL_ROOT/configured-archives" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS") \
+    > "$TMP_ROOT/python.out" 2> "$TMP_ROOT/python.err" || rc=$?
+assert_eq "$rc" 1 'configured roots refuse missing Python'
+assert_contains "$(cat "$TMP_ROOT/python.err")" 'dependency-missing command=python3' 'configured root names the missing dependency'
+mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-python-check lib/state-archive.sh)" || exit 1
+mutate_file "$mutant/lib/state-archive.sh" 'command -v python3 >/dev/null 2>&1 ||' 'true ||'
+rc=0
+(cd -- "$project" && env -i PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" \
+    ORCH_ARCHIVE_ROOT="$CONTROL_ROOT/configured-archives" "$BASH" "$TMP_ROOT/write.sh" "$mutant") \
+    > "$TMP_ROOT/python-control.out" 2> "$TMP_ROOT/python-control.err" || rc=$?
+before="$FAIL"
+assert_contains "$(cat "$TMP_ROOT/python-control.err")" 'dependency-missing command=python3' \
+    'missing Python retains its dependency category' > "$TMP_ROOT/python-control-assertion.out"
+if [[ "$FAIL" -gt "$before" ]]; then FAIL="$before"; pass 'control: missing Python check loses its dependency category'
+else fail 'control: missing Python check loses its dependency category'; fi
+
 # A close removes an entire linked checkout, including archives beside tmp.
 # A prune removes old state subdirectories. Both bounds belong to the reader.
 project="$TMP_ROOT/guard-project"
@@ -120,8 +165,8 @@ ln -s "$lane" "$TMP_ROOT/lane-link"
 
 root_refusal() { # SCRIPTS ROOT LABEL
     local rc=0
-    (cd -- "$project" && env -i PATH="${ARCHIVE_TEST_PATH:-$PATH}" ARCHIVE_REAL_GIT="$(command -v git)" HOME="$project/home" ORCH_ARCHIVE_ROOT="$2" \
-        ARCHIVE_TEST_REPO="$project" ARCHIVE_TEST_REMOVED="$removed" \
+    (cd -- "$project" && env -i PATH="${ARCHIVE_TEST_PATH:-$PATH}" ARCHIVE_REAL_GIT="$(command -v git)" ARCHIVE_GIT_FAILURE="${ARCHIVE_GIT_FAILURE:-listing}" HOME="$project/home" ORCH_ARCHIVE_ROOT="$2" \
+        ARCHIVE_TEST_REPO="${ARCHIVE_TEST_REPO:-$project}" ARCHIVE_TEST_REMOVED="$removed" \
         "$BASH" "$TMP_ROOT/write.sh" "$1") > "$TMP_ROOT/root.out" 2> "$TMP_ROOT/root.err" || rc=$?
     assert_eq "$rc" 1 "$3: refuses an archive that cannot survive removal"
     [[ ! -s "$TMP_ROOT/root.out" ]] && pass "$3: writes no archive" || fail "$3: writes no archive"
@@ -158,20 +203,33 @@ mkdir -p "$CONTROL_ROOT/git-bin"
 cat > "$CONTROL_ROOT/git-bin/git" <<'GIT'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${3:-}:${4:-}" != worktree:list ]] || exit 73
+[[ "$ARCHIVE_GIT_FAILURE" != all && "${3:-}:${4:-}" != worktree:list ]] || exit 73
 exec "$ARCHIVE_REAL_GIT" "$@"
 GIT
 chmod +x "$CONTROL_ROOT/git-bin/git"
-ARCHIVE_TEST_PATH="$CONTROL_ROOT/git-bin:$PATH"
-root_refusal "$SCRIPTS" "$TMP_ROOT/safe-archives" 'unreadable worktrees'
 mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-listing lib/state-archive.sh)" || exit 1
 mutate_file "$mutant/lib/state-archive.sh" 'if listing.returncode != 0:' 'if False and listing.returncode != 0:'
-before="$FAIL"
-root_refusal "$mutant" "$TMP_ROOT/safe-archives" 'ignored listing' > "$TMP_ROOT/listing-control.out"
-if [[ "$FAIL" -gt "$before" ]]; then FAIL="$before"; pass 'control: a failed listing cannot authorize removal'
-else fail 'control: a failed listing cannot authorize removal'; fi
+while read -r failure; do
+    ARCHIVE_TEST_REPO="$project"
+    ARCHIVE_TEST_PATH="$CONTROL_ROOT/git-bin:$PATH"
+    ARCHIVE_GIT_FAILURE="$failure"
+    if [[ "$failure" == non-git ]]; then
+        ARCHIVE_TEST_REPO="$CONTROL_ROOT/default/repo"
+        ARCHIVE_TEST_PATH="$PATH"
+    fi
+    root_refusal "$SCRIPTS" "$TMP_ROOT/safe-archives" "$failure: unreadable worktrees"
+    assert_contains "$(cat "$TMP_ROOT/root.err")" 'archive-worktrees-unreadable' "$failure: identifies the failed listing"
+    before="$FAIL"
+    root_refusal "$mutant" "$TMP_ROOT/safe-archives" "$failure: ignored listing" > "$TMP_ROOT/listing-control.out"
+    if [[ "$FAIL" -gt "$before" ]]; then FAIL="$before"; pass "control: $failure cannot authorize removal"
+    else fail "control: $failure cannot authorize removal"; fi
+done <<'ROWS'
+listing
+all
+non-git
+ROWS
 
-unset ARCHIVE_TEST_PATH
+unset ARCHIVE_TEST_PATH ARCHIVE_TEST_REPO ARCHIVE_GIT_FAILURE
 mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts failed-state-path workflow-state)" || exit 1
 cat > "$mutant/workflow-state" <<'STATE'
 #!/usr/bin/env bash

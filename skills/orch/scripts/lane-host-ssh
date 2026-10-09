@@ -1070,7 +1070,8 @@ Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories, and the item's workflow state, falling back to
 an older launch's settings when needed, with a lane-host-state member naming that
 state's member, under ORCH_ARCHIVE_ROOT/REPO/ITEM/tmp-STAMP.tgz
-(the root defaults to ${FLEET_DIR:-$HOME/.fleet}/archive) and prints kept=PATH. A failed archive stops
+(the root defaults to ${FLEET_DIR:-$HOME/.fleet}/archive) and prints kept=PATH.
+A configured root requires a readable Git worktree list on this host. A failed archive stops
 close, as does a state directory the clone's workflow-state cannot resolve,
 reported as state-unresolved. An already removed worktree's tmp cannot be recovered. No remaining tmp
 and no workflow state outside it means no archive and no kept line. Archives contain paths relative to / and

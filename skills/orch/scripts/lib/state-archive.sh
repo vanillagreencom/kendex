@@ -10,47 +10,42 @@ ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
 # Keep the compatible default here so local and SSH close-out share it.
 # This is a storage setting, below the decision-record bar.
 archive_root() { # REPO_ROOT DESTINATION_SUFFIX [REMOVAL_ROOT_OR_ARCHIVE_INPUT...]
-    local root state_file="" configured=true
+    local root state_file
     root="$("$SCRIPT_DIR/orch-env" ORCH_ARCHIVE_ROOT "")" || return 1
     if [[ -z "$root" ]]; then
         root="${FLEET_DIR:-$HOME/.fleet}/archive"
-        configured=false
-    else
-        # path owns ORCH_STATE_DIR resolution for every caller, including SSH.
-        state_file="$("$SCRIPT_DIR/workflow-state" path oversee)" || return 1
+        [[ "$root" == /* ]] || root="$PWD/$root"
+        printf '%s\n' "$root"
+        return 0
     fi
+    command -v python3 >/dev/null 2>&1 || { printf '%s\n' 'state-archive: dependency-missing command=python3 key=ORCH_ARCHIVE_ROOT' >&2; return 1; }
+    # path owns ORCH_STATE_DIR resolution for every caller, including SSH.
+    state_file="$("$SCRIPT_DIR/workflow-state" path oversee)" || return 1
     # merge-pr removes linked checkouts; prune removes state subdirectories.
     # A configured archive must outlive both, including through directory links.
-    python3 - "$root" "$configured" "$1" "$2" "${state_file%/*}" "${@:3}" <<'PY'
+    python3 - "$root" "$1" "$2" "${state_file%/*}" "${@:3}" <<'PY'
 import pathlib
 import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
-if sys.argv[2] == "false":
-    print(root.absolute())
-    sys.exit(0)
 if not root.is_absolute():
     print(f"state-archive: archive-root-relative key=ORCH_ARCHIVE_ROOT path={root}", file=sys.stderr)
     sys.exit(1)
 root = root.resolve()
-destination = (root / sys.argv[4]).resolve()
-excluded = [pathlib.Path(value).resolve() for value in sys.argv[5:] if value]
-# workflow-state also supports projects outside Git. A Git checkout must give
-# its full worktree list; a failed listing cannot authorize archive removal.
-repo = sys.argv[3]
-probe = subprocess.run(["git", "-C", repo, "rev-parse", "--show-toplevel"],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-if probe.returncode == 0:
-    listing = subprocess.run(["git", "-C", repo, "worktree", "list", "--porcelain", "-z"],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if listing.returncode != 0:
-        print(f"state-archive: archive-worktrees-unreadable path={repo}", file=sys.stderr)
-        sys.exit(1)
-    worktrees = [pathlib.Path(field[9:].decode()).resolve()
-                 for field in listing.stdout.split(b"\0") if field.startswith(b"worktree ")]
-    # Git lists the main checkout first. worktree remove never removes it.
-    excluded.extend(worktrees[1:])
+destination = (root / sys.argv[3]).resolve()
+excluded = [pathlib.Path(value).resolve() for value in sys.argv[4:] if value]
+# Configured roots need Git's full list because merge-pr removes linked trees.
+repo = sys.argv[2]
+listing = subprocess.run(["git", "-C", repo, "worktree", "list", "--porcelain", "-z"],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+if listing.returncode != 0:
+    print(f"state-archive: archive-worktrees-unreadable path={repo}", file=sys.stderr)
+    sys.exit(1)
+worktrees = [pathlib.Path(field[9:].decode()).resolve()
+             for field in listing.stdout.split(b"\0") if field.startswith(b"worktree ")]
+# Git lists the main checkout first. worktree remove never removes it.
+excluded.extend(worktrees[1:])
 for removed in excluded:
     if any(path == removed or removed in path.parents for path in (root, destination)):
         print(f"state-archive: archive-root-overlap key=ORCH_ARCHIVE_ROOT path={root} removed={removed}", file=sys.stderr)

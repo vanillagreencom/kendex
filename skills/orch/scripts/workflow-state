@@ -1666,7 +1666,9 @@ EOF
                                 archives what it deletes, those two kept
                                 entries and each --archive PATH that exists
                                 under ORCH_ARCHIVE_ROOT/REPO/oversee, as prune
-                                does; a failed archive deletes nothing and is
+                                does. A configured root needs Python and a
+                                readable Git worktree list. A failed archive
+                                deletes nothing and is
                                 refused as remove-archive-failed. Prints
                                 "removed path=PATH" per path, then
                                 "removed kept=ARCHIVE", or "removed kept=none"
@@ -1695,6 +1697,8 @@ EOF
                                 5). Completes overseer mailbox compaction before
                                 the state/path archive. Each owner archives its
                                 own removals under ORCH_ARCHIVE_ROOT/REPO/oversee
+                                (a configured root needs Python and a readable
+                                Git worktree list)
                                 before deleting them (FLEET_DIR defaults to
                                 ~/.fleet). A failed archive leaves that owner's
                                 data intact; it does not undo a completed
