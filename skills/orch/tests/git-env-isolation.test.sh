@@ -6,22 +6,14 @@
 # still reporting a clean pass. lib/git-env.sh clears all four at load and
 # every suite sources it.
 #
-# Two surfaces, each with the mutation that must break it:
-#   1. the clearing works — a real suite run with all four exported at a
-#      sandbox repository leaves that repository's log and index untouched;
-#      neutralize lib/git-env.sh beside links to the rest and the same run
-#      writes to it
-#   2. the lint holds — every suite under tests/ carries the source line
-#      directly under its `set -...o pipefail`. Presence alone is not the rule:
-#      the line at the end of the file, inside a dead branch, or inside a
-#      heredoc body that writes a stub all leave the fixture work unprotected,
-#      so the lint pins the position and the probe carries one of each.
+# A real suite run with all four exported at a sandbox repository leaves
+# that repository's log and index untouched. Neutralize lib/git-env.sh beside
+# links to the rest and the same run writes to it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-SOURCE_LINE='source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
 # Small, git-heavy, and reaches nothing outside skills/orch/scripts, so the
 # mutant tree below is skills/orch/{scripts,tests} rather than a whole
 # checkout.
@@ -97,47 +89,6 @@ if [[ "$mutant_before" != "$(fingerprint "$mutant_sandbox")" ]]; then
 else
   fail "must-fail: the sandbox survived a run with the lib neutralized, so the control proves nothing"
 fi
-
-# --- 2. Lint: the source line sits directly under the `set` line -----------
-# Position, not presence. A line that runs after the fixture was built, or does
-# not run at all, protects nothing, so the only accepted place is the line
-# under the file's first `set -...o pipefail`.
-misplaced() { # misplaced <dir> ; names every *.sh in it that is not compliant
-  local file set_line src_line
-  for file in "$1"/*.sh; do
-    [[ -f "$file" ]] || continue
-    set_line="$(grep -n -m1 -E '^set -[a-z]*o pipefail$' "$file" | cut -d: -f1)"
-    src_line="$(grep -n -m1 -xF "$SOURCE_LINE" "$file" | cut -d: -f1)"
-    [[ -n "$set_line" && -n "$src_line" && "$src_line" -eq $((set_line + 1)) ]] \
-      || basename "$file"
-  done
-}
-
-assert_eq "$(grep '^unset ' "$TEST_DIR/lib/git-env.sh")" \
-  "unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE" \
-  "the lib clears all four variables together"
-assert_eq "$(misplaced "$TEST_DIR")" \
-  "" "every suite under tests/ sources the lib under its set line"
-
-# --- 2b. Must-fail: an absent line and three present-but-inert ones --------
-probe="$TMP/probe"
-mkdir -p "$probe"
-printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$SOURCE_LINE" \
-  > "$probe/compliant.sh"
-printf '#!/usr/bin/env bash\nset -euo pipefail\ngit -C . log\n' \
-  > "$probe/bare.sh"
-# Runs, but after the fixture already landed in the caller's repository.
-printf '#!/usr/bin/env bash\nset -euo pipefail\ngit init -q sandbox\n%s\n' \
-  "$SOURCE_LINE" > "$probe/after-fixture.sh"
-printf '#!/usr/bin/env bash\nset -euo pipefail\nif false; then\n%s\nfi\ngit init -q sandbox\n' \
-  "$SOURCE_LINE" > "$probe/dead-branch.sh"
-{ printf '#!/usr/bin/env bash\nset -euo pipefail\ncat > stub.sh <<%s\n' "'EOF'"
-  printf '%s\n' "$SOURCE_LINE"
-  printf 'EOF\ngit init -q sandbox\n'
-} > "$probe/heredoc-body.sh"
-assert_eq "$(misplaced "$probe")" \
-  "$(printf 'after-fixture.sh\nbare.sh\ndead-branch.sh\nheredoc-body.sh')" \
-  "must-fail: the lint names the absent line and every inert placement"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

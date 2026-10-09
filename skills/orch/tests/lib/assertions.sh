@@ -5,8 +5,7 @@
 # Every suite under tests/ sources it, directly or through lib/md.sh or
 # lib/oversee-watch-harness.sh, and defines none of these names itself, so how
 # an assertion judges and what its failure prints are decided here once.
-# assertions.test.sh is its suite, the one suite that judges without it, and
-# holds the no-redefinition rule.
+# assertions.test.sh is its suite, the one suite that judges without it.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run. Sourcing sets PASS and FAIL to 0 and defines the
