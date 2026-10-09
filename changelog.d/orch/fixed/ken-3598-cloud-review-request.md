@@ -1,1 +1,1 @@
-- Request Copilot review from the landing lane before waiting for approval of a cloud session's completed draft pull request.
+- Give cloud landing lanes the worktree and return context needed to request Copilot review before waiting for approval.
