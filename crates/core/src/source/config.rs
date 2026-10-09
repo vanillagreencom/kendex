@@ -33,6 +33,9 @@ pub struct SourceConfig {
     pub agent_skills: BTreeMap<String, Vec<String>>,
     pub role_skills: BTreeMap<String, Vec<String>>,
     pub frontmatter: BTreeMap<String, BTreeMap<String, crate::manifest::FrontmatterOverrides>>,
+    /// `[role-policy]`; `None` where the catalog declares none, which
+    /// renders agents under the fleet default.
+    pub role_policy: Option<crate::render::agent::RolePolicy>,
     /// The curated sets this catalog offers by name. Empty for a
     /// plugin-registry-shaped catalog, whose plugins are its sets.
     pub bundles: BTreeMap<String, CatalogBundle>,
@@ -189,6 +192,9 @@ pub fn source_config(sealed: &SealedSource, display: &str) -> Result<SourceConfi
             // declared anything.
             config.mode = CatalogMode::Explicit;
             read_tables(&mut config, &table);
+            if config.mode != CatalogMode::Unusable {
+                read_role_policy(&mut config, &table);
+            }
             // An unusable catalog answers for nothing, retirements included.
             if config.mode != CatalogMode::Unusable {
                 read_retired(&mut config, &table);
@@ -359,6 +365,23 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
     }
 }
 
+/// `[role-policy]`. One that will not read makes the catalog unusable: the
+/// fleet default in its place would grant or take tools the author declared
+/// otherwise.
+fn read_role_policy(config: &mut SourceConfig, table: &toml::Table) {
+    let Some(value) = table.get("role-policy") else {
+        return;
+    };
+    match crate::render::agent::RolePolicy::parse(value) {
+        Ok(policy) => config.role_policy = Some(policy),
+        Err(problem) => config.unusable(
+            crate::manifest::MANIFEST_FILE,
+            problem,
+            "write `[role-policy.<claude|pi>.<role>]` tables with `deny-tools` and, for pi, `allowed-subagents` string lists",
+        ),
+    }
+}
+
 /// `[retired]`: one table per kind, keyed as a manifest declares that kind,
 /// naming each retired item with its migration line, and `[retired.bundles]`
 /// naming each retired set the same way. A table that will not
@@ -407,7 +430,7 @@ fn read_retired(config: &mut SourceConfig, table: &toml::Table) {
 
 /// A list of strings and nothing else — a member of any other type makes
 /// the whole value unreadable rather than a shorter list.
-pub(super) fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
+pub(crate) fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
     let list = value?.as_array()?;
     list.iter().map(|v| v.as_str().map(str::to_owned)).collect()
 }

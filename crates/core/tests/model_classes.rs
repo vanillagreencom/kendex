@@ -107,6 +107,7 @@ fn every_native_renderer_keeps_valid_class_representation() {
                 launch_instructions: None,
                 additional_instructions: None,
                 custom_hooks: vec![],
+                role_policy: None,
             };
             let rendered = generate(&agent).unwrap();
             let findings =

@@ -8,7 +8,7 @@ use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use crate::render::agent::{
-    EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
+    EffectiveAgent, RolePolicy, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
     parse_source_agent,
 };
 
@@ -45,6 +45,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         agent: publisher,
         carry,
         overrides,
+        role_policy,
         read_at,
     } = published(of)?;
     // What this scope's last install recorded. An absent record already
@@ -88,6 +89,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         launch: merged_instructions(&manifest.agent_launch_instructions, name),
         additional: merged_instructions(&manifest.agent_additional_instructions, name),
         hooks: hooks_for_agent(env, scope, harness, manifest, &publisher),
+        role_policy,
     };
 
     let refused = |problem: String| CoreError::ForkWidensAccess {
@@ -147,6 +149,8 @@ struct Published {
     agent: SourceAgent,
     carry: Option<AgentCarry>,
     overrides: FrontmatterOverrides,
+    /// The catalog's declared role policy, which the install rendered under.
+    role_policy: Option<RolePolicy>,
     read_at: Option<String>,
 }
 
@@ -195,6 +199,7 @@ fn published(of: &ForkOf) -> Result<Published> {
                 .get(harness.name())
                 .and_then(|by_agent| by_agent.get(name)),
         ),
+        role_policy: config.role_policy.clone(),
         bytes,
     })
 }
@@ -266,6 +271,7 @@ struct Around<'a> {
     launch: Option<String>,
     additional: Option<String>,
     hooks: Vec<&'a crate::manifest::CustomHook>,
+    role_policy: Option<RolePolicy>,
 }
 
 /// What this rendering puts before and after an agent's own body. Asking
@@ -309,6 +315,7 @@ fn render(
         launch_instructions: around.launch.clone(),
         additional_instructions: around.additional.clone(),
         custom_hooks: around.hooks.clone(),
+        role_policy: around.role_policy.as_ref(),
     };
     crate::render::agent::generate(&effective).map(|rendered| rendered.text)
 }

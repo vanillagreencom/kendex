@@ -343,6 +343,30 @@ engineer = ["dev"]
     assert_eq!(config.role_skills["engineer"], ["dev"]);
 }
 
+/// `[role-policy]` absent leaves the fleet default in force, declared it is
+/// read, and one that will not read makes the catalog unusable rather than
+/// rendering its agents under a policy the author did not declare.
+#[test]
+fn a_role_policy_reads_whole_or_the_catalog_is_unusable() {
+    let config_of = |text: &str| {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("kendex.toml"), text).unwrap();
+        source_config(&SealedSource::open(tmp.path()).unwrap(), "cat").unwrap()
+    };
+    let none = config_of("[catalog]\nagents = [\"agents\"]\n");
+    assert_eq!(none.role_policy, None);
+    assert_eq!(none.mode, CatalogMode::Explicit);
+
+    let declared = config_of("[role-policy.pi.engineer]\nallowed-subagents = []\n");
+    assert!(declared.role_policy.is_some());
+    assert_eq!(declared.mode, CatalogMode::Explicit);
+
+    let broken = config_of("[role-policy.claude.engineer]\nallowed-subagents = [\"scout\"]\n");
+    assert_eq!(broken.role_policy, None);
+    assert_eq!(broken.mode, CatalogMode::Unusable);
+    assert!(broken.agent_dirs.is_empty());
+}
+
 /// `[retired]` reads per kind, under the table a manifest declares that kind
 /// in; a shape it cannot read retires nothing, as a finding, and neither
 /// does an unusable catalog, so a catalog-side typo never sweeps an item a

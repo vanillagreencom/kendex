@@ -87,6 +87,7 @@ mod tests {
             launch_instructions: Some("start here".into()),
             additional_instructions: Some("end here".into()),
             custom_hooks: hooks,
+            role_policy: None,
         }
     }
 

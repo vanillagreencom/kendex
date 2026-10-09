@@ -14,8 +14,10 @@ pub mod cursor;
 pub mod gemini;
 pub mod opencode;
 pub mod pi;
+mod role_policy;
 mod source;
 
+pub use role_policy::{RolePolicy, RoleRule};
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
 
 /// One skill an agent requires, with the directory the agent is told to
@@ -72,9 +74,17 @@ pub struct EffectiveAgent<'a> {
     pub launch_instructions: Option<String>,
     pub additional_instructions: Option<String>,
     pub custom_hooks: Vec<&'a CustomHook>,
+    /// The source catalog's `[role-policy]`; `None` where it declared none,
+    /// which renders the fleet default.
+    pub role_policy: Option<&'a RolePolicy>,
 }
 
 impl EffectiveAgent<'_> {
+    /// What this agent's `role:` implies in this harness.
+    pub fn role_rule(&self) -> RoleRule {
+        role_policy::role_rule(self.role_policy, self.harness, self.source.role)
+    }
+
     /// Source and manifest model precedence, shared with native intent lookup.
     pub fn model_request(&self) -> &str {
         Self::requested_model(self.source, &self.overrides)
@@ -451,6 +461,7 @@ mod tests {
                     launch_instructions: None,
                     additional_instructions: None,
                     custom_hooks: vec![],
+                    role_policy: None,
                 };
                 let text = generate(&agent).unwrap().text;
                 let model_lines: Vec<_> = text
@@ -494,6 +505,7 @@ mod tests {
                 launch_instructions: None,
                 additional_instructions: None,
                 custom_hooks: vec![],
+                role_policy: None,
             };
             generate(&agent).unwrap().text
         };
@@ -547,6 +559,7 @@ mod tests {
                 launch_instructions: None,
                 additional_instructions: None,
                 custom_hooks: vec![],
+                role_policy: None,
             };
             generate(&agent).unwrap().text
         };

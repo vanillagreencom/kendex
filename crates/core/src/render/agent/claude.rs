@@ -1,4 +1,4 @@
-use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, default_pane};
+use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, default_pane};
 use crate::harness::models::render_model;
 use crate::model::HarnessId;
 use crate::render::permission::{Access, PermissionIntent};
@@ -6,8 +6,8 @@ use crate::render::vocab::claude_tool_name;
 use crate::render::{yaml_quoted as forced_quote, yaml_scalar};
 
 /// Claude Code agent: YAML frontmatter + markdown body. An `AllowOnly`
-/// intent renders as a native `tools:` allowlist; fleet policy denies
-/// (`Agent`, `AskUserQuestion`) still apply on top. Every interpolated
+/// intent renders as a native `tools:` allowlist; the `Agent` deny and the
+/// role policy's denies still apply on top. Every interpolated
 /// value goes through `yaml_scalar` — source text must never mint
 /// frontmatter lines of its own.
 pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
@@ -112,14 +112,13 @@ fn access(agent: &EffectiveAgent) -> Access {
     }
 }
 
-/// `Agent` is always denied to subagents; `AskUserQuestion` unless the
-/// author declared `role: planner`; the intent's extra denies append after.
+/// `Agent` is always denied because Claude Code does not nest subagents: a
+/// subagent cannot start one of its own, so no role policy can grant it.
+/// The role policy's denies follow, then the intent's own.
 fn deny_list(agent: &EffectiveAgent) -> Vec<String> {
     let mut deny = vec!["Agent".to_owned()];
-    if agent.source.role != Some(Role::Planner) {
-        deny.push("AskUserQuestion".to_owned());
-    }
-    for tool in agent.permissions.denies() {
+    let role_denies = agent.role_rule().deny_tools;
+    for tool in role_denies.iter().chain(agent.permissions.denies()) {
         let tool = claude_tool_name(tool);
         if !deny.contains(&tool) {
             deny.push(tool);
@@ -188,6 +187,7 @@ mod tests {
             launch_instructions: Some("start here".into()),
             additional_instructions: Some("end here".into()),
             custom_hooks: hooks,
+            role_policy: None,
         }
     }
 
@@ -236,6 +236,33 @@ mod tests {
         assert!(text.contains("command: \"./guard.sh\""));
         // planner is not an engineer, but the planner pane default applies
         assert!(text.contains("background: false"));
+    }
+
+    /// A catalog's declared policy replaces the fleet default: a role it
+    /// names nothing for keeps `AskUserQuestion`, a role it names loses
+    /// what it lists, and `Agent` stays denied either way.
+    #[test]
+    fn a_declared_role_policy_replaces_the_question_deny() {
+        let table: toml::Table = "[role-policy.claude.reviewer]\ndeny-tools = [\"WebSearch\"]\n"
+            .parse()
+            .unwrap();
+        let policy = crate::render::agent::RolePolicy::parse(&table["role-policy"]).unwrap();
+        let scope = Scope::Global;
+        let source = engineer();
+        let mut agent = effective(&source, &scope, vec![]);
+        agent.role_policy = Some(&policy);
+        let text = generate(&agent).text;
+        assert!(text.contains("disallowedTools: Agent\n"), "{text}");
+
+        let mut reviewer = engineer();
+        reviewer.role = Some(Role::Reviewer);
+        let mut agent = effective(&reviewer, &scope, vec![]);
+        agent.role_policy = Some(&policy);
+        let text = generate(&agent).text;
+        assert!(
+            text.contains("disallowedTools: Agent, WebSearch\n"),
+            "{text}"
+        );
     }
 
     #[test]

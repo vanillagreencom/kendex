@@ -445,5 +445,6 @@ fn effective_agent<'a>(
         launch_instructions: project.launch_instructions,
         additional_instructions: project.additional_instructions,
         custom_hooks: project.custom_hooks,
+        role_policy: ctx.config.role_policy.as_ref(),
     }
 }

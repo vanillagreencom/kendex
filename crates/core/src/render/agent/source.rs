@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::render::permission::PermissionIntent;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Reviewer,

@@ -238,6 +238,7 @@ mod tests {
             launch_instructions: None,
             additional_instructions: None,
             custom_hooks: vec![],
+            role_policy: None,
         }
     }
 

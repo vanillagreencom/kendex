@@ -128,6 +128,7 @@ mod tests {
             launch_instructions: None,
             additional_instructions: None,
             custom_hooks: hooks,
+            role_policy: None,
         }
     }
 
