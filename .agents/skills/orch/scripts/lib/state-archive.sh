@@ -6,11 +6,20 @@
 # and traps untouched. A failure removes its partial archive and returns its
 # diagnostic in ARCHIVE_ERR; success returns the private tarball in ARCHIVE.
 ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
+# Keep the compatible default here so local and SSH close-out share it.
+# This is a storage setting, below the decision-record bar.
+archive_root() {
+    "$SCRIPT_DIR/orch-env" ORCH_ARCHIVE_ROOT "${FLEET_DIR:-$HOME/.fleet}/archive"
+}
+
 archive_write() { # ROOT STEM RECORDS PATH...
-    local repo_root="$1" stem="$2" records="$3" result
+    local repo_root="$1" stem="$2" records="$3" result root
     shift 3
-    ARCHIVE="" ARCHIVE_ERR=""
-    ARCHIVE_DIR="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"
+    ARCHIVE="" ARCHIVE_ERR="" ARCHIVE_DIR=""
+    root="$(archive_root)" || { ARCHIVE_ERR="archive-root-read-failed key=ORCH_ARCHIVE_ROOT"; return 1; }
+    # tar reads members from /, including the staged records.json.
+    case "$root" in /*) ;; *) root="$PWD/$root" ;; esac
+    ARCHIVE_DIR="$root/${repo_root##*/}/oversee"
     result="$( (
         stage=""
         trap 'rc=$?; if [[ -n "$stage" ]]; then rm -rf -- "${stage:?}" || exit 1; [[ "$rc" -eq 0 ]] || rm -f -- "${stage:?}.tgz" || exit 1; fi; exit "$rc"' EXIT

@@ -33,7 +33,7 @@ class SshHostTests(unittest.TestCase):
         self.source.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_"))}
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_")) and k != "ORCH_ARCHIVE_ROOT"}
         self.env.update(REAL_GIT=shutil.which("git"), REAL_CHMOD=shutil.which("chmod"),
                         REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
                         SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
@@ -136,6 +136,11 @@ exec git "$@"
         (self.source / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker"\n]\n')
         (self.source / ".gitignore").write_text(".env.local\n.cache/\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
+        # The controller's settings belong to its own checkout, not an enclosing
+        # repository when this fixture sits under that repository's tmp/.
+        for args in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.root), *args],
+                           env=self.git_env, check=True, capture_output=True)
         # Local clones read loose objects while later rows commit to this source.
         # A detached repack can remove an object between the clone's stat and link.
         for args in (("init", "-q"), ("config", "gc.auto", "0"),
@@ -167,9 +172,11 @@ exec git "$@"
         path.write_text(text)
         path.chmod(0o755)
         if path.name == "lane-host-ssh":
-            library = path.parent / "lib/file-lock.sh"
-            library.parent.mkdir(exist_ok=True)
-            shutil.copy2(PACKAGE / "scripts/lib/file-lock.sh", library)
+            library = path.parent / "lib"
+            library.mkdir(exist_ok=True)
+            for name in ("file-lock.sh", "state-archive.sh", "kendex-env.sh"):
+                shutil.copy2(PACKAGE / "scripts/lib" / name, library / name)
+            shutil.copy2(PACKAGE / "scripts/orch-env", path.parent / "orch-env")
 
     def call(self, *args, data=b"", **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=data, capture_output=True)
@@ -2956,6 +2963,105 @@ fi'''))
             self.assertEqual(saved.extractfile(str(worktree / "tmp/return.json").lstrip("/")).read(),
                              b'"worktree-record"\n')
         self.assertFalse(worktree.exists())
+
+    def archive_root_contract(self, expected, **env):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        record = worktree / "tmp/return.json"
+        record.parent.mkdir(exist_ok=True)
+        record.write_bytes(b'"archive-root-record"\n')
+        closed = self.call("close", "--item", "TEST-1", **env)
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        if not archive.is_absolute():
+            archive = self.root / archive
+        self.assertEqual(archive.parent, expected / "repo/TEST-1")
+        self.assertEqual(archive.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
+        with tarfile.open(archive) as saved:
+            self.assertEqual(saved.extractfile(str(record).lstrip("/")).read(), b'"archive-root-record"\n')
+        self.assertFalse(worktree.exists())
+
+    def test_close_reads_the_local_archive_root(self):
+        for source in ("settings", "private", "environment", "relative", "home-default"):
+            with self.subTest(source=source):
+                self.row["clone"] = str(self.root / source)
+                self.inventory.write_text(json.dumps([self.row]))
+                settings = self.root / "kendex.settings.toml"
+                private = self.root / ".env.local"
+                settings.unlink(missing_ok=True)
+                private.unlink(missing_ok=True)
+                folder = self.root / (source + " archives")
+                env = {}
+                if source == "home-default":
+                    env["FLEET_DIR"] = ""
+                    folder = self.root / ".fleet/archive"
+                else:
+                    settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
+                    if source in ("private", "environment", "relative"):
+                        private.write_text(f'printf "settings-note\\n"\nORCH_ARCHIVE_ROOT="{folder}-private"\n')
+                        folder = Path(str(folder) + "-private")
+                    if source in ("environment", "relative"):
+                        folder = self.root / (source + " environment")
+                        env["ORCH_ARCHIVE_ROOT"] = str(folder) if source == "environment" else folder.name
+                self.archive_root_contract(folder, **env)
+
+    def test_control_close_ignoring_the_archive_root_fails_its_contract(self):
+        original = self.script.read_text()
+        rule = 'directory = Path(root.stdout.decode().rstrip("\\n")).expanduser()'
+        self.assertEqual(original.count(rule), 1)
+        self.script.write_text(original.replace(rule, 'directory = Path(os.environ["FLEET_DIR"]) / "archive"'))
+        with self.assertRaises(AssertionError):
+            self.archive_root_contract(self.root / "configured", ORCH_ARCHIVE_ROOT=str(self.root / "configured"))
+
+    def archive_root_read_refusal(self):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        record = worktree / "tmp/return.json"
+        record.parent.mkdir(exist_ok=True)
+        record.write_text("keep")
+        # The control host's malformed setting must stop close before removal.
+        (self.root / "kendex.settings.toml").write_text('[env]\nORCH_ARCHIVE_ROOT = []\n')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 1, closed.stderr)
+        self.assertEqual(record.read_text(), "keep")
+        self.assertTrue((Path(self.row["clone"]) / ".git/lane-host-item").is_file())
+        self.assertEqual(closed.stdout, b"")
+
+    def test_close_keeps_records_when_archive_settings_cannot_be_read(self):
+        self.archive_root_read_refusal()
+
+    def test_control_close_ignoring_the_archive_setting_failure_removes_records(self):
+        original = self.script.read_text()
+        rule = '        raise SystemExit(root.returncode if root.returncode > 0 else 1)'
+        self.assertEqual(original.count(rule), 1)
+        fallback = str(self.root / "control-archive").encode()
+        self.script.write_text(original.replace(rule, f'        root.stdout = {fallback!r}'))
+        with self.assertRaises(AssertionError):
+            self.archive_root_read_refusal()
+        self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+
+    def test_archive_settings_require_local_bash(self):
+        namespace = runpy.run_path(str(self.script))
+        for control in (False, True):
+            with self.subTest(control=control):
+                source = self.script.read_text()
+                rule = '    if bash is None:\n        raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")\n'
+                self.assertEqual(source.count(rule), 1)
+                if control:
+                    self.script.write_text(source.replace(rule, ""))
+                    namespace = runpy.run_path(str(self.script))
+                with mock.patch.dict(os.environ, self.env, clear=True), \
+                     mock.patch.object(namespace["shutil"], "which", return_value=None), \
+                     mock.patch.dict(namespace["archive_tmp"].__globals__, remote=lambda *args: subprocess.CompletedProcess([], 0, b"archive")):
+                    if control:
+                        with self.assertRaises(TypeError):
+                            namespace["archive_tmp"](self.row, "TEST-1", "unused")
+                    else:
+                        with self.assertRaises(FileNotFoundError) as caught:
+                            namespace["archive_tmp"](self.row, "TEST-1", "unused")
+                        self.assertEqual(caught.exception.filename, "bash")
+                self.assertFalse((self.root / "fleet/archive").exists())
 
     def test_archive_failures_preserve_remote_records(self):
         for failure in ("tar", "storage"):

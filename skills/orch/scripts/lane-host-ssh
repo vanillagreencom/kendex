@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -124,6 +125,7 @@ done
             try:
                 self.process.stdin.close()
             except BrokenPipeError:
+                # The channel already closed; wait still reaps the SSH client.
                 pass
             # No operation remains after EOF. Give the SSH exchange a grace
             # interval, then signal only the process handle this owner holds.
@@ -849,8 +851,16 @@ printf '%s\\n' "$member" > "$manifest/lane-host-state"
 tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row["clone"], worktree_path, item).stdout
     if not data:
         return
-    fleet = Path(os.environ.get("FLEET_DIR") or str(Path.home() / ".fleet")).expanduser()
-    directory = fleet / "archive" / row["repo"].rsplit("/", 1)[-1] / item
+    # The local writer owns this setting's default and settings precedence.
+    bash = shutil.which("bash")
+    if bash is None:
+        raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")
+    root = subprocess.run([bash, "-c",
+                           'set -euo pipefail\nSCRIPT_DIR=$1\n. "$SCRIPT_DIR/lib/state-archive.sh"\narchive_root',
+                           "lane-host-ssh", str(Path(__file__).resolve().parent)], stdout=subprocess.PIPE)
+    if root.returncode != 0:
+        raise SystemExit(root.returncode if root.returncode > 0 else 1)
+    directory = Path(root.stdout.decode().rstrip("\n")).expanduser() / row["repo"].rsplit("/", 1)[-1] / item
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f"tmp-{time.time_ns()}-", suffix=".tgz", dir=directory, delete=False) as archive:
@@ -1058,8 +1068,8 @@ clone's generated inventory refuses close with exit 3 and keeps the static host.
 Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories, and the item's workflow state, falling back to
 an older launch's settings when needed, with a lane-host-state member naming that
-state's member, under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
-(FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
+state's member, under ORCH_ARCHIVE_ROOT/REPO/ITEM/tmp-STAMP.tgz
+(the root defaults to ${FLEET_DIR:-$HOME/.fleet}/archive) and prints kept=PATH. A failed archive stops
 close, as does a state directory the clone's workflow-state cannot resolve,
 reported as state-unresolved. An already removed worktree's tmp cannot be recovered. No remaining tmp
 and no workflow state outside it means no archive and no kept line. Archives contain paths relative to / and
