@@ -1,6 +1,7 @@
 """Environment judgments shared by refresh adoption and the standard report."""
 
 import json
+import os
 import subprocess
 import sys
 from urllib.parse import quote
@@ -38,7 +39,22 @@ def environment_secrets(names, secrets):
             "missing": ";".join(name for name in names if name not in held)}
 
 
-def validate_environment(repository, config, environment):
+def gh_api(*arguments):
+    """Use the same explicit launch contract for every adopter API read."""
+    # GitHub CLI config and credential-store inputs accompany Go's proxy and
+    # certificate inputs. GODEBUG selects native verification with configured
+    # certificate files on macOS and Windows (crypto/x509 SystemCertPool).
+    environment = {key: os.environ[key] for key in
+                   ("PATH", "HOME", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_REPO", "GH_CONFIG_DIR",
+                    "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "XDG_CONFIG_HOME", "AppData", "APPDATA",
+                    "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "DISPLAY", "XAUTHORITY",
+                    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+                    "GODEBUG", "SSL_CERT_FILE", "SSL_CERT_DIR") if key in os.environ}
+    return subprocess.check_output(["gh", "api", *arguments], env=environment,
+                                   stderr=subprocess.PIPE, text=True)
+
+
+def validate_environment(repository, config):
     """Refuse unreadable evidence before the adopter can change any file."""
     def refuse(cause, operation=None):
         raise SystemExit("refresh-error=environment value=" + config["environment"] + " cause=" + cause +
@@ -46,8 +62,7 @@ def validate_environment(repository, config, environment):
 
     def read(endpoint):
         try:
-            output = subprocess.check_output(["gh", "api", endpoint, "--paginate"],
-                                             env=environment, stderr=subprocess.PIPE, text=True)
+            output = gh_api(endpoint, "--paginate")
             pages = []
             decoder = json.JSONDecoder()
             while output.strip():

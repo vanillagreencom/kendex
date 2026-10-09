@@ -27,46 +27,63 @@ if [ "$RC" -eq 0 ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.jso
 
 # The API child keeps the inputs used by GitHub CLI configuration, Linux
 # credential storage and Go network routes. The fixture owns its assertions.
-while IFS='|' read -r key mutation expected; do
+while IFS='|' read -r key value mutation expected; do
   sandbox
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   [ "$RC" -eq 0 ] || exit 1
   rm -- "${DIR:?}/$REFRESH"
   printf '[]\n' >"$DIR/.kendex-generated.json"
   cp "$BIN/gh" "$BIN/gh-environment-base"
-  python3 - "$BIN/gh" "$BIN/gh-environment-base" "$key" <<'GH_ENVIRONMENT'
+  api_calls="$TMP/api-environment-calls"
+  : >"$api_calls"
+  python3 - "$BIN/gh" "$BIN/gh-environment-base" "$key" "$value" "$api_calls" <<'GH_ENVIRONMENT'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); p.write_text("#!/usr/bin/env python3\nimport os, sys\n"
-    "if '--paginate' in sys.argv:\n"
-    "    if os.environ.get("+repr(sys.argv[3])+") != 'environment-input' or 'UNRELATED_APPLICATION_SECRET' in os.environ: raise SystemExit(91)\n"
+    "with open("+repr(sys.argv[5])+", 'a') as calls: calls.write(('validation' if '--paginate' in sys.argv else 'discovery') + '\\n')\n"
+    "if os.environ.get("+repr(sys.argv[3])+") != "+repr(sys.argv[4])+" or 'UNRELATED_APPLICATION_SECRET' in os.environ: raise SystemExit(91)\n"
+    "if os.environ.get('SSL_CERT_FILE') != 'environment-input' or os.environ.get('SSL_CERT_DIR') != 'environment-input' or os.environ.get('GODEBUG') != 'x509sslcertoverrideplatform=0': raise SystemExit(92)\n"
     "os.execv("+repr(sys.argv[2])+", ["+repr(sys.argv[2])+"] + sys.argv[1:])\n")
 GH_ENVIRONMENT
   if [ "$mutation" = dropped ]; then
-    python3 - "$DIR/$ADOPT" "$key" <<'DROP_ENVIRONMENT'
+    python3 - "$DIR/.agents/skills/review-gate/scripts/lib/environment.py" "$key" <<'DROP_ENVIRONMENT'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); old='"'+sys.argv[2]+'", '; assert s.count(old)==1
 changed=s.replace(old, ''); assert changed!=s; p.write_text(changed)
 DROP_ENVIRONMENT
+  elif [ "$mutation" != none ]; then
+    python3 - "$DIR/.agents/skills/review-gate/scripts/lib/environment.py" "$mutation" <<'INHERITED_ENVIRONMENT'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old='env=environment'; assert s.count(old)==1
+condition="'--paginate' not in arguments" if sys.argv[2]=='discovery-inherited' else "'--paginate' in arguments"
+changed=s.replace(old, 'env=(None if '+condition+' else environment)'); assert changed!=s; p.write_text(changed)
+INHERITED_ENVIRONMENT
   fi
   RC=0
   OUT="$(cd "$DIR" && env -i PATH="$BIN:$PATH" HOME="$TMP" GH_TOKEN=fixture \
-    "$key=environment-input" UNRELATED_APPLICATION_SECRET=fixture \
+    SSL_CERT_FILE=environment-input SSL_CERT_DIR=environment-input GODEBUG=x509sslcertoverrideplatform=0 \
+    "$key=$value" UNRELATED_APPLICATION_SECRET=fixture \
     "$DIR/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --retire-writer 2>&1)" || RC=$?
   matched=no
-  if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then matched=yes; fi
+  if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" &&
+      grep -qxF discovery "$api_calls" && grep -qxF validation "$api_calls"; then matched=yes; fi
   if [ "$matched" = "$expected" ]; then ok "GitHub CLI child input=$key mutation=$mutation";
   else bad "GitHub CLI child input=$key mutation=$mutation" "$OUT"; fi
 done <<'GH_ENV_ROWS'
-XDG_CONFIG_HOME|none|yes
-AppData|none|yes
-DBUS_SESSION_BUS_ADDRESS|none|yes
-HTTPS_PROXY|none|yes
-no_proxy|none|yes
-SSL_CERT_FILE|none|yes
-SSL_CERT_DIR|none|yes
-XDG_CONFIG_HOME|dropped|no
+XDG_CONFIG_HOME|environment-input|none|yes
+AppData|environment-input|none|yes
+DBUS_SESSION_BUS_ADDRESS|environment-input|none|yes
+HTTPS_PROXY|environment-input|none|yes
+no_proxy|environment-input|none|yes
+SSL_CERT_FILE|environment-input|none|yes
+SSL_CERT_DIR|environment-input|none|yes
+GODEBUG|x509sslcertoverrideplatform=0|none|yes
+XDG_CONFIG_HOME|environment-input|dropped|no
+GODEBUG|x509sslcertoverrideplatform=0|dropped|no
+GODEBUG|x509sslcertoverrideplatform=0|discovery-inherited|no
+GODEBUG|x509sslcertoverrideplatform=0|validation-inherited|no
 GH_ENV_ROWS
 
 # Only the catalog fixture licenses updates. Consumer records, current
@@ -285,7 +302,6 @@ while IFS='|' read -r rule pattern; do
     missing) printf '{"environments":[]}\n' >"$FIXTURES/environments.json" ;;
     branch-policy) printf '{"branch_policies":[{"name":"*","type":"branch"}]}\n' >"$FIXTURES/branch-policies.json" ;;
     policy-type) printf '{"environments":[{"name":"kendex","deployment_branch_policy":null}]}\n' >"$FIXTURES/environments.json" ;;
-    secrets) printf '{"secrets":[{"name":"FLEET_GH_APP_ID"}]}\n' >"$FIXTURES/environment-secrets-kendex.json" ;;
     read) SHIM_FAIL=environments ;;
   esac
   cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
@@ -321,7 +337,6 @@ done <<'ENV_ROWS'
 missing|if len(selected) != 1:
 branch-policy|if len(policies) != 1 or policies[0].get("name") != branch or policies[0].get("type", "branch") != "branch":
 policy-type|if not isinstance(policy, dict) or policy.get("custom_branch_policies") is not True or policy.get("protected_branches") is not False:
-secrets|if not set(names).issubset(held):
 read|            print(error.stderr, file=sys.stderr, end="")\n            refuse("read", endpoint)
 ENV_ROWS
 cp "$TMP/default-environments" "$FIXTURES/environments.json"
@@ -387,7 +402,8 @@ while IFS='|' read -r mutation expected; do
     retirement)
       file_edit "$trusted" "$ADOPT" 1 '^retiring = retired if ' 's/else \[\]$/else retired/' ;;
     warning)
-      file_edit "$trusted" "$ADOPT" 1 '^    print\("refresh-warning=legacy-writer' 's/^    print/    # print/' ;;
+      file_edit "$trusted" "$ADOPT" 1 '^    print\("refresh-warning=legacy-writer' \
+        's/^    print("refresh-warning=legacy-writer/    # print("refresh-warning=legacy-writer/' ;;
     *) exit 2 ;;
   esac
   run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates"
@@ -593,35 +609,25 @@ else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
 # A shipped caller on the earlier secret names needs no new declaration.
 git -C "$SKILL_DIR" show f24599cab98369094567af9dd1668706a348507c:refresh/kendex-refresh.yml >"$TMP/legacy-caller"
 ship_caller_template "$TMP/legacy-caller"
-sandbox
-cp "$TMP/legacy-caller" "$DIR/$REFRESH"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
-if [ "$RC" -eq 0 ] && python3 - "$DIR/refresh/lib" "$DIR/$REFRESH" "$CALLER" <<'LEGACY'
-from pathlib import Path
-import sys
-sys.path.insert(0, sys.argv[1])
-from caller import configuration, normalized
-actual, shipped = (Path(p).read_bytes() for p in sys.argv[2:])
-assert normalized(actual) == normalized(shipped)
-assert configuration(actual)["names"] == ["FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY"]
-LEGACY
-then
-  ok 'an earlier fully mapped caller adopts with the same environment and app names'
-else bad 'legacy mapped caller' "$OUT"; fi
 
-# Consumer names survive adoption from a new release template. Other bytes
-# keep their shipment check. Each malformed mapping stays private to its case.
-while IFS='|' read -r rule mutation pattern; do
+# Each accepted declaration owns its expected environment and complete secret
+# set independently of the production parser. Every such row checks missing
+# secrets through the same refusal assertion, including retained legacy names.
+while IFS='|' read -r rule mutation pattern selected_environment expected_names; do
   sandbox
   cp "$CALLER" "$DIR/$TEMPLATE"
+  if [ "$rule" = legacy ]; then cp "$TMP/legacy-caller" "$DIR/$REFRESH"; fi
   python3 - "$DIR/$TEMPLATE" "$rule" <<'CUSTOM'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); assert s.count('environment: kendex')==1
+rule=sys.argv[2]
+if rule in ('default', 'legacy'): raise SystemExit(0)
 for key in ('FLEET_GH_APP_ID', 'FLEET_GH_APP_PRIVATE_KEY'):
  s=s.replace('      '+key+': ${{ secrets.'+key+' }}\n', '')
 s=s.replace('environment: kendex', 'environment: delivery').replace('FLEET_GH_APP_ID', 'DELIVERY_ID').replace('FLEET_GH_APP_PRIVATE_KEY', 'DELIVERY_KEY')
-rule=sys.argv[2]
+if rule=='combined':
+ s += '      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}\n      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}\n'
 if rule=='legacy-secret-names':
  s += '      FLEET_GH_APP_ID: ${{ secrets.DELIVERY_ID }}\n      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}\n'
 if rule=='missing': s=s.replace('      app-private-key: ${{ secrets.DELIVERY_KEY }}\n', '')
@@ -644,6 +650,16 @@ CUSTOM
   if [ "$rule" = legacy-secret-names ]; then
     printf '{"secrets":[{"name":"DELIVERY_ID"},{"name":"DELIVERY_KEY"},{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
   fi
+  if [ -n "$expected_names" ]; then
+    python3 - "$FIXTURES" "$selected_environment" "$expected_names" "$rule" <<'DECLARED_ENVIRONMENT'
+import json
+from pathlib import Path
+import sys
+fixtures=Path(sys.argv[1]); environment=sys.argv[2]; names=sys.argv[3].split()
+(fixtures/'environments.json').write_text(json.dumps({'environments': [{'name': environment, 'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}}]}))
+(fixtures/('environment-secrets-'+environment+'.json')).write_text(json.dumps({'secrets': [{'name': name.lower() if sys.argv[4]=='mixed-case' else name} for name in names]}))
+DECLARED_ENVIRONMENT
+  fi
   if [[ "$mutation" = case-sensitive-* ]]; then
     owner="$DIR/refresh/lib/caller.py"
     [ "$mutation" != case-sensitive-api ] || owner="$DIR/.agents/skills/review-gate/scripts/lib/environment.py"
@@ -664,11 +680,43 @@ s=s.replace(old, 'if False and ('+old[3:-1]+'):' ); assert s != p.read_text(); p
 MAPPING_CONTROL
   fi
   run_refresh_command "$DIR" "$DIR/$ADOPT"
-  if [ "$rule" = mixed-case ]; then
+  if [ -n "$expected_names" ] && [ "$mutation" = none ]; then
+    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then
+      ok "$rule declaration adopts with all expected credentials"
+    else bad "$rule declaration adoption" "$OUT"; fi
+    snapshot_adoption
+    for absent_name in $expected_names; do
+      python3 - "$FIXTURES/environment-secrets-$selected_environment.json" "$expected_names" "$absent_name" <<'MISSING_DECLARED_SECRET'
+import json
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(json.dumps({'secrets': [{'name': name} for name in sys.argv[2].split() if name!=sys.argv[3]]}))
+MISSING_DECLARED_SECRET
+      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+      if adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
+        ok "$rule declaration refuses missing $absent_name before adoption"
+      else bad "$rule missing secret=$absent_name" "$OUT"; fi
+    done
+    if [ "$rule" = combined ]; then
+      # Retain the valid combined mapping and the refusal text. Dropping the
+      # retained legacy requirement must make the shared refusal assertion false.
+      file_edit "$DIR" refresh/lib/caller.py 1 '^    required_names = list\(dict.fromkeys' \
+        's/^    required_names = /    required_names = names # /'
+      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+      if [ "$RC" -eq 0 ] && ! adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
+        ok 'control: removed legacy requirement turns the combined missing-secret refusal red'
+      else bad 'combined all-mapped-secrets control' "$OUT"; fi
+    fi
+    python3 - "$FIXTURES/environment-secrets-$selected_environment.json" "$expected_names" <<'RESTORE_DECLARED_SECRETS'
+import json
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(json.dumps({'secrets': [{'name': name} for name in sys.argv[2].split()]}))
+RESTORE_DECLARED_SECRETS
+  elif [ "$rule" = mixed-case ]; then
     matched=no
     if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then matched=yes; fi
     case "$mutation:$matched" in
-      none:yes) ok 'mixed-case references, declarations and API names adopt' ;;
       case-sensitive-*:no)
         cause=secret-names; [ "$mutation" != case-sensitive-api ] || cause=secrets
         if [ ! -e "$DIR/$REFRESH" ] &&
@@ -678,8 +726,17 @@ MAPPING_CONTROL
         else bad "mixed-case control=$mutation" "$OUT"; fi ;;
       *) bad "mixed-case adoption mutation=$mutation" "$OUT" ;;
     esac
-  elif [ "$rule" = custom ]; then
-    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then ok 'custom environment and matching app names adopt'; else bad 'custom adoption' "$OUT"; fi
+  else
+    cause="$rule"; [ "$rule" != missing ] || cause=names; [ "$rule" != inherit ] || cause=not-mapping
+    matched=no
+    if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then matched=yes; fi
+    case "$mutation:$matched" in
+      none:yes) ok "$rule mapping refuses before adoption" ;;
+      disabled:no) ok "control: disabled $rule rule turns the refusal assertion red" ;;
+      *) bad "$rule mapping mutation=$mutation" "$OUT" ;;
+    esac
+  fi
+  if [ "$rule" = custom ]; then
     # A refreshed default template must not overwrite the installed choice.
     cp "$DIR/$REFRESH" "$TMP/custom-workflow"
     run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
@@ -693,19 +750,13 @@ MAPPING_CONTROL
     if [ "$RC" -eq 0 ] && ! cmp -s "$DIR/$REFRESH" "$TMP/custom-workflow"; then
       ok 'control: discarded configuration turns custom refresh preservation red'
     else bad 'custom preservation control' "$OUT"; fi
-  else
-    cause="$rule"; [ "$rule" != missing ] || cause=names; [ "$rule" != inherit ] || cause=not-mapping
-    matched=no
-    if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then matched=yes; fi
-    case "$mutation:$matched" in
-      none:yes) ok "$rule mapping refuses before adoption" ;;
-      disabled:no) ok "control: disabled $rule rule turns the refusal assertion red" ;;
-      *) bad "$rule mapping mutation=$mutation" "$OUT" ;;
-    esac
   fi
 done <<'MAPPING_ROWS'
-custom|none|
-mixed-case|none|
+default|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+legacy|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+custom|none||delivery|DELIVERY_ID DELIVERY_KEY
+combined|none||delivery|DELIVERY_ID DELIVERY_KEY FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+mixed-case|none||delivery|DELIVERY_ID DELIVERY_KEY
 mixed-case|case-sensitive-reference|references[key] = match.group(1).upper()
 mixed-case|case-sensitive-declaration|inputs.get("app-id-secret-name", DEFAULT_NAMES[0]).upper()
 mixed-case|case-sensitive-api|{row["name"].upper() for row in secrets}

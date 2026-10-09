@@ -25,7 +25,20 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 templates="$(cd -- "$templates" && pwd)"
-repository="$(gh api 'repos/{owner}/{repo}' --jq .full_name)" || exit 1
+repository="$(python3 - "$SCRIPT_DIR" <<'REPOSITORY'
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(sys.argv[1]).parent / "skills/review-gate/scripts/lib"))
+from environment import gh_api
+try:
+    print(gh_api("repos/{owner}/{repo}", "--jq", ".full_name"), end="")
+except subprocess.CalledProcessError as error:
+    print(error.stderr, file=sys.stderr, end="")
+    raise SystemExit(1) from error
+REPOSITORY
+)" || exit 1
 if [ "$repository" = vanillagreencom/kendex ]; then
   printf 'refresh-adoption=excluded repository=%s\n' "$repository"
   exit 0
@@ -77,14 +90,7 @@ if selected_config is None:
     if len(environments) != 1 or not names:
         raise SystemExit("refresh-error=caller-secrets value=" + str(templates / refresh.name) + " cause=inline")
     selected_config = {"environment": environments[0], "names": names}
-# Preserve GitHub CLI's documented config, credential-store and Go network
-# inputs. Other application values do not belong in this API child.
-validate_environment(sys.argv[4], selected_config, {key: os.environ[key] for key in
-                     ("PATH", "HOME", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_REPO", "GH_CONFIG_DIR",
-                      "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "XDG_CONFIG_HOME", "AppData", "APPDATA",
-                      "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "DISPLAY", "XAUTHORITY",
-                      "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
-                      "SSL_CERT_FILE", "SSL_CERT_DIR") if key in os.environ})
+validate_environment(sys.argv[4], selected_config)
 
 history = scratch / "history"
 # Git's documented transport supplies full default-branch ancestry. Strip
