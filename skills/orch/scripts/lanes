@@ -271,7 +271,7 @@
 #         `projected_headroom_pct` are null and the wall reading alone is
 #         judged. Under --projected it is exit 6 instead, keyed
 #         `pick-lane-claims-refused`, before anything is measured: that verdict
-#         charges the claims, and none counted is not none in flight. The
+#         charges the claims, and none counted is not none in flight.
 #         A cloud-credit refusal on 3 or 5 carries `refusal`, whose cause and
 #         retry_at decide the refusal instead of any plan fields. Other records
 #         printed on 3 under --json carry `wall` and `binding_bucket`,

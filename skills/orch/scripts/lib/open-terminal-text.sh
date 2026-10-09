@@ -432,7 +432,10 @@ Options:
                     host is this machine's, sent again. The provider's
                     `accounts` answer is what says which accounts it holds, and
                     nothing here reads the secret itself.
-                    WHAT THE ANSWER DECIDES. Both --lane forms judge the
+                    WHAT THE ANSWER DECIDES. On a named lane, cloud-credit
+                    refusal is judged first and reported as lane-credit-refused.
+                    The credential and unreadable answers below apply only
+                    where that refusal is absent. Both --lane forms judge the
                     account on the provider's accounts row as `lanes --help`
                     (pick) states. A row carrying neither a status nor a
                     percentage, an absent verb and a failed one each leave
