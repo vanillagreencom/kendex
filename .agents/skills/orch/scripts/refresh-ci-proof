@@ -8,6 +8,28 @@ refuse() {
   exit 1
 }
 
+# refresh-consumer can PATCH its Engine declaration while retaining the head.
+# Both API reads use this one normalized approval record.
+parse_target() {
+  local target cause
+  target="$(jq -ec '
+    def commit_sha: type == "string" and test("^[0-9a-f]{40}$");
+    if (.head.sha | commit_sha) and (.base.sha | commit_sha) and
+      (.base.ref | type == "string" and length > 0)
+    then
+      (if (.body | type) == "string" then
+        [.body | gsub("\r"; "") | scan("(?m)^Engine version: `?kendex ([^ `\n]+)") | .[0] | rtrimstr(".")]
+      else [] end) as $engines |
+      if ($engines | length) == 1 and $engines[0] != "" then
+        {head:.head.sha, base_sha:.base.sha, base_ref:.base.ref, engine:$engines[0]}
+      else {cause:"engine-mismatch"} end
+    else {cause:"ci-proof-missing"} end
+  ' <<<"$1")" || refuse ci-proof-missing
+  cause="$(jq -r '.cause // ""' <<<"$target")" || refuse ci-proof-missing
+  [[ -z $cause ]] || refuse "$cause"
+  printf '%s\n' "$target"
+}
+
 if [[ ${1:-} == --help ]]; then
   cat <<'EOF'
 Usage: refresh-ci-proof PR_NUMBER HEAD_SHA --repo OWNER/REPO
@@ -21,8 +43,9 @@ the current PR range resolved by harness-ci's harness-only. A PR range uses
 the merge base, not the current base tip. Repeated range records must agree.
 Fetch both commits through github's Git auth helper without moving checkout
 refs or files. Read the job log's measured render
-class and compare its render-verifier version with Engine version in the
-refresh pull request body. Read every changed path. The only permitted
+class and compare its render-verifier version with Engine version in both
+reads of the refresh pull request body. The declaration must stay valid and
+unchanged. Read every changed path. The only permitted
 workflow path is HARNESS_CI_REFRESH_CALLER from the installed harness-ci.
 Renames also check the old path. This command reads GitHub and writes no
 approval. Run it from the trusted consumer checkout with gh authenticated.
@@ -58,13 +81,12 @@ git_auth="$SCRIPT_DIR/../../github/scripts/git-https-auth"
 [[ -x $git_auth ]] || refuse ci-proof-missing
 
 metadata="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing
-jq -e --arg head "$head" '
-  .head.sha == $head and (.body | type) == "string" and
-  (.base.sha | type == "string" and test("^[0-9a-f]{40}$")) and
-  (.base.ref | type == "string" and length > 0) and
+target="$(parse_target "$metadata")" || exit 1
+jq -e --arg head "$head" '.head == $head' >/dev/null <<<"$target" || refuse ci-proof-missing
+jq -e '
   (.changed_files | type) == "number" and .changed_files >= 0
 ' >/dev/null <<<"$metadata" || refuse ci-proof-missing
-base="$(jq -er '.base.sha' <<<"$metadata")" || refuse ci-proof-missing
+base="$(jq -er '.base_sha' <<<"$target")" || refuse ci-proof-missing
 # Refresh publication adds a remote head that the trusted base checkout may
 # not hold yet. Fetch objects only; keep its refs, files and FETCH_HEAD intact.
 "$git_auth" fetch --quiet --no-tags --no-write-fetch-head --no-recurse-submodules origin "$base" "$head" >/dev/null 2>&1 || refuse ci-proof-missing
@@ -158,19 +180,19 @@ proof="$(awk '
 ' <<<"$log")" || refuse ci-proof-missing
 [[ $proof =~ (^|$'\n')class:\ class=render\ measured=true($|\ ) ]] || refuse class-not-render
 version="$(sed -nE 's/^render-verifier: verifier=[^ ]+ version=([^ ]+)$/\1/p' <<<"$proof")" || refuse engine-mismatch
-engine="$(jq -er '
-  [.body | gsub("\r"; "") | scan("(?m)^Engine version: `?kendex ([^ `\n]+)") | .[0] | rtrimstr(".")] |
-  select(length == 1) | .[0]
-' <<<"$metadata")" || refuse engine-mismatch
+engine="$(jq -er '.engine' <<<"$target")" || refuse engine-mismatch
 [[ -n $version && $version == "$engine" ]] || refuse engine-mismatch
 proof_base="$(sed -nE 's/^base-rev: ([0-9a-f]{40})$/\1/p' <<<"$proof")" || refuse ci-proof-missing
 proof_head="$(sed -nE 's/^head-rev: ([0-9a-f]{40})$/\1/p' <<<"$proof")" || refuse ci-proof-missing
 [[ $proof_base == "$range_base" && $proof_head == "$range_head" ]] || refuse ci-proof-missing
 
-# A push or retarget during the evidence reads invalidates the entire proof.
+# A push, retarget or Engine declaration update invalidates the proof.
 live="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing
-jq -e --argjson initial "$metadata" '
-  .head.sha == $initial.head.sha and .base.sha == $initial.base.sha and
-  .base.ref == $initial.base.ref
-' >/dev/null <<<"$live" || refuse ci-proof-missing
+live_target="$(parse_target "$live")" || exit 1
+jq -e --argjson initial "$target" '
+  .head == $initial.head and .base_sha == $initial.base_sha and
+  .base_ref == $initial.base_ref
+' >/dev/null <<<"$live_target" || refuse ci-proof-missing
+live_engine="$(jq -er '.engine' <<<"$live_target")" || refuse engine-mismatch
+[[ $live_engine == "$engine" ]] || refuse engine-mismatch
 printf 'refresh-ci-proof: head=%s class=render measured=true version=%s job=%s\n' "$head" "$version" "$job"

@@ -127,6 +127,7 @@ world() {
     later-workflow) printf '[[{"filename":".agents/skills/orch/SKILL.md"}],[{"filename":".github/workflows/ci.yml"}]]\n' > "$WORLD/files.json"; jq '.changed_files=2' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json" ;;
     engine) sed 's/version=1.13.0/version=1.14.0/' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
     body-missing) jq '.body=""' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json" ;;
+    body-ambiguous) jq '.body += "\nEngine version: `kendex 1.13.0`."' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json" ;;
     standard) sed 's/class=render/class=standard/' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
     unmeasured) sed 's/measured=true/measured=false/' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
     log-failed) touch "$WORLD/log-failed" ;;
@@ -183,7 +184,7 @@ world() {
       jq --arg base "$EARLIER_BASE" '.base={sha:$base,ref:"earlier"}' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json"
       jq --arg base "$EARLIER_BASE" '.pull_requests[0].base.sha=$base' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json"
       ;;
-    moved|base-moved|ref-moved) ;;
+    moved|base-moved|ref-moved|body-updated|live-body-missing|live-body-ambiguous|live-body-equivalent) ;;
     missing-caller) rm "$TMP_ROOT/skills/harness-ci/scripts/lib/change-class.sh" ;;
     *) fail 'fixture row exists' "$1"; exit 1 ;;
   esac
@@ -195,6 +196,11 @@ world() {
     moved) jq --arg sha "$EARLIER_BASE" '.head.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
     base-moved) jq --arg sha "$EARLIER_BASE" '.base.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
     ref-moved) jq '.base.ref="other"' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
+    # Scheduled refresh can reuse the head and PATCH only its body.
+    body-updated) jq '.body="Engine version: `kendex 1.14.0`."' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
+    live-body-missing) jq '.body=""' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
+    live-body-ambiguous) jq '.body += "\nEngine version: `kendex 1.13.0`."' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
+    live-body-equivalent) jq '.body="Engine version: kendex 1.13.0.\r\nUpdated by scheduled refresh.\r\n"' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
   esac
 }
 
@@ -262,6 +268,11 @@ later-workflow|workflow-changed
 partial-files|ci-proof-missing
 engine|engine-mismatch
 body-missing|engine-mismatch
+body-ambiguous|engine-mismatch
+body-updated|engine-mismatch
+live-body-missing|engine-mismatch
+live-body-ambiguous|engine-mismatch
+live-body-equivalent|pass
 standard|class-not-render
 unmeasured|class-not-render
 log-failed|ci-proof-missing
@@ -322,6 +333,9 @@ while IFS='|' read -r row old replacement; do
   assert_contains "$OUT" 'class=render measured=true' "$row control reaches proof"
 done <<'EOF'
 engine|$version == "$engine"|true
+body-updated|$live_engine == "$engine"|true
+body-ambiguous|length) == 1 and $engines[0]|length) >= 1 and $engines[0]
+live-body-ambiguous|length) == 1 and $engines[0]|length) >= 1 and $engines[0]
 workflow|or . == $caller)|or true)
 partial-files|length) == $metadata.changed_files|length) >= 0
 standard|class=render\ measured=true|class=standard\ measured=true
@@ -349,9 +363,9 @@ conflicting-base|!base_conflict|1
 conflicting-head|!head_conflict|1
 retargeted|$proof_base == "$range_base"|true
 measured-head|$proof_head == "$range_head"|true
-moved|.head.sha == $initial.head.sha|true
-base-moved|.base.sha == $initial.base.sha|true
-ref-moved|.base.ref == $initial.base.ref|true
+moved|.head == $initial.head|true
+base-moved|.base_sha == $initial.base_sha|true
+ref-moved|.base_ref == $initial.base_ref|true
 EOF
 
 # Reinstating the single-record rule rejects the normal producer sequence.
