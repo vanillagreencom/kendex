@@ -118,4 +118,6 @@ Live unfiled findings stay open and fail the run under the thread-resolution rul
 
 ### Immediate refresh
 
-An organization managed by fleet runs `fleet repos kendex-refresh` when a fix cannot wait for the schedule. Fleet owns installation-wide dispatch and sends the `kendex-refresh` event to consumer repositories. The consumer's `repository_dispatch` receiver uses the same refresh workflow as scheduled and manual runs. Other consumers use their schedule or run their refresh workflow by hand.
+A release needs no dispatch. The next scheduled run installs the release the major tag names. The schedule permits at most four runs a day. Each run can merge at most one refresh pull request. Manual runs add to that count.
+
+For a fix that cannot wait for the schedule, run the consumer's `kendex-refresh.yml` workflow by hand through `workflow_dispatch`. An organization managed by fleet can send that manual run with `fleet repos kendex-refresh`. Its token needs Actions write access. A routine release uses the schedule.

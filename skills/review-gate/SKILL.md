@@ -31,7 +31,7 @@ Run `scripts/validate-standard.sh` for a read-only report. Run `scripts/provisio
 
 An existing consumer first follows [references/adoption.md § Trusted removal for an existing consumer](references/adoption.md#trusted-removal-for-an-existing-consumer). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs run `refresh/adopt-refresh.sh` from a kendex checkout at a release tag. Each consumer calls the shared workflow, which runs its scripts from that release checkout. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
 
-Consumers refresh on a schedule or a manual run. An organization managed by fleet uses `fleet repos kendex-refresh` for immediate refresh dispatch. Dispatch requirements: [references/adoption.md § Immediate refresh](references/adoption.md#immediate-refresh).
+Consumers take a release at the next scheduled run, with at most four scheduled runs a day, each at most one merged refresh pull request, plus manual runs for a fix that cannot wait, which fleet can send through `fleet repos kendex-refresh`; see [references/adoption.md § Immediate refresh](references/adoption.md#immediate-refresh).
 
 ## 4. Operations
 
