@@ -278,7 +278,7 @@ fi
 lane_check() {
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
   local rc=0
-  "$LANES_CLI" check "$1" >&2 || rc=$?
+  "$LANES_CLI" check "$1" >/dev/null || rc=$?
   case "$rc" in
     0) ;;
     4) ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1 ;;
@@ -291,8 +291,8 @@ named_lane_resolve() {
   lane_dir="$LANE"
   # A value carrying a `/` is meant as a path, so a miss there is a typo,
   # not an alias. A bare word is resolved as a lane alias — the discovered
-  # name, or whatever ORCH_LANE_ALIASES renamed it to — through the same
-  # inventory `pick` measures, so aliases need no second source of truth.
+  # name, or whatever ORCH_LANE_ALIASES renamed it to, through lanes' local
+  # discovery without reading account credentials or measuring usage.
   if [[ "$lane_dir" == */* ]]; then
     [[ -d "$lane_dir" ]] || { ot_message lane-directory-missing "path=$LANE" >&2; exit 1; }
   else
@@ -301,16 +301,17 @@ named_lane_resolve() {
     # a real lane and launched the fleet against the wrong account without
     # saying so. A bare directory name still works when no alias claims it.
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-    # The status is taken, not left to errexit: a `lanes` or `jq` that
+    # The status is taken, not left to errexit: a `lanes` that
     # failed would otherwise end the run here with no line naming why, and
     # an empty result is the alias-not-found answer the branch below reads.
     alias_rc=0
-    lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')" || alias_rc=$?
-    [[ "$alias_rc" -eq 0 ]] || { ot_message lane-resolution-failed "exit=$alias_rc" >&2; exit 1; }
+    lane_dir="$("$LANES_CLI" check "$LANE")" || alias_rc=$?
+    case "$alias_rc" in
+      0) ;;
+      4) ot_message lane-refused "lane=$LANE" "exit=$alias_rc" >&2; exit 1 ;;
+      *) ot_message lane-resolution-failed "exit=$alias_rc" >&2; exit 1 ;;
+    esac
     if [[ -z "$lane_dir" ]]; then
-      # An excluded lane is absent from `list`, so its name or alias is
-      # refused here, before a same-named cwd directory can stand in for it.
-      lane_check "$LANE"
       lane_dir="$LANE"
       [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
     fi

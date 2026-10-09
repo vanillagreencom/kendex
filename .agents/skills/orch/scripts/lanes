@@ -350,7 +350,8 @@
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
 #         or `lanes: lane-retired` when one does, so a caller can tell a
 #         covered lane from a failure (exit 1). Nothing inside the directory is
-#         read. `open-terminal` asks it for every named --lane.
+#         read. Prints the resolved config dir on stdout, or nothing for an
+#         unknown bare name. `open-terminal` asks it for every named --lane.
 #
 # Options:
 #   --harness NAME   claude, codex, copilot, or all (default: all for list,
@@ -3837,6 +3838,23 @@ case "$SUB" in
 			if lane_excluded "$check_name"; then message lane-excluded "$LANE_ARG" >&2; exit 4; fi
 			if lane_retired "$check_name" silent; then message lane-retired "$LANE_ARG" "$LANE_RETIRE_DATE" >&2; exit 4; fi
 		done <<<"$check_names"
+		# Local discovery gives the same first alias match as list, without
+		# measuring the accounts. Unknown names stay empty for caller fallback.
+		check_dir="$LANE_ARG"
+		if [[ "$LANE_ARG" != */* ]]; then
+			check_dir=""
+			for check_harness in claude codex copilot; do
+				while IFS= read -r candidate; do
+					[[ -n "$candidate" ]] || continue
+					lane_alias_for "$candidate" silent
+					[[ "$LANE_ALIAS" == "$LANE_ARG" ]] || continue
+					check_dir="$candidate"
+					break
+				done < <(lane_dirs "$check_harness" all)
+				[[ -z "$check_dir" ]] || break
+			done
+		fi
+		[[ -z "$check_dir" ]] || printf '%s\n' "$check_dir"
 		;;
 	state)
 		[[ -n "$LANE_ARG" ]] || die missing-value state

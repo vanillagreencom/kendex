@@ -343,6 +343,21 @@ table \
   "the renamed lane is the directory the alias named, its measured headroom unchanged|ORCH_LANE_ALIASES=eclaude=work|$LIST|work.config_dir=$H/.eclaude work.headroom_pct=20" \
   "an alias naming no discovered directory is inert|ORCH_LANE_ALIASES=notthere=phantom|$LIST|aliases=claude,eclaude,nclaude,openclaude"
 
+# open-terminal consumes check's stdout as the local alias's config dir.
+table \
+  "check resolves an alias without a usage query|ORCH_LANE_ALIASES=eclaude=work|check work|rc=0 out=$H/.eclaude fetched=none" \
+  "check keeps the first local alias match|ORCH_LANE_ALIASES=claude=work,eclaude=work|check work|rc=0 out=$H/.claude fetched=none" \
+  "check refuses an excluded alias|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude|check work|rc=4 key=lane-excluded,dir=work out= fetched=none"
+check_scripts="$(mutant_scripts check-output lanes)" || exit 1
+mutate_file "$check_scripts/lanes" '[[ -z "$check_dir" ]] || printf '\''%s\n'\'' "$check_dir"' ':'
+LANES="$check_scripts/lanes"
+run_lanes 'ORCH_LANE_ALIASES=eclaude=work' check work
+control_rc=0
+( FAIL=0; assert_eq "$OUT" "$H/.eclaude" 'resolved directory'; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/check-output-control.log" || control_rc=$?
+assert_eq "$RC:$control_rc" '0:1' 'the resolved directory assertion rejects missing check output'
+LANES="$SCRIPTS_DIR/lanes"
+
 echo "=== pick: the most headroom, or a refusal ==="
 # Every lane over the threshold is an error, never a best-effort pick, or the
 # fleet launches into a wall anyway.

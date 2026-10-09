@@ -128,7 +128,7 @@ noisy() {
 # notices — the stub notices the pass forwarded, counted per host an owed
 # listing was read under.
 notices() {
-  printf 'local=%s provider-x=%s' "$(grep -c '^lanes: stub-notice host=local$' "$ERR" || true)" \
+  printf 'local=%s provider-x=%s' "$(grep -Ec '^lanes: stub-notice host=(local|unset)$' "$ERR" || true)" \
     "$(grep -c '^lanes: stub-notice host=provider-x$' "$ERR" || true)"
 }
 
@@ -158,12 +158,64 @@ while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
 done <<<"$WORLD_ROWS"
 assert_eq "$(grep -E '^[^ ]+ (pick|list --json$)' "$STUB_DIR/lanes.hosts" | grep -v '^unset ' | sort)" \
-  "$(printf '%s\n' 'local list --json' 'local pick --harness claude --json --model claude-opus-5' \
+  "$(printf '%s\n' 'local pick --harness claude --json --model claude-opus-5' \
       'local pick --harness claude --json --model claude-sonnet-5' 'local pick --harness codex --json' \
       'provider-x list --json' 'provider-x pick --harness codex --json' | sort)" \
   "each host's accounts are listed once and its wall asked of lanes pick once per harness and model, under that host" "$ERR"
 assert_eq "$(grep -n '^owed ' <<<"$OUT" | head -1 | cut -d: -f1)" "$(($(grep -n '^account ' <<<"$OUT" | tail -1 | cut -d: -f1) + 1))" \
   "the owed lines follow the account roster" "$ERR"
+assert_eq "$(grep -cx 'unset list --json' "$STUB_DIR/lanes.hosts" || true)" 1 \
+  "the own-host roster and owed items share one listing" "$ERR"
+
+# The settings-loaded host, not the spelling local, owns the pass roster.
+world owed_own_provider
+watch_pass ORCH_LANE_HOST=provider-x -- --state "$STUB_DIR/state.json"
+assert_eq "$(grep -cx 'provider-x list --json' "$STUB_DIR/lanes.hosts" || true)|$(grep -cx 'local list --json' "$STUB_DIR/lanes.hosts" || true)|$(owed KEN-12)" \
+  "1|1|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue" \
+  "the configured own host reuses its roster and the other host is listed" "$ERR"
+
+# A malformed first listing fails the roster read. The owed read can still
+# obtain the valid listing the stub gives its later calls.
+world owed_roster_retry
+printf 'not-json\n' > "$STUB_DIR/lanes.1.json"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$(grep -cx 'local list --json' "$STUB_DIR/lanes.hosts" || true)|$(owed KEN-3)" \
+  "1|owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z" \
+  "a failed own-host roster leaves owed work its separate listing" "$ERR"
+
+reuse_scripts="$(mutant_scripts owed-roster-repeat/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/owed-roster-repeat/github"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/owed-roster-repeat/linear"
+mutate_file "$reuse_scripts/oversee-watch" \
+  'if [[ "$ACCOUNT_ROSTER_RC" -eq 0 && "$host" == "${ORCH_LANE_HOST:-local}" ]]; then' \
+  'if false; then'
+world owed_roster_control
+WATCH_BIN="$reuse_scripts/oversee-watch" watch_pass -- --state "$STUB_DIR/state.json"
+control_rc=0
+( FAIL=0; assert_eq "$(grep -c ' list --json$' "$STUB_DIR/lanes.hosts")" 2 'shared roster'; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/owed-roster-control.log" || control_rc=$?
+assert_eq "$control_rc:$(grep -cx 'local list --json' "$STUB_DIR/lanes.hosts" || true)" '1:1' \
+  "the roster assertion rejects the base behavior's duplicate own-host listing" "$ERR"
+
+# Each reuse condition has its own counterexample from the pass producer.
+while IFS='|' read -r name old new host; do
+  guard_scripts="$(mutant_scripts "owed-reuse-$name/orch" oversee-watch)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/owed-reuse-$name/github"
+  ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/owed-reuse-$name/linear"
+  mutate_file "$guard_scripts/oversee-watch" "$old" "$new"
+  world "owed_reuse_$name"
+  [[ "$name" != failed ]] || printf 'not-json\n' > "$STUB_DIR/lanes.1.json"
+  WATCH_BIN="$guard_scripts/oversee-watch" watch_pass "ORCH_LANE_HOST=$host" -- --state "$STUB_DIR/state.json"
+  control_rc=0
+  expected_lists=1
+  [[ "$name" != failed ]] || expected_lists=2
+  ( FAIL=0; assert_eq "$(grep -cx 'local list --json' "$STUB_DIR/lanes.hosts" || true)" "$expected_lists" 'separate owed listing'; [[ "$FAIL" == 0 ]] ) \
+    > "$TMP_ROOT/owed-reuse-$name.log" || control_rc=$?
+  assert_eq "$control_rc" 1 "control: $name roster cannot replace the owed host's listing" "$ERR"
+done <<'ROWS'
+failed|"$ACCOUNT_ROSTER_RC" -eq 0 &&|true &&|local
+other|"$host" == "${ORCH_LANE_HOST:-local}"|true|provider-x
+ROWS
 
 # A host whose accounts could not be listed judges no wall: every item with a
 # harness is unjudged, each host named once, a merged one is still merged,
@@ -608,7 +660,7 @@ world@without the roster membership test a harness with no account is asked of p
 world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
 world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
 world@without the pick's own reset the wall goes undated@.walled_resets_at | if . == null then "-"@null | if . == null then "-"@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=-
-noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=0 provider-x=0
+noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=1 provider-x=0
 ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

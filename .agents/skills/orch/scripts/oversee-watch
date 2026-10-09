@@ -4250,6 +4250,12 @@ owed_accounts() { # HOST
   while IFS=$'\t' read -r asked answer; do
     [[ "$asked" != "$host" ]] || { OWED_LISTING="$answer"; return 0; }
   done <<<"$OWED_ACCOUNTS"
+  # Both reads use this pass's settings and usage age. Reusing a successful
+  # own-host roster removes a duplicate read without changing owed picks.
+  if [[ "$ACCOUNT_ROSTER_RC" -eq 0 && "$host" == "${ORCH_LANE_HOST:-local}" ]]; then
+    OWED_LISTING="$ACCOUNT_ROSTER_JSON"
+    return 0
+  fi
   bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" list --json || rc=$?
   if [[ "$rc" -eq 0 ]] && jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
