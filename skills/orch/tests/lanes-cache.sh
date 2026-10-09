@@ -80,7 +80,7 @@ cache_run() { # STATE POLICY COMMAND...
     ORCH_LANES_TOKEN_CMD="$TMP_ROOT/token" ORCH_LANES_CLAUDE_CLIENT_ID=fixture-client TOKEN_LOG="$TMP_ROOT/token-log" TOKEN_STATUS="${TOKEN_STATUS:-400}" \
     OVERSEE_WATCH_STATE_DIR="$state" ORCH_LANE_HOST="$PROVIDER" \
     LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts" LANE_HOST_STUB_LOG="$TMP_ROOT/provider-log" \
-    "${policy[@]}" "$LANES" "$@")
+    ${policy[@]+"${policy[@]}"} "$LANES" "$@")
 }
 
 # Credit values are from the cached usage body, independently of credentials.
