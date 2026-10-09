@@ -498,60 +498,72 @@ describe("SkillSettings", () => {
   /// An empty value is a real answer for some keys, and a blank row is one
   /// nobody can tell from a rendering fault. The labels are written out
   /// here rather than read back from the copy the row uses, so a label
-  /// that collides with another option's is a case this can fail on: core
-  /// keeps a double quote out of every value the picker can hold, which is
-  /// what makes a pair of them a label nothing else produces.
-  it("labels every option so no two of them read alike", async () => {
-    const rows: [string, SettingsRow, string[]][] = [
-      [
-        "an empty value among the declared ones",
-        row({
-          default: "",
-          values: ["", "enforce"],
-          current: { state: "absent" },
-        }),
-        ['""', "enforce"],
-      ],
-      [
-        "an empty current value beside a declared literal empty",
-        row({
-          values: ["empty", "enforce"],
-          current: { state: "value", value: "", line: 3 },
-        }),
-        ['""', "empty", "enforce"],
-      ],
-      [
-        "a trailing-space current value beside the value it looks like",
-        row({
-          default: "on",
-          values: ["on", "off"],
-          current: { state: "value", value: "on ", line: 3 },
-        }),
-        ["on\\s", "on", "off"],
-      ],
-      [
-        "two declared values differing only in their interior whitespace",
-        row({
-          default: "a b",
-          values: ["a\tb", "a b"],
-          current: { state: "absent" },
-        }),
-        ["a\\tb", "a b"],
-      ],
-    ];
-    expect(rows).toHaveLength(4);
-    for (const [what, one, labels] of rows) {
-      const container = mounted(place(publicRows([one])));
-      const trigger = container.querySelector<HTMLElement>(
-        '[data-slot="select-trigger"]',
-      );
-      if (!trigger) throw new Error(`${what}: the row rendered no picker`);
-      const options = await opened(trigger);
-      expect(
-        options.map((option) => option.textContent),
-        what,
-      ).toEqual(labels);
-    }
+  /// that collides with another option's is a case this can fail on.
+  it.each<[string, SettingsRow, string[]]>([
+    [
+      "an empty value among the declared ones",
+      row({
+        default: "",
+        values: ["", "enforce"],
+        current: { state: "absent" },
+      }),
+      ['""', "enforce"],
+    ],
+    [
+      "an empty current value beside a declared literal empty",
+      row({
+        values: ["empty", "enforce"],
+        current: { state: "value", value: "", line: 3 },
+      }),
+      ['""', "empty", "enforce"],
+    ],
+    [
+      "a trailing-space current value beside the value it looks like",
+      row({
+        default: "on",
+        values: ["on", "off"],
+        current: { state: "value", value: "on ", line: 3 },
+      }),
+      ["on\\s", "on", "off"],
+    ],
+    [
+      "two declared values differing only in their interior whitespace",
+      row({
+        default: "a b",
+        values: ["a\tb", "a b"],
+        current: { state: "absent" },
+      }),
+      ["a\\tb", "a b"],
+    ],
+    [
+      "a literal backslash-t beside a tab",
+      row({
+        default: "\\t",
+        values: ["\\t", "\t"],
+        current: { state: "absent" },
+      }),
+      ["\\\\t", "\\t"],
+    ],
+    [
+      "two double quotes beside an empty value",
+      row({
+        default: '""',
+        values: ['""', ""],
+        current: { state: "absent" },
+      }),
+      ['\\"\\"', '""'],
+    ],
+  ])("labels every option distinctly: %s", async (what, one, labels) => {
+    const container = mounted(place(publicRows([one])));
+    const trigger = container.querySelector<HTMLElement>(
+      '[data-slot="select-trigger"]',
+    );
+    if (!trigger) throw new Error(`${what}: the row rendered no picker`);
+    const options = await opened(trigger);
+    expect(
+      options.map((option) => option.textContent),
+      what,
+    ).toEqual(labels);
   });
 
   /// A key one package declares a setting and another a credential is

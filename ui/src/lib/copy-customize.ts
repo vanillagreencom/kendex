@@ -86,13 +86,9 @@ const escaped = (char: string): string =>
  *  which one their file holds, which is the whole of what that disabled
  *  option is there to tell them.
  *
- *  The escapes are spelled with a backslash because no value can carry
- *  one: core refuses a backslash in a declared value
- *  (`settings_file::check_value`) and in a value read out of the file
- *  (`settings_toml::decoded`). So a backslash in a label never came from
- *  the value, every escape reads back to exactly one character, and the
- *  label determines the value. The empty string's `""` rests on the same
- *  refusal of the double quote.
+ *  Literal settings can contain backslashes and double quotes. Escape
+ *  those characters too, so their labels cannot match a whitespace
+ *  escape or the empty string's `""`.
  *
  *  A single interior space is left as itself, so an ordinary multi-word
  *  value still reads as one. Every other space is one HTML would fold
@@ -102,6 +98,8 @@ export const settingValueShown = (value: string): string => {
   const chars = [...value];
   return chars
     .map((char, at) => {
+      if (char === "\\") return "\\\\";
+      if (char === '"') return '\\"';
       if (char === " ")
         return at === 0 ||
           at === chars.length - 1 ||
