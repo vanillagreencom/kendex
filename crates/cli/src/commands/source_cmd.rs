@@ -17,6 +17,22 @@ pub struct SourceArgs {
     command: SourceCommand,
 }
 
+impl SourceArgs {
+    pub(crate) fn effective_scope(&self) -> Result<ScopeFilter, String> {
+        ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::Project)
+    }
+
+    pub(crate) fn writes_project(&self) -> bool {
+        match self.command {
+            SourceCommand::Add { .. }
+            | SourceCommand::Remove { .. }
+            | SourceCommand::Enable { .. }
+            | SourceCommand::Disable { .. } => true,
+            SourceCommand::List | SourceCommand::Refresh { .. } => false,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum SourceCommand {
     /// List the marketplaces this place installs from, and which are switched off
@@ -62,7 +78,7 @@ pub enum SourceCommand {
 }
 
 pub fn run(env: &Env, args: SourceArgs) -> CliResult {
-    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
+    let filter = args.effective_scope()?;
     let command = args.command;
     // The stale refresh serves the session check, which reads project AND
     // global — a project-scoped default here would leave global mirrors

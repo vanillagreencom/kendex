@@ -81,6 +81,10 @@ pub struct AddFlags {
 }
 
 impl AddFlags {
+    pub(crate) fn is_global(&self) -> bool {
+        self.global
+    }
+
     pub fn into_args(self, source: Option<String>) -> AddArgs {
         AddArgs {
             source,
@@ -175,9 +179,9 @@ impl ReportFlags {
 ///
 /// Without it those verbs take the project the command was typed in,
 /// which is the behaviour every release before this one had. With it the
-/// place is in the command's own words — which is what lets a session
-/// that cannot move its shell, and one standing in a linked git worktree,
-/// name the checkout it means.
+/// place is in the command's own words. A linked worktree may name a
+/// project inside its own checkout. A writing run aimed at another
+/// checkout requires the explicit refresh-lane override.
 ///
 /// The flag answering the temporary-path refusal rides here beside the
 /// path it answers for, because a named run can put that path on the
@@ -188,7 +192,7 @@ pub struct ProjectTargetFlag {
     /// The project this run reads and writes, by path, instead of the one it was typed in
     #[arg(long, value_name = "PATH")]
     project_path: Option<std::path::PathBuf>,
-    /// Permit project writes in a marked lane whose item is a refresh
+    /// Permit project writes in a marked lane or to another checkout
     #[arg(long)]
     pub(crate) lane_refresh: bool,
     /// The temporary-path refusal's answer, for the project --project-path names

@@ -113,8 +113,7 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
 /// the command carries no destination at all. Where it is a linked git
 /// worktree whose project is the main checkout's, the destination is in
 /// the words for the verbs with a flag for it, and every write is marked
-/// as its refresh owner's to run from the main checkout, the shared base
-/// the hook refuses from a worktree; the plan, which writes nothing, runs
+/// as its refresh owner's to run from the main checkout; the plan runs
 /// here. A reader left with the drift line and no remedy has nothing to
 /// act on. A worktree carrying its own manifest is written by every bare
 /// verb typed in it, `update-pi` included, so no command names it and none
@@ -382,13 +381,13 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
         Verbosity::Verbose,
     );
     assert!(
-        text.contains("— fix: kendex refresh --project-path '/w/app' (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"),
+        text.contains("— fix: kendex refresh --project-path '/w/app' (the main checkout's project: its refresh owner runs this there)\n"),
         "{text}"
     );
     for command in commands {
         assert!(
             text.contains(&format!(
-                "— fix: {command} (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"
+                "— fix: {command} (the main checkout's project: its refresh owner runs this there)\n"
             )),
             "{command} missing its marker: {text}"
         );

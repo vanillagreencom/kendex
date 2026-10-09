@@ -209,24 +209,29 @@ impl Repo {
     /// tree probes as the main checkout of its own repository, and it goes
     /// when the enclosing work tree is removed all the same.
     ///
-    /// Asked one repository at a time, outward from the top level of each
-    /// to the directory above it, until a linked one answers or no
-    /// repository encloses the last. A git that cannot answer at any level
-    /// is the error [`Repo::probe`] returns, never a `false`.
+    /// Physical ancestors are checked even when an inner bare repository or
+    /// Git administration directory has no working tree. A git that cannot
+    /// answer at any level is the error [`Repo::probe`] returns, never a `false`.
     pub fn enclosed_by_linked(dir: &Path) -> Result<bool> {
-        let mut at = dir.to_path_buf();
-        loop {
-            let Some(repo) = Repo::probe(&at)? else {
-                return Ok(false);
-            };
-            if repo.is_linked() {
-                return Ok(true);
+        Ok(Self::enclosing_linked(dir)?.is_some())
+    }
+
+    /// The nearest linked checkout containing `dir`, including one enclosing
+    /// a nested clone, bare repository or Git administration directory.
+    /// Repository probing and failures follow
+    /// the same traversal as [`Self::enclosed_by_linked`].
+    pub fn enclosing_linked(dir: &Path) -> Result<Option<Repo>> {
+        let physical = dir
+            .canonicalize()
+            .map_err(|error| CoreError::io(dir, error))?;
+        for at in physical.ancestors() {
+            if let Some(repo) = Repo::probe(at)?
+                && repo.is_linked()
+            {
+                return Ok(Some(repo));
             }
-            let Some(above) = repo.worktree.parent() else {
-                return Ok(false);
-            };
-            at = above.to_path_buf();
         }
+        Ok(None)
     }
 
     /// The main work tree of this repository.
@@ -290,8 +295,8 @@ impl Repo {
         if output.status.success() {
             return match answer.trim() {
                 "true" => Repo::at(dir).map(Some),
-                // Inside a repository but not a checkout — a bare one, or a
-                // git directory reached directly. No gate is expected.
+                // This probe names working trees only. enclosing_linked owns
+                // physical containment through bare and administration directories.
                 "false" => Ok(None),
                 other => Err(guard_err(
                     "hooks",

@@ -31,6 +31,12 @@ pub struct PinArgs {
     _commit: crate::commands::commit_offer::CommitFlags,
 }
 
+impl PinArgs {
+    pub(crate) fn effective_scope(&self) -> Result<ScopeFilter, String> {
+        ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::Project)
+    }
+}
+
 fn canonical_kinds() -> impl Iterator<Item = ItemKind> {
     // Plugins declare through their own table and have no source revisions.
     ItemKind::ALL
@@ -83,7 +89,7 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
     if args.version.is_none() && !args.follow {
         return Err("name a version to hold at, or pass --follow to stop holding it".into());
     }
-    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
+    let filter = args.effective_scope()?;
     let scope = resolve_scopes(env, filter)?.remove(0);
     // Scoped to the package named, exactly as the app's hold move is: the
     // scope's other followers stay at the commit they are installed from.

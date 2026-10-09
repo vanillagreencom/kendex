@@ -31,6 +31,9 @@ use scope::ScopeFilter;
 #[derive(Parser)]
 #[command(name = "kendex")]
 struct Cli {
+    /// The catalog hook's fixed machine-readable guard capability query.
+    #[arg(long, hide = true)]
+    worktree_project_write_capability: bool,
     /// Marketplace or repository to install from
     source: Option<String>,
     #[command(flatten)]
@@ -273,6 +276,14 @@ pub fn main() -> ExitCode {
         let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
         Ok((matches, cli))
     });
+    // Catalog hooks update independently of this executable. Their fixed
+    // query must answer without a project check or a bootstrap write.
+    if let Ok((_, cli)) = &parsed
+        && cli.worktree_project_write_capability
+    {
+        ui::stdout(&[commands::lane_refresh::CAPABILITY.to_owned()]);
+        return ExitCode::SUCCESS;
+    }
     if let Ok((_, cli)) = &parsed
         && let Err(error) = commands::lane_refresh::check(cli)
     {

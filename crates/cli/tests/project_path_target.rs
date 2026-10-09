@@ -1,11 +1,8 @@
 //! `--project-path`: the project a whole-scope write lands in, named in
 //! the command rather than walked up to from the working directory.
 //!
-//! The walk answers for the directory a command was typed in, which an
-//! agent session cannot move, and which inside a linked git worktree with
-//! no manifest of its own the catalog's `block-worktree-refresh` hook
-//! refuses a bare verb in. These run the real binary from a directory that
-//! is not the destination and then read the destination.
+//! These run the real binary with parsed project targets and then read
+//! the destination. Linked callers need --lane-refresh to write another checkout.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -616,11 +613,6 @@ fn a_named_project_and_the_personal_scope_together_are_refused() {
 /// its own right: it is the destination a command may name, it renders
 /// from its own declarations, and the checkout it was added from is
 /// untouched by the run.
-///
-/// This is the case the flag exists for. An agent session rooted in the
-/// worktree cannot move its shell into the main checkout, and a session
-/// running the `block-worktree-refresh` hook is refused a project-scope
-/// write that names no target.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_linked_worktree_with_its_own_manifest_is_a_project_a_command_can_name() {

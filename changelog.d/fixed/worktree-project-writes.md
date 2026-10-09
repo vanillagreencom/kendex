@@ -1,0 +1,1 @@
+- Linked worktrees now refuse cross-checkout project writes for guarded commands, including refresh, apply, and applying updates. The CLI answers the hook's capability question before startup writes so an independently updated hook can require this protection.

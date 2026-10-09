@@ -31,6 +31,12 @@ pub struct ForkArgs {
     _commit: crate::commands::commit_offer::CommitFlags,
 }
 
+impl ForkArgs {
+    pub(crate) fn effective_scope(&self) -> Result<ScopeFilter, String> {
+        ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::Project)
+    }
+}
+
 pub fn run(env: &Env, args: ForkArgs) -> CliResult {
     let kind = parse_kind(&args.kind)?;
     let harness = match &args.harness {
@@ -39,7 +45,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         }
         None => HarnessId::Claude,
     };
-    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
+    let filter = args.effective_scope()?;
     let scope = resolve_scopes(env, filter)?.remove(0);
 
     let plan = match &args.rename {

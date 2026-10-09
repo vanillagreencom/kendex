@@ -1,14 +1,5 @@
 //! Which project a session-start remedy tells a reader to write, when the
 //! project it is reporting on is a linked git worktree.
-//!
-//! A session running the catalog's `block-worktree-refresh` hook is
-//! refused a project-scope kendex write from a linked worktree unless the
-//! command names the checkout it lands in, or the project it writes owns
-//! its manifest there and the verb writes the project it is typed in — the
-//! predicate `crates/core/AGENTS.md` states once for the hook and this
-//! report — so a report printing the bare verb elsewhere prints a command
-//! that session cannot run. The check resolves that name once and every
-//! remedy in the report carries it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -175,7 +166,7 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     );
     assert!(
         report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose).contains(
-            "fix: kendex remove --kind agent gh (the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)\n"
+            "fix: kendex remove --kind agent gh (the main checkout's project: its refresh owner runs this there)\n"
         ),
         "an absent manifest retains the explicit elsewhere marker"
     );
@@ -398,8 +389,6 @@ fn a_clean_report_resolves_no_destination() {
 /// A project below the worktree's root that declares its own packages is
 /// the worktree's own, whatever the root holds: its path is what a write
 /// names, and a remove typed there writes it, so the fix carries no marker.
-/// `hooks/tests/block-worktree-refresh.test.sh` proves the hook passes that
-/// remove on the same layout.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_below_the_worktree_root_that_declares_is_its_own() {
