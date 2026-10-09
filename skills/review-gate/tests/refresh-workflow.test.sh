@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Surface: the refresh workflow trigger declarations.
-# Inputs: .github/workflows/kendex-dispatch.yml,
-# skills/review-gate/templates/kendex-refresh.yml, refresh/kendex-refresh.yml,
+# Inputs: skills/review-gate/templates/kendex-refresh.yml, refresh/kendex-refresh.yml,
 # skills/harness-ci/tests/lib/workflow.sh.
 # GitHub Actions reads these declarations; this suite checks their source shape.
 set -euo pipefail
@@ -13,7 +12,6 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'refresh-workflow: scratch=r
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 . "$TEST_DIR/../../harness-ci/tests/lib/workflow.sh"
 
-DISPATCH="$REPO_ROOT/.github/workflows/kendex-dispatch.yml"
 TEMPLATE="$REPO_ROOT/skills/review-gate/templates/kendex-refresh.yml"
 CALLER="$REPO_ROOT/refresh/kendex-refresh.yml"
 
@@ -33,17 +31,8 @@ schedule_cron() { # WORKFLOW
   ' "$1"
 }
 
-check_cadence() { # DISPATCH TEMPLATE CALLER -> structured failures, exit 0 or 1
-  local dispatch_events caller_events cron file event index=0 failed=0
-  dispatch_events="$(triggers "$1")" || return 2
-  case $'\n'"$dispatch_events"$'\n' in
-    *$'\nworkflow_dispatch\n'*) ;;
-    *) printf 'dispatch=manual-missing\n'; failed=1 ;;
-  esac
-  case $'\n'"$dispatch_events"$'\n' in
-    *$'\npush\n'*) printf 'dispatch=push-present\n'; failed=1 ;;
-  esac
-  shift
+check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
+  local caller_events cron file event index=0 failed=0
   for file in "$@"; do
     index=$((index + 1))
     caller_events="$(triggers "$file")" || return 2
@@ -62,26 +51,24 @@ check_cadence() { # DISPATCH TEMPLATE CALLER -> structured failures, exit 0 or 1
   return "$failed"
 }
 
-for file in "$DISPATCH" "$TEMPLATE" "$CALLER"; do
+for file in "$TEMPLATE" "$CALLER"; do
   [ -f "$file" ] && [ ! -L "$file" ] || { printf 'refresh-workflow: input=not-a-regular-file value=%q\n' "$file" >&2; exit 1; }
 done
 
-# Restore the shipped triggers in disposable copies. Both cases below run
-# the same row, so a control cannot pass through a weaker assertion.
-plant "$DISPATCH" '  workflow_dispatch: {}' $'  push:\n    branches: [main]\n  workflow_dispatch: {}' "$TMP_ROOT/dispatch.yml"
+# Each control uses the same assertions as the shipped callers.
 plant "$TEMPLATE" '    - cron: "17 */6 * * *"' '    - cron: "*/30 * * * *"' "$TMP_ROOT/template.yml"
 plant "$CALLER" '    - cron: "17 */6 * * *"' '    - cron: "*/30 * * * *"' "$TMP_ROOT/caller.yml"
 
 while IFS='|' read -r shape expected_exit; do
   case "$shape" in
-    current) set -- "$DISPATCH" "$TEMPLATE" "$CALLER" ;;
-    unfixed) set -- "$TMP_ROOT/dispatch.yml" "$TMP_ROOT/template.yml" "$TMP_ROOT/caller.yml" ;;
+    current) set -- "$TEMPLATE" "$CALLER" ;;
+    unfixed) set -- "$TMP_ROOT/template.yml" "$TMP_ROOT/caller.yml" ;;
   esac
   status=0
   result="$(check_cadence "$@")" || status=$?
   expected=''
   if [ "$shape" = unfixed ]; then
-    expected=$'dispatch=push-present\ncaller=1 cron=*/30 * * * *\ncaller=2 cron=*/30 * * * *'
+    expected=$'caller=1 cron=*/30 * * * *\ncaller=2 cron=*/30 * * * *'
   fi
   if [ "$status" != "$expected_exit" ] || [ "$result" != "$expected" ]; then
     printf 'refresh-workflow: case=%s exit=%s result=[%s]\n' "$shape" "$status" "$result" >&2
@@ -92,3 +79,29 @@ done <<'CASES'
 current|0
 unfixed|1
 CASES
+
+# A missing dispatch receiver, manual entry or schedule must fail in either
+# caller. Change the event key so unrelated YAML still cannot satisfy it.
+for source in template caller; do
+  case "$source" in
+    template) file="$TEMPLATE"; index=1 ;;
+    caller) file="$CALLER"; index=2 ;;
+  esac
+  for event in repository_dispatch workflow_dispatch schedule; do
+    mutant="$TMP_ROOT/$source-$event.yml"
+    plant "$file" "  $event:" "  ignored_$event:" "$mutant"
+    case "$source" in
+      template) set -- "$mutant" "$CALLER" ;;
+      caller) set -- "$TEMPLATE" "$mutant" ;;
+    esac
+    status=0
+    result="$(check_cadence "$@")" || status=$?
+    expected="caller=$index trigger-missing=$event"
+    [ "$event" != schedule ] || expected+=$'\n'"caller=$index cron="
+    if [ "$status" != 1 ] || [ "$result" != "$expected" ]; then
+      printf 'refresh-workflow: control=%s-%s exit=%s result=[%s]\n' "$source" "$event" "$status" "$result" >&2
+      exit 1
+    fi
+    printf 'refresh-workflow: control=%s-%s observed-exit=%s pass\n' "$source" "$event" "$status"
+  done
+done
