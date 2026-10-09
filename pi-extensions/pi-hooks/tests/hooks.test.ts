@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCargo } from "../extensions/cargo.ts";
-import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
+import { initRustRepo, installCarrier, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 
 useIsolatedGitEnv();
 
@@ -128,7 +128,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 	// contract hooks/pre-commit-check.sh enforces, because it is the same file.
 	// A fake cargo stays on PATH as the control — nothing here runs a check of
 	// its own, so its log must stay empty.
-	test("the real rendered hook defers to an armed repository and refuses an unarmed one", async () => {
+	test("the real rendered hook defers armed checks, allows unarmed commits with setup context, and refuses bypasses", async () => {
 		await withFakeCargo(async ({ log }) => {
 			const armed = initRustRepo("pi-hooks-armed-");
 			const unarmed = initRustRepo("pi-hooks-unarmed-");
@@ -137,11 +137,18 @@ describe("pi-hooks pre-commit tool_call", () => {
 			renderRealHook(unarmed, "pre-commit-check");
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
-				const handler = installToolCallHandler();
+				const carrier = installCarrier();
+				const handler = carrier.handler("tool_call");
 				expect(await handler({ toolName: "bash", input: { command: "git commit -m test" } }, trusted(armed))).toBeUndefined();
+				expect(carrier.sent).toEqual([]);
 
-				const refused = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, trusted(unarmed)) as { block?: boolean; reason?: string };
-				expect(refused.block).toBe(true);
+				expect(await handler({ toolName: "bash", input: { command: "git commit -m test" } }, trusted(unarmed))).toBeUndefined();
+				expect(carrier.sent).toEqual([{
+					message: { customType: "kendex-hook", content: expect.any(String), display: true },
+					options: { triggerTurn: false },
+				}]);
+				expect(carrier.sent[0].message.content.split("\n").filter((line) => line.startsWith("pre-commit-check: ")))
+					.toEqual([`pre-commit-check: unarmed=${unarmed}`, "pre-commit-check: setup=consent"]);
 
 				// Both bypass shapes, and the reason is the script's own stderr:
 				// the flag, and the config key that switches the armed hook off.
