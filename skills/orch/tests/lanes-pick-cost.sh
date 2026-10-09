@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: lanes pick account policy and provider rows.
+# Surface: lanes pick and list account policy and provider rows.
 # Inputs: scripts/lanes, scripts/lib/*.sh, scripts/lane-host, scripts/workflow-state.
 # Count executable calls, not elapsed time or shell subshells. The live VM's
 # total process and time bounds are checked after consumer refresh.
@@ -48,12 +48,15 @@ chmod +x "$TMP_ROOT/provider"
 RETIRE_ONE='absent1=2099-01-01'
 RETIRE_TEN="$RETIRE_ONE"
 for n in 2 3 4 5 6 7 8 9 10; do RETIRE_TEN+=",absent$n=2099-01-01"; done
-run_pick() { # HOMES RETIRE [PROVIDER]
-  local n="$1" retire="$2" host="${3:-local}" i
+run_lanes() { # HOMES RETIRE PROVIDER VERB FORMAT
+  local n="$1" retire="$2" host="$3" verb="$4" format="$5" i
+  local mode_args=(--harness claude)
+  [[ "$verb" != pick ]] || mode_args+=(--min-headroom-pct 5)
+  [[ "$format" != json ]] || mode_args+=(--json)
   rm -rf -- "$TMP_ROOT/home" "$TMP_ROOT/state"
   mkdir -p "$TMP_ROOT/home"
   # A scratch home under worktree tmp must not read the enclosing project's
-  # settings. No pick in this fixture consumes the operator's configuration.
+  # settings. No command in this fixture consumes the operator's configuration.
   git -C "$TMP_ROOT/home" init -q
   git -C "$TMP_ROOT/home" config gc.auto 0
   git -C "$TMP_ROOT/home" config maintenance.auto false
@@ -63,29 +66,79 @@ run_pick() { # HOMES RETIRE [PROVIDER]
   done
   : > "$TMP_ROOT/counter"
   RC=0
-  OUT="$(cd "$TMP_ROOT/home" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+  (cd "$TMP_ROOT/home" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     COST_COUNTER="$TMP_ROOT/counter" COST_REAL_DATE="$REAL_DATE" LANES_HOME="$TMP_ROOT/home" \
     ORCH_LANE_RETIRE="$retire" ORCH_LANE_EXCLUDE='blocked' ORCH_LANE_ALIASES=' aclaude = work , bclaude = blocked ' \
     ORCH_LANE_CLOUD_REPOS=' work = Owner/Repo , dclaude = Other/Repo ' \
     ORCH_LANE_HOST="$host" ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0 ORCH_LANES_FETCH_CMD=false \
-    OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" "$LANES" pick --harness claude --min-headroom-pct 5 --json \
-    2>"$TMP_ROOT/err")" || RC=$?
+    OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" "$LANES" "$verb" "${mode_args[@]}" \
+    >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || RC=$?
+  OUT="$(cat "$TMP_ROOT/out")"
   COUNT="$(wc -l < "$TMP_ROOT/counter")"; COUNT="${COUNT//[[:space:]]/}"
   BASES="$(awk '$0 == "basename" {n++} END {print n+0}' "$TMP_ROOT/counter")"
-  printf 'cost: homes=%s retire=%s calls=%s basename=%s exit=%s\n' "$n" "$retire" "$COUNT" "$BASES" "$RC"
+  printf 'cost: verb=%s format=%s homes=%s retire=%s calls=%s basename=%s exit=%s\n' "$verb" "$format" "$n" "$retire" "$COUNT" "$BASES" "$RC"
 }
 counts=()
 for homes in 4 8 12; do
-  run_pick "$homes" "$RETIRE_ONE"; one="$COUNT"
+  run_lanes "$homes" "$RETIRE_ONE" local pick json; one="$COUNT"
   assert_eq "$RC" 3 "$homes homes: one retirement entry reaches the chooser"
-  run_pick "$homes" "$RETIRE_TEN"
+  run_lanes "$homes" "$RETIRE_TEN" local pick json
   assert_eq "$RC" 3 "$homes homes: ten retirement entries reach the chooser"
   assert_eq "$COUNT" "$one" "$homes homes: retirement entries add no executable calls"
   assert_eq "$BASES" 0 "$homes homes: pick starts no basename"
   counts+=("$COUNT")
 done
 assert_eq "$((counts[2]-counts[1]))" "$((counts[1]-counts[0]))" 'equal home increments add equal executable calls'
-run_pick 4 ' work = 2099-01-01 , cclaude = 2000-01-01 ' "$TMP_ROOT/provider"
+# Captured from main 6783004931cc4e4d998647bf9c281d138c130143. Only the
+# fixture directory and account number vary; fields, ordering, spaces and
+# final newlines stay pinned. The comparison reads the raw stdout files.
+EXPECTED_LIST_ROW='{"alias":"NAMEclaude","harness":"claude","config_dir":"CONFIG_DIR","measured_through":"local","status":"no_credentials","refreshable":false,"plan":null,"session_5h_pct":null,"weekly_pct":null,"model_pct":null,"model_label":null,"model_buckets":[],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":null,"binding_bucket":null,"binding_resets_at":null,"usage_age_s":null,"resets":{"session":null,"weekly":null,"model":null,"monthly":null},"detail":"no credential file at CONFIG_DIR/.credentials.json","wall":null,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":null,"binding_projected_headroom_pct":null,"session_projected_headroom_pct":null,"session_burn_pct_per_lane_hour":null,"session_charge_hours":null,"projected_headroom_pct":null,"projected_window":null,"verdict":"unmeasured"}'
+write_expected_list() { # HOMES FORMAT
+  local names width=9 name dir row comma="" header='LANE     '
+  case "$1" in
+    4) names='1 2 3 4' ;;
+    8) names='1 2 3 4 5 6 7 8' ;;
+    12) names='10 11 12 1 2 3 4 5 6 7 8 9'; width=10; header='LANE      ' ;;
+  esac
+  if [[ "$2" == json ]]; then
+    printf '['
+    for name in $names; do
+      dir="$TMP_ROOT/home/.${name}claude"
+      row="${EXPECTED_LIST_ROW//NAME/$name}"
+      row="${row//CONFIG_DIR/$dir}"
+      printf '%s%s' "$comma" "$row"; comma=','
+    done
+    printf ']\n'
+  else
+    printf '%s%s\n' "$header" 'HARNESS  THROUGH  STATUS          PLAN  5H  WEEK  MODEL  MONTH  HEADROOM  CLAIMS  AGE  DETAIL'
+    for name in $names; do
+      printf '%-*s%s%s\n' "$width" "${name}claude" \
+        'claude   local    no_credentials  -     -   -     -      -      -         0       -    no credential file at ' \
+        "$TMP_ROOT/home/.${name}claude/.credentials.json"
+    done
+  fi
+}
+for format in table json; do
+  counts=()
+  for homes in 4 8 12; do
+    write_expected_list "$homes" "$format" > "$TMP_ROOT/expected"
+    for entries in 1 10; do
+      retire="$RETIRE_ONE"
+      [[ "$entries" != 10 ]] || retire="$RETIRE_TEN"
+      run_lanes "$homes" "$retire" local list "$format"
+      assert_eq "$RC" 0 "$homes homes, $entries retirement entries: list $format exits successfully"
+      cmp_rc=0; cmp -s -- "$TMP_ROOT/out" "$TMP_ROOT/expected" || cmp_rc=$?
+      assert_eq "$cmp_rc" 0 "$homes homes, $entries retirement entries: list $format matches baseline bytes"
+      assert_eq "$BASES" 0 "$homes homes, $entries retirement entries: list $format starts no basename"
+      if [[ "$entries" == 1 ]]; then one="$COUNT"; else
+        assert_eq "$COUNT" "$one" "$homes homes: list $format retirement entries add no executable calls"
+      fi
+    done
+    counts+=("$COUNT")
+  done
+  assert_eq "$((counts[2]-counts[1]))" "$((counts[1]-counts[0]))" "list $format equal home increments add equal executable calls"
+done
+run_lanes 4 ' work = 2099-01-01 , cclaude = 2000-01-01 ' "$TMP_ROOT/provider" pick json
 printf 'parity: exit=%s record=%s\n' "$RC" "${OUT//$TMP_ROOT/ROOT}"
 assert_eq "$RC" 0 'provider policy fixture picks with the baseline exit'
 # This record is captured from the unpatched script, with only its scratch
@@ -104,19 +157,41 @@ ORIGINAL_LANES="$LANES"
 CONTROL="$(mutant_scripts policy-cost lanes)"
 mutate_file "$CONTROL/lanes" 'lane_base "$2"; base="$LANE_BASE"' 'lane_base "$2"; base="$(basename -- "$2")"'
 LANES="$CONTROL/lanes"
-run_pick 4 "$RETIRE_ONE"; one="$COUNT"
-run_pick 4 "$RETIRE_TEN"
+run_lanes 4 "$RETIRE_ONE" local pick json; one="$COUNT"
+run_lanes 4 "$RETIRE_TEN" local pick json
 rc=0
 ( FAIL=0; assert_eq "$COUNT" "$one" 'retirement-entry cost'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-cost.log" || rc=$?
 assert_eq "$rc" 1 'cost assertion rejects entry-dependent command starts'
+for format in table json; do
+  run_lanes 4 "$RETIRE_ONE" local list "$format"; one="$COUNT"
+  assert_eq "$RC" 0 "cost control list $format reaches the listing"
+  run_lanes 4 "$RETIRE_TEN" local list "$format"
+  rc=0
+  ( FAIL=0; assert_eq "$COUNT" "$one" 'retirement-entry cost'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-list-cost-$format.log" || rc=$?
+  assert_eq "$rc" 1 "cost assertion rejects list $format entry-dependent command starts"
+done
 CONTROL="$(mutant_scripts policy-parity lanes)"
 mutate_file "$CONTROL/lanes" 'lane_matches "$name" "$1" && return 0' 'lane_matches "$name" "$1" && :'
 LANES="$CONTROL/lanes"
-run_pick 4 ' work = 2099-01-01 , cclaude = 2000-01-01 ' "$TMP_ROOT/provider"
+run_lanes 4 ' work = 2099-01-01 , cclaude = 2000-01-01 ' "$TMP_ROOT/provider" pick json
 assert_eq "$RC" 0 'parity control reaches a successful pick'
 rc=0
 ( FAIL=0; assert_eq "${OUT//$TMP_ROOT/ROOT}" "$EXPECTED" 'public JSON'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-parity.log" || rc=$?
 assert_eq "$rc" 1 'parity assertion rejects an account policy that ignores exclusions'
+CONTROL="$(mutant_scripts list-parity lanes)"
+mutate_file "$CONTROL/lanes" \
+  'map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' \
+  'map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | .claims = 7 | lane_public)'
+LANES="$CONTROL/lanes"
+for format in table json; do
+  run_lanes 4 "$RETIRE_ONE" local list "$format"
+  assert_eq "$RC" 0 "parity control list $format reaches the listing"
+  write_expected_list 4 "$format" > "$TMP_ROOT/expected"
+  cmp_rc=0; cmp -s -- "$TMP_ROOT/out" "$TMP_ROOT/expected" || cmp_rc=$?
+  rc=0
+  ( FAIL=0; assert_eq "$cmp_rc" 0 'baseline bytes'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-list-parity-$format.log" || rc=$?
+  assert_eq "$rc" 1 "parity assertion rejects changed list $format bytes"
+done
 LANES="$ORIGINAL_LANES"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
