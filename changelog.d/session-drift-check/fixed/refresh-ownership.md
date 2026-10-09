@@ -1,0 +1,1 @@
+- Ordinary worktrees keep actionable drift advice. Recorded lanes follow the declared refresh owner and retain explicit refresh-lane permissions.

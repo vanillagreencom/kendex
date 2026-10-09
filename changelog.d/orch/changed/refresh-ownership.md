@@ -1,0 +1,1 @@
+- **Breaking:** Post-merge retains checkout changes instead of restoring tracked files or removing new files. Route refresh through the declared repository owner and let that owner handle pending outputs. Hosted control checkouts receive committed outputs through sync-base; refresh-only is reserved for an authorized owner outside the control host.

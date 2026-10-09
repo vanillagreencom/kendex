@@ -364,6 +364,7 @@ fixture_git() { env HOME="$GIT_HOME" GIT_CONFIG_NOSYSTEM=1 git "$@"; }
 WT_MAIN="$TMP_ROOT/wt-main"
 WT_LINKED="$TMP_ROOT/wt-linked"
 WT_MARKER="$TMP_ROOT/wt-marker"
+WT_ORDINARY="$TMP_ROOT/wt-ordinary"
 for repo in "$WT_MAIN" "$WT_MARKER"; do
   fixture_git init -q "$repo"
   fixture_git -C "$repo" config gc.auto 0
@@ -371,6 +372,7 @@ for repo in "$WT_MAIN" "$WT_MARKER"; do
   fixture_git -C "$repo" commit -q --allow-empty -m init
 done
 fixture_git -C "$WT_MAIN" worktree add -q "$WT_LINKED" -b lane
+fixture_git -C "$WT_MAIN" worktree add -q "$WT_ORDINARY" -b ordinary
 # lane-marker's real record binds the root under the common git directory.
 # No LANE_MAIL_ITEM is passed: delegated agents must recognise the same lane.
 mkdir -p "$WT_MAIN/.git/lane-mail" "$WT_MARKER/.git/lane-mail"
@@ -386,7 +388,7 @@ LANE_APPLY=$'stale:\n  \'orch\' does not match its source \342\200\224 fix: kend
 LANE_REMOVE=$'removed upstream:\n  skill \'orch\': removed upstream: no replacement is declared: remove the installed copies and declaration \342\200\224 fix: kendex remove orch'
 LANE_OVERFLOW=$'outdated:\n  skill \'orch\': source changed \342\200\224 fix: kendex refresh\n  … 4 more \342\200\224 see: kendex check'
 LANE_TRUNCATED=$'outdated:\n  skill \'orch\': source changed \342\200\224 fix: kendex refresh\n… report truncated (3 more line(s)) \342\200\224 see: kendex check'
-for project in "$WT_LINKED" "$WT_MARKER" "$WT_MAIN"; do
+for project in "$WT_LINKED" "$WT_MARKER" "$WT_MAIN" "$WT_ORDINARY"; do
   for shape in safe refresh updates apply remove overflow truncated; do
     case "$shape" in
       safe) text="$LANE_SAFE"; count=0 ;;
@@ -400,7 +402,7 @@ for project in "$WT_LINKED" "$WT_MARKER" "$WT_MAIN"; do
     capture FAKE_RC=1 FAKE_OUT="$text" CLAUDE_PROJECT_DIR="$project"
     assert_eq "$rc" 0 "$project $shape: starts the session"
     assert_eq "$(cat "$CWD_LOG")" "$project" "$project $shape: checks this root"
-    if [ "$project" = "$WT_MAIN" ]; then
+    if [ "$project" = "$WT_MAIN" ] || [ "$project" = "$WT_ORDINARY" ]; then
       # The common directory carries another root's marker. This main
       # checkout is the must-fail control for applying the lane rule.
       assert_eq "keyed=$(keyed_of) relayed=$(relayed_text)" "keyed=drift=found relayed=$text" "main $shape: output unchanged"
@@ -420,7 +422,7 @@ session-drift-check: count=lower-bound"
     fi
   done
   capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$project"
-  if [ "$project" = "$WT_MAIN" ]; then
+  if [ "$project" = "$WT_MAIN" ] || [ "$project" = "$WT_ORDINARY" ]; then
     assert_eq "$out" "" "main clean: silent"
   else
     assert_eq "$(first_line "$TMP_ROOT/stdout")" "session-drift-check: lane=1" "$project clean: rule still applies"
@@ -440,17 +442,15 @@ assert_eq "$(sed '1,2d' "$TMP_ROOT/stdout" | sed '/^kendex check incomplete /d')
 
 echo "session-drift-check: refresh lanes"
 # lane-marker --lane-refresh writes the lane's root into lane-refresh in the
-# lane's own git directory. A row is `record|keyed|report|prohibition`: the
+# lane's own git directory. A row is `record|keyed|report`: the
 # record's content, `root` for the lane's root, `empty` for the empty file a
 # hosted launcher leaves, `other` for another root; the leading keyed lines;
 # the report under the notice sentence, `whole` for the report relayed as it
-# came or `count` for the advice replaced by its item count; and how many lines
-# carry the ordinary notice's prohibition.
+# came or `count` for the advice replaced by its item count.
 refresh_observed() { # PROJECT
   capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$1"
-  printf 'keyed=%s report=%s prohibition=%s' "$(keyed_of)" \
-    "$(awk 'lead && !/^session-drift-check: / { lead = 0; next } !lead' lead=1 "$TMP_ROOT/stdout")" \
-    "$(grep -c 'never run here' "$TMP_ROOT/stdout" || :)"
+  printf 'keyed=%s report=%s' "$(keyed_of)" \
+    "$(awk 'lead && !/^session-drift-check: / { lead = 0; next } !lead' lead=1 "$TMP_ROOT/stdout")"
 }
 REFRESH_WHOLE="session-drift-check: drift=found
 $LANE_APPLY"
@@ -458,19 +458,19 @@ REFRESH_COUNT="session-drift-check: drift=found
 session-drift-check: drift-items=1"
 for project in "$WT_LINKED" "$WT_MARKER"; do
   record="$(fixture_git -C "$project" rev-parse --absolute-git-dir)/lane-refresh"
-  while IFS='|' read -r content keyed report prohibition; do
+  while IFS='|' read -r content keyed report; do
     case "$content" in
       root) printf '%s\n' "$project" >"$record" ;;
       empty) : >"$record" ;;
       other) printf '%s\n' "$TMP_ROOT/other" >"$record" ;;
     esac
     [ "$report" = whole ] && report="$REFRESH_WHOLE" || report="$REFRESH_COUNT"
-    assert_eq "$(refresh_observed "$project")" "keyed=$keyed report=$report prohibition=$prohibition" \
+    assert_eq "$(refresh_observed "$project")" "keyed=$keyed report=$report" \
       "$project $content record: the notice and the report"
   done <<'ROWS'
-root|lane=1;lane-refresh=1|whole|0
-empty|lane=1|count|1
-other|lane=1|count|1
+root|lane=1;lane-refresh=1|whole
+empty|lane=1|count
+other|lane=1|count
 ROWS
   printf '%s\n' "$project" >"$record"
   capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$project"
@@ -496,8 +496,34 @@ HOOK="$IGNORES_RECORD"
 observed="$(refresh_observed "$WT_LINKED")"
 HOOK="$REAL_HOOK"
 rm -f -- "${record:?}"
-assert_eq "$([ "$observed" = "keyed=lane=1;lane-refresh=1 report=$REFRESH_WHOLE prohibition=0" ] && echo green || echo red)" red \
+assert_eq "$([ "$observed" = "keyed=lane=1;lane-refresh=1 report=$REFRESH_WHOLE" ] && echo green || echo red)" red \
   "control: a hook that ignores the refresh record turns the root row red"
+
+# Ordinary linked worktrees must not inherit lane restrictions from Git layout.
+ALL_LINKED="$TMP_ROOT/all-linked.sh"
+awk '{ print } /^  common=/ { print "  if [ \"$LANE_GIT_DIR\" != \"$common\" ]; then LANE=1; return 0; fi" }' "$HOOK" > "$ALL_LINKED"
+assert_eq "$(grep -c '^  common=' "$HOOK") $(cmp -s "$HOOK" "$ALL_LINKED" && echo same || echo differs)" '1 differs' "linked-worktree control changes the discovery branch"
+REAL_HOOK="$HOOK"; HOOK="$ALL_LINKED"
+capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$WT_ORDINARY"
+HOOK="$REAL_HOOK"
+assert_eq "$([ "$(keyed_of)" = drift=found ] && echo green || echo red)" red "control: treating every linked worktree as a lane fails ordinary advice"
+
+# A launch marker must be a readable plain file, even in a linked worktree.
+marker="$WT_MAIN/.git/lane-mail/lane"
+for bad_record in directory symlink unreadable; do
+  rm -f -- "$marker"
+  case "$bad_record" in
+    directory) mkdir -- "$marker" ;;
+    symlink) ln -s "$WT_MARKER/.git/lane-mail/marker" "$marker" ;;
+    unreadable)
+      printf '%s\n' "$WT_LINKED" > "$marker"
+      chmod 000 "$marker"
+      if [ "$(id -u)" = 0 ]; then chmod 600 "$marker"; continue; fi ;;
+  esac
+  capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$WT_LINKED"
+  assert_eq "first=$(first_line "$TMP_ROOT/stdout") calls=$(calls)" 'first=session-drift-check: lane=unknown calls=-' "$bad_record launch record withholds repair advice"
+  if [ "$bad_record" = directory ]; then rmdir -- "$marker"; else chmod 600 "$marker"; rm -f -- "$marker"; fi
+done
 
 echo "session-drift-check: lane discovery failures"
 # git produces this failure for a broken gitfile. Filesystem read failures

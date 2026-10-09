@@ -20,6 +20,9 @@ tags: [docs]
 <!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
+
+After an authorized documentation rewrite changes kendex-owned inputs, use the repository refresh and verification route. Respect a launched lane's refresh restriction. Keep refresh with the existing owner: kendex uses its lock-record Actions workflow and rolling kendex/lock pull request; consumers with automatic refresh use their kendex-refresh Actions workflow and rolling kendex/refresh pull request. When no refresh workflow exists and the fleet is local, the overseer owns refresh in the base checkout. Keep the local-fleet full post-merge route. This local owner is not a hosted control VM. Confirm any other execution owner before adoption. A hosted consumer without a refresh workflow must confirm an authorized owner outside the control VM. The hosted control checkout receives committed outputs through sync-base after they merge.
+
 <!-- kendex:project-instructions:end -->
 
 # Docs Writing

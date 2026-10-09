@@ -1,0 +1,1 @@
+- Documentation rewrites follow the selected project's refresh owner and lane permissions when kendex-owned inputs change.

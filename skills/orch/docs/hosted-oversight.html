@@ -25,6 +25,8 @@
 
 <h2>What runs where</h2>
 
+<p>The repository's declared owner outside the control host runs refresh and verification. The control checkout receives the reviewed, committed outputs through <code>sync-base</code> after they merge. It never runs <code>post-merge</code>, including <code>--refresh-only</code>. Report a failed refresh workflow; synchronizing the item merge alone does not complete refresh.</p>
+
 <figure>
 <svg viewBox="0 0 920 300" role="img" aria-label="Three tiers. A workstation on the left holds the fleet overseer and the account logins. The control VM in the middle holds the kendex overseer, its tmux, login copies and the claim store. Lane sandboxes on the right hold each item's worktree, CLI and the lane tokens seeded at create. Every arrow points from left to right: the workstation opens SSH to the VM, and the VM opens SSH to a sandbox. No arrow points back.">
   <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
