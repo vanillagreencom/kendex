@@ -57,11 +57,13 @@ def configuration(data):
         match = re.fullmatch(r"\$\{\{ secrets\.([A-Za-z_][A-Za-z0-9_]*) \}\}", secrets[key])
         if not match:
             raise InvalidCaller("expression")
-        names.append(match.group(1))
+        # GitHub secret references are case insensitive; its API stores names
+        # in uppercase, so the declared mapping uses the same comparison form.
+        names.append(match.group(1).upper())
     if set(inputs) - {"environment", "app-id-secret-name", "app-private-key-secret-name"}:
         raise InvalidCaller("inputs")
-    declared = [inputs.get("app-id-secret-name", DEFAULT_NAMES[0]),
-                inputs.get("app-private-key-secret-name", DEFAULT_NAMES[1])]
+    declared = [inputs.get("app-id-secret-name", DEFAULT_NAMES[0]).upper(),
+                inputs.get("app-private-key-secret-name", DEFAULT_NAMES[1]).upper()]
     if names != declared or (legacy and names != list(DEFAULT_NAMES)):
         raise InvalidCaller("secret-names")
     environment = inputs.get("environment", "kendex")
@@ -149,5 +151,5 @@ def validate_environment(repository, config, environment):
     secrets = rows(endpoint + "/secrets", "secrets")
     if not all(isinstance(row, dict) and isinstance(row.get("name"), str) for row in secrets):
         refuse("read")
-    if not set(config["names"]).issubset({row["name"] for row in secrets}):
+    if not set(config["names"]).issubset({row["name"].upper() for row in secrets}):
         refuse("secrets")

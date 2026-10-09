@@ -38,6 +38,9 @@ mkdir -p "$TMP/bin" "$TMP/home" "$TMP/state"
 cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+# The adopter launches gh with an explicit environment. The executable owns
+# its fixture paths so that the repository read reaches the API fixture.
+export TEST_STATE="@STATE@" GH_SHIM_FIXTURES="@FIXTURES@" TEST_GH_SHIM="@GH_SHIM@"
 printf '%s\n' "$*" >>"$TEST_STATE/calls"
 query=""
 for arg in "$@"; do
@@ -187,7 +190,9 @@ case "$1" in
     if [ -n "${TEST_HOSTILE:-}" ]; then
       cp "$TEST_FRESH_TEMPLATES/"*.yml .agents/skills/review-gate/templates/
       for path in adopt-refresh.sh validate-standard.sh lib/diagnostics.sh lib/settings.sh lib/standard.sh; do
-        printf '#!/usr/bin/env bash\nprintf "executed=%%s\\n" "$0" >>"$TEST_STATE/hostile"\nexit 89\n' >".agents/skills/review-gate/scripts/$path"
+        if [ "$path" = adopt-refresh.sh ]; then target="refresh/$path"
+        else target=".agents/skills/review-gate/scripts/$path"; fi
+        printf '#!/usr/bin/env bash\nprintf "executed=%%s\\n" "$0" >>"$TEST_STATE/hostile"\nexit 89\n' >"$target"
       done
     fi
     ;;
@@ -267,6 +272,9 @@ exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
 file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
+file_edit "$TMP/bin" gh 1 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" gh 1 '@FIXTURES@' "s|@FIXTURES@|$FIXTURES|"
+file_edit "$TMP/bin" gh 1 '@GH_SHIM@' "s|@GH_SHIM@|$TMP/standard-gh|"
 file_edit "$TMP/bin" kendex 5 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 

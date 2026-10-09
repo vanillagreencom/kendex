@@ -274,7 +274,7 @@ done <<'ENV_ROWS'
 missing|if len(selected) != 1:
 branch-policy|if len(policies) != 1 or not isinstance(policies[0], dict) or policies[0].get("name") != branch or policies[0].get("type", "branch") != "branch":
 policy-type|if not isinstance(policy, dict) or policy.get("custom_branch_policies") is not True or policy.get("protected_branches") is not False:
-secrets|if not set(config["names"]).issubset({row["name"] for row in secrets}):
+secrets|if not set(config["names"]).issubset({row["name"].upper() for row in secrets}):
 read|
 ENV_ROWS
 cp "$TMP/default-environments" "$FIXTURES/environments.json"
@@ -544,7 +544,7 @@ if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
   ok 'a consumer holding the v1.8.0 caller bytes takes the current caller'
 else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
 # A shipped caller on the earlier secret names needs no new declaration.
-git -C "$SKILL_DIR" show HEAD:refresh/kendex-refresh.yml >"$TMP/legacy-caller"
+git -C "$SKILL_DIR" show f24599cab98369094567af9dd1668706a348507c:refresh/kendex-refresh.yml >"$TMP/legacy-caller"
 ship_caller_template "$TMP/legacy-caller"
 sandbox
 cp "$TMP/legacy-caller" "$DIR/$REFRESH"
@@ -565,6 +565,9 @@ p=Path(sys.argv[1]); s=p.read_text(); assert s.count('environment: kendex')==1
 s=s.replace('environment: kendex', 'environment: delivery').replace('FLEET_GH_APP_ID', 'DELIVERY_ID').replace('FLEET_GH_APP_PRIVATE_KEY', 'DELIVERY_KEY')
 rule=sys.argv[2]
 if rule=='missing': s=s.replace('      app-private-key: ${{ secrets.DELIVERY_KEY }}\n', '')
+elif rule=='mixed-case':
+ s=s.replace('app-id-secret-name: DELIVERY_ID', 'app-id-secret-name: Delivery_ID').replace('app-private-key-secret-name: DELIVERY_KEY', 'app-private-key-secret-name: Delivery_Key')
+ s=s.replace('secrets.DELIVERY_ID', 'secrets.delivery_iD').replace('secrets.DELIVERY_KEY', 'secrets.delivery_kEY')
 elif rule=='inherit': s=s.replace('    secrets:\n      app-id: ${{ secrets.DELIVERY_ID }}\n      app-private-key: ${{ secrets.DELIVERY_KEY }}', '    secrets: inherit')
 elif rule=='expression': s=s.replace('${{ secrets.DELIVERY_ID }}', '${{ secrets.DELIVERY_ID || secrets.FALLBACK }}')
 elif rule=='secret-names': s=s.replace('app-id-secret-name: DELIVERY_ID', 'app-id-secret-name: WRONG_ID')
@@ -575,6 +578,18 @@ assert s != p.read_text(); p.write_text(s)
 CUSTOM
   printf '{"environments":[{"name":"delivery","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
   printf '{"secrets":[{"name":"DELIVERY_ID"},{"name":"DELIVERY_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
+  if [ "$rule" = mixed-case ]; then
+    printf '{"secrets":[{"name":"dELIVERY_ID"},{"name":"dELIVERY_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
+  fi
+  if [[ "$mutation" = case-sensitive-* ]]; then
+    python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'CASE_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
+changed=s.replace(old, old.replace('.upper()', ''))
+assert changed != s; p.write_text(changed)
+CASE_CONTROL
+  fi
   if [ "$mutation" = disabled ]; then
     python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'MAPPING_CONTROL'
 from pathlib import Path
@@ -584,7 +599,21 @@ s=s.replace(old, 'if False and ('+old[3:-1]+'):' ); assert s != p.read_text(); p
 MAPPING_CONTROL
   fi
   run_refresh_command "$DIR" "$DIR/$ADOPT"
-  if [ "$rule" = custom ]; then
+  if [ "$rule" = mixed-case ]; then
+    matched=no
+    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then matched=yes; fi
+    case "$mutation:$matched" in
+      none:yes) ok 'mixed-case references, declarations and API names adopt' ;;
+      case-sensitive-*:no)
+        cause=secret-names; [ "$mutation" != case-sensitive-api ] || cause=secrets
+        if [ ! -e "$DIR/$REFRESH" ] &&
+            { { [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT"; } ||
+              { [ "$RC" -eq 1 ] && grep -qxF "refresh-error=environment value=delivery cause=$cause" <<<"$OUT"; }; }; then
+          ok "control: $mutation turns mixed-case adoption red"
+        else bad "mixed-case control=$mutation" "$OUT"; fi ;;
+      *) bad "mixed-case adoption mutation=$mutation" "$OUT" ;;
+    esac
+  elif [ "$rule" = custom ]; then
     if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then ok 'custom environment and matching app names adopt'; else bad 'custom adoption' "$OUT"; fi
     # A refreshed default template must not overwrite the installed choice.
     cp "$DIR/$REFRESH" "$TMP/custom-workflow"
@@ -611,6 +640,10 @@ MAPPING_CONTROL
   fi
 done <<'MAPPING_ROWS'
 custom|none|
+mixed-case|none|
+mixed-case|case-sensitive-reference|names.append(match.group(1).upper())
+mixed-case|case-sensitive-declaration|inputs.get("app-id-secret-name", DEFAULT_NAMES[0]).upper()
+mixed-case|case-sensitive-api|{row["name"].upper() for row in secrets}
 missing|none|
 missing|disabled|if set(secrets) != set(expected):
 inherit|none|
