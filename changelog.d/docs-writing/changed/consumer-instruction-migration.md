@@ -1,0 +1,1 @@
+- **Breaking:** Documentation rewrites migrate hand-written harness rules only when the consumer selects a migration policy and authorizes the affected files. Add the policy to `[skill-instructions].docs-writing` before an instruction migration.

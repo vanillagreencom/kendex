@@ -23,6 +23,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 After an authorized documentation rewrite changes kendex-owned inputs, use the repository refresh and verification route. Respect a launched lane's refresh restriction. Keep refresh with the existing owner: kendex uses its lock-record Actions workflow and rolling kendex/lock pull request; consumers with automatic refresh use their kendex-refresh Actions workflow and rolling kendex/refresh pull request. When no refresh workflow exists and the fleet is local, the overseer owns refresh in the base checkout. Keep the local-fleet full post-merge route. This local owner is not a hosted control VM. Confirm any other execution owner before adoption. A hosted consumer without a refresh workflow must confirm an authorized owner outside the control VM. The hosted control checkout receives committed outputs through sync-base after they merge.
 
+Migrate this repository hand-written harness instructions only through an authorized instruction migration. Put rules used by one installed skill in that skill's named [skill-instructions] key in kendex.toml, or kendex-local.toml only for a source catalog. Put agent-specific rules in the named [agent-additional-instructions] key and command-specific rules in the named [command-instructions] key. Keep only rules every agent needs in AGENTS.md. Keep operator instructions in consumer docs. Preserve every still-required rule. Remove an empty source instruction file only after its replacement is checked.
+
 <!-- kendex:project-instructions:end -->
 
 # Docs Writing
