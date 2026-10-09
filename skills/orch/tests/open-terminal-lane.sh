@@ -262,10 +262,11 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - 
   "rc=0 form=prefix" \
   "a --cmd template retains its command under the selected account prefix"
 
-run_ot "ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$OUTSIDE_LANE" KEN-89
-assert_eq "$(observe 'rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc')" \
-  'rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc' \
-  "a custom account launch refuses an invalid bound before opening its pane"
+table \
+  "a custom account launch refuses an invalid bound before opening its pane|ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD|--harness claude --lane $OUTSIDE_LANE KEN-89|rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
+  "auto:claude without --harness validates the account wait bound|ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD|--lane auto:claude KEN-89|rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
+  "auto:codex without --harness validates the account wait bound|ORCH_TMUX_VERIFY_SECS=abc;cmd=true --model gpt-6-astra -c model_reasoning_effort=high|--lane auto:codex KEN-89|rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
+  "auto:copilot without --harness validates the account wait bound|ORCH_TMUX_VERIFY_SECS=abc;cmd=true --model claude-opus-5.5 --reasoning-effort high|--lane auto:copilot KEN-89|rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc"
 BOUND_CONTROL="$(mutant_scripts custom-bound open-terminal)"
 orch_fixture_shared_libs "${BOUND_CONTROL%/scripts}"
 mutate_file "$BOUND_CONTROL/open-terminal" 'elif [[ -z "$CMD_TEMPLATE" || -n "$LANE" ]]; then' 'elif [[ -z "$CMD_TEMPLATE" ]]; then'
@@ -274,6 +275,18 @@ OPEN_TERMINAL="$BOUND_CONTROL/open-terminal"
 run_ot "ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$OUTSIDE_LANE" KEN-89
 assert_eq "$(observe 'rc=0 seconds_invalid=none')" 'rc=0 seconds_invalid=none' \
   "control: skipping the custom account bound check accepts the invalid setting"
+OPEN_TERMINAL="$BOUND_SHIPPED"
+RAW_BOUND_CONTROL="$(mutant_scripts raw-custom-bound open-terminal)"
+orch_fixture_shared_libs "${RAW_BOUND_CONTROL%/scripts}"
+mutate_file "$RAW_BOUND_CONTROL/open-terminal" \
+  'elif [[ -z "$CMD_TEMPLATE" || -n "$LANE" ]]; then
+    case "$LAUNCH_HARNESS" in' \
+  'elif [[ -z "$CMD_TEMPLATE" || -n "$LANE" ]]; then
+    case "$HARNESS" in'
+OPEN_TERMINAL="$RAW_BOUND_CONTROL/open-terminal"
+run_ot "ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --lane auto:claude KEN-89
+assert_eq "$(observe 'rc=0 seconds_invalid=none')" 'rc=0 seconds_invalid=none' \
+  "control: the raw harness skips the bound check for auto:claude"
 OPEN_TERMINAL="$BOUND_SHIPPED"
 
 # The suite's one must-fail control is on the model rule, on the same arguments
