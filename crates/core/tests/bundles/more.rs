@@ -76,12 +76,17 @@ fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
             );
         }
 
-        // Removing this member must remove both planned outputs.
+        // The prompt companion requires the session hook, so both must leave.
         let mut missing: toml::Value = toml::from_str(&catalog_text).unwrap();
         missing["bundles"][bundle]["hooks"]
             .as_array_mut()
             .unwrap()
-            .retain(|name| name.as_str() != Some("worktree-session-claim"));
+            .retain(|name| {
+                !matches!(
+                    name.as_str(),
+                    Some("worktree-session-claim" | "worktree-prompt-claim")
+                )
+            });
         catalog_bundles(&f.source, &toml::to_string(&missing).unwrap());
         let report = audit(&f.env, &f.scope).unwrap();
         for tool in ["claude", "codex"] {
