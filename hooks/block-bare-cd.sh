@@ -3,8 +3,8 @@
 # name: block-bare-cd
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a command with a line that is only a `cd`. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
-# summary: Stops a command whose whole line is a `cd`. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
+# description: Refuse a command with a line that is only a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
+# summary: Stops a command whose whole line is a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
 # safety: Reads the command text only. On a harness that runs each command in a fresh shell (Codex, the Pi carrier) a bare cd changes nothing and the refusal costs one rewrite; the scoped form is right on every harness. Every refusal opens with `block-bare-cd: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # ---
 
@@ -68,13 +68,35 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
+# Only a matching later terminator makes the intervening lines command input.
+# This local text check needs no shell parser. It handles the first here-document
+# on a line; a second body's lines keep the existing judgement.
+LINES=()
+while IFS= read -r line; do LINES[${#LINES[@]}]=$line; done <<<"$COMMAND"
+HEREDOC_RE='(^|[^<])<<(-?)[[:blank:]]*("([^"]*)"|'"'"'([^'"'"']*)'"'"'|([^[:space:]<>&;|]+))'
+JUDGED=""
+for ((i=0; i<${#LINES[@]}; i++)); do
+  JUDGED=$JUDGED${LINES[$i]}$'\n'
+  if [[ ${LINES[$i]} =~ $HEREDOC_RE ]]; then
+    strip_tabs=${BASH_REMATCH[2]}
+    delimiter=${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}
+    for ((end=i+1; end<${#LINES[@]}; end++)); do
+      terminator=${LINES[$end]}
+      if [ "$strip_tabs" = - ]; then
+        while [[ $terminator == $'\t'* ]]; do terminator=${terminator#$'\t'}; done
+      fi
+      if [ "$terminator" = "$delimiter" ]; then i=$end; break; fi
+    done
+  fi
+done
+
 # A line that is only a cd, its operand optional on both sides: a bare `cd`
 # goes to $HOME, the same move as `cd /tmp`. sed strips the leading whitespace
 # of every line so an indented one is read the same; grep reads the whole
 # command rather than stopping at the first match, since an early-exiting
 # reader turns its producer's SIGPIPE into status 141 under pipefail, read
 # here as "no bare cd".
-STRIPPED=$(echo "$COMMAND" | sed 's/^[[:space:]]*//')
+STRIPPED=$(echo "$JUDGED" | sed 's/^[[:space:]]*//')
 BARE_STATUS=0
 printf '%s\n' "$STRIPPED" | grep -E '^cd([[:space:]]+[^&|;]*)?$' >/dev/null || BARE_STATUS=$?
 if [ "$BARE_STATUS" -eq 0 ]; then

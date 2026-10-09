@@ -1,0 +1,1 @@
+- Commands that write files through a here-document can contain a `cd` line without being refused. Bare `cd` lines outside a completed here-document still refuse the command.
