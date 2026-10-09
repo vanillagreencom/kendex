@@ -213,8 +213,12 @@ Complete Options:
                         Refuse open branch-provable boxes. Set Verifying when
                         a post-merge box remains open, otherwise Done.
                         Each Post-merge box names reading, Where, Why after
-                        merge and Deadline on one line. The deadline must be
-                        after mergedAt and at most three days later.
+                        merge, Trigger and Deadline on one line. A missing
+                        Trigger means merge. Trigger accepts merge, a UTC time
+                        at or after merge, or release OWNER/REPO TAG-GLOB.
+                        Deadlines follow the trigger by at most 72 hours.
+                        Release deadlines use +Nh after the first matching
+                        publication after merge. Other deadlines use UTC.
                         Without this option, explicit completion sets Done.
   --done-when-met <all|N[,N...]>
                          Tick the "## Done when" checklist boxes the caller

@@ -230,7 +230,7 @@ require_issue_reach() {
 	return 0
 }
 
-# One parser owns checklist numbering, ticking, and post-merge deadlines.
+# One parser owns checklist numbering, ticking, triggers, and post-merge deadlines.
 # merge-pr supplies GitHub's mergedAt; watch and reconcile consume the same
 # per-box deadline in the description without a second tracker field.
 # Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT]
@@ -254,11 +254,20 @@ done_when_parse() {
                 | ($line | sub("^\\s*[-*] \\[[ xX]\\]\\s*"; "")) as $body
                 | ($body | startswith("Post-merge:")) as $post
                 | (if $post then
-                    (try ($body | capture("^Post-merge: (?<reading>.+); Where: (?<where>.+); Why after merge: (?<why>.+); Deadline: (?<deadline>[^; ]+)$")) catch null) // {}
+                    (try ($body | capture("^Post-merge: (?<reading>.+); Where: (?<where>.+); Why after merge: (?<why>.+?); (?:Trigger: (?<trigger>[^;]+); )?Deadline: (?<deadline>[^; ]+)$")) catch null) // {}
                    else {} end) as $fields
+                | ($fields.trigger // "merge") as $trigger
+                | (if $trigger == "merge" then {trigger_kind: "merge", trigger_epoch: $merge_epoch}
+                   elif ($trigger | utc_epoch) != null then {trigger_kind: "time", trigger_epoch: ($trigger | utc_epoch)}
+                   else ((try ($trigger | capture("^release (?<release_repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) (?<release_glob>[^ ;]+)$")) catch null) // {})
+                        | if has("release_repo") then . + {trigger_kind: "release", trigger_epoch: null} else {} end
+                   end) as $trigger_fields
                 | ($fields.deadline // "" | utc_epoch) as $deadline_epoch
+                | (if $trigger_fields.trigger_kind == "release" then
+                      (try ($fields.deadline | capture("^\\+(?<hours>[0-9]+)h$").hours | tonumber) catch null) // null
+                   else null end) as $deadline_hours
                 | .boxes += [({number: $n, checked: (($open | not) or $tick), post_merge: $post,
-                               text: $body, deadline_epoch: $deadline_epoch} + $fields)]
+                               text: $body, deadline_epoch: $deadline_epoch, deadline_hours: $deadline_hours} + $fields + {trigger: $trigger} + $trigger_fields)]
                 | if $tick then .out += [$line | sub("\\[ \\]"; "[x]")] | .ticked += 1
                   else .out += [$line] end
               else .out += [$line] end)
@@ -266,8 +275,12 @@ done_when_parse() {
         | {description: ($r.out | join("\n")), ticked: $r.ticked, boxes: $r.boxes,
            missing: (if $met == "all" then [] else [$met[] | select(. > ($r.boxes | length))] | unique end),
            errors: [$r.boxes[] | select(.post_merge)
-                | if .deadline_epoch == null or any([.reading, .where, .why][]; test("\\S") | not) then {box: .number, rule: "post-merge-fields"}
-                  elif $merged != "" and .deadline_epoch != null and ($merge_epoch == null or .deadline_epoch <= $merge_epoch or .deadline_epoch > ($merge_epoch + 259200))
+                | if .trigger_kind == null or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)
+                     or (if .trigger_kind == "release" then .deadline_hours == null else .deadline_epoch == null end)
+                    then {box: .number, rule: "post-merge-fields"}
+                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or .deadline_hours > 72)
+                        else ($merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))
+                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)
                     then {box: .number, rule: "post-merge-window"}
                   else empty end]}'
 }

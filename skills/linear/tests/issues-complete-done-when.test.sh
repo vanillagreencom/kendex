@@ -184,6 +184,26 @@ out="$(run_complete "$crlf" "$log" CC-720 --post-merge-at "$merged" --done-when-
 assert_eq "CRLF post-merge checklist is accepted" "$rc" 0
 assert_jq "CRLF checklist remains Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying" and (.variables.input.description | contains("\r") | not)'
 
+# Completion consumes the shared parser for every trigger form.
+source "$SKILL_DIR/scripts/lib/issue-validation.sh"
+parsed="$(done_when_parse "## Done when"$'\n'"- [ ] $post" '[]' "$merged")"
+assert_jq "a missing Trigger parses as merge" "$parsed" '.boxes[0].trigger == "merge" and .boxes[0].trigger_kind == "merge"'
+parsed="$(done_when_parse "## Done when"$'\n'"- [ ] ${post/merged release/merged release; live evidence}" '[]' "$merged")"
+assert_jq "a semicolon in Why preserves the legacy form" "$parsed" '(.errors | length) == 0 and .boxes[0].trigger == "merge"'
+
+while IFS='|' read -r name trigger deadline; do
+  printf '%s\n' '## Done when' '- [x] branch proof' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
+  log="$TMP_ROOT/trigger-$name.jsonl"
+  rc=0
+  run_complete "$TMP_ROOT/trigger.md" "$log" CC-720 --post-merge-at "$merged" >"$TMP_ROOT/trigger.out" 2>"$TMP_ROOT/trigger.err" || rc=$?
+  assert_eq "post-merge $name trigger completes successfully" "$rc" 0
+  assert_jq "post-merge $name trigger keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
+done <<'ROWS'
+merge|merge|2026-10-04T00:00:00Z
+time|2026-10-05T00:00:00Z|2026-10-08T00:00:00Z
+release|release owner/repo v*|+72h
+ROWS
+
 # Independent refusals must precede both the summary and the state mutation.
 # Columns: name | description's post-merge body | branch box checked | rule.
 while IFS='|' read -r name body branch rule; do
@@ -198,9 +218,18 @@ while IFS='|' read -r name body branch rule; do
 done <<'ROWS'
 branch|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-02T00:00:00Z| |.error == "post-merge-checklist" and .unmet_branch_boxes == [1]
 fields|Post-merge: Read health; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
+reading-empty|Post-merge:  ; Where: service; Why after merge: live release; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
 late|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-04T00:00:01Z|x|.errors[0].rule == "post-merge-window"
 early|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-01T00:00:00Z|x|.errors[0].rule == "post-merge-window"
 date|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-09-31T12:00:00Z|x|.errors[0].rule == "post-merge-fields"
+trigger|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: someday; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
+trigger-empty|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: ; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
+trigger-before-merge|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-09-30T00:00:00Z; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-window"
+time-early|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-10-05T00:00:00Z; Deadline: 2026-10-05T00:00:00Z|x|.errors[0].rule == "post-merge-window"
+time-late|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-10-05T00:00:00Z; Deadline: 2026-10-08T00:00:01Z|x|.errors[0].rule == "post-merge-window"
+release-late|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +73h|x|.errors[0].rule == "post-merge-window"
+release-early|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +0h|x|.errors[0].rule == "post-merge-window"
+release-deadline|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
 ROWS
 # An invalid merge timestamp refuses before any API request.
 log="$TMP_ROOT/merge-timestamp.jsonl"

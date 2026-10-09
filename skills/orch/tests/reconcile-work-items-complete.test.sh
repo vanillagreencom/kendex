@@ -147,6 +147,11 @@ for id in T-7 T-8; do
     "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/$id.json"
 done
 
+# Release publication is read by the watch. Reconciliation cannot date an
+# unfired release trigger and must not report its relative deadline overdue.
+jq --arg d '## Done when
+- [ ] Post-merge: Read health; Where: service; Why after merge: release; Trigger: release owner/repo v*; Deadline: +24h' '.identifier = "T-9" | .id = "uuid-T-9" | .description = $d' "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-9.json"
+
 OUT=""
 RC=0
 OUT="$(cd "$R" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
@@ -158,15 +163,17 @@ assert_contains "$OUT" "verifying-overdue issue=T-3 box=2 deadline=2026-10-02T00
 assert_contains "$OUT" "verifying-empty issue=T-4" "Verifying with no open box is reported"
 assert_not_contains "$OUT" "issue=T-5" "future Verifying has no stale development finding"
 assert_not_contains "$OUT" "issue=T-6" "completed verification has no finding"
+assert_not_contains "$OUT" "issue=T-9" "an undated release deadline is not overdue"
 assert_contains "$OUT" "verifying-invalid issue=T-7" "missing post-merge metadata is reported"
 assert_contains "$OUT" "verifying-invalid issue=T-8" "open branch work in Verifying is reported"
 # Controls mutate only disposable scripts outside the item worktree.
 source "$TEST_DIR/lib/growth-state.sh"
-for control in overdue empty stale fields branch; do
+for control in overdue empty stale fields branch release; do
   MUTANT_DIR="$TMP_ROOT/reconcile-$control"
   MUTANT_RW="$(mutant_scripts "reconcile-$control/orch" reconcile-work-items)/reconcile-work-items" || exit 1
   ln -s "$LINEAR_SKILL" "$MUTANT_DIR/linear"
   case "$control" in
+    release) mutate_file "$MUTANT_RW" 'and .deadline_epoch != null' 'and true'; expected='verifying-overdue issue=T-9' ;;
     overdue) mutate_file "$MUTANT_RW" 'and .deadline_epoch <= $now' 'and false'; expected='verifying-overdue issue=T-3' ;;
     empty) mutate_file "$MUTANT_RW" 'if [ "$open_count" -eq 0 ]; then' 'if false; then'; expected='verifying-empty issue=T-4' ;;
     stale) mutate_file "$MUTANT_RW" 'and .state.name != "Verifying"' 'and true'; expected='started-stale issue=T-5' ;;
@@ -177,7 +184,7 @@ for control in overdue empty stale fields branch; do
   CONTROL_OUT="$(cd "$R" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
     REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" RECONCILE_STALE_HOURS=0 "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
   assert_eq "$CONTROL_RC" 1 "control: $control reaches findings"
-  if [[ "$control" == stale ]]; then
+  if [[ "$control" == stale || "$control" == release ]]; then
     assert_contains "$CONTROL_OUT" "$expected" "control: removing the exclusion makes Verifying stale development"
   else
     assert_not_contains "$CONTROL_OUT" "$expected" "control: $control removes the required finding"

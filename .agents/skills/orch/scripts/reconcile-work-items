@@ -76,7 +76,7 @@ message() {
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
     verifying-invalid) printf 'The Verifying checklist has invalid metadata or an open branch-provable box. Correct the item with evidence.\n' ;;
     verifying-empty) printf 'The Verifying item has no open post-merge box. Complete the item.\n' ;;
-    verifying-overdue) printf 'The post-merge box has passed its deadline. Read its evidence and complete it, or record failure and return the item to In Progress.\n' ;;
+    verifying-overdue) printf 'The post-merge box has passed its deadline. Read its evidence and complete it, or keep Verifying and file a blocking peer fix item.\n' ;;
     findings) printf 'The tracker state differs from the work.\n' ;;
     clean) printf 'Every issue state matches its work.\n' ;;
   esac
@@ -245,7 +245,7 @@ while IFS= read -r row; do
     continue
   fi
   overdue="$(jq -r --argjson now "$now_epoch" '.boxes[]
-    | select(.post_merge and (.checked | not) and .deadline_epoch <= $now)
+    | select(.post_merge and (.checked | not) and .deadline_epoch != null and .deadline_epoch <= $now)
     | "box=\(.number) deadline=\(.deadline)"' <<<"$checklist")" || config_error scan-failed scan=verifying
   while IFS= read -r box; do
     [ -n "$box" ] || continue

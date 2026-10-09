@@ -548,16 +548,26 @@ The long pass's events, checked and reported in this order:
                              settings. Reported on every long pass while it
                              stays due, so it stops once a report is written;
                              read only with --state
-  EVENT verifying-deadline <item> box=<N> deadline=<UTC>
-                             an open post-merge box reached its UTC deadline.
-                             Read its evidence, tick it and complete the same
-                             item, or comment failure and move it In Progress.
-                             A deadline alone does not prove failure. Emitted
-                             once per standing item/overdue-box set; ticking,
-                             leaving Verifying or changing deadlines resets it.
-  verifying <item> box=<N> deadline=<UTC> reading=<JSON> where=<JSON> why=<JSON>
-                             every open post-merge box from the long pass's
-                             tracker read, before active/queued lane filtering.
+  EVENT verifying-deadline <item> box=<N> trigger=<JSON> status=<due|overdue> deadline=<UTC>
+                             the item's due or overdue box set changed. Read
+                             each due box in that pass and record evidence.
+                             Pass: tick and complete the same item. Fail or
+                             unreadable by deadline: keep Verifying and file
+                             one blocking peer fix through audit-issues.
+                             Repeat the same check after that fix merges.
+                             A merged item never returns to In Progress.
+                             No deadline moves. An owner-only box goes once
+                             to the master, naming item, box, check, Where and
+                             deadline. The master sends one list a day and
+                             repeats open lines until a reading is recorded.
+  verifying <item> box=<N> trigger=<JSON> status=<due|overdue|blocked|waiting> deadline=<UTC|+Nh> reading=<JSON> where=<JSON> why=<JSON>
+                             every open post-merge box on every long pass,
+                             before active/queued lane filtering. Due means
+                             its trigger fired with no open blocker; overdue
+                             means due past deadline; blocked means an open
+                             blocker; waiting means the trigger has not fired.
+                             A missing Trigger means merge. Release triggers
+                             use the first matching publication after merge.
                              Printed with the event block or heartbeat. An item
                              with none prints verifying <item> boxes=0.
   EVENT heartbeat            --max-loops long passes with no event, after
@@ -1169,6 +1179,8 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     missing-linear) text='The tracker path requires the linear skill checklist library beside orch.' ;;
     verifying-invalid) text='The Verifying item has invalid post-merge metadata or an open branch-provable box. Correct its checklist before verification.' ;;
+    verifying-merge-unread) text='The merged pull request timestamp is unavailable. The watch cannot judge the release trigger.' ;;
+    verifying-release-unread) text='The release publication read failed or is incomplete. The watch cannot judge the release trigger.' ;;
     owed-roster-invalid) text='The account listing read for the owed items could not be put to them, so the heartbeat names none.' ;;
     owed-accounts-unread) text='lanes list failed under this host, so the owed items on it read unjudged this heartbeat. Its own words follow.' ;;
     merged-search-truncated) text='The merged pull requests naming the item in their title or body, since --since, reached the search limit, so the item'"'"'s own pull request may be past it and its merge unreported. No merged event is judged from a partial list.' ;;

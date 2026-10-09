@@ -56,20 +56,50 @@ control_replace scripts/commands/issues.sh 1 \
     "            if ! jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<\"\$tick\" >/dev/null; then" \
     "            if ! jq -e '(.errors | length) == 0' <<<\"\$tick\" >/dev/null; then"
 
-control_expect "post-merge fields refuses before any write"
+control_expect 'post-merge reading-empty refuses before any write'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                | if .deadline_epoch == null or any([.reading, .where, .why][]; test("\\S") | not) then {box: .number, rule: "post-merge-fields"}' \
-    '                | if false then {box: .number, rule: "post-merge-fields"}'
+    '                | if .trigger_kind == null or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)' \
+    '                | if false'
 
-control_expect "post-merge late refuses before any write"
+control_expect 'post-merge late refuses before any write'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                  elif $merged != "" and .deadline_epoch != null and ($merge_epoch == null or .deadline_epoch <= $merge_epoch or .deadline_epoch > ($merge_epoch + 259200))' \
-    '                  elif $merged != "" and .deadline_epoch != null and ($merge_epoch == null or .deadline_epoch <= $merge_epoch or false)'
+    '                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)' \
+    '                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or false)) end)'
 
-control_expect "post-merge early refuses before any write"
+control_expect 'post-merge early refuses before any write'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                  elif $merged != "" and .deadline_epoch != null and ($merge_epoch == null or .deadline_epoch <= $merge_epoch or .deadline_epoch > ($merge_epoch + 259200))' \
-    '                  elif $merged != "" and .deadline_epoch != null and ($merge_epoch == null or false or .deadline_epoch > ($merge_epoch + 259200))'
+    '                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)' \
+    '                             or (.deadline_epoch != null and .trigger_epoch != null and (false or .deadline_epoch > (.trigger_epoch + 259200))) end)'
+
+control_expect 'post-merge trigger refuses before any write'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                | if .trigger_kind == null or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)' \
+    '                | if false or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)'
+
+control_expect 'post-merge trigger-empty refuses before any write'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                | if .trigger_kind == null or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)' \
+    '                | if .trigger_kind == null or false or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)'
+
+control_expect 'post-merge trigger-before-merge refuses before any write'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                        else ($merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))' \
+    '                        else ($merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and false)))'
+
+control_expect 'post-merge release-late refuses before any write'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or .deadline_hours > 72)' \
+    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or false)'
+
+control_expect 'post-merge release-early refuses before any write'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or .deadline_hours > 72)' \
+    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (false or .deadline_hours > 72)'
+
+control_expect 'a missing Trigger parses as merge'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                | ($fields.trigger // "merge") as $trigger' \
+    '                | ($fields.trigger // "2026-10-01T00:00:00Z") as $trigger'
 
 control_expect "post-merge date refuses before any write"
 control_replace scripts/lib/issue-validation.sh 1 \

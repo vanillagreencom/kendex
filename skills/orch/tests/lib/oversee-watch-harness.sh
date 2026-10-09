@@ -277,6 +277,19 @@ case "${1:-} ${2:-}" in
       | jq -r "${filter:-.}"
     [[ ! -f "$STUB_DIR/next-alert-token" ]] || mv -- "$STUB_DIR/next-alert-token" "$STUB_DIR/alert-token"
     exit ;;
+  "release list")
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    [[ ! -f "$STUB_DIR/release-fail" ]] || { echo "HTTP 502" >&2; exit 1; }
+    repo=""; limit=30
+    while [[ $# -gt 0 ]]; do
+      case "$1" in --repo) repo="$2"; shift ;; --limit) limit="$2"; shift ;; esac
+      shift
+    done
+    slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+    src="$STUB_DIR/releases.$slug.json"
+    [[ -f "$src" ]] || src="$STUB_DIR/releases.json"
+    if [[ -f "$src" ]]; then jq -c --argjson limit "$limit" 'if type == "array" then .[:$limit] else . end' "$src"; else echo '[]'; fi
+    exit ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }

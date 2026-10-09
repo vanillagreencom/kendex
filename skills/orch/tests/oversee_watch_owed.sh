@@ -286,12 +286,14 @@ verifying_world() {
 }
 verification_lines() { awk '/^verifying /' <<<"$OUT"; }
 verification_events() { awk '/^EVENT verifying-deadline /' <<<"$OUT"; }
-want_lines='verifying KEN-1 box=2 deadline=2026-10-02T00:00:00Z reading="Read deployed health" where="live service" why="needs deployment"
-verifying KEN-1 box=3 deadline=2026-10-03T00:00:00Z reading="Read consumer refresh" where="consumer PR" why="needs rollout"
-verifying KEN-4 box=2 deadline=2026-10-02T00:00:00Z reading="Read deployed health" where="live service" why="needs deployment"
-verifying KEN-4 box=3 deadline=2026-10-03T00:00:00Z reading="Read consumer refresh" where="consumer PR" why="needs rollout"'
-want_events='EVENT verifying-deadline KEN-1 box=2 deadline=2026-10-02T00:00:00Z
-EVENT verifying-deadline KEN-4 box=2 deadline=2026-10-02T00:00:00Z'
+want_lines='verifying KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z reading="Read deployed health" where="live service" why="needs deployment"
+verifying KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z reading="Read consumer refresh" where="consumer PR" why="needs rollout"
+verifying KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z reading="Read deployed health" where="live service" why="needs deployment"
+verifying KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z reading="Read consumer refresh" where="consumer PR" why="needs rollout"'
+want_events='EVENT verifying-deadline KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
+EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z
+EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
+EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z'
 verifying_world verifying_deadline
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(verification_events)" "rc=0 $want_events" "the deadline raises attention for active and queued verification" "$ERR"
@@ -305,10 +307,12 @@ assert_eq "$(verification_lines)" "$want_lines" "the heartbeat carries the same 
 assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying --max --format=safe" "verification shares the owed inventory" "$ERR"
 assert_eq "$(wc -l <"$STUB_DIR/tracker.args.all" | tr -d ' ')" 2 "two passes use two inventory reads" "$ERR"
 verifying_world verifying_future
-jq -nr '"2026-10-01T23:59:59Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+jq 'map(if .state == "Verifying" then .description |= gsub("; Deadline:"; "; Trigger: 2026-10-01T12:00:00Z; Deadline:") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/future.json"
+mv -- "$STUB_DIR/future.json" "$STUB_DIR/tracker.out"
+jq -nr '"2026-10-01T11:59:59Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
 watch_pass -- --state "$STUB_DIR/state.json"
-assert_eq "rc=$RC $(verification_events)" "rc=0 " "a future deadline raises no event" "$ERR"
-assert_eq "$(verification_lines)" "$want_lines" "future checks stay visible" "$ERR"
+assert_eq "rc=$RC $(verification_events)" "rc=0 " "an unfired time trigger raises no event" "$ERR"
+assert_eq "$(verification_lines | grep -c 'status=waiting' || true)" 4 "unfired checks stay visible as waiting" "$ERR"
 # A malformed box fails the read instead of losing verification silently.
 verifying_world verifying_invalid
 jq 'map(if .id == "KEN-1" then .description = "## Done when\n- [ ] Post-merge: Read health" else . end)' \
@@ -358,7 +362,7 @@ for control in membership event filter queue; do
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   case "$control" in
     membership) mutate_file "$MUTANT_WATCH" 'In Progress,In Review,Verifying' 'In Progress,In Review' ;;
-    event) mutate_file "$MUTANT_WATCH" 'and .deadline_epoch <= $now' 'and false' ;;
+    event) mutate_file "$MUTANT_WATCH" 'select(.status == "due" or .status == "overdue")' 'select(false)' ;;
     filter) mutate_file "$MUTANT_WATCH" 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"' 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"; VERIFYING_LINES=""' ;;
     queue)
       old='    verifying_read "$items"'
@@ -385,6 +389,191 @@ for control in membership event filter queue; do
   fi
   assert_eq "rc=$RC" "rc=0" "control: $control reaches the watch result" "$ERR"
 done
+
+# The overseer consumes these machine fields. Each row changes one rule and
+# observes the same script result, including a must-fail production mutation.
+verifying_one() {
+  world "$1"
+  local trigger="$2" blockers="${3:-[]}"
+  jq --arg trigger "$trigger" --argjson blockers "$blockers" '
+    map(if .id == "KEN-1" then .state = "Verifying" | .blocked_by_open = $blockers
+      | .description = ("## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: " + $trigger + "; Deadline: 2026-10-03T00:00:00Z") else . end)' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/one.json"
+  mv -- "$STUB_DIR/one.json" "$STUB_DIR/tracker.out"
+  jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+}
+box_status() { awk '$1 == "verifying" && $2 == "KEN-1" {for(i=1;i<=NF;i++) if($i ~ /^status=/) print $i}' <<<"$OUT"; }
+while IFS='|' read -r name trigger blockers stamp want old new; do
+  verifying_one "trigger_$name" "$trigger" "$blockers"
+  [[ "$stamp" == - ]] || jq -nr --arg stamp "$stamp" '$stamp | fromdateiso8601' >"$STUB_DIR/now.epoch"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(box_status)" "rc=0 status=$want" "$name status" "$ERR"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(box_status) events=$(verification_events)" "rc=0 status=$want events=" "$name persists on every pass" "$ERR"
+  MUTANT_DIR="$TMP_ROOT/trigger-mutant-$name"
+  MUTANT_WATCH="$(mutant_scripts "trigger-mutant-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 0 "control: $name reaches the status result" "$ERR"
+  if [[ "$(box_status)" != "status=$want" ]]; then pass "control: $name violates its status contract"; else fail "control: $name violates its status contract" "$OUT"; fi
+done <<'ROWS'
+due|merge|[]|-|due|else "due" end|else "waiting" end
+waiting|2026-10-02T12:00:00Z|[]|-|waiting|.trigger_epoch > $now|false
+overdue|merge|[]|2026-10-03T00:00:01Z|overdue|.deadline_epoch <= $now|false
+blocked|merge|["KEN-99"]|-|blocked|if $blocked then|if false then
+ROWS
+verifying_one blocker_closed merge '["KEN-99"]'
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$(verification_events)" "" "a blocker holds due attention" "$ERR"
+jq 'map(.blocked_by_open = [])' "$STUB_DIR/tracker.out" >"$STUB_DIR/unblocked.json"
+mv -- "$STUB_DIR/unblocked.json" "$STUB_DIR/tracker.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$(box_status)" 'status=due' "closing a blocker repeats the original check" "$ERR"
+assert_contains "$(verification_events)" 'status=due' "closing a blocker raises due attention" "$ERR"
+jq 'map(if .id == "KEN-1" then .description |= sub("\\[ \\]"; "[x]") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/ticked.json"
+mv -- "$STUB_DIR/ticked.json" "$STUB_DIR/tracker.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$(box_status)" '' "a tick removes the due box" "$ERR"
+assert_contains "$(verification_lines)" 'verifying KEN-1 boxes=0' "all ticked boxes request completion" "$ERR"
+
+release_world() {
+  verifying_one "$1" 'release owner/releases v*'
+  jq 'map(if .id == "KEN-1" then .description |= sub("Deadline: [^;]+$"; "Deadline: +24h") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/release-items.json"
+  mv -- "$STUB_DIR/release-items.json" "$STUB_DIR/tracker.out"
+  printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-01T00:00:00Z"}]' >"$STUB_DIR/merged.json"
+  printf '%s\n' '[{"tagName":"v3","publishedAt":"2026-10-02T00:00:00Z","isDraft":false},{"tagName":"other","publishedAt":"2026-10-01T00:00:01Z","isDraft":false},{"tagName":"vdraft","publishedAt":"2026-10-01T00:00:02Z","isDraft":true},{"tagName":"v2","publishedAt":"2026-10-01T12:00:00Z","isDraft":false},{"tagName":"v1","publishedAt":"2026-09-30T00:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json"
+}
+release_world release_blocked
+jq 'map(if .id == "KEN-1" then .blocked_by_open = ["KEN-99"] else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/release-blocked.json"
+mv -- "$STUB_DIR/release-blocked.json" "$STUB_DIR/tracker.out"
+touch "$STUB_DIR/release-fail"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=blocked events=' "a blocker holds release verification without reading unavailable evidence" "$ERR"
+MUTANT_DIR="$TMP_ROOT/blocked-release-mutant"
+MUTANT_WATCH="$(mutant_scripts "blocked-release-mutant/orch" oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_file "$MUTANT_WATCH" '[[ "$blocked" == false ]] &&' 'true &&'
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status)" 'rc=2 ' "control: ignoring the blocker loses its required status" "$ERR"
+release_world release_first
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "the first matching publication after merge fires" "$ERR"
+assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "the deadline uses the first matching publication" "$ERR"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=due events=' "release evidence stays due on every pass" "$ERR"
+release_world release_waiting
+printf '%s\n' '[]' >"$STUB_DIR/releases.owner_releases.json"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=waiting events=' "no matching publication waits without an event" "$ERR"
+while IFS='|' read -r name setup key; do
+  release_world "release_unread_$name"
+  case "$setup" in
+    fail) touch "$STUB_DIR/release-fail" ;;
+    invalid) echo '{}' >"$STUB_DIR/releases.owner_releases.json" ;;
+    timestamp) echo '[{"tagName":"v1","publishedAt":"invalid","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    truncated) jq -n '[range(1000) | {tagName:"v1",publishedAt:"2026-10-01T12:00:00Z",isDraft:false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    merge) echo '[]' >"$STUB_DIR/merged.json" ;;
+  esac
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC status=$(box_status) key=$(grep -c "^oversee-watch: $key " "$ERR" || true)" 'rc=2 status= key=1' "unread $name refuses instead of waiting" "$ERR"
+done <<'ROWS'
+read|fail|verifying-release-unread
+shape|invalid|verifying-release-unread
+time|timestamp|verifying-release-unread
+page|truncated|verifying-release-unread
+merge|merge|verifying-merge-unread
+ROWS
+# The controls keep the release read and violate its selection decisions.
+while IFS='|' read -r name old new; do
+  release_world "release_control_$name"
+  MUTANT_DIR="$TMP_ROOT/release-mutant-$name"
+  MUTANT_WATCH="$(mutant_scripts "release-mutant-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 0 "control: $name reaches the publication result" "$ERR"
+  if [[ "$(verification_lines)" != *'deadline=2026-10-02T12:00:00Z'* ]]; then pass "control: $name violates publication selection"; else fail "control: $name violates publication selection" "$OUT"; fi
+done <<'ROWS'
+floor|select(.at > $merged)|select(true)
+first|sort_by(.at)[]|sort_by(.at) | reverse | .[]
+glob|[[ "$tag" == $glob ]]|[[ "$tag" == * ]]
+draft|select(.isDraft == false)|select(true)
+ROWS
+
+# Each release-read guard has a control at its own failing input.
+while IFS='@' read -r name fixture old new; do
+  release_world "release_guard_$name"
+  case "$fixture" in
+    shape) echo '{}' >"$STUB_DIR/releases.owner_releases.json" ;;
+    page) jq -n '[range(1000) | {tagName:"v1",publishedAt:"2026-10-01T12:00:00Z",isDraft:false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    time) echo '[{"tagName":"v1","publishedAt":"2026-09-31T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    tag) echo '[{"tagName":42,"publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    draft) echo '[{"tagName":"v1","publishedAt":"2026-10-01T12:00:00Z"}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    merge) echo '[]' >"$STUB_DIR/merged.json" ;;
+  esac
+  MUTANT_DIR="$TMP_ROOT/release-guard-$name"
+  MUTANT_WATCH="$(mutant_scripts "release-guard-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 2 "$name guard refuses incomplete evidence" "$ERR"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 0 "control: $name bypasses its evidence guard" "$ERR"
+done <<'ROWS'
+shape@shape@if type != "array" or length >= $limit then@if false or length >= $limit then
+page@page@or length >= $limit@or false
+time@time@todateiso8601 == $stamp@true
+draft@draft@(.isDraft | type) != "boolean"@false
+tag@tag@(.tagName | type) != "string"@false
+merge@merge@[[ "$merged" != null ]]@[[ true ]]
+ROWS
+release_world release_read_control
+touch "$STUB_DIR/release-fail"
+MUTANT_DIR="$TMP_ROOT/release-read-mutant"
+MUTANT_WATCH="$(mutant_scripts "release-read-mutant/orch" oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+old='releases="$(gh release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
+          || die verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"'
+new='releases="$(gh release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" || :'
+mutate_file "$MUTANT_WATCH" "$old" "$new"
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: ignoring the release read failure fabricates waiting" "$ERR"
+
+# A due set's status change must raise attention even when its membership
+# stays the same. Standing due lines still print without a second event.
+verifying_one due_to_overdue merge
+watch_pass -- --state "$STUB_DIR/state.json"
+jq -nr '"2026-10-03T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_contains "$(verification_events)" 'status=overdue' "due becoming overdue raises attention" "$ERR"
+# Restore the earlier clock to establish the due key again.
+jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+watch_pass -- --state "$STUB_DIR/state.json"
+MUTANT_DIR="$TMP_ROOT/repeat-mutant"
+MUTANT_WATCH="$(mutant_scripts "repeat-mutant/orch" oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_file "$MUTANT_WATCH" '[[ "$prior" != "${due//$'"'"'\n'"'"'/|}" ]] || continue' '[[ "$prior" != "${due//$'"'"'\n'"'"'/|}" ]] || { VERIFYING_LINES=""; continue; }'
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 0 "control: repeat reaches the watch result" "$ERR"
+assert_eq "$(box_status)" '' "control: dropping a standing due line violates repeated listing"
+# Ticking stops listing even if the item's tracker transition is still open.
+jq 'map(if .id == "KEN-1" then .description |= sub("\\[ \\]"; "[x]") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/checked.json"
+mv -- "$STUB_DIR/checked.json" "$STUB_DIR/tracker.out"
+MUTANT_DIR="$TMP_ROOT/tick-mutant"
+MUTANT_WATCH="$(mutant_scripts "tick-mutant/orch" oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_file "$MUTANT_WATCH" 'select(.post_merge and (.checked | not))' 'select(.post_merge)'
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 0 "control: tick reaches the watch result" "$ERR"
+assert_eq "$(box_status)" 'status=due' "control: ignoring a tick violates removal of the due box" "$ERR"
 
 echo "=== must-fail controls ==="
 # Rows, on `@` since the replaced text carries `|`: the world it runs in @

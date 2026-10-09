@@ -1,0 +1,1 @@
+- The watch lists due verification checks each pass. Failed checks keep merged items in Verifying with a blocking fix item.

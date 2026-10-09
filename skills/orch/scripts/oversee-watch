@@ -1419,33 +1419,46 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # GitHub's search ceiling for one gh pr list; the key search refuses a page
 # that reaches it, since the item's own pull request may be past it.
 MERGED_SEARCH_PAGE=1000
+# One merged-PR reader owns lookup and lane_merged evaluation. Verification
+# uses its mergedAt only for the release trigger's publication floor.
+MERGED_ITEM_ROWS=""
+merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC]
+  local item="$1" repo="$2" pr="$3" since="${4:-null}" floor="${5:-}"
+  local branch list named search rows errf="$WORK_DIR/merged.err"
+  local fields=number,headRefName,headRepositoryOwner,mergedAt,title,body
+  branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+  list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json "$fields" 2>"$errf")" \
+    || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
+  # A cloud session's branch names no item, so its pull request is found
+  # by the key in its title or body; lane_own judges what this returns.
+  # GitHub text search cannot ask for the key's place in a title scope or
+  # after Closes, so mentions come back too, bounded by --since.
+  search="\"$item\" in:title,body${floor:+ merged:>=$floor}"
+  named="$(gh pr list --repo "$repo" --search "$search" --state merged --limit "$MERGED_SEARCH_PAGE" --json "$fields" 2>"$errf")" \
+    || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
+  rows="$(jq length <<<"$named" 2>"$errf")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
+  [[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
+  if ! MERGED_ITEM_ROWS="$(jq -cs --arg item "$item" --arg owner "${repo%%/*}" --argjson pr "$pr" --argjson since "$since" \
+    "$LANE_MERGED_JQ"' add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
+    | lane_merged($item; $owner; $pr; $since)' \
+    <<<"$list$named" 2>"$errf")"; then
+    die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+  fi
+}
+
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo list named pr hit hits prior keys fresh key line state="${PW_SEEN[0]}"
-  local fields=number,headRefName,headRepositoryOwner,mergedAt,title,body search rows
+  local errf="$WORK_DIR/merged.err" item branch repo pr hit hits prior keys fresh key line state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     PARKED_KEY=""
     item_parked "$item" || true
     hits=""
     for repo in "${REPOS[@]}"; do
-      list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json "$fields" 2>"$errf")" \
-        || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
-      # A cloud session's branch names no item, so its pull request is found
-      # by the key in its title or body; lane_own judges what this returns.
-      # GitHub text search cannot ask for the key's place in a title scope or
-      # after Closes, so mentions come back too, bounded by --since.
-      search="\"$item\" in:title,body${SINCE:+ merged:>=$SINCE}"
-      named="$(gh pr list --repo "$repo" --search "$search" --state merged --limit "$MERGED_SEARCH_PAGE" --json "$fields" 2>"$errf")" \
-        || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
-      rows="$(jq length <<<"$named" 2>"$errf")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
-      [[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
       pr=null
       [[ "${PARKED_KEY%#*}" != "$repo" ]] || pr="${PARKED_KEY##*#}"
-      if ! hit="$(jq -rs --arg item "$item" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson pr "$pr" --argjson since "$SINCE_EPOCH" \
-        "$LANE_MERGED_JQ"' add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
-        | lane_merged($item; $owner; $pr; $since)[] | "\(.number) \($item | ascii_downcase) \($repo)"' \
-        <<<"$list$named" 2>"$errf")"; then
+      merged_item_read "$item" "$repo" "$pr" "$SINCE_EPOCH" "$SINCE"
+      if ! hit="$(jq -r --arg item "$item" --arg repo "$repo" '.[] | "\(.number) \($item | ascii_downcase) \($repo)"' <<<"$MERGED_ITEM_ROWS" 2>"$errf")"; then
         die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
       fi
       [[ -z "$hit" ]] || hits+="$hit"$'\n'
@@ -4151,7 +4164,7 @@ owed_read() {
       | map(
           if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$"))) then .
           else error("tracker-field field=id value=\(.id | tojson)") end
-          | {id, description: (.description // ""), priority: (if .priority == null or .priority == 0 then "-" else .priority end),
+          | {id, description: (.description // ""), blocked_by_open: (.blocked_by_open // []), priority: (if .priority == null or .priority == 0 then "-" else .priority end),
              state: ({"In Progress": "in-progress", "In Review": "in-review", "Verifying": "verifying"}[.state? | strings]
                // error("tracker-field field=state value=\(.state | tojson)"))})' <<<"$out" 2>"$errf")" \
       || die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM"
@@ -4248,11 +4261,12 @@ owed_accounts() { # HOST
 # lane filtering. Deadlines remain per box in the issue description.
 verifying_read() { # SAFE_ITEMS
   local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
-  local rows row id desc parsed lines overdue prior state="${PW_SEEN[0]}"
+  local rows row id desc parsed lines due prior boxes blocked merged releases release_rows release tag glob repo box resolved
+  local state="${PW_SEEN[0]}" errf="$WORK_DIR/verifying.err" release_limit="$MERGED_SEARCH_PAGE"
   rows="$(jq -c '.[] | select(.state == "verifying")' <<<"$1")" \
     || die tracker-list-invalid "" "team=$LINEAR_TEAM"
-  # Rebuild deadline rows from the complete read. Leaving Verifying or ticking
-  # a box clears its edge key, so a later overdue box is new attention.
+  # Rebuild due rows from the complete read. Ticks and blockers clear the
+  # edge key, so closing a blocking fix asks for the same reading again.
   state="$(awk -F'\t' '$1 != "verifying-deadline" { print }' <<<"$state")"
   if [[ -z "$rows" ]]; then
     lane_row_commit "$state"
@@ -4268,23 +4282,67 @@ verifying_read() { # SAFE_ITEMS
     parsed="$(done_when_parse "${desc%.}" '[]')" || die verifying-invalid "" "issue=$id"
     jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<"$parsed" >/dev/null \
       || die verifying-invalid "$parsed" "issue=$id"
-    lines="$(jq -r --arg id "$id" '
-      .boxes[] | select(.post_merge and (.checked | not))
-      | "verifying \($id) box=\(.number) deadline=\(.deadline) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)"' <<<"$parsed")" \
+    blocked="$(jq -c '(.blocked_by_open | length) > 0' <<<"$row")" || die verifying-invalid "" "issue=$id"
+    boxes="$(jq -c '[.boxes[] | select(.post_merge and (.checked | not))]' <<<"$parsed")" || die verifying-invalid "" "issue=$id"
+    # GitHub supplies the release publication clock. A failed read refuses the
+    # pass; it cannot establish that the release trigger is still waiting.
+    if [[ "$blocked" == false ]] && jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
+      merged=null
+      for repo in "${REPOS[@]}"; do
+        merged_item_read "$id" "$repo" null
+        merged="$(jq -c --argjson previous "$merged" '([$previous] + map(.at)) | max' <<<"$MERGED_ITEM_ROWS")" || die verifying-invalid "" "issue=$id"
+      done
+      [[ "$merged" != null ]] || die verifying-merge-unread "" "issue=$id"
+      release_rows="$(jq -c '.[] | select(.trigger_kind == "release")' <<<"$boxes")" || die verifying-invalid "" "issue=$id"
+      while IFS= read -r box; do
+        repo="$(jq -r .release_repo <<<"$box")" || die verifying-invalid "" "issue=$id"
+        glob="$(jq -r .release_glob <<<"$box")" || die verifying-invalid "" "issue=$id"
+        releases="$(gh release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
+          || die verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"
+        releases="$(jq -c --argjson merged "$merged" --argjson limit "$MERGED_SEARCH_PAGE" '
+          if type != "array" or length >= $limit then error("release-list-incomplete") else . end
+          | map(if (.isDraft | type) != "boolean" then error("release-fields") else . end
+              | select(.isDraft == false) | .publishedAt as $stamp
+              | if (.tagName | type) != "string" or (try ($stamp | fromdateiso8601 | todateiso8601 == $stamp) catch false) != true
+                then error("release-fields") else . end)
+          | map(. + {at: (.publishedAt | fromdateiso8601)} | select(.at > $merged)) | sort_by(.at)[]' <<<"$releases" 2>"$errf")" \
+          || die verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"
+        resolved=null
+        while IFS= read -r release; do
+          [[ -n "$release" ]] || continue
+          tag="$(jq -r .tagName <<<"$release")" || die verifying-invalid "" "issue=$id"
+          # The tracker supplies a tag glob, not a literal tag.
+          # shellcheck disable=SC2053
+          [[ "$tag" == $glob ]] || continue
+          resolved="$(jq -c '.publishedAt | fromdateiso8601' <<<"$release")" || die verifying-invalid "" "issue=$id"
+          break
+        done <<<"$releases"
+        boxes="$(jq -c --argjson box "$box" --argjson fired "$resolved" '
+          map(if .number == $box.number then .trigger_epoch = $fired
+              | .deadline_epoch = (if $fired == null then null else $fired + (.deadline_hours * 3600) end)
+              | if .deadline_epoch == null then . else .deadline = (.deadline_epoch | todateiso8601) end
+              else . end)' <<<"$boxes")" || die verifying-invalid "" "issue=$id"
+      done <<<"$release_rows"
+    fi
+    boxes="$(jq -c --argjson now "$PASS_NOW" --argjson blocked "$blocked" '
+      map(.status = (if $blocked then "blocked"
+          elif .trigger_kind != "merge" and (.trigger_epoch == null or .trigger_epoch > $now) then "waiting"
+          elif .deadline_epoch <= $now then "overdue" else "due" end))' <<<"$boxes")" || die verifying-invalid "" "issue=$id"
+    lines="$(jq -r --arg id "$id" '.[]
+      | "verifying \($id) box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)"' <<<"$boxes")" \
       || die verifying-invalid "" "issue=$id"
     [[ -n "$lines" ]] || lines="verifying $id boxes=0"
     VERIFYING_LINES+="$lines"$'\n'
-    overdue="$(jq -r --argjson now "$PASS_NOW" '
-      .boxes[] | select(.post_merge and (.checked | not) and .deadline_epoch <= $now)
-      | "box=\(.number) deadline=\(.deadline)"' <<<"$parsed")" || die verifying-invalid "" "issue=$id"
-    [[ -n "$overdue" ]] || continue
+    due="$(jq -r '.[] | select(.status == "due" or .status == "overdue")
+      | "box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline)"' <<<"$boxes")" || die verifying-invalid "" "issue=$id"
+    [[ -n "$due" ]] || continue
     prior="$(lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id")" \
       || die state-read-failed "" "row=verifying-deadline" "issue=$id"
-    state="$(lane_row_set verifying-deadline "$state" "$id" "${overdue//$'\n'/|}")"
-    [[ "$prior" != "${overdue//$'\n'/|}" ]] || continue
+    state="$(lane_row_set verifying-deadline "$state" "$id" "${due//$'\n'/|}")"
+    [[ "$prior" != "${due//$'\n'/|}" ]] || continue
     while IFS= read -r row; do
       echo "EVENT verifying-deadline $id $row"
-    done <<<"$overdue"
+    done <<<"$due"
     PASS_EVENT=1
   done <<<"$rows"
   VERIFYING_LINES="${VERIFYING_LINES%$'\n'}"

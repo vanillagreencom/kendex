@@ -1,0 +1,1 @@
+- Post-merge checks name their evidence trigger and require readable evidence inside the deadline window.
