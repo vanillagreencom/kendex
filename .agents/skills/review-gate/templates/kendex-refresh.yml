@@ -1,7 +1,7 @@
 # Adopted into .github/workflows/ by refresh/adopt-refresh.sh from a kendex release checkout, which checks
-# selected environment policy and its fixed credential pairs first. Configure
-# only the environment below. Forward both fixed pairs by the same names.
-# Adoption refuses these names in repository or organization Actions secrets:
+# selected environment policy and its fixed credential pairs first. Configure only the refresh job's
+# with and secrets mappings; adoption keeps them. review-gate references/adoption.md names the accepted mappings.
+# Adoption refuses the fixed names in repository or organization Actions secrets:
 # outside values could fill a name absent from the protected environment.
 # The shared job chooses a complete KENDEX pair, then falls back to FLEET.
 # The FLEET pair also supplies upstream issue reporting. The shared job runs

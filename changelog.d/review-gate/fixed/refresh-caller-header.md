@@ -1,0 +1,1 @@
+- Refresh caller instructions describe the mappings adoption preserves and cite the adoption contract for accepted mappings.
