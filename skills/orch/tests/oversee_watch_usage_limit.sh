@@ -388,7 +388,7 @@ WALL_ROW_UNRECORDED="${WALL_ROW_UNRECORDED%%wall=*}wall=none"
 WALL_ROW_LATER="a wall reported with no record is recorded on the next pass, which reports nothing|cont|weekly_wall|claim_live|-|UTC|rc=0 first=$HEARTBEAT wall=/home/me/.eclaude@1791136800"
 WATCH_BIN="$UNRECORDED_WATCH" usage_table "$WALL_ROW_UNRECORDED"
 usage_table "$WALL_ROW_LATER"
-wall_mutant wall-quiet-skipped oversee-watch '|| quiet=1' '|| continue'
+wall_mutant wall-quiet-skipped oversee-watch '      quiet=1' '      continue'
 WATCH_BIN="$UNRECORDED_WATCH" usage_table "$WALL_ROW_UNRECORDED"
 WATCH_BIN="$WALL_WATCH" usage_table "control: ${WALL_ROW_LATER%%wall=*}wall=none"
 
