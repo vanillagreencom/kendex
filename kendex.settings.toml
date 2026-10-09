@@ -126,10 +126,11 @@ ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Max concurrent lanes the overseer keeps in flight. open-terminal refuses a
-# fleet launch past it. A kendex lane is a 4 vCPU / 8 GiB Daytona sandbox, so 20
-# take 80 vCPU / 160 GiB of the shared 500 vCPU / 1000 GiB pool; a launch
+# fleet launch past it. A kendex lane is a 4 vCPU / 8 GiB Daytona sandbox, so 10
+# take 40 vCPU / 80 GiB of the shared 500 vCPU / 1000 GiB pool; a launch
 # Daytona refuses waits for a lane to close or park (fleet D070).
-ORCH_OVERSEER_LANES = "20"
+# Owner rule 1791524498 (2026-10-09) caps lanes while Codex accounts use credits.
+ORCH_OVERSEER_LANES = "10"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
 # OWNER/REPO; open-terminal refuses a fleet launch from any other.
