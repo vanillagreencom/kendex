@@ -1150,7 +1150,7 @@ rm -f -- "${CI_SCRIPT:?}.mutant"
 # earlier crate. Both preview and execution use this same entry point.
 CI_EXTENSION_ROWS=(
   'widget-test fix|widget|CI|normal|false|ci||tests/widget.sh|none|yes'
-  'guarded crate fix|guarded|CI|normal|false|range|selection-local|crates/orders/src/lib.rs|orders:risk|yes'
+  'guarded crate fix|guarded|CI|normal|false|ci||crates/orders/src/lib.rs|none|yes'
   'widget fix before context setting|widget||normal|false|range|setting-empty|crates/positions/src/lib.rs,tests/widget.sh|positions:loom|yes'
   'failed selector|widget|CI|failed|false|range|selection-unread|tests/widget.sh|none|yes'
   'unreported selector|widget|CI|unreported|false|range|selection-unread|tests/widget.sh|none|yes'
@@ -1258,9 +1258,12 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 # shellcheck disable=SC2016 # private production mutations
 {
 ci_extension_control 'if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' 'if true; then' \
-  'guarded crate fix' 'ci||crates/orders/src/lib.rs,crates/positions/src/lib.rs|none|no'
+  'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
 ci_extension_control $'          class_base="$base_sha"\n          classify "$class_base"' $'          class_base="$base_sha"\n          classify ""' \
-  'widget-test fix' 'range|selection-local|crates/positions/src/lib.rs,tests/widget.sh|positions:loom|yes'
+  'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'
+ci_extension_control 'selection=all|selection=subset) validate_mode=ci;' \
+  'selection=all) validate_mode=ci;' \
+  'guarded crate fix' 'range|selection-unread|crates/orders/src/lib.rs|orders:risk|yes'
 ci_extension_control '&& preview_selection; then' '&& { preview_selection || selection=selection=all; }; then' \
   'failed selector' 'ci||tests/widget.sh|none|yes'
 ci_extension_control 'if [[ -z "$class_fallback" ]] && preview_selection; then' 'if preview_selection; then' \
@@ -1926,7 +1929,7 @@ run_script "$MUTANT" --last-pass --worktree "$proj_last_ci"
 assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo full || echo other)" "other" \
   "control: a read that takes any mode names the ci run"
 
-# --- The command's own preview resolves an all selection before launch -------
+# --- The command's own preview resolves CI selection before launch -----------
 # label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback
 SELECTION_ROWS=(
   "a full all selection uses required PR CI|full|yes|all|rules|ci||unreported|no|absent|0"
@@ -1938,7 +1941,18 @@ SELECTION_ROWS=(
   "a full standard fallback all selection uses required PR CI|full|yes|all-fallback|rules|ci||unreported|no|absent|0"
   "a ci standard fallback all selection uses required PR CI|ci|yes|all-fallback|rules|ci||unreported|no|absent|0"
   "a full subset retains local execution|full|yes|subset|rules|full||unreported|no|full|0"
-  "a range subset retains local execution|range|yes|subset|rules|range||unreported|yes|range|0"
+  "a range subset uses required PR CI|range|yes|subset|rules|ci||unreported|no|absent|0"
+  "a guard-scans subset uses required PR CI|range|yes|guard-scans|rules|ci||unreported|no|absent|0"
+  "a ci subset uses required PR CI|ci|yes|subset|rules|ci||unreported|no|absent|0"
+  "a pre-open range subset retains scoped local execution|range|yes|subset|pr-no-pr|range||unreported|yes|range|0|pr-not-open"
+  "a closed PR range subset retains scoped local execution|range|yes|subset|pr-closed|range||unreported|yes|range|0|pr-not-open"
+  "a merged PR range subset retains scoped local execution|range|yes|subset|pr-merged|range||unreported|yes|range|0|pr-not-open"
+  "a range subset without required CI retains local execution|range|yes|subset|unrequired|range||unreported|yes|range|0|context-unrequired"
+  "a range subset CI does not cover retains local execution|range|yes|subset-render|rules|range||unreported|yes|range|0|class-uncovered"
+  "a range subset with unread rules retains local execution|range|yes|subset|rules-fail|range||unreported|yes|range|0|rules-unread"
+  "a failed range subset PR lookup retains the original failure|range|yes|subset|pr-unread|range||unreported|yes|range|1|base-unresolved"
+  "a failed range preview retains local execution|range|yes|failed|rules|range||unreported|yes|range|0"
+  "an unknown range selection retains local execution|range|yes|unknown|rules|range||unreported|yes|range|0"
   "an unset selector preserves local execution|full|no|all|rules|full||unreported|no|full|0"
   "an unset selector preserves range local execution|range|no|all|rules|range||unreported|yes|range|0"
   "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no|full|0"
@@ -1987,21 +2001,44 @@ if [[ "${DEV_VALIDATE_SCOPED:-false}" == true ]]; then
   printf 'validate: lanes=scoped-suites selection=subset\n'
 else
   [[ "$STUB_SELECTION" != failed ]] || exit 1
+  if [[ "$STUB_SELECTION" == guard-scans ]]; then
+    ./tools/guard --selection --range "$DEV_VALIDATE_BASE" > guard-preview
+    cat guard-preview
+    exit
+  fi
   printf 'selection=%s\n' "$STUB_SELECTION"
 fi
 SH
     chmod +x "$proj/selection"
     [[ "$configured" != yes ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "./selection"\n' >> "$proj/kendex.settings.toml"
+    if [[ "$selection" == guard-scans ]]; then
+      # tools/guard is the real selection producer for kendex range rounds.
+      # Changing one suite leaves its sibling outside the mapped subset.
+      mkdir -p "$proj/tools" "$proj/skills/orch/tests"
+      cp -- "$REPO_ROOT/tools/guard" "$proj/tools/guard"
+      cp -- "$TEST_DIR/dev_validate_run.sh" "$TEST_DIR/job_unit.sh" "$proj/skills/orch/tests/"
+      printf 'guard-preview\nlocal-launch\n' >> "$proj/.gitignore"
+      git -C "$proj" add -A
+      git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m guard-fixture
+      printf '\n# round edit\n' >> "$proj/skills/orch/tests/dev_validate_run.sh"
+    fi
     ci_world "$world"
     answer=change_class=standard
     measured=true
-    if [[ "$selection" == all-render ]]; then selection=all; answer=change_class=render; fi
+    case "$selection" in
+      all-render) selection=all; answer=change_class=render ;;
+      subset-render) selection=subset; answer=change_class=render ;;
+    esac
     if [[ "$selection" == all-fallback ]]; then selection=all; measured=false; fi
     args=()
     [[ "$requested" == full ]] || args=(--validate-mode "$requested" --base HEAD)
     RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED="$measured" \
       STUB_SELECTION="$selection" STUB_LOCAL_EXIT="$expected_rc" run_script "$1" --worktree "$proj" --poll 1 ${args[@]+"${args[@]}"}
     got_rc="$RC"
+    if [[ "$selection" == guard-scans ]]; then
+      assert_eq "$(sed -n '/^selection=/p' "$proj/guard-preview")" selection=subset \
+        "$label: tools/guard produces the subset" "$ERR"
+    fi
     dir="$(run_dir_of "$OUT")"
     got_mode="$(start_line "$dir" validate-mode)"
     got_scoped="$(start_line "$dir" scoped)"
@@ -2047,16 +2084,24 @@ selection_control() { # LABEL ANCHOR REPLACEMENT ROW
 # shellcheck disable=SC2016 # private production mutations
 {
 selection_control 'ignoring an all selection turns CI resolution red' \
-  '"$selection" == selection=all' '"$selection" == selection=subset' \
+  '[[ "$selection" == selection=all ]]' '[[ "$selection" == selection=subset ]]' \
   'a full all selection uses required PR CI'
 selection_control 'treating a subset as all turns local execution red' \
-  '"$selection" == selection=all' '"$selection" == selection=subset' \
+  '[[ "$selection" == selection=all ]]' '[[ "$selection" == selection=subset ]]' \
   'a full subset retains local execution'
+selection_control 'rejecting a range subset turns required CI routing red' \
+  '[[ "$requested_mode" == range && "$selection" == selection=subset ]]' \
+  '[[ "$requested_mode" == range && "$selection" == selection=all ]]' \
+  'a range subset uses required PR CI'
+selection_control 'rejecting the real guard-scans subset turns required CI routing red' \
+  '[[ "$requested_mode" == range && "$selection" == selection=subset ]]' \
+  '[[ "$requested_mode" == range && "$selection" == selection=all ]]' \
+  'a guard-scans subset uses required PR CI'
 selection_control 'inventing a selector when unset turns compatibility red' \
   '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD ""' '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "./selection"' \
   'an unset selector preserves local execution'
 selection_control 'omitting the pre-open scoped route turns its receipt red' \
-  '"$ci_fallback" == pr-not-open' '"$ci_fallback" == never' \
+  '"$ci_fallback" == pr-not-open &&' '"$ci_fallback" == never &&' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
@@ -2075,10 +2120,10 @@ selection_control 'omitting the automatic class fallback turns its record red' \
   $'        ci_fallback=class-uncovered\n' '' \
   'an all selection CI does not cover retains local execution'
 for row in "${SELECTION_ROWS[@]}"; do
-  IFS='|' read -r label requested _ _ _ _ _ _ _ want_launch want_rc _ <<<"$row"
-  if [[ "$want_rc" == 1 ]]; then
+  IFS='|' read -r label requested _ selected _ _ _ _ _ want_launch want_rc _ <<<"$row"
+  if [[ "$want_rc" == 1 && "$selected" == all ]]; then
     selection_control "treating an unread PR as pre-open turns $label red" \
-      '"$ci_fallback" == pr-not-open' '"$ci_fallback" == base-unresolved' "$label"
+      '"$ci_fallback" == pr-not-open &&' '"$ci_fallback" == base-unresolved &&' "$label"
   fi
   [[ "$want_launch" == absent && "$requested" != ci ]] || continue
   selection_control "launching the original command before preview turns $label red" \

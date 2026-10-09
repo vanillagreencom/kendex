@@ -168,8 +168,8 @@
 #          the mode that ran, and names why as the ci-fallback= line of start.
 #          Without a repository selector it hands that command the class,
 #          docs verdict and paths of the whole branch, with no class-base=
-#          line, where a range request hands those since its base. A selector
-#          that requires local work supplies the round's evidence instead.
+#          line, where a range request hands those since its base. A configured
+#          selector supplies the round's evidence before CI can skip its work.
 #          The causes:
 #            setting-empty       DEV_VALIDATE_CI_CONTEXT is empty, the default
 #            pr-not-open         no pull request, or its state is CLOSED or
@@ -184,18 +184,19 @@
 #                                evidence, or an unmeasured narrow class,
 #                                since harness-ci may stand CI's checks down
 #                                for it
-#            selection-local     the repository selector requires local work
 #            selection-unread    the selector or the round evidence failed
 #
 # Full and range starts may also resolve to ci before launching their command.
 # DEV_VALIDATE_SELECTION_CMD, optional, previews the command's own selection
 # with one selection=all or selection=subset line. It receives the same class,
 # docs verdict, paths and base as validation, plus DEV_VALIDATE_MODE, the
-# requested mode. Only all attempts the existing ci route. Unset, failed or
+# requested mode. All attempts the existing ci route. A range subset also
+# attempts it: the selector reports no cost, so a subset can exceed the local
+# time target. Full subsets keep local execution. Unset, failed or
 # unreported selection keeps full and range requests local. For an explicit
 # ci request, an unset selector preserves the existing CI route. A configured
-# selector must report all before CI can skip local work; subset runs the
-# existing range or full command. Its evidence is the current round from
+# selector must report all or subset before CI can skip local work.
+# Its evidence is the current round from
 # --base, including uncommitted edits, rather than the whole pull request.
 # The whole branch still determines whether CI covers the change class.
 # Failed evidence keeps local validation with a conservative class and paths.
@@ -670,7 +671,7 @@ preview_selection() {
 CI_RULES_JQ='.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context'
 CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((.contexts // []) + [(.checks // [])[] | .context]) | .[] else error("protection unreadable") end'
 
-# Both requested CI and automatic all-suite resolution use the same coverage
+# Both requested CI and automatic selection resolution use the same coverage
 # rule: CI may stand checks down for render or docs-only changes. A standard
 # fallback runs CI's conservative lanes, so it does not need a measured size.
 # This is a local coverage check, not a change to the classifier's policy.
@@ -796,8 +797,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
           classify "$class_base"
           if [[ -z "$class_fallback" ]] && preview_selection; then
             case "$selection" in
-              selection=all) validate_mode=ci; class_base="" ;;
-              selection=subset) ci_fallback=selection-local ;;
+              selection=all|selection=subset) validate_mode=ci; class_base="" ;;
             esac
           fi
         fi
@@ -825,12 +825,13 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   scoped=false
   if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then
     if [[ -n "${selection_cmd//[[:space:]]/}" ]]; then
-      if preview_selection && [[ "$selection" == selection=all ]]; then
+      if preview_selection && { [[ "$selection" == selection=all ]] \
+          || [[ "$requested_mode" == range && "$selection" == selection=subset ]]; }; then
         ci_fallback=class-uncovered
         if ci_class_covered && ci_runs_validation; then
           validate_mode=ci
           class_base=""
-        elif [[ "$ci_fallback" == pr-not-open ]]; then
+        elif [[ "$ci_fallback" == pr-not-open && "$selection" == selection=all ]]; then
           # The selector owns scoped execution too; no second suite map
           # or project-specific command lives in this runner.
           scoped=true
