@@ -1,1 +1,0 @@
-- Merge guidance covers a failed mergeability read and GitHub still computing. Existing retry and merge routes stay unchanged.

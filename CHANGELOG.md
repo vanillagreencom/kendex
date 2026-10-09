@@ -6,6 +6,54 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-10-09
+
+### Packages
+
+#### dev
+
+- Dev rounds run each added or changed test file alone and fix failures before the validation run. Investigation runs remain available under the dev skill's validation rules.
+
+#### github
+
+- `pr-merge` distinguishes a failed mergeability read from GitHub still computing. Failed reads keep GitHub's error or exit code while preserving the existing retry route. Merge summaries and classifier help describe both causes.
+
+#### linear
+
+- Post-merge checks accept merge, UTC time, and release triggers with deadlines tied to the trigger.
+
+#### orch
+
+- Set `ORCH_ARCHIVE_ROOT` to choose where state cleanup and SSH lane close save archives. The default archive location stays the same.
+- **Breaking:** Lane preferences can select a host per entry. Claude cloud hosts now require cloud credit and no longer use weekly plan credit. Repositories with a Claude cloud grant can spend it first and fall back to Codex when the grant is exhausted, locked, expired or unavailable for the repository. To keep plan-credit fallback, add an entry without a host or with a plan host after the cloud entry.
+- **Breaking:** Golden-baseline capture, commit and push now require a baseline policy in `[skill-instructions].orch`. A CI skip requires a separate baseline-only CI exception. Consumers must select their capture criterion, visual QA target and approval, host and isolation gate there, and select the exception and its commit subject separately if needed.
+- **Breaking:** Development rounds call Cargo cleanup only when the consumer selects that cleanup policy. Consumers that need it must select the policy in `[skill-instructions].orch`; selected cleanup keeps the existing threshold, owned target scope and failure handling.
+- The watch lists due verification checks each pass. Failed checks keep merged items in Verifying with a blocking fix item.
+- Confirm an existing app approval after a failed GitHub review POST. Report an unconfirmed read separately so overseers check reviews before approving again.
+- Claude cloud lanes commit and push each finished part of their work. Cloud reviews and audits launch as recorded lanes, so a session that runs out of credit or time can leave its partial report on the item branch.
+- Fallback approvals wait for Copilot reviews already queued or running on the same head. A completed review returns to the review-reply check before approval. The hold has a configurable time limit.
+- Post-merge skips refresh and verification when the adopted refresh workflow owns the outputs, keeping the base checkout clean for the next merge.
+- Lane selection and account listing parse account settings once and reuse directory identities, so larger retirement lists do not start more commands for each account.
+- Merge guidance covers a failed mergeability read and GitHub still computing. Existing retry and merge routes stay unchanged.
+- Keep parked lanes while their recorded pull request is open, and resume merged lanes whose Done item still has an unchecked completion box. Retain PR identity through recovery so a failed resume cannot close a lane whose PR is still open.
+
+#### project-management
+
+- Post-merge checks name their evidence trigger and require readable evidence inside the deadline window.
+
+#### review-gate
+
+- Organization-wide immediate refresh dispatch moves to fleet through `fleet repos kendex-refresh`. Consumer scheduled refresh, manual refresh and the `kendex-refresh` event receiver remain available.
+- Consumer refresh settings reports keep model selection in the consumer's model and provider configuration.
+
+#### reviewer-correctness
+
+- Correctness reviews check changed views for accessibility, read record producers, and inspect async targets and branches shared across modes.
+
+#### reviewer
+
+- Reviewers read the documents that repository Read-when lines route to each changed path and cite rules they find breached.
+
 ## [1.14.0] - 2026-10-09
 
 ### Added
@@ -2316,7 +2364,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.1..HEAD
+[1.14.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.1
 [1.14.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.0
 [1.13.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.13.0
 [1.12.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.2

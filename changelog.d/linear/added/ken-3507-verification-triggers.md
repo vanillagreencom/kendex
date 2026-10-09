@@ -1,1 +1,0 @@
-- Post-merge checks accept merge, UTC time, and release triggers with deadlines tied to the trigger.

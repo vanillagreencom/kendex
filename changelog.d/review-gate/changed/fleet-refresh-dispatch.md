@@ -1,1 +1,0 @@
-- Organization-wide immediate refresh dispatch moves to fleet through `fleet repos kendex-refresh`. Consumer scheduled refresh, manual refresh and the `kendex-refresh` event receiver remain available.

@@ -1,1 +1,0 @@
-- Dev rounds run each added or changed test file alone and fix failures before the validation run. Investigation runs remain available under the dev skill's validation rules.

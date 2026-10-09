@@ -1,1 +1,0 @@
-- **Breaking:** Golden-baseline capture, commit and push now require a baseline policy in `[skill-instructions].orch`. A CI skip requires a separate baseline-only CI exception. Consumers must select their capture criterion, visual QA target and approval, host and isolation gate there, and select the exception and its commit subject separately if needed.
