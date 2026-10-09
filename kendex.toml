@@ -62,6 +62,7 @@ hooks = [
   "block-argv-kill",
   "block-worktree-refresh",
   "worktree-session-claim",
+  "worktree-prompt-claim",
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
@@ -95,6 +96,7 @@ skills = [
 hooks = [
   "dev-stop-check",
   "worktree-session-claim",
+  "worktree-prompt-claim",
   "lane-mail-check",
   "lane-mail-deliver",
   "lane-mail-halt",
