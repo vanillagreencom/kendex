@@ -13,6 +13,8 @@
 #                          ci_pending | computing | merged | closed | none.
 #                          A reply check with no verdict
 #                          (review_replies_unread) is a fetch_error.
+#                          computing includes unknown: cause=computing and
+#                          unknown: cause=read-failed mergeability issues.
 #                          An issue prefix outside that vocabulary becomes
 #                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
@@ -27,8 +29,8 @@
 #                          the attempt or that the refusal came from outside
 #                          them, its cause in the attempt's stderr; a bound
 #                          reached under `none` means the second. Every
-#                          other cause prints no retry: line, pending CI
-#                          and an unreadable GitHub answer among them beside
+#                          other cause prints no retry: line, ci_pending
+#                          and fetch_error among them beside
 #                          the causes that need a change or a reader. A
 #                          thread count that cannot be read withholds the
 #                          line, with `ci-classify-refusal: threads=unread
@@ -137,8 +139,6 @@ if [ "$state" = "CLOSED" ]; then
     exit 0
 fi
 
-# Primary cause by priority: an unreadable GitHub answer taints every other
-# signal, then the permanent blockers, then the ones that clear on their own.
 # `none` is reserved for an empty issues[] — an issue whose prefix is not in
 # this table names itself, so an unlisted pr-merge prefix routes as "report it",
 # never as a false all-clear.
@@ -163,9 +163,7 @@ jq -r "$SANITIZE_JQ"' .issues[]? | "issue: " + clean' <<<"$check_json"
 # The terminal causes returned above it: their check data is meaningless.
 jq -r "$SANITIZE_JQ"' .warnings[]? | clean | select(startswith("ci_optional_failed:"))' <<<"$check_json"
 
-# The direct merge refuses while GitHub still computes mergeability, and by
-# the time this runs that computation has often finished (`none`). A `none`
-# can also be a refusal from outside these gates, which a retry does not
+# A `none` can be a refusal from outside these gates, which a retry does not
 # clear; the caller's retry bound ends that, with the attempt's stderr
 # naming the cause. GitHub also refuses for a missing approval, which
 # pr-merge --check reports only as a warning, and an open review thread,

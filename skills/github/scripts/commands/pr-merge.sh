@@ -8,8 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/github-api.sh"
-# Issue prefixes that resolve on their own once GitHub finishes computing or
-# CI completes. Callers wait before the direct attempt, or explicitly queue.
 TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
@@ -252,7 +250,7 @@ Terminal and mutation rules:
     warnings    non-blocking issue strings
     mergeable   MERGEABLE, CONFLICTING, or UNKNOWN
     review      GitHub review decision
-    transient   true only when every blocker can clear by waiting
+    transient   retry classification; see issue prefixes below
     state       OPEN, MERGED, CLOSED, or UNKNOWN
     merged_at   merge timestamp, or an empty string
     head_runs   run IDs used for CI classification
@@ -605,9 +603,6 @@ run_checks() {
     issues_json=$(printf '%s\n' "${issues[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
     warnings_json=$(printf '%s\n' "${warnings[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
 
-    # Classify whether the blocking issues are entirely transient. A transient
-    # block clears by waiting, so --auto or a retry answers it; a permanent
-    # block needs human action (fix conflicts, push CI fix, dismiss review).
     local transient
     transient=$(echo "$issues_json" | jq --arg p "^($TRANSIENT_PREFIXES)" '
         (length > 0) and (all(. | test($p)))
@@ -643,7 +638,7 @@ print_blocked() {
 
     echo "BLOCKED PR #$pr_num — no merge attempted, none queued" >&2
     if [ "$transient" = "true" ]; then
-        echo "  (transient — GitHub still computing or CI pending)" >&2
+        echo "  (transient: GitHub read unavailable, mergeability computing or CI pending)" >&2
     else
         echo "  (permanent — needs fix or review action)" >&2
     fi

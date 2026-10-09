@@ -214,7 +214,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. A review finding on the pull request needs a change condition 3 excludes.
 6. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or `pr-merge --check` returns no valid readiness object for an open pull request.
-7. merge-pr.md § 5 step 1 returns to its § 3.2: the refusal's cause carries no `retry: same-head` line, a set that holds pending CI and an unreadable GitHub answer beside the causes that need a change or a reader. A refusal retried on the same head is not this condition.
+7. merge-pr.md § 5 step 1 returns to its § 3.2: the refusal's cause carries no `retry: same-head` line, a set that holds `ci_pending` and `fetch_error` beside the causes that need a change or a reader. A refusal retried on the same head is not this condition.
 8. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode it resolves is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's checks and that step, by a push, or by a retarget that changes the class or moves the pull request onto a base that requires no approval without moving the head.
 
 The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.

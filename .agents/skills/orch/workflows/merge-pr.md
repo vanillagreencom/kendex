@@ -104,7 +104,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 
 | Prefix | Wait |
 |--------|------|
-| `unknown:` (GitHub still computing mergeable status) | No wait of its own: GitHub computes the state before an armed PR merges. Re-check once, then continue to § 3.2 with the latest `CHECK` |
+| `unknown:` (`cause=computing` or `cause=read-failed` for the mergeability read) | No wait of its own. Re-check once, then continue to § 3.2 with the latest `CHECK` |
 | `ci_pending:` | No wait here. Continue to § 3.2's gates, then § 5 step 1's owned CI wait and `CI_PENDING_LIMIT` |
 | `ci_fetch_failed:`, `ci_unconfigured:` | Re-check, at most three checks total, then continue with the latest `CHECK` |
 

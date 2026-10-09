@@ -493,7 +493,7 @@ err_macro() {
   case "$1" in
     blocked) printf 'BLOCKED PR #123 — no merge attempted, none queued' ;;
     permanent) printf '(permanent — needs fix or review action)' ;;
-    transient) printf '(transient — GitHub still computing or CI pending)' ;;
+    transient) printf '(transient: GitHub read unavailable, mergeability computing or CI pending)' ;;
     # git's own words for a fetch in a repository with no origin, replayed
     # under this command's fixed line. Pinned here, in one place, because the
     # point of the row is that git's account survives rather than being
