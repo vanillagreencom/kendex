@@ -190,7 +190,7 @@ lane_tier_inputs() { # LANES
 		plan) ;;
 		cloud-credit)
 			while IFS= read -r dir; do
-				date="$(lane_retire_date "$dir")"
+				lane_retire_date "$dir" silent; date="$LANE_RETIRE_DATE"
 				[[ -z "$date" ]] || TIER_RETIRE="$(jq -c --arg d "$dir" --arg v "$date" '. + {($d): $v}' <<<"$TIER_RETIRE")" || return 1
 			done < <(jq -r '.[].config_dir' <<<"$1")
 			;;
@@ -218,10 +218,14 @@ lane_tier_inputs() { # LANES
 # lane at DIR: the account has the repository access a cloud session needs.
 # GitHub reads both names case-insensitively.
 lane_cloud_repo() { # DIR REPO
-	local pair
-	while IFS= read -r pair; do
-		lane_matches "$(trim "${pair%%=*}")" "$1" || continue
-		[[ "$(trim "${pair#*=}" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<<"$2")" ]] || return 0
-	done < <(setting_items "${ORCH_LANE_CLOUD_REPOS:-}")
-	return 1
+	local i matched=1 nocase=false
+	shopt -q nocasematch && nocase=true
+	for ((i=0; i<${#LANE_CLOUD_KEYS[@]}; i++)); do
+		lane_matches "${LANE_CLOUD_KEYS[i]}" "$1" || continue
+		shopt -s nocasematch
+		[[ "${LANE_CLOUD_VALUES[i]}" != "$2" ]] || matched=0
+		[[ "$nocase" == true ]] || shopt -u nocasematch
+		[[ "$matched" != 0 ]] || break
+	done
+	return "$matched"
 }

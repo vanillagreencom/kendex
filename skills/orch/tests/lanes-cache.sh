@@ -141,13 +141,13 @@ assert_eq "$(provider_calls)" "$((calls + 1))" 'a retirement date that arrives a
 
 # Reach the cache reader directly in a disposable script, before discovery or
 # startup pruning can mask a missing read guard. The production reader remains
-# unchanged; only the `check` verb's first step is replaced in this copy, which
-# is the one dispatch site that runs after the cache directory and the clock
-# are initialized and before validate_lane_settings prunes. The parser owns the
+# unchanged; the `check` verb's first step runs settings validation with startup
+# pruning disabled, so the reader alone decides whether to serve the record.
+# The settings parser must populate the policy arrays before this read. It owns the
 # argv: `check` takes one directory, and --harness names the record's harness.
 # The state dir is named apart from every mutant, which mutant_scripts clears.
 READER_DISPATCH='[[ -n "$LANE_ARG" ]] || die missing-value check'
-READER_BODY='read_usage_cache "$HARNESS" "$LANE_ARG" "$(date +%s)" ""; exit $?'
+READER_BODY='prune_usage_cache() { :; }; validate_lane_settings; read_usage_cache "$HARNESS" "$LANE_ARG" "$(date +%s)" ""; exit $?'
 state="$TMP_ROOT/reader-state"
 cache_run "$state" ORCH_LANE_EXCLUDE= list --json --no-cache > "$TMP_ROOT/out"
 reader_dir="$(mutant_scripts reader lanes)"
@@ -183,8 +183,8 @@ policy_control() { # NAME MATCH REPLACEMENT POLICY HARNESS ACCOUNT
 }
 policy_control exclude 'lane_matches "$name" "$1" && return 0' \
   'lane_matches "$name" "$1" && return 1' ORCH_LANE_EXCLUDE=claude claude "$H/.claude"
-policy_control retire '[[ -n "$date" && ! "$TODAY" < "$date" ]] || return 1' \
-  '[[ -n "$date" && ! "$TODAY" < "$date" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01 claude "$H/.claude"
+policy_control retire '[[ -n "$LANE_RETIRE_DATE" && ! "$TODAY" < "$LANE_RETIRE_DATE" ]] || return 1' \
+  '[[ -n "$LANE_RETIRE_DATE" && ! "$TODAY" < "$LANE_RETIRE_DATE" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01 claude "$H/.claude"
 STAMP_MATCH='.policy == $policy'
 STAMP_REPLACEMENT='.policy == .policy'
 for policy in ORCH_LANE_EXCLUDE=claude ORCH_LANE_RETIRE=claude=2000-01-01; do

@@ -1075,25 +1075,36 @@ need_jq() { command -v jq >/dev/null 2>&1 || die missing-jq; }
 trim() {
 	local s="$1"
 	s="${s#"${s%%[![:space:]]*}"}"
-	printf '%s' "${s%"${s##*[![:space:]]}"}"
+	TRIMMED="${s%"${s##*[![:space:]]}"}"
+	[[ "${2:-}" == silent ]] || printf '%s' "$TRIMMED"
 }
 
 # The non-empty, trimmed items of a comma-separated setting, one per line.
 # Split without word-splitting or globbing: a value may carry `*` or spaces.
 setting_items() {
 	local rest="$1," item
+	SETTING_ITEMS=()
 	while [[ -n "$rest" ]]; do
-		item="$(trim "${rest%%,*}")"
+		trim "${rest%%,*}" silent; item="$TRIMMED"
 		rest="${rest#*,}"
-		[[ -z "$item" ]] || printf '%s\n' "$item"
+		[[ -n "$item" ]] || continue
+		SETTING_ITEMS+=("$item")
+		[[ "${2:-}" == silent ]] || printf '%s\n' "$item"
 	done
+}
+
+# Match basename's trailing-slash spelling without starting a process.
+lane_base() {
+	LANE_BASE="$1"
+	while [[ "$LANE_BASE" == */ && "$LANE_BASE" != / ]]; do LANE_BASE="${LANE_BASE%/}"; done
+	[[ "$LANE_BASE" == / ]] || LANE_BASE="${LANE_BASE##*/}"
 }
 
 # Whether setting key KEY names the lane at DIR: its directory name, with or
 # without the leading dot.
 lane_named() {
 	local base
-	base="$(basename -- "$2")"
+	lane_base "$2"; base="$LANE_BASE"
 	[[ "$1" == "$base" || "$1" == "${base#.}" ]]
 }
 
@@ -1102,48 +1113,63 @@ lane_named() {
 # built from this list, so no setting that can change a match is left out.
 LANE_POLICY_SETTINGS=(ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_ALIASES)
 
+# Seeded in the owning shell before measurement runs in child shells. Keep
+# lane_claims_canon as the normalizer for callers outside this invocation.
+LANE_CANON_DIRS=() LANE_CANON_IDS=()
+lane_canon() { # DIR: result in LANE_CANON
+	local i
+	for ((i=0; i<${#LANE_CANON_DIRS[@]}; i++)); do
+		[[ "${LANE_CANON_DIRS[i]}" == "$1" || "${LANE_CANON_IDS[i]}" == "$1" ]] || continue
+		LANE_CANON="${LANE_CANON_IDS[i]}"
+		return 0
+	done
+	LANE_CANON="$(lane_claims_canon "$1")" || return 1
+	LANE_CANON_DIRS+=("$1"); LANE_CANON_IDS+=("$LANE_CANON")
+}
+
 # Whether exclusion or retirement key KEY names the lane at DIR: a directory
 # name lane_named accepts, or the alias lane_alias_for gives it. Neither reads
 # inside DIR.
 lane_matches() {
-	lane_named "$1" "$2" || [[ "$1" == "$(lane_alias_for "$2")" ]]
+	lane_named "$1" "$2" && return 0
+	lane_alias_for "$2" silent
+	[[ "$1" == "$LANE_ALIAS" ]]
 }
 
 lane_excluded() {
 	local name
-	[[ -n "${ORCH_LANE_EXCLUDE:-}" ]] || return 1
-	while IFS= read -r name; do
+	for name in ${LANE_EXCLUDES[@]+"${LANE_EXCLUDES[@]}"}; do
 		lane_matches "$name" "$1" && return 0
-	done < <(setting_items "${ORCH_LANE_EXCLUDE:-}")
+	done
 	return 1
 }
 
 # The UTC date ORCH_LANE_RETIRE sets for DIR, empty when none. Entries were
 # validated at startup (validate_lane_settings).
 lane_retire_date() {
-	local pair
-	[[ -n "${ORCH_LANE_RETIRE:-}" ]] || return 0
-	while IFS= read -r pair; do
-		lane_matches "$(trim "${pair%%=*}")" "$1" || continue
-		trim "${pair#*=}"
-		return 0
-	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
+	local i
+	LANE_RETIRE_DATE=""
+	for ((i=0; i<${#LANE_RETIRE_KEYS[@]}; i++)); do
+		lane_matches "${LANE_RETIRE_KEYS[i]}" "$1" || continue
+		LANE_RETIRE_DATE="${LANE_RETIRE_VALUES[i]}"
+		break
+	done
+	[[ "${2:-}" == silent ]] || printf '%s' "$LANE_RETIRE_DATE"
 }
 
 # Prints DIR's retirement date and succeeds when that UTC date is today or
 # earlier; fails for a lane with no retirement or one still ahead.
 lane_retired() {
-	local date
-	date="$(lane_retire_date "$1")"
-	[[ -n "$date" && ! "$TODAY" < "$date" ]] || return 1
-	printf '%s' "$date"
+	lane_retire_date "$1" silent
+	[[ -n "$LANE_RETIRE_DATE" && ! "$TODAY" < "$LANE_RETIRE_DATE" ]] || return 1
+	[[ "${2:-}" == silent ]] || printf '%s' "$LANE_RETIRE_DATE"
 }
 
 # Whether the policy admits the lane at DIR: neither excluded nor retired.
 # Discovery neither probes nor caches a directory it refuses; a retired one is
 # still listed, as retired, without a probe.
 lane_admissible() {
-	! lane_excluded "$1" && ! lane_retired "$1" >/dev/null
+	! lane_excluded "$1" && ! lane_retired "$1" silent
 }
 
 # ORCH_LANE_DIRS entries of harness $1, excluded ones included: whether a
@@ -1160,7 +1186,8 @@ configured_lane_dirs() {
 		[[ -n "$entry" ]] || continue
 		kind=claude
 		if ! lane_admissible "$entry"; then
-			case "$(basename -- "$entry")" in
+			lane_base "$entry"
+			case "$LANE_BASE" in
 				*codex*) kind=codex ;;
 				*copilot*) kind=copilot ;;
 			esac
@@ -1196,10 +1223,12 @@ lane_dirs() {
 	if [[ "$1" == pi ]]; then
 		local copilot_ids=$'\n' id
 		while IFS= read -r d; do
-			[[ -z "$d" ]] || copilot_ids+="$(lane_claims_canon "$d")"$'\n'
+			[[ -n "$d" ]] || continue
+			lane_canon "$d" || return 1
+			copilot_ids+="$LANE_CANON"$'\n'
 		done < <(lane_dirs copilot)
 		copilot_pool_entries 2>/dev/null | cut -f1 | while IFS= read -r d; do
-			id="$(lane_claims_canon "$d")"
+			lane_canon "$d" || return 1; id="$LANE_CANON"
 			case "$copilot_ids" in *$'\n'"$id"$'\n'*) continue ;; esac
 			[[ "${2:-}" != all ]] && lane_excluded "$d" || printf '%s\n' "$d"
 		done
@@ -1238,27 +1267,23 @@ lane_dirs() {
 # the discovered name, so the inventory stays automatic while the labels stay
 # the operator's. An entry naming a directory that does not exist is inert.
 lane_alias_for() {
-	local base key val
-	base="$(basename -- "$1")"
-	while IFS=$'\t' read -r key val; do
-		lane_named "$key" "$1" || continue
-		printf '%s' "$val"
-		return
-	done < <(alias_pairs)
-	printf '%s' "${base#.}"
+	local i
+	lane_base "$1"; LANE_ALIAS="${LANE_BASE#.}"
+	for ((i=0; i<${#LANE_ALIAS_KEYS[@]}; i++)); do
+		lane_named "${LANE_ALIAS_KEYS[i]}" "$1" || continue
+		LANE_ALIAS="${LANE_ALIAS_VALUES[i]}"
+		break
+	done
+	[[ "${2:-}" == silent ]] || printf '%s' "$LANE_ALIAS"
 }
 
 # The ORCH_LANE_ALIASES pairs with a name and an alias, as trimmed
 # `<name>\t<alias>` lines.
 alias_pairs() {
-	local pair key val
-	while IFS= read -r pair; do
-		[[ "$pair" == *=* ]] || continue
-		key="$(trim "${pair%%=*}")"
-		val="$(trim "${pair#*=}")"
-		[[ -n "$key" && -n "$val" ]] || continue
-		printf '%s\t%s\n' "$key" "$val"
-	done < <(setting_items "${ORCH_LANE_ALIASES:-}")
+	local i
+	for ((i=0; i<${#LANE_ALIAS_KEYS[@]}; i++)); do
+		printf '%s\t%s\n' "${LANE_ALIAS_KEYS[i]}" "${LANE_ALIAS_VALUES[i]}"
+	done
 }
 
 # ── Usage fetch (the only impure layer) ──────────────────────────────────────
@@ -1375,8 +1400,8 @@ emit_refusal() { # ALIAS HARNESS DIR PLAN RECORD
 copilot_pool_entries() {
 	local item dir value used limit canon seen=$'\n'
 	while IFS= read -r item; do
-		dir="$(trim "${item%=*}")"
-		value="$(trim "${item##*=}")"
+		trim "${item%=*}" silent; dir="$TRIMMED"
+		trim "${item##*=}" silent; value="$TRIMMED"
 		if [[ "$item" != *=* || "$dir" != /* || ! "$value" =~ ^([0-9]{1,12})/([0-9]{1,12})$ ]]; then
 			message invalid-copilot-pool "$item" >&2
 			return 1
@@ -1387,7 +1412,7 @@ copilot_pool_entries() {
 		# One reading per account, compared through the one lane-path
 		# normaliser: a second one, agreeing or not, is refused rather than
 		# losing to the first, which could be the reading with room.
-		canon="$(lane_claims_canon "$dir")"
+		lane_canon "$dir" || return 1; canon="$LANE_CANON"
 		case "$seen" in *$'\n'"$canon"$'\n'*) message invalid-copilot-pool "$item" >&2; return 1 ;; esac
 		seen+="$canon"$'\n'
 		if (( used >= limit )); then
@@ -1411,9 +1436,11 @@ copilot_pool_entries() {
 measure_copilot_pool() { # ALIAS HARNESS DIR WHY
 	local entries target d pct used limit
 	entries="$(copilot_pool_entries)" || return 1
-	target="$(lane_claims_canon "$3")"
+	lane_canon "$3" || return 1; target="$LANE_CANON"
 	while IFS=$'\t' read -r d pct used limit; do
-		[[ -n "$d" && "$(lane_claims_canon "$d")" == "$target" ]] || continue
+		[[ -n "$d" ]] || continue
+		lane_canon "$d" || return 1
+		[[ "$LANE_CANON" == "$target" ]] || continue
 		emit_lane "$1" "$2" "$3" ok "Copilot pool: $used of $limit credits used, as ORCH_LANE_COPILOT_POOL states; $4" "" \
 			"$(jq -nc --argjson p "$pct" --argjson u "$used" --argjson g "$limit" \
 				'{monthly_pct: $p, credits: {unit: "AIC", unlimited: false, used: $u, granted: $g,
@@ -1431,13 +1458,14 @@ measure_lane() {
 	local harness="$1" dir="$2"
 	local alias creds status="ok" detail="" plan="" token="" account_id="" expires_ms=0 now_s
 	local refreshed=false refresh_out
-	alias="$(lane_alias_for "$dir")"
+	lane_alias_for "$dir" silent; alias="$LANE_ALIAS"
 	now_s=$(date +%s)
 
 	# Before the credentials path is even composed: a retired account is read
 	# no more than an excluded one.
 	local retire
-	if retire="$(lane_retired "$dir")"; then
+	if lane_retired "$dir" silent; then
+		retire="$LANE_RETIRE_DATE"
 		emit_lane "$alias" "$harness" "$dir" "retired" "retired on $retire (ORCH_LANE_RETIRE)" "" '{}'
 		return
 	fi
@@ -2386,7 +2414,9 @@ load_lane_claims() {
 	# exclusion added while a lane runs leaves its claim live.
 	for h in claude codex copilot pi; do
 		while IFS= read -r d; do
-			[[ -z "$d" ]] || own+="$(lane_claims_canon "$d")"$'\n'
+			[[ -n "$d" ]] || continue
+			lane_canon "$d" || return 1
+			own+="$LANE_CANON"$'\n'
 		done < <(lane_dirs "$h" all)
 	done
 	# The canonical config dir is the first field and the named spelling the
@@ -2408,8 +2438,8 @@ load_lane_claims() {
 # two accounts, and only an ORCH_LANE_ALIASES name joins it to another home's.
 lane_account_name() { # DIR
 	local alias base
-	alias="$(lane_alias_for "$1")"
-	base="$(basename -- "$1")"
+	lane_alias_for "$1" silent; alias="$LANE_ALIAS"
+	lane_base "$1"; base="$LANE_BASE"
 	base="${base#.}"
 	[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || printf '%s' "$alias"
 }
@@ -2421,7 +2451,8 @@ lane_account_name() { # DIR
 # DIR's and not empty, which load_lane_claims leaves only on another home's
 # claim. One account is charged every claim on it whichever home wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
 account_claims() { # DIR
-	LANE_CLAIMS_CANON_Q="$(lane_claims_canon "$1")" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" \
+	lane_canon "$1" || return 1
+	LANE_CLAIMS_CANON_Q="$LANE_CANON" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" \
 		awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]) { n++ }
 			END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
 }
@@ -2440,7 +2471,9 @@ account_claims() { # DIR
 collect_lanes() {
 	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x
 	while IFS= read -r x; do
-		[[ -z "$x" ]] || excluded+="$(lane_claims_canon "$x")"$'\n'
+		[[ -n "$x" ]] || continue
+		lane_canon "$x" || return 1
+		excluded+="$LANE_CANON"$'\n'
 	done <<<"$exclude"
 	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
 	{
@@ -2452,7 +2485,7 @@ collect_lanes() {
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
 				if [[ -n "$excluded" || -n "$held" ]]; then
-					id="$(lane_claims_canon "$d")"
+					lane_canon "$d" || return 1; id="$LANE_CANON"
 					case $'\n'"$excluded" in
 						*$'\n'"$id"$'\n'*) continue ;;
 					esac
@@ -2500,23 +2533,28 @@ collect_lanes() {
 # gate is `host-accounts --no-cache`'s answer, never this one.
 HOSTED_ROWS="[]" HOSTED_READ=local
 host_lane_rows() { # HARNESS [READINGS]
-	local rows row stamped="" hosted="" d accounts_rc=0 hosted_rc=0
+	local rows hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0
 	HOSTED_ROWS="[]" HOSTED_READ=local
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || return 0
-	rows="$(host_account_records "$ORCH_LANE_HOST" "$1" "${2:-}")" || accounts_rc=$?
+	rows="$(host_accounts_answer "$ORCH_LANE_HOST")" || accounts_rc=$?
 	case "$accounts_rc" in
 		0) HOSTED_READ=answered ;;
 		2) HOSTED_READ=absent; return 0 ;;
 		*) HOSTED_READ=failed; return 0 ;;
 	esac
-	# emit_lane writes each row as one compact line.
-	while IFS= read -r row; do
-		[[ -n "$row" ]] || continue
-		d="$(jq -r '.config_dir' <<<"$row")" || { hosted_rc=$?; break; }
-		row="$(jq -c --arg id "$(lane_claims_canon "$d")" '._id = $id' <<<"$row")" || { hosted_rc=$?; break; }
-		stamped+="$row"$'\n'
-	done <<<"$rows"
-	[[ "$hosted_rc" -ne 0 ]] || hosted="$(jq -cs . <<<"$stamped")" || hosted_rc=$?
+	# Seed host-only paths through the protocol's parser before child shells
+	# emit their readings. The emitting pass reports any invalid cached row.
+	host_account_rows "$rows" "$1" canon 2>/dev/null || hosted_rc=$?
+	[[ "$hosted_rc" -ne 0 ]] || rows="$(host_account_rows "$rows" "$1" "${2:-}")" || hosted_rc=$?
+	dirs="$(jq -sr '.[].config_dir' <<<"$rows")" || hosted_rc=$?
+	while IFS= read -r d; do
+		[[ -n "$d" ]] || continue
+		lane_canon "$d" || { hosted_rc=$?; break; }
+		ids+="$LANE_CANON"$'\n'
+	done <<<"$dirs"
+	[[ "$hosted_rc" -ne 0 ]] || hosted="$(jq -cs --arg ids "$ids" '
+		($ids | split("\n") | .[:-1]) as $ids
+		| to_entries | map(.value + {_id: $ids[.key]})' <<<"$rows")" || hosted_rc=$?
 	if [[ "$hosted_rc" -ne 0 ]]; then
 		message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
 		HOSTED_READ=failed
@@ -2590,8 +2628,8 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # policy that does not retire the account, since the record it sits in is
 # stamped with every setting the retirement was matched through, the alias
 # map included, and the day, and is a miss under any other.
-host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS]
-	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said
+host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON]
+	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said rest alias
 	local account harness status detail s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets
 	while IFS= read -r line; do
@@ -2599,11 +2637,9 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS]
 		account=""; harness=""; status="ok"; detail=""; bad=""; said=""
 		s_pct=null; w_pct=null; m_pct=null; mo_pct=null
 		m_label=""; s_reset=""; w_reset=""; m_reset=""; mo_reset=""
-		# The row's fields, one per line. `printf '%s\n'`, never `%s`: a last
-		# field with no newline after it is a line `read` returns non-zero on,
-		# and the loop body would never see it — which is where a row puts its
-		# last percentage.
-		while IFS= read -r field; do
+		rest="$line"$'\t'
+		while [[ -n "$rest" ]]; do
+			field="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
 			[[ -n "$field" ]] || continue
 			key="${field%%=*}"
 			value="${field#*=}"
@@ -2633,7 +2669,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS]
 					;;
 				*) ;;
 			esac
-		done < <(printf '%s\n' "$line" | tr '\t' '\n')
+		done
 		[[ -n "$account" ]] || bad="${bad:-account}"
 		[[ "$harness" =~ ^(claude|codex|copilot|pi)$ ]] || bad="${bad:-harness}"
 		if [[ -n "$bad" ]]; then
@@ -2658,12 +2694,18 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS]
 		if lane_excluded "$account"; then
 			continue
 		fi
-		if retire="$(lane_retired "$account")"; then
+		if [[ "$mode" == canon ]]; then
+			lane_canon "$account" || return 1
+			continue
+		fi
+		lane_alias_for "$account" silent; alias="$LANE_ALIAS"
+		if lane_retired "$account" silent; then
+			retire="$LANE_RETIRE_DATE"
 			if [[ "$mode" == cache ]]; then
 				printf 'account=%s\tharness=%s\tstatus=retired\n' "$account" "$harness"
 				continue
 			fi
-			emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "retired" \
+			emit_lane "$alias" "$harness" "$account" "retired" \
 				"retired on $retire (ORCH_LANE_RETIRE)" "" '{}' null false host
 			continue
 		fi
@@ -2686,7 +2728,8 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS]
 			printf '%s\n' "$buckets"
 			continue
 		fi
-		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "$detail" "" "$buckets" null false host
+		lane_canon "$account" || return 1
+		emit_lane "$alias" "$harness" "$account" "$status" "$detail" "" "$buckets" null false host
 	done <<<"$rows"
 }
 
@@ -3048,12 +3091,13 @@ cmd_pick_lane() {
 		fi
 		message pick-lane-claims >&2
 	fi
-	target="$(lane_claims_canon "$dir")"
+	lane_canon "$dir" || return 1; target="$LANE_CANON"
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.
 	while IFS= read -r d; do
 		[[ -n "$d" ]] || continue
-		[[ "$(lane_claims_canon "$d")" == "$target" ]] || continue
+		lane_canon "$d" || return 1
+		[[ "$LANE_CANON" == "$target" ]] || continue
 		found="$d"
 		break
 	done < <(lane_dirs "$harness")
@@ -3197,7 +3241,9 @@ overseer_seats() {
 		[[ -n "$f" && -e "$f" ]] || continue
 		SEATS_STATE="$f"
 		account="$(jq -r '.overseer.account // empty' <"$f")" || return 1
-		[[ -z "$account" ]] || SEATS+="$(lane_claims_canon "$account")"$'\n'
+		[[ -n "$account" ]] || continue
+		lane_canon "$account" || return 1
+		SEATS+="$LANE_CANON"$'\n'
 	done < <(printf '%s\n%s\n' "$fleets" "$claimed" | sort -u)
 }
 
@@ -3209,7 +3255,7 @@ omitted_seats() { # HARNESS HOSTED
 	local d id
 	{ lane_dirs "$1"; jq -r '.[]._id' <<<"$2"; } | while IFS= read -r d; do
 		[[ -n "$d" ]] || continue
-		id="$(lane_claims_canon "$d")"
+		lane_canon "$d" || return 1; id="$LANE_CANON"
 		case $'\n'"$SEATS" in
 			*$'\n'"$id"$'\n'*) printf '%s\n' "$id" ;;
 		esac
@@ -3618,18 +3664,30 @@ calendar_date_valid() {
 # no lane would leave the account it meant to cover readable and pickable, and
 # a TTL that cannot be read has no window to apply.
 validate_lane_settings() {
-	local item
-	while IFS= read -r item; do
-		lane_key_valid "$item" || die invalid-exclude "$item"
-	done < <(setting_items "${ORCH_LANE_EXCLUDE:-}")
-	while IFS= read -r item; do
-		[[ "$item" == *=* ]] && lane_key_valid "$(trim "${item%%=*}")" \
-			&& calendar_date_valid "$(trim "${item#*=}")" || die invalid-retire "$item"
-	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
-	while IFS= read -r item; do
-		[[ "$item" == *=* ]] && lane_key_valid "$(trim "${item%%=*}")" \
-			&& [[ "$(trim "${item#*=}")" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die invalid-cloud-repos "$item"
-	done < <(setting_items "${ORCH_LANE_CLOUD_REPOS:-}")
+	local setting item key value
+	LANE_EXCLUDES=() LANE_RETIRE_KEYS=() LANE_RETIRE_VALUES=()
+	LANE_ALIAS_KEYS=() LANE_ALIAS_VALUES=() LANE_CLOUD_KEYS=() LANE_CLOUD_VALUES=()
+	for setting in ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_ALIASES ORCH_LANE_CLOUD_REPOS; do
+		setting_items "${!setting:-}" silent
+		for item in ${SETTING_ITEMS[@]+"${SETTING_ITEMS[@]}"}; do
+			trim "${item%%=*}" silent; key="$TRIMMED"
+			trim "${item#*=}" silent; value="$TRIMMED"
+			case "$setting" in
+				ORCH_LANE_EXCLUDE)
+					lane_key_valid "$item" || die invalid-exclude "$item"
+					LANE_EXCLUDES+=("$item") ;;
+				ORCH_LANE_RETIRE)
+					[[ "$item" == *=* ]] && lane_key_valid "$key" && calendar_date_valid "$value" || die invalid-retire "$item"
+					LANE_RETIRE_KEYS+=("$key"); LANE_RETIRE_VALUES+=("$value") ;;
+				ORCH_LANE_ALIASES)
+					[[ "$item" == *=* && -n "$key" && -n "$value" ]] || continue
+					LANE_ALIAS_KEYS+=("$key"); LANE_ALIAS_VALUES+=("$value") ;;
+				ORCH_LANE_CLOUD_REPOS)
+					[[ "$item" == *=* ]] && lane_key_valid "$key" && [[ "$value" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die invalid-cloud-repos "$item"
+					LANE_CLOUD_KEYS+=("$key"); LANE_CLOUD_VALUES+=("$value") ;;
+			esac
+		done
+	done
 	[[ "$USAGE_TTL" =~ ^[0-9]+$ ]] || die invalid-usage-ttl "$USAGE_TTL"
 	# Refused here rather than handed to `timeout`, which would exit 125 and be
 	# reported as the provider failing the verb.
@@ -3734,7 +3792,7 @@ case "$SUB" in
 		fi
 		while IFS= read -r check_name; do
 			if lane_excluded "$check_name"; then message lane-excluded "$LANE_ARG" >&2; exit 4; fi
-			if retired_on="$(lane_retired "$check_name")"; then message lane-retired "$LANE_ARG" "$retired_on" >&2; exit 4; fi
+			if lane_retired "$check_name" silent; then message lane-retired "$LANE_ARG" "$LANE_RETIRE_DATE" >&2; exit 4; fi
 		done <<<"$check_names"
 		;;
 	state)

@@ -423,7 +423,7 @@ wall_control mutant-wall-fail-open 'unmeasured" >&2
   return 1' 'unmeasured" >&2
   printf '"'"'%s\n'"'"' "$3"; return 0' \
   "control: an unreadable record passed over reads room|$WALL_JUNK|$LIST|nclaude.status=ok nclaude.verdict=room"
-wall_control mutant-wall-spelling 'ACCOUNT_WALL_CANON="$(lane_claims_canon "$2")"' 'ACCOUNT_WALL_CANON="$2"' \
+wall_control mutant-wall-spelling 'ACCOUNT_WALL_CANON="$canon"' 'ACCOUNT_WALL_CANON="$2"' \
   "control: a dir taken as spelled misses the wall behind a trailing slash|$WALL_SLASH|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room" \
   "control: a dir taken as spelled misses the wall behind a symlink|$WALL_LINK|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room"
 standard_home home
@@ -1309,8 +1309,8 @@ ORCH_LANE_DIRS="$H/.eclaude:$TMP_ROOT/srv/.fclaude" ORCH_LANE_EXCLUDE=fclaude OR
   "control: an inventory of listed lanes alone names the excluded lane's claim|live:%1|theirs:live:%1:srvf||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 claims_scripts="$(mutant_scripts mutant-claims-own-no-pi lanes)" || exit 1
 # The inventory loop alone: the chooser walks the same harness list.
-mutate_file "$claims_scripts/lanes" $'\tfor h in claude codex copilot pi; do\n\t\twhile IFS= read -r d; do\n\t\t\t[[ -z "$d" ]] || own+=' \
-  $'\tfor h in claude codex copilot; do\n\t\twhile IFS= read -r d; do\n\t\t\t[[ -z "$d" ]] || own+='
+mutate_file "$claims_scripts/lanes" $'\tfor h in claude codex copilot pi; do\n\t\twhile IFS= read -r d; do' \
+  $'\tfor h in claude codex copilot; do\n\t\twhile IFS= read -r d; do'
 ORCH_LANE_DIRS="$H/.eclaude" ORCH_LANE_COPILOT_POOL="$TMP_ROOT/pi/.pia=1/10" ORCH_LANE_ALIASES="$OWN_WORK" LANES="$claims_scripts/lanes" claims_table \
   "control: an inventory without Pi roots names the Pi root's claim|live:%1|theirs:live:%1:pia||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 
@@ -2530,7 +2530,8 @@ table \
   "control: without the host row the named token-only folder is unmeasured through the local reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=5 status=no_credentials measured_through=local"
 LANES="$LANES_PATCHED"
 # Control: a host row stamped with its raw spelling never matches the local dir.
-lanes_mutant mutant-host-id-raw lanes '--arg id "\$(lane_claims_canon "\$d")"' '--arg id "$d"'
+host_id_scripts="$(mutant_scripts mutant-host-id-raw lanes)" || exit 1
+mutate_file "$host_id_scripts/lanes" 'map(.value + {_id: $ids[.key]})' 'map(.value + {_id: .value.config_dir})'
 LANES="$TMP_ROOT/mutant-host-id-raw/scripts/lanes"
 table \
   "control: a raw-spelled host row leaves the named folder on the local reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-slash.tsv|$PICK_LANE $H/.tclaude|rc=5 measured_through=local"

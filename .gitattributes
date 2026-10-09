@@ -5,6 +5,8 @@
 # authoring golden digest is over those same bytes.
 * -text
 skills/orch/scripts/open-terminal text eol=lf
+skills/orch/scripts/lanes text eol=lf
+skills/orch/scripts/lib/account-wall.sh text eol=lf
 skills/orch/scripts/lib/lane-launch.sh text eol=lf
 kendex.toml text eol=lf
 skills/orch/references/codex-runtime.md text eol=lf

@@ -32,9 +32,17 @@ account_wall_dir() { # ROOT
 # so the caller runs this in its own shell.
 ACCOUNT_WALL_FILE="" ACCOUNT_WALL_CANON=""
 account_wall_file() { # ROOT CONFIG_DIR
-  local dir sum
+  local dir sum canon
   dir="$(account_wall_dir "$1")" || return 1
-  ACCOUNT_WALL_CANON="$(lane_claims_canon "$2")" || return 1
+  # lanes seeds its per-run map before child shells emit the same accounts.
+  # Other wall readers retain lane_claims_canon's standalone contract.
+  if declare -F lane_canon >/dev/null; then
+    lane_canon "$2" || return 1
+    canon="$LANE_CANON"
+  else
+    canon="$(lane_claims_canon "$2")" || return 1
+  fi
+  ACCOUNT_WALL_CANON="$canon"
   sum="$(printf '%s' "$ACCOUNT_WALL_CANON" | cksum)" || return 1
   ACCOUNT_WALL_FILE="$dir/${sum%% *}.json"
 }
