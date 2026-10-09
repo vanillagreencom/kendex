@@ -145,8 +145,11 @@ case "${1:-}" in
                 exit 0 ;;
             graphql)
                 if [[ "${3:-}" == --input ]]; then
-                    [[ "${STUB_WORKFLOW_FILES_EXIT:-0}" == 0 ]] || exit "$STUB_WORKFLOW_FILES_EXIT"
-                    request=$(cat -- "$4")
+                    if [[ "${STUB_WORKFLOW_FILES_EXIT:-0}" != 0 ]]; then
+                        [[ -z "${STUB_JQ_REQUEST_MARKER:-}" ]] || : >"$STUB_JQ_REQUEST_MARKER.waiting"
+                        exit "$STUB_WORKFLOW_FILES_EXIT"
+                    fi
+                    if [[ "$4" == - ]]; then request=$(cat); else request=$(cat -- "$4"); fi
                     if [[ -n "${STUB_WORKFLOW_FILES:-}" ]]; then
                         printf '%s\n' "$STUB_WORKFLOW_FILES"
                     else

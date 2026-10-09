@@ -304,7 +304,7 @@ required_contexts() {
     local pr_num="$1" repo="${2:-}" base="" rules="" classic="" branch_json=""
     local path="{owner}/{repo}" repo_arg=() fallback=false
     local head="${3:-}" runs workflow checks resolved repo_id evidence state
-    local source sources source_names definition definitions revision source_repo source_sha candidates nodes files matched bindings='[]' claimed_runs='[]' run suite
+    local source sources source_names definition definitions revision source_repo source_sha candidates nodes request files matched bindings='[]' claimed_runs='[]' run suite
     if [ -n "$repo" ]; then
         path="$repo"
         repo_arg=(--repo "$repo")
@@ -363,7 +363,9 @@ required_contexts() {
             nodes=$(jq -c 'map(.check_suite_node_id) | unique' <<<"$candidates") || return 1
             matched='[]'
             if [ "$nodes" != '[]' ]; then
-                if ! files=$(gh api graphql --input <(jq -cn --argjson ids "$nodes" '{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}') 2>/dev/null) \
+                # gh can fail before reading input; finish the writer first.
+                if ! request=$(jq -cn --argjson ids "$nodes" '{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}') \
+                    || ! files=$(gh api graphql --input - <<<"$request" 2>/dev/null) \
                     || ! files=$(jq -ce --slurpfile candidates <(printf '%s\n' "$candidates") '
                         if (.errors // [] | length) > 0 or (.data.nodes | type) != "array" then error("unreadable workflow files") else .data.nodes end
                         | . as $nodes
