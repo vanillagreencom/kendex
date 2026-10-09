@@ -345,14 +345,20 @@ assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \
 echo
 echo "=== round-closure contract ==="
 
-# Every workflow that delegates a dev round mints a fresh round token. That
-# mint is the fail-closed guarantee on its own: a previous round's receipt
-# carries the previous token, so it can never satisfy this round — including on
-# the ci-fix path, whose agent writes no artifact at all.
-for wf in dev-start dev-fix review-pr-comments ci-fix; do
+# Dev workflows that accept artifacts mint a dev token so a previous receipt cannot
+# satisfy the current round. CI fixes use a separate token and no artifact.
+for wf in dev-start dev-fix review-pr-comments; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'new-round-id [ISSUE_ID] dev_round_id' "$wf mints a fresh round id before delegating"
 done
+ci_stamp_present() {
+  grep -Fq -- 'new-round-id [ISSUE_ID] ci_round_id' "$1"
+}
+assert_eq "$(ci_stamp_present "$ci_fix_workflow" && echo yes || echo no)" yes \
+  'ci-fix mints its separate CI round token before delegating'
+assert_doc_mutant_fails ci_stamp_present "$ci_fix_workflow" \
+  'new-round-id [ISSUE_ID] ci_round_id' 'new-round-id [ISSUE_ID] dev_round_id' \
+  'CI command using the dev token fails the distinct-token contract'
 
 # The three artifact-accepting paths must actually run the round-scoped check;
 # accepting on git state alone would take an unfinished round as complete.
