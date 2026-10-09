@@ -10,24 +10,17 @@
 # maintainer touches is read just the same and set by hand. And it SEEDS —
 # what reaches a consumer's kendex.settings.toml, and when, is
 # docs/authoring/settings.md under "What an install writes, and what it
-# leaves". Read it before you mark a key `# required`; the grammar below
-# says where the marker goes, and that section says what marking does.
+# leaves". Read it before you mark a key `# required`; "The grammar"
+# says where the marker goes, and the install section says what marking does.
 #
 # Commit-safe values only. A value that must stay out of git (a token, a
 # credential, a personal identifier) never appears here as an assignment:
 # name it in your SKILL.md as "set `MY_SKILL_TOKEN` in `.env.local`" — that
 # body is what a marketplace page shows for a skill.
 #
-# Grammar: one `[env]` table, its header a lone `[env]` on its own line; a
-# comment block immediately above every key, with no blank line and no other
-# assignment between them; every key a shell identifier; every value a
-# single-line double-quoted string containing no `"` and no `\`. The only
-# thing that may follow a value is `# required`, which is also the only
-# place that marker means anything — on a comment line of its own it marks
-# nothing. Seeding takes whatever it recognizes and says nothing about the
-# rest, so run `kendex marketplace check` on your catalog: it reads this
-# file the way a consumer's shell will read what seeding wrote, and it
-# names a marker you put in the wrong place or spelled wrong.
+# For the declaration grammar, read docs/authoring/settings.md under
+# "The grammar". Run `kendex marketplace check` on your catalog to find
+# declarations outside that grammar.
 
 [env]
 

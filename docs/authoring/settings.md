@@ -34,7 +34,7 @@ The shell loaders decide it (`skills/*/scripts/lib/kendex-env.sh` and `settings.
 
 - One `[env]` table and one `[secrets]` table, at most, each header a lone `[name]` on its own line. A template declares no other table.
 - A key is a shell identifier: letters, digits and underscores, starting with a letter or underscore.
-- A value is one double-quoted string on one line, containing no `"` and no `\`; the only thing that may follow it is `# required`. A `[secrets]` value is the empty string.
+- A value is one string on one line: double quotes with no `"` or `\` inside, or single quotes with no apostrophe inside. Single-quoted strings preserve backslashes and double quotes as text. The only thing that may follow the value is `# required`. A `[secrets]` value is the empty string.
 - Each key has a comment block immediately above it, ended by a blank line or another assignment; that comment is what the consumer reads beside the key.
 - A comment block may carry one `# values: a | b | c` line: the values the key takes, in the order the app offers them, with the default among them. The app picks from that list instead of offering a text box; a block without the line is free text. Only `[env]` takes the line. A comment line starting `values:` is read as the declaration, never as prose, and the bar separates values with no escape, so a key whose values contain one takes no values line. These are check findings, and the key is not read: a second values line in one block; an empty value, which a bar at either end or a doubled bar makes; a value the `[env]` grammar refuses; a value listed twice; a default the line does not list.
 
