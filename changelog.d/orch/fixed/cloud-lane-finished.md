@@ -1,1 +1,0 @@
-- The overseer watch reports a Claude cloud lane when its pull request leaves draft or its account has no credit. Finished lanes wait for landing and bypass the stall close.

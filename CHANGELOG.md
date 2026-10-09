@@ -6,6 +6,24 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-10-09
+
+### Packages
+
+#### harness-ci
+
+- Consumer refreshes can prove adopted callers with preserved environment and secret mappings as render changes. Edits outside the accepted configuration still require standard review and product checks.
+
+#### orch
+
+- The overseer watch reports a Claude cloud lane when its pull request leaves draft or its account has no credit. Finished lanes wait for landing and bypass the stall close.
+- Cloud lane closes record the session and account together so the owner can archive finished sessions by account after later launches.
+- Review checks reject files with multiple JSON values before state import. An older review file cannot replace this rejection.
+
+#### review-gate
+
+- Refresh caller instructions describe the mappings adoption preserves and cite the adoption contract for accepted mappings.
+
 ## [1.14.1] - 2026-10-09
 
 ### Packages
@@ -2364,7 +2382,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.1..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.2..HEAD
+[1.14.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.2
 [1.14.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.1
 [1.14.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.0
 [1.13.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.13.0
