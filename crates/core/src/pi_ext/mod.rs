@@ -40,7 +40,19 @@ pub use shadow::{ShadowLines, ShadowPackage, ShadowScan, shadows};
 const NPM_INSTALL_ARGS: &[&str] = &[
     "install",
     "--omit=dev",
+    // A generated lock would change the installed copy's source hash.
     "--package-lock=false",
+    // Pi supplies its own peer packages when it loads the extension.
+    "--legacy-peer-deps",
+    "--no-audit",
+    "--no-fund",
+];
+
+// ci installs the source's locked tree without rewriting its lock.
+const NPM_CI_ARGS: &[&str] = &[
+    "ci",
+    "--omit=dev",
+    // Pi supplies its own peer packages when it loads the extension.
     "--legacy-peer-deps",
     "--no-audit",
     "--no-fund",
@@ -302,7 +314,7 @@ pub fn list_installed(scope_root: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// Whether installing this package runs `npm install`, and with it the
+/// Whether installing this package runs npm, and with it the
 /// package's own lifecycle scripts: the one question a caller deciding
 /// whether an install may run unasked has to put to the package.
 pub fn declares_runtime_deps(package_dir: &Path) -> Result<bool> {
@@ -328,18 +340,23 @@ fn npm_install(name: &str, package_dir: &Path) -> Result<()> {
     if !declares_runtime_deps(package_dir)? {
         return Ok(());
     }
-    let recovery = format!(
-        "cd '{}' && npm {}",
-        package_dir.display(),
-        NPM_INSTALL_ARGS.join(" ")
-    );
+    let args = if package_dir
+        .join("package-lock.json")
+        .try_exists()
+        .map_err(|e| CoreError::io(package_dir.join("package-lock.json"), e))?
+    {
+        NPM_CI_ARGS
+    } else {
+        NPM_INSTALL_ARGS
+    };
+    let recovery = format!("cd '{}' && npm {}", package_dir.display(), args.join(" "));
     let failed = |detail: String| CoreError::PiPackage {
         name: name.to_owned(),
         message: format!("{detail}. Recovery: `{recovery}`"),
     };
     // A cold install pulls its whole tree over the network; minutes is a
     // slow install, not a wedged one.
-    let output = Hardened::npm(NPM_INSTALL_ARGS, Some(package_dir))
+    let output = Hardened::npm(args, Some(package_dir))
         .timeout(Duration::from_secs(600))
         .run()
         .map_err(|e| {
@@ -354,7 +371,7 @@ fn npm_install(name: &str, package_dir: &Path) -> Result<()> {
     if detail.is_empty() {
         detail = output.status.to_string();
     }
-    Err(failed(format!("`npm install` failed: {detail}")))
+    Err(failed(format!("`npm {}` failed: {detail}", args[0])))
 }
 
 fn link_bins(
