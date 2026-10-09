@@ -350,7 +350,9 @@
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
 #         or `lanes: lane-retired` when one does, so a caller can tell a
 #         covered lane from a failure (exit 1). Nothing inside the directory is
-#         read. `open-terminal` asks it for every named --lane.
+#         read. Prints the resolved config dir on stdout, or nothing for an
+#         unknown bare name. A bare name resolves the first local alias match
+#         in list's inventory. `open-terminal` asks it for every named --lane.
 #
 # Options:
 #   --harness NAME   claude, codex, copilot, or all (default: all for list,
@@ -3825,10 +3827,27 @@ case "$SUB" in
 	check)
 		[[ -n "$LANE_ARG" ]] || die missing-value check
 		validate_lane_settings
-		# A bare word may be an alias, and an excluded lane's alias is absent
-		# from `list`: the directory names that alias stands for are checked too.
-		check_names="$LANE_ARG"
+		# Local discovery gives the same first alias match as list, without
+		# measuring accounts. Policy on another account sharing that alias must
+		# not refuse the selected directory; list drops excluded accounts first.
+		check_dir="$LANE_ARG"
 		if [[ "$LANE_ARG" != */* ]]; then
+			check_dir=""
+			for check_harness in claude codex copilot; do
+				while IFS= read -r candidate; do
+					[[ -n "$candidate" ]] || continue
+					lane_alias_for "$candidate" silent
+					[[ "$LANE_ALIAS" == "$LANE_ARG" ]] || continue
+					check_dir="$candidate"
+					break
+				done < <(lane_dirs "$check_harness")
+				[[ -z "$check_dir" ]] || break
+			done
+		fi
+		# With no resolved account, retain the raw-name refusal so an excluded
+		# alias cannot fall back to a same-named directory in open-terminal.
+		check_names="${check_dir:-$LANE_ARG}"
+		if [[ -z "$check_dir" && "$LANE_ARG" != */* ]]; then
 			while IFS=$'\t' read -r alias_name alias_val; do
 				[[ "$alias_val" != "$LANE_ARG" ]] || check_names+=$'\n'"$alias_name"
 			done < <(alias_pairs)
@@ -3837,6 +3856,7 @@ case "$SUB" in
 			if lane_excluded "$check_name"; then message lane-excluded "$LANE_ARG" >&2; exit 4; fi
 			if lane_retired "$check_name" silent; then message lane-retired "$LANE_ARG" "$LANE_RETIRE_DATE" >&2; exit 4; fi
 		done <<<"$check_names"
+		[[ -z "$check_dir" ]] || printf '%s\n' "$check_dir"
 		;;
 	state)
 		[[ -n "$LANE_ARG" ]] || die missing-value state
