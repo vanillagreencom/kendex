@@ -1065,7 +1065,7 @@ ow_message() { # REASON FIELD=VALUE...
     handoff-invalid) text='The handoff path takes letters, digits and ./_- only, as oversee-succeed reads it.' ;;
     mail-interval-invalid) text='ORCH_WATCH_MAIL_INTERVAL takes a whole number of seconds, with no leading zero.' ;;
     start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
-    start-stall-unread) text='The lane status file could not be read through lane-host, so whether the lane started settles nothing this pass: no start-stalled goes out for it and its row stands. The exit is lane_host_fetch'"'"'s: 2 a failed read, 4 no lane-host slot.' ;;
+    start-stall-unread) text='The lane start could not be read from its status file or GitHub. This pass cannot establish whether it started. No start-stalled event goes out and the row stands. The exit names the failed read.' ;;
     refresh-unread) text='The refresh run list or failed-step log could not be read. A failed run-list read leaves the baseline intact; a failed log read reports cause=unread. The watch continues.' ;;
     main-push-unread) text='The main-push run list, jobs or failed-step log could not be read. An unread run list or jobs leaves the incident intact; an unread log reports cause=unread. The watch continues.' ;;
     refresh-stale) text='GitHub answered the refresh run list with a page that judges nothing: newest= is the run it was checked against, the one the watch last read or, for a pair opening an incident or with none read, the newest completed run in the unfiltered list, none when it has none, and read= the newest run the page holds, none for an empty page. No pair is reported and none is cleared. The watch continues.' ;;
@@ -1146,6 +1146,7 @@ ow_message() { # REASON FIELD=VALUE...
     lane-stall-secs-invalid) text='ORCH_WATCH_LANE_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-stall-unread) text='The digest of a lane pull request body could not be taken, so whether the lane moved is unknown. The watch stops rather than report a stall it did not measure.' ;;
     pr-read-failed) text='The open pull request on the item branch could not be listed, so this pass settles nothing about a lane whose kind writes no file this watch reads: no start-stalled or lane-stalled goes out for it and its rows stand. gh'"'"'s own words follow.' ;;
+    branch-read-failed) text='The item branch could not be read. This pass cannot establish progress or close the cloud lane. The lane rows stand. gh or jq gives the cause below.' ;;
     hosted-without-host) text='A hosted lane is carried, and lane-host resolves this host to local, so its mailbox, state and close would be read on this disk where the lane is not. Set ORCH_LANE_HOST to the provider the lane was launched through, in kendex.settings.toml [env] or .env.local.' ;;
     host-resolve-failed) text='lane-host could not say which host the hosted lanes live on, so none of them is read. Its own words follow.' ;;
     session-resolved) text='The tmux session every bare lane window name is read in, and its server: ORCH_TMUX_SESSION, else the session of the pane that started this watch, resolved once while it exists.' ;;

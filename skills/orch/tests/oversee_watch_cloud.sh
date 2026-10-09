@@ -87,6 +87,7 @@ assert_eq "events=$EVENTS" "events=" "a status=none record with a window raises 
 
 echo "=== an open pull request that does not move is lane-stalled ==="
 # STEP rows per case: AGE|HEAD|BODY|WANT, one pass each, the first seeding the row.
+# With no pull request head, BODY is the branch head or an unread fixture.
 stall_case() { # NAME ROW...
   local row age head body want
   new_case "$1"
@@ -95,6 +96,15 @@ stall_case() { # NAME ROW...
   for row in "$@"; do
     IFS='|' read -r age head body want <<<"$row"
     open_pr "$head" "$body"
+    rm -f "$STUB_DIR/branch-head" "$STUB_DIR/branch-unread" "$STUB_DIR/branch-response.json"
+    if [[ -z "$head" ]]; then
+      case "$body" in
+        unread) : > "$STUB_DIR/branch-unread" ;;
+        invalid) printf '{"data":{"repository":{"ref":{"target":{"oid":"unknown"}}}}}\n' > "$STUB_DIR/branch-response.json" ;;
+        missing-repository) printf '{"data":{"repository":null}}\n' > "$STUB_DIR/branch-response.json" ;;
+        *) [[ -z "$body" ]] || printf '%s\n' "$body" > "$STUB_DIR/branch-head" ;;
+      esac
+    fi
     watch "$age" ORCH_OVERSEER_MARK_REPEAT=3
     assert_eq "events=$EVENTS" "events=$want" "$CASE_LABEL: pass at ${age}s" "$STUB_DIR/err"
   done
@@ -114,12 +124,21 @@ echo "=== a directive left unanswered past ORCH_CLOUD_STALL_MINUTES closes the l
 # minutes. A close runs the harness's lane-close stub, whose argv the closes
 # row reads.
 CLOSED="EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1800"
+BRANCH_HEAD=1111111111111111111111111111111111111111
+PUSHED_HEAD=2222222222222222222222222222222222222222
 closes() { awk 'END { print NR + 0 }' "$STUB_DIR/lane-close.args" 2>/dev/null || echo 0; }
 # LABEL|NAME|DIRECTIVE_AGE|rows as stall_case takes them
 for row in \
   "a stalled pull request with no push since the directive|stall_bound|2000|100,abc111,b,;1900,abc111,b,EVENT lane-stalled issue-1 age=1800;3799,abc111,b,;3800,abc111,b,$CLOSED" \
   "a head pushed after the directive|stall_bound_moved|2000|100,abc111,b,;1900,abc111,b,EVENT lane-stalled issue-1 age=1800;2100,abc222,b,;3800,abc222,b,;3900,abc222,b,EVENT lane-stalled issue-1 age=1800" \
-  "a lane that never opened its pull request|start_bound|700|600,,,EVENT start-stalled issue-1 age=600;2499,,,;2500,,,$CLOSED"; do
+  "a lane that never opened its pull request|start_bound|700|600,,,EVENT start-stalled issue-1 age=600;2499,,,;2500,,,$CLOSED" \
+  "an unchanged branch without a pull request|start_bound_unchanged|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$BRANCH_HEAD,$CLOSED" \
+  "a first push after the startup directive whose pull request creation fails|start_bound_first_push|700|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2560,,$PUSHED_HEAD,;2620,,$PUSHED_HEAD,EVENT start-stalled issue-1 age=2620" \
+  "a changed branch without a pull request|start_bound_changed|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD," \
+  "a branch first observed after the directive bound|start_bound_first_read|700|2500,,$PUSHED_HEAD,EVENT start-stalled issue-1 age=2500" \
+  "an unread branch after the startup directive|start_bound_unread|700|600,,,EVENT start-stalled issue-1 age=600;2500,,unread," \
+  "an invalid branch head after the startup directive|start_bound_invalid_head|700|600,,,EVENT start-stalled issue-1 age=600;2500,,invalid," \
+  "an unread repository after the startup directive|start_bound_missing_repo|700|600,,,EVENT start-stalled issue-1 age=600;2500,,missing-repository,"; do
   IFS='|' read -r label name sent steps <<<"$row"
   IFS=';' read -r -a passes <<<"$steps"
   stall_rows=()
@@ -205,6 +224,16 @@ assert_eq "closes=$(closes)" "closes=0" "control: without the bound no lane-clos
 cloud_mutant bound-since lib/watch-host-kinds.sh '(( at >= $2 && PASS_NOW' '(( PASS_NOW'
 DIRECTIVE_AGE=2000 CASE_LABEL="control: a directive older than the last push" stall_case stall_bound_since_mutant \
   "100|abc111|b|" "1900|abc111|b|EVENT lane-stalled issue-1 age=1800" "2100|abc222|b|"   "3900|abc222|b|EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1900"
+# shellcheck disable=SC2016
+cloud_mutant start-bound-progress oversee-watch 'cloud_stall_close "$item" "$since"' 'cloud_stall_close "$item" "$running"'
+DIRECTIVE_AGE=700 CASE_LABEL="control: launch time hides a first push after the directive" stall_case start_bound_progress_mutant \
+  "600|||EVENT start-stalled issue-1 age=600" "2500||$PUSHED_HEAD|$CLOSED"
+assert_eq "closes=$(closes)" "closes=1" "control: the first-push row rejects closure on launch time" "$STUB_DIR/err"
+# shellcheck disable=SC2016
+cloud_mutant start-bound-unread lib/watch-host-kinds.sh 'ow_message branch-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=2; break' 'ow_message branch-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=1; break'
+DIRECTIVE_AGE=700 CASE_LABEL="control: an unread branch treated as absent closes the lane" stall_case start_bound_unread_mutant \
+  "600|||EVENT start-stalled issue-1 age=600" "2500||unread|$CLOSED"
+assert_eq "closes=$(closes)" "closes=1" "control: the unread row rejects closing without branch evidence" "$STUB_DIR/err"
 unset CLOUD_WATCH
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

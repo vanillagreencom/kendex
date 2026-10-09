@@ -224,6 +224,14 @@ case "${1:-} ${2:-}" in
       esac
       shift
     done
+    if [[ "$query" == *'ref(qualifiedName:'* ]]; then
+      [[ ! -f "$STUB_DIR/branch-unread" ]] || { echo 'HTTP 502: bad gateway' >&2; exit 1; }
+      if [[ -f "$STUB_DIR/branch-response.json" ]]; then cat "$STUB_DIR/branch-response.json"
+      elif [[ -s "$STUB_DIR/branch-head" ]]; then
+        jq -n --arg oid "$(cat "$STUB_DIR/branch-head")" '{data:{repository:{ref:{target:{oid:$oid}}}}}'
+      else printf '{"data":{"repository":{"ref":null}}}\n'; fi
+      exit 0
+    fi
     [[ "$query" =~ vulnerabilityAlerts[[:space:]]*(\(([^\)]*)\))? ]] \
       || { echo "stub: unmodeled-argument query=no-vulnerabilityAlerts" >&2; exit 2; }
     args="${BASH_REMATCH[2]}" states='null'

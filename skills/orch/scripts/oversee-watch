@@ -266,7 +266,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   lane-idle<TAB><lane><TAB><pane key>|<copilot note>|<screen cksum>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
-#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
+#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>|<branch heads>|<last observed progress epoch>
 #   lane-long<TAB><item><TAB><launched_at epoch>|<reported age interval>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
@@ -1904,7 +1904,7 @@ check_refresh() {
 # empty first commit, so no open pull request still means never started. A
 # pull request create the session token is refused reads the same way.
 check_start_stall() {
-  local entry item running age prior passes path rc rows="${PW_SEEN[0]}" items=()
+  local entry item running age prior passes path rc since prior_running prior_head rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
     item="${entry%%=*}"
     running="${entry#*=}"
@@ -1932,26 +1932,42 @@ check_start_stall() {
       1) ;;
       *) ow_message start-stall-unread "item=$item" "exit=$rc" >&2; continue ;;
     esac
+    since="$running"
+    IFS='|' read -r prior_running passes prior_head since <<<"$prior"
+    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
+      # A push can answer a directive even when the session's token cannot
+      # open its pull request. First observing a branch also leaves its push
+      # time unknown, so only an unchanged observation can authorize closing.
+      if [[ "$prior_running" != "$running" || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" || -z "$since" ]]; then
+        since="$PASS_NOW"
+        [[ -n "$OPEN_PR_BRANCH_HEAD" || -n "$prior_head" ]] || since="$running"
+      fi
+    else
+      since="$running"
+    fi
     age=$((PASS_NOW - running))
     if (( age < START_STALL_SECS )); then
-      rows="$(lane_row_clear start-stalled "$rows" "$item")"
+      if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
+        rows="$(lane_row_set start-stalled "$rows" "$item" "$running||$OPEN_PR_BRANCH_HEAD|$since")"
+      else rows="$(lane_row_clear start-stalled "$rows" "$item")"; fi
       continue
     fi
-    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} && cloud_stall_close "$item" "$running"; then
+    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} && cloud_stall_close "$item" "$since"; then
       lane_row_commit "$rows"
       [[ -z "$CLOSE_TERMED" ]] || exit 143
       continue
     fi
-    passes=0
-    if [[ "$prior" == "$running|"* ]]; then
-      passes=$(( ${prior#*|} + 1 ))
+    if [[ "$prior_running" == "$running" && -n "$passes" ]]; then
+      passes=$(( passes + 1 ))
       (( passes < MARK_REPEAT )) || passes=0
-    fi
+    else passes=0; fi
     if (( passes == 0 )); then
       echo "EVENT start-stalled $item age=$age"
       PASS_EVENT=1
     fi
-    rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes")"
+    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
+      rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes|$OPEN_PR_BRANCH_HEAD|$since")"
+    else rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes")"; fi
   done
   rows="$(lane_row_prune start-stalled "$rows" ${items[@]+"${items[@]}"})"
   lane_row_commit "$rows"

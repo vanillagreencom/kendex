@@ -408,7 +408,7 @@ FILELESS_DIR="$TMP_ROOT/start-stall-fileless"
 FILELESS_WATCH="$(mutant_scripts start-stall-fileless/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$FILELESS_DIR/github"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-mutate_file "$FILELESS_WATCH" '    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then' '    if false; then'
+mutate_file "$FILELESS_WATCH" $'    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then\n      item_open_pr' $'    if false; then\n      item_open_pr'
 cloud_start start_stall_fileless_mutant "" "$FILELESS_WATCH"
 assert_eq "events=$EVENTS" "events=" \
   "control: read for a status file, a files=none lane with no pull request is never reported" "$STUB_DIR/err"
