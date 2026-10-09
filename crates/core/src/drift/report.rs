@@ -164,9 +164,7 @@ pub enum Fix {
     Here(String),
     /// Runnable, but not where it was read: the line is about the main
     /// checkout's project, the shared base its refresh owner writes from
-    /// there, so a session running the catalog's `block-worktree-refresh`
-    /// hook is refused every write to it from a linked worktree, named by
-    /// `--project-path` or typed bare. The command is still the fix, and
+    /// there. The command is still the fix, and
     /// the renderer marks it with why it will not run here — a reader
     /// handed no remedy at all is left with the drift and no way out of
     /// it.
@@ -176,12 +174,6 @@ pub enum Fix {
 /// The project a project-scope remedy has to name, and whose it is: the
 /// two differ in which verbs reach it by being typed in the checked
 /// directory. Serialized as the path alone.
-///
-/// Which one it is follows the one predicate the catalog's
-/// `block-worktree-refresh` hook asks of the same place, stated in
-/// `crates/core/AGENTS.md`: whether the checked project root, the one
-/// `discover::project_root_from` resolves, holds its own manifest file
-/// (`manifest::project_manifest_path`) in the linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(untagged)]
 pub enum ProjectTarget {
@@ -349,7 +341,7 @@ impl Remedy {
         let elsewhere = match named {
             None | Some(ProjectTarget::Worktree(_)) => false,
             // `updates` without `--apply` and the plan write nothing in the
-            // checkout, so the hook passes them from the worktree.
+            // checkout, so they run from the worktree.
             Some(ProjectTarget::MainCheckout(_)) => {
                 !matches!(self, Remedy::Plan { .. } | Remedy::Updates { .. })
             }
@@ -433,13 +425,9 @@ pub struct CheckReport {
     /// place its line is about, absent where a command typed in the
     /// checked directory already reaches it.
     ///
-    /// Set for a checked project that is a linked git worktree. kendex
-    /// refuses no write there; the catalog's `block-worktree-refresh`
-    /// hook does, in a session that installed it, where a bare verb would
-    /// write the main checkout's project. That project is named in the
-    /// command for every worktree reader all the same: it is the one
-    /// spelling that is right whether or not the hook is installed, and a
-    /// report cannot see which sessions run it. The worktree's own project
+    /// Set for a checked project that is a linked git worktree.
+    /// The main checkout's project is named in the command.
+    /// The worktree's own project
     /// is what a bare verb typed there writes, so it is never named.
     ///
     /// It is the worktree itself where the worktree carries a manifest of
@@ -628,12 +616,6 @@ impl Sections {
 /// fix for another. Only a work tree with no manifest at all is a
 /// checkout of somebody else's declarations, and there the project that
 /// holds them is the destination.
-///
-/// A git that cannot answer leaves the remedies as they are, which is what
-/// every release before this one printed. Nothing is written on the
-/// strength of the guess: what a reader then runs is the bare verb, which
-/// the catalog's `block-worktree-refresh` hook refuses out loud where a
-/// session installed it.
 fn remedy_target(scope: &Scope, manifest: ManifestState) -> Option<ProjectTarget> {
     let Scope::Project { root } = scope else {
         return None;

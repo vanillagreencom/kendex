@@ -6,11 +6,8 @@ use std::fmt;
 
 use super::*;
 
-/// Why a fix will not run where the report was read. Said once, here,
-/// because this is the only place it is printed, and it names the
-/// condition rather than a place to go instead: which session is free of
-/// the hook is not something a report can know.
-const NOT_FROM_HERE: &str = "(the main checkout's project: its refresh owner runs this there; the block-worktree-refresh hook refuses it from a linked worktree)";
+/// Both report views use the same instruction for the main project's owner.
+const NOT_FROM_HERE: &str = "(the main checkout's project: its refresh owner runs this there)";
 
 /// How much of a report a reader asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +49,7 @@ fn next_action(report: &CheckReport) -> Option<Sentence> {
             Some(Fix::Here(command) | Fix::Elsewhere(command)) => Some(format!("{command} --yes")),
             None => None,
         };
-    // The main checkout's refresh is its refresh owner's, run there: the
-    // hook refuses it from this worktree.
+    // The main checkout's refresh belongs to its refresh owner, run there.
     let checkout = match report.project_target {
         Some(ProjectTarget::MainCheckout(_)) => " from the main checkout, as its refresh owner,",
         Some(ProjectTarget::Worktree(_)) | None => " in this checkout",

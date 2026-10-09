@@ -25,10 +25,17 @@ pub(crate) fn check(cli: &Cli) -> CliResult {
 
 fn check_project_writes(cli: &Cli) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let env = Env::detect()?;
+    check_project_writes_in(cli, &env)
+}
+
+fn check_project_writes_in(
+    cli: &Cli,
+    env: &Env,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let WritingScopes {
         scopes,
         lane_target,
-    } = writing_scopes(cli, &env)?;
+    } = writing_scopes(cli, env)?;
     // The explicit refresh-lane override applies to both project-write
     // restrictions on the three whole-scope commands that accept it.
     if lane_target.is_some_and(|target| target.lane_refresh) {
@@ -47,26 +54,57 @@ fn check_project_writes(cli: &Cli) -> Result<Option<String>, Box<dyn std::error:
     let cwd = env
         .cwd()
         .ok_or("cannot locate the command's working directory")?;
+    let cwd = kendex_core::paths::canonical(cwd)?;
+    let caller = Repo::enclosing_linked(&cwd)?;
     // Preserve the separate refresh-lane rule, including a clone enclosed
     // by a marked lane and named targets outside that lane.
-    if lane_target.is_some() {
-        let caller = kendex_core::lane::marked_worktree(cwd)?;
-        for root in &projects {
-            let item = match &caller {
-                Some(item) => Some(item.clone()),
-                None => kendex_core::lane::marked_worktree(root)?,
-            };
-            if let Some(item) = item {
-                return Ok(Some(format!(
-                    "lane-refresh: item={item}; project writes belong in the repository rolling refresh pull request; pass --lane-refresh for a refresh lane"
-                )));
-            }
-        }
+    let marker = |repo: Option<&Repo>| match repo {
+        Some(repo) => kendex_core::lane::marked_repo(repo),
+        None => Ok(None),
+    };
+    let lane_refusal = |item| {
+        Some(format!(
+            "lane-refresh: item={item}; project writes belong in the repository rolling refresh pull request; pass --lane-refresh for a refresh lane"
+        ))
+    };
+    if lane_target.is_some()
+        && let Some(item) = marker(caller.as_ref())?
+    {
+        return Ok(lane_refusal(item));
     }
-    if let Some(caller) = Repo::enclosing_linked(cwd)? {
-        for root in projects {
-            let destination = Repo::enclosing_linked(root)?;
-            if destination.as_ref().map(|repo| &repo.worktree) != Some(&caller.worktree) {
+    if lane_target.is_none() && caller.is_none() {
+        return Ok(None);
+    }
+    // Retain enclosure answers only for this invocation. Canonical folder
+    // identity, rather than a shared repository identity, permits reuse.
+    let mut destinations = Vec::new();
+    let mut resolved = Vec::new();
+    for root in &projects {
+        let physical = kendex_core::paths::canonical(root)?;
+        let index = if physical == cwd {
+            None
+        } else if let Some(index) = destinations.iter().position(|(path, _)| path == &physical) {
+            Some(index)
+        } else {
+            let destination = Repo::enclosing_linked(&physical)?;
+            if lane_target.is_some()
+                && let Some(item) = marker(destination.as_ref())?
+            {
+                return Ok(lane_refusal(item));
+            }
+            let index = destinations.len();
+            destinations.push((physical, destination));
+            Some(index)
+        };
+        resolved.push((root, index));
+    }
+    if let Some(caller) = caller {
+        for (root, index) in resolved {
+            let destination = match index {
+                None => Some(&caller),
+                Some(index) => destinations[index].1.as_ref(),
+            };
+            if destination.map(|repo| &repo.worktree) != Some(&caller.worktree) {
                 return Ok(Some(format!(
                     "worktree-project-write: target={}; caller={}; run from the target checkout for this project write",
                     root.display(),
@@ -215,3 +253,6 @@ fn add_scope(env: &Env, global: bool) -> Result<Vec<Scope>, Box<dyn std::error::
     // prompting. The actual add still asks before creating a new project.
     Ok(vec![install_destination(env, true)?])
 }
+
+#[cfg(test)]
+mod tests;

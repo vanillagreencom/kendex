@@ -19,6 +19,15 @@ pub fn marked_worktree(dir: &Path) -> Result<Option<String>> {
     let Some(repo) = Repo::enclosing_linked(dir)? else {
         return Ok(None);
     };
+    marked_repo(&repo)
+}
+
+/// Read the launch marker of an already resolved checkout.
+/// Main checkouts have no lane, and Git or marker failures remain errors.
+pub fn marked_repo(repo: &Repo) -> Result<Option<String>> {
+    if !repo.is_linked() {
+        return Ok(None);
+    }
     let output = Hardened::git(&["symbolic-ref", "--quiet", "HEAD"], Some(&repo.worktree)).run()?;
     if output.status.code() == Some(1) {
         return Ok(None);

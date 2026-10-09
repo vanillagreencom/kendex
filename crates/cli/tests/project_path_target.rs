@@ -613,11 +613,6 @@ fn a_named_project_and_the_personal_scope_together_are_refused() {
 /// its own right: it is the destination a command may name, it renders
 /// from its own declarations, and the checkout it was added from is
 /// untouched by the run.
-///
-/// This is the case the flag exists for. An agent session rooted in the
-/// worktree cannot move its shell into the main checkout, and a session
-/// running the `block-worktree-refresh` hook is refused a project-scope
-/// write that names no target.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_linked_worktree_with_its_own_manifest_is_a_project_a_command_can_name() {
