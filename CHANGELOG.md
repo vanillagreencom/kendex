@@ -59,10 +59,16 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Prime source mirrors before the consumer refresh approval classifier runs.
 - Required-only CI waits ignore optional failed, pending or queued jobs, including jobs with the same name as required jobs after required workflows pass. Pending required workflows and unreadable results hold the wait even when visible jobs pass.
 - Accept a fix round's validation record when its run commit contains the restack-mapped round base.
+- Refuse to launch an item whose body names no Location: `item-tier --body` exits 1 with `item-tier-error: cause=no-location` instead of answering `tier=standard` on a size guess, and the overseer sends the item back to filing for a per-subsystem split.
 
 #### worktree
 
 - `worktree push` republishes a branch after a bare rebase when every remote commit has one exact local match in changed paths, modes and complete before/after file contents. Push and restack refuse moved edits, whitespace changes, same-file base updates, incomplete evidence, ambiguous matches and failed comparisons. The push pins the remote commit it read and refuses a later remote change.
+- The session guard reference distinguishes the session-start hook's default advisory mode from its optional required-claim mode and points to the hook declaration for each harness's refusal or advisory support.
+
+#### worktree-session-claim
+
+- Set `KENDEX_WORKTREE_CLAIM=required` in the session environment to stop Codex when the worktree lease cannot be claimed. Codex receives its supported SessionStart stop answer. Claude, Pi and Gemini receive nested advisory context. Copilot receives top-level advisory context. The hook clears inherited Git repository overrides and limits claim diagnostics to their first 4096 bytes.
 
 ## [1.12.2] - 2026-10-08
 
