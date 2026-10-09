@@ -3,9 +3,9 @@
 # name: worktree-session-claim
 # event: SessionStart
 # matcher:
-# description: Claims the linked git worktree a session starts in when its private git directory carries the worktree skill's `kendex-issue` record. The worktree skill's `references/session-guard.md` defines the lease and its limits. It runs `worktree-session-guard claim <worktree root>` with the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A workflow can adopt that initial lease under its issue ID; resumed sessions must name that owner to refresh it. It clears Git's local repository variables plus discovery limits and namespace before resolving the checkout from the session directory. It makes one claim attempt: the guard can wait 60 seconds for its lock, and another attempt would exceed this hook's 75-second timeout. Guard output is limited to its first 4096 bytes. Set the process environment variable `KENDEX_WORKTREE_CLAIM=required` to require a claim; this hook loads no project settings or `.env.local`. In required mode a foreign lease, missing guard, failed claim or unexpected hook error returns `continue:false` with a keyed reason on Claude and Codex. Pi, Gemini and Copilot cannot refuse a SessionStart; they receive the same keyed result as context. Without the setting, failures are notices at exit 0, and a foreign lease stays silent. A main checkout, a repository without the issue record or a directory outside Git claims nothing and says nothing. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
+# description: Claims the linked git worktree a session starts in when its private git directory carries the worktree skill's `kendex-issue` record. The worktree skill's `references/session-guard.md` defines the lease and its limits. It runs `worktree-session-guard claim <worktree root>` with the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A workflow can adopt that initial lease under its issue ID; resumed sessions must name that owner to refresh it. It clears Git's local repository variables plus discovery limits and namespace before resolving the checkout from the session directory. It makes one claim attempt: the guard can wait 60 seconds for its lock, and another attempt would exceed this hook's 75-second timeout. Guard output is limited to its first 4096 bytes. Set the process environment variable `KENDEX_WORKTREE_CLAIM=required` to require a claim; this hook loads no project settings or `.env.local`. In required mode a foreign lease, missing guard, failed claim or unexpected hook error refuses a SessionStart on Codex with `continue:false` and a keyed reason. Claude, Pi, Gemini and Copilot cannot refuse a SessionStart; they receive the same keyed result as advisory context. Without the setting, failures are notices at exit 0, and a foreign lease stays silent. A main checkout, a repository without the issue record or a directory outside Git claims nothing and says nothing. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
 # summary: Claims a git worktree the worktree skill created or adopted for the worktree session guard when a session starts in it.
-# safety: Reads Git repository metadata and the worktree issue record, and runs the guard found beside this hook's install; a project install can use the repository's guard. The guard writes the worktree's lease under the repository's Git directory. Loads no project settings or `.env.local`. Exit 0 carries a structured stop on Claude and Codex only when `KENDEX_WORKTREE_CLAIM=required`; the other harnesses receive an advisory.
+# safety: Reads Git repository metadata and the worktree issue record, and runs the guard found beside this hook's install; a project install can use the repository's guard. The guard writes the worktree's lease under the repository's Git directory. Loads no project settings or `.env.local`. Exit 0 carries a structured stop on Codex only when `KENDEX_WORKTREE_CLAIM=required`; Claude, Pi, Gemini and Copilot receive an advisory at SessionStart.
 # timeout: 75
 # harnesses: [claude, codex, pi, copilot, gemini]
 # requires-skills: [worktree]
@@ -22,12 +22,12 @@ notice() { # KEY VALUE ENGLISH [CAUSE]
   [ -z "$cause" ] || text="$text"$'\n'"$cause"
   printf '%s\n' "$text" >&2
   if [ "${KENDEX_WORKTREE_CLAIM:-}" = required ]; then
-    # Claude and Codex consume continue/stopReason. Gemini and Pi consume
-    # the nested context, and Copilot consumes only additionalContext.
+    # Codex consumes continue/stopReason. Claude, Gemini and Pi consume
+    # advisory nested context; Copilot consumes only additionalContext.
     if answer=$(jq -nc --arg reason "$text" '{continue:false,stopReason:$reason,additionalContext:$reason,hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$reason}}' 2>/dev/null); then
       printf '%s\n' "$answer"
     else
-      # A missing or broken jq must still produce a valid stop answer.
+      # A broken encoder must preserve the Codex stop and advisory context.
       fallback='"worktree-session-claim: output=unavailable\nThe required claim failed. Repair jq and read the cause on stderr."'
       printf '{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$fallback" "$fallback" "$fallback"
     fi
@@ -101,7 +101,7 @@ fi
 
 rc=0
 # The guard can wait 60 seconds for its lock. One attempt fits timeout: 75;
-# a retry could exceed the harness's budget before a refusal is delivered.
+# a retry could exceed the harness's budget before the result is delivered.
 CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?
 # Exit 75 means a lock already holds the tree; this start leaves that lock as
 # it stands.

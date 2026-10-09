@@ -193,14 +193,20 @@ trace_main_rows() {
 }
 trace_main_rows
 
-# Every failure uses the same fixture in advisory and required mode. Claude
-# and Codex read continue/stopReason; Gemini and the Pi carrier read nested
-# context; Copilot reads the top-level context. Those fields must agree.
+# Every failure uses the same fixture in advisory and required mode. These
+# assertions check the hook answer, not a harness run. Codex reads the stop
+# request. Claude, Gemini and Pi read advisory nested context; Copilot reads
+# top-level context. Those fields must agree.
 REQUIRED_ROWS="foreign lease|installed|bob|tree|USER=alice|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob
 missing guard|bare|-|tree|USER=alice|guard|-|none
 failed claim|installed|-|tree|-|unclaimed|worktree-guard-owner-required: claim|none
 redirected Git directory|installed|bob|tree|USER=alice GIT_DIR=MAIN/.git|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob
 discovery ceiling|installed|bob|sub|USER=alice GIT_CEILING_DIRECTORIES=TREE|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob"
+
+assert_advisory_context() { # LABEL
+  assert_eq "$(jq -r '[(.stopReason | type) == "string", .additionalContext == .stopReason, .hookSpecificOutput.additionalContext == .stopReason, .hookSpecificOutput.hookEventName == "SessionStart"] | all' <"$OUT_FILE")" \
+    true "$1: Claude/Pi/Gemini/Copilot advisory context"
+}
 
 required_rows() {
   local label world before dir envspec key guard owner mode cwd rc want_first result
@@ -218,12 +224,12 @@ required_rows() {
       [ "$envspec" = - ] || read -r -a row_env <<<"KENDEX_WORKTREE_CLAIM=$mode $envspec"
       rc=0
       run_hook_in "$cwd" "${row_env[@]}" || rc=$?
-      result=allowed
+      result=silent
       if [ -s "$OUT_FILE" ]; then
-        result=$(jq -r 'if .continue == false and (.stopReason | type) == "string" then "refused" else "invalid" end' <"$OUT_FILE") || result=invalid
+        result=$(jq -r 'if .continue == false and (.stopReason | type) == "string" then "required-output" else "invalid" end' <"$OUT_FILE") || result=invalid
       fi
-      assert_eq "rc=$rc start=$result owner=$(lease_owner "$TREE")" \
-        "rc=0 start=$([ "$mode" = required ] && echo refused || echo allowed) owner=$owner" "$mode: $label"
+      assert_eq "rc=$rc answer=$result owner=$(lease_owner "$TREE")" \
+        "rc=0 answer=$([ "$mode" = required ] && echo required-output || echo silent) owner=$owner" "$mode: $label"
       if [ "$mode" = required ] || [ "$key" != held ]; then
         want_first="worktree-session-claim: $key=$TREE"
         [ "$key" != guard ] || want_first="worktree-session-claim: guard=$WORLD_HOOKS"
@@ -234,9 +240,9 @@ required_rows() {
       else
         assert_eq "$(first_line)" - "$mode: $label key"
       fi
-      if [ "$mode" = required ] && [ "$result" = refused ]; then
+      if [ "$mode" = required ] && [ "$result" = required-output ]; then
         assert_eq "$(jq -r '.stopReason' <"$OUT_FILE")" "$(cat "$ERR_FILE")" "$mode: $label stop reason"
-        assert_eq "$(jq -r '[.additionalContext == .stopReason, .hookSpecificOutput.additionalContext == .stopReason, .hookSpecificOutput.hookEventName == "SessionStart"] | all' <"$OUT_FILE")" true "$mode: $label advisory context"
+        assert_advisory_context "$mode: $label"
       fi
     done
   done <<<"${1:-$REQUIRED_ROWS}"
@@ -270,7 +276,8 @@ EOF
         "rc=0 first=worktree-session-claim: unclaimed=$TREE attempts=1 cause-bytes=4096" "$mode: $kind bound"
       assert_eq "${cause%%$'\n'*}" "worktree-$kind: lock" "$mode: $kind first cause"
       if [ "$mode" = required ]; then
-        assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$mode: $kind start refused"
+        assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$mode: $kind Codex stop request"
+        assert_advisory_context "$mode: $kind"
       else
         assert_eq "$(wc -c <"$OUT_FILE" | tr -d ' ')" 0 "$mode: $kind start allowed"
       fi
@@ -290,12 +297,15 @@ unexpected_rows() {
     install_world installed
     rc=0
     run_hook_in "$TREE" USER=alice "KENDEX_WORKTREE_CLAIM=$mode" || rc=$?
-    result=allowed
+    result=silent
     if [ -s "$OUT_FILE" ]; then
-      result=$(jq -r 'if .continue == false then "refused" else "invalid" end' <"$OUT_FILE") || result=invalid
+      result=$(jq -r 'if .continue == false then "required-output" else "invalid" end' <"$OUT_FILE") || result=invalid
     fi
-    assert_eq "rc=$rc start=$result first=$(first_line)" \
-      "rc=0 start=$([ "$mode" = required ] && echo refused || echo allowed) first=worktree-session-claim: unexpected=$TREE" "$mode: unexpected error"
+    assert_eq "rc=$rc answer=$result first=$(first_line)" \
+      "rc=0 answer=$([ "$mode" = required ] && echo required-output || echo silent) first=worktree-session-claim: unexpected=$TREE" "$mode: unexpected error"
+    if [ "$mode" = required ] && [ "$result" = required-output ]; then
+      assert_advisory_context "$mode: unexpected error"
+    fi
   done
   HOOK=$saved_hook
 }
@@ -313,7 +323,8 @@ output_failure_rows() {
     run_hook_in "$TREE" USER=alice "KENDEX_WORKTREE_CLAIM=$mode" "PATH=$bad_bin:$PATH" || rc=$?
     assert_eq "rc=$rc first=$(first_line)" "rc=0 first=worktree-session-claim: guard=$WORLD_HOOKS" "$mode: broken encoder key"
     if [ "$mode" = required ]; then
-      assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$mode: broken encoder start refused"
+      assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$mode: broken encoder Codex stop request"
+      assert_advisory_context "$mode: broken encoder"
     else
       assert_eq "$(wc -c <"$OUT_FILE" | tr -d ' ')" 0 "$mode: broken encoder start allowed"
     fi
@@ -438,7 +449,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control unexpected-exit 'trap '"'"'rc=$?; [ "$rc" -eq 0 ] || notice unexpected "${ROOT:-$PWD}" "The session claim hook failed; repair the hook before starting work." "exit=$rc"'"'"' EXIT' ':' unexpected_rows \
     "advisory: unexpected error;required: unexpected error;"
   control output-fallback '      printf '"'"'{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback" "$fallback"' '      :' output_failure_rows \
-    "required: broken encoder start refused;"
+    "required: broken encoder Codex stop request;required: broken encoder: Claude/Pi/Gemini/Copilot advisory context;"
+
+  control output-context '      printf '"'"'{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback" "$fallback"' \
+    '      printf '"'"'{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback" "$fallback" >/dev/null; printf '"'"'{"continue":false,"stopReason":%s}\n'"'"' "$fallback"' output_failure_rows \
+    "required: broken encoder: Claude/Pi/Gemini/Copilot advisory context;"
 
   # A hook that claims whatever tree it starts in locks one no
   # `worktree create` returned, such as a harness's own.
