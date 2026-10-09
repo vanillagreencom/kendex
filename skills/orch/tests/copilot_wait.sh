@@ -46,7 +46,7 @@ case "$*" in
     [[ "$MODE" != auth-valid || "${GH_TOKEN:-}${GITHUB_TOKEN:-}" == valid ]] || exit 9
     if [[ "$MODE" == moved && "$(cat "$READS")" -ge 1 ]]; then head="$HEAD_B"; fi
     [[ "$MODE" != invalid-head ]] || head=null
-    case "$MODE" in timeline-old-review*|timeline-newer-request*|timeline-overlap*|timeline-duplicate-old|timeline-cancelled|timeline-boundary-null|timeline-review-null) head="$HEAD_B" ;; esac
+    case "$MODE" in timeline-old-review*|timeline-newer-request*|timeline-overlap*|timeline-cancelled|timeline-paired-*|timeline-rereview-*|timeline-start-overlap|timeline-review-replay|timeline-alias-replay|timeline-boundary-null|timeline-review-null) head="$HEAD_B" ;; esac
     echo "$head"
     ;;
   'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
@@ -75,23 +75,48 @@ case "$*" in
           {event:"head_ref_force_pushed",commit_id:(if $mode == "timeline-boundary-null" then null else $head end),created_at:"2026-10-09T07:20:00Z"}]]'
         ;;
 
-      timeline-old-review*|timeline-newer-request*|timeline-overlap*|timeline-duplicate-old|timeline-cancelled)
+      timeline-paired-*|timeline-rereview-*|timeline-start-overlap|timeline-review-replay|timeline-alias-replay)
+        jq -nc --arg a "$HEAD_A" --arg b "$HEAD_B" --arg mode "$MODE" '
+          def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
+          def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,
+            actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
+          def rev($id;$at): {event:"reviewed",id:$id,commit_id:$a,user:{login:"Copilot",type:"Bot"},state:"commented",submitted_at:$at};
+          [[{event:"committed",sha:$b,committer:{date:"2026-10-09T06:00:00Z"}},
+            {event:"head_ref_force_pushed",commit_id:$a,created_at:"2026-10-09T06:50:00Z"},req(73;"2026-10-09T07:00:00Z")],
+           (if $mode == "timeline-start-overlap"
+            then [req(74;"2026-10-09T07:00:20Z"),work(75;"2026-10-09T07:00:35Z"),work(78;"2026-10-09T07:00:55Z"),rev(81;"2026-10-09T07:10:00Z")]
+            elif $mode == "timeline-paired-cancelled"
+            then [{event:"review_request_removed",requested_reviewer:{login:"Copilot"},created_at:"2026-10-09T07:00:10Z"},work(75;"2026-10-09T07:00:35Z")]
+            else [work(75;"2026-10-09T07:00:35Z")] end),
+           (if $mode == "timeline-alias-replay" then [work(75;"2026-10-09T07:00:35Z")] else [] end),
+           (if $mode == "timeline-paired-completed" or $mode == "timeline-paired-cancelled" or $mode == "timeline-alias-replay" or ($mode | startswith("timeline-rereview"))
+            then [rev(81;"2026-10-09T07:10:00Z")] else [] end),
+           (if ($mode | startswith("timeline-rereview")) then [req(76;"2026-10-09T07:12:00Z"),work(77;"2026-10-09T07:12:35Z")] else [] end),
+           (if $mode == "timeline-rereview-completed" or $mode == "timeline-rereview-newer"
+            then [rev(82;"2026-10-09T07:15:00Z")] else [] end),
+           (if $mode == "timeline-paired-overlap" or $mode == "timeline-rereview-overlap" or $mode == "timeline-rereview-newer" or $mode == "timeline-review-replay"
+            then [req(74;"2026-10-09T07:23:47Z"),work(78;"2026-10-09T07:24:22Z")] else [] end),
+           (if $mode == "timeline-paired-overlap" or $mode == "timeline-review-replay" then [rev(81;"2026-10-09T07:27:06Z")]
+            elif $mode == "timeline-rereview-overlap" then [rev(82;"2026-10-09T07:27:06Z")] else [] end),
+           (if $mode == "timeline-review-replay" then [rev(81;"2026-10-09T07:27:06Z")] else [] end)]'
+        ;;
+      timeline-old-review*|timeline-newer-request*|timeline-overlap*|timeline-cancelled)
         jq -nc --arg a "$HEAD_A" --arg b "$HEAD_B" --arg mode "$MODE" '
           def request($id;$at): {event:"review_requested",id:$id,created_at:$at,commit_id:null,requested_reviewer:{login:"Copilot",type:"Bot"}};
           def review($head;$at): {event:"reviewed",id:(if $at == "2026-10-09T07:10:00Z" then 81 else 82 end),user:{login:"Copilot",type:"Bot"},commit_id:$head,submitted_at:$at};
-          [(if $mode == "timeline-overlap-unknown" or $mode == "timeline-old-review-ordinary" or $mode == "timeline-newer-request-ordinary" or $mode == "timeline-duplicate-old" or $mode == "timeline-cancelled" then [{event:"committed",sha:$b,committer:{date:"2026-10-09T06:00:00Z"}}] else [] end),
+          [(if $mode == "timeline-overlap-unknown" or $mode == "timeline-old-review-ordinary" or $mode == "timeline-newer-request-ordinary" or $mode == "timeline-cancelled" then [{event:"committed",sha:$b,committer:{date:"2026-10-09T06:00:00Z"}}] else [] end),
            [{event:"head_ref_force_pushed",commit_id:$a,created_at:"2026-10-09T06:50:00Z"},
             request(73;"2026-10-09T07:00:00Z")],
-           (if ($mode | startswith("timeline-old-review")) or ($mode | startswith("timeline-newer-request")) or $mode == "timeline-duplicate-old"
+           (if ($mode | startswith("timeline-old-review")) or ($mode | startswith("timeline-newer-request"))
             then [review($a;"2026-10-09T07:10:00Z")] else [] end),
-           (if $mode == "timeline-overlap-unknown" or $mode == "timeline-old-review-ordinary" or $mode == "timeline-newer-request-ordinary" or $mode == "timeline-duplicate-old" or $mode == "timeline-cancelled"
+           (if $mode == "timeline-overlap-unknown" or $mode == "timeline-old-review-ordinary" or $mode == "timeline-newer-request-ordinary" or $mode == "timeline-cancelled"
             then []
             elif $mode == "timeline-overlap-ordinary"
             then [{event:"review_dismissed",commit_id:null,created_at:"2026-10-09T07:20:00Z",dismissed_review:{state:"approved",dismissal_commit_id:$b}}]
             else [{event:"head_ref_force_pushed",commit_id:$b,created_at:"2026-10-09T07:20:00Z"}] end),
            (if $mode == "timeline-cancelled" then [{event:"review_request_removed",requested_reviewer:{login:"Copilot"},created_at:"2026-10-09T07:15:00Z"}] else [] end),
            (if ($mode | startswith("timeline-old-review")) then [] else [request(74;"2026-10-09T07:23:47Z")] end),
-           (if ($mode | startswith("timeline-overlap")) or $mode == "timeline-duplicate-old" or $mode == "timeline-cancelled" then [review($a;"2026-10-09T07:27:06Z")] else [] end)]'
+           (if ($mode | startswith("timeline-overlap")) or $mode == "timeline-cancelled" then [review($a;"2026-10-09T07:27:06Z")] else [] end)]'
         ;;
       timeline-request|timeline-initial|timeline-work|timeline-reviewed|timeline-human-review|timeline-removed|timeline-human-removed)
         event=review_requested
@@ -167,8 +192,16 @@ rows=(
   'timeline-old-review|3|0|none|none|none|0'
   'timeline-old-review-ordinary|3|0|none|none|none|0'
   'timeline-newer-request-ordinary|3|1|expired|none|74|3'
-  'timeline-duplicate-old|3|1|expired|none|74|3'
   'timeline-cancelled|3|1|expired|none|74|3'
+  'timeline-paired-completed|3|0|none|none|none|0'
+  'timeline-paired-cancelled|3|0|none|none|none|0'
+  'timeline-rereview-completed|3|0|none|none|none|0'
+  'timeline-rereview-newer|3|1|expired|none|74|3'
+  'timeline-paired-overlap|3|1|expired|none|74|3'
+  'timeline-rereview-overlap|3|1|expired|none|74|3'
+  'timeline-start-overlap|3|1|expired|none|74|3'
+  'timeline-review-replay|3|1|expired|none|74|3'
+  'timeline-alias-replay|3|0|none|none|none|0'
   'timeline-newer-request|3|1|expired|none|74|3'
   'timeline-overlap|3|1|expired|none|74|3'
   'timeline-overlap-ordinary|3|1|expired|none|74|3'
@@ -272,7 +305,7 @@ mutate "$READER" '$event.commit_id == $head' 'true'
 run_wait timeline-overlap 3
 assert_eq "$(field state)" none 'must-fail: an old-head completion cannot release the newer request'
 cp "$TMP_ROOT/reader.pristine" "$READER"
-mutate "$READER" '($unassigned | length) == 1' 'false and ($unassigned | length) == 1'
+mutate "$READER" '($unassigned | length) > 0' 'false and ($unassigned | length) > 0'
 run_wait timeline-old-review-ordinary 3
 assert_eq "$(field state)" expired 'must-fail: a unique completed old cycle stays closed after an ordinary push'
 cp "$TMP_ROOT/reader.pristine" "$READER"
@@ -280,9 +313,28 @@ mutate "$READER" '.cycles |= map(select(.id != $unassigned[0].id))' '.cycles = [
 run_wait timeline-overlap 3
 assert_eq "$(field state)" none 'must-fail: assigning an old completion cannot consume every cycle'
 cp "$TMP_ROOT/reader.pristine" "$READER"
-mutate "$READER" '(.completed | index($event.commit_id)) == null' 'true'
-run_wait timeline-duplicate-old 3
-assert_eq "$(field state)" none 'must-fail: a completed head cannot claim a newer unknown cycle'
+mutate "$READER" 'select(.phase == "requested" and .started_at <= $event.created_at)' 'select(.pending and .phase == "requested" and .started_at <= $event.created_at)'
+run_wait timeline-paired-cancelled 3
+assert_eq "$(field state)" expired 'must-fail: a delayed work-start must not reopen its cancelled request'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" 'if ($requests | length) > 0' 'if false and ($requests | length) > 0'
+run_wait timeline-paired-completed 3
+assert_eq "$(field state)" expired 'must-fail: request and work-start aliases must close together'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" '           then error("Copilot completion identity is unreadable")
+           elif seen($event) then .
+           else .seen += [[$event.event, $event.id]] |' \
+  '           then error("Copilot completion identity is unreadable")
+           elif seen($event) or any(.seen[]; . == [$event.event, $event.commit_id]) then .
+           else .seen += [[$event.event, $event.id], [$event.event, $event.commit_id]] |'
+run_wait timeline-rereview-completed 3
+assert_eq "$(field state)" expired 'must-fail: one head can have separate completed review instances'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" 'any(.seen[]; . == [$event.event, $event.id])' 'false and any(.seen[]; . == [$event.event, $event.id])'
+run_wait timeline-review-replay 3
+assert_eq "$(field state)" none 'must-fail: replaying one completion cannot consume another request'
+run_wait timeline-alias-replay 3
+assert_eq "$(field state)" expired 'must-fail: replaying a work-start cannot create another review'
 cp "$TMP_ROOT/reader.pristine" "$READER"
 mutate "$READER" '.cycles |= map(.pending = false)' '.cycles = []'
 run_wait timeline-cancelled 3

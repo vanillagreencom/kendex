@@ -40,19 +40,23 @@ case "$*" in
     if [[ "$CHECK_MODE" == cycle-* ]]; then
       jq -nc --arg head "$LIVE_HEAD" --arg old "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" --arg mode "$CHECK_MODE" --argjson count "$(cat "$CHECK_READS")" '
         def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
-        def rev($head;$at): {event:"reviewed",id:(if $at == "2026-10-09T06:20:00Z" then 81 elif $at == "2026-10-09T06:41:25Z" then 82 else 83 end),commit_id:$head,user:{login:"Copilot",type:"Bot"},submitted_at:$at};
+        def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,
+          actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
+        def rev($head;$at): {event:"reviewed",id:(if $at == "2026-10-09T06:20:00Z" then 81 elif $at == "2026-10-09T06:26:00Z" or $at == "2026-10-09T06:42:00Z" then 82 else 83 end),commit_id:$head,user:{login:"Copilot",type:"Bot"},submitted_at:$at};
         [(if $mode == "cycle-unknown" or ($mode | endswith("-ordinary")) then [{event:"committed",sha:$head,committer:{date:"2026-10-09T05:00:00Z"}}] else [] end),
-         [{event:"head_ref_force_pushed",commit_id:$old,created_at:"2026-10-09T06:00:00Z"},req(73;"2026-10-09T06:10:00Z")],
-         (if ($mode | startswith("cycle-completed")) or ($mode | startswith("cycle-newer")) then [rev($old;"2026-10-09T06:20:00Z")] else [] end),
+         [{event:"head_ref_force_pushed",commit_id:$old,created_at:"2026-10-09T06:00:00Z"},req(73;"2026-10-09T06:10:00Z"),work(75;"2026-10-09T06:10:35Z")],
+         (if ($mode | startswith("cycle-completed")) or ($mode | startswith("cycle-newer")) or ($mode | startswith("cycle-rereview")) then [rev($old;"2026-10-09T06:20:00Z")] else [] end),
+         (if ($mode | startswith("cycle-rereview")) then [req(76;"2026-10-09T06:25:00Z"),work(77;"2026-10-09T06:25:35Z")] else [] end),
+         (if $mode == "cycle-rereview-completed-ordinary" or $mode == "cycle-rereview-newer-ordinary" then [rev($old;"2026-10-09T06:26:00Z")] else [] end),
          (if $mode == "cycle-unknown" or ($mode | endswith("-ordinary")) then []
           else [{event:"head_ref_force_pushed",commit_id:$head,created_at:"2026-10-09T06:30:00Z"}] end),
-         (if ($mode | startswith("cycle-completed")) then [] else [req(74;"2026-10-09T06:41:20Z")] end),
-         (if $mode == "cycle-overlap" or $mode == "cycle-unknown" then [rev($old;"2026-10-09T06:41:25Z")] else [] end),
-         (if ($mode | startswith("cycle-completed") | not) and $count > 1 then [rev($head;"2026-10-09T06:41:30Z")] else [] end)]'
+         (if ($mode | startswith("cycle-completed")) or $mode == "cycle-rereview-completed-ordinary" then [] else [req(74;"2026-10-09T06:41:20Z"),work(78;"2026-10-09T06:41:55Z")] end),
+         (if $mode == "cycle-overlap" or $mode == "cycle-unknown" or $mode == "cycle-rereview-overlap-ordinary" then [rev($old;"2026-10-09T06:42:00Z")] else [] end),
+         (if ($mode | startswith("cycle-completed") | not) and $mode != "cycle-rereview-completed-ordinary" and $count > 1 then [rev($head;"2026-10-09T06:42:05Z")] else [] end)]'
     elif [[ "$CHECK_MODE" == timeline ]]; then
       jq -nc --arg head "$LIVE_HEAD" --argjson count "$(cat "$CHECK_READS")" '
         [[{event:"review_requested",id:73,created_at:"2026-10-09T06:41:20Z",requested_reviewer:{login:"Copilot"}}],
-         if $count > 1 then [{event:"reviewed",id:81,user:{login:"Copilot"},commit_id:$head,submitted_at:"2026-10-09T06:41:30Z"}] else [] end]'
+         if $count > 1 then [{event:"reviewed",id:81,user:{login:"Copilot"},commit_id:$head,submitted_at:"2026-10-09T06:42:05Z"}] else [] end]'
     else echo '[[]]'; fi
     ;;
   'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
@@ -192,6 +196,9 @@ pending timeline work is reviewed|timeline|yes|600|5|no|2|copilot-finished
 completed old cycle stays closed after push|cycle-completed|yes|600|0|yes|1|
 completed old cycle stays closed after ordinary push|cycle-completed-ordinary|yes|600|0|yes|1|
 new request after ordinary push stays pending|cycle-newer-ordinary|yes|600|5|no|2|copilot-finished
+second completed review stays closed after ordinary push|cycle-rereview-completed-ordinary|yes|600|0|yes|1|
+new request after two completed reviews stays pending|cycle-rereview-newer-ordinary|yes|600|5|no|2|copilot-finished
+late second old-head review retains newer request|cycle-rereview-overlap-ordinary|yes|600|5|no|2|copilot-finished
 new request stays pending after old completion|cycle-newer|yes|600|5|no|2|copilot-finished
 late old review cannot release new request|cycle-overlap|yes|600|5|no|2|copilot-finished
 unknown owner stays pending until current review|cycle-unknown|yes|600|5|no|2|copilot-finished
