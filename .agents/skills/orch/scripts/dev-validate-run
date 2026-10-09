@@ -180,8 +180,8 @@
 #                                answered names the context
 #            context-unrequired  both reads answered and neither names it
 #            class-uncovered     a class other than micro, small or
-#                                standard, a docs-only diff, or a class the
-#                                classifier did not measure or fell back to,
+#                                standard, a docs-only diff, failed class
+#                                evidence, or an unmeasured narrow class,
 #                                since harness-ci may stand CI's checks down
 #                                for it
 #            selection-local     the repository selector requires local work
@@ -252,7 +252,7 @@
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
+#   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME] [ci-fallback=CAUSE]   (--record)
 #   validate-mode=full|range|ci                                               (--resolve-mode)
 #   run-dir=… head=SHA tree=SHA                                               (--last-pass)
 #   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
@@ -671,11 +671,14 @@ CI_RULES_JQ='.[] | select(.type == "required_status_checks") | .parameters.requi
 CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((.contexts // []) + [(.checks // [])[] | .context]) | .[] else error("protection unreadable") end'
 
 # Both requested CI and automatic all-suite resolution use the same coverage
-# rule: CI may stand checks down for unmeasured, render or docs-only changes.
+# rule: CI may stand checks down for render or docs-only changes. A standard
+# fallback runs CI's conservative lanes, so it does not need a measured size.
+# This is a local coverage check, not a change to the classifier's policy.
 ci_class_covered() {
-  [[ -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]] || return 1
+  [[ -z "$class_fallback" && "$docs_only" == false ]] || return 1
   case "$class" in
-    micro|small|standard) return 0 ;;
+    standard) return 0 ;;
+    micro|small) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;
   esac
   return 1
 }
@@ -822,9 +825,9 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   scoped=false
   if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then
     if [[ -n "${selection_cmd//[[:space:]]/}" ]]; then
-      if preview_selection \
-        && [[ "$selection" == selection=all ]] && ci_class_covered; then
-        if ci_runs_validation; then
+      if preview_selection && [[ "$selection" == selection=all ]]; then
+        ci_fallback=class-uncovered
+        if ci_class_covered && ci_runs_validation; then
           validate_mode=ci
           class_base=""
         elif [[ "$ci_fallback" == pr-not-open ]]; then
@@ -1178,10 +1181,11 @@ if [[ "$mode" == record ]]; then
   record_orphaned="$(start_field "$run_dir/start" validate-base-orphaned)"
   record_class_base="$(start_field "$run_dir/start" class-base)"
   record_scoped="$(start_field "$run_dir/start" scoped)"
-  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
+  record_ci_fallback="$(start_field "$run_dir/start" ci-fallback)"
+  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
     "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" \
     "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "${record_class_base:+ class-base=$record_class_base}" "$record_timing" \
-    "${record_scoped:+ scoped=$record_scoped}"
+    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}"
   exit 0
 fi
 

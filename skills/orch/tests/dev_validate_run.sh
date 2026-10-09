@@ -972,7 +972,7 @@ CI_ROWS=(
   "a render diff, whose checks CI stands down, runs the range command|yes|rules|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a trivial diff outside the docs set runs the range command|yes|rules|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a standard diff of docs alone runs the range command|yes|rules|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
-  "a standard class the classifier fell back to runs the range command|yes|rules|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "a standard fallback under required CI is left to CI|yes|rules|change_class=standard|false|false|state=done guard-exit=0 validate=pass |ci|"
   "a class with no measured marker runs the range command|yes|rules|change_class=micro|false||state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a docs verdict that did not read runs the range command|yes|rules|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
 )
@@ -1011,6 +1011,20 @@ STUB_RULES_STDERR='gh: HTTP 401: Bad credentials' RUN_PATH="$GH_STUB_BIN:$PATH" 
 assert_eq "$(start_line "$(run_dir_of "$OUT")" ci-fallback) $(cat "$(run_dir_of "$OUT")/ci.log" 2>/dev/null)" \
   "rules-unread gh: HTTP 401: Bad credentials" \
   "a rules read that fails names rules-unread and keeps gh's error in ci.log" "$ERR"
+fallback_dir="$(run_dir_of "$OUT")"
+# --record is the machine-readable run record consumed by dev-return-write.
+# Existing runs and every fallback cause keep their start evidence in it.
+for fallback in "" setting-empty pr-not-open base-unresolved rules-unread context-unrequired class-uncovered selection-local selection-unread; do
+  sed -i.bak '/^ci-fallback=/d' "$fallback_dir/start"
+  [[ -z "$fallback" ]] || printf 'ci-fallback=%s\n' "$fallback" >> "$fallback_dir/start"
+  run_script "$CI_SCRIPT" --record --run-dir "$fallback_dir"
+  assert_eq "$RC $(record_field ci-fallback "$OUT")" "0 $fallback" "the run record carries fallback [$fallback]" "$ERR"
+done
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'record_ci_fallback="$(start_field "$run_dir/start" ci-fallback)"' 'record_ci_fallback=""'
+run_script "$CI_SCRIPT.mutant" --record --run-dir "$fallback_dir"
+assert_eq "$RC $(record_field ci-fallback "$OUT")" "0 " \
+  "control: dropping fallback evidence turns its recorded cause red" "$ERR"
 # ci_run [ARG...] — a micro ci request in proj_ci, whose base requires CI.
 ci_run() {
   ci_world rules
@@ -1085,16 +1099,16 @@ ci_control 'an empty pull request base accepted' \
 ci_control 'an unread rule named as unrequired' 'if [[ "$unread" == true ]]; then' 'if false; then' \
   'a ruleset read that fails runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|context-unrequired'
-ci_control 'the class cause unrecorded' $'    ci_fallback=class-uncovered\n' '' \
+ci_control 'the class cause unrecorded' $'    validate_mode=range\n    ci_fallback=class-uncovered\n' $'    validate_mode=range\n' \
   'a render diff, whose checks CI stands down, runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|'
 ci_control 'render among the covered classes' \
-  'micro|small|standard) return 0 ;;' 'micro|small|standard|render) return 0 ;;' \
+  'standard) return 0 ;;' 'standard|render) return 0 ;;' \
   'a render diff, whose checks CI stands down, runs the range command'
 ci_control 'the docs verdict unread' ' && "$docs_only" == false ]]' ' ]]' \
   'a standard diff of docs alone runs the range command'
-ci_control 'the measured marker unread' ' && "$CHANGE_CLASS_MEASURED" == true' '' \
-  'a standard class the classifier fell back to runs the range command'
+ci_control 'the measured marker unread' '[[ "$CHANGE_CLASS_MEASURED" == true ]]' 'true' \
+  'a class with no measured marker runs the range command'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
 }
@@ -1913,43 +1927,49 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
   "control: a read that takes any mode names the ci run"
 
 # --- The command's own preview resolves an all selection before launch -------
-# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit
+# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback
 SELECTION_ROWS=(
   "a full all selection uses required PR CI|full|yes|all|rules|ci||unreported|no|absent|0"
   "a range all selection uses required PR CI|range|yes|all|rules|ci||unreported|no|absent|0"
+  # KEN-3495's archived submit range selected all after PR #4528 opened.
+  # Re-deriving its saved base/head diff yields standard, measured=false,
+  # cause=verify-refused. Its original class.log is no longer available.
+  "KEN-3495 standard fallback all range uses required PR CI|range|yes|all-fallback|rules|ci||unreported|no|absent|0"
+  "a full standard fallback all selection uses required PR CI|full|yes|all-fallback|rules|ci||unreported|no|absent|0"
+  "a ci standard fallback all selection uses required PR CI|ci|yes|all-fallback|rules|ci||unreported|no|absent|0"
   "a full subset retains local execution|full|yes|subset|rules|full||unreported|no|full|0"
   "a range subset retains local execution|range|yes|subset|rules|range||unreported|yes|range|0"
   "an unset selector preserves local execution|full|no|all|rules|full||unreported|no|full|0"
   "an unset selector preserves range local execution|range|no|all|rules|range||unreported|yes|range|0"
   "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no|full|0"
   "an unknown selection preserves local execution|full|yes|unknown|rules|full||unreported|no|full|0"
-  "an all selection without required CI retains local execution|full|yes|all|unrequired|full||unreported|no|full|0"
-  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||unreported|no|full|0"
-  "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-no-pr|full|true|subset|yes|absent|0"
-  "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-no-pr|range|true|subset|yes|absent|0"
-  "a closed PR full all selection runs scoped suites|full|yes|all|pr-closed|full|true|subset|yes|absent|0"
-  "a closed PR range all selection runs scoped suites|range|yes|all|pr-closed|range|true|subset|yes|absent|0"
-  "a merged PR full all selection runs scoped suites|full|yes|all|pr-merged|full|true|subset|yes|absent|0"
-  "a merged PR range all selection runs scoped suites|range|yes|all|pr-merged|range|true|subset|yes|absent|0"
-  "a failed full PR lookup keeps the original failure|full|yes|all|pr-unread|full||unreported|no|full|1"
-  "a failed range PR lookup keeps the original failure|range|yes|all|pr-unread|range||unreported|yes|range|1"
-  "a full network failure keeps the original failure|full|yes|all|pr-network|full||unreported|no|full|1"
-  "a range network failure keeps the original failure|range|yes|all|pr-network|range||unreported|yes|range|1"
-  "a full invalid response keeps the original failure|full|yes|all|pr-invalid|full||unreported|no|full|1"
-  "a range invalid response keeps the original failure|range|yes|all|pr-invalid|range||unreported|yes|range|1"
-  "a full unknown state keeps the original failure|full|yes|all|pr-state|full||unreported|no|full|1"
-  "a range unknown state keeps the original failure|range|yes|all|pr-state|range||unreported|yes|range|1"
-  "a full empty base keeps the original failure|full|yes|all|pr-empty|full||unreported|no|full|1"
-  "a range empty base keeps the original failure|range|yes|all|pr-empty|range||unreported|yes|range|1"
-  "a full URI failure keeps the original failure|full|yes|all|pr-uri|full||unreported|no|full|1"
-  "a range URI failure keeps the original failure|range|yes|all|pr-uri|range||unreported|yes|range|1"
+  "an all selection without required CI retains local execution|full|yes|all|unrequired|full||unreported|no|full|0|context-unrequired"
+  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||unreported|no|full|0|class-uncovered"
+  "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-no-pr|full|true|subset|yes|absent|0|pr-not-open"
+  "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-no-pr|range|true|subset|yes|absent|0|pr-not-open"
+  "a closed PR full all selection runs scoped suites|full|yes|all|pr-closed|full|true|subset|yes|absent|0|pr-not-open"
+  "a closed PR range all selection runs scoped suites|range|yes|all|pr-closed|range|true|subset|yes|absent|0|pr-not-open"
+  "a merged PR full all selection runs scoped suites|full|yes|all|pr-merged|full|true|subset|yes|absent|0|pr-not-open"
+  "a merged PR range all selection runs scoped suites|range|yes|all|pr-merged|range|true|subset|yes|absent|0|pr-not-open"
+  "a failed full PR lookup keeps the original failure|full|yes|all|pr-unread|full||unreported|no|full|1|base-unresolved"
+  "a failed range PR lookup keeps the original failure|range|yes|all|pr-unread|range||unreported|yes|range|1|base-unresolved"
+  "a full network failure keeps the original failure|full|yes|all|pr-network|full||unreported|no|full|1|base-unresolved"
+  "a range network failure keeps the original failure|range|yes|all|pr-network|range||unreported|yes|range|1|base-unresolved"
+  "a full invalid response keeps the original failure|full|yes|all|pr-invalid|full||unreported|no|full|1|base-unresolved"
+  "a range invalid response keeps the original failure|range|yes|all|pr-invalid|range||unreported|yes|range|1|base-unresolved"
+  "a full unknown state keeps the original failure|full|yes|all|pr-state|full||unreported|no|full|1|base-unresolved"
+  "a range unknown state keeps the original failure|range|yes|all|pr-state|range||unreported|yes|range|1|base-unresolved"
+  "a full empty base keeps the original failure|full|yes|all|pr-empty|full||unreported|no|full|1|base-unresolved"
+  "a range empty base keeps the original failure|range|yes|all|pr-empty|range||unreported|yes|range|1|base-unresolved"
+  "a full URI failure keeps the original failure|full|yes|all|pr-uri|full||unreported|no|full|1|base-unresolved"
+  "a range URI failure keeps the original failure|range|yes|all|pr-uri|range||unreported|yes|range|1|base-unresolved"
 )
 selection_rows() { # SCRIPT [LABEL]
-  local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc expected_rc args n answer
+  local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback expected_rc args n answer measured
   local initial_fail="$FAIL"
   n=0
   for row in "${SELECTION_ROWS[@]}"; do
-    IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc <<<"$row"
+    IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc _ <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "proj-selection-$n" CI)"
@@ -1974,10 +1994,12 @@ SH
     [[ "$configured" != yes ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "./selection"\n' >> "$proj/kendex.settings.toml"
     ci_world "$world"
     answer=change_class=standard
+    measured=true
     if [[ "$selection" == all-render ]]; then selection=all; answer=change_class=render; fi
+    if [[ "$selection" == all-fallback ]]; then selection=all; measured=false; fi
     args=()
-    [[ "$requested" != range ]] || args=(--validate-mode range --base HEAD)
-    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED=true \
+    [[ "$requested" == full ]] || args=(--validate-mode "$requested" --base HEAD)
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED="$measured" \
       STUB_SELECTION="$selection" STUB_LOCAL_EXIT="$expected_rc" run_script "$1" --worktree "$proj" --poll 1 ${args[@]+"${args[@]}"}
     got_rc="$RC"
     dir="$(run_dir_of "$OUT")"
@@ -1987,16 +2009,17 @@ SH
     [[ -z "$(start_line "$dir" class-base)" ]] || got_base=yes
     run_script "$1" --record --run-dir "$dir"
     got_selection="$(record_field selection "$OUT")"
+    got_fallback="$(record_field ci-fallback "$OUT")"
     if [[ "$got_scoped" == true ]]; then
       assert_eq "$(record_field scoped "$OUT") $(record_field class-base "$OUT")" \
         "true $(git -C "$proj" rev-parse HEAD)" "$label: scoped receipt cannot stand for the whole battery" "$ERR"
     fi
     got_launch=absent
     [[ ! -f "$proj/local-launch" ]] || got_launch="$(cat "$proj/local-launch")"
-    printf '%s\t%s|%s|%s|%s|%s|%s\n' "$label" "$got_mode" "$got_scoped" "$got_selection" "$got_base" "$got_launch" "$got_rc"
+    printf '%s\t%s|%s|%s|%s|%s|%s|%s\n' "$label" "$got_mode" "$got_scoped" "$got_selection" "$got_base" "$got_launch" "$got_rc" "$got_fallback"
     # A base-aware read resolves the same range selection without starting.
     if [[ "$requested" == range ]]; then
-      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED=true \
+      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED="$measured" \
         STUB_SELECTION="$selection" run_script "$1" --resolve-mode --worktree "$proj" --base HEAD
       assert_eq "$RC $OUT" "0 validate-mode=$got_mode" "$label: selection-aware resolution" "$ERR"
     fi
@@ -2009,9 +2032,9 @@ SH
 }
 SELECTION_GOT="$(selection_rows "$CI_SCRIPT")"
 for row in "${SELECTION_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base want_launch want_rc <<<"$row"
+  IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base want_launch want_rc want_fallback <<<"$row"
   assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$SELECTION_GOT")" \
-    "$want_mode|$want_scoped|$want_selection|$want_base|$want_launch|$want_rc" "$label"
+    "$want_mode|$want_scoped|$want_selection|$want_base|$want_launch|$want_rc|$want_fallback" "$label"
 done
 selection_control() { # LABEL ANCHOR REPLACEMENT ROW
   local got want
@@ -2039,16 +2062,25 @@ selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
-  '&& [[ "$selection" == selection=all ]] && ci_class_covered; then' \
-  '&& [[ "$selection" == selection=all ]] && true; then # ci_class_covered' \
+  $'        ci_fallback=class-uncovered\n        if ci_class_covered && ci_runs_validation; then' \
+  $'        ci_fallback=class-uncovered\n        if ci_runs_validation; then # ci_class_covered' \
+  'an all selection CI does not cover retains local execution'
+selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
+  'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
+  'KEN-3495 standard fallback all range uses required PR CI'
+selection_control 'rejecting a conservative standard fallback turns explicit CI routing red' \
+  'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
+  'a ci standard fallback all selection uses required PR CI'
+selection_control 'omitting the automatic class fallback turns its record red' \
+  $'        ci_fallback=class-uncovered\n' '' \
   'an all selection CI does not cover retains local execution'
 for row in "${SELECTION_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ _ _ _ _ want_launch want_rc <<<"$row"
+  IFS='|' read -r label requested _ _ _ _ _ _ _ want_launch want_rc _ <<<"$row"
   if [[ "$want_rc" == 1 ]]; then
     selection_control "treating an unread PR as pre-open turns $label red" \
       '"$ci_fallback" == pr-not-open' '"$ci_fallback" == base-unresolved' "$label"
   fi
-  [[ "$want_launch" == absent ]] || continue
+  [[ "$want_launch" == absent && "$requested" != ci ]] || continue
   selection_control "launching the original command before preview turns $label red" \
     $'  scoped=false\n  if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then' \
     $'  scoped=false\n  if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then\n    "$BASH" -c "$cmd" >/dev/null' \

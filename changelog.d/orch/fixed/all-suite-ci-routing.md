@@ -1,0 +1,1 @@
+- All-suite validation uses required pull-request CI when the classifier falls back to its conservative standard class. Local fallback records include the cause.
