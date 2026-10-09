@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: refresh-ci-proof. Inputs: harness-ci's shared caller path.
+# Surface: refresh-ci-proof. Inputs: harness-ci's shared caller and range owner.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -14,14 +14,38 @@ mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/skills/orch/scripts" "$TMP_ROOT/skills/harne
 SCRIPT="$TMP_ROOT/skills/orch/scripts/refresh-ci-proof"
 cp "$REPO_ROOT/skills/orch/scripts/refresh-ci-proof" "$SCRIPT"
 cp "$REPO_ROOT/skills/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/skills/harness-ci/scripts/lib/"
-HEAD_SHA=0123456789abcdef0123456789abcdef01234567
+cp "$REPO_ROOT/skills/harness-ci/scripts/harness-only" "$TMP_ROOT/skills/harness-ci/scripts/"
+FIXTURE="$TMP_ROOT/repo"
+git init -q "$FIXTURE"
+git -C "$FIXTURE" config user.email test@example.com
+git -C "$FIXTURE" config user.name test
+git -C "$FIXTURE" config gc.auto 0
+git -C "$FIXTURE" config maintenance.auto false
+printf 'old\n' > "$FIXTURE/product"
+git -C "$FIXTURE" add product
+git -C "$FIXTURE" commit -qm root
+EARLIER_BASE="$(git -C "$FIXTURE" rev-parse HEAD)"
+printf 'new\n' > "$FIXTURE/product"
+git -C "$FIXTURE" commit -qam product
+MEASURED_BASE="$(git -C "$FIXTURE" rev-parse HEAD)"
+mkdir -p "$FIXTURE/.agents"
+printf 'render\n' > "$FIXTURE/.agents/render"
+git -C "$FIXTURE" add .agents
+git -C "$FIXTURE" commit -qm render
+HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+git -C "$FIXTURE" checkout -q --detach "$MEASURED_BASE"
+printf 'base advance\n' > "$FIXTURE/base-only"
+git -C "$FIXTURE" add base-only
+git -C "$FIXTURE" commit -qm base-advance
+BASE_TIP="$(git -C "$FIXTURE" rev-parse HEAD)"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$WORLD/calls"
 case "$*" in
-  'api repos/o/r/pulls/42') cat "$WORLD/pr.json" ;;
-  'api repos/o/r/pulls/42 --jq .head.sha') cat "$WORLD/live" ;;
+  'api repos/o/r/pulls/42')
+    if [[ -e $WORLD/pr-read ]]; then cat "$WORLD/live.json"
+    else touch "$WORLD/pr-read"; cat "$WORLD/pr.json"; fi ;;
   'api repos/o/r/pulls/42/files?per_page=100 --paginate --slurp') cat "$WORLD/files.json" ;;
   'api repos/o/r/commits/'*'/check-runs?check_name=Classify%20the%20diff&filter=latest&per_page=100 --paginate --slurp') cat "$WORLD/checks.json" ;;
   'api repos/o/r/actions/jobs/72') cat "$WORLD/job.json" ;;
@@ -43,16 +67,16 @@ world() {
   WORLD="$TMP_ROOT/world"
   rm -rf -- "$WORLD"
   mkdir -p "$WORLD"
-  jq -n --arg head "$HEAD_SHA" '{head:{sha:$head},body:"Engine version: `kendex 1.13.0`.",changed_files:1}' > "$WORLD/pr.json"
-  printf '%s\n' "$HEAD_SHA" > "$WORLD/live"
+  jq -n --arg head "$HEAD_SHA" --arg base "$BASE_TIP" '{head:{sha:$head},base:{sha:$base,ref:"main"},body:"Engine version: `kendex 1.13.0`.",changed_files:1}' > "$WORLD/pr.json"
   printf '[[{"filename":".agents/skills/orch/SKILL.md"}]]\n' > "$WORLD/files.json"
   jq -n --arg head "$HEAD_SHA" '[{total_count:1,check_runs:[{id:72,name:"Classify the diff",app:{slug:"github-actions"},head_sha:$head,status:"completed",conclusion:"success"}]}]' > "$WORLD/checks.json"
   jq -n --arg head "$HEAD_SHA" '{id:72,run_id:20,name:"Classify the diff",head_sha:$head,status:"completed",conclusion:"success"}' > "$WORLD/job.json"
-  jq -n --arg head "$HEAD_SHA" '{id:20,path:".github/workflows/ci.yml",event:"pull_request",head_sha:$head,repository:{full_name:"o/r"}}' > "$WORLD/run.json"
+  jq -n --arg head "$HEAD_SHA" --arg base "$BASE_TIP" '{id:20,path:".github/workflows/ci.yml",event:"pull_request",head_sha:$head,repository:{full_name:"o/r"},pull_requests:[{number:42,head:{sha:$head},base:{sha:$base}}]}' > "$WORLD/run.json"
   printf '2026-10-09T08:00:00.000Z ##[group]Run \033[36;1mclassify the diff\033[0m\r\n' > "$WORLD/log"
   printf '%s\r\n' \
     '2026-10-09T08:00:00.000Z render-verifier: verifier=path version=1.13.0' \
     '2026-10-09T08:00:01.000Z class: class=render measured=true cause=render-proof' >> "$WORLD/log"
+  printf '2026-10-09T08:00:00.000Z base-rev: %s\r\n2026-10-09T08:00:00.000Z head-rev: %s\r\n' "$MEASURED_BASE" "$HEAD_SHA" >> "$WORLD/log"
   case "$1" in
     render) ;;
     caller) printf '[[{"filename":".github/workflows/kendex-refresh.yml"}]]\n' > "$WORLD/files.json" ;;
@@ -99,15 +123,34 @@ world() {
           ;;
       esac
       ;;
-    moved) printf 'old\n' > "$WORLD/live" ;;
+    different-pr) jq '.pull_requests[0].number=43' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    link-head) jq '.pull_requests[0].head.sha="old"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    empty-links) jq '.pull_requests=[]' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    missing-links) jq 'del(.pull_requests)' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    different-range) sed "s/base-rev: $MEASURED_BASE/base-rev: $EARLIER_BASE/" "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
+    measured-head) sed "s/head-rev: $HEAD_SHA/head-rev: $EARLIER_BASE/" "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
+    range-missing) sed '/base-rev:/d' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
+    range-duplicate) printf 'base-rev: %s\n' "$MEASURED_BASE" >> "$WORLD/log" ;;
+    retargeted)
+      jq --arg base "$EARLIER_BASE" '.base={sha:$base,ref:"earlier"}' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json"
+      jq --arg base "$EARLIER_BASE" '.pull_requests[0].base.sha=$base' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json"
+      ;;
+    moved|base-moved|ref-moved) ;;
     missing-caller) rm "$TMP_ROOT/skills/harness-ci/scripts/lib/change-class.sh" ;;
     *) fail 'fixture row exists' "$1"; exit 1 ;;
+  esac
+  cp "$WORLD/pr.json" "$WORLD/live.json"
+  case "$1" in
+    moved) jq --arg sha "$EARLIER_BASE" '.head.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
+    base-moved) jq --arg sha "$EARLIER_BASE" '.base.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
+    ref-moved) jq '.base.ref="other"' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
   esac
 }
 
 read_proof() {
   RC=0
-  env -i PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r > "$WORLD/out" 2> "$WORLD/err" || RC=$?
+  rm -f "$WORLD/pr-read"
+  (cd -- "$FIXTURE"; env -i PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r) > "$WORLD/out" 2> "$WORLD/err" || RC=$?
   OUT="$(cat "$WORLD/out")"
   ERR="$(sed -n '/^refresh-ci-proof: cause=/p' "$WORLD/err")"
 }
@@ -157,7 +200,18 @@ multiple-green|pass
 latest-pending|ci-proof-missing
 latest-failed|ci-proof-missing
 forged-caller|class-not-render
+different-pr|ci-proof-missing
+link-head|ci-proof-missing
+empty-links|ci-proof-missing
+missing-links|ci-proof-missing
+different-range|ci-proof-missing
+measured-head|ci-proof-missing
+range-missing|ci-proof-missing
+range-duplicate|ci-proof-missing
+retargeted|ci-proof-missing
 moved|ci-proof-missing
+base-moved|ci-proof-missing
+ref-moved|ci-proof-missing
 EOF
 
 mutate() {
@@ -203,7 +257,17 @@ wrong-run-repo|== ($repo|!= (""
 wrong-run-id|.id == $run and (.path|true and (.path
 latest-pending|max_by(.check.id)|min_by(.check.id)
 latest-failed|max_by(.check.id)|min_by(.check.id)
-moved|[[ $live == "$head" ]]|[[ true ]]
+different-pr|.number == $pr and .head.sha == $head|true and .head.sha == $head
+link-head|.number == $pr and .head.sha == $head|.number == $pr and true
+empty-links|any(.run.pull_requests[]; .number == $pr and .head.sha == $head)|true
+different-range|$proof_base == "$range_base"|true
+range-missing|$proof_base == "$range_base"|true
+range-duplicate|$proof_base == "$range_base"|true
+retargeted|$proof_base == "$range_base"|true
+measured-head|$proof_head == "$range_head"|true
+moved|.head.sha == $initial.head.sha|true
+base-moved|.base.sha == $initial.base.sha|true
+ref-moved|.base.ref == $initial.base.ref|true
 EOF
 
 # Without the documented raw-log option, gh rejects the producer's color bytes.

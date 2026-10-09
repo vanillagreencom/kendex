@@ -16,7 +16,9 @@ Read the latest trusted GitHub Actions check named Classify the diff on HEAD_SHA
 HEAD_SHA is a full lowercase commit SHA. The check and its job must have
 completed successfully on that head. Its pull_request run must come from
 an unchanged consumer workflow, excluding HARNESS_CI_REFRESH_CALLER.
-Read the job log's measured render
+Its run must link this PR and head. The log's base-rev/head-rev must match
+the current PR range resolved by harness-ci's harness-only. A PR range uses
+the merge base, not the current base tip. Read the job log's measured render
 class and compare its render-verifier version with Engine version in the
 refresh pull request body. Read every changed path. The only permitted
 workflow path is HARNESS_CI_REFRESH_CALLER from the installed harness-ci.
@@ -29,7 +31,7 @@ Success (exit 0):
 
 Refusal (exit 1), consumed by references/copilot-head-notices.md:
   refresh-ci-proof: cause=ci-proof-missing
-    Evidence is absent, unreadable, incomplete, pending, failed or on another head.
+    Evidence is absent, unreadable, incomplete, pending, failed or for another PR or range.
   refresh-ci-proof: cause=class-not-render
     The completed log does not prove a measured render.
   refresh-ci-proof: cause=engine-mismatch
@@ -48,12 +50,23 @@ library="$SCRIPT_DIR/../../harness-ci/scripts/lib/change-class.sh"
 # shellcheck source=../../harness-ci/scripts/lib/change-class.sh
 source "$library" || refuse ci-proof-missing
 [[ -n ${HARNESS_CI_REFRESH_CALLER:-} ]] || refuse ci-proof-missing
+range_owner="$SCRIPT_DIR/../../harness-ci/scripts/harness-only"
+[[ -r $range_owner ]] || refuse ci-proof-missing
 
 metadata="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing
 jq -e --arg head "$head" '
   .head.sha == $head and (.body | type) == "string" and
+  (.base.sha | type == "string" and test("^[0-9a-f]{40}$")) and
+  (.base.ref | type == "string" and length > 0) and
   (.changed_files | type) == "number" and .changed_files >= 0
 ' >/dev/null <<<"$metadata" || refuse ci-proof-missing
+base="$(jq -er '.base.sha' <<<"$metadata")" || refuse ci-proof-missing
+# harness-only owns event range semantics. Its ownership verdict is not used:
+# only consumer CI can establish render proof with the consumer's engine.
+range="$(env -i PATH="$PATH" "$BASH" "$range_owner" --event pull_request --base "$base" --head "$head" 2>&1)" || refuse ci-proof-missing
+range_base="$(sed -nE 's/^base-rev: ([0-9a-f]{40})$/\1/p' <<<"$range")" || refuse ci-proof-missing
+range_head="$(sed -nE 's/^head-rev: ([0-9a-f]{40})$/\1/p' <<<"$range")" || refuse ci-proof-missing
+[[ $range_base =~ ^[0-9a-f]{40}$ && $range_head == "$head" ]] || refuse ci-proof-missing
 files="$(gh api "repos/$repo/pulls/$pr/files?per_page=100" --paginate --slurp)" || refuse ci-proof-missing
 # GitHub caps this endpoint. Compare with the PR count before trusting an empty search.
 jq -e --argjson metadata "$metadata" '
@@ -99,14 +112,20 @@ while IFS= read -r candidate; do
     (.repository.full_name | ascii_downcase) == ($repo | ascii_downcase) and
     (.path | split("@")[0] | startswith(".github/workflows/") and . != $caller)
   ' >/dev/null <<<"$run_metadata"; then
-    trusted="$(jq -cn --argjson trusted "$trusted" --argjson check "$candidate" --argjson job "$job_metadata" '
-      $trusted + [{check:$check, job:$job}]
+    trusted="$(jq -cn --argjson trusted "$trusted" --argjson check "$candidate" --argjson job "$job_metadata" --argjson run "$run_metadata" '
+      $trusted + [{check:$check, job:$job, run:$run}]
     ')" || refuse ci-proof-missing
   fi
 done <<<"$rows"
 selected="$(jq -ec --arg head "$head" '
   max_by(.check.id) | select(.check.head_sha == $head and .check.status == "completed" and .check.conclusion == "success")
 ' <<<"$trusted")" || refuse ci-proof-missing
+# GitHub's PR links can follow live retargets. They identify the PR, while
+# only the classifier's emitted revisions identify its execution range.
+jq -e --argjson pr "$pr" --arg head "$head" '
+  (.run.pull_requests | type) == "array" and
+  any(.run.pull_requests[]; .number == $pr and .head.sha == $head)
+' >/dev/null <<<"$selected" || refuse ci-proof-missing
 job="$(jq -er '.job.id' <<<"$selected")" || refuse ci-proof-missing
 job_metadata="$(jq -ec '.job' <<<"$selected")" || refuse ci-proof-missing
 jq -e --arg head "$head" --argjson job "$job" '
@@ -119,7 +138,12 @@ proof="$(awk '
   { sub(/\r$/, ""); sub(/^[0-9][0-9][0-9][0-9]-[^ ]+ /, "") }
   /^class: / { class = $0; classes++ }
   /^render-verifier: / { verifier = $0; verifiers++ }
-  END { if (classes == 1) print class; if (verifiers == 1) print verifier }
+  /^base-rev: / { base = $0; bases++ }
+  /^head-rev: / { head = $0; heads++ }
+  END {
+    if (classes == 1) print class; if (verifiers == 1) print verifier
+    if (bases == 1) print base; if (heads == 1) print head
+  }
 ' <<<"$log")" || refuse ci-proof-missing
 [[ $proof =~ (^|$'\n')class:\ class=render\ measured=true($|\ ) ]] || refuse class-not-render
 version="$(sed -nE 's/^render-verifier: verifier=[^ ]+ version=([^ ]+)$/\1/p' <<<"$proof")" || refuse engine-mismatch
@@ -128,8 +152,14 @@ engine="$(jq -er '
   select(length == 1) | .[0]
 ' <<<"$metadata")" || refuse engine-mismatch
 [[ -n $version && $version == "$engine" ]] || refuse engine-mismatch
+proof_base="$(sed -nE 's/^base-rev: ([0-9a-f]{40})$/\1/p' <<<"$proof")" || refuse ci-proof-missing
+proof_head="$(sed -nE 's/^head-rev: ([0-9a-f]{40})$/\1/p' <<<"$proof")" || refuse ci-proof-missing
+[[ $proof_base == "$range_base" && $proof_head == "$range_head" ]] || refuse ci-proof-missing
 
-# A push during the paginated reads invalidates the entire proof.
-live="$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)" || refuse ci-proof-missing
-[[ $live == "$head" ]] || refuse ci-proof-missing
+# A push or retarget during the evidence reads invalidates the entire proof.
+live="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing
+jq -e --argjson initial "$metadata" '
+  .head.sha == $initial.head.sha and .base.sha == $initial.base.sha and
+  .base.ref == $initial.base.ref
+' >/dev/null <<<"$live" || refuse ci-proof-missing
 printf 'refresh-ci-proof: head=%s class=render measured=true version=%s job=%s\n' "$head" "$version" "$job"
