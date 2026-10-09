@@ -47,6 +47,47 @@ OWNER_PR="$(pull 3130 bmethod User COLLABORATOR "$HEAD_A")"
 MEMBER_ISSUE="$(item 3129 teammate User MEMBER)"
 OWNER_ISSUE="$(item 3128 founder User OWNER)"
 PR_EVENT="EVENT outside-contribution owner/repo#3100 kind=pr author=giladbarnea"
+PRIVATE_MEMBER_ISSUE="$(item 3127 bmethod User CONTRIBUTOR)"
+PRIVATE_MEMBER_PR="$(pull 3126 bmethod User CONTRIBUTOR "$HEAD_A")"
+READER_ISSUE="$(item 3125 reader User CONTRIBUTOR)"
+NEWCOMER_ISSUE="$(item 3124 newcomer User NONE)"
+READER_EVENTS="EVENT outside-contribution owner/repo#3125 kind=issue author=reader
+EVENT outside-contribution owner/repo#3124 kind=issue author=newcomer"
+
+# outside_mutant NAME OLD NEW — a watch whose outside-contribution library has
+# OLD replaced by NEW; MUTANT_BIN is its oversee-watch.
+outside_mutant() {
+  local dir="$TMP_ROOT/$1" lib
+  lib="$(mutant_scripts "$1/orch" lib/outside-contribution.sh)/lib/outside-contribution.sh" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$dir/github"
+  mutate_file "$lib" "$2" "$3"
+  MUTANT_BIN="$dir/orch/scripts/oversee-watch"
+}
+
+# Cases that turn on the permission read: a private organization member, whom
+# the app's token reads as CONTRIBUTOR, holding admin; two authors with read
+# alone; and a read that fails. Each takes the watch to run as its argument.
+case_private_member() { # WATCH
+  new_case outside_private_member
+  printf '[%s]\n' "$PRIVATE_MEMBER_PR" > "$STUB_DIR/pulls.json"
+  printf '[%s]\n' "$PRIVATE_MEMBER_ISSUE" > "$STUB_DIR/issues.json"
+  printf 'admin\n' > "$STUB_DIR/permission.bmethod.txt"
+  WATCH_BIN="$1" run --
+}
+case_readers() { # WATCH
+  new_case outside_readers
+  printf '[%s,%s]\n' "$READER_ISSUE" "$NEWCOMER_ISSUE" > "$STUB_DIR/issues.json"
+  printf 'read\n' > "$STUB_DIR/permission.reader.txt"
+  printf 'read\n' > "$STUB_DIR/permission.newcomer.txt"
+  WATCH_BIN="$1" run --
+}
+case_permission_failed() { # WATCH
+  new_case outside_permission_failed
+  printf '[%s]\n' "$READER_ISSUE" > "$STUB_DIR/issues.json"
+  printf 'gh: Server Error (HTTP 502)\n' > "$STUB_DIR/permission.reader.err"
+  WATCH_BIN="$1" run --
+}
+PERMISSION_FAILED='oversee-watch: outside-list-failed repo=owner/repo list=collaborator-permission login=reader exit=1'
 
 echo "=== oversee-watch outside contributions ==="
 
@@ -90,6 +131,24 @@ for row in \
   run --
   assert_eq "$RC|$(events)|$(head -n 1 <<<"$OUT")" "0|none|$HEARTBEAT" "control: $label" "$ERR"
 done
+
+# A CONTRIBUTOR whose permission on the repository is admin, a private
+# organization member as the app's token reads one, is fleet: neither the pull
+# request nor the issue prints, and the login is read once in the pass.
+case_private_member ""
+assert_eq "$RC|$(events)|$(head -n 1 <<<"$OUT")|$(grep -c '^api repos/owner/repo/collaborators/bmethod/permission ' "$STUB_DIR/gh.calls" || true)" \
+  "0|none|$HEARTBEAT|1" "a CONTRIBUTOR author with admin permission is fleet, read once per pass" "$ERR"
+
+# CONTRIBUTOR and NONE authors whose permission is read are still outside.
+case_readers ""
+assert_eq "$RC|$(events)" "0|$READER_EVENTS" \
+  "CONTRIBUTOR and NONE authors with read permission are reported" "$ERR"
+
+# A permission read that fails is not a verdict: the pass exits as a failed
+# list does, naming the login and GitHub's words.
+case_permission_failed ""
+assert_eq "$RC|$(events)|$(grep -c "$PERMISSION_FAILED" "$ERR" || true)|$(grep -c 'HTTP 502' "$ERR" || true)" \
+  "2|none|1|1" "a failed permission read exits 2 naming the repository, the login and GitHub's words" "$ERR"
 
 # An item that closes leaves the list and its row with it, so the same number
 # reopened is news again.
@@ -150,16 +209,28 @@ done
 
 # Must-fail control: with the baseline row read dropped, the second pass
 # reports the same pull request again.
-MUTANT_DIR="$TMP_ROOT/outside-mutant"
-MUTANT_LIB="$(mutant_scripts outside-mutant/orch lib/outside-contribution.sh)/lib/outside-contribution.sh" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-mutate_file "$MUTANT_LIB" '[[ "$prior" != "$value" ]] || continue' ':'
+outside_mutant outside-mutant '[[ "$prior" != "$value" ]] || continue' ':'
 new_case outside_mutant
 printf '[%s]\n' "$OUTSIDE_PR" > "$STUB_DIR/pulls.json"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
+WATCH_BIN="$MUTANT_BIN" run --
+WATCH_BIN="$MUTANT_BIN" run --
 assert_eq "$(events)" "$PR_EVENT head=$HEAD_A" \
   "control: without the baseline read the second pass reports the same pull request again" "$ERR"
+
+# Must-fail controls for the permission read, one per rule.
+outside_mutant outside-mutant-no-permission '! outside_author_is_fleet "$repo" "$login" || continue' ':'
+case_private_member "$MUTANT_BIN"
+assert_eq "$RC|$(events)" "0|EVENT outside-contribution owner/repo#3126 kind=pr author=bmethod head=$HEAD_A
+EVENT outside-contribution owner/repo#3127 kind=issue author=bmethod" \
+  "control: without the permission read the admin CONTRIBUTOR is reported" "$ERR"
+outside_mutant outside-mutant-read-fleet 'admin | maintain | write)' 'admin | maintain | write | read)'
+case_readers "$MUTANT_BIN"
+assert_eq "$RC|$(events)" "0|none" \
+  "control: with read counted as fleet the read-permission authors are not reported" "$ERR"
+outside_mutant outside-mutant-failure-404 "grep -q '(HTTP 404)' \"\$errf\"" 'true'
+case_permission_failed "$MUTANT_BIN"
+assert_eq "$RC|$(events)" "0|EVENT outside-contribution owner/repo#3125 kind=issue author=reader" \
+  "control: a failed read taken as a 404 reports the author as outside instead of exiting" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

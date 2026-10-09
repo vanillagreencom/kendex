@@ -225,7 +225,11 @@ The long pass's events, checked and reported in this order:
                              issue in the first, whose author is outside the
                              fleet: not an app or bot account, and not a
                              login GitHub associates with the repository as
-                             OWNER, MEMBER or COLLABORATOR. A pull request
+                             OWNER, MEMBER or COLLABORATOR, and not a login
+                             GitHub's collaborator permission read, made once
+                             per pass per repository and login, answers
+                             admin, maintain or write; a 404 is outside and
+                             any other failed read exits. A pull request
                              carries head=, its head commit on the list.
                              Reported once while it stays open, and a pull
                              request again once per new head; a

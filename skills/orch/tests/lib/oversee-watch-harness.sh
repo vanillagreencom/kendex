@@ -98,6 +98,11 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   or fail the failed-step log of a main-push run.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
 #   workflows.<SLUG>.err fails that list with the file's stderr.
+#   permission.<LOGIN>.txt
+#                 the permission `api repos/<repo>/collaborators/<LOGIN>/permission`
+#                 answers through its --jq filter; permission.<LOGIN>.err
+#                 fails that read with the file's stderr; absent → GitHub's
+#                 404 for a login it does not know
 #   dependabot.json, code-scanning.json, secret-scanning.json
 #                 the page `api --paginate repos/<repo>/<kind>/alerts`
 #                 answers, the same way (default: []); <kind>-fail present →
@@ -120,8 +125,8 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   next-alert-token
 #                 after the GraphQL read, atomically replaces alert-token,
 #                 as the control VM's token mint renews the supplied file
-# Every `auth status`, `pr list`, `run`, `api --paginate` and `api graphql`
-# call is logged to gh.calls.
+# Every `auth status`, `pr list`, `run`, `api --paginate`, `api graphql` and
+# collaborator permission call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -209,6 +214,15 @@ case "${1:-} ${2:-}" in
     if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"
     elif [[ "$list" == workflows ]]; then jq -rn "{workflows: []} | ${filter:-.}"
     else jq -rn "[] | ${filter:-.}"; fi
+    exit ;;
+  "api repos/"*/collaborators/*/permission)
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    login="${2%/permission}"; login="${login##*/}"
+    [[ ! -f "$STUB_DIR/permission.$login.err" ]] || { cat "$STUB_DIR/permission.$login.err" >&2; exit 1; }
+    [[ -f "$STUB_DIR/permission.$login.txt" ]] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    filter="."
+    [[ "${3:-}" == --jq ]] && filter="$4"
+    jq -rn --arg p "$(cat "$STUB_DIR/permission.$login.txt")" "{permission: \$p} | $filter"
     exit ;;
   "api graphql")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"

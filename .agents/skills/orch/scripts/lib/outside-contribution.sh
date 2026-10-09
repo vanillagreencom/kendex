@@ -10,8 +10,14 @@
 # account, the lanes app and the review bots among them, and a login GitHub
 # associates with the repository as its OWNER, a MEMBER of its organization or
 # a COLLABORATOR, which the owner and an overseer acting on a person's login
-# are. Every other author is outside. GitHub answers that association on each
-# item, so no setting lists the fleet's logins.
+# are, or failing those a login whose permission on the repository is admin,
+# maintain or write. GitHub computes the association against the reading token,
+# and an organization member whose membership is private reads as CONTRIBUTOR
+# to the app's installation token, so the pass asks GitHub's collaborator
+# permission read, once per pass per repository and login, before it calls
+# such an author outside. Every other author is outside, a login the read
+# answers 404 among them. GitHub answers both on its own, so no setting lists
+# the fleet's logins.
 
 # ORCH_EXTERNAL_TRIAGE, read once at start: `on` (the default) runs the pass,
 # `off` lists nothing, and any other value is refused rather than guessed.
@@ -39,6 +45,30 @@ OUTSIDE_PR_JQ=".[] | $OUTSIDE_AUTHOR_JQ"'
 OUTSIDE_ISSUE_JQ=".[] | select(.pull_request | not) | $OUTSIDE_AUTHOR_JQ"'
   | "\(.number)\tissue\t\(.user.login? // "ghost")\t-"'
 
+# The pass's verdicts, one `<repo> <login>\t<fleet|outside>` line each, so
+# a login with many items costs one read. Reset at the start of each pass.
+OUTSIDE_PERMISSIONS=""
+
+# outside_author_is_fleet REPO LOGIN — true when GitHub grants LOGIN admin,
+# maintain or write on REPO. Any read but a 404 that fails exits with the
+# pass's list failure, never a guessed verdict.
+outside_author_is_fleet() {
+  local errf="$WORK_DIR/outside-permission.err" line verdict permission rc=0
+  while IFS=$'\t' read -r line verdict; do
+    [[ "$line" != "$1 $2" ]] || { [[ "$verdict" == fleet ]]; return; }
+  done <<<"$OUTSIDE_PERMISSIONS"
+  permission="$(gh api "repos/$1/collaborators/$2/permission" --jq .permission 2>"$errf")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    grep -q '(HTTP 404)' "$errf" \
+      || die outside-list-failed "$(cat "$errf")" "repo=$1" "list=collaborator-permission" "login=$2" "exit=$rc"
+    permission=none
+  fi
+  verdict=outside
+  case "$permission" in admin | maintain | write) verdict=fleet ;; esac
+  OUTSIDE_PERMISSIONS+="$1 $2"$'\t'"$verdict"$'\n'
+  [[ "$verdict" == fleet ]]
+}
+
 # One row per contribution reported, in the first repository's baseline:
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 # A row stands while its item stays open and outside, so no later pass reports
@@ -50,6 +80,7 @@ check_outside_contribution() {
   [[ "$OUTSIDE_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/outside.err" i repo out rc number kind login head key prior value endpoint
   local state="${PW_SEEN[0]}" events="" keys=() lists
+  OUTSIDE_PERMISSIONS=""
   for i in "${!REPOS[@]}"; do
     repo="${REPOS[$i]}"
     # Issues are read in the first repository alone: the fleet's other
@@ -69,6 +100,7 @@ check_outside_contribution() {
         [[ "$number" =~ ^[0-9]+$ && "$login" =~ ^[A-Za-z0-9._-]+$ \
           && ( ( "$kind" == pr && "$head" =~ ^[0-9a-f]{40}$ ) || ( "$kind" == issue && "$head" == - ) ) ]] \
           || die outside-list-invalid "" "repo=$repo" "list=$endpoint" "line=$number $kind $login $head"
+        ! outside_author_is_fleet "$repo" "$login" || continue
         key="$repo#$number"
         keys+=("$key")
         value="$kind"
