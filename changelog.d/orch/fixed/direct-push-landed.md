@@ -1,0 +1,1 @@
+- Progress reports list recorded direct pushes under Landed and count their items toward the report cadence.

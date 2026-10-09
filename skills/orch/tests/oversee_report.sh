@@ -356,6 +356,59 @@ first_record	oversee-report	map((map(select(.parked)) | first) // first	map(firs
 any_repo_number	oversee-report	(if ($lane.parked.repo // "" | ascii_downcase) == ($repo | ascii_downcase) then $lane.parked.pr else null end)	$lane.parked.pr	0|| KEN-1 (#31, 3131313) | Title 1 | Outcome 1 |\n| KEN-2 (#32, 3232323) | Title 2 | Outcome 2 |\n| KEN-4 (#44, 4444444) | Title 4 | Outcome 4 |\n| KEN-4 (#44, 4040404) | Title 4 | Outcome 4 |
 ROWS
 
+# Direct pushes use the append-only cycle log, not the lane's last cycle.
+# Out-of-window records, PR cycles and repeat-miss notes are not landings.
+echo "=== Landed: direct-push cycle records share the merge window and order ==="
+seed_direct_push() {
+  new_case "$1"
+  report -3600
+  fleet '+ {fleet_log: [
+    {at: "'"$(at -60)"'", kind: "cycle", item: "KEN-1", text: "cycle item=KEN-1 commit=abcdef1234 class=small"},
+    {at: "'"$(at -7200)"'", kind: "cycle", item: "KEN-2", text: "cycle item=KEN-2 commit=2222222aaa class=small"},
+    {at: "'"$(at -30)"'", kind: "cycle", item: "KEN-2", text: "cycle item=KEN-2 pr=7 class=small"},
+    {at: "'"$(at -20)"'", kind: "cycle", item: "KEN-2", text: "repeat-miss phase=review items=KEN-2 causes=thread_fix"},
+    {at: "'"$(at 0)"'", kind: "cycle", item: "KEN-2", text: "cycle item=KEN-2 commit=2222222aaa class=small"}
+  ]}' "$(lane KEN-1 done)" "$(lane KEN-2 done)"
+  issue KEN-1 "Title 1" "Outcome 1 | kept"
+  issue KEN-2 "Title 2" "Outcome 2 | kept"
+}
+DIRECT_WANT="| KEN-1 (direct push, abcdef1) | Title 1 | Outcome 1 \\| kept |"
+while IFS='|' read -r name merge_offset direct_offset threshold count; do
+  seed_direct_push "direct_push_$name"
+  want="$DIRECT_WANT"
+  if [[ "$merge_offset" != none ]]; then
+    merged_pr 7 ken-2 "$merge_offset" 7777777aaa | jq -s . > "$CASE/merged.json"
+    want="| KEN-2 (#7, 7777777) | Title 2 | Outcome 2 \\| kept |"$'\n'"$want"
+  fi
+  if [[ "$direct_offset" != none ]]; then
+    jq --arg at "$(at "$direct_offset")" '.fleet_log += [{at: $at, kind: "cycle", item: "KEN-1", text: "cycle item=KEN-1 commit=1111111aaa class=small"}]' \
+      "$CASE/state.json" > "$CASE/next.json"
+    mv "$CASE/next.json" "$CASE/state.json"
+    want="| KEN-1 (direct push, 1111111) | Title 1 | Outcome 1 \\| kept |"$'\n'"$want"
+  fi
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$(landed_rows)" "0|$want" "$name: direct pushes and merges share Landed in time order"
+  run ORCH_REPORT_EVERY_MINUTES=0 "ORCH_REPORT_EVERY_ISSUES=$threshold" -- due --state "$CASE/state.json" --repo owner/repo
+  due_want=""
+  [[ "$threshold" -gt "$count" ]] || due_want="report-due reason=issues since=$(at -3600) landed=$count"
+  assert_eq "$RC|$OUT" "0|$due_want" "$name: due counts each landed item once"
+done <<'ROWS'
+direct|none|none|1|1
+mixed|-90|none|2|2
+boundary|none|-3600|1|1
+repeated|none|-90|2|1
+ROWS
+
+DIRECT_MUTANT="$(mutant_scripts direct-push/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/direct-push/github"
+mutate_file "$DIRECT_MUTANT" 'select(.kind == "cycle")' 'select(false and .kind == "cycle")'
+seed_direct_push direct_push_mutant
+REPORT_UNDER_TEST="$DIRECT_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Landed/ { print }' <<<"$OUT")" "0|Landed: none" \
+  "control: the PR-only reader omits the direct-push landing"
+REPORT_UNDER_TEST="$DIRECT_MUTANT" run ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=1 -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|" "control: the PR-only reader does not trigger the direct-push cadence"
+
 # ORCH_CONNECTED_REPOS: each listed repository is read after --repo by the
 # merged search and the open pull request list, once and in one spelling, so a
 # merge there lands in the report and an open pull request there runs; a

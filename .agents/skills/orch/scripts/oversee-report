@@ -159,7 +159,12 @@ Rows:
                   conventional-commit scope or right after Closes on a body
                   line, as a Claude cloud session's claude/ branch names no
                   item. The issue cell carries the
-                  PR number and the merge commit.
+                  PR number and the merge commit. Landed also lists each
+                  item with a direct-push cycle row recorded in fleet_log
+                  since the last report. Its issue cell carries
+                  `ITEM (direct push, SHA)`, with the commit's first 7
+                  characters. Rows sort by time, oldest first; a direct
+                  push uses its cycle row's at.
   Escapes         one line under Landed: pull requests merged to the base
                   branch resolve-base-branch names that a revert commit
                   there names as #N, or a `Regressed-by: #N` line (plain or
@@ -538,9 +543,9 @@ fi
 
 # --- what landed --------------------------------------------------------------
 
-# LANDED holds `item<TAB>number<TAB>sha` per fleet item whose own pull
-# request merged at or after LANDED_SINCE and before NOW, in any REPOS entry, oldest
-# merge first. Each repository is read once, as one search for pull requests
+# LANDED holds `item<TAB>number-or-direct<TAB>sha` for merges and recorded
+# direct pushes at or after LANDED_SINCE and before NOW, oldest first.
+# Each repository is read once, as one search for pull requests
 # merged since then, and every lanes[] item is matched against that one list by
 # lib/lane-state.sh's LANE_MERGED_JQ, the filter oversee-watch's merged check
 # uses: the calls stay one per repository however many lanes the fleet has run.
@@ -574,6 +579,17 @@ landed_read() {
     [[ "$rows" != page-full ]] || refuse pr-list-truncated "$repo"
     [[ -z "$rows" ]] || found+="$rows"$'\n'
   done
+  # oversee-cycle record --commit writes this prefix. The append stamp is
+  # the report window, even when the push time could not be read.
+  if ! rows="$(jq -r --argjson since "$LANDED_SINCE" --argjson until "$NOW" '
+    (.fleet_log // [])[] | select(.kind == "cycle")
+    | (.text | capture("^cycle item=[^ ]+ commit=(?<sha>[^ ]+)( |$)")) as $commit
+    | (.at | fromdateiso8601) as $at | select($at >= $since and $at < $until)
+    | [($at | tostring), .item, "direct", ($commit.sha | .[0:7])] | @tsv
+    ' <<<"$STATE_JSON" 2>"$WORK_DIR/jq.err")"; then
+    refuse state "$STATE" "$(cat "$WORK_DIR/jq.err")"
+  fi
+  [[ -z "$rows" ]] || found+="$rows"$'\n'
   [[ -n "$found" ]] || return 0
   if ! LANDED="$(sort -n -k1,1 <<<"$found" | cut -f2-)"; then
     refuse sort landed
@@ -830,7 +846,11 @@ render() {
   landed_read
   while IFS=$'\t' read -r item number sha; do
     [[ -n "$item" ]] || continue
-    rows+="$item"$'\t'"$item (#$number, ${sha:-no sha})"$'\n'
+    if [[ "$number" == direct ]]; then
+      rows+="$item"$'\t'"$item (direct push, $sha)"$'\n'
+    else
+      rows+="$item"$'\t'"$item (#$number, ${sha:-no sha})"$'\n'
+    fi
   done <<<"$LANDED"
   if [[ "$LANDED_CUT" -eq 1 ]]; then
     if ! cut_since="$(from_epoch "$LANDED_SINCE" %Y-%m-%dT%H:%M:%SZ)"; then
