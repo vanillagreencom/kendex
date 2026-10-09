@@ -16,7 +16,7 @@ printf '{}\n' > "$SCRATCH/seed/.kendex-lock.json"; git -C "$SCRATCH/seed" add -A
 # The stub's refresh re-records the committed record, as a refresh on a main
 # whose record its rolling pull request has not landed yet does, and writes
 # a render no branch landed, as one for a package a merge only declared.
-mkdir "$SCRATCH/bin"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"' '[[ "$1" != refresh ]] || { printf stale > .kendex-lock.json; mkdir -p .agents/new; printf x > .agents/new/render; }' '[[ "$1" != "$FAIL_STEP" ]]' > "$SCRATCH/bin/kendex"; chmod +x "$SCRATCH/bin/kendex"
+mkdir "$SCRATCH/bin"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"' 'printf "%s\n" "$*" >> "${KENDEX_CALL_LOG:-/dev/null}"' '[[ "$1" != refresh ]] || { printf stale > .kendex-lock.json; mkdir -p .agents/new; printf x > .agents/new/render; }' '[[ "$1" != "$FAIL_STEP" ]]' > "$SCRATCH/bin/kendex"; chmod +x "$SCRATCH/bin/kendex"
 export PATH="$SCRATCH/bin:$PATH"; unset ORCH_POST_MERGE_CMD WORKTREE_DEFAULT_BRANCH
 # Each row runs the real sync and command; kendex is the external boundary.
 # Refresh-only belongs to an authorized refresh owner outside the control
@@ -72,8 +72,8 @@ assert_eq "$rc:$out" "1:miss verify rc=0" "control: a copy with no verify step f
 
 # The rolling record workflow can still be pending across successive merges.
 # Local commands must process each merge without creating refresh dirt.
-workflow_owner() { # SCRIPT TAG JUDGE
-  local script="$1" tag="$2" judge="$3" W seed before after fail rc out expected calls=''
+workflow_owner() { # SCRIPT TAG JUDGE [MODE]
+  local script="$1" tag="$2" judge="$3" mode="${4:-command-only}" W seed before after fail rc out expected want calls='' flag=--command-only
   W="$SCRATCH/workflow-$tag"
   seed="$SCRATCH/workflow-seed-$tag"
   git clone -q -c gc.auto=0 -c maintenance.auto=false "$SCRATCH/seed" "$seed"
@@ -81,27 +81,45 @@ workflow_owner() { # SCRIPT TAG JUDGE
   git -C "$seed" config user.email test@example.com
   # A tracked manifest reaches refresh if command-only ever falls through.
   touch "$seed/kendex.toml"
+  if [[ "$mode" != command-only ]]; then
+    mkdir -p "$seed/.github/workflows"
+    touch "$seed/.github/workflows/kendex-refresh.yml"
+    git -C "$seed" add .github
+    flag=''
+  fi
   git -C "$seed" add kendex.toml
   git -C "$seed" commit -qm manifest
   git clone -q -c gc.auto=0 -c maintenance.auto=false "$seed" "$W"
   before="$(git -C "$W" rev-parse HEAD)"
+  export KENDEX_CALL_LOG="$SCRATCH/kendex-calls-$tag"
+  : > "$KENDEX_CALL_LOG"
   export COMMAND_LOG="$SCRATCH/commands-$tag" FAIL_STEP=success
   export ORCH_POST_MERGE_CMD='printf "%s:%s\n" "$ORCH_POST_MERGE_BEFORE" "$ORCH_POST_MERGE_AFTER" >> "$COMMAND_LOG"; exit "$COMMAND_EXIT"'
   # A failure on the second merge keeps the first successful checkpoint.
   while IFS='|' read -r fail expected; do
+    [[ "$mode" == command-only ]] || expected=0
     if [[ "$fail" != retry ]]; then
       git -C "$seed" commit -qm merge --allow-empty
     fi
     after="$(git -C "$seed" rev-parse HEAD)"
     COMMAND_EXIT="$expected"; export COMMAND_EXIT
-    rc=0; out="$(bash "$script" --command-only "$W" 2>"$SCRATCH/error")" || rc=$?
-    "$judge" "$rc" "$expected" "$fail: command-only exit" "$SCRATCH/error" || return 1
+    if [[ "$mode" == refresh-only ]]; then
+      rc=0; out="$(bash "$script" --refresh-only "$W" 2>"$SCRATCH/error")" || rc=$?
+      "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
+      "$judge" "$rc:$out" '0:post-merge: refresh=skipped cause=workflow-owned path=.github/workflows/kendex-refresh.yml' "$fail: refresh-only skips all work" || return 1
+    fi
+    rc=0; out="$(bash "$script" $flag "$W" 2>"$SCRATCH/error")" || rc=$?
+    "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
+    "$judge" "$rc" "$expected" "$fail: $mode exit" "$SCRATCH/error" || return 1
     "$judge" "$(git -C "$W" rev-parse HEAD)" "$after" "$fail: synchronized merge" || return 1
     calls="${calls}${before}:${after}"$'\n'
     "$judge" "$(cat "$COMMAND_LOG")" "${calls%$'\n'}" "$fail: command range" || return 1
     [[ "$expected" != 0 ]] || before="$after"
     "$judge" "$(git -C "$W" rev-parse refs/kendex/post-merge-base)" "$before" "$fail: successful checkpoint" || return 1
-    "$judge" "$out" $'main\npost-merge: sync-base=0\npost-merge: command='"$expected" "$fail: no refresh or verify" || return 1
+    want=$'main\npost-merge: sync-base=0\npost-merge: command='"$expected"
+    [[ "$mode" == command-only || "$expected" != 0 ]] || want+=$'\npost-merge: refresh=skipped cause=workflow-owned path=.github/workflows/kendex-refresh.yml\npost-merge: verify=skipped'
+    "$judge" "$out" "$want" "$fail: no refresh or verify" || return 1
+    "$judge" "$(cat "$KENDEX_CALL_LOG")" '' "$fail: kendex was not called" || return 1
     "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
   done <<'ROWS'
 first|0
@@ -110,10 +128,16 @@ retry|0
 ROWS
 }
 workflow_owner "$DIR/post-merge" real assert_eq
+workflow_owner "$DIR/post-merge" caller-full assert_eq full
+workflow_owner "$DIR/post-merge" caller-refresh-only assert_eq refresh-only
+mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
+mutate_file "$mutant" 'if [[ -f "$refresh_caller" ]]; then' 'if false; then'
+rc=0; out="$(workflow_owner "$mutant" caller-removed miss full 2>"$SCRATCH/control-error")" || rc=$?
+assert_contains "$rc:$out" '1:miss first: no refresh dirt' 'control: removing caller ownership creates refresh dirt'
 mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
 mutate_file "$mutant" '[[ "$mode" != command-only ]] || exit 0' ':'
 rc=0; out="$(workflow_owner "$mutant" refresh-fallthrough miss 2>"$SCRATCH/control-error")" || rc=$?
-assert_contains "$rc:$out" '1:miss first: no refresh or verify' 'control: local refresh during workflow ownership is rejected'
+assert_contains "$rc:$out" '1:miss first: no refresh dirt' 'control: local refresh during workflow ownership is rejected'
 
 # A user can stage one version and leave a different worktree version.
 # Full mode permits its configured command to create this work after sync.

@@ -6,7 +6,8 @@ case "${1:-}" in
   -h|--help)
     printf '%s\n' 'usage: post-merge [--command-only|--refresh-only] [BASE_CHECKOUT]' 'Run in the base checkout; stop at the first failed step. All modes retain checkout changes for their declared owner.' \
       '--command-only  synchronize and run the configured command with its checkpoint; leave refresh and verification to the declared workflow owner.' \
-      '--refresh-only  refresh without synchronization, the configured command or verification; for an authorized owner outside the hosted control host.'
+      '--refresh-only  refresh without synchronization, the configured command or verification; for an authorized owner outside the hosted control host.' \
+      'Skip refresh and verification when the base checkout holds the adopted refresh caller.'
     exit 0 ;;
   --command-only) mode=command-only; shift ;;
   --refresh-only) mode=refresh-only; shift ;;
@@ -34,6 +35,13 @@ if [[ "$mode" != refresh-only ]]; then
   git update-ref refs/kendex/post-merge-base "$ORCH_POST_MERGE_AFTER" || { status checkpoint 1; exit 1; }
 fi
 [[ "$mode" != command-only ]] || exit 0
+# review-gate references/adoption.md Caller adoption contract gives this caller every refresh output.
+refresh_caller=.github/workflows/kendex-refresh.yml
+if [[ -f "$refresh_caller" ]]; then
+  status refresh "skipped cause=workflow-owned path=$refresh_caller"
+  [[ "$mode" != full ]] || status verify skipped
+  exit 0
+fi
 if [[ -f kendex.toml ]]; then
   # Refresh owns no cleanup permission. Keep checkout changes for their owner.
   rc=0

@@ -1,0 +1,1 @@
+- Post-merge skips refresh and verification when the adopted refresh workflow owns the outputs, keeping the base checkout clean for the next merge.
