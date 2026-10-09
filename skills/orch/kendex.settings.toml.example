@@ -9,8 +9,9 @@ ORCH_STATE_DIR = "tmp"
 
 # Where state pruning, item close-out, mailbox compaction and SSH lane close
 # keep archives before removing records. An empty value uses FLEET_DIR/archive,
-# or $HOME/.fleet/archive when FLEET_DIR is unset. Relative paths start at the
-# caller's working directory. Use an absolute path to share one archive folder.
+# or $HOME/.fleet/archive when FLEET_DIR is unset. Set an absolute path outside
+# linked worktrees and state or mailbox folders so archives survive cleanup.
+# Relative paths and ~ are refused. TOML does not expand shell variables.
 # ORCH_ARCHIVE_ROOT = "/path/to/archives"
 
 # Where the overseer keeps what it has already seen and which lanes it has

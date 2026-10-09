@@ -9,6 +9,7 @@
 # directly, whose control runs a library copy with its lock removed.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+unset ORCH_ARCHIVE_ROOT
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
@@ -1548,6 +1549,20 @@ mutant_lib unlocked 'if ! orch_take_lock 9 "$1" "$2"; then' 'if false; then'
 held_hosted_send "$MUTANT_LIB"
 assert_eq "$HELD" "1/1" \
   "control: without the lock the hosted send writes while another writer holds it"
+
+# Compaction archives on this host, and prune later removes its state folder.
+# The archive cannot sit in that folder even when the mailbox is elsewhere.
+new_lane unsafe_archive
+printf '946684800\n' > "$STUB_CLOCK"
+clock_lm send --item KEN-1 --root "$LANE" --directive --file "$(text old 'Keep these bytes.')"
+lm inbox --item KEN-1
+before="$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")"
+printf '1790870400\n' > "$STUB_CLOCK"
+ORCH_STATE_DIR="$TMP_ROOT/retention-state" ORCH_ARCHIVE_ROOT="$TMP_ROOT/retention-state/archives" \
+  ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 clock_lm compact --item KEN-1 --root "$LANE"
+assert_eq "$RC" 2 'compaction refuses an archive inside the configured state folder'
+assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$before" \
+  'a refused compaction archive keeps the expired message bytes'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

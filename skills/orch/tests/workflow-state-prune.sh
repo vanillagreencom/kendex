@@ -12,6 +12,7 @@
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+unset ORCH_ARCHIVE_ROOT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -542,6 +543,16 @@ shapes_run no-tree-match "$NO_TREE_MATCH/workflow-state"
 [[ " $SHAPES" == *" 2:removed,removed "* ]] \
   && pass "control: without the worktree match a state naming a linked worktree alone is pruned" \
   || fail "control: without the worktree match a state naming a linked worktree alone is pruned" "got=$SHAPES"
+
+p="$TMP_ROOT/unsafe-archive"
+build "$p"
+rc=0
+(cd "$p" && env ORCH_ARCHIVE_ROOT="$p/tmp/archives" ORCH_RECORD_RETENTION_DAYS=2 \
+  FLEET_DIR="$p/fleet" "$WS" prune) > "$TMP_ROOT/unsafe-archive.out" 2> "$TMP_ROOT/unsafe-archive.err" || rc=$?
+assert_eq "$rc" 1 'an archive root inside the retained state folder refuses prune'
+[[ -f "$p/tmp/audit-KEN-2.json" && -f "$p/tmp/directive.md" ]] \
+  && pass 'a refused archive leaves expired evidence in place' \
+  || fail 'a refused archive leaves expired evidence in place'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

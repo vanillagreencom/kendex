@@ -856,11 +856,12 @@ tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row[
     if bash is None:
         raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")
     root = subprocess.run([bash, "-c",
-                           'set -euo pipefail\nSCRIPT_DIR=$1\n. "$SCRIPT_DIR/lib/state-archive.sh"\narchive_root',
-                           "lane-host-ssh", str(Path(__file__).resolve().parent)], stdout=subprocess.PIPE)
+                           'set -euo pipefail\nSCRIPT_DIR=$1\n. "$SCRIPT_DIR/lib/state-archive.sh"\narchive_root "$PWD" "$2/$3"',
+                           "lane-host-ssh", str(Path(__file__).resolve().parent),
+                           row["repo"].rsplit("/", 1)[-1], item], stdout=subprocess.PIPE)
     if root.returncode != 0:
         raise SystemExit(root.returncode if root.returncode > 0 else 1)
-    directory = Path(root.stdout.decode().rstrip("\n")).expanduser() / row["repo"].rsplit("/", 1)[-1] / item
+    directory = Path(root.stdout.decode().rstrip("\n")) / row["repo"].rsplit("/", 1)[-1] / item
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f"tmp-{time.time_ns()}-", suffix=".tgz", dir=directory, delete=False) as archive:

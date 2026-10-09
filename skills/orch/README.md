@@ -41,7 +41,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | Variable | Purpose | Default |
 |---------|---------|---------|
 | `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |
-| `ORCH_ARCHIVE_ROOT` | Archive folder for state pruning, item close-out, mailbox compaction and SSH lane close. Relative paths start at the caller's working directory | `${FLEET_DIR:-$HOME/.fleet}/archive` |
+| `ORCH_ARCHIVE_ROOT` | Archive folder for state pruning, item close-out, mailbox compaction and SSH lane close. Set an absolute path outside linked worktrees and state or mailbox folders. Relative paths and `~` are refused | `${FLEET_DIR:-$HOME/.fleet}/archive` |
 | `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by `oversee-watch`, `lanes` and `open-terminal` | `tmp/oversee-watch` under the project root |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
 | `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling when no CI checks have registered before it fails | `600` |

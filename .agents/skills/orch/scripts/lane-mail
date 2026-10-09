@@ -1810,7 +1810,7 @@ lm_compact_locked() {
     . "$SCRIPT_DIR/lib/state-archive.sh"
     root="$OWN_ROOT"
     [ -n "$root" ] || root="$ROOT"
-    archive_write "$root" "compact-$ITEM-$COMPACT_NOW" "" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" ||
+    archive_write "$root" "$BOX" "compact-$ITEM-$COMPACT_NOW" "" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" ||
       refuse archive-failed "$ARCHIVE_DIR" "$ARCHIVE_ERR"
     REFUSE_EXTRA="kept=$ARCHIVE"
     lm_store rewrite "$BOX" "$WORK_DIR"

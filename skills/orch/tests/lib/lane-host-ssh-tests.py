@@ -173,10 +173,9 @@ exec git "$@"
         path.chmod(0o755)
         if path.name == "lane-host-ssh":
             library = path.parent / "lib"
-            library.mkdir(exist_ok=True)
-            for name in ("file-lock.sh", "state-archive.sh", "kendex-env.sh"):
-                shutil.copy2(PACKAGE / "scripts/lib" / name, library / name)
-            shutil.copy2(PACKAGE / "scripts/orch-env", path.parent / "orch-env")
+            shutil.copytree(PACKAGE / "scripts/lib", library, dirs_exist_ok=True)
+            for name in ("orch-env", "workflow-state", "git-context"):
+                shutil.copy2(PACKAGE / "scripts" / name, path.parent / name)
 
     def call(self, *args, data=b"", **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=data, capture_output=True)
@@ -2983,7 +2982,7 @@ fi'''))
         self.assertFalse(worktree.exists())
 
     def test_close_reads_the_local_archive_root(self):
-        for source in ("settings", "private", "environment", "relative", "home-default"):
+        for source in ("settings", "private", "environment", "home-default"):
             with self.subTest(source=source):
                 self.row["clone"] = str(self.root / source)
                 self.inventory.write_text(json.dumps([self.row]))
@@ -2998,30 +2997,30 @@ fi'''))
                     folder = self.root / ".fleet/archive"
                 else:
                     settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
-                    if source in ("private", "environment", "relative"):
+                    if source in ("private", "environment"):
                         private.write_text(f'printf "settings-note\\n"\nORCH_ARCHIVE_ROOT="{folder}-private"\n')
                         folder = Path(str(folder) + "-private")
-                    if source in ("environment", "relative"):
+                    if source == "environment":
                         folder = self.root / (source + " environment")
-                        env["ORCH_ARCHIVE_ROOT"] = str(folder) if source == "environment" else folder.name
+                        env["ORCH_ARCHIVE_ROOT"] = str(folder)
                 self.archive_root_contract(folder, **env)
 
     def test_control_close_ignoring_the_archive_root_fails_its_contract(self):
         original = self.script.read_text()
-        rule = 'directory = Path(root.stdout.decode().rstrip("\\n")).expanduser()'
+        rule = 'directory = Path(root.stdout.decode().rstrip("\\n"))'
         self.assertEqual(original.count(rule), 1)
         self.script.write_text(original.replace(rule, 'directory = Path(os.environ["FLEET_DIR"]) / "archive"'))
         with self.assertRaises(AssertionError):
             self.archive_root_contract(self.root / "configured", ORCH_ARCHIVE_ROOT=str(self.root / "configured"))
 
-    def archive_root_read_refusal(self):
+    def archive_root_read_refusal(self, setting=None):
         self.assertEqual(self.create().returncode, 0)
         worktree = Path(self.row["clone"] + "-worktree")
         record = worktree / "tmp/return.json"
         record.parent.mkdir(exist_ok=True)
         record.write_text("keep")
-        # The control host's malformed setting must stop close before removal.
-        (self.root / "kendex.settings.toml").write_text('[env]\nORCH_ARCHIVE_ROOT = []\n')
+        value = "[]" if setting is None else json.dumps(setting)
+        (self.root / "kendex.settings.toml").write_text(f'[env]\nORCH_ARCHIVE_ROOT = {value}\n')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 1, closed.stderr)
         self.assertEqual(record.read_text(), "keep")
@@ -3030,6 +3029,21 @@ fi'''))
 
     def test_close_keeps_records_when_archive_settings_cannot_be_read(self):
         self.archive_root_read_refusal()
+
+    def test_close_refuses_unsafe_archive_roots(self):
+        for name, setting in (("relative", "archives"), ("tilde", "~/archives"),
+                              ("state", str(self.root / "tmp/archives"))):
+            with self.subTest(setting=setting):
+                self.row["clone"] = str(self.root / name)
+                self.inventory.write_text(json.dumps([self.row]))
+                self.archive_root_read_refusal(setting)
+
+    def test_close_refuses_archives_in_the_controller_linked_worktree(self):
+        for args in (("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "controller", "--allow-empty"),
+                     ("worktree", "add", "-q", "--detach", str(self.root / "controller-lane"))):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.root), *args],
+                           env=self.git_env, check=True, capture_output=True)
+        self.archive_root_read_refusal(str(self.root / "controller-lane/archives"))
 
     def test_control_close_ignoring_the_archive_setting_failure_removes_records(self):
         original = self.script.read_text()

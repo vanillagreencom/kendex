@@ -1412,7 +1412,7 @@ cmd_prune() {
     n_rows=$((n_log + n_lanes))
     if [[ "$n_rows" -gt 0 || "${#candidates[@]}" -gt 0 ]]; then
         root=$(project_root) || return 1
-        archive_write "$root" "prune-$now_epoch" "$rows" ${candidates[@]+"${candidates[@]}"} \
+        archive_write "$root" "$STATE_DIR" "prune-$now_epoch" "$rows" ${candidates[@]+"${candidates[@]}"} \
             || { state_message prune-archive-failed "$@" >&2; return 1; }
         archive="$ARCHIVE"
         # The rows reach jq on stdin, never argv: every row past the retention
@@ -1481,7 +1481,7 @@ cmd_remove() {
         now_epoch=$(date -u +%s) || { state_message clock-unreadable "$@" >&2; return 1; }
         local archive_root
         archive_root=$(project_root) || return 1
-        archive_write "$archive_root" "close-$item-$now_epoch" "" ${evidence[@]+"${evidence[@]}"} ${extra[@]+"${extra[@]}"} \
+        archive_write "$archive_root" "$STATE_DIR" "close-$item-$now_epoch" "" ${evidence[@]+"${evidence[@]}"} ${extra[@]+"${extra[@]}"} \
             || { state_message remove-archive-failed "$@" >&2; return 1; }
         archive="$ARCHIVE"
     fi

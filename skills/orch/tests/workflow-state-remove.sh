@@ -9,6 +9,7 @@
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+unset ORCH_ARCHIVE_ROOT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -302,7 +303,7 @@ remove "$NO_ITEM_MATCH" "$mp" KEN-1 >/dev/null 2>&1 || true
 # The archive's must-fail control: the close-out's archive dropped, so the
 # removed worktree's records and the item's state are gone with it.
 NO_ARCHIVE="$(mutant_scripts no-archive workflow-state)/workflow-state" || exit 1
-mutate_file "$NO_ARCHIVE" 'archive_write "$archive_root" "close-$item-$now_epoch"' 'true'
+mutate_file "$NO_ARCHIVE" 'archive_write "$archive_root" "$STATE_DIR" "close-$item-$now_epoch"' 'true'
 worktree_run no-archive "$NO_ARCHIVE"
 [[ "$WORKTREE" == *" state=removed back=unreadable"* ]] \
   && pass "control: without the close-out archive the removed evidence cannot be read back" \
@@ -352,6 +353,47 @@ out="$(remove "$DASH_KEY" "$dp" -KEN-1 2>&1)" || rc=$?
 [[ "$rc" -eq 0 && "$out" == "removed kept=none" ]] \
   && pass "control: without the dash refusal a dash-led key runs the close-out" \
   || fail "control: without the dash refusal a dash-led key runs the close-out" "rc=$rc out=$out"
+
+# merge-pr archives lane tmp before worktree remove deletes the whole lane.
+# A configured destination must survive that second removal, not only this verb.
+repo="$TMP_ROOT/archive-repo"
+lane="$TMP_ROOT/archive-lane"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" config gc.auto 0
+git -C "$repo" config maintenance.auto false
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q --allow-empty -m fixture
+git -C "$repo" worktree add -q --detach "$lane"
+mkdir -p "$lane/tmp"
+printf 'lane evidence\n' > "$lane/tmp/evidence"
+while IFS='|' read -r form archive_root sd; do
+  case "$form" in
+    relative) archive_root=tmp/archive ;;
+    *) archive_root="$TMP_ROOT/$archive_root" ;;
+  esac
+  sd="$TMP_ROOT/$sd"
+  mkdir -p "$sd"
+  printf '{}\n' > "$sd/workflow-state-oversee.json"
+  printf 'state evidence\n' > "$sd/workflow-state-KEN-1.json"
+  rc=0
+  (cd "$lane" && env ORCH_ARCHIVE_ROOT="$archive_root" "$WS" --state-dir "$sd" \
+    remove KEN-1 --archive "$lane/tmp") > "$TMP_ROOT/unsafe-root.out" 2> "$TMP_ROOT/unsafe-root.err" || rc=$?
+  assert_eq "$rc" 1 "$form: unsafe archive root refuses close-out"
+  assert_eq "$(cat "$sd/workflow-state-KEN-1.json")" 'state evidence' "$form: keeps state evidence"
+  assert_eq "$(cat "$lane/tmp/evidence")" 'lane evidence' "$form: keeps lane evidence"
+done <<'ROWS'
+relative||archive-state
+linked-worktree|archive-lane/archives|archive-state
+state-folder|archive-state/archives|archive-state
+destination-overlap|archive-store|archive-store/archive-repo/oversee
+ROWS
+sd="$TMP_ROOT/archive-state"
+out="$(cd "$lane" && env ORCH_ARCHIVE_ROOT="$TMP_ROOT/safe-archives" "$WS" --state-dir "$sd" \
+  remove KEN-1 --archive "$lane/tmp")"
+archive="$(sed -n 's/^removed kept=//p' <<<"$out")"
+git -C "$repo" worktree remove --force "$lane"
+assert_eq "$(tar -xOzf "$archive" "${lane#/}/tmp/evidence")" 'lane evidence' \
+  'a configured safe archive survives merge worktree removal'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
