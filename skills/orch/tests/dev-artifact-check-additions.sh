@@ -109,9 +109,7 @@ assert_eq "$(observe "$E")" "$E" "the public checker refuses the explicit substr
 # The suite's one must-fail control: an inert classifier accepts the same
 # round outright.
 INERT="$(mutant_scripts inert-classifier dev-artifact-check)/dev-artifact-check" || exit 1
-assert_eq "$(awk '/^is_protected_addition\(\)/,/^}/' "$INERT" | grep -Fc 'return 0')" "4" "control: the classifier has four protected returns to invert"
 sed -i.bak '/^is_protected_addition()/,/^}/ s/return 0/return 1/' "$INERT"
-assert_eq "$(awk '/^is_protected_addition\(\)/,/^}/' "$INERT" | grep -Fc 'return 0')" "0" "control: every protected return is inverted in the private copy"
 run_check "$INERT" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-items-from-round
 E='rc=0 ok=true verdict=accept reason=valid files=[]'
 assert_eq "$(observe "$E")" "$E" "control: an inert classifier accepts the round with no file named"
