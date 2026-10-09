@@ -951,36 +951,81 @@ exec "$REAL_CAT" "$@"
         self.assertEqual((result.returncode, target.read_bytes()), (1, b'{"id":"nowhere"}\n'))
 
     def test_read_many_preserves_bytes_and_batches_each_target(self):
-        rows = [dict(self.row, item=f"TEST-{n}", clone=str(self.root / f"clone-{n}")) for n in (1, 2, 3)]
+        rows = [dict(self.row, item=f"TEST-{n}", target=target, clone=str(self.root / f"clone-{n}"))
+                for n, target in ((1, "lane.example"), (2, "other.example"), (3, "lane.example"))]
         self.inventory.write_text(json.dumps(rows))
-        present = self.root / "binary file"
-        present.write_bytes(b"\x00\xff\nlast")
-        empty = self.root / "empty"
-        empty.touch()
-        requests = [{"item": row["item"], "path": str(path)} for row in rows
-                    for path in (present, empty, self.root / "absent", self.root)]
-        result = self.call("read-many", data=json.dumps(requests).encode())
-        self.assertEqual(result.returncode, 0, result.stderr)
-        reply = json.loads(result.stdout)
-        for request, response in zip(requests, reply):
-            self.assertEqual((response["item"], response["path"]), (request["item"], request["path"]))
-            path = Path(request["path"])
-            expected = 0 if path in (present, empty) else 2 if path.name == "absent" else 1
-            self.assertEqual(response["status"], expected)
-            self.assertEqual(base64.b64decode(response["data"]), path.read_bytes() if expected == 0 else b"")
-        self.assertEqual(len(reply), len(requests))
-        self.assertEqual(sum(line.startswith("-T ") for line in (self.root / "calls").read_text().splitlines()), 1)
-        # The real provider's target grouping must control SSH calls.
-        original = self.script.read_text()
-        rule = 'groups.setdefault(row["target"], []).append(request)'
-        self.assertEqual(original.count(rule), 1)
-        with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
-            self.executable(self.script, original.replace(rule, 'groups.setdefault(str(len(groups)), []).append(request)'))
-            (self.root / "calls").write_text("")
-            result = self.call("read-many", data=json.dumps(requests).encode())
+        contents = {"lane.example": b"\x00\xff\nlast", "other.example": b"other\x00\xfe\n"}
+        for target, data in contents.items():
+            directory = self.root / target
+            directory.mkdir()
+            (directory / "binary file").write_bytes(data)
+            (directory / "empty").touch()
+            (directory / "directory").mkdir()
+        calls = self.root / "target-calls"
+        self.env.update(SSH_TEST_TARGET_ROOT=str(self.root), SSH_TEST_TARGET_CALLS=str(calls),
+                        REAL_BASH=shutil.which("bash"))
+        self.executable(self.bin / "ssh", '''#!/usr/bin/env python3
+import json, os, pathlib, subprocess, sys
+words = sys.argv[1:]
+target = words[words.index("--") + 1]
+with open(os.environ["SSH_TEST_TARGET_CALLS"], "a") as log:
+    log.write(json.dumps(target) + "\\n")
+if target == os.environ.get("SSH_TEST_FAILED_TARGET"):
+    sys.stderr.buffer.write(b"ssh-test-transport-failure\\n")
+    sys.exit(int(os.environ["SSH_TEST_FAIL"]))
+sys.exit(subprocess.run([os.environ["REAL_BASH"], "-c", words[-1]],
+                       cwd=pathlib.Path(os.environ["SSH_TEST_TARGET_ROOT"]) / target,
+                       env={key: os.environ[key] for key in ("HOME", "PATH")}).returncode)
+''')
+        # Interleave hosts and reuse the same remote paths with different bytes.
+        requests = [{"item": row["item"], "path": path}
+                    for path in ("binary file", "empty", "absent", "directory") for row in rows]
+        requests.insert(1, {"item": "UNCONFIGURED", "path": "binary file"})
+        targets = {row["item"]: row["target"] for row in rows}
+
+        def assert_reply(failed_target="", failure=0):
+            calls.write_text("")
+            result = self.call("read-many", data=json.dumps(requests).encode(),
+                               SSH_TEST_FAILED_TARGET=failed_target, SSH_TEST_FAIL=str(failure))
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertGreaterEqual(sum(line.startswith("-T ") for line in (self.root / "calls").read_text().splitlines()), 3)
+            reply = json.loads(result.stdout)
+            self.assertEqual(len(reply), len(requests))
+            for request, response in zip(requests, reply):
+                self.assertEqual((response["item"], response["path"]), (request["item"], request["path"]))
+                target = targets.get(request["item"])
+                if target is None or target == failed_target:
+                    self.assertNotIn(response["status"], (0, 2, 69))
+                    self.assertEqual(response["data"], "")
+                    self.assertTrue(response["error"])
+                    if target == failed_target:
+                        self.assertIn("ssh-test-transport-failure\n", response["error"])
+                    continue
+                status, data = {"binary file": (0, contents[target]), "empty": (0, b""),
+                                "absent": (2, b""), "directory": (1, b"")}[request["path"]]
+                self.assertEqual(response["status"], status)
+                self.assertEqual(base64.b64decode(response["data"]), data)
+            self.assertCountEqual([json.loads(line) for line in calls.read_text().splitlines()], list(contents))
+
+        for target, failure in (("", 0), ("lane.example", 255), ("other.example", 255),
+                                ("lane.example", 2), ("lane.example", 69)):
+            with self.subTest(target=target, failure=failure):
+                assert_reply(target, failure)
+        original = self.script.read_text()
+        controls = (
+            ('groups.setdefault(row["target"], []).append(request)',
+             'groups.setdefault(str(len(groups)), []).append(request)', "", 0),
+            ('remote(inventory[group[0]["item"]], script,', 'remote(rows[0], script,', "", 0),
+            ('accept=None, capture_error=True)', 'accept=(), capture_error=True)', "lane.example", 255),
+        )
+        for rule, replacement, target, failure in controls:
+            with self.subTest(control=rule), tempfile.TemporaryDirectory() as control:
+                self.assertEqual(original.count(rule), 1)
+                changed = original.replace(rule, replacement)
+                self.assertNotEqual(changed, original)
+                self.script = Path(control) / "lane-host-ssh"
+                self.executable(self.script, changed)
+                with self.assertRaises(AssertionError):
+                    assert_reply(target, failure)
 
     def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
         """Exit 2 is "not there"; every other read failure keeps its own status."""

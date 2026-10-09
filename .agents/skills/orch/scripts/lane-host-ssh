@@ -45,14 +45,15 @@ def remote_command(row, script, *args):
             "--", row["target"], command]
 
 
-def remote(row, script, *args, data=None, accept=()):
-    """Run Bash through SSH; quote every argument for the remote login shell."""
+def remote(row, script, *args, data=None, accept=(), capture_error=False):
+    """Run Bash through SSH; accept=None returns every transport status."""
     if "session" in row:
         result = row["session"].request(script, args, data or b"")
     else:
         result = subprocess.run(remote_command(row, script, *args),
-                                input=data if data is not None else b"", stdout=subprocess.PIPE)
-    if result.returncode != 0 and result.returncode not in accept:
+                                input=data if data is not None else b"", stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE if capture_error else None)
+    if accept is not None and result.returncode != 0 and result.returncode not in accept:
         notice("remote-failed", target=row["target"], exit=result.returncode)
         raise SystemExit(result.returncode if result.returncode > 0 else 1)
     return result
@@ -332,12 +333,15 @@ def read_many(rows, requests):
         raise ValueError("duplicate read-many request")
     inventory = {r["item"]: r for r in rows}
     groups = {}
+    replies = {}
     for request in requests:
         if request["item"] not in inventory:
-            raise ValueError("unconfigured read-many item")
+            replies[(request["item"], request["path"])] = {
+                **request, "status": 1, "data": "",
+                "error": f"lane-host-ssh: item-unconfigured item={request['item']}"}
+            continue
         row = inventory[request["item"]]
         groups.setdefault(row["target"], []).append(request)
-    replies = {}
     for target, group in groups.items():
         # Stage each file before declaring its byte count. A failed read's
         # partial bytes must never become a successful or missing file.
@@ -352,7 +356,17 @@ for path in "$@"; do
   printf '%s %s %s\\n' "$rc" "$((count + 0))" "$((errors + 0))"
   cat -- "$staged/data" "$staged/error" || exit 1
 done'''
-        result = remote(inventory[group[0]["item"]], script, *(r["path"] for r in group))
+        result = remote(inventory[group[0]["item"]], script, *(r["path"] for r in group),
+                        accept=None, capture_error=True)
+        if result.returncode != 0:
+            # SSH failures must not hide mail on another configured target.
+            status = result.returncode if 0 < result.returncode <= 255 and result.returncode not in (2, 69) else 1
+            error = (f"lane-host-ssh: remote-failed target={target} exit={result.returncode}\n"
+                     + result.stderr.decode("utf-8", errors="replace"))
+            for request in group:
+                replies[(request["item"], request["path"])] = {
+                    **request, "status": status, "data": "", "error": error}
+            continue
         stream = io.BytesIO(result.stdout)
         for request in group:
             header = stream.readline().split()

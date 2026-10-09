@@ -462,9 +462,12 @@ mailbox sits on its provider's disk, where this check cannot see it. A peer
 verb is judged the same way, once per mailbox it opens: the peer's, and the
 caller's own record.
 
-A hosted read that fails is never read as an empty mailbox. `lane-host cat`
-exits 2 for a file that is not there, and the dispatcher exits 2 for a host it
-refuses, so a failed read confirms the host with `lane-host touch` first. A
+A hosted read that fails is never read as an empty mailbox. The watch reads
+the cached `read-many` reply. A missing-file row means absence; any other
+failed row is `mail-read-failed`. Cached reads do not probe the host.
+Other single reads use `lane-host cat`. It exits 2 for a file that is not
+there, and the dispatcher exits 2 for a host it refuses, so a failed single
+read confirms the host with `lane-host touch` first. A
 successful read or probe proves later absent files in the same invocation;
 every other failed read still probes. A
 failed probe is `host-unreachable`, carrying the host's `state=` from
@@ -1083,13 +1086,14 @@ lm_one_spelling() {
 }
 [ "$HOST" -eq 1 ] || lm_one_spelling
 
-# A transport call that failed is a host out of reach or a provider that
-# answered and declined, and only the probe tells them apart. The dispatcher
+# A single transport call that failed is a host out of reach or a provider
+# that answered and declined, and only the probe tells them apart. The dispatcher
 # refuses a host it cannot use with the same 2 as an absent file. An unreachable
 # host is refused here, carrying the state an
 # operator acts on; a host that answers returns, and the caller names what its
 # own verb could not do. A successful read or probe also proves later missing
-# files in this invocation; a non-2 failure still takes a fresh probe.
+# files in this invocation; a non-2 single-read failure takes a fresh probe.
+# Cached batch reads prove absence or refuse failed rows without this probe.
 LM_HOST_ANSWERED=0
 lm_host_answers() {
   local probe_rc=0
@@ -1108,8 +1112,8 @@ lm_host_busy() { # STATUS ERR_FILE
 }
 
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
-# failed hosted read probes the host, so an unreachable one is refused rather
-# than reported as an empty mailbox.
+# cached batch read accepts a missing-file row and refuses any other failure
+# without a probe. A failed single read probes the host before accepting absence.
 LM_FETCH_ABSENT=0
 lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not there
   local rc=0

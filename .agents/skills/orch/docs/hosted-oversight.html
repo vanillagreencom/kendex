@@ -138,7 +138,7 @@
 
 <table>
 <tr><th>Each pass reads</th><th>Local lane</th><th>Hosted lane</th><th>Reported as</th></tr>
-<tr><td>The lane's mailbox</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>lane-question</code>, <code>lane-notice</code></td></tr>
+<tr><td>The lane's mailbox</td><td>The file on disk</td><td><code>lane-host read-many</code></td><td><code>lane-question</code>, <code>lane-notice</code></td></tr>
 <tr><td>The lane's handoff record in its workflow state</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>handoff</code></td></tr>
 <tr><td>A lane record whose launch was handed to a background job while its host prepared it, read from the fleet state</td><td>—</td><td>The record's status and its <code>prepare</code> record</td><td><code>lane-ready</code>, <code>lane-prepare-failed</code>, or <code>lane-prepare-stuck</code> once it has read <code>preparing</code> past <code>ORCH_WATCH_PREPARE_SECS</code></td></tr>
 <tr><td>A running lane record's status file, <code>tmp/lane-status-[ITEM].md</code> under its <code>mail_root</code></td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>start-stalled</code> while it is still missing <code>ORCH_WATCH_START_STALL_SECS</code> after the record's <code>running_at</code>, the time this launch or relaunch recorded it running, and its <code>Step</code> line in <code>lane-long</code> once the lane is <code>ORCH_WATCH_LANE_AGE_SECS</code> past its <code>launched_at</code></td></tr>
