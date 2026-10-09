@@ -270,8 +270,8 @@ read_lane_state() {
   [[ -z "$LANE_ITEM_STATE" ]] || return 0
   pr_key="$(jq -r '.pending_pr.pr // .parked.pr // .cycle.pr // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   [[ "$pr_key" =~ ^[1-9][0-9]*$ ]] || return 0
-  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "pr-$pr_key" \
-    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}
+  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "pr-$pr_key"
 }
 
 print_stages() {

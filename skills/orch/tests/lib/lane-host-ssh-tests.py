@@ -575,24 +575,46 @@ rc=0
         self.assertTrue((self.root / "control-state/workflow-state-TEST-1.json").is_file())
         self.assertFalse((path / "tmp/workflow-state-TEST-1.json").exists())
 
-    def hosted_state_read(self, path, library):
+    def hosted_state_read(self, path, library, state_key=""):
         scratch = self.root / "state-read"
         scratch.mkdir(exist_ok=True)
         child_env = {key: self.env[key] for key in
                      ("HOME", "PATH", "REAL_GIT", "SSH_TEST_SOURCE", "SSH_TEST_LOG",
                       "LANE_HOST_SSH_SOURCE", "LANE_HOST_SSH_INVENTORY")}
         return subprocess.run([shutil.which("bash", path=self.env["PATH"]), "-c",
-                               'set -euo pipefail; . "$1"; lane_hosted_item_state "$2" TEST-1 "$3" "$4"; printf "%s" "$LANE_ITEM_STATE"',
-                               "hosted-reader", str(library), str(self.script), str(path), str(scratch)],
+                               'set -euo pipefail; . "$1"; lane_hosted_item_state "$2" TEST-1 "$3" "$4" "$5"; printf "%s" "$LANE_ITEM_STATE"',
+                               "hosted-reader", str(library), str(self.script), str(path), str(scratch), state_key],
                               env=child_env, capture_output=True, timeout=60)
 
     def test_hosted_state_read_and_archive_keep_the_prefix_state(self):
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
         expected = json.loads((path / "tmp/workflow-state-TEST-1.json").read_bytes())
-        read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh")
-        self.assertEqual(read.returncode, 0, read.stderr)
-        self.assertEqual(json.loads(read.stdout), expected)
+        for state_key in ("", "pr-7"):
+            with self.subTest(state_key=state_key):
+                original = path / "tmp/workflow-state-TEST-1.json"
+                selected = path / f"tmp/workflow-state-{state_key or 'TEST-1'}.json"
+                original.rename(selected)
+                try:
+                    read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh", state_key)
+                    self.assertEqual(read.returncode, 0, read.stderr)
+                    self.assertEqual(json.loads(read.stdout), expected)
+                    if state_key:
+                        with tempfile.TemporaryDirectory() as control:
+                            lib = Path(control) / "orch/scripts/lib"
+                            shutil.copytree(PACKAGE / "scripts/lib", lib)
+                            shutil.copytree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
+                            library = lib / "lane-gitfile.sh"
+                            text = library.read_text()
+                            rule = 'state_key="${5:-$2}"'
+                            self.assertEqual(text.count(rule), 1)
+                            library.write_text(text.replace(rule, 'state_key="$2"'))
+                            read = self.hosted_state_read(path, library, state_key)
+                            self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
+                            with self.assertRaises(AssertionError):
+                                self.assertEqual(json.loads(read.stdout or b"null"), expected)
+                finally:
+                    selected.rename(original)
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
@@ -610,9 +632,9 @@ rc=0
             shutil.copytree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
             library = lib / "lane-gitfile.sh"
             original = library.read_text()
-            rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$2"'
+            rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$state_key"'
             self.assertEqual(original.count(rule), 1)
-            library.write_text(original.replace(rule, 'lane_hosted_state_path "$LANE_HOSTED_CLONE" tmp "$2"'))
+            library.write_text(original.replace(rule, 'lane_hosted_state_path "$LANE_HOSTED_CLONE" tmp "$state_key"'))
             read = self.hosted_state_read(path, library)
             self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
 

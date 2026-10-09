@@ -61,7 +61,7 @@ export OVERSEE_CYCLE_REAL_LANE_HOST="$TEST_DIR/../scripts/lane-host"
 cat > "$LAYOUT/orch/scripts/lane-host" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CASE/lane-host.calls"
-case "$ORCH_LANE_HOST" in local | claude-cloud) exec "$OVERSEE_CYCLE_REAL_LANE_HOST" "$@" ;; esac
+case "$ORCH_LANE_HOST" in local | claude-cloud | /*) exec "$OVERSEE_CYCLE_REAL_LANE_HOST" "$@" ;; esac
 case "$1" in
   capabilities)
     [[ "$ORCH_LANE_HOST" != caps-broken ]] || { echo 'lane-host: capability-invalid key=files value=' >&2; exit 1; }
@@ -1070,15 +1070,15 @@ jq -n --argjson c "[$(cycle '"micro"' 100 met null false false "$P1")]" \
   > "$CASE/state/workflow-state-oversee.json"
 assert_eq "$(rollup | grep -o 'fix_median=[0-9]*')" "fix_median=300" "control: a fix median read over the review rounds reports a review's seconds"
 
-control m-lane-state lib/lane-gitfile.sh 'path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2' \
-  'path="$("$1" path "$4" 2>"$7/state.err")" || return 2'
+control m-lane-state lib/lane-gitfile.sh 'path="$(cd -- "$6" && "$1" path "$state_key" 2>"$7/state.err")" || return 2' \
+  'path="$("$1" path "$state_key" 2>"$7/state.err")" || return 2'
 new_case c-lane-root; printf micro > "$CASE/class"; timeline 1200
 edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
 assert_eq "$(field fix "$(record KEN-5 micro)")" "fix=-" \
   "control: read from the caller's checkout, another repository's lane has no rounds"
 
-control m-hosted-dir lib/lane-gitfile.sh 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$2"' \
-  'lane_hosted_state_path "$LANE_HOSTED_CLONE" "${ORCH_STATE_DIR:-tmp}" "$2"'
+control m-hosted-dir lib/lane-gitfile.sh 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$state_key"' \
+  'lane_hosted_state_path "$LANE_HOSTED_CLONE" "${ORCH_STATE_DIR:-tmp}" "$state_key"'
 new_case c-hosted-dir; printf micro > "$CASE/class"; timeline 1200
 edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
 mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp"
@@ -1340,6 +1340,67 @@ mv -- "$SF" "$REPO/tmp/workflow-state-pr-7.json"
 assert_eq "$(stage_command KEN-1)" "$rows" 'lane PR key resolves when item key is absent'
 record KEN-1 micro >/dev/null
 assert_eq "$(state '.lanes[0].cycle.stages')" "$(jq -c '.stages' "$REPO/tmp/workflow-state-pr-7.json")" 'record shares PR fallback'
+
+# The shipped SSH provider selects its target by the launched item. Only
+# transport is local here; the dispatcher, provider and state reader are real.
+stage_case_root="$CASE"
+new_case hosted-pr-stages
+printf micro > "$CASE/class"; timeline 1500
+hosted_root="$CASE/remote/lane"
+hosted_clone="$CASE/remote/clone"
+hosted_provider="$TEST_DIR/../scripts/lane-host-ssh"
+mkdir -p "$hosted_root/tmp" "$hosted_clone/lane-state" "$CASE/ssh-bin" "$CASE/home"
+printf 'gitdir: %s/.git/worktrees/KEN-1\n' "$hosted_clone" > "$hosted_root/.git"
+cp "$stage_case_root/stage-state.saved" "$hosted_root/tmp/workflow-state-pr-7.json"
+jq -n --arg clone "$hosted_clone" --arg account "$CASE/account" \
+  '[{repo:"owner/repo",item:"KEN-1",target:"lane.example",clone:$clone,account:$account}]' > "$CASE/hosts.json"
+cat > "$CASE/ssh-bin/ssh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$CASE/ssh.calls"
+exec "$BASH" -c "${!#}"
+SH
+chmod +x "$CASE/ssh-bin/ssh"
+edit_json "$CASE/state/workflow-state-oversee.json" \
+  "(.lanes[] | select(.item == \"KEN-1\")) += {status: \"running\", tier: \"micro\", host: \"$hosted_provider\", mail_root: \"$hosted_root\", pending_pr: {pr: 7}}"
+for location in worktree clone-setting archive; do
+  case "$location" in
+    clone-setting)
+      mv -- "$hosted_root/tmp/workflow-state-pr-7.json" "$hosted_clone/lane-state/"
+      printf '[env]\nORCH_STATE_DIR = "lane-state"\n' > "$hosted_root/kendex.settings.toml"
+      ;;
+    archive)
+      # An older close archive has no recorded member. The requested file
+      # key selects its PR state, while the host still probes KEN-1.
+      tar -czf "$CASE/kept.tgz" -C "$hosted_clone" lane-state/workflow-state-pr-7.json
+      edit_json "$CASE/state/workflow-state-oversee.json" \
+        ".fleet_log += [{at: \"$(at 20)\", item: \"KEN-1\", text: \"kept=$CASE/kept.tgz\"}]"
+      rm -rf -- "${hosted_root:?}"
+      ;;
+  esac
+  got="$(HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" stage_command KEN-1)"
+  assert_eq "$got" "$rows" "hosted PR-key stages from $location keep the launched item identity"
+  HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" record KEN-1 micro >/dev/null
+  assert_eq "$(state '.lanes[0].cycle.stages')" "$(jq -c '.stages' "$stage_case_root/stage-state.saved")" \
+    "hosted PR-key cycle from $location records the same stages"
+  control "m-hosted-pr-$location" oversee-cycle \
+    '"${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "pr-$pr_key"' \
+    '"${ORCH_STATE_DIR:-tmp}" "pr-$pr_key" \
+    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "pr-$pr_key"'
+  rc=0
+  HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" \
+    stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+  assert_eq "$rc" 1 "control: hosted $location stages refuse a file key used as the lane identity"
+  assert_contains "$(cat "$CASE/err")" 'item-unconfigured item=pr-7' \
+    "control: the shipped SSH inventory rejects the wrong lane identity for $location"
+  HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" record KEN-1 micro >/dev/null
+  assert_eq "$(state '.lanes[0].cycle.stages')" null \
+    "control: hosted $location cycle loses stages under the wrong lane identity"
+  RUN_BIN=""
+done
+CASE="$stage_case_root"
+export CASE
 rm -- "$REPO/tmp/workflow-state-pr-7.json"
 for item in KEN-unknown KEN-1; do
   rc=0
