@@ -70,6 +70,51 @@ mutate_file "$mutant" '[[ $rc -ne 0 || "$mode" != full ]] || step verify kendex 
 rc=0; out="$(table "$mutant" mutant miss 2>"$SCRATCH/control-error")" || rc=$?
 assert_eq "$rc:$out" "1:miss verify rc=0" "control: a copy with no verify step fails the verify row" "$SCRATCH/control-error"
 
+# The rolling record workflow can still be pending across successive merges.
+# Local commands must process each merge without creating refresh dirt.
+workflow_owner() { # SCRIPT TAG JUDGE
+  local script="$1" tag="$2" judge="$3" W seed before after fail rc out expected calls=''
+  W="$SCRATCH/workflow-$tag"
+  seed="$SCRATCH/workflow-seed-$tag"
+  git clone -q -c gc.auto=0 -c maintenance.auto=false "$SCRATCH/seed" "$seed"
+  git -C "$seed" config user.name test
+  git -C "$seed" config user.email test@example.com
+  # A tracked manifest reaches refresh if command-only ever falls through.
+  touch "$seed/kendex.toml"
+  git -C "$seed" add kendex.toml
+  git -C "$seed" commit -qm manifest
+  git clone -q -c gc.auto=0 -c maintenance.auto=false "$seed" "$W"
+  before="$(git -C "$W" rev-parse HEAD)"
+  export COMMAND_LOG="$SCRATCH/commands-$tag" FAIL_STEP=success
+  export ORCH_POST_MERGE_CMD='printf "%s:%s\n" "$ORCH_POST_MERGE_BEFORE" "$ORCH_POST_MERGE_AFTER" >> "$COMMAND_LOG"; exit "$COMMAND_EXIT"'
+  # A failure on the second merge keeps the first successful checkpoint.
+  while IFS='|' read -r fail expected; do
+    if [[ "$fail" != retry ]]; then
+      git -C "$seed" commit -qm merge --allow-empty
+    fi
+    after="$(git -C "$seed" rev-parse HEAD)"
+    COMMAND_EXIT="$expected"; export COMMAND_EXIT
+    rc=0; out="$(bash "$script" --command-only "$W" 2>"$SCRATCH/error")" || rc=$?
+    "$judge" "$rc" "$expected" "$fail: command-only exit" "$SCRATCH/error" || return 1
+    "$judge" "$(git -C "$W" rev-parse HEAD)" "$after" "$fail: synchronized merge" || return 1
+    calls="${calls}${before}:${after}"$'\n'
+    "$judge" "$(cat "$COMMAND_LOG")" "${calls%$'\n'}" "$fail: command range" || return 1
+    [[ "$expected" != 0 ]] || before="$after"
+    "$judge" "$(git -C "$W" rev-parse refs/kendex/post-merge-base)" "$before" "$fail: successful checkpoint" || return 1
+    "$judge" "$out" $'main\npost-merge: sync-base=0\npost-merge: command='"$expected" "$fail: no refresh or verify" || return 1
+    "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
+  done <<'ROWS'
+first|0
+second|23
+retry|0
+ROWS
+}
+workflow_owner "$DIR/post-merge" real assert_eq
+mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
+mutate_file "$mutant" '[[ "$mode" != command-only ]] || exit 0' ':'
+rc=0; out="$(workflow_owner "$mutant" refresh-fallthrough miss 2>"$SCRATCH/control-error")" || rc=$?
+assert_contains "$rc:$out" '1:miss first: no refresh or verify' 'control: local refresh during workflow ownership is rejected'
+
 # A user can stage one version and leave a different worktree version.
 # Full mode permits its configured command to create this work after sync.
 REAL_GIT="$(command -v git)"

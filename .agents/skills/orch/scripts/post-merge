@@ -4,9 +4,11 @@ set -euo pipefail
 mode=full
 case "${1:-}" in
   -h|--help)
-    printf '%s\n' 'usage: post-merge [--refresh-only] [BASE_CHECKOUT]' 'Run in the base checkout; stop at the first failed step. Both modes retain checkout changes for their declared owner.' \
+    printf '%s\n' 'usage: post-merge [--command-only|--refresh-only] [BASE_CHECKOUT]' 'Run in the base checkout; stop at the first failed step. All modes retain checkout changes for their declared owner.' \
+      '--command-only  synchronize and run the configured command with its checkpoint; leave refresh and verification to the declared workflow owner.' \
       '--refresh-only  refresh without synchronization, the configured command or verification; for an authorized owner outside the hosted control host.'
     exit 0 ;;
+  --command-only) mode=command-only; shift ;;
   --refresh-only) mode=refresh-only; shift ;;
 esac
 status() { printf 'post-merge: %s=%s\n' "$1" "$2"; }
@@ -18,7 +20,7 @@ step() {
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 [[ $# -le 1 ]] || { status arguments "$#"; exit 2; }
 cd -- "${1:-.}" || { status checkout 1; exit 1; }
-if [[ "$mode" == full ]]; then
+if [[ "$mode" != refresh-only ]]; then
   step sync-base "$SCRIPT_DIR/sync-base" . || exit $?
   ORCH_POST_MERGE_BEFORE="$(git rev-parse refs/kendex/post-merge-base)" || { status sync-base 1; exit 1; }
   ORCH_POST_MERGE_AFTER="$(git rev-parse HEAD)" || { status sync-base 1; exit 1; }
@@ -31,6 +33,7 @@ if [[ "$mode" == full ]]; then
   fi
   git update-ref refs/kendex/post-merge-base "$ORCH_POST_MERGE_AFTER" || { status checkpoint 1; exit 1; }
 fi
+[[ "$mode" != command-only ]] || exit 0
 if [[ -f kendex.toml ]]; then
   # Refresh owns no cleanup permission. Keep checkout changes for their owner.
   rc=0

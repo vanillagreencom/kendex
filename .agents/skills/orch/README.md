@@ -5,7 +5,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 ## Features
 
 - `orch start` takes one issue from its worktree to merge.
-- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps and, off a hosted fleet, refreshes the consumer repositories when a merge changes shipped packages.
+- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps through the repository's declared refresh owner.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
 - `oversee launch` opens a fleet's first overseer and `oversee register` records one opened by hand. `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires, or once it has ended or walled.
 - `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with, and picks on projected room weighted by time to reset, never an overseer's; the watch reports an account that hit its usage limit and when the limit resets.
