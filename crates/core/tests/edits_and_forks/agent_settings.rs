@@ -10,6 +10,170 @@ use kendex_core::error::CoreError;
 
 use super::*;
 
+/// Catalog role rules travel through every transfer, including empty rules
+/// that suppress fleet defaults. The initial install assertions also cover
+/// the engine's policy wiring, before AgentCarry can affect the result.
+#[test]
+#[allow(clippy::unwrap_used, clippy::too_many_lines)]
+fn catalog_role_access_survives_fork_beside_and_detach() {
+    struct Rule {
+        role: Option<&'static str>,
+        catalog: &'static str,
+        project: &'static str,
+        claude: &'static str,
+        pi: &'static str,
+        delegates: &'static str,
+    }
+    let rules = [
+        Rule {
+            role: Some("reviewer"),
+            catalog: "[role-policy.claude.reviewer]\ndeny-tools = [\"Bash\"]\n[role-policy.pi.reviewer]\ndeny-tools = [\"bash\"]\nallowed-subagents = [\"probe\"]\n[agent-frontmatter.claude]\nrev = { deny-tools = [\"WebFetch\"] }\n[agent-frontmatter.pi]\nrev = { deny-tools = [\"read\"] }\n",
+            project: "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Write\"] }\n[agent-frontmatter.pi]\nrev = { deny-tools = [\"edit\"] }\n",
+            claude: "Agent, Bash, WebFetch, Write",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, bash, read, edit",
+            delegates: "probe",
+        },
+        Rule {
+            role: Some("engineer"),
+            catalog: "[role-policy.pi.reviewer]\ndeny-tools = [\"bash\"]\nallowed-subagents = [\"probe\"]\n",
+            project: "",
+            claude: "Agent",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent",
+            delegates: "",
+        },
+        Rule {
+            role: None,
+            catalog: "[role-policy.pi.reviewer]\ndeny-tools = [\"bash\"]\n",
+            project: "",
+            claude: "Agent",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent",
+            delegates: "",
+        },
+        Rule {
+            role: Some("reviewer"),
+            catalog: "[role-policy.claude.reviewer]\ndeny-tools = [\"Bash\"]\n",
+            project: "",
+            claude: "Agent, Bash",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent",
+            delegates: "",
+        },
+        Rule {
+            role: Some("reviewer"),
+            catalog: "[role-policy]\n",
+            project: "",
+            claude: "Agent",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent",
+            delegates: "",
+        },
+        Rule {
+            role: Some("reviewer"),
+            catalog: "[role-policy.claude.reviewer]\ndeny-tools = [\"Bash\"]\n[role-policy.pi.reviewer]\ndeny-tools = [\"delegate_subagent\"]\nallowed-subagents = [\"probe\"]\n[agent-frontmatter.claude]\nrev = { role-deny-tools = [\"WebFetch\"] }\n",
+            project: "[agent-frontmatter.claude]\nrev = { role-deny-tools = [], deny-tools = [\"Write\"] }\n[agent-frontmatter.pi]\nrev = { allowed-subagents = [\"project-probe\"] }\n",
+            claude: "Agent, Write",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent",
+            delegates: "project-probe",
+        },
+        Rule {
+            role: Some("reviewer"),
+            catalog: "[role-policy.pi.reviewer]\ndeny-tools = [\"bash\"]\nallowed-subagents = [\"probe\"]\n",
+            project: "[agent-frontmatter.pi]\nrev = { allowed-subagents = [] }\n",
+            claude: "Agent",
+            pi: "subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, bash",
+            delegates: "",
+        },
+    ];
+    for (row, rule) in rules.iter().enumerate() {
+        for transfer in [
+            "fork-claude",
+            "fork-pi",
+            "beside-claude",
+            "beside-pi",
+            "detach",
+        ] {
+            let role = rule
+                .role
+                .map(|role| format!("role: {role}\n"))
+                .unwrap_or_default();
+            let agent =
+                format!("---\nname: rev\ndescription: agent rev\n{role}---\nUpstream body.\n");
+            let w = agent_world("\"claude\", \"pi\"", &agent, rule.catalog, rule.project);
+            let check = |name: &str| {
+                for (harness, key, expected) in [
+                    (HarnessId::Claude, "disallowedTools:", rule.claude),
+                    (HarnessId::Pi, "deny-tools:", rule.pi),
+                ] {
+                    let text = fs::read_to_string(rendered(&w, harness, name)).unwrap();
+                    let tools = |line: &str| {
+                        let mut tools: Vec<String> =
+                            line.split(',').map(|tool| tool.trim().to_owned()).collect();
+                        tools.sort();
+                        tools
+                    };
+                    let denied = deny_line(&text, key);
+                    let denied = denied.strip_prefix(key).unwrap();
+                    assert_eq!(
+                        tools(denied),
+                        tools(expected),
+                        "row {row}, {transfer}, {name}"
+                    );
+                    if harness == HarnessId::Pi {
+                        let delegates = match rule.delegates {
+                            "" => String::new(),
+                            list => format!("allowed-subagents: {list}"),
+                        };
+                        assert_eq!(
+                            deny_line(&text, "allowed-subagents:"),
+                            delegates,
+                            "row {row}, {transfer}, {name}"
+                        );
+                    }
+                }
+            };
+            check("rev");
+            let harness = match transfer {
+                "fork-pi" | "beside-pi" => HarnessId::Pi,
+                _ => HarnessId::Claude,
+            };
+            let name = if transfer.starts_with("beside") {
+                "rev-mine"
+            } else {
+                "rev"
+            };
+            let plan = match transfer {
+                "detach" => kendex_core::engine::detach::source(&w.env, &w.scope, "cat").unwrap(),
+                "fork-claude" | "fork-pi" => {
+                    edit_body(&rendered(&w, harness, "rev"));
+                    fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", harness).unwrap()
+                }
+                "beside-claude" | "beside-pi" => {
+                    edit_body(&rendered(&w, harness, "rev"));
+                    fork::fork_beside(
+                        &w.env,
+                        &w.scope,
+                        ItemKind::Agent,
+                        "rev",
+                        harness,
+                        name,
+                        None,
+                    )
+                    .unwrap()
+                }
+                _ => unreachable!(),
+            };
+            apply::execute(&w.env, &plan).unwrap();
+            resettle(&w);
+            check(name);
+            if name != "rev" {
+                check("rev");
+            }
+            assert!(
+                audit(&w.env, &w.scope).unwrap().drift.is_empty(),
+                "row {row}, {transfer}"
+            );
+        }
+    }
+}
+
 /// A hand edit the fork cannot carry refuses before writing anything, one
 /// row per edit, the refusal's own `problem` naming what it stopped on. A
 /// person who tightens a generated file by hand states something the local

@@ -17,6 +17,7 @@ pub mod pi;
 mod role_policy;
 mod source;
 
+pub(crate) use role_policy::role_rule;
 pub use role_policy::{RolePolicy, RoleRule};
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
 
@@ -82,7 +83,11 @@ pub struct EffectiveAgent<'a> {
 impl EffectiveAgent<'_> {
     /// What this agent's `role:` implies in this harness.
     pub fn role_rule(&self) -> RoleRule {
-        role_policy::role_rule(self.role_policy, self.harness, self.source.role)
+        let mut rule = role_policy::role_rule(self.role_policy, self.harness, self.source.role);
+        if let Some(denies) = &self.overrides.role_deny_tools {
+            rule.deny_tools.clone_from(denies);
+        }
+        rule
     }
 
     /// Source and manifest model precedence, shared with native intent lookup.
@@ -170,6 +175,7 @@ pub fn merge_overrides(
     take!(color);
     take!(model);
     take!(allow_tools);
+    take!(role_deny_tools);
     take!(allowed_subagents);
     take!(pane);
     take!(background);

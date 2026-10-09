@@ -1,5 +1,5 @@
 //! What a catalog contributes to one agent's rendering beyond the agent's
-//! own file. Its skill assignment and its per-harness frontmatter defaults
+//! own file. Its role rules, skill assignment and per-harness frontmatter defaults
 //! live in the catalog's control file, not in the bytes anything copies,
 //! so an agent that stops reading that catalog — detached, or forked into
 //! the local source — renders differently at the very next apply unless
@@ -8,13 +8,13 @@
 use std::collections::BTreeMap;
 
 use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest};
-use crate::model::ItemKind;
+use crate::model::{HarnessId, ItemKind};
 use crate::render::agent::Selects;
 use crate::source::SourceConfig;
 use crate::source_read::SealedSource;
 
 /// The catalog-level values one kept agent rendered with: the effective
-/// skill list and the merged per-harness frontmatter.
+/// skill list and the merged per-harness frontmatter, including role rules.
 #[derive(Clone, Default)]
 pub(crate) struct AgentCarry {
     skills: Vec<String>,
@@ -27,6 +27,14 @@ impl AgentCarry {
     /// disagree with the list the manifest is about to hold.
     pub(crate) fn skills(&self) -> Vec<String> {
         self.skills.clone()
+    }
+
+    /// The same resolved overrides that the next local rendering will read.
+    pub(crate) fn overrides(&self, harness: HarnessId) -> Option<&FrontmatterOverrides> {
+        self.frontmatter
+            .iter()
+            .find(|(name, _)| name == harness.name())
+            .map(|(_, overrides)| overrides)
     }
 
     /// Whether this carries nothing, so nothing has to reach the manifest.
@@ -122,19 +130,40 @@ pub(crate) fn agent_carry(
         return Err(refusal);
     }
     let skills = skills.effective;
+    let mut harnesses: std::collections::BTreeSet<&str> =
+        config.frontmatter.keys().map(String::as_str).collect();
+    if config.role_policy.is_some() {
+        // A declared policy also suppresses fleet defaults for omitted
+        // harnesses and roles. Those empty rules must travel too.
+        harnesses.extend([HarnessId::Claude.name(), HarnessId::Pi.name()]);
+    }
     let mut frontmatter = Vec::new();
-    for (harness, by_agent) in &config.frontmatter {
-        let Some(defaults) = by_agent.get(name) else {
-            continue;
-        };
-        let merged = crate::render::agent::merge_overrides(
-            Some(defaults),
+    for harness in harnesses {
+        let mut merged = crate::render::agent::merge_overrides(
+            config
+                .frontmatter
+                .get(harness)
+                .and_then(|agents| agents.get(name)),
             manifest
                 .agent_frontmatter
                 .get(harness)
                 .and_then(|agents| agents.get(name)),
         );
-        frontmatter.push((harness.clone(), merged));
+        if let Some(policy) = &config.role_policy {
+            let id = HarnessId::parse(harness);
+            if let Some(id @ (HarnessId::Claude | HarnessId::Pi)) = id {
+                let rule = crate::render::agent::role_rule(Some(policy), id, role);
+                merged.role_deny_tools.get_or_insert(rule.deny_tools);
+                if id == HarnessId::Pi {
+                    merged
+                        .allowed_subagents
+                        .get_or_insert(rule.allowed_subagents);
+                }
+            }
+        }
+        if merged != FrontmatterOverrides::default() {
+            frontmatter.push((harness.to_owned(), merged));
+        }
     }
     if skills.is_empty() && frontmatter.is_empty() {
         return Ok(None);

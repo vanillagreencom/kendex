@@ -161,7 +161,7 @@ impl ItemDecl {
     }
 }
 
-/// Typed `[agent-frontmatter.<harness>.<agent>]` overrides — v1's field set.
+/// Typed `[agent-frontmatter.<harness>.<agent>]` overrides.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct FrontmatterOverrides {
@@ -171,6 +171,10 @@ pub struct FrontmatterOverrides {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deny_tools: Option<Vec<String>>,
+    /// Resolved role denies retained when an agent leaves its catalog.
+    /// An empty list suppresses implicit fleet denies; `deny_tools` still narrows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_deny_tools: Option<Vec<String>>,
     /// Allow-only tool intent: replaces a source-side `tools:` allowlist for
     /// this harness. Distinct from `deny_tools`, which only narrows.
     #[serde(skip_serializing_if = "Option::is_none")]

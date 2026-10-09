@@ -145,15 +145,6 @@ fn deny_tools(agent: &EffectiveAgent, allowed: &[String]) -> Vec<String> {
         }
         out.push(tool);
     }
-    // A live allowlist needs the delegation tool, so the default deny goes —
-    // unless the user asked for it, in which case their policy wins and the
-    // allowlist stays inert.
-    let user_denies_delegate = user
-        .iter()
-        .any(|tool| normalize(tool) == "delegate_subagent");
-    if !allowed.is_empty() && !user_denies_delegate {
-        out.retain(|tool| normalize(tool) != "delegate_subagent");
-    }
     out
 }
 
@@ -323,6 +314,43 @@ mod tests {
         agent.permissions = PermissionIntent::allow_only(vec!["read".into()]);
         let refusal = generate(&agent).unwrap_err();
         assert!(refusal.contains("widen"));
+    }
+
+    /// Delegates do not remove denies declared by the catalog, a carried
+    /// role rule, or the agent's permission intent.
+    #[test]
+    fn an_explicit_delegation_deny_survives_a_delegate_list() {
+        let table: toml::Table =
+            "[role-policy.pi.engineer]\ndeny-tools = [\"delegate-subagent\"]\nallowed-subagents = [\"probe\"]\n"
+                .parse()
+                .unwrap();
+        let policy = crate::render::agent::RolePolicy::parse(&table["role-policy"]).unwrap();
+        let source = source("rust", "engineer", "opus");
+        let scope = Scope::Global;
+        for origin in ["catalog", "carried", "permissions"] {
+            let mut agent = effective(&source, &scope);
+            match origin {
+                "catalog" => agent.role_policy = Some(&policy),
+                "carried" => {
+                    agent.overrides.role_deny_tools = Some(vec!["delegate-subagent".into()]);
+                }
+                "permissions" => {
+                    agent.permissions =
+                        PermissionIntent::DenyExtra(vec!["delegate-subagent".into()]);
+                }
+                _ => unreachable!(),
+            }
+            agent.overrides.allowed_subagents = Some(vec!["probe".into()]);
+            let text = generate(&agent).unwrap().text;
+            assert!(
+                text.contains("allowed-subagents: probe\n"),
+                "{origin}: {text}"
+            );
+            assert!(
+                deny_line(&text).contains("delegate-subagent"),
+                "{origin}: {text}"
+            );
+        }
     }
 
     #[test]

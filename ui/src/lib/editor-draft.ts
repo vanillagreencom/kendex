@@ -30,6 +30,7 @@ export const EMPTY_FRONTMATTER: DraftFrontmatter = {
   color: null,
   model: null,
   "deny-tools": null,
+  "role-deny-tools": null,
   "allow-tools": null,
   "allowed-subagents": null,
   pane: null,
