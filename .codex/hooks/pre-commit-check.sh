@@ -84,14 +84,15 @@ for dependency in jq cat grep; do
 done
 [ -z "$MISSING" ] || { message missing-tools "${MISSING#,}"; exit 0; }
 INPUT=$(cat 2>&1) || { message payload read-failed "$INPUT"; exit 0; }
-COMMAND=$(printf '%s' "$INPUT" | jq -r '
+# A reader that exits early must not make a payload writer print before the keyed notice.
+COMMAND=$(jq -r '
   def copilot: .toolArgs
     | if . == null then null elif type == "string" then fromjson else . end
     | if . == null then null elif type == "object" then .command else error end;
   if .tool_input.command != null then .tool_input.command
   elif .command != null then .command
   elif copilot != null then copilot else "" end
-  | if type == "string" then . else error end' 2>/dev/null) ||
+  | if type == "string" then . else error end' 2>/dev/null <<<"$INPUT") ||
   { message payload invalid-json; exit 0; }
 
 

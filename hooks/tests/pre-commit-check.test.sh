@@ -224,7 +224,7 @@ assert_eq "$log" "" "the hook never executes repository checks"
 # The registered commands are the consumers of stdout JSON. Failure worlds
 # keep the reader absent or broken while jq in the parent parses that JSON.
 context_rows() {
-  local harness registry registered install row world form key path status context selected expected
+  local harness registry registered install row world form key path status context selected expected first
   local repo="$UNARMED" root="${HOOKS_DIR%/hooks}" tool real
   for harness in claude codex copilot pi; do
     case "$harness" in
@@ -267,8 +267,14 @@ context_rows() {
         invalid) form='{"tool_input":' ;;
         *) form=$(jq -nc --arg c "$form" '{tool_input:{command:$c}}') ;;
       esac
+      if [ "$world" = broken-jq ]; then
+        # The CI reader can exit without reading. Exceed a pipe buffer so the
+        # old writer must hit EPIPE, even if it writes before the reader exits.
+        form=$(jq -c '.padding = (" " * 131072)' <<<"$form")
+      fi
       status=0
-      (cd -- "$repo" && env -i HOME="$TMP_ROOT" PATH="$path" CLAUDE_PROJECT_DIR="$repo" "$BASH" -c "$registered" <<<"$form") >"$OUT_FILE" 2>"$ERR_FILE" || status=$?
+      (cd -- "$repo" && { [ "$world" != broken-jq ] || trap '' PIPE; } &&
+        env -i HOME="$TMP_ROOT" PATH="$path" CLAUDE_PROJECT_DIR="$repo" "$BASH" -c "$registered" <<<"$form") >"$OUT_FILE" 2>"$ERR_FILE" || status=$?
       out=$(cat "$OUT_FILE"); err=$(cat "$ERR_FILE")
       if [ "$harness" = copilot ]; then
         selected='.additionalContext'
@@ -280,6 +286,11 @@ context_rows() {
       expected=${expected//REPO/$repo}
       assert_eq "rc=$status first=${err%%$'\n'*}" "rc=0 first=$expected" "registered $harness $world $key notice status"
       assert_eq "$context" "$err" "registered $harness $world $key context equals the keyed diagnostic"
+      if [ "$world" = broken-jq ] && [ "${PIPE_READER_CONTROL:-}" = true ]; then
+        first=other
+        case "${err%%$'\n'*}" in *': printf: write error: Broken pipe') first=broken-pipe ;; esac
+        assert_eq "$first" broken-pipe "control pipe-reader: registered $harness broken-jq first=broken-pipe"
+      fi
     done <<'ROWS'
 tools|git commit -m test|unarmed=REPO
 tools|git commit -m $TEXT -n|command=unresolved
@@ -298,6 +309,49 @@ ROWS
 context_rows
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  # The shared control helper inserts code. This control must replace both
+  # redirections to restore the original pipeline on the disposable hook.
+  [ ! -L "$HOOK" ] || { echo 'pipe-reader-control: source=symlink' >&2; exit 2; }
+  perl -e '
+    use strict;
+    use warnings;
+    my ($source, $target) = @ARGV;
+    open my $input, "<", $source or die "pipe-reader-control: source=unreadable\n$!\n";
+    local $/;
+    $! = 0;
+    my $text = <$input>;
+    die "pipe-reader-control: source=unreadable\n$!\n" if $!;
+    close $input or die "pipe-reader-control: source=unreadable\n$!\n";
+    my $changed = $text;
+    my $before = q{COMMAND=$(jq -r};
+    my $after = q{COMMAND=$(printf '\''%s'\'' "$INPUT" | jq -r};
+    ($changed =~ s/\Q$before\E/$after/g) == 1 or die "pipe-reader-control: command=ambiguous-or-missing\n";
+    $before = q{2>/dev/null <<<"$INPUT")};
+    $after = q{2>/dev/null)};
+    ($changed =~ s/\Q$before\E/$after/g) == 1 or die "pipe-reader-control: input=ambiguous-or-missing\n";
+    die "pipe-reader-control: mutation=unchanged\n" if $changed eq $text;
+    open my $output, ">", $target or die "pipe-reader-control: mutation=unwritable\n$!\n";
+    print {$output} $changed or die "pipe-reader-control: mutation=unwritable\n$!\n";
+    close $output or die "pipe-reader-control: mutation=unwritable\n$!\n";
+  ' -- "$HOOK" "$TMP_ROOT/pipe-reader.sh"
+  control_status=0
+  (
+    HOOK_UNDER_TEST="$TMP_ROOT/pipe-reader.sh"
+    HOOK="$HOOK_UNDER_TEST"
+    PIPE_READER_CONTROL=true
+    PASS=0; FAIL=0
+    context_rows
+    [ "$FAIL" -eq 0 ]
+  ) >"$TMP_ROOT/pipe-reader.log" 2>&1 || control_status=$?
+  assert_eq "$control_status" 1 'control pipe-reader: the mutated hook turns the suite red'
+  for control_harness in claude codex copilot pi; do
+    for control_assertion in 'notice status' 'context equals the keyed diagnostic'; do
+      control_matches=$(grep -Fxc -e "  FAIL  registered $control_harness broken-jq payload=invalid-json $control_assertion" -- "$TMP_ROOT/pipe-reader.log") || [ "$?" -eq 1 ]
+      assert_eq "$control_matches" 1 "control pipe-reader: registered $control_harness broken-jq $control_assertion"
+    done
+    control_matches=$(grep -Fxc -e "  ok    control pipe-reader: registered $control_harness broken-jq first=broken-pipe" -- "$TMP_ROOT/pipe-reader.log") || [ "$?" -eq 1 ]
+    assert_eq "$control_matches" 1 "control pipe-reader: registered $control_harness broken-jq first=broken-pipe"
+  done
   skill_load_control no-short-flag "$HOOK" 'letter=${rest:0:1}; rest=${rest:1}' 'letter=x' HOOK command_rows \
     'git commit -n -m test'
   skill_load_control no-hook-override "$HOOK" 'CALL_RESULT=commit; CALL_BYPASS=$env_config' 'CALL_BYPASS=""' HOOK command_rows \
