@@ -6,6 +6,64 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-09
+
+### Added
+
+- A project adds its own text to a package command with `[command-instructions]` in its manifest, keyed by command name or `all`. Every tool's copy of the command carries that text above the publisher's body, which keeps updating, so keeping a paragraph no longer means copying the command.
+
+### Fixed
+
+- `kendex adopt` defaults to enabled harnesses that support the item's kind in the chosen scope, and refuses when none can receive it. The README and command help explain the project skill directory move and distinguish symlink delivery from copy delivery.
+- Apply follows a removed package or set revision and a changed source revision after discarding local edits. Held packages keep their recorded revision choices across tool changes and Pi operations. Existing install records keep their earlier holds until refresh records revision choices.
+- Catalogs with CRLF line endings reuse one source hash across AI tools and read Git line-ending metadata once per source tree during planning. Overlapping catalogs keep separate source identities.
+- A skill or command whose frontmatter closes with YAML's `...` keeps that frontmatter first when project instructions are added, instead of having the instructions block written above it.
+- A skill, agent or command named `all` renders the project's `all` instructions once, instead of once as everyone's text and again as its own.
+- Keep recorded hooks armed when their installed files and required companions remain available under conflicting revisions. Withhold new wrappers and wrappers whose required files are missing.
+- Pi refresh prompts distinguish installs from updates and identify project or user packages. Declining a scope leaves it unchanged, keeps earlier project results, and permits later user updates. Duplicate-package notices explain why Pi cannot start and let you choose which copy to keep.
+- Plans, removal messages, verification remedies and editor saves in source-catalog projects name `kendex-local.toml`, where the project's declarations are stored. Existing custom hooks keep their recorded source identity when refreshed, changed or disabled.
+
+### Packages
+
+#### bot-instructions
+
+- With `codex = false` in a configured `[bot-instructions.bots]` table, `render`, `check` and `adopt` now report an `orphan` finding for each `## Code Review Rules` section of `AGENTS.md` that opens with this package's marker, however many such headings there are; before, a marked section under a second heading went unreported while Codex still loaded it.
+- A manifest with no `[bot-instructions]` table no longer hides the bot files this package rendered: `render`, `check` and `adopt` name each marked file or `AGENTS.md` region still in the tree as an `orphan` finding, under any number of `## Code Review Rules` headings, and refuse as `unconfigured` only when none remains, with a second `bot-instructions: renders=none` line that says so.
+- Fix the macOS file-check test while keeping device and FIFO refusal controls.
+
+#### commit-guards
+
+- Let commits through when bot-instructions is installed, the manifest has no `[bot-instructions]` table and no file the package rendered remains. The pre-commit chain prints `not-adopted=` for that lane and passes, but only when the package's refusal carries its `bot-instructions: renders=none` line; an older bot-instructions copy without that line still blocks, and the chain prints `unattested=` naming that copy as the cause, to be fixed by updating bot-instructions. Every other bot-instructions refusal still blocks the commit.
+
+#### github
+
+- Merge checks include the current required workflow's jobs in the consumer repository after proof of the configured source. Optional jobs with the same name stay optional. Optional failed, pending or queued checks no longer block a merge. Pending required workflows hold the merge, and unreadable workflow results refuse it even when visible jobs pass.
+
+#### harness-ci
+
+- Prove refreshes in partial clones, identify a missing source commit with its fetch remedy, and verify adopted refresh callers against their pinned released template.
+
+#### linear
+
+- Resolve issue project names within the issue team. Refuse duplicate live names and list each project with its team.
+
+#### orch
+
+- Codex lanes count finished threads against the thread cap and reuse eligible threads for review and fix work before reporting a capacity blocker.
+- Overseer launches start a detached fleet watch that survives session exit. Automatic death and wall recovery keep a watch for the successor and preserve the fleet start for new-item triage. Sessions read its log without taking a second watch claim.
+- Make the queue waiter retry tests independent of runner delays, so CPU contention does not cause false authentication failures in the skill test suite.
+- Make the lane-state test wait for its process fixture to finish renaming itself before reading its state, so a loaded runner no longer fails the orch-state skill tests.
+- `review-artifact-check` judges a performance artifact that declares `metric_kind: "instruction_count"` on its `instruction_counts`, refusing missing, empty or all-zero counts, instead of rejecting it as `zero_sample` for lacking latency percentiles it never measured; latency percentiles are required only for latency metrics, and an unknown `metric_kind` is refused.
+- Preserve every line of local Codex, Claude and Pi file briefs when the terminal shell starts slowly.
+- Replace an overseer whose harness reports an expired login on the first watch pass. Send lane login failures through the existing wall recovery route. Skip Claude accounts whose refresh login has ended when selecting a new session.
+- Prime source mirrors before the consumer refresh approval classifier runs.
+- Required-only CI waits ignore optional failed, pending or queued jobs, including jobs with the same name as required jobs after required workflows pass. Pending required workflows and unreadable results hold the wait even when visible jobs pass.
+- Accept a fix round's validation record when its run commit contains the restack-mapped round base.
+
+#### worktree
+
+- `worktree push` republishes a branch after a bare rebase when every remote commit has one exact local match in changed paths, modes and complete before/after file contents. Push and restack refuse moved edits, whitespace changes, same-file base updates, incomplete evidence, ambiguous matches and failed comparisons. The push pins the remote commit it read and refuses a later remote change.
+
 ## [1.12.2] - 2026-10-08
 
 ### Fixed
@@ -2144,7 +2202,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.12.2..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.13.0..HEAD
+[1.13.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.13.0
 [1.12.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.2
 [1.12.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.1
 [1.12.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.0

@@ -1,1 +1,0 @@
-- Preserve every line of local Codex, Claude and Pi file briefs when the terminal shell starts slowly.

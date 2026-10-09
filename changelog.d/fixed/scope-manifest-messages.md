@@ -1,1 +1,0 @@
-- Plans, removal messages, verification remedies and editor saves in source-catalog projects name `kendex-local.toml`, where the project's declarations are stored. Existing custom hooks keep their recorded source identity when refreshed, changed or disabled.

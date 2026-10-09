@@ -1,1 +1,0 @@
-- Apply follows a removed package or set revision and a changed source revision after discarding local edits. Held packages keep their recorded revision choices across tool changes and Pi operations. Existing install records keep their earlier holds until refresh records revision choices.

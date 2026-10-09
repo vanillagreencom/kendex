@@ -1,1 +1,0 @@
-- Keep recorded hooks armed when their installed files and required companions remain available under conflicting revisions. Withhold new wrappers and wrappers whose required files are missing.

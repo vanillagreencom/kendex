@@ -1,1 +1,0 @@
-- With `codex = false` in a configured `[bot-instructions.bots]` table, `render`, `check` and `adopt` now report an `orphan` finding for each `## Code Review Rules` section of `AGENTS.md` that opens with this package's marker, however many such headings there are; before, a marked section under a second heading went unreported while Codex still loaded it.

@@ -1,1 +1,0 @@
-- A project adds its own text to a package command with `[command-instructions]` in its manifest, keyed by command name or `all`. Every tool's copy of the command carries that text above the publisher's body, which keeps updating, so keeping a paragraph no longer means copying the command.

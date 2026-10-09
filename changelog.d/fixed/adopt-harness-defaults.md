@@ -1,1 +1,0 @@
-- `kendex adopt` defaults to enabled harnesses that support the item's kind in the chosen scope, and refuses when none can receive it. The README and command help explain the project skill directory move and distinguish symlink delivery from copy delivery.

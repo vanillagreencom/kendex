@@ -1,1 +1,0 @@
-- Resolve issue project names within the issue team. Refuse duplicate live names and list each project with its team.

@@ -1,1 +1,0 @@
-- Pi refresh prompts distinguish installs from updates and identify project or user packages. Declining a scope leaves it unchanged, keeps earlier project results, and permits later user updates. Duplicate-package notices explain why Pi cannot start and let you choose which copy to keep.

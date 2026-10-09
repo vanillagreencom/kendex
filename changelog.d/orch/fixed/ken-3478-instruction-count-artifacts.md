@@ -1,1 +1,0 @@
-- `review-artifact-check` judges a performance artifact that declares `metric_kind: "instruction_count"` on its `instruction_counts`, refusing missing, empty or all-zero counts, instead of rejecting it as `zero_sample` for lacking latency percentiles it never measured; latency percentiles are required only for latency metrics, and an unknown `metric_kind` is refused.

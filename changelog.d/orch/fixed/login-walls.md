@@ -1,1 +1,0 @@
-- Replace an overseer whose harness reports an expired login on the first watch pass. Send lane login failures through the existing wall recovery route. Skip Claude accounts whose refresh login has ended when selecting a new session.
