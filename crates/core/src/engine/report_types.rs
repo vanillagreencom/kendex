@@ -855,6 +855,10 @@ pub struct PlanOptions {
     /// can place, since the record installed none from that repository:
     /// every hold reads its followers fresh from it, and a single-package
     /// update or an add records the rebind at once.
+    /// A locked scope write also releases invented revisions whose
+    /// dependency or set derivations disagree. The common rule is
+    /// [`super::desired::hold::held_planning`]; add and at-record reads keep
+    /// their existing dependency and pin holds.
     pub keep_source_records: bool,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.

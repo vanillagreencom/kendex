@@ -225,9 +225,13 @@ impl HeldPin {
 /// caller's own, or — under `update_only` — a pinned copy of it with each
 /// pin at a commit gone from its source released ([`release_unserved`]),
 /// paired with the synthetic pins to strip from any manifest the plan
-/// writes. The scope plan, the closure and the Pi settle each read through
-/// this one rule, so none of them holds a declaration the others read
-/// fresh.
+/// writes. A locked scope reconcile also releases the declarations or
+/// sets whose invented revisions disagree through dependencies or members,
+/// until no remaining disagreement carries an invented pin.
+/// Other declarations stay held. Add retains installed dependency revisions;
+/// an at-record read keeps its pins. This is engine.md rule 19.
+/// The scope plan, the closure and the Pi settle each read through this
+/// one rule, so none of them holds a declaration the others read fresh.
 pub(crate) fn held_planning<'a>(
     env: &Env,
     scope: &Scope,

@@ -120,6 +120,14 @@ fn locked_apply_releases_disagreeing_recorded_revisions_but_keeps_written_pins()
             readings.manifest.skills["solo"].rev.as_deref(),
             Some(first.as_str())
         );
+        let held_owner = match bundled {
+            true => &readings.manifest.bundles["wrapper"],
+            false => &readings.manifest.hooks["deliver"],
+        };
+        let written = pinned.then_some(first.as_str());
+        assert_eq!(held_owner.rev.as_deref(), written);
+        assert_eq!(readings.manifest.skills["judge"].rev, None);
+        assert_eq!(readings.manifest.skills["followup"].rev.as_deref(), written);
         for row in closure {
             let expected = match (row.name.as_str(), pinned) {
                 ("solo", _) | ("deliver" | "followup", true) => Some(first.as_str()),
