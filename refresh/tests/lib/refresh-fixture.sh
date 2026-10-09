@@ -63,8 +63,9 @@ cp -R "$SKILL_DIR/../orch" "$PRISTINE/.agents/skills/orch"
 BIN="$TMP/bin"
 FIXTURES="$TMP/github"
 mkdir -p "$BIN" "$FIXTURES"
-cp "$SKILL_DIR/tests/lib/gh-shim.sh" "$BIN/gh"
-chmod +x "$BIN/gh"
+cp "$SKILL_DIR/tests/lib/gh-shim.sh" "$BIN/gh-shim"
+chmod +x "$BIN/gh-shim"
+cp "$BIN/gh-shim" "$BIN/gh"
 cat >"$BIN/sleep" <<'SLEEP'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -81,6 +82,11 @@ printf '{"secrets":[{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY
 run_refresh_command() {
   local root="$1" script="$2"
   shift 2
+  # The adopter gives gh an explicit production environment. The executable
+  # fixture owns its own data location, rather than needing inherited inputs.
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nexport GH_SHIM_FIXTURES=%q GH_SHIM_FAIL=%q\nexec %q "$@"\n' \
+    "$FIXTURES" "${SHIM_FAIL:-}" "$BIN/gh-shim" >"$BIN/gh"
+  chmod +x "$BIN/gh"
   if [ "${script##*/}" = adopt-refresh.sh ]; then
     case " $* " in
       *' --templates-dir '*) ;;

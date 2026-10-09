@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise consumer adoption with the real environment validator.
+# Exercise consumer adoption and its declared environment checks.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REFRESH_DIR="$(cd "$TEST_DIR/.." && pwd)"
@@ -153,8 +153,8 @@ mutations={
 old,new,count=mutations[sys.argv[2]]; assert s.count(old)==count
 changed=s.replace(old,new)
 if sys.argv[2]=='history':
- old='raise SystemExit(2) from error'; assert changed.count(old)==1
- changed=changed.replace(old, 'return b"" # ' + old)
+ old='raise SystemExit(2) from error'; assert changed.count(old)==2
+ position=changed.index(old, changed.index('def git(')); changed=changed[:position]+changed[position:].replace(old, 'return b"" # ' + old, 1)
 assert changed != s; p.write_text(changed)
 CONTROL
   fi
@@ -166,8 +166,8 @@ done
 # An exact historical shipped workflow still needs the history lookup.
 sandbox
 cp "$TMP/shipped-historical" "$DIR/$REFRESH"
-file_edit "$DIR" "$ADOPT" 1 '^        shipped_copy = shipped_copy or copied == candidate$' \
-  's/copied == candidate/copied == replacement # copied == candidate/'
+file_edit "$DIR" "$ADOPT" 1 '^        shipped_copy = shipped_copy or copied_shape == candidate_shape$' \
+  's/copied_shape == candidate_shape/copied == replacement # copied_shape == candidate_shape/'
 chmod +x "$DIR/$ADOPT"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT"; then
@@ -210,7 +210,7 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text()
 old={'workflow':'if (refresh.read_bytes() if refresh.exists() else None) != observed:',
-     'template':'if template.read_bytes() != template_bytes:',
+     'template':'if template.read_bytes() != (scratch / "source-template").read_bytes():',
      'symlink':'if refresh.is_symlink():'}[sys.argv[2]]
 assert s.count(old)==(2 if sys.argv[2]=='symlink' else 1)
 before, after = s.rsplit(old, 1)
@@ -227,63 +227,59 @@ PRECONDITION_CONTROL
   else bad "$rule precondition control" "$OUT"; fi
 done
 
-sandbox
-printf '{"environments":[]}\n' >"$FIXTURES/environments.json"
-cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-if [ "$RC" -eq 1 ] && grep -qF 'scripts/provision-environment.sh --org acme' <<<"$OUT" &&
-    [ ! -e "$DIR/$REFRESH" ] &&
-    cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then
-  ok 'an absent environment refuses adoption before any workflow copy'
-else
-  bad "environment refusal (rc=$RC)" "$OUT"
-fi
-
-# Adoption must consume the environment validator's status, even if the
-# validator still emits the same failure record and provisioning command.
-file_edit "$DIR" "$ADOPT" 1 '^  "\$SCRIPT_DIR/../skills/review-gate/scripts/validate-standard.sh" --environment-only$' \
-  's/ --environment-only$/ --environment-only || true/'
-chmod +x "$DIR/$ADOPT"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok 'control: ignored environment failure allows adoption'; else bad "control: environment guard (rc=$RC)" "$OUT"; fi
-
-# Adoption judges the environment and secrets the refresh template reads. The
-# consumer's settings name another environment, fully provisioned, and each
-# row leaves the template's short in one way; the failed check is its own.
-KENDEX_ENVIRONMENT='{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
-OTHER_ENVIRONMENT='{"name":"other","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
-printf '{"secrets":[{"name":"OTHER_ID"},{"name":"OTHER_KEY"}]}\n' >"$FIXTURES/environment-secrets-other.json"
-cp "$FIXTURES/environment-secrets-kendex.json" "$TMP/kendex-secrets"
-# name ~ environments listed ~ kendex's secrets ~ failed verdict line
-while IFS='~' read -r name environments secrets verdict; do
+# Each environment rule runs against the adopter, with a disabled condition
+# in its disposable module copy. Reads still run under each control.
+cp "$FIXTURES/environments.json" "$TMP/default-environments"
+cp "$FIXTURES/branch-policies.json" "$TMP/default-policies"
+cp "$FIXTURES/environment-secrets-kendex.json" "$TMP/default-secrets"
+while IFS='|' read -r rule pattern; do
   sandbox
-  settings "$DIR" REVIEW_GATE_STANDARD_ENVIRONMENT other
-  settings "$DIR" REVIEW_GATE_STANDARD_SECRETS 'OTHER_ID;OTHER_KEY'
-  commit "$DIR"
-  printf '{"environments":[%s]}\n' "$environments" >"$FIXTURES/environments.json"
-  printf '{"secrets":[%s]}\n' "$secrets" >"$FIXTURES/environment-secrets-kendex.json"
+  cp "$TMP/default-environments" "$FIXTURES/environments.json"
+  cp "$TMP/default-policies" "$FIXTURES/branch-policies.json"
+  cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
+  case "$rule" in
+    missing) printf '{"environments":[]}\n' >"$FIXTURES/environments.json" ;;
+    branch-policy) printf '{"branch_policies":[{"name":"*","type":"branch"}]}\n' >"$FIXTURES/branch-policies.json" ;;
+    policy-type) printf '{"environments":[{"name":"kendex","deployment_branch_policy":null}]}\n' >"$FIXTURES/environments.json" ;;
+    secrets) printf '{"secrets":[{"name":"FLEET_GH_APP_ID"}]}\n' >"$FIXTURES/environment-secrets-kendex.json" ;;
+    read) SHIM_FAIL=environments ;;
+  esac
+  cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-  if [ "$RC" -eq 1 ] && grep -qxF "$verdict" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then
-    ok "$name refuses adoption whatever the settings name"
-  else
-    bad "$name (rc=$RC)" "$OUT"
+  cause="$rule"; [ "$rule" != policy-type ] || cause=branch-policy
+  [ "$rule" != read ] || cause="read operation=repos/acme/widgets/environments"
+  if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=environment value=kendex cause=$cause" <<<"$OUT" &&
+      [ ! -e "$DIR/$REFRESH" ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then
+    ok "$rule refuses before workflow or inventory changes"
+  else bad "$rule environment refusal" "$OUT"; fi
+  if [ "$rule" != read ]; then
+    python3 - "$DIR/refresh/lib/caller.py" "$pattern" "$rule" <<'ENV_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
+s=s.replace(old, 'if False and ('+old[3:-1]+'):' )
+# The presence rule supplies the later policy read with a valid fallback.
+if sys.argv[3]=='missing':
+ old='policy = selected[0].get("deployment_branch_policy")'; assert s.count(old)==1
+ s=s.replace(old, 'policy = selected[0].get("deployment_branch_policy") if selected else {"custom_branch_policies": True, "protected_branches": False}')
+assert s != p.read_text(); p.write_text(s)
+ENV_CONTROL
+    run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
+      ok "control: disabled $rule check permits adoption"
+    else bad "$rule environment control" "$OUT"; fi
   fi
-done <<ROWS
-the template's environment absent~$OTHER_ENVIRONMENT~~FAIL check=standard-environment value=absent
-the template's environment short of a secret~$KENDEX_ENVIRONMENT,$OTHER_ENVIRONMENT~{"name":"FLEET_GH_APP_ID"}~FAIL check=standard-environment-secrets value=FLEET_GH_APP_ID
-ROWS
-
-# The control keeps the template's names in the script and stops passing them
-# to the validator, which then reads the consumer's settings and adopts.
-file_edit "$DIR" "$ADOPT" 1 '^REVIEW_GATE_STANDARD_ENVIRONMENT="\$template_environment" REVIEW_GATE_STANDARD_SECRETS=' \
-  's/^REVIEW_GATE_STANDARD_ENVIRONMENT=\(.*\) REVIEW_GATE_STANDARD_SECRETS=/TEMPLATE_ENVIRONMENT=\1 TEMPLATE_SECRETS=/'
-chmod +x "$DIR/$ADOPT"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-  ok 'control: the settings-named environment adopts once the template names stay unpassed'
-else bad "control: template names (rc=$RC)" "$OUT"; fi
-printf '{"environments":[%s]}\n' "$KENDEX_ENVIRONMENT" >"$FIXTURES/environments.json"
-cp "$TMP/kendex-secrets" "$FIXTURES/environment-secrets-kendex.json"
+  SHIM_FAIL=''
+done <<'ENV_ROWS'
+missing|if len(selected) != 1:
+branch-policy|if len(policies) != 1 or not isinstance(policies[0], dict) or policies[0].get("name") != branch or policies[0].get("type", "branch") != "branch":
+policy-type|if not isinstance(policy, dict) or policy.get("custom_branch_policies") is not True or policy.get("protected_branches") is not False:
+secrets|if not set(config["names"]).issubset({row["name"] for row in secrets}):
+read|
+ENV_ROWS
+cp "$TMP/default-environments" "$FIXTURES/environments.json"
+cp "$TMP/default-policies" "$FIXTURES/branch-policies.json"
+cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
 
 sandbox
 printf '{"full_name":"vanillagreencom/kendex","default_branch":"main"}\n' >"$FIXTURES/repository.json"
@@ -459,33 +455,6 @@ retired-symlink|^    if copied.is_symlink|s/^    if \(.*\):$/    if False and (\
 unrecorded|^if.*unrecorded.exists|s/^if \(.*\):$/if False and (\1):/
 CONTROLS
 
-# A caller of the shared workflow declares no environment and maps the
-# secrets the shared workflow declares. The adopter judges it by that
-# environment and those secrets, which this row holds equal; the control
-# renames one secret in a copy of the adopter. shared-refresh-workflow.test.sh
-# holds the declared secrets equal to those its steps read.
-caller_names_match() { # ADOPTER
-  python3 - "$1" "$REFRESH_DIR/../.github/workflows/refresh-consumer.yml" <<'NAMES'
-import re, sys
-adopter, shared = (open(path).read() for path in sys.argv[1:])
-names = re.search(r"^shared_environment=(\S+)\nshared_secrets='([^']*)'$", adopter, re.M)
-assert names, 'shared names not found in the adopter'
-environments = re.findall(r'^    environment: (\S+)$', shared, re.M)
-block = re.search(r'^  workflow_call:\n(?:    #.*\n)*    secrets:\n((?:      .*\n)+)', shared, re.M)
-assert environments and block, 'shared workflow declarations not found'
-secrets = re.findall(r'^      ([A-Za-z0-9_]+):$', block.group(1), re.M)
-assert secrets, 'shared workflow declares no secret'
-assert [names.group(1)] == environments, (names.group(1), environments)
-assert names.group(2) == ';'.join(secrets), (names.group(2), secrets)
-NAMES
-}
-if caller_names_match "$REFRESH_DIR/adopt-refresh.sh"; then ok 'caller environment and secret names equal the shared workflow declarations'
-else bad 'caller names differ from the shared workflow'; fi
-sed 's/FLEET_GH_APP_PRIVATE_KEY/FLEET_GH_APP_KEY/' "$REFRESH_DIR/adopt-refresh.sh" >"$TMP/renamed-adopter"
-if ! cmp -s "$REFRESH_DIR/adopt-refresh.sh" "$TMP/renamed-adopter" && ! caller_names_match "$TMP/renamed-adopter" 2>/dev/null; then
-  ok 'control: a renamed caller secret turns the names row red'
-else bad 'caller names control'; fi
-
 # The rendered template becomes the caller. The adopter checks the shared
 # workflow's names and records the copy; the v1.5.1 adopter extracts empty
 # names from the caller and refuses it.
@@ -574,49 +543,89 @@ if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
     jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
   ok 'a consumer holding the v1.8.0 caller bytes takes the current caller'
 else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
-# A release tree whose caller does not map exactly the shared workflow's
-# secrets, each to its same-named secret, on the line under uses: is refused
-# before the environment check, with the cause the judge found. Each rule's
-# control disables it in a copy of the adopter: the END rule judges the
-# v1.8.0 caller, which ends at uses:; the next-line rule an inherit caller;
-# the names rule a mapping missing or misnaming a secret; the same-name rule
-# an entry mapping another secret.
-mapping_head() { cat "$TMP/caller-no-secrets"; printf '%s\n' '    secrets:'; }
-{ cat "$TMP/caller-no-secrets"; printf '%s\n' '    secrets: inherit'; } >"$TMP/caller-inherit"
-{ mapping_head; printf '%s\n' '      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}'; } >"$TMP/caller-missing"
-{ mapping_head; printf '%s\n' '      FLEET_APP_ID: ${{ secrets.FLEET_APP_ID }}' \
-    '      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'; } >"$TMP/caller-misnamed"
-{ mapping_head; printf '%s\n' '      FLEET_GH_APP_ID: ${{ secrets.FLEET_APP_ID }}' \
-    '      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'; } >"$TMP/caller-cross-mapped"
-for fixture in no-secrets inherit missing misnamed cross-mapped; do
-  mkdir -p "$TMP/release-$fixture"
-  cp "$TMP/caller-$fixture" "$TMP/release-$fixture/kendex-refresh.yml"
-done
-# fixture ~ mutation ~ cause ~ control pattern ~ control edit
-while IFS='~' read -r fixture mutation cause pattern replacement; do
+# A shipped caller on the earlier secret names needs no new declaration.
+git -C "$SKILL_DIR" show HEAD:refresh/kendex-refresh.yml >"$TMP/legacy-caller"
+ship_caller_template "$TMP/legacy-caller"
+sandbox
+cp "$TMP/legacy-caller" "$DIR/$REFRESH"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER"; then
+  ok 'an earlier fully mapped caller adopts with the same environment and app names'
+else bad 'legacy mapped caller' "$OUT"; fi
+
+# Consumer names survive adoption from a new release template. Other bytes
+# keep their shipment check. Each malformed mapping stays private to its case.
+while IFS='|' read -r rule mutation pattern; do
   sandbox
-  cp "$TMP/caller-no-secrets" "$DIR/$REFRESH"
-  commit "$DIR"
-  [ "$mutation" = none ] || file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement"
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$TMP/release-$fixture"
-  matched=no
-  if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$TMP/release-$fixture/kendex-refresh.yml cause=$cause" <<<"$OUT" &&
-      cmp -s "$DIR/$REFRESH" "$TMP/caller-no-secrets" && ! grep -q '^ok check=' <<<"$OUT"; then matched=yes; fi
-  case "$mutation:$matched" in
-    none:yes) ok "a $fixture caller template is refused with cause=$cause and the workflow kept" ;;
-    end-rule:no | next-line:no | names:no | same-name:no) ok "control: $mutation turns the $fixture caller refusal row red" ;;
-    *) bad "caller secrets refusal fixture=$fixture mutation=$mutation (rc=$RC)" "$OUT" ;;
-  esac
-done <<'ROWS'
-no-secrets~none~none~~
-no-secrets~end-rule~none~print \(call \? "none" : "inline"\)~s/print (call ? "none" : "inline")/print "inline"/
-inherit~none~not-mapping~~
-inherit~next-line~not-mapping~^  call \{ if \(\$0 != "    secrets:"\)~s/if (\$0 != "    secrets:")/if (0)/
-missing~none~names~~
-misnamed~none~names~~
-missing~names~names~^  "mapped \$shared_secrets"\)$~s/^  "mapped \$shared_secrets")$/  mapped\\ *)/
-cross-mapped~none~not-same-name~~
-cross-mapped~same-name~not-same-name~\|\| \$3 != "secrets\." name \|\|~s/ || \$3 != "secrets\." name//
-ROWS
+  cp "$CALLER" "$DIR/$TEMPLATE"
+  python3 - "$DIR/$TEMPLATE" "$rule" <<'CUSTOM'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); assert s.count('environment: kendex')==1
+s=s.replace('environment: kendex', 'environment: delivery').replace('FLEET_GH_APP_ID', 'DELIVERY_ID').replace('FLEET_GH_APP_PRIVATE_KEY', 'DELIVERY_KEY')
+rule=sys.argv[2]
+if rule=='missing': s=s.replace('      app-private-key: ${{ secrets.DELIVERY_KEY }}\n', '')
+elif rule=='inherit': s=s.replace('    secrets:\n      app-id: ${{ secrets.DELIVERY_ID }}\n      app-private-key: ${{ secrets.DELIVERY_KEY }}', '    secrets: inherit')
+elif rule=='expression': s=s.replace('${{ secrets.DELIVERY_ID }}', '${{ secrets.DELIVERY_ID || secrets.FALLBACK }}')
+elif rule=='secret-names': s=s.replace('app-id-secret-name: DELIVERY_ID', 'app-id-secret-name: WRONG_ID')
+elif rule=='environment': s=s.replace('environment: delivery', "environment: ${{ vars.DELIVERY_ENV }}")
+elif rule=='duplicate': s=s.replace('      environment: delivery', '      environment: delivery\n      environment: delivery')
+elif rule=='inputs': s=s.replace('    with:', '    with:\n      unexpected: value')
+assert s != p.read_text(); p.write_text(s)
+CUSTOM
+  printf '{"environments":[{"name":"delivery","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
+  printf '{"secrets":[{"name":"DELIVERY_ID"},{"name":"DELIVERY_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
+  if [ "$mutation" = disabled ]; then
+    python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'MAPPING_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
+s=s.replace(old, 'if False and ('+old[3:-1]+'):' ); assert s != p.read_text(); p.write_text(s)
+MAPPING_CONTROL
+  fi
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  if [ "$rule" = custom ]; then
+    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then ok 'custom environment and matching app names adopt'; else bad 'custom adoption' "$OUT"; fi
+    # A refreshed default template must not overwrite the installed choice.
+    cp "$DIR/$REFRESH" "$TMP/custom-workflow"
+    run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/custom-workflow" &&
+        jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
+      ok 'refresh keeps the custom mapping and environment without a byte-identical render record'
+    else bad 'custom refresh preservation' "$OUT"; fi
+    file_edit "$DIR" refresh/lib/caller.py 1 '^    if replacement is None or config is None:' \
+      's/if replacement is None or config is None:/if True or replacement is None or config is None:/'
+    run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+    if [ "$RC" -eq 0 ] && ! cmp -s "$DIR/$REFRESH" "$TMP/custom-workflow"; then
+      ok 'control: discarded configuration turns custom refresh preservation red'
+    else bad 'custom preservation control' "$OUT"; fi
+  else
+    cause="$rule"; [ "$rule" != missing ] || cause=names; [ "$rule" != inherit ] || cause=not-mapping
+    matched=no
+    if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then matched=yes; fi
+    case "$mutation:$matched" in
+      none:yes) ok "$rule mapping refuses before adoption" ;;
+      disabled:no) ok "control: disabled $rule rule turns the refusal assertion red" ;;
+      *) bad "$rule mapping mutation=$mutation" "$OUT" ;;
+    esac
+  fi
+done <<'MAPPING_ROWS'
+custom|none|
+missing|none|
+missing|disabled|if set(secrets) != set(expected):
+inherit|none|
+inherit|disabled|if section is None or not match:
+expression|none|
+expression|disabled|if not match:
+secret-names|none|
+secret-names|disabled|if names != declared or (legacy and names != list(DEFAULT_NAMES)):
+environment|none|
+environment|disabled|if not isinstance(environment, str) or not environment.strip() or any(c in environment for c in "\r\n${}[]#"):
+duplicate|none|
+duplicate|disabled|if key in section:
+inputs|none|
+inputs|disabled|if set(inputs) - {"environment", "app-id-secret-name", "app-private-key-secret-name"}:
+MAPPING_ROWS
+cp "$TMP/default-environments" "$FIXTURES/environments.json"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

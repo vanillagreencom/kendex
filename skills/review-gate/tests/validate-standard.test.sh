@@ -539,8 +539,8 @@ else
   bad "environment-only baseline (rc=$RC)" "$RAW"
 fi
 
-# adopt-refresh.sh runs this mode on every consumer refresh, so a contexts
-# value the settings reader refuses must not stop it. The value sits in
+# The environment-only report reads no contexts value. A contexts
+# value the settings reader refuses must not stop the report. The value sits in
 # .env.local, which the reader judges one key at a time; a
 # kendex.settings.toml [env] table it judges whole.
 settings_consumer env-contexts 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
@@ -554,8 +554,7 @@ else
   bad "environment-only with unreadable contexts (rc=$RC)" "$RAW"
 fi
 # The environment scope reads neither bypass key: a consumer whose queue
-# bypass entry is malformed still validates its environment, as adopt-refresh
-# runs it. The control reads the provision scope's keys in every scope, and
+# bypass entry is malformed still validates its environment. The control reads the provision scope's keys in every scope, and
 # the same consumer is refused on the entry.
 CONSUMER="$TMP/consumer-bad-bypass"
 run "$ENV_BASE" '' --environment-only

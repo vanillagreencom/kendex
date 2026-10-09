@@ -1,0 +1,1 @@
+- Consumer refresh accepts a declared environment and app-secret names. Adoption preserves these declarations and validates their mapping. Existing callers keep the current defaults.

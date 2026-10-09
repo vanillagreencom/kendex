@@ -67,7 +67,7 @@ for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
 
 def check(job):
     steps = job['steps']
-    assert job['environment'] == 'kendex'
+    assert job['environment'] == '${{ inputs.environment }}'
     assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
     checkouts = [s for s in steps if s.get('uses', '').startswith('actions/checkout@')]
     assert len(checkouts) == 2
@@ -109,9 +109,10 @@ def check(job):
     assert upstream['with']['owner'] == 'vanillagreencom' and upstream['with']['repositories'] == 'kendex'
     assert {k: v for k, v in upstream['with'].items() if k.startswith('permission-')} == {'permission-issues': 'write'}
     assert upstream['continue-on-error'] is True
-    for token in tokens:
-        assert token['with']['app-id'] == '${{ secrets.FLEET_GH_APP_ID }}'
-        assert token['with']['private-key'] == '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'
+    assert repository['with']['app-id'] == '${{ secrets[inputs.app-id-secret-name] || secrets.app-id || secrets.FLEET_GH_APP_ID }}'
+    assert repository['with']['private-key'] == '${{ secrets[inputs.app-private-key-secret-name] || secrets.app-private-key || secrets.FLEET_GH_APP_PRIVATE_KEY }}'
+    assert upstream['with']['app-id'] == '${{ secrets.FLEET_GH_APP_ID }}'
+    assert upstream['with']['private-key'] == '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'
     users = [s for s in steps if 'steps.issues-token.outputs.token' in json.dumps(s)]
     assert len(users) == 1 and 'refresh-reviews.sh' in users[0]['run']
     assert not any('steps.token.outputs.token' in json.dumps(s) for s in steps[:steps.index(repository)])
@@ -120,7 +121,8 @@ check(job)
 for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
     print(f'  executed: {script} from release checkout with consumer cwd; status=0,47')
 for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token',
-                 'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure'):
+                 'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure',
+                 'environment', 'app-secret-name'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -132,6 +134,9 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     elif mutation == 'repository': next(s for s in steps if s.get('id') == 'issues-token')['with']['repositories'] = 'kendex,consumer'
     elif mutation == 'early-token':
         token = next(s for s in steps if s.get('id') == 'token'); steps.remove(token); steps.insert(0, token)
+    elif mutation == 'environment': j['environment'] = 'kendex'
+    elif mutation == 'app-secret-name':
+        next(s for s in steps if s.get('id') == 'token')['with']['app-id'] = '${{ secrets.FLEET_GH_APP_ID }}'
     elif mutation.endswith(('-disabled-exec', '-masked-failure')):
         script = 'refresh-consumer.sh' if mutation.startswith('consumer-') else 'refresh-reviews.sh'
         step = next(s for s in steps if script in s.get('run', ''))
@@ -203,14 +208,19 @@ declared_matches() { # WORKFLOW
   python3 - "$1" <<'DECLARED'
 import re, sys
 on, job = open(sys.argv[1]).read().split('\njobs:\n', 1)
-block = re.search(r'^  workflow_call:\n(?:    #.*\n)*    secrets:\n((?:      .*\n)+)', on, re.M)
+block = re.search(r'^    secrets:\n((?:      .*\n)+)', on, re.M)
 assert block, 'no declared secrets'
-declared = re.findall(r'^      ([A-Za-z0-9_]+):\n        required: (\S+)$', block.group(1), re.M)
+declared = re.findall(r'^      ([A-Za-z0-9_-]+):\n        required: (\S+)$', block.group(1), re.M)
 assert len(declared) * 2 == len(block.group(1).splitlines()), block.group(1)
-read = sorted(set(re.findall(r'\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}', job)))
+read = sorted(set(re.findall(r'secrets\.([A-Za-z0-9_-]+)', job)))
 assert read, 'the steps read no secret'
-assert [name for name, _ in declared] == read, (declared, read)
+assert sorted(name for name, _ in declared) == read, (declared, read)
 assert all(required == 'false' for _, required in declared), declared
+inputs = re.search(r'^    inputs:\n(.*?)(?=^    #|^    secrets:)', on, re.M | re.S)
+assert inputs, 'no declared inputs'
+fields = re.findall(r'^      ([A-Za-z0-9_-]+):\n        type: string\n        default: (\S+)$', inputs.group(1), re.M)
+assert dict(fields) == {'environment': 'kendex', 'app-id-secret-name': 'FLEET_GH_APP_ID',
+                        'app-private-key-secret-name': 'FLEET_GH_APP_PRIVATE_KEY'}, fields
 DECLARED
 }
 if declared_matches "$WORKFLOW"; then ok 'the workflow declares, each optional, exactly the secrets its steps read'
