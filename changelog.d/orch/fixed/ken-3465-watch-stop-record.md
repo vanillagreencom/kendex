@@ -1,0 +1,1 @@
+- Stopping a repeat fleet watch run as a systemd user unit always removes its pid record, so the next start no longer reads a stale claim from that watch.

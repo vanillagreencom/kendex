@@ -782,8 +782,14 @@ watch_pane_gone() { # PANE
 # The repeat loop's pass or delay, the one child a stop has to take with it.
 # The record goes first, so the start that stopped this loop is not refused,
 # then the loop waits for that child, which may be ending a lane-close.
+# A unit's stop signals each process its group holds until none is new, so
+# TERM also reaches what this stop forks: its record read's subshell, which
+# runs the trap inherited across its fork as malformed text, and grep and rm.
+# Ignored first, the signal ends none of them and never re-enters this stop;
+# the children it signals were forked before.
 REPEAT_CHILD_PID=""
 repeat_stop() { # STATUS
+  trap '' TERM INT
   watch_pid_release "$STATE_FILE"
   [[ -z "$BOX_POLL_PID" ]] || kill -TERM "$BOX_POLL_PID" 2>/dev/null || :
   if [[ -n "$REPEAT_CHILD_PID" ]]; then

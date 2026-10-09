@@ -302,6 +302,17 @@ record_case() { # NAME [WATCH ARGS...]
   # Seconds each account read of a long pass is held, for a case that stops a
   # loop while one is in flight.
   [[ -z "${RECORD_LANES_SLEEP:-}" ]] || printf '%s\n' "$RECORD_LANES_SLEEP" > "$STUB_DIR/lanes.sleep"
+  # An rm that a TERM reaches as it removes the record, as a unit's stop
+  # reaches each process the loop's stop forks, for a case that stops a loop
+  # the way systemd does.
+  if [[ -n "${RECORD_STOP_RESCAN:-}" ]]; then
+    cat > "$STUB_DIR/bin/rm" <<EOF
+#!/usr/bin/env bash
+[[ "\$*" != *oversee-watch.pid* ]] || kill -TERM \$\$
+exec "$(command -v rm)" "\$@"
+EOF
+    chmod +x "$STUB_DIR/bin/rm"
+  fi
   ( repeat_watch_run -- "$@" -- --model old --verbose >"$TMP_ROOT/o-$name" 2>"$TMP_ROOT/e-$name" && rc=0 || rc=$?
     echo "$rc" > "$STUB_DIR/loop.rc" ) &
   LAUNCHER=$!
@@ -414,6 +425,22 @@ term_case() { # NAME
 term_case term_loop
 assert_eq "pass=${PASS_PID:+found} $PASS_STATE loop=$LOOP_STATE" \
   "pass=found gone loop=gone" "a TERM on the loop pid ends the pass it is running" "$TMP_ROOT/e-term_loop"
+
+# A unit's stop: TERM on the loop, then on what its stop forks, here the rm
+# that removes the record. The stop ignores TERM before it forks, so the
+# record goes; one that does not leaves it, the next start reading a stale
+# claim.
+rescan_stop_case() { # NAME
+  RECORD_STOP_RESCAN=1 record_case "$1"
+  kill -TERM "$LOOP"
+  wait "$LAUNCHER" 2>/dev/null || true
+  RESCAN="rc=$(cat "$STUB_DIR/loop.rc") record=$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed)"
+}
+rescan_stop_case rescan_stop
+assert_eq "$RESCAN" "rc=143 record=removed" "a TERM on what the loop's stop forks still removes the record" "$TMP_ROOT/e-rescan_stop"
+mutant rescan_stop oversee-watch "  trap '' TERM INT" "  :"
+WATCH_BIN="$MUTANT" rescan_stop_case rescan_stop_mutant
+assert_eq "$RESCAN" "rc=143 record=left" "control: a stop that keeps TERM trapped loses the record to it" "$TMP_ROOT/e-rescan_stop_mutant"
 
 # descendant ROOT PATTERN — the first process under ROOT, breadth first, whose
 # command line matches the extended regex PATTERN; empty when none does.
