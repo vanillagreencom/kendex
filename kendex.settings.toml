@@ -333,7 +333,7 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 # The fragment scope of the changelog-entries lane. The two-segment glob
 # keeps changelog.d/README.md out — its bullets document the format and are
 # not entries. changelog.d/<package>/<section>/ holds a catalog package's
-# own entries, which never move kendex's version; the package setting's
+# own entries, which choose no part of kendex's version; the package setting's
 # comment below says which packages carry a version.
 # CHANGELOG.md is the lane's other scope,
 # COMMIT_GUARDS_CHANGELOG_RECORD, judged by a different rule: entries there

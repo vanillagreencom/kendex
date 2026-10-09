@@ -14,7 +14,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Release kendex
 
-Choose the version by the [release-version rule](../../../skills/commit-guards/CHECKS.md#release-versions), from the program entries alone: a package entry moves no kendex version. Follow the [release standard](../../../changelog.d/README.md#release-standard) for breaking changes and compatibility.
+Choose the version by the [release-version rule](../../../skills/commit-guards/CHECKS.md#release-versions), from the program entries alone. A package entry chooses no part of the kendex version. Under the [release standard](../../../changelog.d/README.md#release-standard), a release whose entries are all package entries is a patch. Follow that standard for breaking changes and compatibility.
 
 Before collation, run `tools/release-previous-tag`. It prints the newest published stable `vX.Y.Z` release tag and fetches it from `origin`. Use that tag for the file comparison with `HEAD`. Stop if the lookup, fetch or comparison fails.
 

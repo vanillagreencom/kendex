@@ -6,7 +6,10 @@ This standard applies to kendex, its apps, Pi packages, GitHub releases, and the
 
 - Write each kendex program change, under `crates/`, `ui/`, `packaging/` or the CLI, as one list item in `changelog.d/<section>/<name>.md`. Use `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. State the outcome.
 - Write each catalog package change, a skill, hook or agent, as one list item in `changelog.d/<package>/<section>/<name>.md`, `<package>` being a skill's directory name, or a hook's or agent's file name less its extension. One entry names one package, which `COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS` declares.
-- The kendex version counts program changes only. A package entry never moves the kendex version or causes a kendex release, whatever its section or Breaking mark.
+- The kendex version counts program changes only. A package entry chooses no part of the kendex version, whatever its section or Breaking mark.
+- Release a merged package fix that needs a release on the same day, in that day's batch release. It needs a release when its consumer path runs from a kendex release. This includes [the shared refresh workflow and the scripts it runs from its release checkout](../docs/architecture/merge-rail.md). It also needs a release when its post-merge check reads a release.
+- A release whose entries are all package entries is a kendex patch.
+- A package change that needs no release causes none. Its entry waits for the next release.
 - Skills, hooks and agents carry no version, and a skill's `SKILL.md` states no `metadata.version`.
 - Start a breaking-change item with `- **Breaking:**`. Name the break and include its migration note in that item.
 - Collate accepted fragments into `CHANGELOG.md` at release. Program entries fold under their sections; package entries fold under `### Packages`, one heading per package: `#### <package>`. A release record written before skills dropped their versions keeps its versioned headings. Move the pending entries under the new version heading.
