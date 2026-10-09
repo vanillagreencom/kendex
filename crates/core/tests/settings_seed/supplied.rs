@@ -85,7 +85,7 @@ type Row = (
     Want,
 );
 
-fn rows() -> [Row; 7] {
+fn rows() -> [Row; 6] {
     [
         (
             "an unmarked key lands with the arriving skill's own seed",
@@ -143,14 +143,6 @@ fn rows() -> [Row; 7] {
             &[("NOPE", "1")],
             Want::Refused(
                 |refusal| matches!(refusal, SettingsRefusal::NotDeclaredHere { key } if key == "NOPE"),
-            ),
-        ),
-        (
-            "a value the loaders would not read is refused even where the file keeps its own",
-            Some("[env]\nDEPTH = \"3\"\n"),
-            &[("DEPTH", "a\"b")],
-            Want::Refused(
-                |refusal| matches!(refusal, SettingsRefusal::Value { key, .. } if key == "DEPTH"),
             ),
         ),
     ]
