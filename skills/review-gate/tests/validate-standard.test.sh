@@ -25,6 +25,41 @@ BIN="$TMP/bin"
 BASE="$TMP/base"
 mkdir -p "$SKILL" "$BIN" "$BASE"
 cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
+
+# validate-standard consumes this machine error line. Malformed GitHub secret
+# metadata must refuse without copying input values into that diagnostic.
+environment_data_case() { # INPUT ERROR_TYPE
+  RC=0
+  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" python3 "$SKILL/scripts/lib/environment.py" secrets APP_ID <<<"$1" 2>&1)" || RC=$?
+  CASE_MATCH=false
+  if [ "$RC" -eq 2 ] && [ "$RAW" = "review-gate-error=environment-data type=$2" ]; then
+    CASE_MATCH=true
+  fi
+}
+while IFS='~' read -r name input error_type; do
+  environment_data_case "$input" "$error_type"
+  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name (rc=$RC)" "$RAW"; fi
+done <<'ROWS'
+malformed secret metadata reports its error type without input values~[{"name":"PRIVATE_INPUT_MARKER"},{"name":null}]~ValueError
+malformed secret JSON reports its error type without input values~["PRIVATE_INPUT_MARKER",]~JSONDecodeError
+ROWS
+cp "$SKILL/scripts/lib/environment.py" "$TMP/environment-data.keep"
+python3 - "$SKILL/scripts/lib/environment.py" <<'ENVIRONMENT_DATA_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+old = 'type(error).__name__'
+assert source.count(old) == 1
+changed = source.replace(old, 'str(error)')
+assert changed != source
+path.write_text(changed)
+ENVIRONMENT_DATA_CONTROL
+environment_data_case '[{"name":"PRIVATE_INPUT_MARKER"},{"name":null}]' ValueError
+mv "$TMP/environment-data.keep" "$SKILL/scripts/lib/environment.py"
+if [ "$CASE_MATCH" = false ]; then ok 'control: exception text turns the environment-data assertion red';
+else bad 'environment-data diagnostic control' "$RAW"; fi
+
 cat >"$SKILL/standard.json" <<'JSON'
 {
   "ci_context": "CI",

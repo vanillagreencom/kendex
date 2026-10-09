@@ -96,8 +96,10 @@ def validate_environment(repository, config):
         except subprocess.CalledProcessError as error:
             print(error.stderr, file=sys.stderr, end="")
             refuse("read", endpoint)
+            raise
         except ValueError:
             refuse("read", endpoint)
+            raise
 
     def rows(endpoint, key):
         pages = read(endpoint)
@@ -155,5 +157,5 @@ if __name__ == "__main__":
             raise ValueError("operation")
         print(json.dumps(result))
     except (ValueError, KeyError, TypeError) as error:
-        print("review-gate-error=environment-data value=" + str(error), file=sys.stderr)
+        print("review-gate-error=environment-data type=" + type(error).__name__, file=sys.stderr)
         raise SystemExit(2) from error
