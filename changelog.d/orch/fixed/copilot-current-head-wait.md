@@ -1,1 +1,1 @@
-- Wait for Copilot work on the current pull request head before reading findings or requesting approval, close completed or removed request cycles, and hold fallback notices while its review is running.
+- Wait for Copilot work before reading findings or requesting approval, keep a newer request pending when an older-head review finishes, and hold fallback notices while its review is running.
