@@ -1040,13 +1040,13 @@ done
 # counter bumped in the subshell would be discarded.
 CARGO_TARGET_MARK='cargo-targets: $flags'
 CARGO_CRATE=kendex-cli
-CARGO_LEGS='render-lint rest verify-lock'
+CARGO_LEGS='apply-locked render-lint rest verify-lock'
 LANE_LEG=render-lint
 LANE_TARGET=catalog_render_lint
 UNIT_LEG=rest
 UNIT_FLAGS='--lib --bins'
 INTEGRATION_TARGET=integration
-INTEGRATION_LEGS=$'rest\nverify-lock'
+INTEGRATION_LEGS=$'apply-locked\nrest\nverify-lock'
 CARGO_TEST_MARK='cargo test -p ${{ matrix.crate }} --locked --no-fail-fast'
 
 cli_targets() { # cli_targets ; CARGO_CRATE's test target names, one per line
@@ -1283,7 +1283,7 @@ check "every $CARGO_CRATE test target is claimed by one of the workflow's cargo 
   "" "$(comm -23 "$CLI_TARGETS" <(sort -u "$CLAIMED"))"
 check "no $CARGO_CRATE target other than the shared integration harness is claimed twice" \
   "$INTEGRATION_TARGET" "$(uniq -d "$CLAIMED")"
-check "only the two name-partitioned legs share the integration target" \
+check "only the name-partitioned legs share the integration target" \
   "$INTEGRATION_LEGS" "$(awk -v target="$INTEGRATION_TARGET" '$1 == target { print $2 }' "$LEG_CLAIMS" | sort)"
 check "the $UNIT_LEG leg selects the crate's library and binary unit tests" \
   "$UNIT_FLAGS" "$(unit_flags_of "$WORKFLOW" "$UNIT_LEG")"
@@ -1304,10 +1304,16 @@ done <<'TESTS'
 cli::list_sees_global_and_current_project_scopes|rest
 cli::verify_names_an_installation_that_cannot_act|verify-lock
 lock_record::two_branches_on_one_package_merge_in_sequence_and_main_records_after_each|verify-lock
+apply_locked::an_apply_after_a_source_revision_edit_renders_at_that_revision|apply-locked
 TESTS
-check "every locked-record toggle test belongs to verify-lock" \
-  "$(sed -n '/^toggle_locked::/p' "$INTEGRATION_TESTS")" \
-  "$(awk '$1 ~ /^toggle_locked::/ && $2 == "verify-lock" { print $1 }' "$INTEGRATION_CLAIMS")"
+while IFS='|' read -r family leg; do
+  check "every $family test belongs to $leg" \
+    "$(sed -n "/^$family/p" "$INTEGRATION_TESTS")" \
+    "$(awk -v family="$family" -v leg="$leg" 'index($1, family) == 1 && $2 == leg { print $1 }' "$INTEGRATION_CLAIMS")"
+done <<'FAMILIES'
+toggle_locked::|verify-lock
+apply_locked::|apply-locked
+FAMILIES
 while IFS= read -r leg; do
   check "the $leg test command runs every declared target and unit selection" \
     "$(roster_of "$WORKFLOW" "$leg" declarations | sed -n 's/^cargo-targets: //p' | target_selections)" \
@@ -1321,7 +1327,7 @@ check "every integration test is claimed by one workflow leg" \
   "" "$(comm -23 "$INTEGRATION_TESTS" <(sort -u "$TMP/integration-claimed"))"
 check "no integration test is claimed by two workflow legs" \
   "" "$(uniq -d "$TMP/integration-claimed")"
-for leg in rest verify-lock; do
+for leg in apply-locked rest verify-lock; do
   [[ -n "$(awk -v leg="$leg" '$2 == leg { print $1 }' "$INTEGRATION_CLAIMS")" ]] &&
     ok "the $leg leg claims integration tests" || bad "the $leg leg claims no integration test"
 done
@@ -1384,7 +1390,7 @@ check "must-fail: with $UNIT_FLAGS dropped, the $UNIT_LEG leg selects no unit te
 # on, and it holds before the mutation as well, which is the point.
 wf_lane_merged="$TMP/wf-cargo-lane-merged.yml"
 awk "{
-       sub(/leg: \[whole, $LANE_LEG, $UNIT_LEG, verify-lock\]/, \"leg: [whole, $UNIT_LEG, verify-lock]\")
+       sub(/leg: \[whole, $LANE_LEG, /, \"leg: [whole, \")
        sub(/flags='$UNIT_FLAGS'/, \"flags='$UNIT_FLAGS --test $LANE_TARGET'\")
        print
      }" "$WORKFLOW" > "$wf_lane_merged"
@@ -1398,13 +1404,15 @@ check "must-fail: that merge retains every target and only the integration overl
 # Omission and overlap controls remove one side of the same name seam.
 # A third control drops forwarding in the actual test command: declarations
 # alone must not claim protection for arguments the harness never receives.
-for defect in selector skip toggle-selector toggle-skip forwarding export unit-filter; do
+for defect in selector skip toggle-selector toggle-skip apply-leg-drop apply-skip forwarding export unit-filter; do
   mutant="$TMP/wf-cargo-filter-$defect.yml"
   case "$defect" in
     selector) sed "s/filters='verify_ lock_record:: toggle_locked::'/filters='lock_record:: toggle_locked::'/" "$WORKFLOW" > "$mutant" ;;
     skip) sed 's/--skip verify_ //' "$WORKFLOW" > "$mutant" ;;
     toggle-selector) sed "s/filters='verify_ lock_record:: toggle_locked::'/filters='verify_ lock_record::'/" "$WORKFLOW" > "$mutant" ;;
     toggle-skip) sed 's/ --skip toggle_locked:://' "$WORKFLOW" > "$mutant" ;;
+    apply-leg-drop) sed 's/, apply-locked\]/]/' "$WORKFLOW" > "$mutant" ;;
+    apply-skip) sed 's/ --skip apply_locked:://' "$WORKFLOW" > "$mutant" ;;
     forwarding) sed 's/ -- \$CARGO_FILTERS//' "$WORKFLOW" > "$mutant" ;;
     export) sed 's/echo "CARGO_FILTERS=\$filters"/echo "CARGO_FILTERS="/' "$WORKFLOW" > "$mutant" ;;
     unit-filter) sed 's/\$CARGO_TARGETS ||/\$CARGO_TARGETS -- \$CARGO_FILTERS ||/' "$WORKFLOW" > "$mutant" ;;
@@ -1424,20 +1432,24 @@ for defect in selector skip toggle-selector toggle-skip forwarding export unit-f
     continue
   fi
   integration_claims "$mutant" | cut -d' ' -f1 | sort > "$TMP/integration-$defect"
-  if [[ "$defect" == selector || "$defect" == toggle-selector ]]; then
+  if [[ "$defect" == selector || "$defect" == toggle-selector || "$defect" == apply-leg-drop ]]; then
     lost="$(comm -23 "$INTEGRATION_TESTS" <(sort -u "$TMP/integration-$defect"))"
-    if [[ "$defect" == toggle-selector ]]; then
-      check "must-fail: a dropped toggle selector leaves every toggle test unclaimed" \
-        "$(sed -n '/^toggle_locked::/p' "$INTEGRATION_TESTS")" "$lost"
+    if [[ "$defect" == toggle-selector || "$defect" == apply-leg-drop ]]; then
+      family=toggle_locked::
+      [[ "$defect" != apply-leg-drop ]] || family=apply_locked::
+      check "must-fail: dropped $defect leaves every $family test unclaimed" \
+        "$(sed -n "/^$family/p" "$INTEGRATION_TESTS")" "$lost"
     else
       [[ -n "$lost" ]] && ok "must-fail: a dropped selector names unclaimed integration tests" ||
         bad "must-fail: a dropped selector leaves no unclaimed integration test"
     fi
   else
     repeated="$(uniq -d "$TMP/integration-$defect")"
-    if [[ "$defect" == toggle-skip ]]; then
-      check "must-fail: a dropped toggle skip repeats every toggle test" \
-        "$(sed -n '/^toggle_locked::/p' "$INTEGRATION_TESTS")" "$repeated"
+    if [[ "$defect" == toggle-skip || "$defect" == apply-skip ]]; then
+      family=toggle_locked::
+      [[ "$defect" != apply-skip ]] || family=apply_locked::
+      check "must-fail: dropped $defect repeats every $family test" \
+        "$(sed -n "/^$family/p" "$INTEGRATION_TESTS")" "$repeated"
     else
       [[ -n "$repeated" ]] && ok "must-fail: dropped $defect names repeated integration tests" ||
         bad "must-fail: dropped $defect leaves no repeated integration test"

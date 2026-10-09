@@ -86,11 +86,10 @@ name: Skill Tests
 # pass split across scopes, its macOS test step measured 277s in run
 # 37597618670. `rest`
 # is split again by test name: `verify-lock` takes verification, lock
-# recording and toggles that preserve locked records. `rest` skips those
-# same names. Both still use the one
-# `integration` binary. Run 37597618670 measured their macOS test steps at
-# 484s and 475s respectively, each with one successful sample, inside the
-# 600s ceiling. The comment above the test step derives each bound.
+# recording and toggles that preserve locked records; `apply-locked` takes
+# `apply_locked::`. `rest` skips those same names. Each uses the one
+# `integration` binary. The comment above the test step cites the measured
+# runs and distinguishes the new leg's estimate from a standalone timing.
 #
 # The cargo lanes' test steps each carry a `timeout-minutes` set from the
 # figures in the comment above it or its job, with headroom, so a hang there
@@ -1768,11 +1767,11 @@ jobs:
       fail-fast: false
       matrix:
         crate: [kendex-core, kendex-cli, kendex-app]
-        # kendex-cli runs as three legs over targets and test names; the other two
+        # kendex-cli runs as four legs over targets and test names; the other two
         # crates run whole. The excludes prune the combinations those two
         # lists do not mean, and the `crate:` line still spells the workspace
         # member set the guard in the steps below reads.
-        leg: [whole, render-lint, rest, verify-lock]
+        leg: [whole, render-lint, rest, verify-lock, apply-locked]
         exclude:
           - crate: kendex-core
             leg: render-lint
@@ -1780,26 +1779,26 @@ jobs:
             leg: rest
           - crate: kendex-core
             leg: verify-lock
+          - crate: kendex-core
+            leg: apply-locked
           - crate: kendex-app
             leg: render-lint
           - crate: kendex-app
             leg: rest
           - crate: kendex-app
             leg: verify-lock
+          - crate: kendex-app
+            leg: apply-locked
           - crate: kendex-cli
             leg: whole
     runs-on: macos-latest
-    # Each leg reserves its compile bound plus its test bound plus 5 minutes
-    # for setup and cleanup, and the ceiling below is that sum for every leg
-    # of this job, not the CLI legs alone. Compile is 20 on every leg. Test is
-    # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; the measured
-    # test bounds below give `rest` 20 + 11 + 5 = 36 and `verify-lock`
-    # 20 + 10 + 5 = 35. Rest's allowance also covers the name partition check,
-    # which took 25s in run 37597618670;
-    # it is 12 on the `whole` legs
-    # kendex-core and kendex-app run, so each of those two reserves
-    # 20 + 12 + 5 = 37 and takes the 40 below.
-    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || matrix.leg == 'rest' && 36 || matrix.leg == 'verify-lock' && 35 || 40 }}
+    # CLI job maxima over the 15 successful main-push runs cited at test:
+    # render-lint 478s, rest 760s, verify-lock 682s. Add 25% and round up
+    # to minutes: 10, 16, 15. The new apply-locked leg keeps the unsplit
+    # rest maximum, including compile and partition-check time: 16 minutes.
+    # These samples include cache hits; cold-cache job time is unmeasured.
+    # The whole-crate jobs retain their compile + test + setup allowance.
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 10 || matrix.leg == 'rest' && 16 || matrix.leg == 'verify-lock' && 15 || matrix.leg == 'apply-locked' && 16 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1870,11 +1869,16 @@ jobs:
               integration='--test integration'
               filters='verify_ lock_record:: toggle_locked::'
               ;;
+            apply-locked)
+              flags=''
+              integration='--test integration'
+              filters='apply_locked::'
+              ;;
             rest)
               doc='--doc'
               flags='--lib --bins'
               integration='--test integration'
-              filters='--skip verify_ --skip lock_record:: --skip toggle_locked::'
+              filters='--skip verify_ --skip lock_record:: --skip toggle_locked:: --skip apply_locked::'
               flags="$flags --test cli_smoke"
               ;;
             *) echo "no target roster for leg $LEG"; exit 1 ;;
@@ -1897,21 +1901,23 @@ jobs:
       - name: CLI integration name partition
         if: matrix.crate == 'kendex-cli' && matrix.leg == 'rest'
         run: bash tools/tests/orch-shard-partition.test.sh --cargo-only
-      # Measured maxima of the step this bounds, over those same runs: 534s
-      # for kendex-core whole and 81s for kendex-app whole. Before its
-      # name split, rest took 854-941s over five successful merge-group runs
-      # on 2026-10-07, median 920s. Run 37597618670 at fa5acb8c measured this
-      # partition's test steps at 484s for rest and 475s for verify-lock.
-      # Each maximum has one successful sample. `verify-lock` selects the
-      # `verify_` family, `lock_record::`
-      # and `toggle_locked::`; rest rejects exactly those same strings, so a
-      # new test still lands in one leg. These are libtest substring filters,
-      # not new Cargo targets: the integration binary remains one binary.
-      # Both measured steps sit inside the header's 600s ceiling. Each bound
-      # adds 25% to its own maximum and rounds up to whole minutes:
-      # rest ceil(484 * 1.25 / 60) = 11; verify-lock ceil(475 * 1.25 / 60) = 10.
-      # `render-lint` measured 277s in that run after its comments pass split
-      # across scopes; its 25-minute bound retains the earlier 1012s maximum.
+      # CLI measurements: 15 successful main-push Skill Tests runs on
+      # 2026-10-09: 37882328114, 37880822013, 37880007749, 37879167232,
+      # 37878878860, 37876175474, 37875494584, 37875447295, 37872580775,
+      # 37872477875, 37872452783, 37867125177, 37866360021, 37865707185,
+      # 37865455977. Raw job timestamps and rest logs are attached to KEN-3530.
+      # Step maxima: render-lint 382s, unsplit rest 618s, verify-lock 538s.
+      # Each bound is ceil(maximum * 1.25 / 60): 8, 13, 12 minutes.
+      # Historical apply_locked:: work finished within 136.405s of the
+      # integration harness starting, including preceding and concurrent
+      # tests. This is an estimate, not a standalone leg measurement.
+      # apply-locked conservatively keeps the entire old rest maximum and
+      # its 13-minute bound until standalone hosted timings are available.
+      # The split removes that family from rest to meet the 600s split figure;
+      # hosted PR timing must confirm both legs, independently of their bounds.
+      # All filters are libtest substrings; new integration tests still land
+      # in one leg. Whole-crate bounds retain their measured 534s core and
+      # 81s app maxima with the existing allowance.
       # --no-fail-fast: one run reports
       # every platform-specific failure instead of one per queue attempt.
       # Every selected invocation runs and the step fails if any did, the same
@@ -1920,10 +1926,10 @@ jobs:
       # Integration filters get their own invocation: passing them alongside
       # --lib, --bins or cli_smoke would also filter those unrelated tests.
       - name: test
-        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || matrix.leg == 'rest' && 11 || matrix.leg == 'verify-lock' && 10 || 12 }}
+        timeout-minutes: ${{ matrix.leg == 'render-lint' && 8 || matrix.leg == 'rest' && 13 || matrix.leg == 'verify-lock' && 12 || matrix.leg == 'apply-locked' && 13 || 12 }}
         env:
           GH_TOKEN: ""
-          GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && (matrix.leg == 'rest' || matrix.leg == 'verify-lock') && github.token || '' }}
+          GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && (matrix.leg == 'rest' || matrix.leg == 'verify-lock' || matrix.leg == 'apply-locked') && github.token || '' }}
         run: |
           set -u
           rc=0
