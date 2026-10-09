@@ -80,7 +80,8 @@
 # included), 1 when any row failed, 2 when it refuses before any row (among
 # those refusals: this script's checkout has no HEAD commit, or the kendex on
 # PATH fails the build check `--help` states) or when the
-# fixture could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
+# fixture could not be installed, `kendex verify` refused it, or the main shell
+# aborted, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
 # antigravity, five on pi, one on gemini, fifteen on copilot, two on cursor when
@@ -96,7 +97,7 @@
 # own they are captured and replayed under the keyed line, so the keyed line
 # is the first line; each harness's own output goes to its log under LOGS,
 # which a row's evidence names.
-set -euo pipefail
+set -Eeuo pipefail
 
 # The paths a kendex-cli build reads besides the toolchain itself: the crates,
 # the workspace manifest and lock, and the toolchain pin and cargo config.
@@ -163,6 +164,8 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
       echo "the Copilot package table has no answer, or a second one, for that row: tools/harness-smoke is broken." ;;
     setup)
       echo "that step of a scratch project could not be taken, so no row could be measured." ;;
+    aborted)
+      echo "the main shell stopped at that command; the scratch project and logs are kept." ;;
     update-pi)
       printf 'kendex update-pi did not install the Pi extension for %s; %s says why.\n' "$2" "$3" ;;
     verify)
@@ -197,10 +200,19 @@ refuse_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
   [ -z "$3" ] || printf '%s\n' "$3" >&2
   exit 2
 }
+abort() { # STATUS LINE COMMAND
+  # Empty harness output makes last_line fail inside a substitution. Its
+  # caller decides the row; only the main shell's abort refuses the run.
+  [ "$BASH_SUBSHELL" -eq 0 ] || return "$1"
+  KEEP=1
+  say aborted "$1 line=$2 command=$3"
+  exit 2
+}
 
 HARNESSES="claude codex opencode cursor pi gemini copilot antigravity"
 ONLY="$HARNESSES"
 KEEP=0
+trap 'abort "$?" "$LINENO" "$BASH_COMMAND"' ERR
 COPILOT_INTERACTIVE=0
 ALLOW_STALE=0
 DIR=""

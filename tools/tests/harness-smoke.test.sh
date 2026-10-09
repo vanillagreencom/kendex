@@ -205,29 +205,89 @@ row_count() { # FILE RESULT — rows the run reported with that result
   awk -v want="$2" '/^\|/ { next } $3 == want { n++ } END { print n + 0 }' "$1"
 }
 
-rows_case() { # LABEL HARNESS-EXIT RESULT KEY WANT-STATUS
-  local label="$1" h out rc=0
+rows_run() { # HARNESS-EXIT [SCRIPT [PATH]] — sets rows_out and rows_rc
+  local h
   for h in claude codex; do
-    printf '#!/bin/sh\nexit %s\n' "$2" >"$ROWS_BIN/$h"
+    printf '#!/bin/sh\nexit %s\n' "$1" >"$ROWS_BIN/$h"
     chmod +x "$ROWS_BIN/$h"
   done
   rm -rf -- "${TMP:?}/rows-dir"
   mkdir -p "$TMP/rows-dir"
-  out="$TMP/rows-out"
-  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" CLAUDE_CONFIG_DIR="$ROWS_CFG" \
-    "$BASH" "$SMOKE" --only claude,codex --dir "$TMP/rows-dir" >"$out" 2>&1) || rc=$?
-  local seen keyed
-  seen="$(row_count "$out" "$3")"
-  keyed="$(sed -n "s/^harness-smoke: $4=//p" "$out")"
-  if [ "$rc" = "$5" ] && [ "$seen" -ge 2 ] && [ "$keyed" = "$seen" ]; then
-    ok "$label ($4=$keyed over $seen row(s), exit $rc)"
+  rows_out="$TMP/rows-out"
+  rows_rc=0
+  (cd "$ROWS_REPO" && PATH="${3:-$ROWS_BIN:$PATH}" CLAUDE_CONFIG_DIR="$ROWS_CFG" \
+    "$BASH" "${2:-$SMOKE}" --only claude,codex --dir "$TMP/rows-dir" >"$rows_out" 2>&1) || rows_rc=$?
+}
+rows_case() { # LABEL HARNESS-EXIT RESULT KEY WANT-STATUS
+  local label="$1" seen keyed first aborted
+  rows_run "$2"
+  seen="$(row_count "$rows_out" "$3")"
+  keyed="$(sed -n "s/^harness-smoke: $4=//p" "$rows_out")"
+  first="$(sed -n '/^harness-smoke:/ { p; q; }' "$rows_out")"
+  aborted="$(sed -n 's/^harness-smoke: aborted=//p' "$rows_out")"
+  if [ "$rows_rc" = "$5" ] && [ "$seen" -ge 2 ] && [ "$keyed" = "$seen" ] && [ -z "$aborted" ]; then
+    ok "$label ($4=$keyed over $seen row(s), exit $rows_rc)"
   else
-    bad "$label" "rc=$rc want=$5 rows=$seen keyed=${keyed:--}"
+    bad "$label" "rc=$rows_rc want=$5 rows=$seen keyed=${keyed:--} first=${first:--} aborted=${aborted:--}"
   fi
 }
 
 rows_case "a harness that answers nothing fails every row it is asked" 0 fail failed 1
 rows_case "a harness that cannot run leaves every row unanswerable" 3 unanswerable unanswerable 3
+
+# A chmod failure is a scratch I/O error, not a harness row verdict.
+ABORT_BIN="$TMP/abort-bin"
+mkdir -p "$ABORT_BIN"
+printf '#!/bin/sh\nexit 1\n' >"$ABORT_BIN/chmod"
+chmod +x "$ABORT_BIN/chmod"
+rows_run 0 "$SMOKE" "$ABORT_BIN:$ROWS_BIN:$PATH"
+abort_first="$(sed -n '/^harness-smoke:/ { p; q; }' "$rows_out")"
+abort_kept="$(sed -n 's/^harness-smoke: kept=//p' "$rows_out")"
+if [ "$rows_rc" = 2 ] && [[ "$abort_first" = 'harness-smoke: aborted=1 line='*' command=chmod '* ]] &&
+  [ -d "$abort_kept/logs" ]; then
+  ok "a main-shell chmod abort refuses keyed and keeps its logs"
+else
+  bad "a main-shell chmod abort refuses keyed and keeps its logs" "rc=$rows_rc first=${abort_first:--} kept=${abort_kept:--}"
+fi
+
+# The control has its own repository outside the worktree because the script
+# resolves its catalog and build identity from its own checkout.
+ABORT_CONTROL="$(mktemp -d)" || { echo "harness-smoke.test: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $ABORT_CONTROL && ! -L $ABORT_CONTROL ]] || { echo "harness-smoke.test: scratch=not-a-directory" >&2; exit 1; }
+ABORT_CONTROL="$(cd -- "$ABORT_CONTROL" && pwd -P)" || { echo "harness-smoke.test: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}" "${ABORT_CONTROL:?}"' EXIT
+git clone -q --shared --no-checkout "$REPO" "$ABORT_CONTROL"
+mkdir -p "$ABORT_CONTROL/tools" "$ABORT_CONTROL/hooks"
+cp "$REPO/hooks/lane-mail-check.sh" "$ABORT_CONTROL/hooks/"
+abort_trap='trap '\''abort "$?" "$LINENO" "$BASH_COMMAND"'\'' ERR'
+[ "$(grep -cxF "$abort_trap" "$SMOKE")" -eq 1 ] || { echo "harness-smoke.test: control=trap-match-failed" >&2; exit 1; }
+sed '/^trap '\''abort /d' "$SMOKE" >"$ABORT_CONTROL/tools/harness-smoke"
+if cmp -s "$SMOKE" "$ABORT_CONTROL/tools/harness-smoke"; then
+  echo "harness-smoke.test: control=unchanged" >&2
+  exit 1
+fi
+rows_run 0 "$ABORT_CONTROL/tools/harness-smoke" "$ABORT_BIN:$ROWS_BIN:$PATH"
+abort_first="$(sed -n '/^harness-smoke:/ { p; q; }' "$rows_out")"
+if [ "$rows_rc" = 1 ] && [ -z "$abort_first" ]; then
+  ok "control: an unpatched chmod abort exits 1 with no keyed line"
+else
+  bad "control: an unpatched chmod abort exits 1 with no keyed line" "rc=$rows_rc first=${abort_first:--}"
+fi
+abort_guard='  [ "$BASH_SUBSHELL" -eq 0 ] || return "$1"'
+[ "$(grep -cxF "$abort_guard" "$SMOKE")" -eq 1 ] || { echo "harness-smoke.test: control=guard-match-failed" >&2; exit 1; }
+sed '/^  \[ "$BASH_SUBSHELL" -eq 0 \] || return "$1"/d' "$SMOKE" >"$ABORT_CONTROL/tools/harness-smoke"
+if cmp -s "$SMOKE" "$ABORT_CONTROL/tools/harness-smoke"; then
+  echo "harness-smoke.test: control=unchanged" >&2
+  exit 1
+fi
+rows_run 0 "$ABORT_CONTROL/tools/harness-smoke"
+if grep -q '^harness-smoke: aborted=' "$rows_out"; then
+  ok "control: no subshell guard reports empty harness output as an abort"
+else
+  bad "control: no subshell guard reports empty harness output as an abort" "rc=$rows_rc"
+fi
+rm -rf -- "${ABORT_CONTROL:?}"
+trap 'rm -rf -- "${TMP:?}"' EXIT
 
 # A print-mode session that arms its mailbox monitor, answers `armed` and ends
 # with its turn stops that monitor, and the watch withdraws its liveness record
