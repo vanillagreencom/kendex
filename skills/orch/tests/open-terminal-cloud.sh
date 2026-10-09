@@ -31,6 +31,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_HOST CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 export ORCH_OVERSEER_LANES=1000
+export ORCH_OVERSEER_CLOUD_LANES=1000
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # mutant_scripts and mutate_file, the two halves of the controls below.
@@ -87,6 +88,9 @@ set -euo pipefail
 printf '%s\n' "\$*" >> "$WT_LOG"
 case "\${1:-}" in
   create)
+    if [[ -n "\${STUB_RESERVATION_LOG:-}" ]]; then
+      awk -F'\t' '{print \$8}' "\$OVERSEE_WATCH_STATE_DIR/claims"/*.reserve > "\$STUB_RESERVATION_LOG"
+    fi
     mkdir -p "$TMP_ROOT/wt/\$2"
     if [[ "\${STUB_WT_PLAIN:-}" != 1 ]]; then
       git init -q "$TMP_ROOT/wt/\$2"
@@ -104,7 +108,7 @@ chmod +x "$BIN/gh" "$BIN/lanes" "$BIN/worktree"
 
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
-cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/lane-host-ssh" "$SCRIPTS_DIR/workflow-state" \
+cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/lane-host-ssh" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/workflow-state" \
   "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
@@ -139,20 +143,30 @@ PROMPT="$(cat "$BRIEF")"$'\n\n'"${SESSION_TEXT//\{branch\}/cc-1}"
 # from the repo in tmux session `fleet`; sets RC, ERR and OUT, and resets the
 # worktree log, the tmux stub's log and pane, the lane claims and the item
 # worktrees first. The session screen is $STARTED unless the row drew its own
-# with `screen` before it.
+# with `screen` before it. CAP_KEEP_LAUNCH retains the preceding launch's
+# panes, claims and worktrees. CAP_USE_DEFAULT removes the cloud cap setting
+# from the process environment; its caller supplies empty project settings
+# and a private env file.
 run_ot() {
-  local script="$OT" env_args=()
+  local script="$OT" env_args=() env_unsets=()
   [[ "${1:-}" != SCRIPT=* ]] || { script="${1#SCRIPT=}"; shift; }
   while [[ "${1:-}" != -- ]]; do env_args+=("$1"); shift; done
   shift
-  rm -f -- "${TMP_ROOT:?}/worktree.log" "${TMP_ROOT:?}/panes"
-  rm -rf -- "${TMP_ROOT:?}/wt" "${TMP_ROOT:?}/claims"
+  rm -f -- "${TMP_ROOT:?}/worktree.log"
+  if [[ "${CAP_KEEP_LAUNCH:-false}" != true ]]; then
+    rm -f -- "${TMP_ROOT:?}/panes"
+    rm -rf -- "${TMP_ROOT:?}/wt" "${TMP_ROOT:?}/claims"
+  fi
+  [[ "${CAP_USE_DEFAULT:-false}" != true ]] || env_unsets=(-u ORCH_OVERSEER_CLOUD_LANES)
+  if [[ -n "${CAP_RESERVE_KIND:-}" ]]; then
+    (source "$SCRIPTS_DIR/lib/lane-claims.sh" && lane_claim_reserve "$TMP_ROOT/claims/claims" "$$" CC-98 "$CAP_RESERVE_FLEET" "$CAP_RESERVE_KIND")
+  fi
   : > "$TMUX_LOG"
   [[ -f "$SCREEN" ]] || screen "$STARTED"
   set +e
   # The ceiling keeps a plain item directory outside every repository wherever
   # TMPDIR sits, so its branch read fails as a real one does.
-  (cd "$REPO" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$BIN:$OT_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" WORKTREE_CLI="$BIN/worktree" \
+  (cd "$REPO" && env ${env_unsets[@]+"${env_unsets[@]}"} GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$BIN:$OT_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" WORKTREE_CLI="$BIN/worktree" \
     LANES_CLI="$BIN/lanes" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' GH_REPO="" TMUX="" TMUX_PANE="" \
     ORCH_TMUX_SESSION=fleet ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 \
     OT_TMUX_LOG="$TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/panes" OT_COMPOSER_ON_ENTER=1 OT_SCREEN_FILE="$SCREEN" \
@@ -211,6 +225,142 @@ described() {
 # either beside --cloud.
 print_words() { local word n=0; for word in $(pasted 1); do [[ "$word" != -p && "$word" != --print ]] || n=$((n + 1)); done; echo "$n"; }
 made() { [[ -e "$WT_LOG" ]] && echo yes || echo no; }
+
+# A declared kind selects the cap even when the host field names the other
+# kind. Each row starts with a full Daytona fleet and its own cloud records.
+cloud_cap_row() { # SCRIPT NAME STATUS CLOUD_COUNT [OPTION] [CLOUD_CAP]
+  local script="$1" state="$REPO/tmp/cloud-cap-$2" n cloud_cap="${6:-1}"
+  local CAP_RESERVE_KIND="" CAP_RESERVE_FLEET="$state/workflow-state-oversee.json"
+  local CAP_USE_DEFAULT=false cap_env=(ORCH_OVERSEER_LANES=1)
+  if [[ "$cloud_cap" == default ]]; then
+    CAP_USE_DEFAULT=true
+    printf '[env]\n' > "$REPO/kendex.settings.toml"
+    : > "$REPO/cloud-cap-default.env"
+    cap_env+=(KENDEX_ENV_FILE=cloud-cap-default.env)
+  else
+    cap_env+=("ORCH_OVERSEER_CLOUD_LANES=$cloud_cap")
+  fi
+  "$WS" --state-dir "$state" init oversee >/dev/null
+  "$WS" --state-dir "$state" append oversee lanes \
+    '{"item":"CC-90","kind":"ssh","host":"claude-cloud","status":"running","window":"fleet:CC-90"}' >/dev/null
+  for ((n=0; n<$4; n++)); do
+    "$WS" --state-dir "$state" append oversee lanes \
+      '{"item":"CC-9'"$((n + 1))"'","kind":"claude-cloud","host":"daytona","status":"'"$3"'","window":"fleet:CC-9'"$((n + 1))"'"}' >/dev/null
+  done
+  local extra=()
+  [[ "${5:-}" != over ]] || extra=(--over-cap)
+  [[ "${5:-}" != reserve ]] || CAP_RESERVE_KIND=claude-cloud
+  rm -f -- "$TMP_ROOT/reservation-kind"
+  run_ot SCRIPT="$script" "${cap_env[@]}" STUB_RESERVATION_LOG="$TMP_ROOT/reservation-kind" -- \
+    "${CLOUD[@]}" --state-dir "$state" ${extra[@]+"${extra[@]}"} CC-50
+  CAP_RESULT="rc=$RC made=$(made) setting=$(awk '$2 == "cap-reached" {for(i=3;i<=NF;i++) if($i ~ /^setting=/) print substr($i,9)}' <<<"$ERR")"
+  CAP_OVER="$("$WS" --state-dir "$state" get oversee '[.lanes[] | select(.item == "CC-50")] | first | .over_cap // "none"')"
+  CAP_RESERVED=none
+  [[ ! -f "$TMP_ROOT/reservation-kind" ]] || CAP_RESERVED="$(cat "$TMP_ROOT/reservation-kind")"
+}
+
+echo "=== cloud sessions use their own cap beside a full Daytona fleet ==="
+for status in running preparing parked; do
+  for spec in 'below|0|rc=0 made=yes setting=' 'full|1|rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES'; do
+    IFS='|' read -r name count want <<<"$spec"
+    cloud_cap_row "$OT" "$status-$name" "$status" "$count"
+    assert_eq "$CAP_RESULT" "$want" "a $status cloud record counts only against the cloud cap"
+    [[ "$name" != below ]] || assert_eq "$CAP_RESERVED" claude-cloud "the admitted launcher reserves a cloud slot before its worktree create"
+  done
+done
+cloud_cap_row "$OT" configured running 1 '' 2
+assert_eq "$CAP_RESULT" 'rc=0 made=yes setting=' "the cloud setting permits another session above the fleet limit"
+cloud_cap_row "$OT" configured-full running 2 '' 2
+assert_eq "$CAP_RESULT" 'rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES' "the configured cloud limit refuses the next session"
+cloud_cap_row "$OT" over running 1 over
+assert_eq "$CAP_RESULT over=$CAP_OVER" 'rc=0 made=yes setting= over=cloud' \
+  "an explicit cloud cap exception records the cloud cap"
+cloud_cap_row "$OT" reserved running 0 reserve
+assert_eq "$CAP_RESULT" 'rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES' \
+  "an unrecorded cloud launch reservation consumes the cloud slot"
+for spec in 'below|9|rc=0 made=yes setting=' 'full|10|rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES'; do
+  IFS='|' read -r name count want <<<"$spec"
+  cloud_cap_row "$OT" "default-$name" running "$count" '' default
+  assert_eq "$CAP_RESULT" "$want" "the absent cloud setting uses the default boundary of 10: $name"
+done
+
+# The cloud launch's live pane keeps the claim that replaces its reservation.
+# A later local launch reads that real claim beside the cloud's held record.
+cloud_live_row() { # SCRIPT NAME FLEET_COUNT
+  local script="$1" state="$REPO/tmp/cloud-live-$2" cloud_rc CAP_KEEP_LAUNCH=false
+  "$WS" --state-dir "$state" init oversee >/dev/null
+  if [[ "$3" == 1 ]]; then
+    "$WS" --state-dir "$state" append oversee lanes \
+      '{"item":"CC-90","kind":"ssh","status":"running","window":"fleet:CC-90"}' >/dev/null
+  fi
+  run_ot SCRIPT="$script" ORCH_OVERSEER_LANES=1 ORCH_OVERSEER_CLOUD_LANES=1 -- "${CLOUD[@]}" --state-dir "$state" CC-50
+  cloud_rc="$RC"
+  CAP_KEEP_LAUNCH=true
+  run_ot SCRIPT="$script" TERMINAL=ghostty ORCH_OVERSEER_LANES=1 ORCH_OVERSEER_CLOUD_LANES=1 -- \
+    --host local --ghostty --harness claude --lane "$LANE_DIR" --launch-flags '--model sonnet --effort high' --state-dir "$state" CC-51
+  CAP_LIVE_RESULT="cloud=$cloud_rc rc=$RC made=$(made) $(grep '^open-terminal: cap-reached ' <<<"$ERR" || true)"
+}
+for spec in 'free|0|cloud=0 rc=0 made=yes ' 'full|1|cloud=0 rc=1 made=no open-terminal: cap-reached item=CC-51 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES'; do
+  IFS='|' read -r name count want <<<"$spec"
+  cloud_live_row "$OT" "$name" "$count"
+  assert_eq "$CAP_LIVE_RESULT" "$want" "a live cloud claim leaves the $name fleet cap unchanged" "$TMP_ROOT/err"
+done
+
+# Restore today's all-record count in a disposable owner. The same below-cap
+# row must fail its admission assertion on that count.
+COUNT_CONTROL="$(mutant_scripts cloud-cap-control lib/lane-cap.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-cap-control"
+mutate_file "$COUNT_CONTROL/lib/lane-cap.sh" \
+  '[.[] | select(in_flight and same_cap)] as $held' \
+  '[.[] | select(in_flight)] as $held'
+cloud_cap_row "$COUNT_CONTROL/open-terminal" control running 0
+CAP_CONTROL="$(FAIL=0; assert_eq "$CAP_RESULT" 'rc=0 made=yes setting=' 'cloud admission' > "$TMP_ROOT/cloud-cap-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CAP_CONTROL $CAP_RESULT" '1 rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES' \
+  "control: counting the full Daytona fleet in the cloud cap turns the admission row red"
+RESERVE_CONTROL="$(mutant_scripts cloud-reserve-control lib/lane-cap.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-reserve-control"
+mutate_file "$RESERVE_CONTROL/lib/lane-cap.sh" \
+  '(.[6] | cap_kind) == $cap' '(.[6] | cap_kind) != $cap'
+cloud_cap_row "$RESERVE_CONTROL/open-terminal" reserve-control running 0 reserve
+CAP_CONTROL="$(FAIL=0; assert_eq "$CAP_RESULT" 'rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES' 'cloud reservation' > "$TMP_ROOT/cloud-reserve-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CAP_CONTROL $CAP_RESULT" '1 rc=0 made=yes setting=' \
+  "control: charging the reservation to the other cap turns the refusal row red"
+WRITE_CONTROL="$(mutant_scripts cloud-reserve-write-control lib/lane-cap.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-reserve-write-control"
+mutate_file "$WRITE_CONTROL/lib/lane-cap.sh" \
+  'lane_claim_reserve "$store" "$$" "$2" "$CAP_FLEET" "$HOST_KIND"' \
+  'lane_claim_reserve "$store" "$$" "$2" "$CAP_FLEET" ""'
+cloud_cap_row "$WRITE_CONTROL/open-terminal" reserve-write-control running 0
+CAP_CONTROL="$(FAIL=0; assert_eq "$CAP_RESERVED" claude-cloud 'cloud reservation kind' > "$TMP_ROOT/cloud-reserve-write-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CAP_CONTROL $CAP_RESULT" '1 rc=0 made=yes setting=' \
+  "control: omitting the reservation kind turns the pre-record cloud slot assertion red"
+BOUND_CONTROL="$(mutant_scripts cloud-cap-bound-control lib/lane-cap.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-cap-bound-control"
+mutate_file "$BOUND_CONTROL/lib/lane-cap.sh" \
+  'cap="$CLOUD_CAP"; setting=ORCH_OVERSEER_CLOUD_LANES' \
+  'cap="$FLEET_CAP"; setting=ORCH_OVERSEER_CLOUD_LANES'
+cloud_cap_row "$BOUND_CONTROL/open-terminal" bound-control running 1 '' 2
+CAP_CONTROL="$(FAIL=0; assert_eq "$CAP_RESULT" 'rc=0 made=yes setting=' 'cloud cap setting' > "$TMP_ROOT/cloud-cap-bound-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CAP_CONTROL $CAP_RESULT" '1 rc=1 made=no setting=ORCH_OVERSEER_CLOUD_LANES' \
+  "control: using the fleet limit turns the configured cloud admission assertion red"
+DEFAULT_CONTROL="$(mutant_scripts cloud-cap-default-control open-terminal)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-cap-default-control"
+mutate_file "$DEFAULT_CONTROL/open-terminal" \
+  'CLOUD_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_CLOUD_LANES 10)"' \
+  'CLOUD_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_CLOUD_LANES 1)"'
+cloud_cap_row "$DEFAULT_CONTROL/open-terminal" default-control running 9 '' default
+CAP_CONTROL="$(FAIL=0; assert_eq "$CAP_RESULT" 'rc=0 made=yes setting=' 'cloud cap default' > "$TMP_ROOT/cloud-cap-default-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CAP_CONTROL" 1 "control: lowering the default turns the absent-setting admission row red"
+LIVE_CONTROL="$(mutant_scripts cloud-cap-live-control open-terminal)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-cap-live-control"
+mutate_file "$LIVE_CONTROL/open-terminal" \
+  'lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET" "$HOST_KIND"' \
+  'lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET" ""'
+cloud_live_row "$LIVE_CONTROL/open-terminal" control 0
+CAP_CONTROL="$(FAIL=0; assert_eq "$CAP_LIVE_RESULT" 'cloud=0 rc=0 made=yes ' 'live cloud claim' > "$TMP_ROOT/cloud-cap-live-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CAP_CONTROL $CAP_LIVE_RESULT" \
+  '1 cloud=0 rc=1 made=no open-terminal: cap-reached item=CC-51 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES' \
+  "control: omitting the live cloud claim kind turns the free fleet admission row red"
 
 echo "=== a cloud session is launched from the item's pushed branch and recorded ==="
 run_ot -- "${CLOUD[@]}" CC-1

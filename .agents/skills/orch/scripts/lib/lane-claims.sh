@@ -28,14 +28,14 @@
 # home-specific path alone.
 #
 # Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>\t
-# <fleet>\t<named>`.
+# <fleet>\t<named>\t<kind>`.
 # The config dir is canonical; `named` is the spelling the launch named the lane
 # by, before canonicalisation, so a reader can name the account as `lanes list`
 # does from a discovered path. A record written before it carried one has none,
 # and a reader names that claim's account from its canonical config dir.
 # The fleet is the oversee state file of the fleet the launch was judged in
 # (`open-terminal --state-dir`), empty for a launch naming no fleet, and it is
-# what lets one store serve several fleets: open-terminal's fleet cap counts
+# what lets one store serve several fleets: open-terminal's launch cap counts
 # only its own fleet's claims, while `lanes pick` charges an account with
 # whatever fleet's claims name it. A claim with an empty fleet, written by a
 # launch naming no fleet or before claims carried one, counts toward its
@@ -46,9 +46,9 @@
 # A reservation is the same record under `.reserve`, with the launcher's pid as
 # its server and `-` as its pane: the place in the count a judged launch holds
 # from its count until its claim or record stands, or the item ends, live while
-# that launcher runs. Its config dir is empty: only the count form of
-# lane_claims_read carries reservations, and the fleet cap that reads it judges
-# a reservation by its window and fleet, never its account. Every other reader
+# that launcher runs. Its config dir is empty: only the count and cap modes of
+# lane_claims_read carry reservations, and the launch cap judges
+# a reservation by its window, fleet and kind, never its account. Every other reader
 # reads claims alone.
 set -euo pipefail
 
@@ -95,21 +95,23 @@ lane_claims_canon() {
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
-# pid>\t<pane id>` lines. Where $2 is `count`, the form open-terminal's fleet
-# cap counts, each line ends in `\t<fleet>\t<named>` and the live
+# pid>\t<pane id>` lines. Where $2 is `count`, each line ends in
+# `\t<fleet>\t<named>` and the live
 # reservations are among them, read in full before the claims are listed: a
 # launch writes its claim or its record before it drops its reservation, so a
 # reservation gone by the time it is read is a claim the later listing finds,
 # or a record for a caller that reads its records after this.
+# Mode `cap`, read by open-terminal, adds the declared kind after named and
+# includes reservations. Older claims carry no kind and count as fleet lanes.
 # The four-field form is the default because lane-context appends its own
-# fifth field. Mode `fleet` carries the same two fields without adding
+# fifth field. Mode `fleet` carries fleet and named without adding
 # reservations; a context selector removes them before the caller flag is
 # appended.
 # $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
-  local dir="$1" mode="${2:-}" live this_server f server pane cfg window fleet named rc=0
+  local dir="$1" mode="${2:-}" live this_server f server pane cfg window fleet named host_kind rc=0
   local rechecked=0 recheck_ok=1 live_now fresh line rest kinds=claim kind
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
@@ -129,13 +131,13 @@ lane_claims_read() {
   # The enumerated server's pid, empty when nothing could be enumerated.
   this_server="${live%%$'\n'*}"
   this_server="${this_server%% *}"
-  [[ "$mode" != count ]] || kinds="reserve claim"
+  [[ "$mode" != count && "$mode" != cap ]] || kinds="reserve claim"
   for kind in $kinds; do
     for f in "$dir"/*."$kind"; do
       [[ -f "$f" ]] || continue
       # Cleared every iteration: a failed read must never leave the previous
       # record's fields standing in for this one.
-      server=""; pane=""; cfg=""; window=""; fleet=""; named=""
+      server=""; pane=""; cfg=""; window=""; fleet=""; named=""; host_kind=""
       if [[ ! -r "$f" ]]; then
         # A claim that cannot be read is a launch that cannot be seen: reported,
         # left in place, and carried out as a failure so a caller deciding where
@@ -158,6 +160,8 @@ lane_claims_read() {
       fleet="${rest%%$'\t'*}"
       rest="${rest#*$'\t'}"
       named="${rest%%$'\t'*}"
+      rest="${rest#*$'\t'}"
+      host_kind="${rest%%$'\t'*}"
       if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
         rm -f -- "$f"
         continue
@@ -201,8 +205,10 @@ lane_claims_read() {
       # Canonical on the way out, whatever spelling the record carries: the
       # count compares strings, and a hand-written or older record must still
       # land on the account discovery reports.
-      if [[ "$mode" == count || "$mode" == fleet ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet" "$named"
+      if [[ "$mode" == count || "$mode" == fleet || "$mode" == cap ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet" "$named"
+        [[ "$mode" != cap ]] || printf '\t%s' "$host_kind"
+        printf '\n'
       else
         printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
       fi
@@ -261,7 +267,8 @@ lane_claims_config_dir() {
 
 # Writes one record under SUFFIX, its path left in LANE_CLAIM_PATH.
 # $1: claims dir, $2: suffix, $3: server pid, $4: pane id, $5: config dir,
-# $6: window, $7: fleet. The config dir is recorded canonical and as named.
+# $6: window, $7: fleet, $8: declared kind. Old callers omit kind and remain
+# fleet lanes. The config dir is recorded canonical and as named.
 lane_claim_put() {
   local dir="$1" suffix="$2" cfg tmp
   cfg="$(lane_claims_canon "$5")"
@@ -269,8 +276,8 @@ lane_claim_put() {
   tmp="$(mktemp -- "$dir/claim.XXXXXX")" || return 1
   # Named with its suffix only once complete: a reader must never see a
   # half-written record and prune a live lane over it.
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" "$5" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" "$5" "${8:-}" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   # mktemp creates mode 600, which no default ACL widens: a store shared by
   # several homes would refuse every other home's read as unreadable-claim.
   # `--` before the mode: BSD chmod applies a mode followed by `--`, then
@@ -282,23 +289,25 @@ lane_claim_put() {
 }
 
 # Record one claim. $1: claims dir, $2: server pid, $3: pane id, $4: config
-# dir, $5: window, $6: fleet, empty for none. A missing pane handle or config
+# dir, $5: window, $6: fleet, empty for none, $7: declared kind. A missing pane handle or config
 # dir records nothing.
 lane_claim_write() {
   [[ -n "$2" && -n "$3" && -n "$4" ]] || return 0
-  lane_claim_put "$1" claim "$2" "$3" "$4" "$5" "${6:-}"
+  lane_claim_put "$1" claim "$2" "$3" "$4" "$5" "${6:-}" "${7:-}"
 }
 
 # Record one reservation, its path left in LANE_CLAIM_PATH, with an empty
-# config dir. $1: claims dir, $2: the launcher's pid, $3: window, $4: fleet.
+# config dir. $1: claims dir, $2: the launcher's pid, $3: window, $4: fleet,
+# $5: declared kind. open-terminal supplies it before the record exists, so
+# concurrent cloud sessions reserve cloud slots rather than fleet slots.
 lane_claim_reserve() {
-  lane_claim_put "$1" reserve "$2" - "" "$3" "$4"
+  lane_claim_put "$1" reserve "$2" - "" "$3" "$4" "${5:-}"
 }
 
 # The one answer to which oversee lane records are lanes in flight, as jq
 # definitions a caller prefixes to its own program: oversee-watch carries the
 # running records. open-terminal counts the in_flight
-# records against its fleet cap, so a resume never adds a lane. The watch and
+# records against their cap, so a resume in the same cap adds no lane. The watch and
 # the cap cannot describe two different fleets. Hand-appended entries that are
 # not objects are no lane.
 LANE_RUNNING_JQ='def running: type == "object" and .status == "running";

@@ -5,7 +5,7 @@
 # launch lock, held from the count through the reservation write, which
 # refuses the launch where it fails. No cap bounds the lanes on one account.
 # A relaunch meets the fleet cap where the item has no running, preparing or
-# parked record. --over-cap admits one launch and records the cap it passed, and
+# parked record held in that cap. --over-cap admits one launch and records the cap it passed, and
 # --wait-slot waits for room instead of refusing.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state and
@@ -257,7 +257,7 @@ race count 1 "$LANE_A" "$LANE_B"
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) reservations=$(reservations)" \
   "one=0 two=1 running=CC-1 reservations=0" \
   "the launch holding the lock launches, the one counting after it does not, and no reservation outlives the launch"
-assert_eq "$(key two)" "open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
+assert_eq "$(key two)" "open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES" \
   "the refusal counts the first launch's reservation, its record not yet written"
 assert_eq "$(grep -c "^open-terminal: lock-waiting item=CC-2 lock=$STATE/workflow-state-oversee.json.launch.lock wait-s=900$" "$ROW/two.out" || true)" "1" \
   "the launch that finds the lock held during a count says it waits for it"
@@ -266,7 +266,7 @@ echo "=== the launch locks are free while an admitted launch creates its worktre
 row create-race
 race create 1 "$LANE_A" "$LANE_B"
 assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" \
-  "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
+  "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES" \
   "the second launch counts at once, and the first launch's reservation fills the fleet's only slot"
 
 echo "=== a launch naming no lane holds its place in the fleet count ==="
@@ -279,7 +279,7 @@ launch two 1 CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) $(key two) reservations=$(reservations)" \
-  "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 reservations=0" \
+  "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES reservations=0" \
   "the reservation of a launch naming no lane fills the fleet's only slot, and goes when the launch ends"
 
 echo "=== an --over-cap launch holds no launch lock through its worktree create ==="
@@ -292,7 +292,7 @@ launch two 1 --lane "$LANE_B" CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" \
-  "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=1" \
+  "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=1 setting=ORCH_OVERSEER_LANES" \
   "the next launch counts at once, the exception's reservation among the lanes it counts"
 
 echo "=== a count that reads the claim store before a launch records sees the lane in its records ==="
@@ -312,7 +312,7 @@ await_exit "$FIRST"
 : > "$ROW/counted"
 await_exit "$SECOND"
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" \
-  "one=0 two=1 running=CC-1 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0" \
+  "one=0 two=1 running=CC-1 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES" \
   "the second count finds the first lane by its record once its reservation is gone"
 
 echo "=== a count that lists the claims before a launch claims sees the lane in its reservations ==="
@@ -334,7 +334,7 @@ await_step one paste
 await_exit "$SECOND"
 : > "$ROW/pasted"
 await_exit "$FIRST"
-assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
+assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES" \
   "the second count holds the first lane by the reservation it read before the claim landed"
 
 echo "=== a reservation whose launcher has exited holds no place ==="
@@ -357,14 +357,14 @@ await_step one paste
 launch two 1 --lane "$LANE_B" CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
-assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
+assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES" \
   "the claim replaces the reservation it was written over"
 
 echo "=== an unrecorded live claim counts toward the fleet cap ==="
 row fleet-claim
 seed_claim CC-8 "$LANE_B"
 launch one 1 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=0 claims=1" \
+assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES" \
   "a claim no running record names fills the fleet's only slot"
 
 echo "=== fleets sharing one claim store count only their own claims toward the fleet cap ==="
@@ -398,7 +398,7 @@ while kill -0 "$SECOND" 2>/dev/null && ! grep -q '^open-terminal: lock-waiting' 
 : > "$ROW/gate"
 await_exit "$SECOND"
 assert_eq "one=$(rc one) handed=$(grep -c '^open-terminal: lane-preparing item=CC-1 ' "$ROW/one.out" || true) two=$(rc two) lock-waits=$(grep -c '^open-terminal: lock-waiting' "$ROW/two.out" || true) $(key two)" \
-  "one=0 handed=1 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0" \
+  "one=0 handed=1 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES" \
   "the next launch finds the lock free while the job waits on the host, and the preparing lane fills the fleet's only slot"
 end=$((SECONDS + 60))
 while [[ "$(status_of CC-1)" == preparing ]] && (( SECONDS < end )); do sleep 0.1; done
@@ -406,12 +406,12 @@ assert_eq "$(status_of CC-1)" stopped "the job ends on the host's failed prepara
 row preparing
 seed_running CC-9 preparing
 launch one 1 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
+assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES" \
   "a preparing record with no claim beside it fills the fleet's only slot"
 row parked
 seed_running CC-9 parked
 launch one 1 --lane "$LANE_A" CC-1
-assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
+assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES" \
   "a parked record keeps the fleet's only slot, and a fresh launch beside it is refused"
 
 echo "=== a relaunch is judged on the lane it adds ==="
@@ -435,6 +435,39 @@ launch two 2 --lane "$LANE_A" CC-2
 await_exit "$FIRST"
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" "one=0 two=0 running=CC-1,CC-2 " \
   "a fresh launch beside a relaunch moving to another account finds the fleet's second slot free"
+
+# The landing has reserved its fleet slot before it replaces its cloud record.
+# Its window has not changed, so only a record in the same cap can deduplicate
+# that reservation. The next fleet launch must see the reserved slot.
+landing_race() { # NAME
+  local first
+  row "landing-race-$1"
+  seed_running CC-1 running "$LANE_A"
+  "$WS" --state-dir "$STATE" update oversee '.lanes |= map(.kind = "claude-cloud")' >/dev/null
+  STUB_HOLD_CREATE="$ROW/release" launch one 1 --lane "$LANE_A" --relaunch CC-1 &
+  first=$!
+  await_step one create
+  launch two 1 --lane "$LANE_B" CC-2
+  : > "$ROW/release"
+  await_exit "$first"
+  assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" \
+    "one=0 two=1 running=CC-1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 setting=ORCH_OVERSEER_LANES" \
+    "a concurrent fleet launch counts the landing reservation beside its old cloud record"
+}
+landing_race shipped
+LANDING_OT="$OT"
+OT="$(mutant_scripts landing-reservation-control lib/lane-cap.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/landing-reservation-control"
+mutate_file "${OT%/*}/lib/lane-cap.sh" \
+  '[$held[] | .window // ""' '[.[] | select(in_flight) | .window // ""'
+SAVED_FAIL="$FAIL"
+FAIL=0
+landing_race control > "$TMP_ROOT/landing-reservation-control.out"
+LANDING_CONTROL="$FAIL"
+FAIL="$SAVED_FAIL"
+assert_eq "$LANDING_CONTROL" 1 "control: excluding the old cloud window hides the landing reservation and turns the concurrent row red"
+OT="$LANDING_OT"
+
 row relaunch-stopped
 launch one 1 --lane "$LANE_A" CC-1
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "stopped")' >/dev/null
@@ -442,7 +475,7 @@ rm -f -- "${CLAIMS:?}/claims"/*.claim
 seed_running CC-9
 launch two 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) running=$(running)" \
-  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
+  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES running=CC-9" \
   "a relaunch of a stopped record adds a lane, and at the fleet cap it is refused"
 row relaunch-parked
 launch one 1 --lane "$LANE_A" CC-1
@@ -465,7 +498,7 @@ OT="$CTL_OT" launch one 1 --lane "$LANE_A" CC-1
 rm -f -- "${CLAIMS:?}/claims"/*.claim
 seed_running CC-9
 OT="$CTL_OT" launch two 1 --lane "$LANE_A" --relaunch CC-1
-assert_eq "rc=$(rc two) $(key two)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
+assert_eq "rc=$(rc two) $(key two)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES" \
   "control: with parked records out of the count the resume at the fleet cap is refused"
 row relaunch-preparing
 seed_running CC-1 preparing
@@ -480,7 +513,7 @@ launch one 1 --lane "$LANE_A" --over-cap CC-1
 assert_eq "rc=$(rc one) over_cap=$(over_cap CC-1) running=$(running)" "rc=0 over_cap=fleet running=CC-9,CC-1" \
   "the exception launches and its record names the fleet cap it passed"
 assert_eq "$(key one)" \
-  "open-terminal: over-cap-admitted item=CC-1 cap=1 running=1 claims=0" \
+  "open-terminal: over-cap-admitted item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES" \
   "the exception is reported with the count it passed"
 launch two 1 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) over_cap=$(over_cap CC-1)" "rc=0 over_cap=fleet" \
@@ -498,7 +531,7 @@ seed_claim CC-8 "$LANE_A" "$TMP_ROOT/rows/other-fleet/state/workflow-state-overs
 launch one 5 --lane "$LANE_A" CC-1
 launch two 5 --lane "$LANE_A" CC-2
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" \
-  "one=0 two=1 running=CC-11,CC-12,CC-13,CC-14,CC-1 open-terminal: cap-reached item=CC-2 cap=5 running=5 claims=0" \
+  "one=0 two=1 running=CC-11,CC-12,CC-13,CC-14,CC-1 open-terminal: cap-reached item=CC-2 cap=5 running=5 claims=0 setting=ORCH_OVERSEER_LANES" \
   "a launch onto an account carrying five lanes proceeds, and the fleet cap still refuses the next"
 
 echo "=== --over-cap inside the cap passes nothing ==="
@@ -514,12 +547,12 @@ launch one 1 --lane "$LANE_A" --wait-slot CC-1 &
 WAITER=$!
 await_line one '^open-terminal: slot-waiting'
 assert_eq "$(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
-  "open-terminal: slot-waiting item=CC-1 cap=1 running=1 claims=0 opened=no" \
+  "open-terminal: slot-waiting item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES opened=no" \
   "a launch at the fleet cap waits, naming the count, and opens nothing"
 seed_claim CC-8 "$LANE_B"
 await_line one '^open-terminal: slot-waiting' 2
 assert_eq "$(key one | tail -n 1)" \
-  "open-terminal: slot-waiting item=CC-1 cap=1 running=1 claims=1" \
+  "open-terminal: slot-waiting item=CC-1 cap=1 running=1 claims=1 setting=ORCH_OVERSEER_LANES" \
   "a change in the count it waits on is printed again"
 rm -f -- "${CLAIMS:?}/claims/CC-8.claim"
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(if .item == "CC-9" then .status = "done" else . end)' >/dev/null
@@ -664,7 +697,7 @@ row batch
 seed_running CC-9
 launch one 1 --lane "$LANE_A" CC-1 CC-2
 assert_eq "rc=$(rc one) $(key one) running=$(running)" \
-  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
+  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 setting=ORCH_OVERSEER_LANES running=CC-9" \
   "the first refused item ends the batch, so the second is neither judged nor launched"
 
 echo "=== a count or a lock that cannot be had refuses before any window ==="

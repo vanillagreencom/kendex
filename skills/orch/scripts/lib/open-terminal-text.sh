@@ -87,17 +87,17 @@ ot_message() { # REASON FIELD=VALUE...
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
-    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running, preparing or parked, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record has none of those statuses while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
-    cap-unreadable) text='The lanes in flight could not be counted, so the fleet cap cannot be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
+    cap-reached) text='A launch here would exceed the cap named by setting. cap is its limit. running counts the lane records of that cap whose status is running, preparing or parked, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record has none of those statuses while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
+    cap-unreadable) text='The lanes in flight could not be counted, so the launch cap cannot be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='The fleet'"'"'s launch lock, which lock names, was not taken inside its bound, so the count and the reservation write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
     cap-lock-unopenable) text='The fleet'"'"'s launch lock file, which lock names, could not be opened, so the count and the reservation write cannot be one step. Nothing was launched. The shell'"'"'s own line above names why: a directory at that path, a state directory this launch cannot write, or a read-only file system.' ;;
     cap-reserve-failed) text='The reservation that holds this launch'"'"'s place in the count could not be written to the claim store that store names, so the next count would not see this launch. Nothing was launched. Check that directory: a store that cannot take a reservation cannot take the claim that follows it either.' ;;
     reserve-unremoved) text='The reservation this launch wrote could not be removed. Until the lane record is written the count holds this lane twice; after the lane stops, the reservation still counts as a lane in flight until this launcher exits, when it lapses.' ;;
-    cap-option-unanchored) text='This option answers the fleet cap, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
+    cap-option-unanchored) text='This option answers the launch cap, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
     over-cap-items) text='--over-cap admits one launch past a cap. Nothing was launched. Pass one item.' ;;
-    over-cap-admitted) text='The launch goes past the fleet cap on --over-cap, and its lane record carries that as over_cap fleet.' ;;
+    over-cap-admitted) text='The launch goes past the cap named by setting on --over-cap. Its lane record carries over_cap fleet or cloud for that cap.' ;;
     lock-waiting) text='Another launch into this fleet holds the launch lock that lock names, so this one waits for it, at most wait-s seconds.' ;;
-    slot-waiting) text='The fleet cap is reached, so this launch waits under --wait-slot: it counts again every few seconds without holding the launch lock, judges its lane again, and counts and reserves under the lock once the cap has room. The fields are the count it waits on, printed again whenever that count changes.' ;;
+    slot-waiting) text='The cap named by setting is reached, so this launch waits under --wait-slot: it counts again every few seconds without holding the launch lock, judges its lane again, and counts and reserves under the lock once the cap has room. The fields are the count it waits on, printed again whenever that count changes.' ;;
     state-absent) text='No oversee workflow state exists at the address this wake resolved, so nothing was ever launched into it. Nothing woken. Point the wake at the fleet state with --state-dir, the directory holding the file workflow-state path oversee prints from the overseer checkout.' ;;
     tmux-opened) text='The tmux window is open.' ;;
     launch-confirmed) text='The lane started while its composer was checked. No further text was sent.' ;;
@@ -749,12 +749,13 @@ recovery. Legacy records without those choices require a manual relaunch.
 The record also carries launched_at,
 status `running`, or `preparing` with its `prepare` record for a hosted lane
 waiting in a background job or saved foreground continuation (see --host),
-and over_cap, `fleet` where an
---over-cap launch passed the fleet cap;
+and over_cap, `fleet` or `cloud` where an
+--over-cap launch passed the fleet or cloud cap;
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item,
-launched_at and over_cap and sets status back to running; --wake rewrites session_id
+launched_at and sets status back to running. It keeps over_cap unless it
+passes a cap through --over-cap again, which records that cap. --wake rewrites session_id
 and status, and an item no entry names is record-missing, since this launcher
 never launched it. A state that cannot be created refuses the whole launch as
 state-unwritable before any window opens; a wake creates no state, and one
@@ -765,7 +766,7 @@ into it is record-write-failed: the window stands, the item counts as failed,
 and the watch will not carry it until the record is written, by hand per
 oversee.md § 3 Lane record or by a relaunch once the window is closed.
 
-Every launch and relaunch under --state-dir is judged on the fleet cap before
+Every launch and relaunch under --state-dir is judged on its cap before
 its worktree, under a launch lock beside the fleet state held from the count
 through a reservation written into the claim store, which every later count
 sees as this launch's lane until its claim or record stands, or the item
@@ -773,23 +774,28 @@ ends, so two launchers cannot both pass on one count; a launch that finds the
 lock held prints lock-waiting and waits for it. The worktree and host creates
 run with no lock held. A reservation that cannot be written refuses the
 launch as cap-reserve-failed.
-The fleet cap, ORCH_OVERSEER_LANES (default 3), read through orch-env, counts
-the records whose status is running, preparing (a hosted background job or
+The fleet cap, ORCH_OVERSEER_LANES (default 3), and the Claude cloud cap,
+ORCH_OVERSEER_CLOUD_LANES (default 10 per overseer), read through orch-env,
+count records whose status is running, preparing (a hosted background job or
 saved foreground continuation, see --host) or parked (a hosted lane stopped by
-`lane-close --park`, whose resume takes back its slot) plus the live launch claims and reservations this
-fleet wrote that no such record names (a claim store several fleets share
-counts each fleet's own claims here); a launch that would pass it is refused
-as cap-reached, naming the cap, those records and the claims. A connected
-repository launch reads this cap in the overseer's resolved directory, with
-the launcher's ORCH_OVERSEER_LANES and KENDEX_ENV_FILE dropped. Own-repository
-launches keep their checkout's cap. No cap bounds
+`lane-close --park`, whose resume takes back its slot). A record's declared
+kind selects its cap: claude-cloud uses the cloud cap; every other kind,
+a cloud session's landing lane included, uses the fleet cap. Host names do
+not select caps. Live claims and reservations this fleet wrote that no held
+record names count against their declared kind's cap; older claims with no
+kind use the fleet cap. A shared claim store counts each fleet's own claims.
+A launch past its cap is refused as cap-reached. setting names the cap;
+cap is its limit, running its held records, and claims its other live claims
+and reservations. A connected repository launch reads both caps in the
+overseer's resolved directory, with the launcher's cap settings and
+KENDEX_ENV_FILE dropped. Own-repository launches keep their checkout's caps. No cap bounds
 the lanes on one account: `--lane auto` chooses the account by its headroom
 through `lanes pick`. A refusal stops the batch, and so does a claim this run
 failed to write under --lane auto, whose re-pick reads claims, as
 claim-unrecorded. A store that cannot be read refuses as cap-unreadable, a
 lock file that cannot be opened as cap-lock-unopenable, and a lock another
-launch holds past the wait as cap-lock-failed. A --relaunch meets the fleet
-cap where the item has no running, preparing or parked record. A saved
+launch holds past the wait as cap-lock-failed. A --relaunch meets its cap where the item has no running, preparing or
+parked record counted by that cap. A saved
 foreground continuation uses its held slot after its identity matches.
 --wake is not judged.
 Both flags below need --state-dir, and are refused as cap-option-unanchored
@@ -801,9 +807,9 @@ without it:
                     named lane is refused as lane-model-walled if its window
                     walled during the wait. slot-waiting prints the count
                     waited on, again whenever it changes.
-  --over-cap        Admit one launch past the fleet cap, printed as
+  --over-cap        Admit one launch past its cap, printed as
                     over-cap-admitted and recorded in its lane record as
-                    over_cap fleet. One item only, refused as over-cap-items
+                    over_cap fleet or cloud for the cap passed. One item only, refused as over-cap-items
                     otherwise.
 
 Every launch, relaunch and wake under --state-dir is judged on the overseer's
@@ -826,7 +832,7 @@ blank-separated list, empty by default, which admits the overseer's own
 repository alone. The lane record of a launch it admits carries that
 repository as repo where nothing else names one. Any other is refused as
 overseer-foreign, and one that cannot be judged as overseer-unjudged, except a
-launch or relaunch whose state does not parse, which the fleet cap refuses
+launch or relaunch whose state does not parse, which the launch cap refuses
 first as cap-unreadable. A --state-dir below a .git entry git cannot read is
 one that cannot be judged, never one outside any checkout.
 

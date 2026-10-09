@@ -1387,7 +1387,8 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # every field of an entry that already names the item; a relaunch rewrites
 # what a relaunch can change (a lane moved to another account, host or window)
 # and keeps launched_at, the fleet start the watch is given as --since, and
-# over_cap, the exception its launch was admitted on. A relaunch that records
+# over_cap, the exception its launch was admitted on, unless this relaunch
+# passes a cap through --over-cap again. A relaunch that records
 # the lane preparing before start or stopped has not taken, so it also keeps
 # harness, model, account and session_id as the last launch that took wrote
 # them: the next relaunch's route is judged on them. A wake
@@ -1469,6 +1470,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
+       | if $rec.over_cap == null then . else . + {over_cap: $rec.over_cap} end
        | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
@@ -2332,7 +2334,7 @@ tmux_window_open() { # DIR TITLE
   # identity — and never fatal: a launch that worked is not a failure because
   # its bookkeeping did not.
   if [[ -n "$LANE_ENV" && -n "$server" ]]; then
-    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET"; then
+    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET" "$HOST_KIND"; then
       # This launch stands, but the next `auto` pick cannot see it: the batch
       # stops at the top of the next item rather than stacking blind.
       CLAIM_WRITE_FAILED=true
@@ -3332,12 +3334,14 @@ launch_prepared() { # LOG
 }
 
 # The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the items the
-# fleet has in flight, its running, preparing and parked lanes. No cap bounds
+# fleet has in flight, its running, preparing and parked lanes except those
+# declared claude-cloud, which ORCH_OVERSEER_CLOUD_LANES bounds separately.
+# A cloud session's landing lane consumes a fleet slot. No cap bounds
 # the lanes one account carries: `lanes pick` chooses the account by its
 # headroom. A launch naming no fleet has no records to count, and a wake rouses
 # a lane the fleet already counts, so neither is judged. A relaunch is judged
-# where it adds a lane: where the item has no running, preparing or parked
-# record. A parked lane keeps its slot, so its resume never meets the cap.
+# where it adds a lane to its cap: where the item has no running, preparing or
+# parked record held in the same cap. A parked lane keeps its slot in that cap.
 #
 # The count and the reservation write are one step under the fleet's launch
 # lock, taken per item and released once the reservation stands: two launchers
@@ -3401,10 +3405,13 @@ if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   if [[ "$OVERSEER_BIND" == connected ]]; then
     FLEET_CAP="$(cd -- "$OVERSEER_DIR" && unset ORCH_OVERSEER_LANES KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
+    CLOUD_CAP="$(cd -- "$OVERSEER_DIR" && unset ORCH_OVERSEER_CLOUD_LANES KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" ORCH_OVERSEER_CLOUD_LANES 10)" || exit 1
   else
     FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
+    CLOUD_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_CLOUD_LANES 10)" || exit 1
   fi
   FLEET_CAP=$((10#$FLEET_CAP))
+  CLOUD_CAP=$((10#$CLOUD_CAP))
 fi
 launched=0
 preparing=0

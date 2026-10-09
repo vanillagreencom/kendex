@@ -294,9 +294,14 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # QA_UI_PATHS = "ui/src/*"
 # QA_UI_DESIGN_DOC = "docs/design-system.md"
 
-# How many lanes the overseer keeps running at once. A launch that would
-# go past it is refused.
+# How many running, preparing or parked fleet lanes the overseer holds.
+# Claude cloud sessions use the separate cloud cap below. Their landing
+# lanes count here. A launch past its cap is refused.
 ORCH_OVERSEER_LANES = "3"
+
+# How many Claude cloud sessions one overseer holds. The record's declared
+# claude-cloud kind owns this cap, regardless of host name.
+ORCH_OVERSEER_CLOUD_LANES = "10"
 
 # External triage. The overseer processes issues and pull requests from
 # outside contributors: it investigates each one, may review and comment,
