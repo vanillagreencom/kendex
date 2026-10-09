@@ -88,6 +88,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ "$state" = all ] || { echo "gh-stub: unsupported state $state" >&2; exit 2; }
+case "${RECONCILE_FIXTURE_PROBE:-}" in
+  command) printf 'gh-stub: error=pr-list-unavailable\n' >&2; exit 1 ;;
+  json) printf 'not-json\n'; exit 0 ;;
+esac
 merged='{"state":"MERGED","mergedAt":"2026-10-08T02:28:00Z","isCrossRepository":false}'
 case "$head" in
   t-10 | t-18) echo "[$merged]" ;;
@@ -215,6 +219,54 @@ OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 { [ "$RC" -eq 1 ] && grep -q "merged-in-review issue=T-18" <<<"$OUT"; } \
   && pass "the shipped sweep reports the same row the control misses" || fail "age bypass row" "rc=$RC out=$OUT"
+
+# GitHub can fail or be absent, and its output can fail the JSON parser.
+# A failed probe must identify the item before the fresh-item age guard.
+probe_failure_reported() {
+  [ "$RC" -eq 1 ] \
+    && [[ "$OUT" == *"reconcile-work-items: pr-probe-failed issue=T-PROBE command=$probe_cli branch=t-probe"* ]] \
+    && [[ "$OUT" != *"reconcile-work-items: clean"* ]] \
+    && [ -s "$TMP/probe.stderr" ]
+}
+while IFS='|' read -r probe_case probe_state probe_updated probe_mode; do
+  probe_cli="$TMP/gh-stub"
+  [ "$probe_case" != missing ] || probe_cli="$TMP/missing-gh"
+  issue T-PROBE "probe failure" "$probe_state" started "$probe_updated" | jq -s . \
+    >"$R/.tracker-fixture/issues.json"
+  OUT=""; RC=0
+  OUT="$(cd "$R" && RECONCILE_FIXTURE_PROBE="$probe_mode" RECONCILE_GH_CLI="$probe_cli" "$RW" 2>"$TMP/probe.stderr")" || RC=$?
+  probe_failure_reported && pass "$probe_case: failed probe reports its issue and retains error evidence" \
+    || fail "$probe_case: failed probe" "rc=$RC out=$OUT"
+  if [ "$probe_updated" = "$old" ]; then
+    case "$OUT" in *"started-stale issue=T-PROBE"*"pr=unverified"*) pass "$probe_case: stale failure keeps the ordinary finding" ;;
+      *) fail "$probe_case: stale unverified finding" "$OUT" ;;
+    esac
+  else
+    assert_not_contains "$OUT" "started-stale issue=T-PROBE" "$probe_case: fresh probe failure does not become stale"
+  fi
+done <<CASES
+command|In Review|$now|command
+missing|In Review|$now|
+json|In Review|$now|json
+stale-review|In Review|$old|command
+stale-progress|In Progress|$old|command
+CASES
+
+# Control: keep the failed-probe text but suppress the finding in a private
+# copy. The same fresh-item assertion must reject that sweep.
+cp -- "$RW" "$RW.probe-mutant"
+mutate_file "$RW.probe-mutant" \
+  '    note pr-probe-failed "issue=$iid" "command=$GH_CLI" "branch=$branch"' \
+  '    : pr-probe-failed "issue=$iid" "command=$GH_CLI" "branch=$branch"'
+issue T-PROBE "probe failure" "In Review" started "$now" | jq -s . >"$R/.tracker-fixture/issues.json"
+probe_cli="$TMP/gh-stub"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_FIXTURE_PROBE=command RECONCILE_GH_CLI="$probe_cli" bash "$RW.probe-mutant" 2>"$TMP/probe.stderr")" || RC=$?
+if probe_failure_reported; then
+  fail "control: the failed-probe assertion accepted a suppressed finding" "rc=$RC out=$OUT"
+else
+  pass "control: the failed-probe assertion rejects a suppressed finding"
+fi
 
 # --- settings-file threshold -------------------------------------------------
 # RECONCILE_STALE_HOURS set in the project's kendex.settings.toml (not the

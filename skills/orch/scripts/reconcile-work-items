@@ -28,8 +28,8 @@
 #
 # RECONCILE_STALE_HOURS   started-stale threshold (default 24)
 # RECONCILE_GH_CLI        PR-probe command (default gh); absent/failing gh
-#                         degrades that item to "PR state unverified", never
-#                         to silence
+#                         reports pr-probe-failed at any age; stale items also
+#                         retain started-stale with PR state unverified
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,6 +69,7 @@ message() {
     scan-failed) printf 'The issue scan failed.\n' ;;
     clock-failed) printf 'The current time could not be read.\n' ;;
     invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
+    pr-probe-failed) printf 'The pull request probe failed. The issue PR state remains unverified.\n' ;;
     container-parked) printf 'All non-canceled children are Done. Close the parent or state why it remains open.\n' ;;
     merged-in-review) printf 'Every linked pull request has merged. Complete it with `issues complete --post-merge-at <mergedAt>`, which moves it to Done or Verifying.\n' ;;
     started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
@@ -157,19 +158,22 @@ done <"$TMPD/containers"
 # this repository's PRs from BRANCH; it fails when the probe cannot answer, and
 # the caller then reports the PR state unverified rather than nothing.
 probe_prs() {
-  command -v "${GH_CLI%% *}" >/dev/null 2>&1 || return 1
+  command -v "${GH_CLI%% *}" >/dev/null 2>&1 || {
+    message missing-command "command=${GH_CLI%% *}" >&2
+    return 1
+  }
   # This repo's branch only — a fork's same-named branch is someone else's
   # PR and must not vouch for this item. The probe answers for THIS checkout:
   # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
   # repository's same-named branch vouch for this item.
   local listed
-  listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json state,mergedAt,isCrossRepository 2>/dev/null)" || return 1
+  listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json state,mergedAt,isCrossRepository)" || return 1
   jq -er '[.[] | select(.isCrossRepository | not)]
     | [(map(select(.state == "OPEN")) | length),
        (map(select(.state == "MERGED")) | length),
        (map(select(.state != "OPEN" and .state != "MERGED")) | length),
        (map(select(.state == "MERGED") | .mergedAt) | max // "none")]
-    | map(tostring) | join(" ")' <<<"$listed" 2>/dev/null
+    | map(tostring) | join(" ")' <<<"$listed"
 }
 
 now_epoch="$(date -u +%s)" || config_error clock-failed command=date
@@ -194,7 +198,11 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
   age_hours=$(((now_epoch - updated_epoch) / 3600))
   [ "$istate" = "In Review" ] || [ "$age_hours" -ge "$STALE_HOURS" ] || continue
   branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
-  prs="$(probe_prs "$branch")" || prs=""
+  if ! prs="$(probe_prs "$branch" 2>"$TMPD/pr-probe-error")"; then
+    prs=""
+    note pr-probe-failed "issue=$iid" "command=$GH_CLI" "branch=$branch"
+    cat "$TMPD/pr-probe-error" >&2
+  fi
   if [ -n "$prs" ]; then
     read -r open merged unmerged merged_at <<<"$prs"
     # Age plays no part here: the merge already happened and no later sweep
