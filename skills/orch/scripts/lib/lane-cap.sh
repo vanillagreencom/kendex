@@ -3,7 +3,7 @@
 # Owner: open-terminal, the one script that sources this file.
 #
 # What a fleet launch is judged on: the overseer binding, the repository the
-# launch may run in, and the fleet cap, its count, launch lock, reservation and
+# launch may run in, and its cap, count, launch lock, reservation and
 # gate. What the cap bounds is stated where open-terminal decides whether a
 # launch is judged. It reads open-terminal's globals (CLAIM_ROOT, STATE_DIR,
 # WORKFLOW_STATE, the cap setting and options) and calls its ot_message and
@@ -93,7 +93,8 @@ cap_take() { # ITEM
   return 1
 }
 
-# Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls
+# Sets CAP_KIND (the launch's cap identity), CAP_RUNNING (records
+# lib/lane-claims.sh's LANE_RUNNING_JQ calls
 # in_flight, running, preparing or parked, here called held, in the launch's
 # cap), CAP_INFLIGHT
 # (live claims and reservations naming this fleet that are no held record's
@@ -112,36 +113,28 @@ cap_take() { # ITEM
 # read missed is a record this read finds. Returns 1 on a store it could not
 # read: a count missing a lane is a cap that admits one lane too many.
 cap_count() { # ITEM KEY
-  local lanes out held windows="" claims tag window kind rc=0
+  local lanes out claims rc=0
   claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" cap)" || rc=$?
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
   lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || rc=$?
-  # One line per held record, tagged and joined by the unit separator, which
-  # keeps an empty window a field of its own.
-  [[ "$rc" -eq 0 ]] && out="$(jq -r --arg key "$2" --arg kind "$HOST_KIND" "$LANE_RUNNING_JQ"'
-    def same_cap: (.kind == "claude-cloud") == ($kind == "claude-cloud");
+  # Classify the launch, records and claims together: the count and its bound
+  # must use the same cap. Only that cap's held windows deduplicate claims.
+  # A landing reserves a fleet slot while its old cloud record keeps its window.
+  [[ "$rc" -eq 0 ]] && out="$(jq -r --arg key "$2" --arg kind "$HOST_KIND" --arg fleet "$CAP_FLEET" \
+    --arg claims "$claims" "$LANE_RUNNING_JQ"'
+    def cap_kind: if . == "claude-cloud" then "cloud" else "fleet" end;
+    ($kind | cap_kind) as $cap
+    | def same_cap: (.kind | cap_kind) == $cap;
     ([.[] | objects | select(.item == $key)] | first) as $own
-    | (if $own == null then "absent" elif ($own | in_flight and same_cap) then "held" else "stopped" end),
-      (.[] | select(in_flight) | ["held", (.window // "" | sub("^[^:]*:"; "")), (.kind // "")] | join("\u001f"))' <<<"$lanes")" || rc=1
+    | [.[] | select(in_flight and same_cap)] as $held
+    | [$held[] | .window // "" | sub("^[^:]*:"; "") | select(. != "")] as $windows
+    | [$claims | split("\n")[] | select(length > 0) | split("\t")
+       | select(.[4] == $fleet and (.[6] | cap_kind) == $cap)
+       | select(.[1] as $window | ($windows | index($window)) == null)] as $live
+    | [$cap, (if $own == null then "absent" elif ($own | in_flight and same_cap) then "held" else "stopped" end),
+       ($held | length), ($live | length)] | @tsv' <<<"$lanes")" || rc=1
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
-  { read -r CAP_ITEM_HELD; held="$(cat)"; } <<<"$out"
-  CAP_RUNNING=0
-  while IFS=$'\037' read -r tag window kind; do
-    [[ "$tag" == held ]] || continue
-    if [[ ( "$kind" == claude-cloud && "$HOST_KIND" == claude-cloud ) || ( "$kind" != claude-cloud && "$HOST_KIND" != claude-cloud ) ]]; then
-      CAP_RUNNING=$((CAP_RUNNING + 1))
-      [[ -z "$window" ]] || windows+="$window"$'\n'
-    fi
-  done <<<"$held"
-  # Only this cap's held windows exclude their own claims. A landing reserves
-  # a fleet slot while its old cloud record still holds the same window.
-  CAP_INFLIGHT="$(CAP_WINDOWS="$windows" CAP_FLEET="$CAP_FLEET" CAP_KIND="$HOST_KIND" awk -F'\t' '
-    BEGIN {
-      n = split(ENVIRON["CAP_WINDOWS"], w, "\n")
-      for (i = 1; i <= n; i++) if (w[i] != "") window[w[i]] = 1
-    }
-    NF && $5 == ENVIRON["CAP_FLEET"] && !($2 in window) && (($7 == "claude-cloud") == (ENVIRON["CAP_KIND"] == "claude-cloud")) { f++ }
-    END { print f + 0 }' <<<"$claims")"
+  IFS=$'\t' read -r CAP_KIND CAP_ITEM_HELD CAP_RUNNING CAP_INFLIGHT <<<"$out"
 }
 
 # Returns 0 with the item's reservation written and the lock released when
@@ -155,17 +148,17 @@ cap_count() { # ITEM KEY
 # printing slot-waiting whenever the count it waits on changes, and judges the
 # lane again before the count that admits it.
 cap_gate() { # ITEM KEY WINDOW
-  local item="$1" key="$2" stale=false waited_on="" cap setting cap_kind
+  local item="$1" key="$2" stale=false waited_on="" cap setting
   CAP_PASSED=""
   while :; do
     # The declared kind owns both the count and the bound. A preference
     # rejudgment can change it while --wait-slot is waiting.
-    cap="$FLEET_CAP"; setting=ORCH_OVERSEER_LANES; cap_kind=fleet
-    if [[ "$HOST_KIND" == claude-cloud ]]; then
-      cap="$CLOUD_CAP"; setting=ORCH_OVERSEER_CLOUD_LANES; cap_kind=cloud
-    fi
     cap_take "$item" || return 1
     cap_count "$item" "$key" || { cap_release; return 1; }
+    cap="$FLEET_CAP"; setting=ORCH_OVERSEER_LANES
+    if [[ "$CAP_KIND" == cloud ]]; then
+      cap="$CLOUD_CAP"; setting=ORCH_OVERSEER_CLOUD_LANES
+    fi
     if [[ ( "$RELAUNCH" == true || -n "$host_line" ) && "$CAP_ITEM_HELD" == held ]] || (( CAP_RUNNING + CAP_INFLIGHT < cap )); then
       [[ "$stale" == true ]] || { cap_reserve "$item" "$3"; return; }
       cap_release
@@ -176,7 +169,7 @@ cap_gate() { # ITEM KEY WINDOW
     if [[ "$OVER_CAP" == true ]]; then
       cap_reserve "$item" "$3" || return 1
       # shellcheck disable=SC2034  # read by open-terminal's lane_record_write
-      CAP_PASSED="$cap_kind"
+      CAP_PASSED="$CAP_KIND"
       ot_message over-cap-admitted "item=$item" "cap=$cap" "running=$CAP_RUNNING" "claims=$CAP_INFLIGHT" "setting=$setting" >&2
       return 0
     fi

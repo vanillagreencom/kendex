@@ -35,7 +35,7 @@
 # and a reader names that claim's account from its canonical config dir.
 # The fleet is the oversee state file of the fleet the launch was judged in
 # (`open-terminal --state-dir`), empty for a launch naming no fleet, and it is
-# what lets one store serve several fleets: open-terminal's fleet cap counts
+# what lets one store serve several fleets: open-terminal's launch cap counts
 # only its own fleet's claims, while `lanes pick` charges an account with
 # whatever fleet's claims name it. A claim with an empty fleet, written by a
 # launch naming no fleet or before claims carried one, counts toward its
@@ -46,9 +46,9 @@
 # A reservation is the same record under `.reserve`, with the launcher's pid as
 # its server and `-` as its pane: the place in the count a judged launch holds
 # from its count until its claim or record stands, or the item ends, live while
-# that launcher runs. Its config dir is empty: only the count form of
-# lane_claims_read carries reservations, and the fleet cap that reads it judges
-# a reservation by its window and fleet, never its account. Every other reader
+# that launcher runs. Its config dir is empty: only the count and cap modes of
+# lane_claims_read carry reservations, and the launch cap judges
+# a reservation by its window, fleet and kind, never its account. Every other reader
 # reads claims alone.
 set -euo pipefail
 
@@ -307,7 +307,7 @@ lane_claim_reserve() {
 # The one answer to which oversee lane records are lanes in flight, as jq
 # definitions a caller prefixes to its own program: oversee-watch carries the
 # running records. open-terminal counts the in_flight
-# records against its fleet cap, so a resume never adds a lane. The watch and
+# records against their cap, so a resume in the same cap adds no lane. The watch and
 # the cap cannot describe two different fleets. Hand-appended entries that are
 # not objects are no lane.
 LANE_RUNNING_JQ='def running: type == "object" and .status == "running";

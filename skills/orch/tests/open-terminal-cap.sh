@@ -5,7 +5,7 @@
 # launch lock, held from the count through the reservation write, which
 # refuses the launch where it fails. No cap bounds the lanes on one account.
 # A relaunch meets the fleet cap where the item has no running, preparing or
-# parked record. --over-cap admits one launch and records the cap it passed, and
+# parked record held in that cap. --over-cap admits one launch and records the cap it passed, and
 # --wait-slot waits for room instead of refusing.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state and
@@ -459,7 +459,7 @@ LANDING_OT="$OT"
 OT="$(mutant_scripts landing-reservation-control lib/lane-cap.sh)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/landing-reservation-control"
 mutate_file "${OT%/*}/lib/lane-cap.sh" \
-  '  done <<<"$held"' $'    [[ -z "$window" ]] || windows+="$window"$\'\\n\'\n  done <<<"$held"'
+  '[$held[] | .window // ""' '[.[] | select(in_flight) | .window // ""'
 SAVED_FAIL="$FAIL"
 FAIL=0
 landing_race control > "$TMP_ROOT/landing-reservation-control.out"

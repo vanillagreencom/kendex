@@ -88,12 +88,12 @@ ot_message() { # REASON FIELD=VALUE...
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
     cap-reached) text='A launch here would exceed the cap named by setting. cap is its limit. running counts the lane records of that cap whose status is running, preparing or parked, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record has none of those statuses while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
-    cap-unreadable) text='The lanes in flight could not be counted, so the fleet cap cannot be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
+    cap-unreadable) text='The lanes in flight could not be counted, so the launch cap cannot be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='The fleet'"'"'s launch lock, which lock names, was not taken inside its bound, so the count and the reservation write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
     cap-lock-unopenable) text='The fleet'"'"'s launch lock file, which lock names, could not be opened, so the count and the reservation write cannot be one step. Nothing was launched. The shell'"'"'s own line above names why: a directory at that path, a state directory this launch cannot write, or a read-only file system.' ;;
     cap-reserve-failed) text='The reservation that holds this launch'"'"'s place in the count could not be written to the claim store that store names, so the next count would not see this launch. Nothing was launched. Check that directory: a store that cannot take a reservation cannot take the claim that follows it either.' ;;
     reserve-unremoved) text='The reservation this launch wrote could not be removed. Until the lane record is written the count holds this lane twice; after the lane stops, the reservation still counts as a lane in flight until this launcher exits, when it lapses.' ;;
-    cap-option-unanchored) text='This option answers the fleet cap, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
+    cap-option-unanchored) text='This option answers the launch cap, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
     over-cap-items) text='--over-cap admits one launch past a cap. Nothing was launched. Pass one item.' ;;
     over-cap-admitted) text='The launch goes past the cap named by setting on --over-cap. Its lane record carries over_cap fleet or cloud for that cap.' ;;
     lock-waiting) text='Another launch into this fleet holds the launch lock that lock names, so this one waits for it, at most wait-s seconds.' ;;
@@ -807,7 +807,7 @@ without it:
                     named lane is refused as lane-model-walled if its window
                     walled during the wait. slot-waiting prints the count
                     waited on, again whenever it changes.
-  --over-cap        Admit one launch past the fleet cap, printed as
+  --over-cap        Admit one launch past its cap, printed as
                     over-cap-admitted and recorded in its lane record as
                     over_cap fleet or cloud for the cap passed. One item only, refused as over-cap-items
                     otherwise.
@@ -832,7 +832,7 @@ blank-separated list, empty by default, which admits the overseer's own
 repository alone. The lane record of a launch it admits carries that
 repository as repo where nothing else names one. Any other is refused as
 overseer-foreign, and one that cannot be judged as overseer-unjudged, except a
-launch or relaunch whose state does not parse, which the fleet cap refuses
+launch or relaunch whose state does not parse, which the launch cap refuses
 first as cap-unreadable. A --state-dir below a .git entry git cannot read is
 one that cannot be judged, never one outside any checkout.
 
