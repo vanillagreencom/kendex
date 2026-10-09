@@ -163,6 +163,7 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
         launch_instructions: launch.map(str::to_owned),
         additional_instructions: additional.map(str::to_owned),
         custom_hooks: vec![],
+        role_policy: None,
     };
     let legacy = generate(&effective).unwrap().text;
     let legacy = if crlf {

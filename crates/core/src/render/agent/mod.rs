@@ -504,6 +504,7 @@ mod tests {
             launch_instructions: None,
             additional_instructions: merged_instructions(&table, "rust"),
             custom_hooks: vec![],
+            role_policy: None,
         };
         let text = generate(&agent).unwrap().text;
         assert!(text.ends_with("\n\n  rust rule\n"), "{text:?}");
