@@ -832,17 +832,6 @@ WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")" || refuse write-failed "$TM
 lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
-# A send to a lane is matched on the channel its record's host kind declares
-# (../schemas/lane-host.md § Host kinds). A mailbox channel goes on to the
-# mailbox below, and so does a lane with no record when the send names no
-# fleet state; a send that names one refuses an unreadable state or one with
-# no record for the lane, since either would land a cloud lane's directive in
-# a mailbox nobody reads. A session channel is a Claude cloud session of this
-# repository, judged by its record's mail_root as a mailbox send is by its
-# root: a directive is queued into the record's session through the Claude
-# CLI under the record's account, which answers {ok, session_id, url}. Such a
-# lane never asks, so an answer has nothing to reach, and no hook enforces a
-# halt there.
 # The cause readings a stalled cloud lane's close carries into the fleet log,
 # kept on its record as directive_send: when this send ran, its result
 # (sent, archived or failed) and the CLI's words, and the account's cloud
@@ -850,8 +839,8 @@ trap lm_cleanup EXIT
 # makes, and no read of a session's own state exists (Claude Code 2.1.295
 # documents none), so these are the only causes it can name. A credit read
 # that fails, or a reading with no credit body, records "unread", never an
-# empty credit. The send already ran,
-# so a record write that fails is noted and the send's outcome stands.
+# empty credit. The send already ran, so a record write that fails is noted
+# and the send's outcome stands.
 lm_send_record() { # RESULT CAUSE
   local credit
   credit="$(ORCH_LANE_DIRS="$account" "$SCRIPT_DIR/lanes" list --harness claude --local --json 2>/dev/null |
@@ -864,6 +853,17 @@ lm_send_record() { # RESULT CAUSE
     { lm_message send-unrecorded "$ITEM" >&2; cat -- "$WORK_DIR/state.err" >&2; }
 }
 
+# A send to a lane is matched on the channel its record's host kind declares
+# (../schemas/lane-host.md § Host kinds). A mailbox channel goes on to the
+# mailbox below, and so does a lane with no record when the send names no
+# fleet state; a send that names one refuses an unreadable state or one with
+# no record for the lane, since either would land a cloud lane's directive in
+# a mailbox nobody reads. A session channel is a Claude cloud session of this
+# repository, judged by its record's mail_root as a mailbox send is by its
+# root: a directive is queued into the record's session through the Claude
+# CLI under the record's account, which answers {ok, session_id, url}. Such a
+# lane never asks, so an answer has nothing to reach, and no hook enforces a
+# halt there.
 lm_send_channel() {
   local state_args=() rc=0 exists record host channel files harness account session root out answer cause
   [ -z "$STATE_DIR" ] || state_args=(--state-dir "$STATE_DIR")
