@@ -140,6 +140,45 @@ case "${1:-}" in
     fi
     ;;
   api)
+    if [[ "${2:-}" == repos/*/commits/*/check-runs\?* ]]; then
+      mode="${STUB_COPILOT_FLIGHT:-completed}"
+      count=0
+      [[ ! -f "$STUB_COPILOT_COUNT_FILE" ]] || count=$(cat "$STUB_COPILOT_COUNT_FILE")
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$STUB_COPILOT_COUNT_FILE"
+      [[ "$mode" != fail ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
+      [[ "$mode" != timeline && "$mode" != cycle-* ]] || { echo '[{"check_runs":[]}]'; exit 0; }
+      if [[ "$mode" == finishing ]]; then
+        mode=in_progress
+        [[ "$count" -eq 1 ]] || mode=completed
+      fi
+      printf '[{"check_runs":[{"id":72,"name":"copilot-pull-request-reviewer","status":"%s","started_at":"2026-10-09T06:41:20Z"}]}]\n' "$mode"
+      exit 0
+    fi
+    if [[ "${2:-}" == repos/*/issues/*/timeline\?* ]]; then
+      if [[ "${STUB_COPILOT_FLIGHT:-completed}" == cycle-* ]]; then
+        jq -nc --arg head "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" --arg current "${STUB_CONFIRM_HEAD:-headsha1}" --arg old "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" --arg mode "$STUB_COPILOT_FLIGHT" --argjson count "$(cat "$STUB_COPILOT_COUNT_FILE")" '
+        def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
+        def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
+        def rev($id;$head;$at): {event:"reviewed",id:$id,commit_id:$head,user:{login:"Copilot",type:"Bot"},state:"commented",submitted_at:$at};
+        (if ($mode | startswith("cycle-cancel")) then "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" else $head end) as $b |
+        [[{event:"committed",sha:$b,committer:{date:"2026-10-09T05:00:00Z"}},
+          {event:"committed",sha:$current,committer:{date:"2026-10-09T05:00:01Z"}},
+          {event:"head_ref_force_pushed",commit_id:$old,created_at:"2026-10-09T06:00:00Z"},req(73;"2026-10-09T06:10:00Z")],
+         (if ($mode | startswith("cycle-cancel")) then [{event:"review_request_removed",created_at:"2026-10-09T06:11:00Z",requested_reviewer:{login:"Copilot",type:"Bot"}}]
+          else [work(75;"2026-10-09T06:10:35Z"),rev(81;$old;"2026-10-09T06:20:00Z")] end),
+         (if $mode == "cycle-cancel-boundary" then [{event:"head_ref_force_pushed",commit_id:$b,created_at:"2026-10-09T06:30:00Z"}] else [] end),
+         (if ($mode | startswith("cycle-rereview")) then [req(76;"2026-10-09T06:25:00Z"),work(77;"2026-10-09T06:25:35Z"),rev(82;$old;"2026-10-09T06:26:00Z")] else [] end),
+         (if ($mode | startswith("cycle-cancel")) then [req(74;"2026-10-09T06:41:20Z"),work(78;"2026-10-09T06:41:55Z"),rev(83;$b;"2026-10-09T06:42:05Z")] else [] end),
+         (if ($mode | contains("newer")) then [req(79;"2026-10-09T06:43:00Z"),work(80;"2026-10-09T06:43:35Z")] else [] end),
+         (if $count > 1 then [rev(84;$current;"2026-10-09T06:45:00Z")] else [] end)]'
+      elif [[ "${STUB_COPILOT_FLIGHT:-completed}" == timeline ]]; then
+        jq -nc --argjson count "$(cat "$STUB_COPILOT_COUNT_FILE")" '
+          [[{event:"review_requested",id:73,created_at:"2026-10-09T06:41:20Z",requested_reviewer:{login:"Copilot"}}],
+           if $count > 1 then [{event:"reviewed",id:81,commit_id:"headsha1",user:{login:"Copilot"},submitted_at:"2026-10-09T06:42:05Z"}] else [] end]'
+      else echo '[[]]'; fi
+      exit 0
+    fi
     if [[ "${2:-}" == repos/*/pulls/*/reviews ]]; then
       case "${STUB_REVIEW_READ:-ok}" in
         fail) echo 'HTTP 404: Not Found' >&2; exit 1 ;;
@@ -355,6 +394,8 @@ case "${1:-}" in
           http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
         esac
         head="headsha1"
+        [[ "${STUB_COPILOT_FLIGHT:-}" != cycle-* ]] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        [[ "${STUB_COPILOT_FLIGHT:-}" != cycle-cancel-* ]] || head=cccccccccccccccccccccccccccccccccccccccc
         if [[ "${STUB_HEAD_MODE:-static}" == "changes" ]]; then
           count=0
           if [[ -f "${STUB_HEAD_COUNT_FILE:?}" ]]; then
@@ -470,6 +511,7 @@ run_wait() {
         STUB_RULES_LOG="$RUN/rules-reads" \
         STUB_MARKER_LOG="$RUN/marker-posts" \
         STUB_REQUEST_LOG="$RUN/requests" \
+        STUB_COPILOT_COUNT_FILE="$RUN/copilot-polls" \
         .agents/skills/orch/scripts/approval-wait "$@" ${base_args[@]+"${base_args[@]}"} 2>"$RUN/stderr")
   RC=$?
   set -e
@@ -524,6 +566,7 @@ observe() {
       requests) got="$got requests=$(count_lines "$RUN/requests")" ;;
       request_argv) got="$got request_argv=$(tr ' ' '+' < "$RUN/requests")" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
+      copilot_polls) got="$got copilot_polls=$(cat "$RUN/copilot-polls" 2>/dev/null || echo 0)" ;;
       rules_reads) got="$got rules_reads=$(count_lines "$RUN/rules-reads")" ;;
       rules_url) got="$got rules_url=$(sed -n '$p' "$RUN/rules-reads" 2>/dev/null)" ;;
       marker_posts) got="$got marker_posts=$(count_lines "$RUN/marker-posts")" ;;
@@ -806,14 +849,30 @@ echo "=== PR_COPILOT_REQUESTS=off: a wait in a lane asks the overseer once per h
 # head sends nothing, and a send that fails leaves the wait running and tries
 # again on the next poll.
 mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-9" "$TMP_ROOT/repo/tmp/lane-mail/KEN-8" \
+  "$TMP_ROOT/repo/tmp/lane-mail/KEN-3" "$TMP_ROOT/repo/tmp/lane-mail/KEN-2" \
   "$TMP_ROOT/repo/tmp/lane-mail/KEN-6/to-overseer.jsonl"
+for item in KEN-20 KEN-21 KEN-22 KEN-23 KEN-24 KEN-25 KEN-26 KEN-27 KEN-28 KEN-29 KEN-30 KEN-31; do mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/$item"; done
 table '1 61 61 --json --mode approval --item KEN-9' \
   'a wait on an unapproved head sends one notice over two polls||PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md' \
-  'a second wait on the same head sends nothing||PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md' \
+  'a second wait on the same head sends nothing||PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail|rc=1 status=timeout copilot_polls=0 unsent=0 fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md' \
   'a new head sends its own notice|1 61 183 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=off,STUB_HEAD_MODE=changes|rc=1 status=timeout fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md,headsha2:off:tmp/lane-status-KEN-9.md' \
   'requests on send nothing|1 61 61 --json --mode approval --item KEN-8||rc=1 status=timeout fallback_notices=none' \
   'an approved head sends nothing|1 61 61 --json --mode approval --item KEN-8|PR_COPILOT_REQUESTS=off,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved fallback_notices=none' \
-  'a wait outside a lane sends nothing|1 61 61 --json --mode approval --item KEN-7|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=0 fallback_notices=none' \
+  'a wait outside a lane sends nothing|1 61 61 --json --mode approval --item KEN-7|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail|rc=1 status=timeout copilot_polls=0 unsent=0 fallback_notices=none' \
+  'a wait without an item reads no Copilot work|1 1 1 --json --mode approval|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail|rc=1 status=timeout copilot_polls=0' \
+  'active Copilot work holds the off notice|1 1 1 --json --mode approval --item KEN-8|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=in_progress|rc=1 status=timeout fallback_notices=none' \
+  'completion releases the off notice|1 1 1 --json --mode approval --item KEN-8|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=finishing|rc=1 status=timeout fallback_notices=headsha1:off:tmp/lane-status-KEN-8.md' \
+  'a failed Copilot read sends no notice|1 1 1 --json --mode approval --item KEN-3|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail|rc=1 status=error fallback_notices=none' \
+  'pending timeline work holds the notice until reviewed|1 1 1 --json --mode approval --item KEN-2|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=timeline|rc=1 status=timeout copilot_polls=2 fallback_notices=headsha1:off:tmp/lane-status-KEN-2.md' \
+  'request cycle completed|1 1 1 --json --mode approval --item KEN-20|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-completed,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=1 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-20.md' \
+  'completed cycle after ordinary push|1 1 1 --json --mode approval --item KEN-24|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-completed-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=1 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-24.md' \
+  'new request after ordinary push|1 1 1 --json --mode approval --item KEN-25|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-newer-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-25.md' \
+  'second review cycle completed|1 1 1 --json --mode approval --item KEN-26|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-rereview-completed-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=1 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-26.md' \
+  'second review cycle newer|1 1 1 --json --mode approval --item KEN-27|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-rereview-newer-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-27.md' \
+  'cancelled completed review after ordinary pushes|1 1 1 --json --mode approval --item KEN-29|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-completed,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-29.md' \
+  'unanswered request after cancelled completed history|1 1 1 --json --mode approval --item KEN-30|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-newer,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=2 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-30.md' \
+  'cancelled completed review after a verified boundary|1 1 1 --json --mode approval --item KEN-31|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-boundary,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-31.md' \
+  'request cycle newer|1 1 1 --json --mode approval --item KEN-21|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-newer,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-21.md' \
   'a failed send is retried and ends no wait|1 61 61 --json --mode approval --item KEN-6|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=2' \
   'an unknown setting is refused|1 61 61 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=junk|rc=2 stdout=empty stderr_line=approval-wait:+copilot-requests-invalid+value=junk'
 
@@ -851,27 +910,38 @@ git -C "$MUTANT_REPO" init -q
 git -C "$MUTANT_REPO" config gc.auto 0
 git -C "$MUTANT_REPO" config maintenance.auto false
 mkdir -p "$MUTANT_REPO/tmp/lane-mail/KEN-9"
+for item in KEN-20 KEN-21 KEN-22 KEN-23 KEN-24 KEN-25 KEN-26 KEN-27 KEN-28 KEN-29 KEN-30 KEN-31; do mkdir -p "$MUTANT_REPO/tmp/lane-mail/$item"; done
+mkdir -p "$MUTANT_REPO/tmp/lane-mail/KEN-5" "$MUTANT_REPO/tmp/lane-mail/KEN-4" "$MUTANT_REPO/tmp/lane-mail/KEN-2"
 MUTANT_SCRIPT="$MUTANT_REPO/.agents/skills/orch/scripts/approval-wait"
 PRISTINE="$TMP_ROOT/approval-wait.pristine"
 cp "$MUTANT_SCRIPT" "$PRISTINE"
+MUTANT_READER="$MUTANT_REPO/.agents/skills/orch/scripts/lib/copilot-check-runs.sh"
+READER_PRISTINE="$TMP_ROOT/copilot-reader.pristine"
+cp "$MUTANT_READER" "$READER_PRISTINE"
 
 # control NAME FROM TO ARGS ENV EXPECT — EXPECT holds against the unmutated
 # copy, and fails once the one line FROM reads TO.
 control() {
-  local name="$1" from="$2" to="$3" args="$4" env="$5" expect="$6" count
+  local name="$1" from="$2" to="$3" args="$4" env="$5" expect="$6" count target="$MUTANT_SCRIPT" pristine="$PRISTINE"
+  if [[ "$name" == fallback-cancel ]]; then target="$MUTANT_READER"; pristine="$READER_PRISTINE"; fi
+  cp "$pristine" "$target"
   cp "$PRISTINE" "$MUTANT_SCRIPT"
   WAIT_REPO="$MUTANT_REPO"
+  if [[ "$name" == fallback-timeline ]]; then rm -f "$WAIT_REPO/tmp/lane-mail/KEN-2/copilot-fallback-headsha1.md" "$WAIT_REPO/tmp/lane-mail/KEN-2/to-overseer.jsonl"; fi
+  if [[ "$name" == fallback-cancel ]]; then rm -f -- "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/copilot-fallback-cccccccccccccccccccccccccccccccccccccccc.md" "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/to-overseer.jsonl"; fi
   # shellcheck disable=SC2086
   run_wait "$env" $args
   assert_eq "$(observe "$expect")" "$expect" "control $name: the unmutated copy answers the row" "$RUN/stderr"
-  count="$(grep -Fxc -- "$from" "$PRISTINE" || true)"
+  count="$(grep -Fxc -- "$from" "$pristine" || true)"
   assert_eq "$count" "1" "control $name: the substitution matches one line"
   # ENVIRON, not -v: awk -v escape-processes its value, and awks disagree on
   # the trailing backslash the changes-over-approval lines end in.
-  MUT_FROM="$from" MUT_TO="$to" awk '$0 == ENVIRON["MUT_FROM"] { print ENVIRON["MUT_TO"]; next } { print }' "$PRISTINE" >"$MUTANT_SCRIPT"
-  if cmp -s "$MUTANT_SCRIPT" "$PRISTINE"; then
+  MUT_FROM="$from" MUT_TO="$to" awk '$0 == ENVIRON["MUT_FROM"] { print ENVIRON["MUT_TO"]; next } { print }' "$pristine" >"$target"
+  if cmp -s "$target" "$pristine"; then
     fail "control $name: the mutant must differ from the script"
   fi
+  if [[ "$name" == fallback-timeline ]]; then rm -f "$WAIT_REPO/tmp/lane-mail/KEN-2/copilot-fallback-headsha1.md" "$WAIT_REPO/tmp/lane-mail/KEN-2/to-overseer.jsonl"; fi
+  if [[ "$name" == fallback-cancel ]]; then rm -f -- "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/copilot-fallback-cccccccccccccccccccccccccccccccccccccccc.md" "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/to-overseer.jsonl"; fi
   # shellcheck disable=SC2086
   run_wait "$env" $args
   if [[ "$(observe "$expect")" == "$expect" ]]; then
@@ -879,6 +949,7 @@ control() {
   else
     pass "must-fail $name: the mutant breaks $expect"
   fi
+  cp "$pristine" "$target"
   WAIT_REPO="$TMP_ROOT/repo"
 }
 
@@ -917,7 +988,29 @@ control fallback-once '  if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/d
   '1 61 61 --json --mode approval --item KEN-9' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout fallback_notices=headsha1:off:tmp/lane-status-KEN-9.md'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control fallback-outside-lane '  [ -d "$box" ] || return 0' '  : # [ -d "$box" ] || return 0' \
-  '1 61 61 --json --mode approval --item KEN-7' 'PR_COPILOT_REQUESTS=off' 'rc=1 status=timeout unsent=0 fallback_notices=none'
+  '1 61 61 --json --mode approval --item KEN-7' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail' 'rc=1 status=timeout copilot_polls=0 unsent=0 fallback_notices=none'
+# shellcheck disable=SC2016
+control fallback-existing '  if [ ! -e "$notice" ]; then' '  if true; then # if [ ! -e "$notice" ]; then' \
+  '1 1 1 --json --mode approval --item KEN-9' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail' 'rc=1 status=timeout copilot_polls=0'
+
+# shellcheck disable=SC2016
+control fallback-in-flight '    [ "$copilot_runs" = '\''[]'\'' ] || return 0' \
+  '    : # [ "$copilot_runs" = '\''[]'\'' ] || return 0' \
+  '1 1 1 --json --mode approval --item KEN-5' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=in_progress' 'rc=1 status=timeout fallback_notices=none'
+# shellcheck disable=SC2016
+control fallback-read-failed '    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" "$PR_NUM" 2>"$GH_ERR_FILE"); then' \
+  '    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" "$PR_NUM" 2>"$GH_ERR_FILE" || printf "[]\\n"); then' \
+  '1 1 1 --json --mode approval --item KEN-4' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail' 'rc=1 status=error fallback_notices=none'
+# shellcheck disable=SC2016
+control fallback-cancel '           elif . != null and $event.submitted_at >= .started_at' \
+  '           elif false and . != null and $event.submitted_at >= .started_at' \
+  '1 1 1 --json --mode approval --item KEN-29' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-completed,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc' \
+  'rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-29.md'
+# shellcheck disable=SC2016
+control fallback-timeline '    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" "$PR_NUM" 2>"$GH_ERR_FILE"); then' \
+  '    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" 2>"$GH_ERR_FILE"); then' \
+  '1 1 1 --json --mode approval --item KEN-2' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=timeline' \
+  'rc=1 status=timeout copilot_polls=2 fallback_notices=headsha1:off:tmp/lane-status-KEN-2.md'
 
 # The old loop keeps the error snapshot but performs no request. This must
 # redden the same request-and-continued-wait row, not merely its final status.

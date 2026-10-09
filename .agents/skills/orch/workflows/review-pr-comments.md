@@ -29,7 +29,7 @@ On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries
 
 ## 1. Fetch And Parse
 
-Triage what exists on the PR **right now** — never block on a bot reaching a terminal state. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
+Triage what exists on the PR. The one bounded bot wait is [Copilot work in flight on the current head](../references/copilot-wait.md): run it before the `pr-data` read below. Other bots do not hold this read. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"
@@ -366,7 +366,7 @@ Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_I
 
 PR-level comments and human-only threads stay deferred to § 7.
 
-This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Do **not** wait for bots to re-review — check once for comments that arrived while fixes were being applied, then loop or exit.
+This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Run [the bounded current-head Copilot wait](../references/copilot-wait.md) before the `pr-data` read below. This is the one exception to checking once without waiting for bots to re-review. Then check for comments that arrived while fixes were being applied and loop or exit.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
@@ -406,6 +406,8 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
+Run [the current-head Copilot wait](../references/copilot-wait.md) before the body check, any review request or any head notice in this step. Keep `[COPILOT_WAIT]` for the head routing below. Skip this wait when `pr_order` reads `open-first-returned`, as the step's skip rule directs.
+
 **Skip if** no thread this triage answered is Copilot's and the body check below, run now, exits `0`; any other exit runs this step. **Skip if** workflow state `pr_order` reads `open-first-returned`, with no notice and no request: on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, the lane's `Review:` line still reads pending, and [submit-pr.md](submit-pr.md) § 2 step 1 routes the head once its push lands. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
@@ -427,13 +429,15 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pull
 A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` runs the body check below, and its exit `0` ends this step: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
 
 - **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below, first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per thread `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer` gives its `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [copilot-head-notices.md](../references/copilot-head-notices.md).
-- **Head moved**, by a push for any reviewer's thread. Unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
+- **Head moved**, by a push for any reviewer's thread. If `[COPILOT_WAIT]` names `[HEAD_SHA]` with a `run` other than `none`, that in-flight run counts as the request: record the head below, send no second request, and start the existing approval wait. Otherwise, unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded with no work observed gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
+
+  Only the route that needs a new request runs this command:
 
   ```bash
   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
   ```
 
-  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head and start no wait. Under `cause=refused`, send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] [CAUSE]`, `[CAUSE]` and the line under it as that section sets, which asks for the overseer's fallback approval; under `cause=off` send nothing, since the caller's approval wait sends it.
+  For a new request, route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head and start no wait. Under `cause=refused`, send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] [CAUSE]`, `[CAUSE]` and the line under it as that section sets, which asks for the overseer's fallback approval; under `cause=off` send nothing, since the caller's approval wait sends it.
 
   ```bash
   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'

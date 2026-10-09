@@ -21,7 +21,8 @@ live head, event APPROVE and the text of the body file.
 Options:
   --body-file PATH   the review body, sent as its text
   --hold-copilot     hold fallback approval while a Copilot check run is
-                     queued or in_progress on the live head. Poll every 10
+                     queued or in_progress on the live head, or its timeline
+                     has pending Copilot work. Poll every 10
                      seconds with the same token. A completed hold exits 5
                      without posting: run check-review-replies on the head
                      again before another approval call. An expired hold
@@ -81,7 +82,8 @@ Hold notices can precede it:
   copilot-hold-setting
                      ORCH_COPILOT_HOLD_SECS is not a positive whole number
   copilot-read-failed
-                     check runs could not be read; gh's or jq's words follow.
+                     checks or timeline work could not be read; gh's or jq's
+                     words follow.
                      Nothing is posted
   copilot-finished   a held run ended inside the bound. Nothing is posted;
                      run check-review-replies on the head before retrying
@@ -102,9 +104,11 @@ Exit codes:
   4  head-moved
   5  copilot-finished
 
-Hold notices on stderr, each naming the pull request, head and check run:
-  copilot-in-flight    printed once with the run's started_at (none when
-                       GitHub has not assigned one)
+Hold notices on stderr, each naming the pull request, head and work:
+  copilot-in-flight    printed once with run and started_at. They name the
+                       active check, or the pending review-request or
+                       work-start timeline event when no active check exists.
+                       started_at is none when GitHub has not assigned one.
   copilot-hold-expired printed when the bound ends, with waited seconds;
                        the approval still exits 0 on success
 EOF
@@ -285,7 +289,7 @@ if [[ "$HOLD_COPILOT" -eq 1 ]]; then
   hold_started="$(date +%s)"
   held_run=""
   while :; do
-    if ! runs="$(GH_TOKEN="$token" orch_copilot_check_runs "$REPO" "$live" 2>"$SCRATCH/err")"; then
+    if ! runs="$(GH_TOKEN="$token" orch_copilot_check_runs "$REPO" "$live" "$PR_NUM" 2>"$SCRATCH/err")"; then
       oa_message copilot-read-failed "$PR_NUM" "$REPO" "$live" >&2
       cat -- "$SCRATCH/err" >&2
       exit 1

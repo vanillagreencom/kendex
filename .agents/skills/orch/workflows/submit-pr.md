@@ -94,7 +94,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-pushed
    ```
 
-   Then run [review-pr-comments.md](review-pr-comments.md) § 7.2 from its mode read, past its **Skip if**: the triage's own § 7.2 routed no head on this pull request, so this run is the pushed head's one route whatever threads the triage answered. With no Copilot review on the pull request, the head takes its **Head moved** route, an exact-head request even where the push moved nothing: GitHub's request event restarts pr-watch's quiet period, so an `awaiting-stale` line the hold held rises again for this head now that the hold has ended.
+   Then run [review-pr-comments.md](review-pr-comments.md) § 7.2, including its current-head Copilot wait before the mode read. Keep `[COPILOT_WAIT]` for its **Head moved** route. Bypass only its **Skip if** conditions: the triage's own § 7.2 routed no head on this pull request, so this run routes the pushed head whatever threads the triage answered. With no Copilot review, the head takes **Head moved**. Work already requested on that head counts as its request. Otherwise request that head even where the push moved nothing: GitHub's request event restarts pr-watch's quiet period, so the overseer's held `awaiting-stale` line rises again after the hold ends.
 
 2. **Check for an existing PR**:
 

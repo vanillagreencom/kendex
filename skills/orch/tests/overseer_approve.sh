@@ -36,6 +36,29 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CALLS"
 case "$*" in
+  'api repos/o/r/issues/42/timeline?per_page=100 --paginate --slurp')
+    if [[ "$CHECK_MODE" == cycle-* ]]; then
+      jq -nc --arg head "$LIVE_HEAD" --arg current "$LIVE_HEAD" --arg old "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" --arg mode "$CHECK_MODE" --argjson count "$(cat "$CHECK_READS")" '
+        def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
+        def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
+        def rev($id;$head;$at): {event:"reviewed",id:$id,commit_id:$head,user:{login:"Copilot",type:"Bot"},state:"commented",submitted_at:$at};
+        (if ($mode | startswith("cycle-cancel")) then "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" else $head end) as $b |
+        [[{event:"committed",sha:$b,committer:{date:"2026-10-09T05:00:00Z"}},
+          {event:"committed",sha:$current,committer:{date:"2026-10-09T05:00:01Z"}},
+          {event:"head_ref_force_pushed",commit_id:$old,created_at:"2026-10-09T06:00:00Z"},req(73;"2026-10-09T06:10:00Z")],
+         (if ($mode | startswith("cycle-cancel")) then [{event:"review_request_removed",created_at:"2026-10-09T06:11:00Z",requested_reviewer:{login:"Copilot",type:"Bot"}}]
+          else [work(75;"2026-10-09T06:10:35Z"),rev(81;$old;"2026-10-09T06:20:00Z")] end),
+         (if $mode == "cycle-cancel-boundary" then [{event:"head_ref_force_pushed",commit_id:$b,created_at:"2026-10-09T06:30:00Z"}] else [] end),
+         (if ($mode | startswith("cycle-rereview")) then [req(76;"2026-10-09T06:25:00Z"),work(77;"2026-10-09T06:25:35Z"),rev(82;$old;"2026-10-09T06:26:00Z")] else [] end),
+         (if ($mode | startswith("cycle-cancel")) then [req(74;"2026-10-09T06:41:20Z"),work(78;"2026-10-09T06:41:55Z"),rev(83;$b;"2026-10-09T06:42:05Z")] else [] end),
+         (if ($mode | contains("newer")) then [req(79;"2026-10-09T06:43:00Z"),work(80;"2026-10-09T06:43:35Z")] else [] end),
+         (if $count > 1 then [rev(84;$current;"2026-10-09T06:45:00Z")] else [] end)]'
+    elif [[ "$CHECK_MODE" == timeline ]]; then
+      jq -nc --arg head "$LIVE_HEAD" --argjson count "$(cat "$CHECK_READS")" '
+        [[{event:"review_requested",id:73,created_at:"2026-10-09T06:41:20Z",requested_reviewer:{login:"Copilot"}}],
+         if $count > 1 then [{event:"reviewed",id:81,user:{login:"Copilot"},commit_id:$head,submitted_at:"2026-10-09T06:42:05Z"}] else [] end]'
+    else echo '[[]]'; fi
+    ;;
   'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
     [[ "$*" == "api repos/o/r/commits/$LIVE_HEAD/check-runs?filter=all&per_page=100 --paginate --slurp" ]] || exit 9
     count="$(cat "$CHECK_READS")"
@@ -45,6 +68,7 @@ case "$*" in
     started='"2026-10-09T06:41:20Z"'
     case "$CHECK_MODE" in
       completed) state=completed ;;
+      timeline|cycle-*) echo '[{"check_runs":[]}]'; exit 0 ;;
       finishing) [[ "$count" -eq 1 ]] || state=completed ;;
       queued) state=queued; started=null; [[ "$count" -eq 1 ]] || state=completed ;;
       failed) echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;
@@ -168,6 +192,16 @@ while IFS='|' read -r label mode flag bound want_rc want_post want_reads want_ke
 done <<'EOF'
 in-progress run completes|finishing|yes|600|5|no|2|copilot-finished
 queued run completes|queued|yes|600|5|no|2|copilot-finished
+pending timeline work is reviewed|timeline|yes|600|5|no|2|copilot-finished
+completed old cycle stays closed after push|cycle-completed|yes|600|0|yes|1|
+completed old cycle stays closed after ordinary push|cycle-completed-ordinary|yes|600|0|yes|1|
+new request after ordinary push stays pending|cycle-newer-ordinary|yes|600|5|no|2|copilot-finished
+second completed review stays closed after ordinary push|cycle-rereview-completed-ordinary|yes|600|0|yes|1|
+new request after two completed reviews stays pending|cycle-rereview-newer-ordinary|yes|600|5|no|2|copilot-finished
+completed cancelled history after ordinary pushes|cycle-cancel-completed|yes|600|0|yes|1|
+cancelled history retains newer request|cycle-cancel-newer|yes|600|5|no|2|copilot-finished
+completed cancelled history after verified boundary|cycle-cancel-boundary|yes|600|0|yes|1|
+new request stays pending after old completion|cycle-newer|yes|600|5|no|2|copilot-finished
 run outlasts bound|running|yes|3|0|yes|2|copilot-hold-expired
 run completes at bound|finishing|yes|10|0|yes|2|copilot-hold-expired
 flag absent during run|running|no|3|0|yes|0|
@@ -181,6 +215,13 @@ invalid bound|running|yes|invalid|1|no|0|copilot-hold-setting
 zero bound|running|yes|0|1|no|0|copilot-hold-setting
 EOF
 unset CHECK_MODE HOLD_SECS
+
+CHECK_MODE=timeline
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$STDERR_KEY|$(cat "$SLEEPS")" \
+  "overseer-approve: copilot-in-flight pr=42 repo=o/r head=$GIVEN run=73 started_at=2026-10-09T06:41:20Z|10" \
+  'timeline hold names the pending request and polls before finishing' "$ERR"
+unset CHECK_MODE
 
 # A review-fix push can change the head during the hold. A caller's short
 # prefix must still bind the full initial head when expiry permits approval.
@@ -343,6 +384,15 @@ assert_eq "$RC|$NCALLS|${STDERR_KEY%% pr=*}|$(cat "$OUT")" "1|2|overseer-approve
 # before the fixture's running review finishes. The normal completion row
 # above rejects that behavior. Other controls remove each independent guard.
 scripts="$(mutant_scripts mutant/orch overseer-approve)"
+# shellcheck disable=SC2016
+mutate_file "$scripts/overseer-approve" 'orch_copilot_check_runs "$REPO" "$live" "$PR_NUM"' \
+  'orch_copilot_check_runs "$REPO" "$live"'
+CHECK_MODE=timeline
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$CHECK_READS")|$(cat "$OUT")" \
+  '0|1|APPROVED vanillagreen-overseer[bot] 0123456' 'timeline control approves before the pending request is reviewed' "$ERR"
+
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
 mutate_file "$scripts/overseer-approve" 'if [[ "$HOLD_COPILOT" -eq 1 ]]; then' \
   'if false; then # if [[ "$HOLD_COPILOT" -eq 1 ]]; then'
 CHECK_MODE=finishing
@@ -402,6 +452,15 @@ CHECK_MODE=running HOLD_SECS=0
 run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
 assert_eq "$RC|$(cat "$CHECK_READS")|$(cat "$SLEEPS")|$(jq -r .commit_id "$INPUT")" "0|1||$GIVEN" \
   'setting control approves immediately with a zero bound' "$ERR"
+unset CHECK_MODE HOLD_SECS
+
+scripts="$(mutant_scripts mutant/orch lib/copilot-check-runs.sh)"
+mutate_file "$scripts/lib/copilot-check-runs.sh" '$event.submitted_at >= .started_at' 'false and $event.submitted_at >= .started_at'
+CHECK_MODE=cycle-cancel-completed HOLD_SECS=3
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+last_key="$(sed -n 's/^overseer-approve: \([^ ]*\).*/\1/p' "$ERR" | tail -1)"
+assert_eq "$RC|$(cat "$CHECK_READS")|$last_key" '0|2|copilot-hold-expired' \
+  'must-fail: completed history would create an approval hold after ordinary pushes' "$ERR"
 unset CHECK_MODE HOLD_SECS
 
 scripts="$(mutant_scripts mutant/orch lib/copilot-check-runs.sh)"

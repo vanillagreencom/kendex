@@ -92,6 +92,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, Expected delta and the shared rules for its Location and changed paths; the widest input wins. Measured branch line counts do not select a tier. `--help` |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the gate mode: it reads the consumer's `REVIEW_GATE_MODE` from the base checkout first, then native GitHub requirements where that policy permits it |
 | `ci-wait` | Block until CI completes on a PR |
+| `copilot-wait` | Wait for Copilot work |
 | `queue-wait` | Blocking merge-queue / auto-merge waiter and verdict producer |
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |

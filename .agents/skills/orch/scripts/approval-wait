@@ -49,6 +49,10 @@ approval_message() {
       printf 'approval-wait: copilot-reviews-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' 'Could not read Copilot review identities for this head.'
       ;;
+    copilot-flight-failed)
+      printf 'approval-wait: copilot-flight-failed pr=%s repo=%s head=%s\n' "$PR_NUM" "$REPO" "$last_head_sha"
+      printf '%s\n' 'Could not read pending Copilot work before the fallback notice.'
+      ;;
     copilot-retry-failed)
       printf 'approval-wait: copilot-retry-failed pr=%s head=%s exit=%s\n' "$PR_NUM" "$last_head_sha" "$request_status"
       printf '%s\n' 'The Copilot request owner failed before it returned a wait route.'
@@ -166,6 +170,7 @@ source "$SCRIPT_DIR/lib/gh-auth.sh"
 source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/lane-mail-nap.sh
 source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
+source "$SCRIPT_DIR/lib/copilot-check-runs.sh"
 
 # Named in every result, so a verdict states the repository it read. Empty
 # until the resolver below runs, which is after the auth ladder: an auth
@@ -316,8 +321,10 @@ REVIEW_GATE_MODE; process values for these keys are cleared there):
                         either key empty, another value, or an unread pull
                         request exits 2
 
-Copilot fallback notice: under PR_COPILOT_REQUESTS=off no Copilot review
-will come, so the overseer's approval is what ends a wait. A wait whose
+Copilot fallback notice: PR_COPILOT_REQUESTS=off disables this lane's requests.
+An automatic Copilot run can still exist. The shared Copilot reader holds
+cause=off notices while that head has pending work; a failed read exits 1.
+A wait whose
 --item names a lane, its mailbox tmp/lane-mail/<ITEM> standing in this
 checkout, asks for that approval: the first poll that reads a head with no
 approval, no CHANGES_REQUESTED and no open thread sends
@@ -1146,11 +1153,18 @@ read_base_ref() {
 # approval. The notice file is the once-per-head key, so it is created
 # exclusively and removed only by the send that failed to deliver it.
 copilot_fallback_notice() {
-  local box notice text
+  local box notice text copilot_runs
   [ -n "$LANE_MAIL_FILE" ] && [ -n "$1" ] || return 0
   box="${LANE_MAIL_FILE%/*}"
   [ -d "$box" ] || return 0
   notice="$box/copilot-fallback-$1.md"
+  if [ ! -e "$notice" ]; then
+    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" "$PR_NUM" 2>"$GH_ERR_FILE"); then
+      emit_error copilot-flight-failed
+      return 1
+    fi
+    [ "$copilot_runs" = '[]' ] || return 0
+  fi
   text="copilot-fallback PR #$PR_NUM head $1 cause=off"$'\n'"Lane status: tmp/lane-status-$ITEM.md"
   if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then
     # An earlier poll or wait on this head created it, or the write failed.
@@ -1305,7 +1319,9 @@ while true; do
     emit_result "comments"
     exit 1
   fi
-  [ "$COPILOT_REQUESTS" = on ] || copilot_fallback_notice "$last_head_sha"
+  if [ "$COPILOT_REQUESTS" = off ]; then
+    copilot_fallback_notice "$last_head_sha" || exit 1
+  fi
   if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg reviewer "$COPILOT_REVIEWER" '
     any(.latestReviews[]?; .author.login == $reviewer and .state == "COMMENTED")' >/dev/null <<<"$view_json"; then
     error_status=0
