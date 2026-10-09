@@ -39,12 +39,18 @@ cp "$HOOK" "$INSTALL/worktree-prompt-claim.sh"
 cp "$JUDGE" "$INSTALL/worktree-session-claim.sh"
 
 rows() {
-  local label mode owner cwd rc want_rc want_key want_owner
+  local label mode owner adopter refresh cwd rc want_rc want_key want_owner
   # Claude produces UserPromptSubmit. The prompt's contents cannot change
   # the claim decision, so the fixture sends its documented event only.
-  while IFS='|' read -r label mode owner cwd want_rc want_key want_owner; do
+  while IFS='|' read -r label mode owner adopter refresh cwd want_rc want_key want_owner; do
     "$GUARD" release "$TREE" --force --repo "$MAIN" >/dev/null 2>&1 || :
-    [ "$owner" = - ] || "$GUARD" claim "$TREE" --owner "$owner" >/dev/null
+    [ "$owner" = - ] || env -i PATH="$PATH" USER="$owner" "$BASH" "$GUARD" claim "$TREE" >/dev/null
+    if [ "$adopter" != - ]; then
+      env -i PATH="$PATH" USER="$adopter" "$BASH" "$GUARD" claim "$TREE" --owner ISSUE-1 --adopt >/dev/null
+    fi
+    if [ "$refresh" = yes ]; then
+      env -i PATH="$PATH" USER=alice "$BASH" "$GUARD" refresh "$TREE" --owner ISSUE-1 >/dev/null
+    fi
     rc=0
     (cd "$TMP_ROOT/$cwd" && env -i PATH="$PATH" HOME="$WORLD_HOME" USER=alice KENDEX_WORKTREE_CLAIM="$mode" \
       "$BASH" "$INSTALL/worktree-prompt-claim.sh" <<<'{"hook_event_name":"UserPromptSubmit"}' >"$OUT_FILE" 2>"$ERR_FILE") || rc=$?
@@ -53,11 +59,15 @@ rows() {
     assert_eq "$(wc -c <"$OUT_FILE" | tr -d ' ')" 0 "$label: no advisory output"
     assert_eq "$(env -i PATH="$PATH" "$BASH" "$GUARD" status "$TREE" --repo "$MAIN" | jq -r 'if .locked then .owner else "none" end')" "$want_owner" "$label: lease owner"
   done <<'EOF'
-foreign required lease|required|bob|tree|2|worktree-session-claim: held=TREE|bob
-foreign optional lease|advisory|bob|tree|0|-|bob
-unclaimed required tree|required|-|tree|0|-|alice
-own required lease|required|alice|tree|0|-|alice
-main checkout|required|-|main|0|-|none
+foreign required lease|required|bob|-|-|tree|2|worktree-session-claim: held=TREE|bob
+foreign optional lease|advisory|bob|-|-|tree|0|-|bob
+unclaimed required tree|required|-|-|-|tree|0|-|alice
+own required lease|required|alice|-|-|tree|0|-|alice
+main checkout|required|-|-|-|main|0|-|none
+same session after issue adoption|required|alice|alice|-|tree|0|-|ISSUE-1
+same session after issue refresh|required|alice|alice|yes|tree|0|-|ISSUE-1
+another session after issue adoption|required|bob|bob|-|tree|2|worktree-session-claim: held=TREE|ISSUE-1
+issue lease without verified adoption|required|ISSUE-1|-|-|tree|2|worktree-session-claim: held=TREE|ISSUE-1
 EOF
 }
 rows
@@ -82,14 +92,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   ! cmp -s "$JUDGE" "$INSTALL/worktree-session-claim.sh" || exit 1
   log=$(PASS=0 FAIL=0 rows) || :
   assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
-    'foreign required lease: prompt decision;' 'blocking control: claim failure must block'
+    'foreign required lease: prompt decision;another session after issue adoption: prompt decision;issue lease without verified adoption: prompt decision;' 'blocking control: claim failure must block'
   cp "$JUDGE" "$INSTALL/worktree-session-claim.sh"
   assert_eq "$(grep -cxF 'exec "$BASH" "$JUDGE" prompt' "$HOOK" || :)" 1 'forwarding control: unique anchor'
   sed 's/exec "$BASH" "$JUDGE" prompt/exec "$BASH" "$JUDGE"/' "$HOOK" >"$INSTALL/worktree-prompt-claim.sh"
   ! cmp -s "$HOOK" "$INSTALL/worktree-prompt-claim.sh" || exit 1
   log=$(PASS=0 FAIL=0 rows) || :
   assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
-    'foreign required lease: prompt decision;foreign required lease: no advisory output;' 'forwarding control: event reaches decision owner'
+    'foreign required lease: prompt decision;foreign required lease: no advisory output;same session after issue adoption: keyed reason;same session after issue adoption: no advisory output;same session after issue refresh: keyed reason;same session after issue refresh: no advisory output;another session after issue adoption: prompt decision;another session after issue adoption: no advisory output;issue lease without verified adoption: prompt decision;issue lease without verified adoption: no advisory output;' 'forwarding control: event reaches decision owner'
   cp "$HOOK" "$INSTALL/worktree-prompt-claim.sh"
   assert_eq "$(grep -cxF '  exit 2' "$HOOK" || :)" 1 'missing owner control: unique anchor'
   sed 's/^  exit 2$/  exit 0/' "$HOOK" >"$INSTALL/worktree-prompt-claim.sh"
@@ -98,6 +108,23 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   log=$(PASS=0 FAIL=0 missing_judge) || :
   assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
     'missing decision owner: prompt blocked;' 'missing owner control: cannot pass an unevaluated claim'
+  mv "$TMP_ROOT/saved-judge.sh" "$INSTALL/worktree-session-claim.sh"
+  cp "$HOOK" "$INSTALL/worktree-prompt-claim.sh"
+
+  # The existing guard owns both the recorded association and its use.
+  # These defects leave the claim and adoption producers running.
+  while IFS='|' read -r label anchor replacement expected; do
+    assert_eq "$(grep -cxF -- "$anchor" "$SCRIPTS/worktree-session-guard" || :)" 1 "$label control: unique anchor"
+    LINE=$anchor REPLACEMENT=$replacement awk '$0 == ENVIRON["LINE"] { print ENVIRON["REPLACEMENT"]; next } { print }' \
+      "$SCRIPTS/worktree-session-guard" >"$GUARD"
+    ! cmp -s "$SCRIPTS/worktree-session-guard" "$GUARD" || exit 1
+    log=$(PASS=0 FAIL=0 rows) || :
+    assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" "$expected" "$label control: association contract"
+  done <<'EOF'
+foreign association|			if [[ "$session" == true && "$owner_set" != true && -n "$session_owner" && "$session_owner" == "$OWNER" ]]; then|			if [[ "$session" == true && "$owner_set" != true && -n "$session_owner" ]]; then|another session after issue adoption: prompt decision;another session after issue adoption: keyed reason;
+lost association|				session_owner="$recorded"|				session_owner=''|same session after issue adoption: prompt decision;same session after issue adoption: keyed reason;same session after issue refresh: prompt decision;same session after issue refresh: keyed reason;
+issue owner replaced|		write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now" "$session_owner")"|		write_lease "$LOCK_FILE" "$(lease_line "${session_owner:-$OWNER}" "$claimed" "$now" "$session_owner")"|same session after issue adoption: lease owner;same session after issue refresh: lease owner;another session after issue adoption: lease owner;
+EOF
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

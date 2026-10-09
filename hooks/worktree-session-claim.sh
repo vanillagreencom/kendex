@@ -122,7 +122,11 @@ fi
 rc=0
 # The guard can wait 60 seconds for its lock. One attempt fits timeout: 75;
 # a retry could exceed the harness's budget before the result is delivered.
+if [ "$PROMPT" = true ]; then
+  CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?
+else
 CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?
+fi
 # Exit 75 means a lock already holds the tree; this start leaves that lock as
 # it stands.
 case "$rc" in

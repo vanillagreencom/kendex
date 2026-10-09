@@ -1,1 +1,1 @@
-- Documents how required Claude prompt claims refresh the worktree lease.
+- Keeps required Claude prompts working after a workflow adopts the session's worktree lease under its issue ID.

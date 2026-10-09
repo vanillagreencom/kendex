@@ -444,7 +444,8 @@ HANDOVER="the env owner's lease passes to an adopting --owner|claim --owner ISSU
 the ladder's top rung is the env owner|claim --owner ISSUE-1 --adopt|KENDEX_SESSION_OWNER=alice USER=bob|0|ISSUE-1|
 another env owner is refused|claim --owner ISSUE-1 --adopt|USER=bob|75|alice|$HANDOVER_CONFLICT
 an explicit owner without --adopt is refused|claim --owner ISSUE-1|USER=alice|75|alice|$HANDOVER_CONFLICT
-refresh refuses --adopt|refresh --owner ISSUE-1 --adopt|USER=alice|1|alice|worktree-guard-option-command: --adopt=refresh"
+refresh refuses --adopt|refresh --owner ISSUE-1 --adopt|USER=alice|1|alice|worktree-guard-option-command: --adopt=refresh
+refresh refuses --session|refresh --owner alice --session|USER=alice|1|alice|worktree-guard-option-command: --session=refresh"
 handover_rows() { # GUARD
   local guard="$1" label argspec envspec expected_rc expected_owner expected_record handover_rc handover_err verb
   local -a handover_args handover_env
@@ -473,7 +474,8 @@ HANDOVER_ANCHOR='env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-
 HANDOVER_GATE="require_flag_applies --adopt 'claim'"
 HANDOVER_CONTROLS="env owner never matches|$HANDOVER_ANCHOR|$HANDOVER_ANCHOR; env_owner=|the env owner's lease passes to an adopting --owner;the ladder's top rung is the env owner
 adopt on every claim|$HANDOVER_ANCHOR|$HANDOVER_ANCHOR; adopt=true|an explicit owner without --adopt is refused
-refresh takes --adopt|$HANDOVER_GATE|require_flag_applies --adopt 'claim refresh'|refresh refuses --adopt"
+refresh takes --adopt|$HANDOVER_GATE|require_flag_applies --adopt 'claim refresh'|refresh refuses --adopt
+refresh takes --session|require_flag_applies --session 'claim'|require_flag_applies --session 'claim refresh'|refresh refuses --session"
 control_n=0
 while IFS='|' read -r control_label control_text control_replacement expected_fails; do
   control_n=$((control_n + 1))

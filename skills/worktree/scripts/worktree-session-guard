@@ -51,6 +51,10 @@ Options (a flag a command does not take is a usage failure):
                      held under the environment owner above, as a
                      session-start claim leaves it; without it that lease
                      refuses --owner.
+  --session          claim. With the environment owner, refresh an issue
+                     lease that --adopt recorded as this owner's lease.
+                     Keep the issue owner. Default claims do not use this
+                     association.
   --ttl-minutes N    release, sweep. Heartbeat TTL in minutes (default 720).
   --stale            release. Release a lease only when it is past the TTL.
   --force            release. Release a foreign lease regardless of age.
@@ -142,10 +146,11 @@ lease_is_managed() {
 }
 
 lease_line() {
-	local owner="$1" claimed="$2" heartbeat="$3"
-	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s\n' \
+	local owner="$1" claimed="$2" heartbeat="$3" session_owner="$4" association=''
+	[[ -z "$session_owner" ]] || association=" session_owner=$session_owner"
+	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s%s\n' \
 		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$$" "$(sanitize_host)" \
-		"$(iso_from_epoch "$claimed")" "$claimed" "$(iso_from_epoch "$heartbeat")" "$heartbeat"
+		"$(iso_from_epoch "$claimed")" "$claimed" "$(iso_from_epoch "$heartbeat")" "$heartbeat" "$association"
 }
 
 # Control characters are escaped, never deleted: lock_reason carries arbitrary
@@ -371,6 +376,7 @@ stale=false
 force=false
 dry_run=false
 adopt=false
+session=false
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--owner) require_flag_applies --owner 'claim refresh release status'; [[ $# -ge 2 ]] || fail guard-option-value --owner "This option requires a value."; OWNER="$(sanitize_owner "$2")"; owner_set=true; shift 2 ;;
@@ -379,6 +385,7 @@ while [[ $# -gt 0 ]]; do
 		--force) require_flag_applies --force 'release'; force=true; shift ;;
 		--dry-run) require_flag_applies --dry-run 'sweep'; dry_run=true; shift ;;
 		--adopt) require_flag_applies --adopt 'claim'; adopt=true; shift ;;
+		--session) require_flag_applies --session 'claim'; session=true; shift ;;
 		--repo) require_flag_applies --repo 'release status list sweep'; [[ $# -ge 2 ]] || fail guard-option-value --repo "This option requires a directory."; repo="$2"; repo_set=true; shift 2 ;;
 		-h | --help) usage; exit 0 ;;
 		*) fail guard-option-unknown "$1" "Unknown session-guard option." ;;
@@ -402,9 +409,17 @@ case "$command" in
 		[[ "$DIRECTORY_PRESENT" == true ]] || fail guard-worktree-missing "$REQUESTED_PATH" "The worktree directory is missing."
 		acquire_guard_mutex "$COMMON_DIR"
 		now="$(date -u +%s)"
+		session_owner=''
 		if read_lease; then
 			lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" "The worktree lock belongs to another tool." >&2; exit "$EXIT_OWNED"; }
 			recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
+			session_owner="$(lease_field "$LEASE_TEXT" session_owner 2>/dev/null)" || session_owner=''
+			# Only verified adoption writes this association. Prompt claims
+			# use it without changing the issue owner; SessionStart and an
+			# explicit --owner claim keep their existing owner check.
+			if [[ "$session" == true && "$owner_set" != true && -n "$session_owner" && "$session_owner" == "$OWNER" ]]; then
+				OWNER="$recorded"
+			fi
 			# A session-start hook claims under the env ladder before the
 			# workflow claims under the issue ID. Only that caller says the two
 			# are one session: another --owner claim, such as output-prune's,
@@ -412,13 +427,16 @@ case "$command" in
 			# probe.
 			[[ "$recorded" == "$OWNER" || ( "$adopt" == true && -n "$env_owner" && "$recorded" == "$env_owner" ) ]] \
 				|| { claimed_by "${recorded:-unknown}"; exit "$EXIT_OWNED"; }
+			if [[ "$adopt" == true && "$owner_set" == true && "$recorded" != "$OWNER" ]]; then
+				session_owner="$recorded"
+			fi
 			claimed="$(lease_field "$LEASE_TEXT" claimed_epoch 2>/dev/null || true)"
 			[[ "$claimed" =~ ^[0-9]+$ ]] || claimed="$now"
 	else
 			[[ "$command" == claim ]] || { worktree_message guard-lease-missing "$REQUESTED_PATH" "There is no lease to refresh." >&2; exit "$EXIT_NO_LEASE"; }
 			claimed="$now"
 		fi
-		write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now")"
+		write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now" "$session_owner")"
 		printf '%s\n' "$OWNER"
 		;;
 	status)

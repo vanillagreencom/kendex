@@ -259,6 +259,27 @@ required_rows() {
 }
 required_rows
 
+# Verified adoption serves only the prompt path. Codex and Copilot keep
+# their SessionStart owner decision and their existing output format.
+adopted_start_rows() {
+  local harness rc label
+  for harness in codex copilot-project copilot-global; do
+    release_all
+    install_world installed "$harness"
+    run_hook_in "$TREE" USER=alice KENDEX_WORKTREE_CLAIM=required
+    env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice \
+      "$GUARD" claim "$TREE" --owner ISSUE-1 --adopt >/dev/null
+    rc=0
+    run_hook_in "$TREE" USER=alice KENDEX_WORKTREE_CLAIM=required || rc=$?
+    label="$harness: adopted SessionStart"
+    assert_eq "rc=$rc owner=$(lease_owner "$TREE")" 'rc=0 owner=ISSUE-1' "$label: lease unchanged"
+    assert_eq "$(first_line)" "worktree-session-claim: held=$TREE" "$label: owner decision"
+    assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$label: stop request"
+    assert_advisory_context "$label" "$harness"
+  done
+}
+adopted_start_rows
+
 # A lock timeout is the guard's bounded stalled-claim result. The fixture
 # writes a large cause and records every invocation, so no retry can hide a
 # first failure or run past the hook's one-attempt budget.
@@ -481,6 +502,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "required: claude broken encoder stop request;required: claude broken encoder: context contract;required: codex broken encoder stop request;required: codex broken encoder: context contract;"
   control codex-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks | */.codex/hooks) COPILOT=true ;;' output_failure_rows \
     "required: codex normal encoder: context contract;required: codex broken encoder: context contract;"
+  control session-flag-at-start 'if [ "$PROMPT" = true ]; then' 'if true; then' adopted_start_rows \
+    'codex: adopted SessionStart: owner decision;codex: adopted SessionStart: stop request;codex: adopted SessionStart: context contract;copilot-project: adopted SessionStart: owner decision;copilot-project: adopted SessionStart: stop request;copilot-project: adopted SessionStart: context contract;copilot-global: adopted SessionStart: owner decision;copilot-global: adopted SessionStart: stop request;copilot-global: adopted SessionStart: context contract;'
   control copilot-project-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks) : ;;' output_failure_rows \
     "required: copilot-project normal encoder: context contract;required: copilot-project broken encoder: context contract;"
   control copilot-global-context '[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true' ':' output_failure_rows \
