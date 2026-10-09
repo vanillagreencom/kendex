@@ -13,6 +13,15 @@
 
 set -euo pipefail
 
+# Copilot consumes top-level context; Codex 0.162.0 treats that field as a
+# context-only answer and misses continue:false. These are the install
+# markers used by lane-mail-check, including relocated Copilot account roots.
+COPILOT=false
+case "${BASH_SOURCE[0]%/*}" in
+  */.github/hooks | .github/hooks) COPILOT=true ;;
+esac
+[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true
+
 notice() { # KEY VALUE ENGLISH [CAUSE]
   local text cause="${4:-}" answer fallback
   trap - EXIT
@@ -22,14 +31,16 @@ notice() { # KEY VALUE ENGLISH [CAUSE]
   [ -z "$cause" ] || text="$text"$'\n'"$cause"
   printf '%s\n' "$text" >&2
   if [ "${KENDEX_WORKTREE_CLAIM:-}" = required ]; then
-    # Codex consumes continue/stopReason. Claude, Gemini and Pi consume
-    # advisory nested context; Copilot consumes only additionalContext.
-    if answer=$(jq -nc --arg reason "$text" '{continue:false,stopReason:$reason,additionalContext:$reason,hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$reason}}' 2>/dev/null); then
+    if answer=$(jq -nc --arg reason "$text" --argjson copilot "$COPILOT" '{continue:false,stopReason:$reason} + (if $copilot then {additionalContext:$reason} else {hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$reason}} end)' 2>/dev/null); then
       printf '%s\n' "$answer"
     else
       # A broken encoder must preserve the Codex stop and advisory context.
       fallback='"worktree-session-claim: output=unavailable\nThe required claim failed. Repair jq and read the cause on stderr."'
-      printf '{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$fallback" "$fallback" "$fallback"
+      if [ "$COPILOT" = true ]; then
+        printf '{"continue":false,"stopReason":%s,"additionalContext":%s}\n' "$fallback" "$fallback"
+      else
+        printf '{"continue":false,"stopReason":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$fallback" "$fallback"
+      fi
     fi
   fi
   exit 0

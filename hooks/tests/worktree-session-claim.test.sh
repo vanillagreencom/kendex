@@ -59,7 +59,7 @@ GUARD="$WORKTREE_SCRIPTS/worktree-session-guard"
 # CODEX_HOME elsewhere) beside the home's shared guard, `bare` installs the
 # global hook alone, and `repo-only` puts the guard in the open worktree
 # alone, which a global hook must not run.
-install_world() { # WORLD
+install_world() { # WORLD [HARNESS]
   WORLD_HOME="$TMP_ROOT/home.$1"
   WORLD_HOOKS="$WORLD_HOME/.claude/hooks"
   rm -rf -- "${WORLD_HOME:?}" "$TMP_ROOT/harness.$1" "${TREE:?}/.agents" "${TREE:?}/.claude"
@@ -70,8 +70,16 @@ install_world() { # WORLD
     relocated) WORLD_HOOKS="$TMP_ROOT/harness.$1/hooks"; install_guard "$WORLD_HOME" ;;
     repo-only) install_guard "$TREE" ;;
   esac
+  case "${2:-claude}" in
+    codex) WORLD_HOOKS="$WORLD_HOME/.codex/hooks" ;;
+    copilot-project) WORLD_HOOKS="$WORLD_HOME/project/.github/hooks" ;;
+    copilot-global) WORLD_HOOKS="$WORLD_HOME/copilot-account/hooks" ;;
+  esac
   mkdir -p "$WORLD_HOOKS"
   cp "$HOOK" "$WORLD_HOOKS/worktree-session-claim.sh"
+  if [ "${2:-claude}" = copilot-global ]; then
+    printf '{}\n' >"$WORLD_HOOKS/worktree-session-claim.json"
+  fi
 }
 
 install_guard() { # ROOT
@@ -195,17 +203,19 @@ trace_main_rows
 
 # Every failure uses the same fixture in advisory and required mode. These
 # assertions check the hook answer, not a harness run. Codex reads the stop
-# request. Claude, Gemini and Pi read advisory nested context; Copilot reads
-# top-level context. Those fields must agree.
+# request without top-level context. Claude, Gemini and Pi read advisory
+# nested context; Copilot reads top-level context from its own install.
 REQUIRED_ROWS="foreign lease|installed|bob|tree|USER=alice|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob
 missing guard|bare|-|tree|USER=alice|guard|-|none
 failed claim|installed|-|tree|-|unclaimed|worktree-guard-owner-required: claim|none
 redirected Git directory|installed|bob|tree|USER=alice GIT_DIR=MAIN/.git|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob
 discovery ceiling|installed|bob|sub|USER=alice GIT_CEILING_DIRECTORIES=TREE|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob"
 
-assert_advisory_context() { # LABEL
-  assert_eq "$(jq -r '[(.stopReason | type) == "string", .additionalContext == .stopReason, .hookSpecificOutput.additionalContext == .stopReason, .hookSpecificOutput.hookEventName == "SessionStart"] | all' <"$OUT_FILE")" \
-    true "$1: Claude/Pi/Gemini/Copilot advisory context"
+assert_advisory_context() { # LABEL [HARNESS]
+  local copilot=false
+  case "${2:-claude}" in copilot-*) copilot=true ;; esac
+  assert_eq "$(jq -r --argjson copilot "$copilot" '[(.stopReason | type) == "string", (if $copilot then .additionalContext == .stopReason and (has("hookSpecificOutput") | not) else (has("additionalContext") | not) and .hookSpecificOutput.additionalContext == .stopReason and .hookSpecificOutput.hookEventName == "SessionStart" end)] | all' <"$OUT_FILE")" \
+    true "$1: context contract"
 }
 
 required_rows() {
@@ -312,23 +322,42 @@ unexpected_rows() {
 unexpected_rows
 
 output_failure_rows() {
-  local mode rc bad_bin="$TMP_ROOT/bad-jq"
+  local mode harness encoder rc label bad_bin="$TMP_ROOT/bad-jq"
   mkdir -p "$bad_bin"
   printf '#!/bin/sh\nexit 1\n' >"$bad_bin/jq"
   chmod +x "$bad_bin/jq"
-  for mode in advisory required; do
-    release_all
-    install_world bare
-    rc=0
-    run_hook_in "$TREE" USER=alice "KENDEX_WORKTREE_CLAIM=$mode" "PATH=$bad_bin:$PATH" || rc=$?
-    assert_eq "rc=$rc first=$(first_line)" "rc=0 first=worktree-session-claim: guard=$WORLD_HOOKS" "$mode: broken encoder key"
-    if [ "$mode" = required ]; then
-      assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$mode: broken encoder Codex stop request"
-      assert_advisory_context "$mode: broken encoder"
-    else
-      assert_eq "$(wc -c <"$OUT_FILE" | tr -d ' ')" 0 "$mode: broken encoder start allowed"
-    fi
-  done
+  # Native Codex parses the normal and fallback answers through the same
+  # SessionStart contract. Copilot's project path and global registry marker
+  # identify installs that must retain its top-level context instead.
+  while IFS='|' read -r harness encoder; do
+    for mode in advisory required; do
+      release_all
+      install_world bare "$harness"
+      rc=0
+      if [ "$encoder" = broken ]; then
+        run_hook_in "$TREE" USER=alice "KENDEX_WORKTREE_CLAIM=$mode" "PATH=$bad_bin:$PATH" || rc=$?
+      else
+        run_hook_in "$TREE" USER=alice "KENDEX_WORKTREE_CLAIM=$mode" || rc=$?
+      fi
+      label="$mode: $harness $encoder encoder"
+      assert_eq "rc=$rc first=$(first_line)" "rc=0 first=worktree-session-claim: guard=$WORLD_HOOKS" "$label key"
+      if [ "$mode" = required ]; then
+        assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$label stop request"
+        assert_advisory_context "$label" "$harness"
+      else
+        assert_eq "$(wc -c <"$OUT_FILE" | tr -d ' ')" 0 "$label start allowed"
+      fi
+    done
+  done <<'EOF'
+claude|normal
+claude|broken
+codex|normal
+codex|broken
+copilot-project|normal
+copilot-project|broken
+copilot-global|normal
+copilot-global|broken
+EOF
 }
 output_failure_rows
 
@@ -448,12 +477,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "advisory: guard-lock-timeout bound;required: guard-lock-timeout bound;advisory: guard-mutex-timeout bound;required: guard-mutex-timeout bound;"
   control unexpected-exit 'trap '"'"'rc=$?; [ "$rc" -eq 0 ] || notice unexpected "${ROOT:-$PWD}" "The session claim hook failed; repair the hook before starting work." "exit=$rc"'"'"' EXIT' ':' unexpected_rows \
     "advisory: unexpected error;required: unexpected error;"
-  control output-fallback '      printf '"'"'{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback" "$fallback"' '      :' output_failure_rows \
-    "required: broken encoder Codex stop request;required: broken encoder: Claude/Pi/Gemini/Copilot advisory context;"
-
-  control output-context '      printf '"'"'{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback" "$fallback"' \
-    '      printf '"'"'{"continue":false,"stopReason":%s,"additionalContext":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback" "$fallback" >/dev/null; printf '"'"'{"continue":false,"stopReason":%s}\n'"'"' "$fallback"' output_failure_rows \
-    "required: broken encoder: Claude/Pi/Gemini/Copilot advisory context;"
+  control output-fallback '        printf '"'"'{"continue":false,"stopReason":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback"' '        :' output_failure_rows \
+    "required: claude broken encoder stop request;required: claude broken encoder: context contract;required: codex broken encoder stop request;required: codex broken encoder: context contract;"
+  control codex-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks | */.codex/hooks) COPILOT=true ;;' output_failure_rows \
+    "required: codex normal encoder: context contract;required: codex broken encoder: context contract;"
+  control copilot-project-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks) : ;;' output_failure_rows \
+    "required: copilot-project normal encoder: context contract;required: copilot-project broken encoder: context contract;"
+  control copilot-global-context '[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true' ':' output_failure_rows \
+    "required: copilot-global normal encoder: context contract;required: copilot-global broken encoder: context contract;"
 
   # A hook that claims whatever tree it starts in locks one no
   # `worktree create` returned, such as a harness's own.
