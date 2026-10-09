@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Surface: the central request workflow's executed JavaScript.
-# Inputs: .github/workflows/request-copilot-review.yml.
+# Surface: the central request workflow's job declarations and executed JavaScript.
+# Inputs: .github/workflows/request-copilot-review.yml,
+# skills/harness-ci/tests/lib/workflow.sh.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKFLOW="$TEST_DIR/../../../.github/workflows/request-copilot-review.yml"
@@ -8,6 +9,33 @@ TMP_ROOT="$(mktemp -d)" || { echo 'request-copilot-review: scratch=mktemp-failed
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "request-copilot-review: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'request-copilot-review: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+. "$TEST_DIR/../../harness-ci/tests/lib/workflow.sh"
+
+# GitHub Actions evaluates these declarations before allocating a runner.
+# This check proves their source shape; GitHub owns their execution.
+check_declarations() {
+  local events condition
+  events="$(triggers "$1")" || return 2
+  condition="$(job_ifs "$1")" || return 2
+  [ "$events" = $'merge_group\npull_request_target' ] &&
+    [ "$condition" = $'request\t'"github.event_name != 'merge_group' && !github.event.pull_request.draft" ]
+}
+check_declarations "$WORKFLOW"
+for control in no-if no-draft no-merge-group; do
+  case "$control" in
+    no-if) needle='    if:'; replacement='    # if:' ;;
+    no-draft) needle=' && !github.event.pull_request.draft'; replacement=$'\n    # && !github.event.pull_request.draft' ;;
+    no-merge-group) needle='  merge_group:'; replacement='  # merge_group:' ;;
+  esac
+  plant "$WORKFLOW" "$needle" "$replacement" "$TMP_ROOT/$control.yml"
+  status=0
+  check_declarations "$TMP_ROOT/$control.yml" || status=$?
+  if [ "$status" != 1 ]; then
+    printf 'request-copilot-review: control=%s unexpected-exit=%s\n' "$control" "$status" >&2
+    exit 1
+  fi
+  printf 'request-copilot-review: control=%s rejected-defect\n' "$control"
+done
 python3 - "$WORKFLOW" "$TMP_ROOT/body.js" <<'PY'
 import pathlib, sys, textwrap
 text = pathlib.Path(sys.argv[1]).read_text().replace('\r\n', '\n')
@@ -34,15 +62,12 @@ async function check(source) {
     ['request permission failure', 'pull_request_target', 'feature', 'owner', 'User', 403, 1, 1],
     ['request refused', 'pull_request_target', 'feature', 'owner', 'User', 422, 1, 1],
     ['request network failure', 'pull_request_target', 'feature', 'owner', 'User', 'network', 1, 1],
-    ['merge group', 'merge_group', null, null, null, null, 0, 0],
   ];
   for (const [name, eventName, ref, login, type, failure, requests, warnings] of cases) {
     const calls = [];
     const notices = [];
     const context = {eventName, repo: {owner: 'acme', repo: 'widgets'}, payload: {}};
-    if (eventName !== 'merge_group') {
-      context.payload.pull_request = {number: 42, head: {ref, repo: {full_name: name === 'fork pull request' ? 'contributor/widgets' : 'acme/widgets'}}, user: {login, type}};
-    }
+    context.payload.pull_request = {number: 42, head: {ref, repo: {full_name: name === 'fork pull request' ? 'contributor/widgets' : 'acme/widgets'}}, user: {login, type}};
     const github = {rest: {pulls: {requestReviewers: async (args) => {
       calls.push(args);
       if (failure) throw Object.assign(new Error('upstream request failed'), typeof failure === 'number' ? {status: failure} : {});
@@ -57,7 +82,6 @@ async function check(source) {
   await check(original);
   // Each control changes executed behavior while retaining its matched text.
   const controls = [
-    ["context.eventName === 'merge_group'", 'false'],
     ["pr.head.ref === 'kendex/refresh'", 'true'],
     ["pr.user.login === 'vanillagreen-fleet-lanes[bot]'", 'true'],
     ["pr.user.type === 'Bot'", 'true'],
