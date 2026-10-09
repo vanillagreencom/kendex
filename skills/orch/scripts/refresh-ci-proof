@@ -18,7 +18,9 @@ completed successfully on that head. Its pull_request run must come from
 an unchanged consumer workflow, excluding HARNESS_CI_REFRESH_CALLER.
 Its run must link this PR and head. The log's base-rev/head-rev must match
 the current PR range resolved by harness-ci's harness-only. A PR range uses
-the merge base, not the current base tip. Read the job log's measured render
+the merge base, not the current base tip. Repeated range records must agree.
+Fetch both commits through github's Git auth helper without moving checkout
+refs or files. Read the job log's measured render
 class and compare its render-verifier version with Engine version in the
 refresh pull request body. Read every changed path. The only permitted
 workflow path is HARNESS_CI_REFRESH_CALLER from the installed harness-ci.
@@ -52,6 +54,8 @@ source "$library" || refuse ci-proof-missing
 [[ -n ${HARNESS_CI_REFRESH_CALLER:-} ]] || refuse ci-proof-missing
 range_owner="$SCRIPT_DIR/../../harness-ci/scripts/harness-only"
 [[ -r $range_owner ]] || refuse ci-proof-missing
+git_auth="$SCRIPT_DIR/../../github/scripts/git-https-auth"
+[[ -x $git_auth ]] || refuse ci-proof-missing
 
 metadata="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing
 jq -e --arg head "$head" '
@@ -61,6 +65,12 @@ jq -e --arg head "$head" '
   (.changed_files | type) == "number" and .changed_files >= 0
 ' >/dev/null <<<"$metadata" || refuse ci-proof-missing
 base="$(jq -er '.base.sha' <<<"$metadata")" || refuse ci-proof-missing
+# Refresh publication adds a remote head that the trusted base checkout may
+# not hold yet. Fetch objects only; keep its refs, files and FETCH_HEAD intact.
+"$git_auth" fetch --quiet --no-tags --no-write-fetch-head --no-recurse-submodules origin "$base" "$head" >/dev/null 2>&1 || refuse ci-proof-missing
+for revision in "$base" "$head"; do
+  env -i PATH="$PATH" git cat-file -e "${revision}^{commit}" 2>/dev/null || refuse ci-proof-missing
+done
 # harness-only owns event range semantics. Its ownership verdict is not used:
 # only consumer CI can establish render proof with the consumer's engine.
 range="$(env -i PATH="$PATH" "$BASH" "$range_owner" --event pull_request --base "$base" --head "$head" 2>&1)" || refuse ci-proof-missing
@@ -138,11 +148,12 @@ proof="$(awk '
   { sub(/\r$/, ""); sub(/^[0-9][0-9][0-9][0-9]-[^ ]+ /, "") }
   /^class: / { class = $0; classes++ }
   /^render-verifier: / { verifier = $0; verifiers++ }
-  /^base-rev: / { base = $0; bases++ }
-  /^head-rev: / { head = $0; heads++ }
+  # render-reach and change-class repeat the range in the same Actions job.
+  /^base-rev: / { if (bases++ && base != $0) base_conflict = 1; base = $0 }
+  /^head-rev: / { if (heads++ && head != $0) head_conflict = 1; head = $0 }
   END {
     if (classes == 1) print class; if (verifiers == 1) print verifier
-    if (bases == 1) print base; if (heads == 1) print head
+    if (bases && !base_conflict) print base; if (heads && !head_conflict) print head
   }
 ' <<<"$log")" || refuse ci-proof-missing
 [[ $proof =~ (^|$'\n')class:\ class=render\ measured=true($|\ ) ]] || refuse class-not-render

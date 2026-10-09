@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Surface: refresh-ci-proof. Inputs: harness-ci's shared caller and range owner.
+# Surface: refresh-ci-proof. Inputs: harness-ci's caller/range owner and
+# github's git-https-auth helper with its auth, env and bounded-run libraries.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -10,11 +11,15 @@ TMP_ROOT="$(mktemp -d)" || { echo 'refresh-ci-proof.test: scratch=mktemp-failed'
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'refresh-ci-proof.test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/skills/orch/scripts" "$TMP_ROOT/skills/harness-ci/scripts/lib"
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/skills/orch/scripts" "$TMP_ROOT/skills/harness-ci/scripts/lib" "$TMP_ROOT/skills/github/scripts/lib"
 SCRIPT="$TMP_ROOT/skills/orch/scripts/refresh-ci-proof"
 cp "$REPO_ROOT/skills/orch/scripts/refresh-ci-proof" "$SCRIPT"
 cp "$REPO_ROOT/skills/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/skills/harness-ci/scripts/lib/"
 cp "$REPO_ROOT/skills/harness-ci/scripts/harness-only" "$TMP_ROOT/skills/harness-ci/scripts/"
+cp "$REPO_ROOT/skills/github/scripts/git-https-auth" "$TMP_ROOT/skills/github/scripts/"
+for library in gh-auth.sh bounded.sh group-leader.sh kendex-env.sh; do
+  cp "$REPO_ROOT/skills/github/scripts/lib/$library" "$TMP_ROOT/skills/github/scripts/lib/"
+done
 FIXTURE="$TMP_ROOT/repo"
 git init -q "$FIXTURE"
 git -C "$FIXTURE" config user.email test@example.com
@@ -38,6 +43,21 @@ printf 'base advance\n' > "$FIXTURE/base-only"
 git -C "$FIXTURE" add base-only
 git -C "$FIXTURE" commit -qm base-advance
 BASE_TIP="$(git -C "$FIXTURE" rev-parse HEAD)"
+git -C "$FIXTURE" update-ref refs/heads/base "$BASE_TIP"
+git -C "$FIXTURE" update-ref refs/heads/old-base "$EARLIER_BASE"
+git -C "$FIXTURE" update-ref refs/heads/refresh "$HEAD_SHA"
+git -C "$FIXTURE" remote add origin "$FIXTURE"
+REAL_GIT="$(command -v git)"
+cat > "$TMP_ROOT/bin/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# External failure injection only. All real Git operations use the real CLI.
+if [[ ${1:-} == fetch && -n ${WORLD:-} && -e $WORLD/fetch-status-failed ]]; then
+  exit 1
+fi
+EOF
+printf 'exec %q "$@"\n' "$REAL_GIT" >> "$TMP_ROOT/bin/git"
+chmod +x "$TMP_ROOT/bin/git"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -64,21 +84,42 @@ EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
 world() {
+  local base_branch field original_revision
   WORLD="$TMP_ROOT/world"
   rm -rf -- "$WORLD"
   mkdir -p "$WORLD"
+  READ_REPO="$FIXTURE"
+  git -C "$FIXTURE" remote set-url origin "$FIXTURE"
   jq -n --arg head "$HEAD_SHA" --arg base "$BASE_TIP" '{head:{sha:$head},base:{sha:$base,ref:"main"},body:"Engine version: `kendex 1.13.0`.",changed_files:1}' > "$WORLD/pr.json"
   printf '[[{"filename":".agents/skills/orch/SKILL.md"}]]\n' > "$WORLD/files.json"
   jq -n --arg head "$HEAD_SHA" '[{total_count:1,check_runs:[{id:72,name:"Classify the diff",app:{slug:"github-actions"},head_sha:$head,status:"completed",conclusion:"success"}]}]' > "$WORLD/checks.json"
   jq -n --arg head "$HEAD_SHA" '{id:72,run_id:20,name:"Classify the diff",head_sha:$head,status:"completed",conclusion:"success"}' > "$WORLD/job.json"
   jq -n --arg head "$HEAD_SHA" --arg base "$BASE_TIP" '{id:20,path:".github/workflows/ci.yml",event:"pull_request",head_sha:$head,repository:{full_name:"o/r"},pull_requests:[{number:42,head:{sha:$head},base:{sha:$base}}]}' > "$WORLD/run.json"
-  printf '2026-10-09T08:00:00.000Z ##[group]Run \033[36;1mclassify the diff\033[0m\r\n' > "$WORLD/log"
+  # The shipped CI template runs render-reach, then the classifier. Both
+  # write the range, while only the classifier writes render-verifier/class.
+  printf '2026-10-09T08:00:00.000Z ##[group]Run \033[36;1mrender-reach\033[0m\r\n' > "$WORLD/log"
+  printf '2026-10-09T08:00:00.000Z base-rev: %s\r\n2026-10-09T08:00:00.000Z head-rev: %s\r\n' "$MEASURED_BASE" "$HEAD_SHA" >> "$WORLD/log"
+  printf '%s\r\n' \
+    '2026-10-09T08:00:00.000Z render_candidate=true' \
+    '2026-10-09T08:00:00.000Z ##[endgroup]' \
+    '2026-10-09T08:00:00.000Z ##[group]Run classify the diff' >> "$WORLD/log"
+  printf '2026-10-09T08:00:00.000Z base-rev: %s\r\n2026-10-09T08:00:00.000Z head-rev: %s\r\n' "$MEASURED_BASE" "$HEAD_SHA" >> "$WORLD/log"
   printf '%s\r\n' \
     '2026-10-09T08:00:00.000Z render-verifier: verifier=path version=1.13.0' \
-    '2026-10-09T08:00:01.000Z class: class=render measured=true cause=render-proof' >> "$WORLD/log"
-  printf '2026-10-09T08:00:00.000Z base-rev: %s\r\n2026-10-09T08:00:00.000Z head-rev: %s\r\n' "$MEASURED_BASE" "$HEAD_SHA" >> "$WORLD/log"
+    '2026-10-09T08:00:00.000Z render-proof: checked=1 failed=0' \
+    '2026-10-09T08:00:01.000Z class: class=render measured=true cause=render-proof' \
+    '2026-10-09T08:00:01.000Z ##[endgroup]' >> "$WORLD/log"
   case "$1" in
-    render) ;;
+    render|single-range) ;;
+    remote-head|remote-base|fetch-failed)
+      base_branch=base
+      [[ $1 != remote-base ]] || base_branch=old-base
+      READ_REPO="$WORLD/base-checkout"
+      git clone -q --no-local --single-branch --branch "$base_branch" "$FIXTURE" "$READ_REPO"
+      git -C "$READ_REPO" config gc.auto 0
+      git -C "$READ_REPO" config maintenance.auto false
+      [[ $1 != fetch-failed ]] || git -C "$READ_REPO" remote set-url origin "$WORLD/absent-remote"
+      ;;
     caller) printf '[[{"filename":".github/workflows/kendex-refresh.yml"}]]\n' > "$WORLD/files.json" ;;
     workflow) printf '[[{"filename":".github/workflows/ci.yml"}]]\n' > "$WORLD/files.json" ;;
     renamed-workflow) printf '[[{"filename":"elsewhere.yml","previous_filename":".github/workflows/ci.yml"}]]\n' > "$WORLD/files.json" ;;
@@ -130,7 +171,14 @@ world() {
     different-range) sed "s/base-rev: $MEASURED_BASE/base-rev: $EARLIER_BASE/" "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
     measured-head) sed "s/head-rev: $HEAD_SHA/head-rev: $EARLIER_BASE/" "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
     range-missing) sed '/base-rev:/d' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
-    range-duplicate) printf 'base-rev: %s\n' "$MEASURED_BASE" >> "$WORLD/log" ;;
+    conflicting-base|conflicting-head)
+      field=base-rev original_revision="$MEASURED_BASE"
+      [[ $1 != conflicting-head ]] || { field=head-rev; original_revision="$HEAD_SHA"; }
+      awk -v field="$field" -v old="$original_revision" -v other="$EARLIER_BASE" '
+        !changed && index($0, field ": ") { sub(old, other); changed = 1 }
+        { print }
+      ' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log"
+      ;;
     retargeted)
       jq --arg base "$EARLIER_BASE" '.base={sha:$base,ref:"earlier"}' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json"
       jq --arg base "$EARLIER_BASE" '.pull_requests[0].base.sha=$base' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json"
@@ -139,6 +187,9 @@ world() {
     missing-caller) rm "$TMP_ROOT/skills/harness-ci/scripts/lib/change-class.sh" ;;
     *) fail 'fixture row exists' "$1"; exit 1 ;;
   esac
+  if [[ $1 == single-range ]]; then
+    awk '/^.*base-rev:/ { if (base++) next } /^.*head-rev:/ { if (head++) next } { print }' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log"
+  fi
   cp "$WORLD/pr.json" "$WORLD/live.json"
   case "$1" in
     moved) jq --arg sha "$EARLIER_BASE" '.head.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
@@ -150,7 +201,7 @@ world() {
 read_proof() {
   RC=0
   rm -f "$WORLD/pr-read"
-  (cd -- "$FIXTURE"; env -i PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r) > "$WORLD/out" 2> "$WORLD/err" || RC=$?
+  (cd -- "$READ_REPO"; env -i PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r) > "$WORLD/out" 2> "$WORLD/err" || RC=$?
   OUT="$(cat "$WORLD/out")"
   ERR="$(sed -n '/^refresh-ci-proof: cause=/p' "$WORLD/err")"
 }
@@ -158,7 +209,34 @@ read_proof() {
 # The overseer's route consumes the keyed proof and refusal lines.
 while IFS='|' read -r row cause; do
   world "$row"
+  if [[ $row == remote-head || $row == remote-base ]]; then
+    present=0
+    git -C "$READ_REPO" cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || present=$?
+    assert_eq "$present" 128 "$row begins without the remote head"
+    if [[ $row == remote-base ]]; then
+      present=0
+      git -C "$READ_REPO" cat-file -e "${BASE_TIP}^{commit}" 2>/dev/null || present=$?
+      assert_eq "$present" 128 "$row begins without the remote base"
+    fi
+  fi
+  checkout_head="$(git -C "$READ_REPO" rev-parse HEAD)"
+  checkout_refs="$(git -C "$READ_REPO" show-ref)"
+  checkout_status="$(git -C "$READ_REPO" status --porcelain)"
+  checkout_config="$(git -C "$READ_REPO" config --local --list)"
+  printf 'held fetch record\n' > "$READ_REPO/.git/FETCH_HEAD"
   read_proof "$SCRIPT"
+  if [[ $row == remote-head || $row == remote-base ]]; then
+    for revision in "$BASE_TIP" "$HEAD_SHA"; do
+      present=0
+      git -C "$READ_REPO" cat-file -e "${revision}^{commit}" 2>/dev/null || present=$?
+      assert_eq "$present" 0 "$row fetches target commit $revision"
+    done
+  fi
+  assert_eq "$(git -C "$READ_REPO" rev-parse HEAD)" "$checkout_head" "$row preserves checkout head"
+  assert_eq "$(git -C "$READ_REPO" show-ref)" "$checkout_refs" "$row preserves checkout refs"
+  assert_eq "$(git -C "$READ_REPO" status --porcelain)" "$checkout_status" "$row preserves checkout files"
+  assert_eq "$(git -C "$READ_REPO" config --local --list)" "$checkout_config" "$row preserves repository config"
+  assert_eq "$(cat "$READ_REPO/.git/FETCH_HEAD")" 'held fetch record' "$row preserves FETCH_HEAD"
   if [[ $cause == pass ]]; then
     expected_job=72
     [[ $row != multiple-green ]] || expected_job=74
@@ -173,6 +251,10 @@ while IFS='|' read -r row cause; do
   assert_not_contains "$(cat "$WORLD/err")" $'\033' "$row errors keep log controls private"
 done <<'EOF'
 render|pass
+single-range|pass
+remote-head|pass
+remote-base|pass
+fetch-failed|ci-proof-missing
 caller|pass
 workflow|workflow-changed
 renamed-workflow|workflow-changed
@@ -207,7 +289,8 @@ missing-links|ci-proof-missing
 different-range|ci-proof-missing
 measured-head|ci-proof-missing
 range-missing|ci-proof-missing
-range-duplicate|ci-proof-missing
+conflicting-base|ci-proof-missing
+conflicting-head|ci-proof-missing
 retargeted|ci-proof-missing
 moved|ci-proof-missing
 base-moved|ci-proof-missing
@@ -262,13 +345,39 @@ link-head|.number == $pr and .head.sha == $head|.number == $pr and true
 empty-links|any(.run.pull_requests[]; .number == $pr and .head.sha == $head)|true
 different-range|$proof_base == "$range_base"|true
 range-missing|$proof_base == "$range_base"|true
-range-duplicate|$proof_base == "$range_base"|true
+conflicting-base|!base_conflict|1
+conflicting-head|!head_conflict|1
 retargeted|$proof_base == "$range_base"|true
 measured-head|$proof_head == "$range_head"|true
 moved|.head.sha == $initial.head.sha|true
 base-moved|.base.sha == $initial.base.sha|true
 ref-moved|.base.ref == $initial.base.ref|true
 EOF
+
+# Reinstating the single-record rule rejects the normal producer sequence.
+world render
+mutate "$TMP_ROOT/skills/orch/scripts/single-record" 'bases && !base_conflict' 'bases == 1'
+read_proof "$TMP_ROOT/skills/orch/scripts/single-record"
+assert_eq "$RC" 1 'repeated-record control makes accepted render row red'
+assert_eq "$ERR" 'refresh-ci-proof: cause=ci-proof-missing' 'repeated-record control refuses equal copies'
+
+# Without the object fetch, matching remote proof is unavailable locally.
+world remote-head
+mutate "$TMP_ROOT/skills/orch/scripts/no-fetch" '"$git_auth" fetch --quiet --no-tags --no-write-fetch-head --no-recurse-submodules origin "$base" "$head" >/dev/null 2>&1 || refuse ci-proof-missing' ':'
+read_proof "$TMP_ROOT/skills/orch/scripts/no-fetch"
+assert_eq "$RC" 1 'object-fetch control makes accepted remote-head row red'
+assert_eq "$ERR" 'refresh-ci-proof: cause=ci-proof-missing' 'object-fetch control refuses absent commits'
+
+# A failed fetch cannot authorize a result from already-held local objects.
+world render
+touch "$WORLD/fetch-status-failed"
+read_proof "$SCRIPT"
+assert_eq "$RC" 1 'fetch-status refusal with held objects'
+assert_eq "$ERR" 'refresh-ci-proof: cause=ci-proof-missing' 'fetch-status refusal cause'
+mutate "$TMP_ROOT/skills/orch/scripts/ignored-fetch-failure" '"$head" >/dev/null 2>&1 || refuse ci-proof-missing' '"$head" >/dev/null 2>&1 || true'
+read_proof "$TMP_ROOT/skills/orch/scripts/ignored-fetch-failure"
+assert_eq "$RC" 0 'fetch-status control makes refusal row red' "$WORLD/err"
+assert_contains "$OUT" 'class=render measured=true' 'fetch-status control reaches proof'
 
 # Without the documented raw-log option, gh rejects the producer's color bytes.
 world render
