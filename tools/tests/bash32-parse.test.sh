@@ -129,6 +129,12 @@ fi
 # A bare tag is whatever the registry serves and whatever a daemon already
 # cached under that name, and this image's stdout is the verdict the lane
 # believes, so the reference is what binds that verdict to reviewed content.
+names_registry_host() {
+  case "${1%%/*}" in
+  *.*) [ "$1" != "${1%%/*}" ] ;;
+  *) return 1 ;;
+  esac
+}
 if [ -z "$IMAGE_REF" ]; then
   bad "the lane declares no image, so nothing pins the shell that judges the tree"
 else
@@ -140,10 +146,16 @@ else
   # whose registries.conf names no unqualified-search registry, which is a
   # bare podman install: the pass then reports no-bash32 with a runtime that
   # is installed and working.
-  case "$IMAGE_REF" in
-  docker.io/library/*) ok "the image reference names its registry, so podman resolves it with no registries.conf entry" ;;
-  *) bad "the image reference is a short name, which podman refuses with no unqualified-search registry configured" "$IMAGE_REF" ;;
-  esac
+  if names_registry_host "$IMAGE_REF"; then
+    ok "the image reference names a registry host, so podman resolves it with no registries.conf entry"
+  else
+    bad "the image reference names no registry host, which podman requires with no unqualified-search registry configured" "$IMAGE_REF"
+  fi
+  if names_registry_host "bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"; then
+    bad "the registry host judgement accepts a short image name"
+  else
+    ok "the registry host judgement rejects a short image name"
+  fi
 fi
 
 # --- 2. teeth ------------------------------------------------------------
