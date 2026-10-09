@@ -140,7 +140,7 @@ fn the_guard_hooks_scan_clean() {
 /// read off the file at the line the mention reports, wherever it stands.
 ///
 /// The open-terminal handoff and preference tests, oversee-succeed tests,
-/// wall-relaunch tests and overseer-watch test library hand the launch lines
+/// and overseer-watch test library hand the launch lines
 /// they check to their stubs and assertions: a quoted string a test assigns
 /// or prints, and an argument of a function the tests define, on the line
 /// that names the function or a line continuing it. Each is a mention, and the
@@ -158,7 +158,6 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
         "skills/orch/tests/open-terminal-preference.sh",
         "skills/orch/tests/oversee_succeed.sh",
         "skills/orch/tests/lib/overseer-watch-case.sh",
-        "skills/orch/tests/oversee_watch_wall_relaunch.sh",
     ];
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
     assert_eq!(result.safety.score, 100);
