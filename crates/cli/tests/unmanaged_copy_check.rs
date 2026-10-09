@@ -295,10 +295,10 @@ fn a_lane_adding_a_package(arrange: Arrange) -> (tempfile::TempDir, Lane) {
 
 /// How a row runs the check.
 #[derive(Clone, Copy)]
-enum Run {
+enum Run<'a> {
     /// The session-drift-check hook itself, fed a fresh start's payload,
     /// with this build's kendex first on PATH.
-    Hook,
+    Hook(&'a Path),
     /// The kendex-drift script `kendex drift-hook` installs, run the same
     /// way.
     KendexDrift,
@@ -309,16 +309,12 @@ enum Run {
 /// The hook's stdout, or the check's, and the check's exit status; the
 /// hook always exits 0, so its status is not the check's.
 #[allow(clippy::expect_used, clippy::unwrap_used)]
-fn run(lane: &Lane, how: Run) -> (String, Option<i32>, String) {
+fn run(lane: &Lane, how: Run<'_>) -> (String, Option<i32>, String) {
     let output = match how {
         Run::ByHand => kendex(&lane.home, &lane.checkout, &["check", "--quiet"]),
-        Run::Hook | Run::KendexDrift => {
+        Run::Hook(_) | Run::KendexDrift => {
             let (shell, hook) = match how {
-                Run::Hook => (
-                    "bash",
-                    Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .join("../../hooks/session-drift-check.sh"),
-                ),
+                Run::Hook(script) => ("bash", script.to_path_buf()),
                 Run::KendexDrift => {
                     let script = lane.home.join("kendex-drift.sh");
                     fs::write(&script, kendex_core::drift::hook::HOOK_SCRIPT).unwrap();
@@ -375,6 +371,23 @@ fn in_a_linked_worktree(root: &Path) -> PathBuf {
     kendex_core::paths::canonical(&linked).unwrap()
 }
 
+#[allow(clippy::unwrap_used)]
+fn record_lane(lane: &Lane) {
+    let writer =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/orch/scripts/lane-marker");
+    let output = Command::new("bash")
+        .arg(writer)
+        .arg(&lane.checkout)
+        .arg("lane")
+        .current_dir(&lane.checkout)
+        .env_clear()
+        .envs(test_util::fixture_env(&lane.home))
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+}
+
 fn on_a_detached_head(root: &Path) -> PathBuf {
     git(root, &["switch", "--quiet", "--detach"]);
     root.to_path_buf()
@@ -388,38 +401,53 @@ fn on_the_default_branch(root: &Path) -> PathBuf {
 /// hook and the kendex-drift script run `kendex check --report-only`,
 /// which reports the proven render's missing row, with its path and both
 /// hashes, and leaves the tree as git had it on a branch, in a linked
-/// worktree, on a detached HEAD and on the default branch alike. A check
-/// run by hand keeps D007's branch rule: off the default branch it records
+/// worktree with or without a launch record, on a detached HEAD and on the
+/// default branch alike. A check run by hand keeps D007's branch rule:
+/// off the default branch it records
 /// nothing and says why; on it, the control, it settles the render into
 /// the record, so `.kendex-lock.json` is modified and the report is clean.
 #[test]
 fn a_session_start_writes_nothing_git_sees() {
+    let hook = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../hooks/session-drift-check.sh");
     let session = "the session check leaves the record as this checkout holds it";
     let lane =
         "branch 'lane' leaves the record as 'main' holds it, and 'main' records it after the merge";
     let detached = "a detached HEAD leaves the record as 'main' holds it";
     // The tree the run leaves, and the reason its line gives; `None` where
     // the run records and prints nothing.
-    let rows: [(&str, Arrange, Run, &str, Option<&str>); 9] = [
-        ("hook, branch", on_a_branch, Run::Hook, "", Some(session)),
+    let rows: [(&str, Arrange, Run<'_>, &str, Option<&str>); 10] = [
+        (
+            "hook, branch",
+            on_a_branch,
+            Run::Hook(&hook),
+            "",
+            Some(session),
+        ),
         (
             "hook, worktree",
             in_a_linked_worktree,
-            Run::Hook,
+            Run::Hook(&hook),
+            "",
+            Some(session),
+        ),
+        (
+            "hook, recorded lane",
+            in_a_linked_worktree,
+            Run::Hook(&hook),
             "",
             Some(session),
         ),
         (
             "hook, detached",
             on_a_detached_head,
-            Run::Hook,
+            Run::Hook(&hook),
             "",
             Some(session),
         ),
         (
             "hook, default",
             on_the_default_branch,
-            Run::Hook,
+            Run::Hook(&hook),
             "",
             Some(session),
         ),
@@ -454,7 +482,10 @@ fn a_session_start_writes_nothing_git_sees() {
         ),
     ];
     for (shape, arrange, how, tree, why) in rows {
-        let (_tmp, lane) = a_lane_adding_a_package(arrange);
+        let (tmp, lane) = a_lane_adding_a_package(arrange);
+        if shape == "hook, recorded lane" {
+            record_lane(&lane);
+        }
         let (stdout, code, all) = run(&lane, how);
         assert_eq!(
             git(&lane.checkout, &["status", "--porcelain"]),
@@ -462,20 +493,8 @@ fn a_session_start_writes_nothing_git_sees() {
             "{shape}: {all}"
         );
         match (how, why) {
-            (Run::Hook, Some(why)) => {
-                let opening = if shape == "hook, worktree" {
-                    "session-drift-check: lane=1\n"
-                } else {
-                    "session-drift-check: drift=found\n"
-                };
-                assert!(stdout.starts_with(opening), "{shape}: {all}");
-                assert!(
-                    stdout
-                        .lines()
-                        .any(|line| line == "session-drift-check: drift=found"),
-                    "{shape}: {all}"
-                );
-                assert_unrecorded(&lane, &stdout, why, shape);
+            (Run::Hook(script), Some(why)) => {
+                assert_hook_report(&lane, script, tmp.path(), &stdout, why, shape);
             }
             // The kendex-drift script relays a drift report with no notice
             // line of its own.
@@ -488,10 +507,59 @@ fn a_session_start_writes_nothing_git_sees() {
                 assert_eq!(code, Some(0), "{shape}: {all}");
                 assert_eq!(stdout, "", "{shape}: {all}");
             }
-            (Run::Hook | Run::KendexDrift, None) => {
+            (Run::Hook(_) | Run::KendexDrift, None) => {
                 unreachable!("{shape}: a session hook records nothing")
             }
         }
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_hook_report(
+    lane: &Lane,
+    script: &Path,
+    temp_root: &Path,
+    stdout: &str,
+    why: &str,
+    shape: &str,
+) {
+    let opening = if shape == "hook, recorded lane" {
+        "session-drift-check: lane=1\n"
+    } else {
+        "session-drift-check: drift=found\n"
+    };
+    assert!(stdout.starts_with(opening), "{shape}: {stdout}");
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "session-drift-check: drift=found"),
+        "{shape}: {stdout}"
+    );
+    assert_unrecorded(lane, stdout, why, shape);
+    if shape == "hook, worktree" {
+        // Reinstating Git-layout classification must fail this row even
+        // while the hook preserves the detailed report.
+        let source = fs::read_to_string(script).unwrap();
+        let anchor = "  common=${dirs#*$'\\n'}\n";
+        assert_eq!(source.matches(anchor).count(), 1);
+        let changed = source.replace(
+            anchor,
+            &format!(
+                "{anchor}  if [ \"$LANE_GIT_DIR\" != \"$common\" ]; then LANE=1; return 0; fi\n"
+            ),
+        );
+        assert_ne!(source, changed);
+        let control = temp_root.join("all-worktrees-are-lanes.sh");
+        fs::write(&control, changed).unwrap();
+        let (stdout, code, all) = run(lane, Run::Hook(&control));
+        assert_eq!(code, Some(0), "{shape} control: {all}");
+        assert!(
+            stdout.starts_with("session-drift-check: lane=1\n"),
+            "{shape} control: {all}"
+        );
+        assert!(!stdout.starts_with(opening), "{shape} control: {all}");
+        assert_unrecorded(lane, &stdout, why, shape);
+        assert_eq!(git(&lane.checkout, &["status", "--porcelain"]), "");
     }
 }
 
