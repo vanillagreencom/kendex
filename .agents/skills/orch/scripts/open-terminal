@@ -50,6 +50,7 @@ parse_argv() {
   LANE_ENV=""
   STATE_DIR=""
   RELAUNCH=false
+  CONTINUE_RESUME=false
   LANE_REFRESH=false
   WAKE=false
   WAIT_SLOT=false
@@ -81,6 +82,7 @@ parse_argv() {
       --state-dir) need_val "$@"; STATE_DIR="$2"; shift 2 ;;
       --state-dir=*) STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$STATE_DIR"; shift ;;
       --relaunch) RELAUNCH=true; shift ;;
+      --continue-resume) CONTINUE_RESUME=true; shift ;;
       --lane-refresh) LANE_REFRESH=true; shift ;;
       --wake) WAKE=true; shift ;;
       --wait-slot) WAIT_SLOT=true; shift ;;
@@ -1397,8 +1399,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" \
+    --arg recovery_cwd "$CLAIM_ROOT" --arg recovery_flags "$LAUNCH_FLAGS" --arg recovery_session "$LAUNCH_SESSION" --argjson recovery_refresh "$LANE_REFRESH" --arg custom "$CMD_TEMPLATE" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
+       + {recovery: (if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)}
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $pick == null then {} else {pick: ($pick | {account: .config_dir, binding_bucket, claims,
            burn_pct_per_lane_hour, session_burn_pct_per_lane_hour, session_charge_hours,
@@ -1415,7 +1419,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
-       | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id) end else . end) as $patch
+       | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
          | if $rec.status == "running" or $rec.prepare.step == "selection" then del(.preference_entry, .pick) else . end end) + $patch else . end))), report: "rewritten"}
@@ -1463,6 +1467,14 @@ merged_commit_for() ( # WT_ID
   [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || cat -- "$err" >&2
   return "$rc"
 )
+relaunch_continuation() { # MAIL_ID HARNESS
+  local rearm=""
+  case "$2" in
+    claude) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $1 through your harness background wake" ;;
+    copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item $1 as a background command" ;;
+  esac
+  printf '%s\n' "Resume the orch workflow for $1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $1 first and act on every envelope it prints, answers and directives alike, as its text directs$rearm. $LAUNCH_UNATTENDED_TEXT"
+}
 start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
   # MAIL_ID is the worktree id, which is what every line rendered here must
   # name. write_lane_marker binds the lane's mailbox under it and the
@@ -1542,13 +1554,8 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
   elif [[ "$RELAUNCH" == true ]]; then
     # The harnesses whose row in ../references/watch-delivery.md § Lane mailbox monitor
     # names an Arm; that table is the rule.
-    local rearm=""
-    case "$HARNESS" in
-      claude) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake" ;;
-      copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item $mail_id as a background command" ;;
-      *) rearm="" ;;
-    esac
-    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every envelope it prints, answers and directives alike, as its text directs$rearm.$unattended'"
+    line="$(relaunch_continuation "$mail_id" "$HARNESS")" || return 1
+    line=" '$line'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
   # claude and pi take the line as a trailing positional on their own resume
@@ -2874,7 +2881,12 @@ launch_record_finish() {
       UNTAKEN_PANE="$LAUNCH_PANE"; return 1
     fi
     case "$selected" in
-      resume) ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2 ;;
+      resume)
+        if [[ "$CONTINUE_RESUME" == true ]]; then
+          local continuation
+          continuation="$(relaunch_continuation "$wt_id" "$HARNESS")" || return 1
+          launch_write continuation "$title" "$LAUNCH_PANE" ssh text "$continuation" || return 1
+        else ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2; fi ;;
       fresh) ;;
       *) ot_message relaunch-selection-failed "item=$item" "operation=read" "value=$selected" >&2
         UNTAKEN_PANE="$LAUNCH_PANE"; return 1 ;;

@@ -73,7 +73,7 @@ RUN_SEQ=0
 # previous run left. SCREEN is the harness screen file, `-` for a pane that
 # never draws one. RUN_ENV holds any further stub settings for the run. Sets
 # OUT, RC and RUN.
-RUN_ENV=() SEED_LANES='[]' SELECT_KIND=-
+RUN_ENV=() RUN_ARGS=() SEED_LANES='[]' SELECT_KIND=-
 run_ot() {
   local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
@@ -117,7 +117,7 @@ run_ot() {
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$OPEN_TERMINAL" --state-dir "$RUN/state" --host "$HOST_STUB" --repo o/r --relaunch \
-    --harness "$harness" --lane "$lane" --launch-flags "$flags" KEN-1 2>&1)"
+    --harness "$harness" --lane "$lane" --launch-flags "$flags" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} KEN-1 2>&1)"
   RC=$?
   printf '%s\n' "$OUT" > "$RUN/launcher.out"
 }
@@ -307,6 +307,22 @@ RUN_ENV=()
 assert_eq "rc=$RC launched=$(launched) failed=$(said '^open-terminal: relaunch-selection-failed item=KEN-1 operation=put')" \
   'rc=1 launched=0 failed=1' 'a selection reset that fails starts no Codex harness'
 
+echo "=== automatic continuation follows confirmed hosted selection ==="
+RUN_ARGS=(--continue-resume)
+for row in 'matching|resume|3' 'none|fresh|2'; do
+  IFS='|' read -r kind selection pastes <<<"$row"
+  SELECT_KIND="$kind" run_ot codex "$HARNESS_SCREEN" codex
+  assert_eq "rc=$RC selection=$(cat "$RUN/remote/srv/lane/tmp/lane-mail/KEN-1/relaunch-selection") pastes=$(grep -c '^load-buffer ' "$RUN/tmux.log") lineless=$(said '^open-terminal: resume-lineless ')" \
+    "rc=0 selection=$selection pastes=$pastes lineless=0" \
+    "automatic Codex $selection delivers a continuation only for the host's actual resume"
+done
+RUN_ENV=(OT_TMUX_FAIL_NTH=load-buffer:3)
+SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
+RUN_ENV=() RUN_ARGS=()
+assert_eq "rc=$RC failed=$(said '^open-terminal: tmux-failed operation=continuation ') account=$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[] | select(.item == "KEN-1") | .account') closed=$(closed)" \
+  'rc=1 failed=1 account=last-account closed=0' \
+  'a failed automatic continuation reports the failed write and retains the surviving window'
+
 echo "=== controls ==="
 # One mutant per rule. Each keeps the text it edits and removes the behaviour.
 SHIPPED="$OPEN_TERMINAL"
@@ -338,11 +354,17 @@ SELECT_KIND=none run_ot codex "$HARNESS_SCREEN" codex
 assert_eq "$(cat "$RUN/inline/replay.out") lineless=$(said '^open-terminal: resume-lineless item=KEN-1 harness=codex$')" \
   'rc=0 runs=1 resume=0 fresh=1 target=0 lineless=1' \
   'control: a fresh selection labelled resume wrongly requests a continuation paste'
-control selection-resume 'resume) ot_message resume-lineless' 'resume) : ;; unused) ot_message resume-lineless'
+control selection-resume 'else ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2; fi' 'else :; fi'
 SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
 assert_eq "$(cat "$RUN/inline/replay.out") lineless=$(said '^open-terminal: resume-lineless item=KEN-1 harness=codex$')" \
   'rc=0 runs=1 resume=1 fresh=0 target=1 lineless=0' \
   'control: a suppressed resume result loses the continuation handoff'
+control automatic-continuation 'launch_write continuation "$title" "$LAUNCH_PANE" ssh text "$continuation" || return 1' ':'
+RUN_ARGS=(--continue-resume)
+SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
+RUN_ARGS=()
+assert_eq "rc=$RC pastes=$(grep -c '^load-buffer ' "$RUN/tmux.log")" 'rc=0 pastes=2' \
+  'control: without continuation delivery a confirmed automatic resume receives no turn'
 control selection-read 'UNTAKEN_PANE="$LAUNCH_PANE"; return 1 ;;' 'UNTAKEN_PANE="$LAUNCH_PANE"; : ;;'
 RUN_ENV=(LANE_HOST_STUB_SELECTION=pending)
 run_ot codex "$HARNESS_SCREEN" codex

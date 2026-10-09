@@ -211,7 +211,7 @@ run_ot() {
 # below. launch is left out too: launch_of ITEM reads it on its own rows. So
 # is wake, whose start a wake reads while a turn that exits at once may be gone.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "launch" and .key != "wake")) | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "launch" and .key != "wake" and .key != "recovery")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
 launch_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .launch | if . == null then null else [.pane, (.server | type), .pid, .start] end' | jq -c .; }
 running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
@@ -475,6 +475,9 @@ touch "$EXISTS_DIR/CC-1"
 LAUNCHED_AT=2026-01-01T00:00:00Z
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'" | .running_at = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort low" CC-1
+assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | .recovery' | jq -c .)" \
+  "0 $(jq -cn --arg cwd "$REPO" '{cwd:$cwd,flags:"--model opus --effort low",session:"",refresh:false}')" \
+  "a native relaunch records its original flags and launch checkout for automatic recovery"
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 assert_eq "$(stamped "$RELAUNCH_RUNNING_AT") renewed=$([[ "$RELAUNCH_RUNNING_AT" != "$LAUNCHED_AT" ]] && echo yes || echo no)" "iso renewed=yes" \
   "a relaunch renews running_at, so the watch counts a fresh start-stall window from it"
@@ -938,7 +941,7 @@ assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 reco
 # through a running relaunch on no reading shows the old reading.
 PICK_KEEP_OT="$(mutant_scripts pick-keep-mutant open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/pick-keep-mutant"
-mutate_file "$PICK_KEEP_OT" 'del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id)' 'del(.harness, .model, .effort, .preference_entry, .account, .session_id)'
+mutate_file "$PICK_KEEP_OT" 'del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery)' 'del(.harness, .model, .effort, .preference_entry, .account, .session_id, .recovery)'
 PICK_DROP_OT="$(mutant_scripts pick-drop-mutant open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/pick-drop-mutant"
 mutate_file "$PICK_DROP_OT" 'del(.preference_entry, .pick)' 'del(.preference_entry)'
@@ -1279,6 +1282,19 @@ hosted_pi /pi nowake "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
 assert_eq "$PI_OUTCOME" \
   "rc=1 open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=/pi scope=global location=hosted update=kendex update-pi --scope global retry=launch windows=0 marker=none" \
   "control: losing the relaunch flag breaks recovery of the item create already owns"
+
+echo "=== automatic recovery retains the original launch choices ==="
+RECOVERY_FLAGS="--model opus --effort high --permission-mode dontAsk"
+run_ot --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "$RECOVERY_FLAGS" --lane-refresh CC-191
+RECOVERY_EXPECTED="$(jq -cn --arg cwd "$REPO" --arg flags "$RECOVERY_FLAGS" '{cwd:$cwd,flags:$flags,session:"",refresh:true}')"
+assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-191") | .recovery' | jq -c .)" \
+  "0 $RECOVERY_EXPECTED" "a restricted refresh launch records every choice automatic recovery needs"
+RECOVERY_OT="$(mutant_scripts recovery-unrecorded/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/recovery-unrecorded/orch"
+mutate_file "$RECOVERY_OT" 'flags: $recovery_flags' 'flags: ""'
+run_ot SCRIPT="$RECOVERY_OT" --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "$RECOVERY_FLAGS" --lane-refresh CC-192
+assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-192") | .recovery.flags')" \
+  '0 ' "control: without the original flag record automatic recovery loses its permission choice"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -11,6 +11,32 @@
 # open-terminal's rendered command consumes stdout as the resume id. Exit 1
 # means no session; exit 2 means lookup failed, never permission to start fresh.
 
+# open-terminal records the choices it can repeat in `recovery`. Older records
+# and custom commands cannot recover their original permissions, so the watch
+# must refuse before stopping a lane. The host and tracker retain their existing
+# lane-record meanings, including null host meaning local.
+lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
+  local fields item harness flags refresh tracker repo
+  LANE_RECOVERY_CAUSE=permission-choice-unrecorded
+  LANE_RECOVERY_ARGS=() LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
+  fields="$(jq -er 'select((.recovery | type) == "object"
+      and (.recovery.cwd | type) == "string" and (.recovery.cwd | length) > 0
+      and (.recovery.flags | type) == "string" and (.recovery.refresh | type) == "boolean")
+    | [.item, .harness, .recovery.cwd, .recovery.flags, (.recovery.refresh | tostring),
+       (.host // "local"), (.recovery.session // ""), .tracker, (.repo // "")]
+    | join("\u001f")' <<<"$1")" || return 1
+  IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo <<<"$fields"
+  LANE_RECOVERY_CAUSE=checkout-unavailable
+  LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1
+  LANE_RECOVERY_ARGS=("$4" --tmux --relaunch --continue-resume --harness "$harness" --lane "$2"
+    --launch-flags "$flags" --state-dir "$3" --host "$LANE_RECOVERY_HOST" --tracker "$tracker")
+  [[ -z "$repo" ]] || LANE_RECOVERY_ARGS+=(--repo "$repo")
+  [[ "$refresh" != true ]] || LANE_RECOVERY_ARGS+=(--lane-refresh)
+  if [[ "$tracker" == github ]]; then LANE_RECOVERY_ARGS+=("${item#issue-}")
+  else LANE_RECOVERY_ARGS+=("$item"); fi
+  LANE_RECOVERY_CAUSE=""
+}
+
 # Pi resolves a relative session directory from the process working directory,
 # which is the item worktree for the command this launcher emits.
 pi_relaunch_root() { # WORKTREE HOME

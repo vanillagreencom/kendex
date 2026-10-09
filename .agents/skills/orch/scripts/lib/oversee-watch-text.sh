@@ -329,18 +329,28 @@ The long pass's events, checked and reported in this order:
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
-  EVENT lane-prepare-failed <item> reason=<reason> log=<path>
+  EVENT lane-prepare-failed <item> reason=<reason> [exit=<N>] log=<path>
+                             reason=relaunch-failed is a completed automatic
+                             recovery failure. exit is its status. Its
+                             window can survive: read the log and keep it
+                             while fixing the cause. Other reasons mean
                              that job failed and closed its window: reason
                              wait-failed is the host's preparation,
                              launch-failed a launch step, each named in the
                              job's log. The record reads stopped, which
                              lane-close closes
-  EVENT lane-prepare-stuck <item> age=<secs>s log=<path>
+  EVENT lane-prepare-stuck <item> age=<secs>s log=<path> [reason=relaunch-pending]
+                             reason=relaunch-pending means automatic recovery
+                             exceeded ORCH_WATCH_PREPARE_SECS. Read the log.
+                             Keep its window and let its job finish before
+                             starting another recovery. Other outcomes mean
                              that record has read preparing for longer than
                              ORCH_WATCH_PREPARE_SECS with no outcome written;
                              lane-close closes it.
-                             These three are read from --state records and
-                             reported once per preparation
+                             Hosted preparation outcomes come from --state
+                             records. Automatic recovery completion comes
+                             from its detached launch status. Each outcome
+                             is reported once
   EVENT start-stalled <item> age=<secs>
                              a running --state record names a mail_root whose
                              tmp/lane-status-<item>.md does not exist
@@ -458,10 +468,15 @@ The long pass's events, checked and reported in this order:
                              relaunch was refused
   EVENT lane-relaunched <item> lane=<config-dir> from=<config-dir>
                              under ORCH_WALL_RELAUNCH=auto, the walled lane's
-                             window was killed by its pane id and the
                              record's own `open-terminal --relaunch` started
                              detached on the picked account; `log=<path>`
-                             follows, the launch's output. Reported in place
+                             follows, the launch's output. It keeps the
+                             original launch choices. The launcher replaces
+                             the window and keeps its tmux session alive.
+                             The notice needs no operator launch action.
+                             A detached failure reports lane-prepare-failed
+                             with reason=relaunch-failed, exit and log,
+                             including when the window survives. Reported in place
                              of usage-limit, never beside it. Until that
                              launch exits, inside ORCH_WATCH_PREPARE_SECS, the
                              lane's missing window is no window-gone
@@ -1170,7 +1185,7 @@ ow_message() { # REASON FIELD=VALUE...
     hosted-duplicate) text='Name each hosted item once.' ;;
     host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. Nothing of the fleet is carried.' ;;
     wall-relaunch-invalid) text='ORCH_WALL_RELAUNCH takes auto or ask.' ;;
-    wall-relaunch-refused) text='The watch did not relaunch this walled lane, and reports usage-limit in its place. The reason names the rule or the step that stopped it: lane-working (the judge did not read the lane walled), record-unnamed (no running lane record names its item, harness and model), account-unknown (neither a live claim nor the record names the spent account), spent-account (the pick handed back the account that walled), flags-unbuilt (no launch words for that harness), marker-unwritten (the pending marker of the relaunch could not be written), stop-failed (the hosted harness did not stop) or kill-failed (the window did not close).' ;;
+    wall-relaunch-refused) text='The watch did not relaunch this walled lane, and reports usage-limit in its place. The reason names the rule or the step that stopped it: lane-working (the judge did not read the lane walled), record-unnamed (no running lane record names its item, harness and model), account-unknown (neither a live claim nor the record names the spent account), spent-account (the pick handed back the account that walled), context-unavailable (the original launch choices cannot be recovered; cause names missing permission choices or checkout), marker-unwritten (the pending marker of the relaunch could not be written), or stop-failed (the hosted harness did not confirm its stop).' ;;
     lane-age-secs-invalid) text='ORCH_WATCH_LANE_AGE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-long-rounds-unread) text='The lane workflow state or its round counts could not be read. The lane-long event carries unavailable counts.' ;;
     cloud-stall-minutes-invalid) text='ORCH_CLOUD_STALL_MINUTES takes a positive whole number of minutes, with no leading zero.' ;;

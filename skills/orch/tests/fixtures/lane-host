@@ -206,7 +206,10 @@ READ_MANY
     [ "${LANE_HOST_STUB_WAIT_STATUS:-0}" -eq 0 ] \
       || { printf 'lane-host-fixture: prepare-failed item=%s\n' "$3" >&2; exit "$LANE_HOST_STUB_WAIT_STATUS"; } ;;
   touch) ;;
-  stop) ;;
+  stop)
+    [[ "${LANE_HOST_STUB_STOP_STATUS:-0}" -eq 0 ]] \
+      || { printf 'lane-host-fixture: stop-failed item=%s\n' "$3" >&2; exit "$LANE_HOST_STUB_STOP_STATUS"; }
+    printf '%s\n' "${LANE_HOST_STUB_STOP_OUT-stopped item=$3 processes=0}" ;;
   # The park pair. _STOP_SANDBOX_STATUS is a provider that could not stop the
   # sandbox, _START_STATUS one that could not bring it back, and _STOP_SANDBOX_OUT
   # or _START_OUT the line it prints in place of the protocol's own, for a

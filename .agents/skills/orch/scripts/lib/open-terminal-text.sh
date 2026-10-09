@@ -566,6 +566,12 @@ Options:
                     record, or for a hosted lane empties it, so a refresh
                     lane's relaunch passes it again. A --wake writes no
                     launch record and keeps the one the launch wrote.
+  --continue-resume Deliver the standard continuation after a hosted Codex
+                    relaunch confirms that it resumed a session. The watch
+                    uses this option for automatic account recovery. A
+                    fresh start already carries its brief. Without this
+                    option, the caller receives resume-lineless and pastes
+                    the continuation.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -586,8 +592,9 @@ Options:
                     See pi-runtime.md, Lane mailbox wake, for project repairs
                     in linked worktrees. Hosted retries require --relaunch.
                     A hosted codex
-                    resume is the exception: only an actual resume reports
-                    resume-lineless and needs its continuation pasted into
+                    resume is the exception: without --continue-resume,
+                    only an actual resume reports resume-lineless and needs
+                    its continuation pasted into
                     the pane. A fresh start needs no paste. See --host.
                     With no match the normal brief
                     starts fresh, and so does a local relaunch of an item
@@ -732,7 +739,10 @@ record names host and kind claude-cloud, its session id and the item's
 window, whose pane runs the session's local client, its mail_root the local
 worktree), mail_root, surface, model, session_id, session_since
 (the time this launch or relaunch read before its terminal opened), allow_all
-(whether a copilot command grants --allow-all or --yolo), launched_at,
+(whether a copilot command grants --allow-all or --yolo), and recovery,
+whose private choices lib/lane-relaunch.sh uses for automatic same-harness
+recovery. Legacy records without those choices require a manual relaunch.
+The record also carries launched_at,
 status `running`, or `preparing` with its `prepare` record for a hosted lane
 waiting in a background job or saved foreground continuation (see --host),
 and over_cap, `fleet` where an

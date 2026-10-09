@@ -157,7 +157,7 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # A walled lane is relaunched by oversee-watch on an account with headroom for
-# its model, and the overseer spends no turn on it.
+# its model. The notice needs no operator launch action.
 ORCH_WALL_RELAUNCH = "auto"
 
 # Lane pane output. No person reads a lane's pane: the overseer learns a lane's

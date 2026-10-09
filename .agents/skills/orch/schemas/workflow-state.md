@@ -173,6 +173,8 @@ Persistent state file for orch workflows. Survives context compaction.
 
 ## Oversee state
 
+`open-terminal` also records private `recovery` choices for automatic account recovery. [lib/lane-relaunch.sh](../scripts/lib/lane-relaunch.sh) owns their reader. A record without these choices remains valid and requires a manual recovery launch.
+
 `workflow-state-oversee.json`, under the key `oversee`, is the fleet's record, at the one address every launch passes `open-terminal --state-dir` and the watch reads as `--state` ([oversee.md § 3 Lane record](../workflows/oversee.md#3-launch)). `open-terminal` creates it on the first launch of a tmux fleet; the other surfaces create it as oversee.md § 3 Lane record directs. It carries the fields above unused and these:
 
 | Field | Type | Description |
