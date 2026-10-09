@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Claude Haiku 5.5 (`claude-haiku-5-5`) is selectable under the `pi-claude` provider, listed ahead of Haiku 4.5, with 1M context and 128k output.
+
 ### 4.1.0
 
 - Claude Sonnet 5.5 (`claude-sonnet-5-5`) is selectable under the `pi-claude` provider, listed ahead of Sonnet 5, with 1M context, 128k output and `xhigh`/`max` effort. Claude Code gets Claude Sonnet 5 as its safety fallback, and the bridge announces a switch to it; which declined turns re-run there is Claude Code's own routing.
