@@ -120,4 +120,4 @@ Live unfiled findings stay open and fail the run under the thread-resolution rul
 
 A release needs no dispatch. The next scheduled run installs the release the major tag names. The schedule permits at most four runs a day. Each run can merge at most one refresh pull request. Manual runs add to that count.
 
-For a fix that cannot wait for the schedule, run the consumer's `kendex-refresh.yml` workflow by hand through `workflow_dispatch`. An organization managed by fleet can send that manual run with `fleet repos kendex-refresh`. Its token needs Actions write access. A routine release uses the schedule.
+For a fix that cannot wait for the schedule, run the consumer's `kendex-refresh.yml` workflow by hand through `workflow_dispatch`. After fleet adopts its `workflow_dispatch` change, an organization managed by fleet can send that manual run with `fleet repos kendex-refresh`. Its token needs Actions write access. A routine release uses the schedule.
