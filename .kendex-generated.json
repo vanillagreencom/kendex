@@ -610,6 +610,7 @@
   ".agents/skills/orch/scripts/lib/adapters/pi.sh",
   ".agents/skills/orch/scripts/lib/branch-growth.sh",
   ".agents/skills/orch/scripts/lib/change-class.sh",
+  ".agents/skills/orch/scripts/lib/copilot-check-runs.sh",
   ".agents/skills/orch/scripts/lib/copilot-credits.sh",
   ".agents/skills/orch/scripts/lib/copilot-session.sh",
   ".agents/skills/orch/scripts/lib/date-ladder.sh",

@@ -59,6 +59,12 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # values: on | off
 PR_COPILOT_REQUESTS = "on"
 
+# Maximum seconds a fallback app approval holds for a Copilot review already
+# queued or running on the live head. A finished hold returns to the review
+# reply check. An expired hold approves as usual. Positive whole seconds.
+# Requires the overseer token app's repository Checks: read permission.
+ORCH_COPILOT_HOLD_SECS = "600"
+
 # Who reviews this repository's own kendex refresh pull request when no
 # approval reached it. "overseer" sends that head, matched by the exact
 # branch and the app's bot login below, to the overseer instead of Copilot;

@@ -24,6 +24,9 @@ CALLS="$TMP_ROOT/calls"
 INPUT="$TMP_ROOT/input"
 OUT="$TMP_ROOT/out"
 ERR="$TMP_ROOT/err"
+CHECK_READS="$TMP_ROOT/check-reads"
+CLOCK="$TMP_ROOT/clock"
+SLEEPS="$TMP_ROOT/sleeps"
 
 # One `<GH_TOKEN>|<argv>` line per call; the POST's stdin is kept whole.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -31,6 +34,27 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CALLS"
 case "$*" in
+  'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
+    [[ "$*" == "api repos/o/r/commits/$LIVE_HEAD/check-runs?filter=all&per_page=100 --paginate --slurp" ]] || exit 9
+    count="$(cat "$CHECK_READS")"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$CHECK_READS"
+    state=in_progress
+    started='"2026-10-09T06:41:20Z"'
+    case "$CHECK_MODE" in
+      completed) state=completed ;;
+      finishing) [[ "$count" -eq 1 ]] || state=completed ;;
+      queued) state=queued; started=null; [[ "$count" -eq 1 ]] || state=completed ;;
+      failed) echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;
+      later-failed) [[ "$count" -eq 1 ]] || { echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; } ;;
+      empty) :; exit 0 ;;
+      malformed) echo '[{"check_runs":null}]'; exit 0 ;;
+      invalid-json) echo 'invalid JSON'; exit 0 ;;
+    esac
+    # The in-flight run is on a later page, after an unrelated active check
+    # and an earlier completed Copilot attempt. The reader must see them all.
+    printf '[{"check_runs":[{"name":"CI","status":"in_progress"},{"name":"copilot-pull-request-reviewer","id":71,"status":"completed"}]},{"check_runs":[{"name":"copilot-pull-request-reviewer","id":72,"status":"%s","started_at":%s}]}]\n' "$state" "$started"
+    ;;
   'api repos/o/r/pulls/42 --jq .head.sha')
     if [[ $LIVE_HEAD == fail ]]; then echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi
     echo "$LIVE_HEAD"
@@ -65,18 +89,39 @@ esac
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
+# Inject the clock through executable fixtures. No real wait decides a row.
+cat > "$TMP_ROOT/bin/date" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == +%s ]] || exit 9
+cat "$CLOCK"
+EOF
+cat > "$TMP_ROOT/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$1" >> "$SLEEPS"
+now="$(cat "$CLOCK")"
+printf '%s\n' "$((now + $1))" > "$CLOCK"
+EOF
+chmod +x "$TMP_ROOT/bin/date" "$TMP_ROOT/bin/sleep"
+
 run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   local script="$1" token_file="$2" live="$3" post="$4" setting=()
   shift 4
   [[ -z "$token_file" ]] || setting=("ORCH_OVERSEER_REVIEW_TOKEN_FILE=$token_file")
   : > "$CALLS"
+  printf '0\n' > "$CHECK_READS"
+  printf '0\n' > "$CLOCK"
+  : > "$SLEEPS"
   rm -f -- "$INPUT"
   RC=0
   (cd -- "$TMP_ROOT/cwd" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     ${setting[@]+"${setting[@]}"} \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
+    CHECK_MODE="${CHECK_MODE-finishing}" CHECK_READS="$CHECK_READS" \
+    CLOCK="$CLOCK" SLEEPS="$SLEEPS" ORCH_COPILOT_HOLD_SECS="${HOLD_SECS-600}" \
     ORCH_OVERSEER_REVIEW_LOGIN="${REVIEW_LOGIN-review-app[bot]}" \
-    bash "$script" "$@" > "$OUT" 2> "$ERR") || RC=$?
+    "$BASH" "$script" "$@" > "$OUT" 2> "$ERR") || RC=$?
   STDERR_KEY="$(sed -n 1p "$ERR")"
   NCALLS="$(wc -l < "$CALLS" | tr -d ' ')"
 }
@@ -95,6 +140,61 @@ assert_eq "$(jq -c . "$INPUT")" \
   "$(jq -cn --arg sha "$GIVEN" '{commit_id: $sha, event: "APPROVE", body: "Each decline holds.\n\"Quoted\" line\n"}')" \
   'the review binds the given commit, APPROVE and the body text' "$ERR"
 assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" 'approval prints no token'
+
+# label | check response sequence | flag | bound | exit | POST | read count | final key
+while IFS='|' read -r label mode flag bound want_rc want_post want_reads want_key; do
+  CHECK_MODE="$mode" HOLD_SECS="$bound"
+  flags=()
+  [[ "$flag" != yes ]] || flags=(--hold-copilot)
+  run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" ${flags[@]+"${flags[@]}"}
+  posted=no
+  [[ ! -f "$INPUT" ]] || posted=yes
+  last_key="$(sed -n 's/^overseer-approve: \([^ ]*\).*/\1/p' "$ERR" | tail -1)"
+  assert_eq "$RC|$posted|$(cat "$CHECK_READS")|$last_key" \
+    "$want_rc|$want_post|$want_reads|$want_key" "$label" "$ERR"
+  assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" "$label prints no token"
+  if [[ "$want_post" == yes ]]; then
+    assert_eq "$(jq -r .commit_id "$INPUT")" "$GIVEN" "$label binds the live head" "$ERR"
+  fi
+done <<'EOF'
+in-progress run completes|finishing|yes|600|5|no|2|copilot-finished
+queued run completes|queued|yes|600|5|no|2|copilot-finished
+run outlasts bound|running|yes|3|0|yes|2|copilot-hold-expired
+run completes at bound|finishing|yes|10|0|yes|2|copilot-hold-expired
+flag absent during run|running|no|3|0|yes|0|
+read forbidden|failed|yes|600|1|no|1|copilot-read-failed
+later read forbidden|later-failed|yes|600|1|no|2|copilot-read-failed
+empty response|empty|yes|600|1|no|1|copilot-read-failed
+malformed page|malformed|yes|600|1|no|1|copilot-read-failed
+invalid JSON|invalid-json|yes|600|1|no|1|copilot-read-failed
+already completed|completed|yes|600|0|yes|1|
+invalid bound|running|yes|invalid|1|no|0|copilot-hold-setting
+zero bound|running|yes|0|1|no|0|copilot-hold-setting
+EOF
+unset CHECK_MODE HOLD_SECS
+
+CHECK_MODE=finishing
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$STDERR_KEY" \
+  "overseer-approve: copilot-in-flight pr=42 repo=o/r head=$GIVEN run=72 started_at=2026-10-09T06:41:20Z" \
+  'hold notice identifies the later-page active run' "$ERR"
+assert_eq "$(cat "$SLEEPS")" 10 'the hold polls at its fixed interval' "$ERR"
+assert_eq "$(sed -n 2p "$CALLS")" \
+  "$TOKEN|api repos/o/r/commits/$GIVEN/check-runs?filter=all&per_page=100 --paginate --slurp" \
+  'the check-run read uses the approval token and full live head' "$ERR"
+CHECK_MODE=queued
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "${STDERR_KEY##* started_at=}" none 'queued work can have no start time' "$ERR"
+CHECK_MODE=running HOLD_SECS=3
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$(cat "$SLEEPS")|$(sed -n 2p "$ERR")" \
+  "3|overseer-approve: copilot-hold-expired pr=42 repo=o/r head=$GIVEN run=72 waited=3" \
+  'expiry names the held run and measured duration' "$ERR"
+CHECK_MODE=failed HOLD_SECS=600
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_contains "$(cat "$ERR")" 'gh: Resource not accessible by integration (HTTP 403)' \
+  'a check-run read refusal keeps the API error' "$ERR"
+unset CHECK_MODE HOLD_SECS
 
 # pr-watch prints the head as 8 characters; the review binds the full live one.
 run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok 42 "${GIVEN:0:8}" --body-file "$TMP_ROOT/body" --repo o/r
@@ -205,6 +305,52 @@ mutate_file "$scripts/overseer-approve" \
 run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" refused-approved "${APPROVE[@]}"
 assert_eq "$RC|$NCALLS|${STDERR_KEY%% pr=*}|$(cat "$OUT")" "1|2|overseer-approve: post-failed|" \
   'failed-POST control reports failure despite the existing approval' "$ERR"
+
+# Today's approval path, with the flag accepted but its hold bypassed, posts
+# before the fixture's running review finishes. The normal completion row
+# above rejects that behavior. Other controls remove each independent guard.
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" 'if [[ "$HOLD_COPILOT" -eq 1 ]]; then' \
+  'if false; then # if [[ "$HOLD_COPILOT" -eq 1 ]]; then'
+CHECK_MODE=finishing
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$CHECK_READS")|$(cat "$OUT")" \
+  '0|0|APPROVED vanillagreen-overseer[bot] 0123456' 'hold control approves before Copilot finishes' "$ERR"
+
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" 'if [[ "$HOLD_COPILOT" -eq 1 ]]; then' \
+  'if true; then # if [[ "$HOLD_COPILOT" -eq 1 ]]; then'
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}"
+assert_eq "$RC|$(cat "$CHECK_READS")|$(cat "$OUT")" '5|2|' \
+  'opt-in control holds a route that omitted the flag' "$ERR"
+
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" '      exit 1
+    fi
+    now="$(date +%s)"' '      runs="[]" # exit 1
+    fi
+    now="$(date +%s)"'
+CHECK_MODE=failed
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$OUT")" '0|APPROVED vanillagreen-overseer[bot] 0123456' \
+  'read-failure control approves with unreadable work' "$ERR"
+
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" '"$waited" -ge "$hold_secs"' '"$waited" -gt "$hold_secs"'
+CHECK_MODE=finishing HOLD_SECS=10
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$OUT")" '5|' 'bound control refuses after the hold expired' "$ERR"
+unset CHECK_MODE HOLD_SECS
+
+scripts="$(mutant_scripts mutant/orch lib/copilot-check-runs.sh)"
+mutate_file "$scripts/lib/copilot-check-runs.sh" \
+  'select(.status == "queued" or .status == "in_progress")' \
+  'select(.status == "queued") | # select(.status == "queued" or .status == "in_progress")'
+CHECK_MODE=finishing
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$OUT")" '0|APPROVED vanillagreen-overseer[bot] 0123456' \
+  'status control overlooks a running review' "$ERR"
+unset CHECK_MODE
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

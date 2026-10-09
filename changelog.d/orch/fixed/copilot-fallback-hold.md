@@ -1,0 +1,1 @@
+- Fallback approvals wait for Copilot reviews already queued or running on the same head. A completed review returns to the review-reply check before approval. The hold has a configurable time limit.

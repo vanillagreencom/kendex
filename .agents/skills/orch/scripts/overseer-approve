@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 print_usage() {
   cat <<'EOF'
-Usage: overseer-approve PR_NUMBER HEAD_SHA --body-file PATH [--repo OWNER/REPO]
+Usage: overseer-approve PR_NUMBER HEAD_SHA --body-file PATH [--repo OWNER/REPO] [--hold-copilot]
 
 Approves the head of pull request PR_NUMBER as the overseer's GitHub App,
 the fallback approval and the Copilot head notices of
@@ -20,6 +20,12 @@ live head, event APPROVE and the text of the body file.
 
 Options:
   --body-file PATH   the review body, sent as its text
+  --hold-copilot     hold fallback approval while a Copilot check run is
+                     queued or in_progress on the live head. Poll every 10
+                     seconds with the same token. A completed hold exits 5
+                     without posting: run check-review-replies on the head
+                     again before another approval call. An expired hold
+                     approves as usual. Other approval routes omit this flag
   --repo OWNER/REPO  the repository; default GH_REPO, then the working
                      directory (`gh repo view`, then the origin remote).
                      Pass it for a pull request outside the working
@@ -42,13 +48,19 @@ Environment:
                      the token app's bot login, such as
                      vanillagreen-overseer[bot], from the same settings.
                      Required to confirm an approval after a failed POST.
+  ORCH_COPILOT_HOLD_SECS
+                     maximum hold in seconds, default 600. A positive whole
+                     number, read from the same project settings. The final
+                     poll waits only the remaining seconds of the bound.
+                     The token app needs repository Checks: read permission.
 
 Output: one line on success,
   <state> <reviewer login> <short commit>
 as GitHub answered the review, for example
   APPROVED vanillagreen-overseer[bot] 0123abc
 
-Every refusal's first stderr line is `overseer-approve: <key> ...`:
+Every refusal has a stderr line `overseer-approve: <key> ...`.
+Hold notices can precede it:
   usage              an operand or option is missing or malformed
   body-file          the body file cannot be read
   scratch            no scratch directory could be made
@@ -63,6 +75,13 @@ Every refusal's first stderr line is `overseer-approve: <key> ...`:
                      40-character SHA; gh's words follow
   head-moved         the live head does not start with HEAD_SHA; both
                      named. Nothing is posted
+  copilot-hold-setting
+                     ORCH_COPILOT_HOLD_SECS is not a positive whole number
+  copilot-read-failed
+                     check runs could not be read; gh's or jq's words follow.
+                     Nothing is posted
+  copilot-finished   a held run ended inside the bound. Nothing is posted;
+                     run check-review-replies on the head before retrying
   payload            the review payload could not be built
   post-failed        GitHub refused the review; its message follows
   read-back-failed   the approval could not be confirmed after a failed POST;
@@ -73,10 +92,18 @@ Every refusal's first stderr line is `overseer-approve: <key> ...`:
 Exit codes:
   0  approved
   1  repo-unresolved, repo-shape, head-read-failed, payload, post-failed,
-     read-back-failed, response-unread, settings-load, scratch
+     read-back-failed, response-unread, settings-load, scratch,
+     copilot-hold-setting, copilot-read-failed
   2  usage, body-file
   3  credential
   4  head-moved
+  5  copilot-finished
+
+Hold notices on stderr, each naming the pull request, head and check run:
+  copilot-in-flight    printed once with the run's started_at (none when
+                       GitHub has not assigned one)
+  copilot-hold-expired printed when the bound ends, with waited seconds;
+                       the approval still exits 0 on success
 EOF
 }
 
@@ -125,6 +152,22 @@ oa_message() {
       printf 'overseer-approve: head-moved pr=%s given=%s live=%s\n' "$1" "$2" "$3"
       printf '%s\n' "The pull request's head is no longer the one given, so nothing was posted; the new head takes its own route."
       ;;
+    copilot-hold-setting)
+      printf 'overseer-approve: copilot-hold-setting setting=ORCH_COPILOT_HOLD_SECS value=%q\n' "$1"
+      ;;
+    copilot-read-failed)
+      printf 'overseer-approve: copilot-read-failed pr=%s repo=%s head=%s\n' "$1" "$2" "$3"
+      ;;
+    copilot-in-flight)
+      printf 'overseer-approve: copilot-in-flight pr=%s repo=%s head=%s run=%s started_at=%s\n' "$1" "$2" "$3" "$4" "$5"
+      ;;
+    copilot-finished)
+      printf 'overseer-approve: copilot-finished pr=%s repo=%s head=%s run=%s\n' "$1" "$2" "$3" "$4"
+      printf '%s\n' "Run check-review-replies on this head before approving again. Nothing was posted."
+      ;;
+    copilot-hold-expired)
+      printf 'overseer-approve: copilot-hold-expired pr=%s repo=%s head=%s run=%s waited=%s\n' "$1" "$2" "$3" "$4" "$5"
+      ;;
     post-failed)
       printf 'overseer-approve: post-failed pr=%s repo=%s commit=%s\n' "$1" "$2" "$3"
       printf '%s\n' "GitHub refused the approval; its message follows."
@@ -151,9 +194,11 @@ PR_NUM=""
 HEAD_SHA=""
 BODY_FILE=""
 REPO_ARG=""
+HOLD_COPILOT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) print_usage; exit 0 ;;
+    --hold-copilot) HOLD_COPILOT=1; shift ;;
     --body-file|--repo)
       [[ $# -ge 2 ]] || refuse 2 usage missing-value "$1"
       if [[ "$1" == --body-file ]]; then BODY_FILE="$2"; else REPO_ARG="$2"; fi
@@ -224,6 +269,44 @@ if [[ $live_status -ne 0 || ! "$live" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 [[ "$live" == "$HEAD_SHA"* ]] || refuse 4 head-moved "$PR_NUM" "$HEAD_SHA" "$live"
+if [[ "$HOLD_COPILOT" -eq 1 ]]; then
+  hold_secs="${ORCH_COPILOT_HOLD_SECS-600}"
+  [[ "$hold_secs" =~ ^[1-9][0-9]*$ ]] || refuse 1 copilot-hold-setting "$hold_secs"
+  # shellcheck source=lib/copilot-check-runs.sh
+  source "$SCRIPT_DIR/lib/copilot-check-runs.sh"
+  hold_started="$(date +%s)"
+  held_run=""
+  while :; do
+    if ! runs="$(GH_TOKEN="$token" orch_copilot_check_runs "$REPO" "$live" 2>"$SCRATCH/err")"; then
+      oa_message copilot-read-failed "$PR_NUM" "$REPO" "$live" >&2
+      cat -- "$SCRATCH/err" >&2
+      exit 1
+    fi
+    now="$(date +%s)"
+    waited=$((now - hold_started))
+    if [[ -z "$held_run" && "$runs" != '[]' ]]; then
+      if ! held_run="$(jq -er '.[0].id' <<<"$runs" 2>"$SCRATCH/err")" ||
+        ! run_started="$(jq -er '.[0].started_at // "none"' <<<"$runs" 2>"$SCRATCH/err")"; then
+        oa_message copilot-read-failed "$PR_NUM" "$REPO" "$live" >&2
+        cat -- "$SCRATCH/err" >&2
+        exit 1
+      fi
+      oa_message copilot-in-flight "$PR_NUM" "$REPO" "$live" "$held_run" "$run_started" >&2
+    fi
+    if [[ -n "$held_run" && "$waited" -ge "$hold_secs" ]]; then
+      oa_message copilot-hold-expired "$PR_NUM" "$REPO" "$live" "$held_run" "$waited" >&2
+      break
+    fi
+    if [[ "$runs" == '[]' ]]; then
+      [[ -z "$held_run" ]] || refuse 5 copilot-finished "$PR_NUM" "$REPO" "$live" "$held_run"
+      break
+    fi
+    pause=10
+    remaining=$((hold_secs - waited))
+    [[ "$remaining" -ge "$pause" ]] || pause="$remaining"
+    sleep "$pause"
+  done
+fi
 payload="$(jq -c --arg sha "$live" '{commit_id: $sha} + .' "$SCRATCH/review")" \
   || refuse 1 payload "$PR_NUM" "$live"
 
