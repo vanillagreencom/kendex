@@ -356,9 +356,7 @@ BUILD_BIN="$TMP/build-bin"
 mkdir -p "$BUILD_BIN"
 kendex_stub "$BUILD_BIN/kendex" "kendex 0.0.0+git.$REPO_HEAD"
 
-# Exit 1 is the run's verdict once rows have run, and also any early death, so
-# a status-1 row counts only where the run printed the row table's header,
-# which comes after every refusal.
+# The row-table header proves the fixture reached measurement.
 stand_case() { # LABEL WANT-STATUS WANT-FIRST [ARG...] — ARGs follow --only claude, so an --only among them wins
   local rc=0 said="" reached=""
   (cd "$ROWS_REPO" && PATH="$BUILD_BIN:$ROWS_BIN:$PATH" "$BASH" "$STAND_SMOKE" \

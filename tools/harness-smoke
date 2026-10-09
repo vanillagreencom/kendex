@@ -525,11 +525,8 @@ refused() { # KEY HARNESS LOG — the fixture install did not finish
   KEEP=1
   refuse "$@"
 }
-# One effectful step of a scratch project. Its own words are captured and
-# replayed under the keyed refusal, so a failure refuses with exit 2 and keeps
-# the scratch tree, rather than aborting mid-table under errexit with the
-# command's own status — outside the 0/1/2/3 contract, before a row has
-# printed, and while KEEP is still 0 so the trap deletes the logs.
+# A setup failure exits 2 and keeps the scratch tree. The command's output
+# follows its keyed refusal so the cause is visible.
 setup() { # WHAT CMD... — WHAT names the step on the keyed line
   local what=$1 err=""
   shift
