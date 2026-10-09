@@ -62,6 +62,7 @@ MAIL_CALLS="$TMP_ROOT/mail-calls"
 FLEET_DIR="$TMP_ROOT/fleet-state"
 mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
+ln -s "$TEST_DIR/../../linear/scripts/lib" "$FIXTURE/skills/linear/scripts/lib"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
   "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
@@ -282,7 +283,7 @@ if [[ "${LANE_CLOSE_TRACKER_FAIL:-0}" != 0 ]]; then
   printf 'linear.sh: api-unreachable\n' >&2
   exit "$LANE_CLOSE_TRACKER_FAIL"
 fi
-printf '{"state":"%s","state_type":"%s"}\n' \
+printf '{"state":"%s","state_type":"%s","description":""}\n' \
   "${LANE_CLOSE_TRACKER_STATE:-Done}" "${LANE_CLOSE_TRACKER_STATE_TYPE-completed}"
 EOF
 chmod +x "$FIXTURE/skills/linear/scripts/linear.sh"
@@ -522,6 +523,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  ln -s "$FIXTURE/skills/linear/scripts/lib" "$dir/skills/linear/scripts/lib"
   ln -s "$FIXTURE/skills/worktree" "$dir/skills/worktree"
   ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
   ln -s "$SCRIPTS/lib/lane-capabilities.sh" "$dir/skills/orch/scripts/lib/lane-capabilities.sh"
@@ -2202,6 +2204,7 @@ real_worktree_tree() { # NAME [LANE_CLOSE] — prints the tree's lane-close
   done
   ln -s "${2:-$SCRIPTS/lane-close}" "$dir/skills/orch/scripts/lane-close"
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  ln -s "$FIXTURE/skills/linear/scripts/lib" "$dir/skills/linear/scripts/lib"
   cp -R "$TEST_DIR/../../worktree" "$dir/skills/worktree"
   printf '%s\n' "$dir/skills/orch/scripts/lane-close"
 }

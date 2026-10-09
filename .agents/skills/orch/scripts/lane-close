@@ -277,9 +277,11 @@ harness by signal as a close does,
 whatever the lane is doing, waits for its pane to read exited, closes the
 window, then stops the sandbox through lane-host stop-sandbox and requires its
 sandbox-stopped item=ID line. The record then reads parked and carries
-{pr, head, repo, at}, the pull request and head it was judged on. The merge of
-that pull request lets oversee-watch record its cycle before closing a Done
-or Canceled item. An open item gets parked-merged, and the overseer's relaunch
+{pr, head, repo, at}, the pull request and head it was judged on. An open or
+queued recorded pull request stays parked, whatever the tracker state. After
+merge, oversee-watch records its cycle before closing a Canceled item or a
+Done item whose Done-when boxes are all checked. An open item or a Done item
+with an unchecked box gets parked-merged, and the overseer's relaunch
 resumes the lane to finish its post-merge work. A stop the
 provider refuses, or answers without that line, leaves the record stopped,
 what --keep-sandbox leaves, and refuses as park-failed: the harness is gone
@@ -315,9 +317,10 @@ any full close. A list that fails or names the item keeps mail-read-failed.
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
 
---terminal-state reads the tracker through the recorded identity. For a
-parked record, an open recorded pull request or a completed Linear item with
-an unchecked Done-when box reads open. It prints open, completed or canceled
+--terminal-state reads the tracker through the recorded identity. A parked
+record with an open recorded pull request reads open. A parked or stopped
+completed Linear item with an unchecked Done-when box also reads open.
+It prints open, completed or canceled
 and exits 0. A failed tracker, pull request or checklist read exits 2.
 --if-terminal closes only if that judge answers terminal. An open item exits
 4 with an item-open line and no changes. Neither option accepts --keep-sandbox
@@ -673,9 +676,11 @@ tracker_terminal() {
       [[ -n "$state" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
       case "$state" in
         completed)
-          if [[ "$status" == parked && "$TERMINAL_MODE" != close ]]; then
+          if [[ "$TERMINAL_MODE" != close && ( "$status" == parked || "$status" == stopped ) ]]; then
             # GitHub integration marks Done at merge before lane close-out
             # ticks branch proof or schedules an open post-merge box.
+            # open-terminal unpark writes stopped before create --relaunch;
+            # a failed create must retain the same unfinished close-out.
             [[ -r "$SCRIPT_DIR/../../linear/scripts/lib/issue-validation.sh" ]] \
               || { TRACKER_CAUSE=checklist-missing; return 2; }
             # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
