@@ -3997,10 +3997,12 @@ check_lanes() {
 # leaves ACCOUNT_ROSTER_RC non-zero, which the heartbeat reports rather than
 # printing no accounts.
 ACCOUNT_ROSTER=""
+ACCOUNT_ROSTER_JSON=""
 ACCOUNT_ROSTER_RC=1
 account_roster_read() {
   local errf="$WORK_DIR/accounts.err" rc=0 out
   ACCOUNT_ROSTER=""
+  ACCOUNT_ROSTER_JSON=""
   ACCOUNT_ROSTER_RC=1
   bounded_account_read account-unread "$errf" "$LANES_CLI" list --json || rc=$?
   # `lanes` writes its own keyed notices on a listing it still answered, a
@@ -4028,6 +4030,7 @@ account_roster_read() {
     return 1
   }
   ACCOUNT_ROSTER="$out"
+  ACCOUNT_ROSTER_JSON="$BOUNDED_OUT"
   ACCOUNT_ROSTER_RC=0
 }
 
@@ -4052,7 +4055,7 @@ account_roster_read() {
 check_accounts() {
   local key value fields prior state="${PW_SEEN[0]}" change row
   local was_status was_verdict was_resets was_unmeasured status verdict resets reset_epoch unmeasured
-  account_roster_read || return 0
+  [[ "$ACCOUNT_ROSTER_RC" -eq 0 ]] || return 0
   while IFS=$'\t' read -r key value fields; do
     [[ -n "$key" ]] || continue
     if ! prior="$(lane_row_get account "$state" "$key")"; then
@@ -4477,6 +4480,7 @@ long_pass() {
     check_security_alerts
     check_prepare
     check_start_stall
+    account_roster_read || true
     check_lane_stall
     check_lane_long
     check_lanes

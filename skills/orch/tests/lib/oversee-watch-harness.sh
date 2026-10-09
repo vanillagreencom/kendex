@@ -330,7 +330,8 @@ case "${1:-} ${2:-}" in
     awk -F'\t' -v n="${limit:-0}" -v head="$head" 'head == "" || $2 == head' "$src" | awk -v n="${limit:-0}" 'n == 0 || NR <= n' \
       | jq -Rn --arg fields "$fields" --arg owner "${repo%%/*}" '[inputs | split("\t")
           | {number: (.[0] | tonumber), headRefName: .[1], title: .[2], author: {login: (.[3] // "octocat")},
-             headRefOid: (.[4] // null), body: (.[5] // ""), headRepositoryOwner: {login: (.[6] // $owner)}}
+             headRefOid: (.[4] // null), body: (.[5] // ""), headRepositoryOwner: {login: (.[6] // $owner)},
+             isDraft: (if .[7] == "false" then false elif (.[7] // "true") == "true" then true else null end)}
           | with_entries(select(.key as $k | $fields | split(",") | any(. == $k)))]' \
       | jq -r "${filter:-.}"
     exit ;;

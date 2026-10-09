@@ -366,7 +366,21 @@ The long pass's events, checked and reported in this order:
                              A record whose host kind declares files=none, a
                              cloud session, writes no file: its open pull
                              request on the item branch stands in for it
-  EVENT lane-stalled <item> age=<secs>
+  EVENT lane-stalled <item> age=<secs> [state=finished|out-of-credit]
+                             state=finished: the pull request left draft.
+                             Launch the item's landing lane in this pass,
+                             as disarmed for land=handoff says, with no
+                             directive and no wait for approval. The watch
+                             never closes a finished lane.
+                             state=out-of-credit: the draft lane's account
+                             reads locked or remaining_dollars <= 0. Send no
+                             directive. Close it with lane-close <item> and
+                             relaunch it as cloud-stall-closed says.
+                             A state goes out in the first pass that reads it,
+                             repeats every ORCH_OVERSEER_MARK_REPEAT passes,
+                             and changes report at once. One account roster
+                             read serves the stall and account checks.
+                             Without state=:
                              a running record whose host kind declares
                              status=none, a cloud session, has an open pull
                              request on the item branch whose head commit and

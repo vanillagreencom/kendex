@@ -191,7 +191,7 @@ host_capabilities() { # HOST — sets LANE_CAPABILITIES
 
 # The lane's own open pull request on ITEM's branch, in the first repository
 # that holds one: its head commit as OPEN_PR_HEAD and a digest of its body as
-# OPEN_PR_DIGEST. With none open, OPEN_PR_BRANCH_HEAD holds the item branch's
+# OPEN_PR_DIGEST, and its draft flag as OPEN_PR_DRAFT. With none open, OPEN_PR_BRANCH_HEAD holds the item branch's
 # heads by repository, including an empty value when no branch exists. A
 # branch head is observed progress; a commit date cannot date its push.
 # Only a head the repository owner holds is the lane's,
@@ -202,19 +202,20 @@ host_capabilities() { # HOST — sets LANE_CAPABILITIES
 # for none open, 2 for a list that failed, its words noted.
 OPEN_PR_HEAD=""
 OPEN_PR_DIGEST=""
+OPEN_PR_DRAFT=""
 OPEN_PR_BRANCH_HEAD=""
 OPEN_PR_SEEN=()
 item_open_pr() { # ITEM
   local branch repo list row branch_head rc=1 entry
   for entry in ${OPEN_PR_SEEN[@]+"${OPEN_PR_SEEN[@]}"}; do
     [[ "${entry%%|*}" == "$1" ]] || continue
-    IFS='|' read -r _ rc OPEN_PR_HEAD OPEN_PR_DIGEST OPEN_PR_BRANCH_HEAD <<<"$entry"
+    IFS='|' read -r _ rc OPEN_PR_HEAD OPEN_PR_DIGEST OPEN_PR_BRANCH_HEAD OPEN_PR_DRAFT <<<"$entry"
     return "$rc"
   done
-  OPEN_PR_HEAD="" OPEN_PR_DIGEST="" OPEN_PR_BRANCH_HEAD=""
+  OPEN_PR_HEAD="" OPEN_PR_DIGEST="" OPEN_PR_BRANCH_HEAD="" OPEN_PR_DRAFT=""
   branch="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   for repo in "${REPOS[@]}"; do
-    if ! list="$(gh pr list --repo "$repo" --head "$branch" --state open --json headRefName,headRepositoryOwner,headRefOid,body 2>"$WORK_DIR/pr.err")"; then
+    if ! list="$(gh pr list --repo "$repo" --head "$branch" --state open --json headRefName,headRepositoryOwner,headRefOid,body,isDraft 2>"$WORK_DIR/pr.err")"; then
       ow_message pr-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=2; break
     fi
     row="$(jq -c --arg branch "$branch" --arg owner "${repo%%/*}" "$LANE_MERGED_JQ"'
@@ -235,25 +236,27 @@ item_open_pr() { # ITEM
       continue
     fi
     OPEN_PR_HEAD="$(jq -r '.headRefOid // ""' <<<"$row")" && OPEN_PR_DIGEST="$(jq -r '.body // ""' <<<"$row" | cksum)" \
+      && OPEN_PR_DRAFT="$(jq -r '.isDraft | if type == "boolean" then tostring else "" end' <<<"$row")" \
       || die lane-stall-unread "" "item=$1"
     OPEN_PR_DIGEST="${OPEN_PR_DIGEST%% *}"
     rc=0
     break
   done
-  OPEN_PR_SEEN+=("$1|$rc|$OPEN_PR_HEAD|$OPEN_PR_DIGEST|$OPEN_PR_BRANCH_HEAD")
+  OPEN_PR_SEEN+=("$1|$rc|$OPEN_PR_HEAD|$OPEN_PR_DIGEST|$OPEN_PR_BRANCH_HEAD|$OPEN_PR_DRAFT")
   return "$rc"
 }
 
 # A running lane whose kind declares status=none, a cloud session no process
-# read reaches, is judged by what it pushes: once its pull request is open,
+# read reaches, reports a ready pull request or exhausted account at once.
+# Unknown draft or credit readings keep the age route: once its pull request is open,
 # neither its head nor the `## Lane status` body moving for
 # LANE_STALL_SECS is lane-stalled, whether it stopped on a question, lost its
 # machine or spent its credit. The row keeps the head, a digest of the body
-# and the epoch either last moved, so a change resets the window. Reported
+# and the epoch either last moved, plus the reported state word. Reported
 # once, then every MARK_REPEAT passes while it stands. Before the pull request
 # opens the start-stall check holds the lane, so a lane with none has no row.
 check_lane_stall() {
-  local item prior head digest since passes age rc rows="${PW_SEEN[0]}" items=()
+  local item prior head digest since passes age rc state reported rows="${PW_SEEN[0]}" items=()
   for item in ${STATUSLESS[@]+"${STATUSLESS[@]}"}; do
     items+=("$item")
     rc=0
@@ -263,29 +266,44 @@ check_lane_stall() {
       1) rows="$(lane_row_clear lane-stalled "$rows" "$item")"; continue ;;
       *) continue ;;
     esac
-    digest="$OPEN_PR_DIGEST"
+    state=""
+    if [[ "$OPEN_PR_DRAFT" == false ]]; then state=finished
+    elif [[ "$OPEN_PR_DRAFT" == true && "$ACCOUNT_ROSTER_RC" -eq 0 ]]; then
+      state="$(jq -r --arg item "$item" --argjson accounts "$ACCOUNT_ROSTER_JSON" '
+        [.lanes[]? | objects | select(.item == $item) | .account | strings] | first as $account
+        | [$accounts[] | select(.config_dir == $account) | .credits | objects
+            | select(.locked_reason != null or (.remaining_dollars | numbers | . <= 0))]
+        | if length > 0 then "out-of-credit" else "" end' <<<"$FLEET_STATE")" \
+        || die lane-stall-unread "" "item=$item"
+    fi
     if ! prior="$(lane_row_get lane-stalled "$rows" "$item")"; then
       die state-read-failed "" "item=$item" "row=lane-stalled"
     fi
+    IFS='|' read -r head digest since passes reported <<<"$prior"
+    digest="$OPEN_PR_DIGEST"
     if [[ "$prior" != "$OPEN_PR_HEAD|$digest|"* ]]; then
-      rows="$(lane_row_set lane-stalled "$rows" "$item" "$OPEN_PR_HEAD|$digest|$PASS_NOW|")"
+      head="$OPEN_PR_HEAD" since="$PASS_NOW"
+      [[ -n "$state" ]] || passes=""
+    fi
+    age=$((PASS_NOW - since))
+    if [[ -z "$state" ]] && (( age < LANE_STALL_SECS )); then
+      rows="$(lane_row_set lane-stalled "$rows" "$item" "$head|$digest|$since||")"
       continue
     fi
-    IFS='|' read -r head digest since passes <<<"$prior"
-    age=$((PASS_NOW - since))
-    (( age >= LANE_STALL_SECS )) || continue
-    if cloud_stall_close "$item" "$since"; then
+    # A ready PR waits for landing; closing it would relaunch completed work.
+    if [[ "$state" != finished ]] && (( age >= LANE_STALL_SECS )) && cloud_stall_close "$item" "$since"; then
       lane_row_commit "$rows"
       [[ -z "$CLOSE_TERMED" ]] || exit 143
       continue
     fi
+    [[ "$state" == "$reported" ]] || passes=""
     if [[ -z "$passes" ]]; then passes=0
     else passes=$(( passes + 1 )); (( passes < MARK_REPEAT )) || passes=0; fi
     if (( passes == 0 )); then
-      echo "EVENT lane-stalled $item age=$age"
+      echo "EVENT lane-stalled $item age=$age${state:+ state=$state}"
       PASS_EVENT=1
     fi
-    rows="$(lane_row_set lane-stalled "$rows" "$item" "$head|$digest|$since|$passes")"
+    rows="$(lane_row_set lane-stalled "$rows" "$item" "$head|$digest|$since|$passes|$state")"
   done
   rows="$(lane_row_prune lane-stalled "$rows" ${items[@]+"${items[@]}"})"
   lane_row_commit "$rows"
