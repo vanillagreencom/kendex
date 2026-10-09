@@ -847,6 +847,30 @@ timing_head="$(git -C "$wt" rev-parse HEAD)"
 run_old="$(validate_run_dir "$wt/tmp/dev-validate-old" range 0 "$timing_head" 1)"
 run_new="$(validate_run_dir "$wt/tmp/dev-validate-new" range 0 "$timing_head" 2)"
 run_other="$(validate_run_dir "$wt/tmp/dev-validate-other" range 0 "$OLD_A" 3)"
+echo '=== recording-only arguments cannot select a push or another read-only mode ==='
+for row in 'push-argument^--no-rebase^argument=--no-rebase' 'conflicting-mode^--check-live-round^argument=--record-restack-validation'; do
+  IFS='^' read -r label argument expected <<<"$row"
+  run_push "$work" --record-restack-validation "$run_new" --worktree "$wt" --issue KEN-1 "$argument"
+  assert_eq "$RUN_RC|$(sed -n '1p' "$run_err")" "1|worktree-push: check-argument $expected" "$label refuses before a push or timing write"
+done
+PUSH_SAVED="$PUSH"
+for rule in push-argument conflicting-mode; do
+  PUSH="$(mutant_scripts "record-$rule" worktree-push)/worktree-push"
+  case "$rule" in
+    push-argument)
+      mutate_file "$PUSH" '[[ "$check_live_round" == true || -n "$record_run_dir" ]]' '[[ "$check_live_round" == true ]]'
+      argument=--no-rebase
+      ;;
+    conflicting-mode)
+      mutate_file "$PUSH" '[[ "$check_live_round" != true || -z "$record_run_dir" ]]' 'true'
+      argument=--check-live-round
+      ;;
+  esac
+  run_push "$work" --record-restack-validation "$run_new" --worktree "$wt" --issue KEN-1 "$argument"
+  assert_eq "$RUN_RC" 0 "control: removing $rule refusal fails the recording-only argument row"
+done
+PUSH="$PUSH_SAVED"
+reset_state "$work"
 printf 'validate: lanes=shell selection=subset\n' > "$run_new/log"
 "$STATE" --state-dir "$work/tmp" update KEN-1 '.stages=[]'
 for round in first second; do
@@ -906,7 +930,7 @@ assert_eq "$RUN_RC|$(jq -c '.stages // []' <<<"$(state_json "$work")")" '7|[]' '
 reset_state "$work"
 PUSH_SAVED="$PUSH"
 PUSH="$(mutant_scripts no-restack-stage worktree-push)/worktree-push"
-mutate_file "$PUSH" 'record_restack_validation ||' 'true ||'
+mutate_file "$PUSH" 'record_restack_validation() {' 'record_restack_validation() { return 0'
 printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
 STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC|$(jq -c '.stages // []' <<<"$(state_json "$work")")" '0|[]' 'control: dropping restack write fails stage observation'

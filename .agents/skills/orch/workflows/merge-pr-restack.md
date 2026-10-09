@@ -54,6 +54,12 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
    ```
 
+   Bind `[RUN_DIR]` to the run's `run-dir=` line and read its head and times after it ends:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]
+   ```
+
    `worktree-push` reads the newest finished run for the pre-push restacked head through `dev-validate-run --record` after a successful push. It records the restack stage and validation minutes once per run directory. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.
 
    A start refused as `run-live` ran nothing and is no result: take [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate)'s route for that refusal, then start the range run again.
@@ -74,7 +80,13 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    git -C [WT_PATH] rev-parse HEAD
    ```
 
-   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's skip check again on it, and where it does not skip, its range run, then record and route the result as step 2 does. A pass or a skip goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
+   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's skip check again on it, and where it does not skip, its range run and record read. Route a non-passing result as step 2 does. After a pass, bind `[RUN_DIR]` to this second run and record its timing through the same owner:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --record-restack-validation [RUN_DIR] --worktree [WT_PATH] --issue [ISSUE]
+   ```
+
+   This command publishes nothing. Its timing write is advisory (`worktree-push --help`). A pass or a skip goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
 4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head, wait for its CI and take the merge route again.
 
