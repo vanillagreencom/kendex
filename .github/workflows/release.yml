@@ -77,6 +77,14 @@ jobs:
       - name: Linux webview dependencies
         if: runner.os == 'Linux'
         run: |
+          # The x86_64 runner's Azure mirror has stalled package downloads.
+          # Keep the image's suites and signing key on the official archive.
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            sudo sed -i \
+              -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+              -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+              /etc/apt/sources.list.d/ubuntu.sources
+          fi
           sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update
           sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libxdo-dev xdg-utils libarchive-tools
