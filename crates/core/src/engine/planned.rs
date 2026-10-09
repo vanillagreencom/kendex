@@ -122,7 +122,7 @@ pub fn planned_closure_held(
     lock: &crate::lock::Lock,
     options: &super::PlanOptions,
 ) -> crate::error::Result<(Vec<PlannedDeclaration>, super::DeclarationStatus)> {
-    let (planning, held) = desired::hold::held_planning(env, manifest, lock, options)?;
+    let (planning, held) = desired::hold::held_planning(env, scope, manifest, lock, options)?;
     Ok(closure(env, scope, planning.as_ref(), held.as_ref()))
 }
 
@@ -140,11 +140,12 @@ pub struct HeldDeclarations<'a> {
 
 pub fn held_declarations<'a>(
     env: &Env,
+    scope: &Scope,
     manifest: &'a Manifest,
     lock: &crate::lock::Lock,
     options: &super::PlanOptions,
 ) -> crate::error::Result<HeldDeclarations<'a>> {
-    let (planning, held) = desired::hold::held_planning(env, manifest, lock, options)?;
+    let (planning, held) = desired::hold::held_planning(env, scope, manifest, lock, options)?;
     let selectors = desired::pi_selector_bases(&planning, held.as_ref())
         .into_iter()
         .map(|((_, name), basis)| (name, basis.recorded()))

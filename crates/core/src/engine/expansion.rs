@@ -70,7 +70,7 @@ pub(super) struct Planned {
     derived_from: Option<Reason>,
     /// The synthetic declaration that supplied this reading, inherited
     /// by dependencies when their parent owns the revision.
-    held_by: Option<SelectorBasis>,
+    held_by: Option<(super::Held, SelectorBasis)>,
 }
 
 #[derive(Default, Clone)]
@@ -81,11 +81,7 @@ pub(super) struct Expansion {
     /// The first derivation wins deterministically — map order — and each
     /// loser is reported, never silently absorbed.
     rev_disagreements: Vec<Disagreement>,
-    /// The revisions this pass pinned itself to hold the rest of the scope
-    /// still, by source and commit: read revisions, never a person's
-    /// choice.
-    invented: BTreeSet<(String, String)>,
-    held_owners: BTreeMap<(String, super::Held), Option<crate::lock::DeclaredSelector>>,
+    held_owners: BTreeMap<(String, super::Held), (String, Option<crate::lock::DeclaredSelector>)>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -101,6 +97,8 @@ struct Disagreement {
     /// the one the item is read at; only a derivation weighing the read
     /// revision can be settled by the commit both resolve to.
     by_a_set: bool,
+    kept_owner: Option<super::Held>,
+    refused_owner: Option<super::Held>,
 }
 
 impl Expansion {
@@ -112,7 +110,7 @@ impl Expansion {
             .iter()
             .map(|(key, planned)| {
                 let basis = match &planned.held_by {
-                    Some(basis) => basis.clone(),
+                    Some((_, basis)) => basis.clone(),
                     None => SelectorBasis::Declared(crate::lock::DeclaredSelector::of(
                         manifest,
                         &planned.decl.source,
@@ -212,6 +210,7 @@ impl Expansion {
                         kind,
                         name: name.to_owned(),
                     },
+                    decl.rev.as_deref(),
                 ),
             },
         );
@@ -296,6 +295,7 @@ impl Expansion {
                 super::Held::Set {
                     name: bundle.name.clone(),
                 },
+                decl.rev.as_deref(),
             ),
             Reason::RequiredBy { by } => {
                 let Some(parent) = self.items.get(&(by.kind, by.name.clone())) else {
@@ -324,7 +324,7 @@ impl Expansion {
                 harnesses: Vec::new(),
                 chosen_rev: decl.rev.clone(),
                 derived_from: Some(reason_owning.clone()),
-                held_by,
+                held_by: held_by.clone(),
             });
         // A derived item is on while any requirer that brings it in is on:
         // the first requirer walked wrote its switch, and a later one that
@@ -351,6 +351,10 @@ impl Expansion {
                 kept: wanted_at.clone(),
                 refused: decl.rev.clone(),
                 by_a_set: carried_by_a_set,
+                kept_owner: (*wanted_at == planned.decl.rev)
+                    .then(|| planned.held_by.as_ref().map(|(owner, _)| owner.clone()))
+                    .flatten(),
+                refused_owner: held_by.as_ref().map(|(owner, _)| owner.clone()),
             });
         }
         if !planned.harnesses.contains(&harness) {
@@ -359,10 +363,30 @@ impl Expansion {
         fresh || turned_on
     }
 
-    fn held_owner(&self, source: &str, owner: super::Held) -> Option<SelectorBasis> {
+    fn held_owner(
+        &self,
+        source: &str,
+        owner: super::Held,
+        rev: Option<&str>,
+    ) -> Option<(super::Held, SelectorBasis)> {
         self.held_owners
-            .get(&(source.to_owned(), owner))
-            .map(|selector| SelectorBasis::Held(selector.clone()))
+            .get(&(source.to_owned(), owner.clone()))
+            .filter(|(commit, _)| rev == Some(commit.as_str()))
+            .map(|(_, selector)| (owner, SelectorBasis::Held(selector.clone())))
+    }
+
+    /// The declarations whose invented revisions disagree, including the
+    /// owner inherited through each dependency rather than the dependency.
+    pub(super) fn disagreeing_holds(&self) -> BTreeSet<(String, super::Held)> {
+        self.rev_disagreements
+            .iter()
+            .flat_map(|one| {
+                [&one.kept_owner, &one.refused_owner]
+                    .into_iter()
+                    .flatten()
+                    .map(|owner| (one.source.clone(), owner.clone()))
+            })
+            .collect()
     }
 
     /// Report every revision disagreement as a warning on the item, once
@@ -391,16 +415,9 @@ impl Expansion {
                 _ => None,
             }
         };
-        let invented = &self.invented;
-        let invented = |source: &str, rev: &Option<String>| {
-            rev.as_ref()
-                .is_some_and(|rev| invented.contains(&(source.to_owned(), rev.clone())))
-        };
         self.rev_disagreements.retain(|one| {
             let kept = commit_of(&one.source, &one.kept);
-            let chosen = one.by_a_set
-                && !invented(&one.source, &one.kept)
-                && !invented(&one.source, &one.refused);
+            let chosen = one.by_a_set && one.kept_owner.is_none() && one.refused_owner.is_none();
             chosen || kept.is_none() || kept != commit_of(&one.source, &one.refused)
         });
         for Disagreement {
@@ -671,13 +688,14 @@ fn expand_read<'a>(
 ) -> Expansion {
     let mut expansion = Expansion {
         held_owners: held
-            .map(|pins| pins.selectors().clone())
-            .unwrap_or_default(),
-        invented: held
             .map(|pins| {
                 pins.pins()
                     .iter()
-                    .map(|pin| (pin.source.clone(), pin.commit.clone()))
+                    .map(|pin| {
+                        let owner = (pin.source.clone(), pin.held.clone());
+                        let selector = pins.selectors()[&owner].clone();
+                        (owner, (pin.commit.clone(), selector))
+                    })
                     .collect()
             })
             .unwrap_or_default(),

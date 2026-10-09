@@ -30,7 +30,7 @@ use crate::error::{CoreError, Result};
 
 use crate::lock::{Lock, LockEntry, Reason};
 use crate::manifest::Manifest;
-use crate::model::ItemKind;
+use crate::model::{ItemKind, Scope};
 
 use super::super::expansion::PLANNED_KINDS;
 use super::super::report_types::{Held, HeldPin, Reach, Targets};
@@ -188,6 +188,22 @@ impl HeldPins {
             }
         }
     }
+
+    fn release_where(&mut self, manifest: &mut Manifest, release: impl Fn(&HeldPin) -> bool) {
+        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pins)
+            .into_iter()
+            .partition(release);
+        for pin in &gone {
+            self.selectors
+                .remove(&(pin.source.clone(), pin.held.clone()));
+        }
+        HeldPins {
+            pins: gone,
+            selectors: BTreeMap::new(),
+        }
+        .unpin(manifest);
+        self.pins = kept;
+    }
 }
 
 impl HeldPin {
@@ -214,6 +230,7 @@ impl HeldPin {
 /// fresh.
 pub(crate) fn held_planning<'a>(
     env: &Env,
+    scope: &Scope,
     manifest: &'a Manifest,
     lock: &Lock,
     options: &super::super::PlanOptions,
@@ -221,6 +238,29 @@ pub(crate) fn held_planning<'a>(
     let (mut planning, mut pins) = planning_manifest(manifest, lock, options);
     if let Some(pins) = pins.as_mut() {
         release_unserved(env, options, planning.to_mut(), pins)?;
+        // An add retains the installed packages instead of reconciling
+        // them; its existing dependency refusal must still see their pins.
+        let reconciles = options
+            .update_only
+            .as_ref()
+            .is_some_and(|targets| targets.reach == Reach::Carriers);
+        if options.keep_source_records && reconciles && !pins.pins.is_empty() {
+            loop {
+                let mut state = super::DesiredState::default();
+                let expanded =
+                    super::super::expansion::expand(env, scope, &planning, Some(pins), &mut state);
+                let owners = expanded.disagreeing_holds();
+                if owners.is_empty() {
+                    break;
+                }
+                // The record cannot place these declarations together.
+                // Release only their synthetic pins; each pass removes
+                // an owner before it reads the changed closure again.
+                pins.release_where(planning.to_mut(), |pin| {
+                    owners.contains(&(pin.source.clone(), pin.held.clone()))
+                });
+            }
+        }
     }
     Ok((planning, pins))
 }
@@ -316,22 +356,9 @@ fn release(
             *readable = serves(repo, commit);
         }
     }
-    let (kept, gone) = std::mem::take(&mut pins.pins).into_iter().partition(|pin| {
-        served
-            .get(&(pin.repo.clone(), pin.commit.clone()))
-            .copied()
-            .unwrap_or(true)
+    pins.release_where(held, |pin| {
+        served.get(&(pin.repo.clone(), pin.commit.clone())) == Some(&false)
     });
-    HeldPins {
-        pins: gone,
-        selectors: BTreeMap::new(),
-    }
-    .unpin(held);
-    pins.selectors.retain(|(source, owner), _| {
-        kept.iter()
-            .any(|pin| &pin.source == source && &pin.held == owner)
-    });
-    pins.pins = kept;
     Ok(())
 }
 

@@ -248,7 +248,8 @@ fn settleable(
         return Ok(Vec::new());
     }
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
-    let manifest = kendex_core::engine::held_declarations(env, &manifest, &lock, options)?.manifest;
+    let manifest =
+        kendex_core::engine::held_declarations(env, scope, &manifest, &lock, options)?.manifest;
     let mut found = Vec::new();
     for (name, decl) in &manifest.pi_extensions {
         let key = kendex_core::lock::entry_key(
@@ -655,7 +656,8 @@ fn install_rows(
     };
     let declared = kendex_core::engine::ops::manifest_for_reading(env, &plan.scope)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
-    let readings = kendex_core::engine::held_declarations(env, &declared, &lock, options)?;
+    let readings =
+        kendex_core::engine::held_declarations(env, &plan.scope, &declared, &lock, options)?;
     let manifest = &readings.manifest;
     for row in &plan.rows {
         let (source_dir, verb) = match &row.status {

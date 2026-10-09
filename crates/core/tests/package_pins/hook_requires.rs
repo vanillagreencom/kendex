@@ -11,6 +11,142 @@ use kendex_core::remote;
 
 use super::{REPO, World, commit, messages, notes, world, write_manifest};
 
+/// Apply records can hold a hook before its explicitly declared companion
+/// was updated. Only a pin in the manifest can keep that disagreement.
+#[test]
+#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one revision planning table: declaration and bundle owners, repeated release, written pins, and unchanged followers"
+)]
+fn locked_apply_releases_disagreeing_recorded_revisions_but_keeps_written_pins() {
+    use kendex_core::engine::{PlanOptions, plan_apply};
+    use kendex_core::lock::{entry_key, load, lock_path, save};
+    use kendex_core::model::{HarnessId, ItemKind};
+
+    for (pinned, bundled) in [(false, false), (true, false), (false, true), (true, true)] {
+        let w = world();
+        fs::write(
+            w.upstream.join("kendex.toml"),
+            "is_source_catalog = true\n\n[bundles.wrapper]\nhooks = [\"deliver\"]\n",
+        )
+        .unwrap();
+        super::write_skill(&w.upstream, "judge", "", "Judge one.");
+        super::write_skill(&w.upstream, "solo", "", "Solo one.");
+        super::write_skill(&w.upstream, "followup", "", "Followup one.");
+        let write_requirer = |requires, body| {
+            fs::create_dir_all(w.upstream.join("hooks")).unwrap();
+            fs::write(
+                w.upstream.join("hooks/deliver.sh"),
+                format!("#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: deliver\n# requires-skills: [{requires}]\n# ---\n{body}\n"),
+            )
+            .unwrap();
+        };
+        write_requirer("judge", "exit 0");
+        let first = commit(&w.upstream, "one");
+        let pin = match pinned {
+            true => format!("rev = \"{first}\"\n"),
+            false => String::new(),
+        };
+        let owner = match bundled {
+            true => "bundles.wrapper",
+            false => "hooks.deliver",
+        };
+        write_manifest(
+            &w,
+            &format!(
+                "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[{owner}]\nsource = \"cat\"\n{pin}\n[skills.judge]\nsource = \"cat\"\n\n[skills.solo]\nsource = \"cat\"\n\n[skills.followup]\nsource = \"cat\"\n"
+            ),
+        );
+        super::sync_and_apply(&w);
+        assert!(armed(&w, "deliver"));
+        super::write_skill(&w.upstream, "judge", "", "Judge two.");
+        super::write_skill(&w.upstream, "solo", "", "Solo two.");
+        super::write_skill(&w.upstream, "followup", "", "Followup two.");
+        // The fresh hook introduces another disagreement only after its
+        // first hold is released. The next expansion must release it too.
+        write_requirer("judge, followup", "exit 0 # second");
+        let second = commit(&w.upstream, "two");
+        super::fetch_mirrors(&w);
+        let path = lock_path(&w.env, &w.scope);
+        let mut recorded = load(&path).unwrap();
+        let judge = entry_key(ItemKind::Skill, "judge", HarnessId::Claude);
+        recorded.entries.get_mut(&judge).unwrap().source_commit = Some(second.clone());
+        save(&path, &recorded).unwrap();
+
+        let report = plan_apply(&w.env, &w.scope, &PlanOptions::locked()).unwrap();
+        let conflicts: Vec<_> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "judge" && row.state == DriftState::Conflict)
+            .collect();
+        assert_eq!(
+            !conflicts.is_empty(),
+            pinned,
+            "companion revision disagreement: {:?}",
+            messages(&report)
+        );
+        if pinned {
+            assert!(report.warnings.iter().any(|warning| {
+                warning.kind == ItemKind::Skill
+                    && warning.name == "judge"
+                    && warning.remediation.is_some()
+            }));
+            assert_eq!(report.declaration_status, DeclarationStatus::Incomplete);
+        } else {
+            assert_eq!(report.declaration_status, DeclarationStatus::Complete);
+        }
+        let declared = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+            .unwrap()
+            .unwrap();
+        let readings = kendex_core::engine::held_declarations(
+            &w.env,
+            &w.scope,
+            &declared,
+            &recorded,
+            &PlanOptions::locked(),
+        )
+        .unwrap();
+        let (closure, status) = kendex_core::engine::planned_closure_held(
+            &w.env,
+            &w.scope,
+            &declared,
+            &recorded,
+            &PlanOptions::locked(),
+        )
+        .unwrap();
+        assert_eq!(status, report.declaration_status);
+        assert_eq!(
+            readings.manifest.skills["solo"].rev.as_deref(),
+            Some(first.as_str())
+        );
+        for row in closure {
+            let expected = match (row.name.as_str(), pinned) {
+                ("solo", _) | ("deliver" | "followup", true) => Some(first.as_str()),
+                ("judge", _) | ("deliver" | "followup", false) => None,
+                _ => panic!("unexpected closure member"),
+            };
+            assert_eq!(row.decl.rev.as_deref(), expected, "{}", row.name);
+        }
+        apply::execute(&w.env, &report.plan).unwrap();
+        let after = load(&path).unwrap();
+        let deliver = entry_key(ItemKind::Hook, "deliver", HarnessId::Claude);
+        let solo = entry_key(ItemKind::Skill, "solo", HarnessId::Claude);
+        assert_eq!(after.entries[&solo], recorded.entries[&solo]);
+        let followup = entry_key(ItemKind::Skill, "followup", HarnessId::Claude);
+        for key in [&deliver, &judge, &followup] {
+            match pinned {
+                true => assert_eq!(after.entries[key], recorded.entries[key]),
+                false => assert_eq!(
+                    after.entries[key].source_commit.as_deref(),
+                    Some(second.as_str())
+                ),
+            }
+        }
+        assert!(armed(&w, "deliver"));
+    }
+}
+
 /// A hook script with the smallest header that parses, naming the hooks it
 /// cannot work without.
 #[allow(clippy::unwrap_used)]
