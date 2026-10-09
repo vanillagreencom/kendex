@@ -53,9 +53,8 @@ checkout's remote.
 
 --environment-only reports the environment policy and its secret names, and
 reads neither REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_CONTEXTS, the
-two bypass keys nor any ruleset. Refresh
-adoption uses this mode, with the refresh template's environment and secret
-names set as process values, which outrank the settings files.
+two bypass keys nor any ruleset. Refresh adoption reads its caller declaration
+and uses the same environment judgments without this report mode.
 
 One verdict line per row, ok, advisory or FAIL, VALUE being what was
 observed. An advisory row departs from a requirement the 1.3.0 standard
@@ -310,7 +309,7 @@ advise() { # CHECK VALUE MESSAGE NEW_FORM
   rg_report advisory "$1" "$2" "$3"
 }
 
-# Adoption needs the environment checks without unrelated owner-only reads.
+# The environment-only report excludes unrelated owner-only reads.
 if [ "$ENVIRONMENT_ONLY" -eq 0 ]; then
 # ------------------------------------------------------ default branch ---
 
@@ -639,27 +638,30 @@ fi
 
 ENV_PRESENT=unknown
 if [ -n "$ENVS" ]; then
-  policy="$(jq -r --arg n "$WANT_ENV" 'map(select(.name == $n)) | if length == 0 then "" else (.[0].deployment_branch_policy | @json) end' <<<"$ENVS")" ||
-    die environments-query "$WANT_ENV" "jq could not evaluate a query over the parsed environments"
-  case "$policy" in
-    "") ENV_PRESENT=no; bad standard-environment absent "the environment $WANT_ENV does not exist. $PROVISION" ;;
-    null) ENV_PRESENT=yes; bad standard-environment unrestricted "$WANT_ENV deploys from every branch; the standard allows the default branch only. $PROVISION" ;;
-    *)
-      ENV_PRESENT=yes
-      kind="$(jq -r 'if .custom_branch_policies == true and .protected_branches == false then "custom" elif .protected_branches == true then "protected-branches" else "malformed" end' <<<"$policy" 2>/dev/null)" || kind=malformed
-      if [ "$kind" != custom ]; then
-        bad standard-environment "$kind" "$WANT_ENV does not deploy from a custom branch policy; the standard allows the default branch only. $PROVISION"
-      elif read_api "repos/$FULL/environments/$ENV_URI/deployment-branch-policies" '.branch_policies[] | "\(.type // "branch"):\(.name)"' --paginate; then
-        observed="custom:$(printf '%s' "$READ_OUT" | tr '\n' ',')"
-        if [ "$READ_OUT" = "branch:$BRANCH" ]; then
-          ok standard-environment "$observed" "$WANT_ENV deploys from $BRANCH only"
-        else
-          bad standard-environment "$observed" "$WANT_ENV deploys from these branch policies; the standard allows branch:$BRANCH only. $PROVISION"
-        fi
-      else
-        bad standard-environment unreadable "the branch policies of $WANT_ENV could not be read: $READ_ERR"
-      fi
-      ;;
+  policy_data="$(jq -n --argjson environments "$ENVS" '{environments: $environments}')" ||
+    die environments-query "$WANT_ENV" "could not encode the environment data"
+  judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" policy "$BRANCH" "$WANT_ENV" <<<"$policy_data")" ||
+    die environments-query "$WANT_ENV" "could not judge the environment data"
+  ENV_PRESENT="$(jq -r .present <<<"$judgment")"
+  cause="$(jq -r .cause <<<"$judgment")" ||
+    die environments-query "$WANT_ENV" "could not decode the environment judgment"
+  if [ "$cause" = pending ]; then
+    if read_api "repos/$FULL/environments/$ENV_URI/deployment-branch-policies" '.branch_policies[] | @json' --paginate &&
+        policies="$(printf '%s' "$READ_OUT" | jq -s '.')"; then
+      policy_data="$(jq --argjson policies "$policies" '. + {policies: $policies}' <<<"$policy_data")"
+      judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" policy "$BRANCH" "$WANT_ENV" <<<"$policy_data")" ||
+        die environments-query "$WANT_ENV" "could not judge the branch-policy data"
+      cause="$(jq -r .cause <<<"$judgment")" ||
+        die environments-query "$WANT_ENV" "could not decode the branch-policy judgment"
+    else
+      cause=read
+    fi
+  fi
+  observed="$(jq -r .value <<<"$judgment")"
+  case "$cause" in
+    '') ok standard-environment "$observed" "$WANT_ENV deploys from $BRANCH only" ;;
+    read) bad standard-environment unreadable "the branch policies of $WANT_ENV could not be read: $READ_ERR" ;;
+    *) bad standard-environment "$observed" "$WANT_ENV must exist and allow the default branch only. $PROVISION" ;;
   esac
 else
   bad standard-environment unreadable "the environments could not be read: $ENVS_ERR"
@@ -667,10 +669,13 @@ fi
 
 case "$ENV_PRESENT" in
   yes)
-    if read_api "repos/$FULL/environments/$ENV_URI/secrets" '.secrets[].name' --paginate; then
-      listed="$READ_OUT"
-      held="$(rg_standard_held "$listed" | paste -sd ';' -)"
-      if missing="$(rg_standard_missing "$listed" | paste -sd ';' -)" && [ -z "$missing" ]; then
+    if read_api "repos/$FULL/environments/$ENV_URI/secrets" '.secrets[] | @json' --paginate &&
+        secrets="$(printf '%s' "$READ_OUT" | jq -s '.')"; then
+      judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" secrets "$WANT_SECRETS" <<<"$secrets")" ||
+        die environments-query "$WANT_ENV" "could not judge the secret-name data"
+      held="$(jq -r .held <<<"$judgment")"
+      missing="$(jq -r .missing <<<"$judgment")"
+      if [ "$(jq -r .cause <<<"$judgment")" = '' ]; then
         ok standard-environment-secrets "$held" "$WANT_ENV holds every secret the standard names"
       else
         bad standard-environment-secrets "$held" "$WANT_ENV lacks: $missing. $PROVISION"

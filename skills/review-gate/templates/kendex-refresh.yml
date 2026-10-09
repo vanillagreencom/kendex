@@ -1,8 +1,10 @@
 # Adopted into .github/workflows/ by refresh/adopt-refresh.sh from a kendex release checkout, which checks
 # the declared environment and its secrets first. Configure only the
 # environment, secret-name inputs and matching secret mappings below.
-# The shared job resolves those names in this repository's environment. The shared
-# workflow runs the refresh from the kendex release the major tag names.
+# GitHub requires named secret forwarding for environment secrets. The legacy
+# same-name pair also supplies upstream issue reporting. Custom name and neutral
+# alias resolution require a hosted check. The shared workflow runs the refresh
+# from the kendex release the major tag names.
 # Opening a pull request needs that repository's app token.
 # Auto-merge depends on the published head becoming visible in GitHub.
 # review-gate SKILL.md defines the arm outcomes and merge requirements.
@@ -21,7 +23,7 @@ name: Refresh kendex
   workflow_dispatch: {}
 
 jobs:
-  # A run held on the kendex environment gate never times out, and it holds
+  # A run held on its selected environment gate never times out, and it holds
   # the refresh group, so every later run queues behind it. The gate has no
   # reviewers and no wait timer, so a run still waiting 30 minutes after its
   # last state change is stuck. This job takes no group; it force-cancels
@@ -69,3 +71,5 @@ jobs:
     secrets:
       app-id: ${{ secrets.FLEET_GH_APP_ID }}
       app-private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
+      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}

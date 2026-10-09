@@ -25,6 +25,50 @@ cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then ok 'repeated adoption keeps the inventory unchanged'; else bad "repeated adoption (rc=$RC)" "$OUT"; fi
 
+# The API child keeps the inputs used by GitHub CLI configuration, Linux
+# credential storage and Go network routes. The fixture owns its assertions.
+while IFS='|' read -r key mutation expected; do
+  sandbox
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  [ "$RC" -eq 0 ] || exit 1
+  rm -- "${DIR:?}/$REFRESH"
+  printf '[]\n' >"$DIR/.kendex-generated.json"
+  cp "$BIN/gh" "$BIN/gh-environment-base"
+  python3 - "$BIN/gh" "$BIN/gh-environment-base" "$key" <<'GH_ENVIRONMENT'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); p.write_text("#!/usr/bin/env python3\nimport os, sys\n"
+    "if '--paginate' in sys.argv:\n"
+    "    if os.environ.get("+repr(sys.argv[3])+") != 'environment-input' or 'UNRELATED_APPLICATION_SECRET' in os.environ: raise SystemExit(91)\n"
+    "os.execv("+repr(sys.argv[2])+", ["+repr(sys.argv[2])+"] + sys.argv[1:])\n")
+GH_ENVIRONMENT
+  if [ "$mutation" = dropped ]; then
+    python3 - "$DIR/$ADOPT" "$key" <<'DROP_ENVIRONMENT'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old='"'+sys.argv[2]+'", '; assert s.count(old)==1
+changed=s.replace(old, ''); assert changed!=s; p.write_text(changed)
+DROP_ENVIRONMENT
+  fi
+  RC=0
+  OUT="$(cd "$DIR" && env -i PATH="$BIN:$PATH" HOME="$TMP" GH_TOKEN=fixture \
+    "$key=environment-input" UNRELATED_APPLICATION_SECRET=fixture \
+    "$DIR/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --retire-writer 2>&1)" || RC=$?
+  matched=no
+  if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then matched=yes; fi
+  if [ "$matched" = "$expected" ]; then ok "GitHub CLI child input=$key mutation=$mutation";
+  else bad "GitHub CLI child input=$key mutation=$mutation" "$OUT"; fi
+done <<'GH_ENV_ROWS'
+XDG_CONFIG_HOME|none|yes
+AppData|none|yes
+DBUS_SESSION_BUS_ADDRESS|none|yes
+HTTPS_PROXY|none|yes
+no_proxy|none|yes
+SSL_CERT_FILE|none|yes
+SSL_CERT_DIR|none|yes
+XDG_CONFIG_HOME|dropped|no
+GH_ENV_ROWS
+
 # Only the catalog fixture licenses updates. Consumer records, current
 # templates and consumer commits cannot supply shipment evidence.
 # input | record | result | writer
@@ -252,30 +296,33 @@ while IFS='|' read -r rule pattern; do
       [ ! -e "$DIR/$REFRESH" ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then
     ok "$rule refuses before workflow or inventory changes"
   else bad "$rule environment refusal" "$OUT"; fi
-  if [ "$rule" != read ]; then
-    python3 - "$DIR/refresh/lib/caller.py" "$pattern" "$rule" <<'ENV_CONTROL'
+  python3 - "$DIR/.agents/skills/review-gate/scripts/lib/environment.py" "$pattern" "$rule" <<'ENV_CONTROL'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
-s=s.replace(old, 'if False and ('+old[3:-1]+'):' )
-# The presence rule supplies the later policy read with a valid fallback.
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2].replace("\\n", "\n"); assert s.count(old)==1
+if sys.argv[3]=='read':
+ # Keep the failed API request and refusal text. Valid fallback data lets
+ # the later policy checks pass, so only the ignored read changes adoption.
+ replacement = old.replace('refuse("read", endpoint)', '# refuse("read", endpoint)\n            return [{"environments": [{"name": "kendex", "deployment_branch_policy": {"custom_branch_policies": True, "protected_branches": False}}]}]')
+ s=s.replace(old, replacement)
+else:
+ s=s.replace(old, 'if False and ('+old[3:-1]+'):' )
 if sys.argv[3]=='missing':
  old='policy = selected[0].get("deployment_branch_policy")'; assert s.count(old)==1
  s=s.replace(old, 'policy = selected[0].get("deployment_branch_policy") if selected else {"custom_branch_policies": True, "protected_branches": False}')
 assert s != p.read_text(); p.write_text(s)
 ENV_CONTROL
-    run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-      ok "control: disabled $rule check permits adoption"
-    else bad "$rule environment control" "$OUT"; fi
-  fi
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
+    ok "control: disabled $rule check permits adoption"
+  else bad "$rule environment control" "$OUT"; fi
   SHIM_FAIL=''
 done <<'ENV_ROWS'
 missing|if len(selected) != 1:
-branch-policy|if len(policies) != 1 or not isinstance(policies[0], dict) or policies[0].get("name") != branch or policies[0].get("type", "branch") != "branch":
+branch-policy|if len(policies) != 1 or policies[0].get("name") != branch or policies[0].get("type", "branch") != "branch":
 policy-type|if not isinstance(policy, dict) or policy.get("custom_branch_policies") is not True or policy.get("protected_branches") is not False:
-secrets|if not set(config["names"]).issubset({row["name"].upper() for row in secrets}):
-read|
+secrets|if not set(names).issubset(held):
+read|            print(error.stderr, file=sys.stderr, end="")\n            refuse("read", endpoint)
 ENV_ROWS
 cp "$TMP/default-environments" "$FIXTURES/environments.json"
 cp "$TMP/default-policies" "$FIXTURES/branch-policies.json"
@@ -549,7 +596,16 @@ ship_caller_template "$TMP/legacy-caller"
 sandbox
 cp "$TMP/legacy-caller" "$DIR/$REFRESH"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
-if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER"; then
+if [ "$RC" -eq 0 ] && python3 - "$DIR/refresh/lib" "$DIR/$REFRESH" "$CALLER" <<'LEGACY'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from caller import configuration, normalized
+actual, shipped = (Path(p).read_bytes() for p in sys.argv[2:])
+assert normalized(actual) == normalized(shipped)
+assert configuration(actual)["names"] == ["FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY"]
+LEGACY
+then
   ok 'an earlier fully mapped caller adopts with the same environment and app names'
 else bad 'legacy mapped caller' "$OUT"; fi
 
@@ -562,8 +618,12 @@ while IFS='|' read -r rule mutation pattern; do
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); assert s.count('environment: kendex')==1
+for key in ('FLEET_GH_APP_ID', 'FLEET_GH_APP_PRIVATE_KEY'):
+ s=s.replace('      '+key+': ${{ secrets.'+key+' }}\n', '')
 s=s.replace('environment: kendex', 'environment: delivery').replace('FLEET_GH_APP_ID', 'DELIVERY_ID').replace('FLEET_GH_APP_PRIVATE_KEY', 'DELIVERY_KEY')
 rule=sys.argv[2]
+if rule=='legacy-secret-names':
+ s += '      FLEET_GH_APP_ID: ${{ secrets.DELIVERY_ID }}\n      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}\n'
 if rule=='missing': s=s.replace('      app-private-key: ${{ secrets.DELIVERY_KEY }}\n', '')
 elif rule=='mixed-case':
  s=s.replace('app-id-secret-name: DELIVERY_ID', 'app-id-secret-name: Delivery_ID').replace('app-private-key-secret-name: DELIVERY_KEY', 'app-private-key-secret-name: Delivery_Key')
@@ -581,8 +641,13 @@ CUSTOM
   if [ "$rule" = mixed-case ]; then
     printf '{"secrets":[{"name":"dELIVERY_ID"},{"name":"dELIVERY_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
   fi
+  if [ "$rule" = legacy-secret-names ]; then
+    printf '{"secrets":[{"name":"DELIVERY_ID"},{"name":"DELIVERY_KEY"},{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
+  fi
   if [[ "$mutation" = case-sensitive-* ]]; then
-    python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'CASE_CONTROL'
+    owner="$DIR/refresh/lib/caller.py"
+    [ "$mutation" != case-sensitive-api ] || owner="$DIR/.agents/skills/review-gate/scripts/lib/environment.py"
+    python3 - "$owner" "$pattern" <<'CASE_CONTROL'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
@@ -641,17 +706,19 @@ MAPPING_CONTROL
 done <<'MAPPING_ROWS'
 custom|none|
 mixed-case|none|
-mixed-case|case-sensitive-reference|names.append(match.group(1).upper())
+mixed-case|case-sensitive-reference|references[key] = match.group(1).upper()
 mixed-case|case-sensitive-declaration|inputs.get("app-id-secret-name", DEFAULT_NAMES[0]).upper()
 mixed-case|case-sensitive-api|{row["name"].upper() for row in secrets}
 missing|none|
-missing|disabled|if set(secrets) != set(expected):
+missing|disabled|if set(secrets) not in (set(DEFAULT_NAMES), set(neutral), set(DEFAULT_NAMES + neutral)):
 inherit|none|
 inherit|disabled|if section is None or not match:
 expression|none|
 expression|disabled|if not match:
 secret-names|none|
 secret-names|disabled|if names != declared or (legacy and names != list(DEFAULT_NAMES)):
+legacy-secret-names|none|
+legacy-secret-names|disabled|if key in references and references[key] != key:
 environment|none|
 environment|disabled|if not isinstance(environment, str) or not environment.strip() or any(c in environment for c in "\r\n${}[]#"):
 duplicate|none|

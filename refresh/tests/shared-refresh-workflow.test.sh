@@ -23,6 +23,32 @@ bad() {
   return 0
 }
 
+# These declarations keep the documented same-name environment path for
+# the unchanged issue-token step. This checks wiring, not hosted resolution.
+if python3 - "$TEST_DIR/../kendex-refresh.yml" "$TEST_DIR/../../skills/review-gate/templates/kendex-refresh.yml" <<'FORWARDING'
+from pathlib import Path
+import re, sys
+expected = {'app-id': '${{ secrets.FLEET_GH_APP_ID }}',
+            'app-private-key': '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}',
+            'FLEET_GH_APP_ID': '${{ secrets.FLEET_GH_APP_ID }}',
+            'FLEET_GH_APP_PRIVATE_KEY': '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'}
+def check(text):
+    block = text.split('    secrets:\n', 1)[1]
+    actual = dict(re.findall(r'^      ([A-Za-z0-9_-]+): (.+)$', block, re.M))
+    assert actual == expected, actual
+for path in sys.argv[1:]:
+    text = Path(path).read_text()
+    check(text)
+    for name in ('FLEET_GH_APP_ID', 'FLEET_GH_APP_PRIVATE_KEY'):
+        line = '      '+name+': '+expected[name]+'\n'
+        assert text.count(line) == 1
+        try: check(text.replace(line, ''))
+        except AssertionError: pass
+        else: raise AssertionError('missing forwarding control '+name)
+FORWARDING
+then ok 'default callers forward both complete pairs; omitted same-name controls fail';
+else bad 'default caller credential forwarding'; fi
+
 if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'
 import copy, json, pathlib, re, subprocess, sys
 # Read the literal job keys, step inputs and run bodies. Full YAML syntax

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copies shipped refresh workflows, preserving declared consumer inputs. Adoption
 # records are inventory, not permission to replace an edit. A template from
-# the consumer's render gets a record; one from the kendex release tree, the
+# the consumer's render gets a record only for equal bytes; one from the kendex release tree, the
 # shared workflow's caller, gets none and drops any earlier record. The
 # retired writer ownership check precedes any workflow or inventory change.
 # Retired adoption records emit refresh-warning=legacy-writer value=TEMPLATE.
@@ -9,7 +9,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the declared consumer environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Exact templates from kendex default-branch history permit adoption. Refresh hand edits are refused and preserved.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the declared consumer environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Environment, secret-name inputs and matching secret mappings survive adoption. All other bytes must match kendex default-branch template history.' 'An in-consumer template gets an inventory record only when the adopted bytes equal its bytes.'
   exit 0
 fi
 templates="$SCRIPT_DIR"
@@ -44,7 +44,9 @@ root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], tex
 templates = Path(sys.argv[1])
 scratch = Path(sys.argv[2])
 sys.path.insert(0, str(Path(sys.argv[3]) / "lib"))
-from caller import InvalidCaller, configuration, configured, normalized, validate_environment
+from caller import InvalidCaller, configuration, configured, normalized
+sys.path.insert(0, str(Path(sys.argv[3]).parent / "skills/review-gate/scripts/lib"))
+from environment import validate_environment
 refresh = root / ".github/workflows/kendex-refresh.yml"
 if refresh.is_symlink():
     raise SystemExit("refresh-error=workflow-symlink value=" + str(refresh))
@@ -75,9 +77,14 @@ if selected_config is None:
     if len(environments) != 1 or not names:
         raise SystemExit("refresh-error=caller-secrets value=" + str(templates / refresh.name) + " cause=inline")
     selected_config = {"environment": environments[0], "names": names}
+# Preserve GitHub CLI's documented config, credential-store and Go network
+# inputs. Other application values do not belong in this API child.
 validate_environment(sys.argv[4], selected_config, {key: os.environ[key] for key in
-                     ("PATH", "HOME", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR",
-                      "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN") if key in os.environ})
+                     ("PATH", "HOME", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_REPO", "GH_CONFIG_DIR",
+                      "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "XDG_CONFIG_HOME", "AppData", "APPDATA",
+                      "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "DISPLAY", "XAUTHORITY",
+                      "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+                      "SSL_CERT_FILE", "SSL_CERT_DIR") if key in os.environ})
 
 history = scratch / "history"
 # Git's documented transport supplies full default-branch ancestry. Strip
