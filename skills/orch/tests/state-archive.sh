@@ -4,8 +4,8 @@
 # State cleanup and mailbox compaction share this writer. The archive root
 # follows project settings and preserves the compatible fallback and modes.
 set -euo pipefail
-export MSYS=winsymlinks:nativestrict
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+export MSYS=winsymlinks:nativestrict
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPTS="$TEST_DIR/../scripts"
 source "$TEST_DIR/lib/assertions.sh"
