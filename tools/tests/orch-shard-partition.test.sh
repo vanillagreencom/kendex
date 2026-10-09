@@ -749,6 +749,46 @@ claims_file "$wf_nostep" "$TMP/claims-nostep"
 check "with the step that globs a package deleted, no suite of it is unclaimed" \
   "" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-nostep"))"
 
+# Dedicated owners disappear independently. Their declarations and the
+# generic rest invocation must not answer the claims search themselves.
+for package in slack review-gate orch; do
+  owner=""
+  case "$package" in
+    slack) owner="- name: Slack suites" ;;
+    review-gate) owner="- name: review-gate suites" ;;
+  esac
+  wf_owner_removed="$TMP/wf-owner-removed-$package.yml"
+  awk -v owner="$owner" -v package="$package" '
+    package == "orch" && $0 ~ /^[[:space:]]*run: bash / &&
+      index($0, "skills/" package "/tests/run-all.sh") { hits++; next }
+    owner != "" && index($0, owner) { drop = 1; hits++; next }
+    drop && substr($0, 1, 8) == "      - " { drop = 0 }
+    drop { next }
+    { print }
+    END { exit hits == 0 }
+  ' "$WORKFLOW" > "$wf_owner_removed" || bad "$package owner removal matched nothing"
+  edited "$WORKFLOW" "$wf_owner_removed" "$package-owner-removed"
+  claims_file "$wf_owner_removed" "$TMP/claims-owner-removed-$package"
+  check "$package suites move to rest when dedicated ownership is removed" \
+    "$(grep "^skills/$package/tests/" "$UNIV")" \
+    "$(grep "^skills/$package/tests/" "$TMP/claims-owner-removed-$package")"
+done
+
+# The old literal Slack declaration answered its own search after removal.
+wf_self_claim="$TMP/wf-slack-self-claim.yml"
+awk '
+  /needle="--battery skills\/\$x\/tests"/ {
+    sub(/skills\/\$x\/tests/, "skills/slack/tests"); hits++
+  }
+  { print }
+  END { exit hits != 1 }
+' "$TMP/wf-owner-removed-slack.yml" > "$wf_self_claim" || bad "Slack self-claim control matched other than once"
+edited "$TMP/wf-owner-removed-slack.yml" "$wf_self_claim" slack-self-claim
+claims_file "$wf_self_claim" "$TMP/claims-self-claim"
+check "must-fail: a Slack declaration that claims itself loses the reclaimed package" \
+  "$(grep '^skills/slack/tests/' "$UNIV")" \
+  "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-self-claim"))"
+
 wf_prefix="$TMP/wf-prefix-needle.yml"
 awk '{ sub(/needle="skills\/\$x\/tests\/\*\.sh"/, "needle=\"skills/$x/tests/\""); print }' \
   "$wf_nostep" > "$wf_prefix"

@@ -56,6 +56,7 @@ mkdir -p "$TMP_ROOT"
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
+source "$TEST_DIR/../scripts/lib/lane-state.sh"
 
 # A fresh battery directory holding run-all.sh and no suites, the process
 # library run-all.sh sources at its path beside the directory, and DIR.tmp for
@@ -281,32 +282,42 @@ echo "=== 5. a signal that ends the run ends its suites ==="
 # The runner leads its own process group here (set -m), so a group signal
 # never reaches this file; perl sets SIGINT back to its default, as a shell
 # started with it ignored could not trap it. The suite writes its pid and
-# blocks, so only the runner can end it. TERM goes to the runner alone, the
-# case the group does not cover.
+# blocks, so only the runner can end it. Its holder uses the shipped
+# oversee_watch_lifecycle stop_bound_case TERM-ignoring loop. TERM goes to the
+# runner alone, the case the group does not cover.
 # SIGNAL|TARGET|EXPECTED RUNNER STATUS
 SIGNAL_ROWS='INT|group|130
 TERM|runner|143
 HUP|group|129'
-for variant in normal hup-unhandled; do
+for variant in normal hup-unhandled kill-skipped; do
 while IFS='|' read -r sig target want; do
   [[ "$variant" != hup-unhandled || "$sig" == HUP ]] || continue
   B="$TMP_ROOT/signal-$variant-$sig"
   battery "$B"
   if [[ "$variant" == hup-unhandled ]]; then
     mutate_file "$B/run-all.sh" "trap 'stop_suites; exit 129' HUP" "trap 'exit 129' HUP"
+  elif [[ "$variant" == kill-skipped ]]; then
+    mutate_file "$B/run-all.sh" '  signal_tree KILL "$1"' '  :'
   fi
-  printf '#!/usr/bin/env bash\necho "$$" >"$PIDFILE"\nwhile :; do sleep 1; done\n' >"$B/block.sh"
+  cat >"$B/block.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" >"$PIDFILE"
+bash -c 'trap "" TERM; echo "$$" >"$HOLDERFILE"; while :; do sleep 0.1; done' &
+wait
+SH
   mkdir -p "$B.bin"
   printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
   chmod +x "$B.bin/nproc"
   set -m
   perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i PATH="$B.bin:$PATH" HOME="$HOME" \
-    TMPDIR="$B.tmp" PIDFILE="$B.pid" bash "$B/run-all.sh" >"$B.out" 2>&1 &
+    TMPDIR="$B.tmp" PIDFILE="$B.pid" HOLDERFILE="$B.holder" bash "$B/run-all.sh" >"$B.out" 2>&1 &
   runner=$!
   set +m
   tick=0
-  until [ -s "$B.pid" ] || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
+  until { [ -s "$B.pid" ] && [ -s "$B.holder" ]; } || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
   suite_pid="$(cat "$B.pid" 2>/dev/null)"
+  holder_pid="$(cat "$B.holder" 2>/dev/null)"
+  holder_start="$(lane_process_start "$holder_pid" 2>/dev/null)"
   if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
   RC=0
   wait "$runner" 2>/dev/null || RC=$?
@@ -315,15 +326,27 @@ while IFS='|' read -r sig target want; do
   while kill -0 "$suite_pid" 2>/dev/null && [ "$tick" -lt 50 ]; do sleep 0.1; tick=$((tick + 1)); done
   state=gone
   [ -n "$suite_pid" ] || state=never-started
+  holder_state=gone
+  [ -n "$holder_start" ] || holder_state=never-started
+  if [ -n "$holder_start" ] &&
+    [ "$(lane_process_start "$holder_pid" 2>/dev/null)" = "$holder_start" ]; then
+    case "$(lane_process_state "$holder_pid" 2>/dev/null)" in
+      '' | Z) ;;
+      *) holder_state=alive ;;
+    esac
+  fi
   # The pid names this row's suite only while it runs, so a red row's survivor
   # is killed here and a pid proven gone is never signalled.
   if [ -n "$suite_pid" ] && kill -0 "$suite_pid" 2>/dev/null; then
     state=alive
+  fi
+  if [[ "$state" == alive || "$holder_state" == alive ]]; then
     kill -KILL -- "-$suite_pid" 2>/dev/null
   fi
-  expected="rc=$want suite=gone"
-  [[ "$variant" != hup-unhandled ]] || expected="rc=$want suite=alive"
-  assert_eq "rc=$RC suite=$state" "$expected" \
+  expected="rc=$want suite=gone holder=gone"
+  [[ "$variant" != hup-unhandled ]] || expected="rc=$want suite=alive holder=alive"
+  [[ "$variant" != kill-skipped ]] || expected="rc=$want suite=gone holder=alive"
+  assert_eq "rc=$RC suite=$state holder=$holder_state" "$expected" \
     "$variant: SIG$sig to the $target preserves suite teardown"
 done <<<"$SIGNAL_ROWS"
 done
@@ -525,8 +548,8 @@ edit_of() { # NAME
     stop-skipped) EDIT=('      stop_overdue "$k"' '      :') ;;
     gate-removed) EDIT=("$GATE" '{ :; }') ;;
     unstarted-green) EDIT=('report "${SUITES[next]}" none 0 unstarted' 'report "${SUITES[next]}" 0 0') ;;
-    term-skipped) EDIT=('  signal_tree TERM "$tree"' '  :') ;;
-    kill-skipped) EDIT=('  signal_tree KILL "$tree"' '  :') ;;
+    term-skipped) EDIT=('  signal_tree TERM "$1"' '  :') ;;
+    kill-skipped) EDIT=('  signal_tree KILL "$1"' '  :') ;;
     tree-root-only) EDIT=('table="$(lane_process_table)" || table=""' 'table=""') ;;
     red-by-status) EDIT=('[[ "$2" != 0 || -n "${4:-}" ]]' '[[ "$2" != 0 ]]') ;;
     last-dropped) EDIT=('SLOT_LAST[$1]="$(awk' 'SLOT_LAST[$1]="$(: awk') ;;

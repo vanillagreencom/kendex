@@ -1139,7 +1139,7 @@ jobs:
         if: matrix.shard == 'slack'
         run: |
           bash skills/orch/tests/run-all.sh --battery skills/slack/tests \
-            --alone listen.test --alone mailbox.test --alone reload.test --alone socket.test
+            --alone mailbox.test --alone reload.test --alone socket.test
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
@@ -1152,7 +1152,9 @@ jobs:
       # would keep this step skipping the package's other thirty-four suites
       # after the step that runs them was deleted. Each glob below appears
       # once and disappears with its step. `orch` is claimed by a path to
-      # run-all.sh rather than by a glob, so that path is its needle.
+      # run-all.sh rather than by a glob. Its one-line run prefix excludes
+      # this step's pooled call. Package variables keep declarations from
+      # answering their own claims search.
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
 
@@ -1225,9 +1227,9 @@ jobs:
             x="${dir#skills/}"
             x="${x%%/*}"
             case "$x" in
-              orch) needle=skills/orch/tests/run-all.sh ;;
-              review-gate) needle=skills/review-gate/tests/*.test.sh ;;
-              slack) needle="--battery skills/slack/tests" ;;
+              orch) needle="run: bash skills/$x/tests/run-all.sh" ;;
+              review-gate) needle="skills/$x/tests/*.test.sh" ;;
+              slack) needle="--battery skills/$x/tests" ;;
               commit-guards | linear | bot-instructions | preflight | worktree)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;
@@ -1247,7 +1249,7 @@ jobs:
               second-opinion)
                 set -- --alone cli-failure-gate.test --alone detached-run.test \
                   --alone execution-fallback.test --alone process-tree.test ;;
-              slack) set -- --alone listen.test --alone mailbox.test --alone reload.test --alone socket.test ;;
+              slack) set -- --alone mailbox.test --alone reload.test --alone socket.test ;;
             esac
             if ! bash skills/orch/tests/run-all.sh --battery "$dir" "$@"; then
               fail=1
