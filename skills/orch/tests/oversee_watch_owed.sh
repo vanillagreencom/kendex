@@ -552,8 +552,8 @@ watch_pass -- --state "$STUB_DIR/state.json"
 jq -nr '"2026-10-03T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_contains "$(verification_events)" 'status=overdue' "due becoming overdue raises attention" "$ERR"
-# Restore the earlier clock to establish the due key again.
-jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+# Fresh state keeps the repeated-listing clock monotonic.
+verifying_one repeated_due merge
 watch_pass -- --state "$STUB_DIR/state.json"
 MUTANT_DIR="$TMP_ROOT/repeat-mutant"
 MUTANT_WATCH="$(mutant_scripts "repeat-mutant/orch" oversee-watch)/oversee-watch" || exit 1
