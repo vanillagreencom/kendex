@@ -13,9 +13,9 @@ Output: one copilot-wait: result line with state=none, settled, or expired,
 head, review id (none when the check ended without a review), run id,
 started_at and waited seconds. Workflow routing consumes these fields.
 A run field other than none identifies a check or pending timeline request.
-An older-head review cannot consume a newer request. Completed historical
-cycles stay closed after a push. Unidentified or overlapping cycles stay
-pending until a current-head completion, removal, or the hold deadline.
+Timeline requests and work starts remain pending until a later Copilot
+review or request removal. Queued or in-progress checks on the current
+head take precedence.
 Exit 0: none or settled. Exit 1: expired or a keyed read refusal.
 Exit 2: invalid arguments or setting. Exit 3: unavailable GitHub auth.
 Exit 5: lane mail arrived or was unreadable; no result. Read the inbox,

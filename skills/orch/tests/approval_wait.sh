@@ -159,23 +159,19 @@ case "${1:-}" in
       if [[ "${STUB_COPILOT_FLIGHT:-completed}" == cycle-* ]]; then
         jq -nc --arg head "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" --arg current "${STUB_CONFIRM_HEAD:-headsha1}" --arg old "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" --arg mode "$STUB_COPILOT_FLIGHT" --argjson count "$(cat "$STUB_COPILOT_COUNT_FILE")" '
         def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
-        def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,
-          actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
-        def rev($head;$at): {event:"reviewed",id:(if $at == "2026-10-09T06:20:00Z" then 81 elif $at == "2026-10-09T06:26:00Z" or $at == "2026-10-09T06:42:00Z" then 82 elif $at == "2026-10-09T06:42:05Z" then 83 else 84 end),commit_id:$head,user:{login:"Copilot",type:"Bot"},submitted_at:$at};
-        (if ($mode | startswith("cycle-cancel")) then "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" else $head end) as $head |
-        [(if $mode == "cycle-unknown" or ($mode | endswith("-ordinary")) then [{event:"committed",sha:$head,committer:{date:"2026-10-09T05:00:00Z"}}] else [] end),
-         [{event:"head_ref_force_pushed",commit_id:$old,created_at:"2026-10-09T06:00:00Z"},req(73;"2026-10-09T06:10:00Z"),work(75;"2026-10-09T06:10:35Z")],
-         (if ($mode | startswith("cycle-completed")) or ($mode | startswith("cycle-newer")) or ($mode | startswith("cycle-rereview")) then [rev($old;"2026-10-09T06:20:00Z")] else [] end),
-         (if ($mode | startswith("cycle-rereview")) then [req(76;"2026-10-09T06:25:00Z"),work(77;"2026-10-09T06:25:35Z")] else [] end),
-         (if $mode == "cycle-rereview-completed-ordinary" or $mode == "cycle-rereview-newer-ordinary" then [rev($old;"2026-10-09T06:26:00Z")] else [] end),
-         (if ($mode | startswith("cycle-cancel")) then [{event:"review_request_removed",created_at:"2026-10-09T06:11:00Z",requested_reviewer:{login:"Copilot",type:"Bot"}}] else [] end),
-         (if $mode == "cycle-unknown" or ($mode | endswith("-ordinary")) then []
-          else [{event:"head_ref_force_pushed",commit_id:$head,created_at:"2026-10-09T06:30:00Z"}] end),
-         (if ($mode | startswith("cycle-completed")) or $mode == "cycle-rereview-completed-ordinary" then [] else [req(74;"2026-10-09T06:41:20Z"),work(78;"2026-10-09T06:41:55Z")] end),
-         (if $mode == "cycle-overlap" or $mode == "cycle-unknown" or $mode == "cycle-rereview-overlap-ordinary" or $mode == "cycle-cancel-late" then [rev($old;"2026-10-09T06:42:00Z")] else [] end),
-         (if $mode == "cycle-cancel-completed" or $mode == "cycle-cancel-newer" then [rev($head;"2026-10-09T06:42:05Z")] else [] end),
-         (if $mode == "cycle-cancel-newer" then [req(79;"2026-10-09T06:43:00Z"),work(80;"2026-10-09T06:43:35Z")] else [] end),
-         (if ($mode | startswith("cycle-completed") | not) and $mode != "cycle-rereview-completed-ordinary" and $count > 1 then [rev((if $mode == "cycle-cancel-newer" then $current else $head end);"2026-10-09T06:45:00Z")] else [] end)]'
+        def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
+        def rev($id;$head;$at): {event:"reviewed",id:$id,commit_id:$head,user:{login:"Copilot",type:"Bot"},state:"commented",submitted_at:$at};
+        (if ($mode | startswith("cycle-cancel")) then "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" else $head end) as $b |
+        [[{event:"committed",sha:$b,committer:{date:"2026-10-09T05:00:00Z"}},
+          {event:"committed",sha:$current,committer:{date:"2026-10-09T05:00:01Z"}},
+          {event:"head_ref_force_pushed",commit_id:$old,created_at:"2026-10-09T06:00:00Z"},req(73;"2026-10-09T06:10:00Z")],
+         (if ($mode | startswith("cycle-cancel")) then [{event:"review_request_removed",created_at:"2026-10-09T06:11:00Z",requested_reviewer:{login:"Copilot",type:"Bot"}}]
+          else [work(75;"2026-10-09T06:10:35Z"),rev(81;$old;"2026-10-09T06:20:00Z")] end),
+         (if $mode == "cycle-cancel-boundary" then [{event:"head_ref_force_pushed",commit_id:$b,created_at:"2026-10-09T06:30:00Z"}] else [] end),
+         (if ($mode | startswith("cycle-rereview")) then [req(76;"2026-10-09T06:25:00Z"),work(77;"2026-10-09T06:25:35Z"),rev(82;$old;"2026-10-09T06:26:00Z")] else [] end),
+         (if ($mode | startswith("cycle-cancel")) then [req(74;"2026-10-09T06:41:20Z"),work(78;"2026-10-09T06:41:55Z"),rev(83;$b;"2026-10-09T06:42:05Z")] else [] end),
+         (if ($mode | contains("newer")) then [req(79;"2026-10-09T06:43:00Z"),work(80;"2026-10-09T06:43:35Z")] else [] end),
+         (if $count > 1 then [rev(84;$current;"2026-10-09T06:45:00Z")] else [] end)]'
       elif [[ "${STUB_COPILOT_FLIGHT:-completed}" == timeline ]]; then
         jq -nc --argjson count "$(cat "$STUB_COPILOT_COUNT_FILE")" '
           [[{event:"review_requested",id:73,created_at:"2026-10-09T06:41:20Z",requested_reviewer:{login:"Copilot"}}],
@@ -873,13 +869,10 @@ table '1 61 61 --json --mode approval --item KEN-9' \
   'new request after ordinary push|1 1 1 --json --mode approval --item KEN-25|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-newer-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-25.md' \
   'second review cycle completed|1 1 1 --json --mode approval --item KEN-26|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-rereview-completed-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=1 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-26.md' \
   'second review cycle newer|1 1 1 --json --mode approval --item KEN-27|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-rereview-newer-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-27.md' \
-  'second review cycle overlap|1 1 1 --json --mode approval --item KEN-28|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-rereview-overlap-ordinary,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-28.md' \
-  'cancelled review ownership completed|1 1 1 --json --mode approval --item KEN-29|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-completed,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-29.md' \
-  'cancelled review ownership newer|1 1 1 --json --mode approval --item KEN-30|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-newer,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=2 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-30.md' \
-  'cancelled review ownership late|1 1 1 --json --mode approval --item KEN-31|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-late,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=2 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-31.md' \
+  'cancelled completed review after ordinary pushes|1 1 1 --json --mode approval --item KEN-29|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-completed,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-29.md' \
+  'unanswered request after cancelled completed history|1 1 1 --json --mode approval --item KEN-30|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-newer,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=2 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-30.md' \
+  'cancelled completed review after a verified boundary|1 1 1 --json --mode approval --item KEN-31|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-boundary,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc|rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-31.md' \
   'request cycle newer|1 1 1 --json --mode approval --item KEN-21|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-newer,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-21.md' \
-  'request cycle overlap|1 1 1 --json --mode approval --item KEN-22|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-overlap,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-22.md' \
-  'request cycle unknown|1 1 1 --json --mode approval --item KEN-23|PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-unknown,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-23.md' \
   'a failed send is retried and ends no wait|1 61 61 --json --mode approval --item KEN-6|PR_COPILOT_REQUESTS=off|rc=1 status=timeout unsent=2' \
   'an unknown setting is refused|1 61 61 --json --mode approval --item KEN-9|PR_COPILOT_REQUESTS=junk|rc=2 stdout=empty stderr_line=approval-wait:+copilot-requests-invalid+value=junk'
 
@@ -930,12 +923,11 @@ cp "$MUTANT_READER" "$READER_PRISTINE"
 # copy, and fails once the one line FROM reads TO.
 control() {
   local name="$1" from="$2" to="$3" args="$4" env="$5" expect="$6" count target="$MUTANT_SCRIPT" pristine="$PRISTINE"
-  if [[ "$name" == fallback-cycle || "$name" == fallback-cancel ]]; then target="$MUTANT_READER"; pristine="$READER_PRISTINE"; fi
+  if [[ "$name" == fallback-cancel ]]; then target="$MUTANT_READER"; pristine="$READER_PRISTINE"; fi
   cp "$pristine" "$target"
   cp "$PRISTINE" "$MUTANT_SCRIPT"
   WAIT_REPO="$MUTANT_REPO"
   if [[ "$name" == fallback-timeline ]]; then rm -f "$WAIT_REPO/tmp/lane-mail/KEN-2/copilot-fallback-headsha1.md" "$WAIT_REPO/tmp/lane-mail/KEN-2/to-overseer.jsonl"; fi
-  if [[ "$name" == fallback-cycle ]]; then rm -f -- "${WAIT_REPO:?}/tmp/lane-mail/KEN-22/copilot-fallback-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.md" "${WAIT_REPO:?}/tmp/lane-mail/KEN-22/to-overseer.jsonl"; fi
   if [[ "$name" == fallback-cancel ]]; then rm -f -- "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/copilot-fallback-cccccccccccccccccccccccccccccccccccccccc.md" "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/to-overseer.jsonl"; fi
   # shellcheck disable=SC2086
   run_wait "$env" $args
@@ -949,7 +941,6 @@ control() {
     fail "control $name: the mutant must differ from the script"
   fi
   if [[ "$name" == fallback-timeline ]]; then rm -f "$WAIT_REPO/tmp/lane-mail/KEN-2/copilot-fallback-headsha1.md" "$WAIT_REPO/tmp/lane-mail/KEN-2/to-overseer.jsonl"; fi
-  if [[ "$name" == fallback-cycle ]]; then rm -f -- "${WAIT_REPO:?}/tmp/lane-mail/KEN-22/copilot-fallback-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.md" "${WAIT_REPO:?}/tmp/lane-mail/KEN-22/to-overseer.jsonl"; fi
   if [[ "$name" == fallback-cancel ]]; then rm -f -- "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/copilot-fallback-cccccccccccccccccccccccccccccccccccccccc.md" "${WAIT_REPO:?}/tmp/lane-mail/KEN-29/to-overseer.jsonl"; fi
   # shellcheck disable=SC2086
   run_wait "$env" $args
@@ -1011,13 +1002,8 @@ control fallback-read-failed '    if ! copilot_runs=$(orch_copilot_check_runs "$
   '    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" "$PR_NUM" 2>"$GH_ERR_FILE" || printf "[]\\n"); then' \
   '1 1 1 --json --mode approval --item KEN-4' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=fail' 'rc=1 status=error fallback_notices=none'
 # shellcheck disable=SC2016
-control fallback-cycle '             if $event.commit_id == $head' \
-  '             if true' \
-  '1 1 1 --json --mode approval --item KEN-22' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-overlap,STUB_CONFIRM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
-  'rc=1 status=timeout copilot_polls=2 fallback_notices=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:off:tmp/lane-status-KEN-22.md'
-# shellcheck disable=SC2016
-control fallback-cancel '                   sort_by(.owner != $event.commit_id)) as $unassigned |' \
-  '                   sort_by(false)) as $unassigned |' \
+control fallback-cancel '           elif . != null and $event.submitted_at >= .started_at' \
+  '           elif false and . != null and $event.submitted_at >= .started_at' \
   '1 1 1 --json --mode approval --item KEN-29' 'PR_COPILOT_REQUESTS=off,STUB_COPILOT_FLIGHT=cycle-cancel-completed,STUB_CONFIRM_HEAD=cccccccccccccccccccccccccccccccccccccccc' \
   'rc=1 status=timeout copilot_polls=1 fallback_notices=cccccccccccccccccccccccccccccccccccccccc:off:tmp/lane-status-KEN-29.md'
 # shellcheck disable=SC2016

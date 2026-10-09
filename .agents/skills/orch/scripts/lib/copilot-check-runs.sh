@@ -27,69 +27,32 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
     printf '%s\n' "$active"
     return 0
   fi
-  # GitHub emits request -> optional work-start -> review for one review.
-  # Keep request instances through overlaps; work-start advances one instance.
-  # Review identity, not its commit hash, owns a completion, so a re-review of
-  # the same head can close another instance. Unanswered work stays pending.
-  # Retain historical boundary heads. A matching completion owns its instance
-  # before a cancelled older instance can claim it. Without a matching boundary,
-  # retain the chronological fallback: ordinary pushes have no boundary event.
-  # Push boundaries identify the new tip; committed rows use commit dates.
+  # Timeline work remains pending until a later Copilot review or removal.
+  # Request and work-start commit fields are null; no head is inferred.
   timeline=$(gh api "repos/$1/issues/$3/timeline?per_page=100" --paginate --slurp) || return $?
-  jq -ce --arg head "$2" --argjson checks "$checks" '
-    def copilot: . == "copilot-pull-request-reviewer[bot]" or . == "Copilot";
-    def seen($event): any(.seen[]; . == [$event.event, $event.id]);
+  jq -ce --argjson checks "$checks" '
     if type != "array" or length == 0 or any(.[]; type != "array")
     then error("timeline pages are unreadable") else add end |
-    reduce .[] as $event ({tip: null, cycles: [], seen: []};
-      if $event.event == "review_requested" and ($event.requested_reviewer.login | copilot)
+    reduce .[] as $event (null;
+      if ($event.event == "review_requested" and
+          ($event.requested_reviewer.login == "copilot-pull-request-reviewer[bot]" or
+           $event.requested_reviewer.login == "Copilot")) or
+         $event.event == "copilot_work_started"
       then if ($event.id | type) != "number" or ($event.created_at | type) != "string"
            then error("Copilot timeline identity is unreadable")
-           elif seen($event) then .
-           else .seen += [[$event.event, $event.id]] |
-                .cycles += [{id: $event.id, started_at: $event.created_at,
-                             owner: .tip,
-                             phase: "requested", pending: true}] end
-      elif $event.event == "copilot_work_started"
-      then if ($event.id | type) != "number" or ($event.created_at | type) != "string"
-           then error("Copilot timeline identity is unreadable")
-           elif seen($event) then .
-           else .seen += [[$event.event, $event.id]] |
-                ([.cycles[] | select(.phase == "requested" and .started_at <= $event.created_at)] |
-                 sort_by(.pending | not)) as $requests |
-                if ($requests | length) > 0
-                then .cycles |= map(if .id == $requests[0].id then .phase = "started" else . end)
-                else .cycles += [{id: $event.id, started_at: $event.created_at,
-                                  owner: .tip,
-                                  phase: "started", pending: true}] end
-           end
-      elif $event.event == "review_request_removed" and ($event.requested_reviewer.login | copilot)
-      # Keep cancelled cycles as possible owners of a late completion.
-      then .cycles |= map(.pending = false)
-      elif $event.event == "reviewed" and ($event.user.login | copilot)
-      then if ($event.id | type) != "number" or ($event.commit_id | type) != "string" or
-              ($event.submitted_at | type) != "string"
-           then error("Copilot completion identity is unreadable")
-           elif seen($event) then .
-           else .seen += [[$event.event, $event.id]] |
-             if $event.commit_id == $head
-             then .cycles |= map(select(.started_at > $event.submitted_at))
-             else ([.cycles[] | select(.owner != $head and .started_at <= $event.submitted_at)] |
-                   sort_by(.owner != $event.commit_id)) as $unassigned |
-               if ($unassigned | length) > 0
-               then .cycles |= map(select(.id != $unassigned[0].id)) else . end
-             end
-           end
-      elif $event.event == "head_ref_force_pushed" or
-           ($event.event == "review_dismissed" and $event.dismissed_review.dismissal_commit_id != null)
-      then ($event | if .event == "head_ref_force_pushed" then .commit_id
-                     else .dismissed_review.dismissal_commit_id end) as $tip |
-           if ($tip | type) != "string" or ($tip | test("^[0-9a-fA-F]{40}$") | not) or
-              ($event.created_at | type) != "string"
-           then error("Copilot head boundary is unreadable") else .tip = $tip end
+           else {id: $event.id, started_at: $event.created_at} end
+      elif $event.event == "review_request_removed" and
+           ($event.requested_reviewer.login == "copilot-pull-request-reviewer[bot]" or
+            $event.requested_reviewer.login == "Copilot")
+      then null
+      elif $event.event == "reviewed" and
+           ($event.user.login == "copilot-pull-request-reviewer[bot]" or $event.user.login == "Copilot")
+      then if ($event.submitted_at | type) != "string"
+           then error("Copilot completion time is unreadable")
+           elif . != null and $event.submitted_at >= .started_at
+           then null else . end
       else . end) |
-    [.cycles[] | select(.pending)] |
-    if length == 0 then [] else last as $request |
+    if . == null then [] else . as $request |
       if any($checks[]; .status == "completed" and .started_at != null and .started_at >= $request.started_at)
-      then [] else [$request | {id, started_at}] end end' <<<"$timeline"
+      then [] else [$request] end end' <<<"$timeline"
 }

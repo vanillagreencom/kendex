@@ -1,1 +1,1 @@
-- Wait for Copilot work before reading findings or requesting approval, close paired request and work-start events and repeated reviews of the same commit, keep cancelled history from reopening a completed review on another head, keep a newer request pending when an older-head review finishes, and hold fallback notices while its review is running.
+- Wait for Copilot work before reading findings or requesting approval, close pending timeline work after a later Copilot review, and hold fallback notices while its review is running.
