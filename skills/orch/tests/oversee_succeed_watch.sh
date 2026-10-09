@@ -419,5 +419,64 @@ else
   printf '  skip  the refused-launch rows need setsid\n'
 fi
 
+# The helper and the restarted watch both append keyed lines to
+# oversee-watch.err, so each writer prints its line in one write. A printf
+# function plays the other writer: it appends that writer's line to the file
+# right after the first call, where a split write would be torn by it.
+# interleaved FILE OTHER_LINE WRITER... — WRITER run once, its output on FILE.
+interleaved() {
+  local file="$1" other="$2"
+  shift 2
+  (
+    first=1
+    printf() {
+      builtin printf "$@"
+      (( first )) || return 0
+      first=0
+      builtin printf '%s\n' "$other"
+    }
+    "$@"
+  ) >> "$file"
+}
+# succeed_message SCRIPTS — the oversee-succeed message function of that copy
+# writing the helper's outcome line.
+succeed_message() {
+  eval "$(sed -n '/^message() {/,/^}/p' "$1/oversee-succeed")"
+  message watch-restarted pid=7 pane=%1 runner=setsid
+}
+# watch_message SCRIPTS — the oversee-watch ow_message of that copy writing
+# the line a restarted watch prints while the old one finishes.
+watch_message() {
+  source "$1/lib/oversee-watch-text.sh"
+  ow_message watch-finishing pid=8
+}
+SUCCEED_LINE='oversee-succeed: watch-restarted pid=7 pane=%1 runner=setsid'
+WATCH_LINE='oversee-watch: watch-finishing pid=8'
+SUCCEED_TORN="$(mutant_scripts succeed-torn oversee-succeed)" || exit 1
+mutate_file "$SUCCEED_TORN/oversee-succeed" \
+  "  printf -v fields ' %s' \"\$@\"
+  printf 'oversee-succeed: %s%s\n%s\n' \"\$key\" \"\$fields\" \"\$text\"" \
+  "  printf 'oversee-succeed: %s' \"\$key\"; printf ' %s' \"\$@\"; printf '\n%s\n' \"\$text\""
+WATCH_TORN="$(mutant_scripts watch-torn lib/oversee-watch-text.sh)" || exit 1
+mutate_file "$WATCH_TORN/lib/oversee-watch-text.sh" \
+  "  printf 'oversee-watch: %s%s\n%s\n' \"\$reason\" \"\$fields\" \"\$text\"" \
+  "  printf 'oversee-watch: %s' \"\$reason\"; printf '%s' \"\$fields\"; printf '\n%s\n' \"\$text\""
+# torn_row SCRIPTS WRITER LINE OTHER — whether LINE and OTHER each stand whole
+# in the file WRITER wrote with OTHER cut in after its first call.
+torn_row() {
+  local file="$TMP_ROOT/interleaved.err"
+  : > "$file"
+  interleaved "$file" "$4" "$2" "$1"
+  printf '%s|%s' "$(grep -cxF -- "$3" "$file")" "$(grep -cxF -- "$4" "$file")"
+}
+assert_eq "$(torn_row "$SRC_DIR" succeed_message "$SUCCEED_LINE" "$WATCH_LINE")" "1|1" \
+  "the helper's watch-restarted line stays whole when the watch writes between its calls"
+assert_eq "$(torn_row "$SUCCEED_TORN" succeed_message "$SUCCEED_LINE" "$WATCH_LINE")" "0|0" \
+  "control: a message printed in three calls is torn by the watch's line"
+assert_eq "$(torn_row "$SRC_DIR" watch_message "$WATCH_LINE" "$SUCCEED_LINE")" "1|1" \
+  "the watch's watch-finishing line stays whole when the helper writes between its calls"
+assert_eq "$(torn_row "$WATCH_TORN" watch_message "$WATCH_LINE" "$SUCCEED_LINE")" "0|0" \
+  "control: an ow_message printed in three calls is torn by the helper's line"
+
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

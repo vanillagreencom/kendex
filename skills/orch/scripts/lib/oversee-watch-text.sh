@@ -1040,7 +1040,7 @@ USAGE
 OW_REPLAY_RULE='A death replays the held line only where the record names this pane by server, server start and pane id: the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand may not have started with. A record naming another pane, or no line, means a death with no successor.'
 
 ow_message() { # REASON FIELD=VALUE...
-  local reason="$1" text field
+  local reason="$1" text field fields=""
   shift
   case "$reason" in
     missing-value) text='The option requires a value.' ;;
@@ -1174,13 +1174,14 @@ ow_message() { # REASON FIELD=VALUE...
     long-pass-unfinished) text='The long pass exited 0 without writing its status, so whether it found news is unknown.' ;;
     *) printf 'oversee-watch: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
   esac
-  printf 'oversee-watch: %s' "$reason"
   for field in "$@"; do
     field="${field//\\/\\\\}"
     field="${field//$'\t'/\\t}"
     field="${field//$'\r'/\\r}"
     field="${field//$'\n'/\\n}"
-    printf ' %s' "$field"
+    fields+=" $field"
   done
-  printf '\n%s\n' "$text"
+  # One printf, so one write: a succession helper appends its own keyed lines
+  # to the same oversee-watch.err, and a split write lets them tear this one.
+  printf 'oversee-watch: %s%s\n%s\n' "$reason" "$fields" "$text"
 }

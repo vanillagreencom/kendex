@@ -1,0 +1,1 @@
+- The succession helper and the restarted fleet watch each write their keyed lines to `oversee-watch.err` in one write, so neither line arrives torn by the other.

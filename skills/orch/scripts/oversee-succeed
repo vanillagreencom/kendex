@@ -464,7 +464,7 @@ export SCRIPT_DIR
 usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 message() { # KEY FIELD=VALUE...
-  local key="$1" text
+  local key="$1" text fields
   local headroom_text='The headroom field says what the account mark found: a number above the trigger, or at or below it for a Codex account room on its credits (lanes --help, pick), or none or unreadable where nothing measured it.'
   shift
   case "$key" in
@@ -529,9 +529,10 @@ message() { # KEY FIELD=VALUE...
     watch-started) text='The repeat fleet watch runs outside the successor session. Read the log field to receive its events.' ;;
     watch-restart-failed) text='The fleet watch could not be started or restarted from the successor pane. Before the caller closes, this failure refuses the succession. A later helper failure is recorded in the watch error log.' ;;
   esac
-  printf 'oversee-succeed: %s' "$key"
-  printf ' %s' "$@"
-  printf '\n%s\n' "$text"
+  # One printf, so one write: the restarted watch appends its own keyed lines
+  # to the same oversee-watch.err, and a split write lets them tear this one.
+  printf -v fields ' %s' "$@"
+  printf 'oversee-succeed: %s%s\n%s\n' "$key" "$fields" "$text"
 }
 
 # The exit status is a parameter of ONE function, so a refusal's words and its
