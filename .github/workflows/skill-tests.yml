@@ -1004,23 +1004,14 @@ jobs:
           set -u
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
-          fail=0
-          failed=""
+          set --
           for t in tools/tests/*.test.sh; do
             if printf '%s\n' "$claims" | grep -qF "$t"; then
-              continue
-            fi
-            echo "=== $t"
-            if ! bash "$t"; then
-              echo "FAILED: $t"
-              fail=1
-              failed="$failed $t"
+              base="${t##*/}"
+              set -- "$@" "!=${base%.sh}"
             fi
           done
-          if [ "$fail" != 0 ]; then
-            echo "FAILED SUITES:$failed"
-          fi
-          exit "$fail"
+          bash tools/tests/run-all.sh --alone bash32-parse.test "$@"
 
       - name: the two slowest tools suites
         if: matrix.shard == 'guards-tools-tail'
@@ -1147,21 +1138,8 @@ jobs:
       - name: Slack suites
         if: matrix.shard == 'slack'
         run: |
-          set -u
-          fail=0
-          failed=""
-          for t in skills/slack/tests/*.sh; do
-            echo "=== $t"
-            if ! bash "$t"; then
-              echo "FAILED: $t"
-              fail=1
-              failed="$failed $t"
-            fi
-          done
-          if [ "$fail" != 0 ]; then
-            echo "FAILED SUITES:$failed"
-          fi
-          exit "$fail"
+          bash skills/orch/tests/run-all.sh --battery skills/slack/tests \
+            --alone listen.test --alone mailbox.test --alone reload.test --alone socket.test
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
@@ -1241,27 +1219,39 @@ jobs:
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           fail=0
           failed=""
-          for t in skills/*/tests/*.sh; do
-            x="${t#skills/}"
+          for dir in skills/*/tests; do
+            suites=("$dir"/*.sh)
+            [ -f "${suites[0]}" ] || continue
+            x="${dir#skills/}"
             x="${x%%/*}"
             case "$x" in
               orch) needle=skills/orch/tests/run-all.sh ;;
               review-gate) needle=skills/review-gate/tests/*.test.sh ;;
-              commit-guards | linear | bot-instructions | preflight | worktree | slack)
+              slack) needle="--battery skills/slack/tests" ;;
+              commit-guards | linear | bot-instructions | preflight | worktree)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;
             esac
             if [ -n "$needle" ]; then
-              if printf '%s\n' "$claims" | grep -qF "$needle"; then
+              if printf '%s\n' "$claims" | grep -qF -- "$needle"; then
                 continue
               fi
-              echo "no other shard runs $needle — running $t here"
+              echo "no other shard runs $needle: running $dir here"
             fi
-            echo "=== $t"
-            if ! bash "$t"; then
-              echo "FAILED: $t"
+            set --
+            case "$x" in
+              github) set -- --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test ;;
+              harness-ci) set -- --alone wiring-errors.test ;;
+              orch) set -- --alone open-terminal-lane --alone oversee_watch_lifecycle ;;
+              reviewer) set -- --alone mutation-stability.test ;;
+              second-opinion)
+                set -- --alone cli-failure-gate.test --alone detached-run.test \
+                  --alone execution-fallback.test --alone process-tree.test ;;
+              slack) set -- --alone listen.test --alone mailbox.test --alone reload.test --alone socket.test ;;
+            esac
+            if ! bash skills/orch/tests/run-all.sh --battery "$dir" "$@"; then
               fail=1
-              failed="$failed $t"
+              failed="$failed $dir"
             fi
           done
           if [ "$fail" != 0 ]; then

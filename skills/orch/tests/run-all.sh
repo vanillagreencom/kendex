@@ -84,6 +84,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # lane_process_start, for the stop.
 source "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib/lane-state.sh" ||
   { echo "run-all.sh: ../scripts/lib/lane-state.sh did not load; a stop would have no process reader" >&2; exit 1; }
+source "$(dirname "${BASH_SOURCE[0]}")/../../github/scripts/lib/group-leader.sh" ||
+  { echo "run-all.sh: group-leader-missing" >&2; exit 1; }
 
 # Lane launch settings must not override the suites' own fixture settings.
 unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
@@ -234,6 +236,7 @@ OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
 trap 'rm -rf -- "$OUT_DIR"' EXIT
 trap 'stop_suites; exit 130' INT
 trap 'stop_suites; exit 143' TERM
+trap 'stop_suites; exit 129' HUP
 
 # Prints "PASS FAIL" from a suite's output, per the shapes the header names.
 counts_of() { # FILE
@@ -333,10 +336,9 @@ signal_tree() { # SIGNAL TREE
 
 tree_running() { [ -n "$(tree_live "$1")" ]; } # TREE
 
-# Suites stay in the runner's process group, so HUP, TERM or KILL sent to
-# the group ends them with it. A background job ignores SIGINT, and TERM may
-# reach the runner alone, so on either this sends TERM to every running suite
-# and its descendants and waits for each before the runner exits.
+# Each suite leads its own group and starts with INT and QUIT restored. A
+# signal to the runner must therefore stop each suite and its descendants
+# before the runner exits.
 stop_suites() {
   local k=0
   while [ "$k" -lt "$JOBS" ]; do
@@ -412,7 +414,7 @@ while [ "$finished" -lt "$RUN" ]; do
       { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; } &&
       { [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
-      bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
+      "${KENDEX_GROUP_LEADER[@]}" bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS

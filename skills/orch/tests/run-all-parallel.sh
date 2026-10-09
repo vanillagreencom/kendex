@@ -46,9 +46,12 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
+SCRATCH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
   { echo "mktemp failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'rm -rf -- "${SCRATCH_ROOT:?}"' EXIT
+# Copied runners resolve github two directories above their battery.
+TMP_ROOT="$SCRATCH_ROOT/fixture/tests"
+mkdir -p "$TMP_ROOT"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -62,6 +65,8 @@ battery() { # DIR
   cp "$TEST_DIR/run-all.sh" "$1/run-all.sh"
   printf '#!/usr/bin/env bash\n:\n' >"$1/lib/git-env.sh"
   cp "$TEST_DIR/../scripts/lib/lane-state.sh" "${1%/*}/scripts/lib/lane-state.sh"
+  mkdir -p "$1/../../github/scripts/lib"
+  cp "$TEST_DIR/../../github/scripts/lib/group-leader.sh" "$1/../../github/scripts/lib/group-leader.sh"
 }
 
 # A suite that prints BODY, if any, then ERR, if any, to stderr, and exits
@@ -282,9 +287,14 @@ echo "=== 5. a signal that ends the run ends its suites ==="
 SIGNAL_ROWS='INT|group|130
 TERM|runner|143
 HUP|group|129'
+for variant in normal hup-unhandled; do
 while IFS='|' read -r sig target want; do
-  B="$TMP_ROOT/signal-$sig"
+  [[ "$variant" != hup-unhandled || "$sig" == HUP ]] || continue
+  B="$TMP_ROOT/signal-$variant-$sig"
   battery "$B"
+  if [[ "$variant" == hup-unhandled ]]; then
+    mutate_file "$B/run-all.sh" "trap 'stop_suites; exit 129' HUP" "trap 'exit 129' HUP"
+  fi
   printf '#!/usr/bin/env bash\necho "$$" >"$PIDFILE"\nwhile :; do sleep 1; done\n' >"$B/block.sh"
   mkdir -p "$B.bin"
   printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
@@ -309,11 +319,33 @@ while IFS='|' read -r sig target want; do
   # is killed here and a pid proven gone is never signalled.
   if [ -n "$suite_pid" ] && kill -0 "$suite_pid" 2>/dev/null; then
     state=alive
-    kill -KILL "$suite_pid" 2>/dev/null
+    kill -KILL -- "-$suite_pid" 2>/dev/null
   fi
-  assert_eq "rc=$RC suite=$state" \
-    "rc=$want suite=gone" "SIG$sig to the $target ends the run at $want and ends the suite it ran"
+  expected="rc=$want suite=gone"
+  [[ "$variant" != hup-unhandled ]] || expected="rc=$want suite=alive"
+  assert_eq "rc=$RC suite=$state" "$expected" \
+    "$variant: SIG$sig to the $target preserves suite teardown"
 done <<<"$SIGNAL_ROWS"
+done
+
+# A suite must be able to install its own INT and QUIT handlers. Bash cannot
+# recover either signal if an asynchronous parent passed it as ignored.
+echo "=== suite signal handlers survive the asynchronous launch ==="
+for variant in normal signals-ignored; do
+  B="$TMP_ROOT/suite-signals-$variant"
+  battery "$B"
+  for sig in INT QUIT; do
+    printf '#!/usr/bin/env bash\ntrap "exit 0" %s\nkill -%s "$$"\nexit 1\n' "$sig" "$sig" > "$B/$sig.sh"
+  done
+  if [[ "$variant" == signals-ignored ]]; then
+    mutate_file "$B/run-all.sh" '      "${KENDEX_GROUP_LEADER[@]}" bash' '      bash'
+  fi
+  run_battery "$B" 2
+  expected='rc=0 red='
+  [[ "$variant" != signals-ignored ]] || expected='rc=1 red=INT QUIT '
+  assert_eq "rc=$RC red=$(failed_of)" "$expected" \
+    "$variant: suites can handle their own INT and QUIT"
+done
 
 echo "=== 6. a name filter selects by substring, or by whole name written =name ==="
 B="$TMP_ROOT/filter"

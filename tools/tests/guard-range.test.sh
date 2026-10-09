@@ -403,6 +403,8 @@ mkdir -p "$M/scripts/lib" "$M/tests/lib" "$M/tests/fixtures" "$M/references" "$M
 cp "$REPO/skills/orch/tests/run-all.sh" "$M/tests/run-all.sh"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$M/tests/lib/git-env.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$M/scripts/lib/lane-state.sh"
+mkdir -p "$R/skills/github/scripts/lib"
+cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
 printf 'pid=1\n' >"$M/scripts/lib/pid.sh"
 printf 'source "${BASH_SOURCE[0]%%/*}/pid.sh"\n' >"$M/scripts/lib/wrap.sh"
 printf 'source "${BASH_SOURCE[0]%%/*}/wrap.sh"\n' >"$M/scripts/lib/alpha.sh"
