@@ -484,15 +484,14 @@ proof_linux_only() { # [FROM TO]
 OWNED_HEADER="$(sed -n "s/^owned_header='\(.*\)'\$/\1/p" "$TOOLS/lane-setup")"
 [ -n "$OWNED_HEADER" ] || { bad "the owned_header extractor reads the header from lane-setup" "no owned_header= line matched"; exit 1; }
 
-# proof_wrapper PRIOR ASSIGNMENT SCCACHE EXPECT CONFIG [FROM TO]: the sandbox
-# setup with the endpoint ASSIGNMENT, after a first run with PRIOR when that
-# is set. sccache wraps rustc and its config names the endpoint (redis),
-# wraps rustc and its config is the owned header alone (local), or neither
-# (unused). CONFIG is the sccache-config key the second run prints, write or
-# skip, or none when it prints none.
+# proof_wrapper PRIOR SCCACHE EXPECT CONFIG [FROM TO]: the sandbox setup
+# with a stale owned config, an empty config from a prior run, or no config.
+# sccache wraps rustc and its config is the owned header alone (local), or
+# neither (unused). CONFIG is the sccache-config key the run prints, write
+# or skip, or none when it prints none.
 proof_wrapper() {
-  local prior=$1 assignment=$2 sccache=$3 expect=$4 config=$5 out="" conf="" conf_text=""
-  shift 5
+  local prior=$1 sccache=$2 expect=$3 config=$4 out="" conf="" conf_text=""
+  shift 4
   lane_fixture "$@"
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
@@ -500,14 +499,22 @@ proof_wrapper() {
     printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"${0%%/*}/sccache.log"\nexec "$@"\n' >"$EXTRA_BIN/sccache"
     chmod +x "$EXTRA_BIN/sccache"
   fi
-  if [ -n "$prior" ]; then
-    run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test "$prior"
-    [ "$RC" -eq 0 ] || { WHY="prior rc=$RC out=$OUT"; return 1; }
-  fi
-  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test ${assignment:+"$assignment"}
+  conf="$R/home/.config/sccache/config"
+  case "$prior" in
+    stale)
+      mkdir -p "${conf%/*}"
+      printf '%s\n[cache.disk]\ndir = "/prior-cache"\n' "$OWNED_HEADER" >"$conf"
+      ;;
+    empty)
+      run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
+      [ "$RC" -eq 0 ] || { WHY="prior rc=$RC out=$OUT"; return 1; }
+      ;;
+    '') ;;
+    *) WHY="unknown prior config $prior"; return 1 ;;
+  esac
+  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   out="$(cargo_in "$R" check -v)" || { WHY="$out"; return 1; }
-  conf="$R/home/.config/sccache/config"
   if [ -e "$conf" ]; then
     conf_text="$(cat "$conf")" || return 1
   fi
@@ -518,12 +525,9 @@ proof_wrapper() {
     *) WHY="unknown config key $config"; return 1 ;;
   esac
   case "$expect" in
-    redis)
-      [ -s "$EXTRA_BIN/sccache.log" ] && grep -qxF "endpoint = \"${assignment#*=}\"" "$conf" \
-        && case "$OUT" in *"lane-setup: sccache-cache=redis"*) true ;; *) false ;; esac ;;
     local)
       [ -s "$EXTRA_BIN/sccache.log" ] && [ -e "$conf" ] && [ "$conf_text" = "$OWNED_HEADER" ] \
-        && case "$OUT" in *"lane-setup: sccache-cache=local:endpoint-unset"*) true ;; *) false ;; esac ;;
+        && case "$OUT" in *"lane-setup: sccache-cache=local"*) true ;; *) false ;; esac ;;
     unused)
       [ ! -e "$EXTRA_BIN/sccache.log" ] && [ ! -e "$conf" ] \
         && case "$OUT" in *"lane-setup: sccache-cache="*) false ;; *) true ;; esac ;;
@@ -545,7 +549,7 @@ case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the wa
 # Cargo.lock (good), does not compile (broken), or has no Cargo.lock for
 # --locked to accept (unlocked), with the real cargo on its PATH and the build
 # kept in the clone's own target dir. WRAPPER sccache gives the lane config a
-# pass-through sccache and an endpoint; none gives it no wrapper. STALE tree
+# pass-through sccache; none gives it no wrapper. STALE tree
 # leaves a cut-off build's worktree, with an untracked file, at LANE_PATH;
 # registration leaves its registration with the directory gone; foreign
 # leaves a plain directory holding a file, which git does not know as a
@@ -554,7 +558,6 @@ case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the wa
 # as it was.
 proof_warm() {
   local warm=$1 source=$2 wrapper=$3 stale=$4 expect=$5 lock="" exe="" built=no trees="" at_lane=no
-  local -a endpoint=()
   shift 5
   lane_fixture "$@"
   case "$source" in
@@ -595,12 +598,11 @@ proof_warm() {
     sccache)
       printf '#!/usr/bin/env bash\nexec "$@"\n' >"$EXTRA_BIN/sccache"
       chmod +x "$EXTRA_BIN/sccache"
-      endpoint=(FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379)
       ;;
     none) ;;
     *) WHY="unknown wrapper $wrapper"; return 1 ;;
   esac
-  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${endpoint[@]+"${endpoint[@]}"} ${warm:+FLEET_WARM="$warm"}
+  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${warm:+FLEET_WARM="$warm"}
   for exe in "$R"/target/debug/deps/toy-*; do
     case "${exe##*/}" in *.*) ;; *) [ ! -f "$exe" ] || [ ! -x "$exe" ] || built=yes ;; esac
   done
@@ -639,15 +641,13 @@ if [ -n "$FOREIGN_TARGET" ]; then
 else
   ok "linker: non-Linux target row skipped, no aarch64-apple-darwin or x86_64-pc-windows-msvc in $SYSROOT"
 fi
-while IFS='|' read -r prior assignment sccache expect config; do
-  proof_wrapper "$prior" "$assignment" "$sccache" "$expect" "$config" && ok "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect, config $config" || bad "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect, config $config" "$WHY"
+while IFS='|' read -r prior sccache expect config; do
+  proof_wrapper "$prior" "$sccache" "$expect" "$config" && ok "wrapper: prior [$prior] with sccache $sccache is $expect, config $config" || bad "wrapper: prior [$prior] with sccache $sccache is $expect, config $config" "$WHY"
 done <<'ROWS'
-|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|present|redis|write
-|FLEET_SCCACHE_REDIS_ENDPOINT=|present|local|write
-||present|local|write
-FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379||present|local|write
-FLEET_SCCACHE_REDIS_ENDPOINT=||present|local|skip
-|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused|none
+|present|local|write
+stale|present|local|write
+empty|present|local|skip
+|absent|unused|none
 ROWS
 
 while IFS='|' read -r warm source wrapper stale expect; do
@@ -695,18 +695,15 @@ if [ -n "$FOREIGN_TARGET" ]; then
     && bad "control: a linker entry for every target fails the non-Linux row" "$WHY" \
     || ok "control: a linker entry for every target fails the non-Linux row"
 fi
-proof_wrapper '' FLEET_SCCACHE_REDIS_ENDPOINT= present local write '  if ! sccache_path="$(command -v sccache)"; then' '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ] || ! sccache_path="$(command -v sccache)"; then' \
-  && bad "control: a wrapper tied to the endpoint fails the empty-endpoint row" "$WHY" \
-  || ok "control: a wrapper tied to the endpoint fails the empty-endpoint row"
-proof_wrapper '' '' present local write '    if [ -n "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '    if true; then' \
-  && bad "control: a redis section written with no endpoint fails the unset-endpoint row" "$WHY" \
-  || ok "control: a redis section written with no endpoint fails the unset-endpoint row"
-proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379 '' present local write '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' '    [ -z "$sccache_config" ] || write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' \
-  && bad "control: an earlier run's redis section left in place fails the rerun row" "$WHY" \
-  || ok "control: an earlier run's redis section left in place fails the rerun row"
-proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= '' present local skip '  if [ -n "$3" ]; then' '  if true; then' \
-  && bad "control: a blank line after the header of an empty config fails the no-endpoint rerun row" "$WHY" \
-  || ok "control: a blank line after the header of an empty config fails the no-endpoint rerun row"
+proof_wrapper '' present local write '  if ! sccache_path="$(command -v sccache)"; then' '  if true; then' \
+  && bad "control: skipping an installed wrapper fails the local-cache row" "$WHY" \
+  || ok "control: skipping an installed wrapper fails the local-cache row"
+proof_wrapper stale present local write '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" ""' '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "[cache.disk]"' \
+  && bad "control: a cache section written in the config fails the stale-config row" "$WHY" \
+  || ok "control: a cache section written in the config fails the stale-config row"
+proof_wrapper empty present local skip '  if [ -n "$3" ]; then' '  if true; then' \
+  && bad "control: a blank line after the header of an empty config fails the rerun row" "$WHY" \
+  || ok "control: a blank line after the header of an empty config fails the rerun row"
 
 proof_warm 1 good sccache none built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
   && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
