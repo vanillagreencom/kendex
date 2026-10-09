@@ -878,36 +878,14 @@ done
 # group or a push to main never shares a group with another run, so nothing
 # cancels or queues it behind one. Each `${{ }}` of the workflow's
 # concurrency values is evaluated and spliced back into its text.
-concurrency_value() { # WORKFLOW KEY EVENT — the key's value on a run of that event
-  local raw ctx out="" expr
-  raw="$(awk -v key="$2" '
-    /^concurrency:/ { on = 1; next }
-    on && /^[^ ]/ { exit }
-    on && $1 == key ":" { sub(/^ *[a-z-]+: */, ""); print }
-  ' "$1")"
-  [ -n "$raw" ] || { printf 'no-concurrency-%s' "$2"; return 0; }
-  ctx="$(jq -cn --arg e "$3" '{github: {event_name: $e, run_id: 7}}
-    | if $e == "pull_request" then .github.event = {pull_request: {number: 42}} else . end')"
-  while [ -n "$raw" ]; do
-    case "$raw" in
-      *'${{'*)
-        out="$out${raw%%'${{'*}"
-        raw="${raw#*'${{'}"
-        expr="${raw%%'}}'*}"
-        raw="${raw#*'}}'}"
-        out="$out$(gh_eval value "$ctx" "$expr" | tr -d '"')"
-        ;;
-      *) out="$out$raw"; raw="" ;;
-    esac
-  done
-  printf '%s' "$out"
-}
 # EVENT|GROUP|CANCEL
 concurrency_rows=0
 while IFS='|' read -r event group cancel; do
   concurrency_rows=$((concurrency_rows + 1))
+  concurrency_ctx="$(jq -cn --arg e "$event" '{github: {event_name: $e, run_id: 7}}
+    | if $e == "pull_request" then .github.event = {pull_request: {number: 42}} else . end')"
   check "a $event run's concurrency group and cancel" "$group $cancel" \
-    "$(concurrency_value "$WORKFLOW" group "$event") $(concurrency_value "$WORKFLOW" cancel-in-progress "$event")"
+    "$(concurrency_value "$WORKFLOW" group "$concurrency_ctx") $(concurrency_value "$WORKFLOW" cancel-in-progress "$concurrency_ctx")"
 done <<'ROWS'
 pull_request|skill-tests-pull_request-42|true
 merge_group|skill-tests-merge_group-7|false
@@ -916,8 +894,9 @@ ROWS
 [ "$concurrency_rows" -ge 3 ] || { echo "the concurrency table read $concurrency_rows rows" >&2; exit 1; }
 plant "$WORKFLOW" "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" "cancel-in-progress: true" \
   "$TMP/wf-cancel-all.yml"
+concurrency_ctx='{"github":{"event_name":"merge_group","run_id":7}}'
 check "must-fail: a cancel held to no event cancels a merge group run" "true" \
-  "$(concurrency_value "$TMP/wf-cancel-all.yml" cancel-in-progress merge_group)"
+  "$(concurrency_value "$TMP/wf-cancel-all.yml" cancel-in-progress "$concurrency_ctx")"
 
 # --- 2b. Must-fail controls -------------------------------------------------
 
