@@ -360,7 +360,10 @@ fi
 # One owner chooses and rebuilds a preference launch from the original input.
 # Permission eligibility and flag translation belong to the overseer walk.
 preference_select() {
-  local preference_entry preference_rc preference_word preference_record
+  local preference_entry preference_rc preference_word preference_record preference_mode="$TERMINAL_MODE"
+  if [[ -z "$preference_mode" ]]; then
+    if tmux_server_named; then preference_mode=tmux; else preference_mode=gui; fi
+  fi
   PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
   for preference_entry in "${OL_ENTRIES[@]}"; do
     ol_entry_model "$preference_entry"
@@ -372,6 +375,19 @@ preference_select() {
     fi
     LANE_HOST="${OL_ENTRY_HOST:-$preference_host}"
     LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL"
+    lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || {
+      ot_message host-capabilities-failed "host=$LANE_HOST" >&2; return 1;
+    }
+    lane_capability HOST_KIND kind
+    lane_capability HOST_LAUNCH launch
+    case "$HOST_LAUNCH" in
+      window) ;;
+      ssh) [[ "$preference_mode" == tmux ]] || continue ;;
+      cloud-session)
+        [[ "$OL_ENTRY_HARNESS" == claude && "$preference_mode" == tmux && ${#ITEMS[@]} -eq 1 && "$RELAUNCH" != true ]] || continue ;;
+      cloud-task) continue ;;
+      *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; return 1 ;;
+    esac
     preference_rc=0
     preference_record="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
     case "$preference_rc" in
@@ -388,11 +404,6 @@ preference_select() {
     "$OL_ENTRY_MODEL" "$preference_harness" ${preference_input[@]+"${preference_input[@]}"} || {
     ot_message lane-resolution-failed "entry=$PREFERENCE_ENTRY" "step=$OL_REASON" >&2; return 1;
   }
-  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || {
-    ot_message host-capabilities-failed "host=$LANE_HOST" >&2; return 1;
-  }
-  lane_capability HOST_KIND kind
-  lane_capability HOST_LAUNCH launch
   CMD_TEMPLATE=""
   if [[ "$HOST_LAUNCH" == cloud-session ]]; then
     # The cloud takes the issue brief itself, not an orch command template.
@@ -1055,6 +1066,7 @@ host_account_read() { # CONFIG_DIR HARNESS
 # printed. The block that calls it below says why each answer is what it is.
 named_lane_judge() {
   local lane_rc=0 lane_record lane_wall lane_bucket lane_projected lane_status lane_detail
+  local lane_refusal lane_cause lane_retry
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
@@ -1063,6 +1075,18 @@ named_lane_judge() {
   lane_rc=0
   lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
     --model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
+  if [[ "$lane_rc" == 3 || "$lane_rc" == 5 ]]; then
+    lane_refusal="$(jq -r 'if .refusal == null then empty
+      elif .refusal.cause == "cloud-credit" then [.refusal.cause, (.refusal.retry_at // "none")] | @tsv
+      else error("unknown allowance refusal") end' <<<"$lane_record")" || {
+      ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-refusal" >&2; return 1;
+    }
+    if [[ -n "$lane_refusal" ]]; then
+      IFS=$'\t' read -r lane_cause lane_retry <<<"$lane_refusal"
+      ot_message lane-credit-refused "lane=${LANE_ENV#*=}" "cause=$lane_cause" "retry-at=$lane_retry" >&2
+      return 1
+    fi
+  fi
   case "$lane_rc" in
     0) LANE_PICK_RECORD="$lane_record" ;;
     # 4 is `lanes` holding no record for this directory — a config dir outside

@@ -97,7 +97,7 @@ cloud_body() {
 # remaining_dollars.
 for spec in "aclaude|10|" "gclaude|10|1:250:2099-09-01T00_00_00Z" "bclaude|100|241:250:2099-06-01T07_59_00Z" "cclaude|100|200:250:2099-03-01T00_00_00Z" \
   "dclaude|100|200:250:2099-06-01T00_00_00Z" "eclaude|10|241:250:2020-01-01T00_00_00Z" "fclaude|10|5:250:2099-06-01T00_00_00Z" \
-  "lclaude|10|241:250:2099-06-01T00_00_00Z:overage" "uclaude|100|" "mclaude|100|241:250:2099-06-01T00_00_00Z"; do
+  "lclaude|10|241:250:2099-06-01T00_00_00Z:overage" "uclaude|100|" "mclaude|10|241:250:2099-06-01T00_00_00Z"; do
   IFS='|' read -r name week credit <<<"$spec"
   make_lane "$H" "$name" 3600
   cloud_body "$week" "$credit" > "$FIXTURE_DIR/.$name.json"
@@ -229,13 +229,16 @@ table \
 
 echo "=== the floor, the lock, the expiry and an unread credit ==="
 table \
-  "a credit at the floor takes its walled plan verdict|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=3 walled=1" \
-  "a named credit at the floor stays walled|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|pick --lane $H/.fclaude --harness claude --json|rc=3" \
+  "a credit at the floor carries no plan retry date|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=3 walled=1 walled_resets_at=null refusals[0].refusal.cause=cloud-credit refusals[0].refusal.retry_at=null" \
+  "a named credit at the floor has its own refusal|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|pick --lane $H/.fclaude --harness claude --json|rc=3 refusal.cause=cloud-credit refusal.retry_at=null key=cloud-credit-refused,account=$H/.fclaude,cause=cloud-credit,retry-at=none" \
   "a named locked credit stays walled|$CLOUD;$(dirs lclaude);$(repos lclaude)|pick --lane $H/.lclaude --harness claude --json|rc=3" \
   "a named expired credit stays walled|$CLOUD;$(dirs eclaude);$(repos eclaude)|pick --lane $H/.eclaude --harness claude --json|rc=3" \
   "a credit above the floor is tier 0|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=4|$CPICK|rc=0 config_dir=$H/.fclaude" \
-  "a locked credit takes its walled plan verdict|$CLOUD;$(dirs lclaude);$(repos lclaude)|$CPICK|rc=3 walled=1" \
-  "a credit past its expiry takes its walled plan verdict, named as no unread one|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=3 walled=1 line.cloud-credit-unread=none" \
+  "a locked credit carries no plan retry date|$CLOUD;$(dirs lclaude);$(repos lclaude)|$CPICK|rc=3 walled=1 walled_resets_at=null" \
+  "an expired credit carries no plan retry date|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=3 walled=1 walled_resets_at=null line.cloud-credit-unread=none" \
+  "a cloud account with plan room and no grant stays unmeasured|$CLOUD;$(dirs aclaude);$(repos aclaude)|$CPICK|rc=3 walled=0 unmeasured=1 walled_resets_at=null refusals[0].refusal.cause=cloud-credit" \
+  "a named cloud account with plan room and no grant stays unmeasured|$CLOUD;$(dirs aclaude);$(repos aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=5 refusal.cause=cloud-credit refusal.retry_at=null key=cloud-credit-refused,account=$H/.aclaude,cause=cloud-credit,retry-at=none" \
+  "a named cloud account with an unread grant and plan room stays unmeasured|$CLOUD;$(dirs mclaude);$(repos mclaude)|pick --lane $H/.mclaude --harness claude --json|rc=5 refusal.cause=cloud-credit refusal.retry_at=null" \
   "a body without the credit is named and passed over|$CLOUD;$(dirs uclaude gclaude);$(repos uclaude gclaude)|$CPICK|rc=0 config_dir=$H/.gclaude line.cloud-credit-unread=account=uclaude" \
   "a credit with no remaining_dollars is named as unread|$CLOUD;$(dirs mclaude gclaude);$(repos mclaude gclaude)|$CPICK|rc=0 config_dir=$H/.gclaude line.cloud-credit-unread=account=mclaude" \
   "a floor nobody can read refuses the pick|$CLOUD;$(dirs bclaude);$(repos bclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=five|$CPICK|rc=1 line.invalid-lane-cloud-credit-floor=value=five"
@@ -373,6 +376,18 @@ cloud_control mutant-cloud-unread lanes 'message cloud-credit-unread "$dir" >&2'
 # shellcheck disable=SC2016
 cloud_control mutant-cloud-partial lib/lane-model.sh '($read | not)' '(.credits == null)' \
   "control: read as unread only when absent, a credit with no remaining_dollars is passed over and gclaude named first|$CLOUD;$(dirs mclaude gclaude);$(repos mclaude gclaude)|$CPICK|rc=0 config_dir=$H/.gclaude line.cloud-credit-unread=none"
+
+# The same optional grant body occurs with plan room. Borrowing that plan
+# must turn both the automatic and named missing-grant assertions red.
+CTRL="$(cloud_mutant mutant-cloud-credit-only lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" 'elif $pool == "cloud-credit" then' 'elif false then'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: plan borrowing admits a missing grant in the automatic pick|$CLOUD;$(dirs aclaude);$(repos aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
+  "control: plan borrowing admits a missing grant in the named pick|$CLOUD;$(dirs aclaude);$(repos aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=0 config_dir=$H/.aclaude" \
+  "control: plan borrowing admits an unread grant|$CLOUD;$(dirs mclaude);$(repos mclaude)|$CPICK|rc=0 config_dir=$H/.mclaude"
+# A retry date must come from the deciding allowance, never the plan date.
+cloud_control mutant-cloud-refusal-reset lib/lane-model.sh '.refusal != null then .refusal.retry_at' '.refusal != null then (.refusal.retry_at // "2099-08-01T06:00:00Z")' \
+  "control: a plan date on a cloud refusal changes the retry assertion|$CLOUD;$(dirs fclaude);$(repos fclaude);ORCH_LANE_CLOUD_CREDIT_FLOOR=5|$CPICK|rc=3 walled_resets_at=2099-08-01T06:00:00Z"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

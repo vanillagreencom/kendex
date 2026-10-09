@@ -290,6 +290,7 @@ done
 git -C "$REPO" remote add origin https://github.com/owner/repo.git
 cp "$TEST_DIR/fixtures/lane-host" "$REPO/daytona"
 make_lane "$TMP_ROOT/home" claude
+make_lane "$TMP_ROOT/home" aclaude
 make_codex_lane "$TMP_ROOT/home/.codex"
 mkdir -p "$TMP_ROOT/cloud-usage"
 printf '{"rate_limit":{"primary_window":{"used_percent":10,"reset_at":4102444800},"secondary_window":{"used_percent":20,"reset_at":4102444800}}}\n' > "$TMP_ROOT/cloud-usage/.codex.json"
@@ -299,10 +300,23 @@ printf 'dev@lane:~$\n' > "$TMP_ROOT/ssh-screen"
 CLOUD_PREF='claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high'
 cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
   local row="$1" root="${2:-$REPO/scripts}" pref="${3:-$CLOUD_PREF}" remaining=20 lock=null expiry='2099-11-04T00:00:00Z' repos='claude=owner/repo' rc=0 brief_args=()
+  local cloud_account=claude terminal_args=(--tmux) shape_args=() items=(CC-21) tmux_session=stub
   case "$row" in floor) remaining=5 ;; locked) lock='"overage"' ;; expired) expiry='2020-11-04T00:00:00Z' ;; no-repo) repos='' ;; esac
+  case "$row" in
+    missing-credit | unread-credit) cloud_account=aclaude; repos='aclaude=owner/repo' ;;
+    relaunch) shape_args=(--relaunch) ;;
+    batch) items+=(CC-22) ;;
+    gui) terminal_args=(--ghostty); tmux_session='' ;;
+    implicit-gui) terminal_args=(); tmux_session='' ;;
+  esac
   claude_usage 10 20 10 Opus | jq --argjson remaining "$remaining" --argjson lock "$lock" --arg expiry "$expiry" \
     '. + {iguana_necktie: {limit_dollars:250,remaining_dollars:$remaining,locked_reason:$lock,resets_at:$expiry}}' \
-    > "$TMP_ROOT/cloud-usage/.claude.json"
+    > "$TMP_ROOT/cloud-usage/.$cloud_account.json"
+  case "$row" in
+    missing-credit) jq 'del(.iguana_necktie)' "$TMP_ROOT/cloud-usage/.$cloud_account.json" > "$TMP_ROOT/cloud-usage/credit.next" ;;
+    unread-credit) jq 'del(.iguana_necktie.remaining_dollars)' "$TMP_ROOT/cloud-usage/.$cloud_account.json" > "$TMP_ROOT/cloud-usage/credit.next" ;;
+  esac
+  case "$row" in missing-credit | unread-credit) mv -- "$TMP_ROOT/cloud-usage/credit.next" "$TMP_ROOT/cloud-usage/.$cloud_account.json" ;; esac
   RUN="$TMP_ROOT/cloud-run"
   rm -rf -- "${RUN:?}"
   mkdir -p "$RUN/remote/srv/lane"
@@ -311,15 +325,15 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
   [[ "$row" == no-brief ]] || brief_args=(--brief-file "$TMP_ROOT/brief")
   (cd -- "$REPO" && env -i PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" LANES_HOME="$TMP_ROOT/home" \
     ORCH_LANE_HOST="$REPO/daytona" ORCH_LANE_PREFERENCE="$pref" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 \
-    ORCH_LANE_CLOUD_REPOS="$repos" ORCH_LANE_DIRS="$TMP_ROOT/home/.claude:$TMP_ROOT/home/.codex" \
+    ORCH_LANE_CLOUD_REPOS="$repos" ORCH_LANE_DIRS="$TMP_ROOT/home/.$cloud_account:$TMP_ROOT/home/.codex" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/cloud-usage" ORCH_LANES_USAGE_TTL=0 \
-    OVERSEE_WATCH_STATE_DIR="$RUN/claims" ORCH_TMUX_SESSION=stub ORCH_OVERSEER_LANES=3 \
+    OVERSEE_WATCH_STATE_DIR="$RUN/claims" ORCH_TMUX_SESSION="$tmux_session" ORCH_OVERSEER_LANES=3 \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 WORKTREE_CLI="$BIN/worktree" LANES_CLI="$root/lanes" \
     OT_WT_LOG="$RUN/worktrees" OT_TMUX_LOG="$RUN/tmux" OT_TMUX_PANES="$RUN/panes" OT_TMUX_SERVER_PID="$$" \
     OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=1 OT_SCREEN_FILE="$TMP_ROOT/cloud-screen" OT_HARNESS_SCREEN="$TMP_ROOT/host-screen" OT_SSH_SCREEN="$TMP_ROOT/ssh-screen" \
     LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host" OT_SLEEP_INSTANT=1 \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$root/open-terminal" --tmux --state-dir "$RUN/state" --harness claude --lane auto \
-    --cmd 'claude --dangerously-skip-permissions {brief}' ${brief_args[@]+"${brief_args[@]}"} CC-21 \
+    TERMINAL=ghostty OT_CAPTURE="$RUN/command" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$root/open-terminal" ${terminal_args[@]+"${terminal_args[@]}"} --state-dir "$RUN/state" --harness claude --lane auto \
+    --cmd 'claude --dangerously-skip-permissions {brief}' ${brief_args[@]+"${brief_args[@]}"} ${shape_args[@]+"${shape_args[@]}"} "${items[@]}" \
     > "$RUN/out" 2> "$RUN/err") || rc=$?
   local record key=none
   record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee \
@@ -331,12 +345,23 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
 }
 CLOUD_WANT="0|none|claude|claude-cloud|claude-cloud|claude-opus-5-5|claude@claude-cloud:claude-opus-5-5:high|session_01PREFERENCE"
 SSH_WANT="0|none|codex|ssh|$REPO/daytona|gpt-6.1-sol|codex:gpt-6.1-sol:high|none"
-for row in room floor locked expired no-repo no-brief; do
+for row in room floor locked expired no-repo missing-credit unread-credit no-brief; do
   cloud_observe "$row"
   want="$SSH_WANT"
   case "$row" in room) want="$CLOUD_WANT" ;; no-brief) want='1|cloud-brief-missing|' ;; esac
   assert_eq "$CLOUD_OBS" "$want" "hosted preference: $row" "$RUN/err"
 done
+LOCAL_PREF='claude@claude-cloud:claude-opus-5-5:high,codex@local:gpt-6.1-sol:high'
+LOCAL_WANT='0|none|codex|local||gpt-6.1-sol|codex@local:gpt-6.1-sol:high|none'
+while IFS='|' read -r row preference want; do
+  cloud_observe "$row" "$REPO/scripts" "$preference"
+  assert_eq "$CLOUD_OBS" "$want" "host launch eligibility: $row" "$RUN/err"
+done <<ROWS
+relaunch|$LOCAL_PREF|$LOCAL_WANT
+batch|$LOCAL_PREF|$LOCAL_WANT,${LOCAL_WANT#0|none|}
+gui|$LOCAL_PREF|$LOCAL_WANT
+implicit-gui|$LOCAL_PREF|$LOCAL_WANT
+ROWS
 # A legacy entry still uses the fleet host. An entry naming local changes
 # only its own route, without changing the configured fleet host.
 cloud_observe floor "$REPO/scripts" 'codex:gpt-6.1-sol:high'
@@ -367,6 +392,34 @@ for control in host floor locked expired no-repo credit-only grammar; do
   cloud_observe "$row" "$root"
   if [[ "$CLOUD_OBS" != "$want" ]]; then pass "control: $control changes the hosted preference result"
   else fail "control: $control leaves the hosted preference result unchanged"; fi
+  if [[ "$control" == credit-only ]]; then
+    for row in missing-credit unread-credit; do
+      cloud_observe "$row" "$root"
+      if [[ "$CLOUD_OBS" != "$SSH_WANT" ]]; then pass "control: credit-only changes $row fallback"
+      else fail "control: credit-only leaves $row fallback unchanged"; fi
+    done
+  fi
+done
+
+# Remove each launch-shape check independently; the selected cloud entry
+# then reaches the existing refusal instead of the eligible fallback.
+for row in relaunch batch gui; do
+  preference="$LOCAL_PREF" want="$LOCAL_WANT"
+  case "$row" in
+    relaunch) old='&& "$RELAUNCH" != true ]] || continue'; new='&& ( "$RELAUNCH" != true || 1 == 1 ) ]] || continue' ;;
+    batch) old='${#ITEMS[@]} -eq 1 && "$RELAUNCH" != true'; new='( ${#ITEMS[@]} -eq 1 || 1 == 1 ) && "$RELAUNCH" != true'; want="$LOCAL_WANT,${LOCAL_WANT#0|none|}" ;;
+    gui) old='&& "$preference_mode" == tmux'; new='&& ( "$preference_mode" == tmux || 1 == 1 )' ;;
+  esac
+  root="$(mutant_scripts "cloud-shape-$row" open-terminal)"
+  orch_fixture_shared_libs "$TMP_ROOT/cloud-shape-$row"
+  git -C "$TMP_ROOT/cloud-shape-$row" init -q
+  git -C "$TMP_ROOT/cloud-shape-$row" config gc.auto 0
+  git -C "$TMP_ROOT/cloud-shape-$row" config maintenance.auto false
+  git -C "$TMP_ROOT/cloud-shape-$row" remote add origin https://github.com/owner/repo.git
+  mutate_file "$root/open-terminal" "$old" "$new"
+  cloud_observe "$row" "$root" "$preference"
+  if [[ "$CLOUD_OBS" != "$want" ]]; then pass "control: $row compatibility changes the fallback"
+  else fail "control: $row compatibility leaves the fallback unchanged"; fi
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

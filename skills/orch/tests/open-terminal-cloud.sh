@@ -71,6 +71,10 @@ case "${1:-}" in
       printf 'lanes: cloud-repo-unset account=%s repo=owner/repo\n' "$3" >&2
       exit 7
     fi
+    if [[ -n "${STUB_LANES_CREDIT_STATE:-}" ]]; then
+      printf '%s\n' '{"wall":20,"binding_bucket":"weekly","binding_resets_at":"2099-08-01T06:00:00Z","status":"expired","refusal":{"cause":"cloud-credit","retry_at":null}}'
+      case "$STUB_LANES_CREDIT_STATE" in walled) exit 3 ;; unmeasured) exit 5 ;; *) exit 1 ;; esac
+    fi
     ;;
 esac
 exit 0
@@ -300,6 +304,20 @@ mutate_file "$CTRL/open-terminal" '7) return 1 ;;' '7) : ;;'
 run_ot SCRIPT="$CTRL/open-terminal" STUB_LANES_REPO_UNSET=true -- "${CLOUD[@]}" CC-31
 assert_eq "rc=$RC made=$(made) claude=$(typed 1)" \
   "rc=0 made=yes claude=ran" "control: ignoring the repository refusal launches the cloud session" "$TMP_ROOT/err"
+
+echo "=== a cloud allowance refusal precedes plan and credential branches ==="
+for credit_state in walled unmeasured; do
+  run_ot STUB_LANES_CREDIT_STATE="$credit_state" -- "${CLOUD[@]}" CC-32
+  refusal="$(sed -n 's/^open-terminal: lane-credit-refused / /p' <<<"$ERR")"
+  assert_eq "rc=$RC$refusal made=$(made) claude=$(typed 1)" \
+    "rc=1 lane=$LANE_DIR cause=cloud-credit retry-at=none made=no claude=none" \
+    "the named $credit_state grant refusal reports its own cause and no plan retry" "$TMP_ROOT/err"
+done
+CTRL="$(mutant_scripts mutant-named-cloud-credit open-terminal)" || exit 1
+mutate_file "$CTRL/open-terminal" 'if [[ -n "$lane_refusal" ]]; then' 'if false && [[ -n "$lane_refusal" ]]; then'
+run_ot SCRIPT="$CTRL/open-terminal" STUB_LANES_CREDIT_STATE=walled -- "${CLOUD[@]}" CC-32
+assert_eq "rc=$RC cloud=$(grep -c '^open-terminal: lane-credit-refused ' <<<"$ERR" || true) plan=$(grep -c '^open-terminal: lane-model-walled ' <<<"$ERR" || true)" \
+  'rc=1 cloud=0 plan=1' 'control: ignoring the cloud refusal reports the unrelated plan wall' "$TMP_ROOT/err"
 
 echo "=== what a cloud session cannot take refuses before anything is made ==="
 # KEY FIELDS|ARGS|OLD|NEW: the refusal's first line past its key word, the

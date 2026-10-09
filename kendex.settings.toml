@@ -110,7 +110,7 @@ ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
 # waits for a slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
-# The kendex owner program uses the Copilot pool before the native Codex harness.
+# The kendex owner program uses Claude cloud first and Codex on its own accounts as fallback.
 ORCH_LANE_PREFERENCE = "claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
 
 # Accounts a cloud-session pick may hand a kendex lane. An entry records both

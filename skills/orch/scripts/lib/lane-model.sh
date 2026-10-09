@@ -391,7 +391,10 @@ def with_lane_tier($pool; $cloud_floor; $retire; $now):
     then . + {verdict: "room", _tier: 0, _expires: $e,
               _score: (100 * $c.remaining_dollars / $c.limit_dollars * (1 + 1 / (1 + ($e - $now) / 3600)))}
     elif $pool == "cloud-credit" then
-      . + {verdict: (if $read then "walled" else "unmeasured" end), _tier: 0, _expires: ($e // 0), _score: 0}
+      # An expiry ends the grant; it does not refill it. No plan reset can
+      # reopen a spent, locked, expired or unread grant.
+      . + {verdict: (if $read then "walled" else "unmeasured" end),
+           refusal: {cause: "cloud-credit", retry_at: null}, _tier: 0, _expires: ($e // 0), _score: 0}
     elif .binding_bucket == "credits" then . + {_tier: 2, _expires: 0, _score: .credits.balance}
     else . + {_tier: 1, _expires: 0, _score: .selection_score} end;
 
@@ -423,11 +426,13 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
       qualifying: ([ .[] | select(.verdict == "room") ] | length),
       walled: ([ .[] | select(.verdict == "walled") ] | length),
       walled_resets_at: ([ .[] | select(.verdict == "walled")
-                           | if .projected_window == null then .binding_resets_at else .projected_window.resets_at end
+                           | if .refusal != null then .refusal.retry_at
+                             elif .projected_window == null then .binding_resets_at else .projected_window.resets_at end
                            | strings ] | min),
       unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
       cloud_repo_unset: [ .[] | select(.verdict == "cloud-repo-unset") | .config_dir ],
       cloud_credit_unread: [ .[] | select(._credit_unread) | .alias ],
+      refusals: [ .[] | select(.refusal != null) | {config_dir, refusal} ],
       unread: [ .[] | select(.verdict == "unmeasured") ] };
 '
 
