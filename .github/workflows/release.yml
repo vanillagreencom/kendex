@@ -80,7 +80,9 @@ jobs:
           # The x86_64 runner's Azure mirror has stalled package downloads.
           # Keep the image's suites and signing key on the official archive.
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-            sudo sed -i 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            sudo sed -i \
+              -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+              -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
               /etc/apt/sources.list.d/ubuntu.sources
           fi
           sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update
