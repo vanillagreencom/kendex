@@ -35,6 +35,10 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 - A kendex `Proposal:` comment, per `skills/orch/references/skill-rules.md` § Coordination, Tracked issue creation, carries a `Symptom:` line (where, when and what broke) or an `Owner:` line (the owner's note or ask) beside `Reached by:`, at every source and priority. audit-issues § 6 declines one with neither, per the project-management skill's § Intake.
 
+### Consumer refresh review
+
+- This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages (KEN-3338). Each consumer's committed `kendex.settings.toml` `[env]` declares `REVIEW_GATE_REFRESH_REVIEW = "overseer"`, `REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh"` and `REVIEW_GATE_REFRESH_AUTHOR = "vanillagreen-fleet-lanes[bot]"`. A consumer without them gets a Copilot request on that head; add them there through a lane in that repository.
+
 <!-- kendex:project-instructions:end -->
 
 # Orchestration

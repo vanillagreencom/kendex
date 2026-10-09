@@ -59,6 +59,16 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # values: on | off
 PR_COPILOT_REQUESTS = "on"
 
+# Who reviews this repository's own kendex refresh pull request when no
+# approval reached it. "overseer" sends that head, matched by the exact
+# branch and the app's bot login below, to the overseer instead of Copilot;
+# every other pull request keeps its route. Read from the consumer's base
+# checkout. "overseer" with either identity key empty is refused.
+# values: copilot | overseer
+REVIEW_GATE_REFRESH_REVIEW = "copilot"
+REVIEW_GATE_REFRESH_BRANCH = ""
+REVIEW_GATE_REFRESH_AUTHOR = ""
+
 # Seconds to keep waiting for the build to start before treating its
 # absence as a failure. Raise it where a build needs approval before it
 # begins. A value that is not a whole number of seconds waits the default.

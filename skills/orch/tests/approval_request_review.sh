@@ -35,6 +35,10 @@ case "$1 $2" in
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
     echo '[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]'
     ;;
+  'api repos/consumer/repo/pulls/42')
+    [[ "$PULL_JSON" != fail ]] || exit 1
+    printf '%s\n' "$PULL_JSON"
+    ;;
   'pr edit')
     printf '%s\n' "$PWD|$*" >> "$REQUEST_LOG"
     [[ "$REQUEST_EXIT" == 0 ]] || exit "$REQUEST_EXIT"
@@ -51,11 +55,16 @@ REQUEST_LOG="$TMP_ROOT/requests"
 QUERY_LOG="$TMP_ROOT/queries"
 EXECUTION_LOG="$TMP_ROOT/executions"
 
-# write_settings FILE GATE COPILOT: COPILOT empty leaves PR_COPILOT_REQUESTS unset.
+# write_settings FILE GATE COPILOT [REFRESH]: COPILOT empty leaves
+# PR_COPILOT_REQUESTS unset; REFRESH is extra [env] lines, ';'-separated.
 write_settings() {
   printf '[env]\nREVIEW_GATE_MODE = %s\n' "$2" > "$1"
   [[ -z "$3" ]] || printf 'PR_COPILOT_REQUESTS = "%s"\n' "$3" >> "$1"
+  [[ -z "${4:-}" ]] || tr ';' '\n' <<<"$4" >> "$1"
 }
+ORDINARY_PULL='{"head":{"ref":"feature/work"},"user":{"login":"someone","type":"User"}}'
+PULL_JSON="$ORDINARY_PULL"
+RUN_ENV=()
 
 run_action() { # SCRIPT REQUEST_EXIT ARGS...
   local script="$1" request_exit="$2"
@@ -68,7 +77,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
     GH_TOKEN=github_pat_fixture GH_REPO=catalog/repo GITHUB_REPOSITORY=catalog/repo \
     REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review REVIEW_GATE_SETTINGS_FILE=/dev/null \
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
-    REQUEST_EXIT="$request_exit" \
+    REQUEST_EXIT="$request_exit" PULL_JSON="$PULL_JSON" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     bash "$script" 42 "$@" > "$OUT" 2> "$ERR") || RC=$?
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
 }
@@ -116,12 +125,12 @@ done
 # Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests~action (default --request-review)
 for row in \
   'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
-  'settings-failure~["off"]~~~0~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0' \
+  'settings-failure~["off"]~~~0~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0~--resolve-mode' \
   'unknown-policy~"junk"~~~0~*) approval_message policy-mode-invalid >&2; return 1 ;;~*) approval_message policy-mode-invalid >&2; return 0 ;;~2~~0' \
   'base-directory~"off"~~~0~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
   'stacked-base-execution~"enforce"~~~0~  policy=$(rg_setting REVIEW_GATE_MODE enforce)~  "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
   'stdout-isolation~"enforce"~~~0~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1' \
-  'copilot-off~"enforce"~off~~0~    if [[ "$COPILOT_REQUESTS" == off ]]; then~    if false; then~0~fallback cause=off~0' \
+  'copilot-off~"enforce"~off~~0~    elif [[ "$COPILOT_REQUESTS" == off ]]; then~    elif false; then~0~fallback cause=off~0' \
   'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback cause=refused exit=8~1' \
   'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~0~approval~1' \
   'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0' \
@@ -136,6 +145,62 @@ for row in \
   mutate_file "$scripts/approval-wait" "$old" "$new"
   run_action "$scripts/approval-wait" "$request_exit" "${action:---request-review}" --base-checkout "$BASE"
   if [[ "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$EXECUTION_LOG")" == "$want_rc|$want_out|$want_requests|" ]]; then
+    fail "$label control did not turn its behavioral assertion red"
+  else
+    pass "$label control turns its behavioral assertion red"
+  fi
+done
+
+# The consumer's declared refresh identity takes the overseer route with no
+# Copilot request (KEN-3338); every other head and consumer keeps its route.
+REFRESH_PULL='{"head":{"ref":"kendex/refresh"},"user":{"login":"lanes-app[bot]","type":"Bot"}}'
+DECLARED='REVIEW_GATE_REFRESH_REVIEW = "overseer";REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh";REVIEW_GATE_REFRESH_AUTHOR = "lanes-app[bot]"'
+refresh_case() { # GATE CALLER_COPILOT BASE_REFRESH PULL [ENV...]
+  write_settings "$BASE/kendex.settings.toml" "$1" '' "$3"
+  write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' "$2"
+  PULL_JSON="$4"
+  shift 4
+  RUN_ENV=("$@")
+}
+# Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base refresh lines~pull~caller env~rc~stdout~requests
+for row in \
+  "declared refresh head~\"enforce\"~~$DECLARED~$REFRESH_PULL~~0~fallback cause=refresh~0" \
+  "declared refresh head with Copilot requests off~\"enforce\"~off~$DECLARED~$REFRESH_PULL~~0~fallback cause=refresh~0" \
+  "declared refresh head on an off gate~\"off\"~~$DECLARED~$REFRESH_PULL~~0~off~0" \
+  "ordinary head under the refresh policy~\"enforce\"~~$DECLARED~$ORDINARY_PULL~~0~approval~1" \
+  "refresh branch from another author~\"enforce\"~~$DECLARED~${REFRESH_PULL/lanes-app/another}~~0~approval~1" \
+  "refresh author as a user~\"enforce\"~~$DECLARED~${REFRESH_PULL/\"Bot\"/\"User\"}~~0~approval~1" \
+  "refresh author on another branch~\"enforce\"~~$DECLARED~${REFRESH_PULL/kendex\/refresh/kendex\/refresh-extra}~~0~approval~1" \
+  "consumer without the refresh policy~\"enforce\"~~~$REFRESH_PULL~~0~approval~1" \
+  "consumer keeping the Copilot route~\"enforce\"~~${DECLARED/overseer/copilot}~$REFRESH_PULL~~0~approval~1" \
+  "caller environment cannot declare the consumer route~\"enforce\"~~~$REFRESH_PULL~REVIEW_GATE_REFRESH_REVIEW=overseer~0~approval~1" \
+  "unknown refresh route~\"enforce\"~~${DECLARED/overseer/junk}~$REFRESH_PULL~~2~~0" \
+  "overseer route without a branch~\"enforce\"~~${DECLARED/kendex\/refresh/}~$REFRESH_PULL~~2~~0" \
+  "overseer route without an author~\"enforce\"~~${DECLARED/lanes-app\[bot\]/}~$REFRESH_PULL~~2~~0" \
+  "unreadable pull request~\"enforce\"~~$DECLARED~fail~~2~~0"; do
+  IFS='~' read -r label setting caller_copilot base_refresh pull run_env want_rc want_out want_requests <<< "$row"
+  refresh_case "$setting" "$caller_copilot" "$base_refresh" "$pull" ${run_env:+"$run_env"}
+  run_action "$RUN" 0 --request-review --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "$want_rc|$want_out|$want_requests" "$label" "$ERR"
+done
+# Columns: label~base refresh lines~pull~caller env~old~new~rc~stdout~requests
+for row in \
+  "refresh-route~$DECLARED~$REFRESH_PULL~~    if [[ \"\$refresh_rc\" -eq 0 ]]; then~    if false; then~0~fallback cause=refresh~0" \
+  "refresh-branch~$DECLARED~${REFRESH_PULL/kendex\/refresh/product}~~'.head.ref == \$branch and ~'~0~approval~1" \
+  "refresh-author~$DECLARED~${REFRESH_PULL/lanes-app/another}~~ and .user.login == \$author~~0~approval~1" \
+  "refresh-type~$DECLARED~${REFRESH_PULL/\"Bot\"/\"User\"}~~ and .user.type == \"Bot\"'~'~0~approval~1" \
+  "refresh-caller-env~~$REFRESH_PULL~REVIEW_GATE_REFRESH_REVIEW=overseer;REVIEW_GATE_REFRESH_BRANCH=kendex/refresh;REVIEW_GATE_REFRESH_AUTHOR=lanes-app[bot]~  unset REVIEW_GATE_REFRESH_REVIEW REVIEW_GATE_REFRESH_BRANCH REVIEW_GATE_REFRESH_AUTHOR~  :~0~approval~1" \
+  "refresh-identity-unset~${DECLARED/kendex\/refresh/}~$REFRESH_PULL~~    approval_message refresh-identity-unset >&2
+    return 2~    return 1~2~~0"; do
+  IFS='~' read -r label base_refresh pull run_env old new want_rc want_out want_requests <<< "$row"
+  IFS=';' read -r -a env_items <<< "$run_env"
+  refresh_case '"enforce"' '' "$base_refresh" "$pull" ${env_items[@]+"${env_items[@]}"}
+  scripts="$(mutant_scripts "$label/orch" approval-wait)"
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$label/github"
+  ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/$label/review-gate"
+  mutate_file "$scripts/approval-wait" "$old" "$new"
+  run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+  if [[ "$RC|$(cat "$OUT")|$REQUESTS" == "$want_rc|$want_out|$want_requests" ]]; then
     fail "$label control did not turn its behavioral assertion red"
   else
     pass "$label control turns its behavioral assertion red"

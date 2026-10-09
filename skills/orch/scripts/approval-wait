@@ -105,6 +105,18 @@ approval_message() {
       printf 'approval-wait: policy-mode-invalid value=%q\n' "$policy"
       printf '%s\n' 'REVIEW_GATE_MODE must be enforce or off.'
       ;;
+    refresh-review-invalid)
+      printf 'approval-wait: refresh-review-invalid value=%q\n' "$refresh_route"
+      printf '%s\n' 'REVIEW_GATE_REFRESH_REVIEW must be copilot or overseer.'
+      ;;
+    refresh-identity-unset)
+      printf 'approval-wait: refresh-identity-unset branch=%q author=%q\n' "$refresh_branch" "$refresh_author"
+      printf '%s\n' 'REVIEW_GATE_REFRESH_REVIEW=overseer needs REVIEW_GATE_REFRESH_BRANCH and REVIEW_GATE_REFRESH_AUTHOR.'
+      ;;
+    pull-unreadable)
+      printf 'approval-wait: pull-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' 'Could not read the pull request head branch and author for the refresh review route.'
+      ;;
     missing-item)
       printf 'approval-wait: missing-item option=%s\n' "--item"
       printf '%s\n' "approval-wait: --item requires a value: the lane's item"
@@ -206,10 +218,13 @@ stop: stdout stays empty and stderr says why.
                  resolve through --base-checkout each time. An off gate prints off
                  and sends no request. An approval gate requests Copilot and prints
                  approval, or prints a fallback line when no request went out
-                 (below). A resolution or PR_COPILOT_REQUESTS failure is nonzero
-                 and authorizes no wait or retry.
+                 (below). A resolution, refresh-route or PR_COPILOT_REQUESTS
+                 failure is nonzero and authorizes no wait or retry.
                  Print a fallback line, exit 0, when an approval gate sends no
                  request, its first word fallback and then its cause:
+                   fallback cause=refresh          the consumer routes this head,
+                                                   its declared refresh, to the
+                                                   overseer (Refresh review route)
                    fallback cause=off              PR_COPILOT_REQUESTS is off
                    fallback cause=refused exit=N   the request exited N, nonzero
                                                    (copilot-request-refused on stderr)
@@ -288,6 +303,18 @@ Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                         from the caller's project, as auth is, never from
                         --base-checkout: Copilot spend is the caller's
                         account's. Any other value exits 2
+
+Refresh review route (consumer policy, read from --base-checkout like
+REVIEW_GATE_MODE; process values for these keys are cleared there):
+  REVIEW_GATE_REFRESH_REVIEW  copilot | overseer (default copilot). Under
+                        overseer, a pull request whose head branch is
+                        REVIEW_GATE_REFRESH_BRANCH and whose author is the
+                        app login REVIEW_GATE_REFRESH_AUTHOR (type Bot), read
+                        from GitHub's pull request, gets fallback
+                        cause=refresh and no Copilot request; every other
+                        pull request keeps the route above. Overseer with
+                        either key empty, another value, or an unread pull
+                        request exits 2
 
 Copilot fallback notice: under PR_COPILOT_REQUESTS=off no Copilot review
 will come, so the overseer's approval is what ends a wait. A wait whose
@@ -420,7 +447,8 @@ Exit codes:
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
   2  usage error: missing or empty argument, invalid --mode value,
-     unknown flag; a mode resolution that failed; or a PR_COPILOT_REQUESTS
+     unknown flag; a mode resolution or refresh review route that
+     failed; or a PR_COPILOT_REQUESTS
      that is unreadable or neither on nor off, read by --request-review and
      by a wait with --item
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
@@ -521,6 +549,7 @@ if { $REQUEST_REVIEW || $RESOLVE_MODE; } && [[ -n "$BASE_CHECKOUT" ]]; then
   PROJECT_ROOT="$BASE_CHECKOUT"
   # Fleet callers inherit catalog settings. Read only the consumer's policy.
   unset GH_REPO GITHUB_REPOSITORY PR_REVIEW_GATE REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE
+  unset REVIEW_GATE_REFRESH_REVIEW REVIEW_GATE_REFRESH_BRANCH REVIEW_GATE_REFRESH_AUTHOR
   unset PR_REVIEW_ON_TIMEOUT PR_REVIEW_WAIT_SECS
 fi
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
@@ -838,11 +867,46 @@ resolve_gate_mode() {
   fi
 }
 
+# The consumer's committed policy may route its own refresh pull requests to
+# the overseer instead of Copilot. Branch and author are that consumer's
+# declaration, never a catalog constant. 0 = this pull request is the declared
+# refresh head; 1 = any other route; 2 = unreadable policy or pull request.
+refresh_route=""
+refresh_branch=""
+refresh_author=""
+refresh_review_route() {
+  local pull
+  refresh_route=$(rg_setting REVIEW_GATE_REFRESH_REVIEW copilot) || return 2
+  case "$refresh_route" in
+    copilot) return 1 ;;
+    overseer) ;;
+    *) approval_message refresh-review-invalid >&2; return 2 ;;
+  esac
+  refresh_branch=$(rg_setting REVIEW_GATE_REFRESH_BRANCH '') || return 2
+  refresh_author=$(rg_setting REVIEW_GATE_REFRESH_AUTHOR '') || return 2
+  if [[ -z "$refresh_branch" || -z "$refresh_author" ]]; then
+    approval_message refresh-identity-unset >&2
+    return 2
+  fi
+  if ! pull=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE") \
+    || ! jq -e '[.head.ref, .user.login, .user.type] | all(type == "string")' >/dev/null 2>&1 <<<"$pull"; then
+    approval_message pull-unreadable >&2
+    return 2
+  fi
+  jq -e --arg branch "$refresh_branch" --arg author "$refresh_author" \
+    '.head.ref == $branch and .user.login == $author and .user.type == "Bot"' >/dev/null <<<"$pull" || return 1
+}
+
 if $RESOLVE_MODE || $REQUEST_REVIEW; then
   resolve_gate_mode || exit 2
   answer="$GATE_MODE"
   if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then
-    if [[ "$COPILOT_REQUESTS" == off ]]; then
+    refresh_rc=0
+    refresh_review_route || refresh_rc=$?
+    [[ "$refresh_rc" -le 1 ]] || exit 2
+    if [[ "$refresh_rc" -eq 0 ]]; then
+      answer='fallback cause=refresh'
+    elif [[ "$COPILOT_REQUESTS" == off ]]; then
       answer='fallback cause=off'
     else
       request_rc=0
