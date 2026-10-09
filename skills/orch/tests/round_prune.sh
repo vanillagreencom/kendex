@@ -111,13 +111,14 @@ full_run() {
 
 OUT="" ERR="" RC=0
 ROW_ENV=()
-prune() { # USED [SCRIPTS_DIR] — a fresh round id, then the round-start prune; its stderr lands in ERR
-  local scripts="${2:-$ORCH_SCRIPTS}"
-  "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
+prune() { # USED [SCRIPTS_DIR] [ROUND_FIELD]: stamp, then prune; stderr lands in ERR
+  local scripts="${2:-$ORCH_SCRIPTS}" field="${3:-dev_round_id}" route_args=()
+  [[ "$field" != ci_round_id ]] || route_args=(--ci)
+  "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" "$field" >/dev/null
   RC=0
   OUT="$(cd "$MAIN" && env -u CARGO_TARGET_DIR PATH="$TMP_ROOT/bin:$PATH" DF_TARGET_USED="$1" ORCH_ROUND_PRUNE_DISK_PCT=75 \
     ORCH_WORKTREE_BIN="$REPO_ROOT/skills/worktree/scripts/worktree" ${ROW_ENV[@]+"${ROW_ENV[@]}"} \
-    "$scripts/round-prune" --state-dir "$STATE" "$KEY" 2>"$ROOT/prune.err")" || RC=$?
+    "$scripts/round-prune" --state-dir "$STATE" ${route_args[@]+"${route_args[@]}"} "$KEY" 2>"$ROOT/prune.err")" || RC=$?
   ERR="$(cat -- "$ROOT/prune.err")" || { echo "round_prune: stderr=unreadable path=[$ROOT/prune.err]" >&2; exit 2; }
 }
 
@@ -227,6 +228,47 @@ while IFS='|' read -r label used key branch owner state_wt setup rc action recor
 done <<<"$ROWS"
 [[ "$n" -ge 17 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
+
+# CI delegates under ci_round_id. A standalone lane has no dev token; a
+# managed lane must retain both the earlier dev token and its cleanup record.
+ci_cleanup() { # NAME PRIOR_DEV SCRIPTS_DIR
+  local before status key=pr-5
+  [[ "$2" != yes ]] || key=KEN-1
+  build "$1" KEN-1 - "$key"
+  if [[ "$2" == yes ]]; then
+    prune 74
+  fi
+  before="$("$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" get "$KEY" \
+    '{dev_round_id, round_prunes, stages}')" || return 2
+  prune 80 "$3" ci_round_id
+  status="$("$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" get "$KEY" . | \
+    jq -c --argjson before "$before" \
+    '.ci_round_id as $ci | {dev_same: (.dev_round_id == $before.dev_round_id),
+      stages_same: (.stages == $before.stages),
+      prior_same: ((.round_prunes // {} | del(.[$ci])) == ($before.round_prunes // {})),
+      ci_record_ok: (.round_prunes[$ci] | .action == "pruned" and .used_pct == 80 and .mark_pct == 75 and .bytes > 0),
+      records: (.round_prunes // {} | length), stage_count: (.stages // [] | length)}')" || return 2
+  printf 'rc=%s %s | %s | left=%s\n' "$RC" "$(line)" "$status" "$(artifacts)"
+}
+
+assert_file_contains "$REPO_ROOT/skills/orch/workflows/ci-fix.md" \
+  '.agents/skills/orch/scripts/round-prune --ci [ISSUE_ID]' \
+  'the CI caller selects its own cleanup token'
+CI_WRONG_TOKEN="$(mutant_scripts ci-wrong-token round-prune)" || exit 1
+mutate_file "$CI_WRONG_TOKEN/round-prune" 'round_field=ci_round_id' 'round_field=dev_round_id'
+CI_ROWS='standalone|no|1|0
+managed|yes|2|1'
+while IFS='|' read -r name prior records stages; do
+  want="rc=0 round-prune: action=pruned used-pct=80 mark-pct=75 bytes=<positive> round=<round> worktree=<wt> | {\"dev_same\":true,\"stages_same\":true,\"prior_same\":true,\"ci_record_ok\":true,\"records\":$records,\"stage_count\":$stages} | left=.cargo-lock"
+  got="$(ci_cleanup "ci-$name" "$prior" "$ORCH_SCRIPTS")" || exit 2
+  assert_eq "$got" "$want" "CI cleanup on a $name lane records its token and preserves dev state"
+  got="$(ci_cleanup "control-ci-$name" "$prior" "$CI_WRONG_TOKEN")" || exit 2
+  if [[ "$got" == "$want" ]]; then
+    fail "control: the $name CI row rejects cleanup under the dev token" "$got"
+  else
+    pass "control: the $name CI row rejects cleanup under the dev token"
+  fi
+done <<<"$CI_ROWS"
 
 # A worktree listing git cannot give: which tree the state names is unknown,
 # so the round refuses with nothing pruned or recorded, under a git that fails

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# round-prune — at a dev round's start, reclaim the lane worktree's Cargo build
+# round-prune: at a dev or CI round's start, reclaim the lane worktree's Cargo build
 # output when its disk is at or past the mark, and record what that freed in
 # workflow state.
 #
-# Usage: round-prune [--state-dir DIR] STATE_KEY
+# Usage: round-prune [--state-dir DIR] [--ci] STATE_KEY
+#
+# Reads dev_round_id by default. The CI route passes --ci to read ci_round_id,
+# so its cleanup cannot replace a development round's record.
 #
 # When the consumer selects Cargo round cleanup, the orchestrator runs it
 # after `workflow-state new-round-id` and before the `dev_delegated_at` stamp
@@ -60,8 +63,8 @@ MARK_DEFAULT=75
 message() { # KEY VALUE
   printf 'round-prune: %s=%s\n' "$1" "$2"
   case "$1" in
-  usage) printf '%s\n' 'Usage: round-prune [--state-dir DIR] STATE_KEY' ;;
-  state-missing) printf '%s\n' 'workflow state has no value for that field under this key; dev_round_id comes from workflow-state new-round-id run under the same key.' ;;
+  usage) printf '%s\n' 'Usage: round-prune [--state-dir DIR] [--ci] STATE_KEY' ;;
+  state-missing) printf '%s\n' 'workflow state has no value for that field under this key; stamp it with workflow-state new-round-id under the same key.' ;;
   owner) printf '%s\n' 'git-context could not read the worktree branch, so the lease owner is unknown.' ;;
   worktree-list) printf '%s\n' 'git worktree list failed, so the worktree holding the state'"'"'s branch is unknown.' ;;
   target-elsewhere) printf '%s\n' 'CARGO_TARGET_DIR puts the Cargo target outside the worktree'"'"'s target/, which the owner-scoped prune cannot take; free that volume by hand or unset it for the lane.' ;;
@@ -73,17 +76,25 @@ message() { # KEY VALUE
 }
 
 state_args=()
-case "${1:-}" in
---help | -h)
-  sed -n '2,/^set -euo pipefail$/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
-  exit 0
-  ;;
---state-dir)
-  [[ $# -ge 2 && -n "$2" ]] || { message usage "$1" >&2; exit 2; }
-  state_args=(--state-dir "$2")
-  shift 2
-  ;;
-esac
+round_field=dev_round_id
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+  --help | -h)
+    sed -n '2,/^set -euo pipefail$/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  --state-dir)
+    [[ $# -ge 2 && -n "$2" ]] || { message usage "$1" >&2; exit 2; }
+    state_args=(--state-dir "$2")
+    shift 2
+    ;;
+  --ci)
+    round_field=ci_round_id
+    shift
+    ;;
+  *) break ;;
+  esac
+done
 [[ $# -eq 1 && -n "$1" && "$1" != -* ]] || { message usage "${1:-}" >&2; exit 2; }
 key="$1"
 
@@ -91,8 +102,8 @@ state_get() { # JQ
   "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} get "$key" "$1"
 }
 round=""
-if ! round="$(state_get '.dev_round_id // ""')" || [[ -z "$round" ]]; then
-  message state-missing dev_round_id >&2
+if ! round="$(state_get ".$round_field // \"\"")" || [[ -z "$round" ]]; then
+  message state-missing "$round_field" >&2
   exit 2
 fi
 worktree="" branch=""

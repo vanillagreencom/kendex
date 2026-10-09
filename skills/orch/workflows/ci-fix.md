@@ -79,7 +79,7 @@ Stamp the round as separate tool calls immediately before delegating. Apply the 
 Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
 
 ```bash
-.agents/skills/orch/scripts/round-prune [ISSUE_ID]
+.agents/skills/orch/scripts/round-prune --ci [ISSUE_ID]
 ```
 
 ```bash
