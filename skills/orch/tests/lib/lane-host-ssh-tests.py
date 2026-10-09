@@ -5,6 +5,7 @@ close, and list, which reads the inventory every verb reads first.
 """
 import json
 import base64
+import hashlib
 import os
 from pathlib import Path
 import runpy
@@ -135,7 +136,11 @@ exec git "$@"
         (self.source / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker"\n]\n')
         (self.source / ".gitignore").write_text(".env.local\n.cache/\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
-        for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
+        # Local clones read loose objects while later rows commit to this source.
+        # A detached repack can remove an object between the clone's stat and link.
+        for args in (("init", "-q"), ("config", "gc.auto", "0"),
+                     ("config", "maintenance.auto", "false"), ("add", "."),
+                     ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
         (self.source / ".env.local").write_bytes(b"SECRET=private-fixture\n")
         # A source checkout can still hold the retired Linear store; a clone never receives it.
@@ -183,6 +188,43 @@ exec git "$@"
                       "commit", "-qm", "seed render")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
                            check=True, capture_output=True)
+
+    def test_source_commits_keep_objects_available_to_local_clones(self):
+        """A commit must not repack objects a local clone already enumerated."""
+        pressure = self.root / "maintenance.gitconfig"
+        pressure.write_text("[gc]\n\tauto = 1\n\tautoDetach = false\n[maintenance]\n\tauto = true\n")
+        objects = []
+        # Git's automatic loose-object threshold samples the 17 directory.
+        for number in range(4096):
+            text = f"clone maintenance object {number}\n"
+            data = text.encode()
+            oid = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+            if oid.startswith("17"):
+                self.seed_source(f"clone-object-{len(objects)}", text)
+                objects.append(self.source / ".git/objects" / oid[:2] / oid[2:])
+                if len(objects) == 2:
+                    break
+        self.assertEqual(len(objects), 2)
+
+        def commit_preserves_enumerated_objects(text):
+            self.seed_source("maintenance-trigger", text)
+            for path in objects:
+                self.assertTrue(path.is_file(), path)
+
+        with mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=str(pressure), GIT_CONFIG_NOSYSTEM="1"):
+            commit_preserves_enumerated_objects("protected source\n")
+            cloned = self.create()
+            self.assertEqual(cloned.returncode, 0, cloned.stderr)
+            for index in range(len(objects)):
+                path = f"clone-object-{index}"
+                self.assertEqual((Path(self.row["clone"]) / path).read_bytes(), (self.source / path).read_bytes())
+            # The control permits repacking only in this test's source.
+            for key in ("gc.auto", "maintenance.auto"):
+                subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "config", "--unset", key],
+                               env=self.git_env, check=True, capture_output=True)
+            with self.assertRaises(AssertionError):
+                commit_preserves_enumerated_objects("unprotected source\n")
+            self.assertTrue(all(not path.exists() for path in objects))
 
     def connection_reuse(self):
         """Model key exchanges at the OpenSSH option boundary, not real SSH latency."""
