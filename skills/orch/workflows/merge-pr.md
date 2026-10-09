@@ -117,7 +117,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 The following conditions are merge gates, not advice:
 
 - **Open review threads** — not a `CHECK` field: run § 3.3 before the `not_approved` wait.
-- **`not_approved`** — resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
+- **`not_approved`**: bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing), then resolve the gate mode the pull request's base sets. A non-zero exit is no mode: report it and stop.
 
   ```bash
   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
@@ -126,7 +126,7 @@ The following conditions are merge gates, not advice:
   Route on the printed `GATE_MODE`:
 
   - `off` — informational; never gate or wait.
-  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
+  - `approval`: a GitHub-native approval verdict is required. Before the first approval wait on this head, run [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) with managed context and `[STATE_KEY]` as its `[ISSUE_ID]`. Bypass only its **Skip if** conditions, as [submit-pr.md § 2 step 1](submit-pr.md#2-push-and-submit) does for its first pushed head: a cloud session marks its draft ready without that publication pass. That existing route owns the current-head review and pending-request reads, the request decision, and [Copilot request routing](../references/gates.md#copilot-requests). A read or request failure that stops that route stops this step too. Then poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   A `copilot-error` answer routes as [Copilot requests](../references/gates.md#copilot-requests) says, then re-runs this wait. It is never a met approval gate.
 

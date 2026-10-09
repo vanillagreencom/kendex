@@ -1,0 +1,1 @@
+- Request Copilot review from the landing lane before waiting for approval of a cloud session's completed draft pull request.
