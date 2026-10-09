@@ -134,7 +134,7 @@ ORCH_OVERSEER_LANES = "10"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
 # OWNER/REPO; open-terminal refuses a fleet launch from any other.
-ORCH_CONNECTED_REPOS = "vanillagreencom/review-gate-sandbox vanillagreencom/kendex-web"
+ORCH_CONNECTED_REPOS = "vanillagreencom/kendex-web"
 
 # The turn-end hook uses this pgrep -f pattern to find the session's wake process.
 ORCH_WAKE_PROCESS = ""
