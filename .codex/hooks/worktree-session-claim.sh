@@ -9,9 +9,17 @@
 # timeout: 75
 # harnesses: [claude, codex, pi, copilot, gemini]
 # requires-skills: [worktree]
+# requires: [worktree-prompt-claim]
+# requires-on: [claude]
 # ---
 
 set -euo pipefail
+
+# Claude's SessionStart cannot block. Its prompt companion uses this same
+# claim decision, but UserPromptSubmit can refuse through exit 2.
+PROMPT=false
+[ "${1:-}" != prompt ] || PROMPT=true
+[ "$PROMPT" != true ] || [ "${KENDEX_WORKTREE_CLAIM:-}" = required ] || exit 0
 
 # Copilot consumes top-level context; Codex 0.162.0 treats that field as a
 # context-only answer and misses continue:false. These are the install
@@ -30,6 +38,7 @@ notice() { # KEY VALUE ENGLISH [CAUSE]
   text=$(printf 'worktree-session-claim: %s=%s\n%s' "$1" "$2" "$3")
   [ -z "$cause" ] || text="$text"$'\n'"$cause"
   printf '%s\n' "$text" >&2
+  [ "$PROMPT" != true ] || exit 2
   if [ "${KENDEX_WORKTREE_CLAIM:-}" = required ]; then
     if answer=$(jq -nc --arg reason "$text" --argjson copilot "$COPILOT" '{continue:false,stopReason:$reason} + (if $copilot then {additionalContext:$reason} else {hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$reason}} end)' 2>/dev/null); then
       printf '%s\n' "$answer"

@@ -553,6 +553,10 @@ source = "."
 source = "."
 harnesses = ["claude", "codex", "pi"]
 
+[hooks.worktree-prompt-claim]
+source = "."
+harnesses = ["claude"]
+
 [hooks.session-end-row]
 source = "."
 

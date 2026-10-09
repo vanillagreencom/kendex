@@ -1,0 +1,1 @@
+- Required worktree claims block Claude prompts through the companion prompt hook.

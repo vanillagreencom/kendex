@@ -1,0 +1,1 @@
+- Documents how required Claude prompt claims refresh the worktree lease.

@@ -851,6 +851,7 @@
   ".claude/hooks/session-start-row.sh",
   ".claude/hooks/stop-failure-row.sh",
   ".claude/hooks/task-completed-check.sh",
+  ".claude/hooks/worktree-prompt-claim.sh",
   ".claude/hooks/worktree-session-claim.sh",
   ".claude/settings.json",
   ".claude/skills/bot-instructions",

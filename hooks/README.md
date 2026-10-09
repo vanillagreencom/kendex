@@ -26,4 +26,5 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `session-start-row`: Writes down that a session started, and on which account and model, so the fleet's overseer is judged from what its harness said rather than from its screen.
 - `stop-failure-row`: Writes down that a turn stopped on an error such as a usage limit, so a fleet's overseer that hits its limit is seen to be stuck without anyone reading its screen.
 - `task-completed-check`: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
+- `worktree-prompt-claim`: Blocks Claude prompts when a required worktree claim fails.
 - `worktree-session-claim`: Claims a git worktree the worktree skill created or adopted for the worktree session guard when a session starts in it.
