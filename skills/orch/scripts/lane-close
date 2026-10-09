@@ -61,6 +61,11 @@ message() { # REASON FIELD=VALUE...
         '  cli-missing     the linear CLI is not executable beside this script.' \
         '  payload-unparsed  the linear CLI answered something that is not JSON.' \
         '  no-state-type   the linear payload carried no state_type, so it answered nothing.' \
+        '  parked-record-invalid  the parked record carried no pull request or repository.' \
+        '  pr-read-failed  the parked pull request could not be read.' \
+        '  pr-state-invalid  the parked pull request carried no known state.' \
+        '  checklist-missing  the linear checklist parser is not installed beside this script.' \
+        '  checklist-unparsed  the completed item carried no description, or its checklist could not be read.' \
         '  tracker-unknown  tracker is neither linear nor github. Pass --tracker linear|github.' \
         'source=derived is a tracker read from the item key rather than from the record or --tracker, and source=given is one of those two.' ;;
     harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex|pi|copilot.' ;;
@@ -112,7 +117,7 @@ message() { # REASON FIELD=VALUE...
         '  provider          the lane host stop-sandbox verb exited with status; its own words are on the lines above this one. A provider without the verb answers 2.' \
         '  answer-unparsed   the verb succeeded without its sandbox-stopped item=ID line, so nothing here confirms the sandbox is down.' \
         'A stopped record is what --keep-sandbox leaves: a relaunch recovers it, and lane-close --park --pr N on it retries the stop from the record alone.' ;;
-    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch records its cycle and closes a terminal item at merge, or hands an open item to the overseer as parked-merged.' ;;
+    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps an open pull request parked and hands an open item or a Done item with an unchecked Done-when box to the overseer as parked-merged after merge.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     host-absent) printf '%s\n' "The lane mailbox could not be read, mail-status= being lane-mail's exit, and the provider's list names no sandbox for this terminal item, so no session holds an ask. The record closes with no provider stop or close; its files and window go as in any full close." ;;
     fleet-log-failed) printf '%s\n' "The lane closed and its record reads done, but the fleet-log row naming the cause of its directive_send could not be written: cause=scratch-unmade a mktemp that failed, cause=append workflow-state's append-file, its own words above. The record keeps directive_send; write the close row by hand from it." ;;
@@ -310,8 +315,10 @@ any full close. A list that fails or names the item keeps mail-read-failed.
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
 
---terminal-state reads only the tracker through the recorded identity. It
-prints open, completed or canceled and exits 0. A failed read exits 2.
+--terminal-state reads the tracker through the recorded identity. For a
+parked record, an open recorded pull request or a completed Linear item with
+an unchecked Done-when box reads open. It prints open, completed or canceled
+and exits 0. A failed tracker, pull request or checklist read exits 2.
 --if-terminal closes only if that judge answers terminal. An open item exits
 4 with an item-open line and no changes. Neither option accepts --keep-sandbox
 or --park.
@@ -636,8 +643,22 @@ tracker_read() { # OUT_VAR COMMAND...
 TRACKER_CAUSE=""
 ITEM_END=""
 tracker_terminal() {
-  local value number state reason
+  local value number state reason pr_repo pr_number description checklist
   TRACKER_CAUSE=""
+  if [[ "$status" == parked && "$TERMINAL_MODE" != close ]]; then
+    # Tracker integration can close the item before its queued PR merges.
+    pr_repo="$(jq -er '.parked.repo | strings | select(length > 0)' <<<"$record")" \
+      || { TRACKER_CAUSE=parked-record-invalid; return 2; }
+    pr_number="$(jq -er '.parked.pr | numbers | select(. > 0)' <<<"$record")" \
+      || { TRACKER_CAUSE=parked-record-invalid; return 2; }
+    tracker_read state env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' \
+      || { TRACKER_CAUSE=pr-read-failed; return 2; }
+    case "$state" in
+      OPEN) return 1 ;;
+      MERGED|CLOSED) ;;
+      *) TRACKER_CAUSE=pr-state-invalid; return 2 ;;
+    esac
+  fi
   case "$tracker" in
     linear)
       [[ -x "$LINEAR" ]] || { TRACKER_CAUSE=cli-missing; return 2; }
@@ -648,10 +669,25 @@ tracker_terminal() {
       # name would hold a finished lane open. A payload carrying no state_type
       # answered nothing, so it reads as a failed tracker read, not as work
       # still running.
-      value="$(jq -r '.state_type // empty' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
-      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
-      case "$value" in
-        completed | canceled) ITEM_END="$value" ;;
+      state="$(jq -r '.state_type // empty' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
+      [[ -n "$state" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
+      case "$state" in
+        completed)
+          if [[ "$status" == parked && "$TERMINAL_MODE" != close ]]; then
+            # GitHub integration marks Done at merge before lane close-out
+            # ticks branch proof or schedules an open post-merge box.
+            [[ -r "$SCRIPT_DIR/../../linear/scripts/lib/issue-validation.sh" ]] \
+              || { TRACKER_CAUSE=checklist-missing; return 2; }
+            # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
+            source "$SCRIPT_DIR/../../linear/scripts/lib/issue-validation.sh"
+            description="$(jq -er '.description | strings | . + "."' <<<"$value")" \
+              || { TRACKER_CAUSE=checklist-unparsed; return 2; }
+            checklist="$(done_when_parse "${description%.}" '[]')" \
+              || { TRACKER_CAUSE=checklist-unparsed; return 2; }
+            jq -e 'all(.boxes[]; .checked)' <<<"$checklist" >/dev/null || return 1
+          fi
+          ITEM_END=completed ;;
+        canceled) ITEM_END=canceled ;;
         *) return 1 ;;
       esac ;;
     github)

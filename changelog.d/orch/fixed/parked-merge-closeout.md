@@ -1,0 +1,1 @@
+- Keep parked lanes while their recorded pull request is open, and resume merged lanes whose Done item still has an unchecked completion box.

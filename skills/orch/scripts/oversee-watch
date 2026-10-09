@@ -1156,7 +1156,8 @@ close_hosted_lane() { # ITEM [--if-terminal]
 }
 
 # Stopped and parked records have no pane or mailbox to watch. Read the close
-# verb's terminal judge on every fleet pass, and keep only provider refusals:
+# verb's terminal judge, including a parked PR and Done-when boxes, on every
+# fleet pass, and keep only provider refusals:
 # user-owned changes need an overseer's action, not another provider call.
 check_terminal_lanes() {
   [[ -n "$STATE_FILE" ]] || return 0
@@ -1411,11 +1412,12 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # delivered, so a merged item still in --item on a re-run is not news again,
 # while a further PR on the branch, in any repo, is. The rows are committed
 # once, after the lines are out.
-# An open parked item needs its lane to finish post-merge work. Hand only
+# A parked item with work left needs its lane to finish post-merge work,
+# including a Done item with an unchecked box. Hand only
 # the pull request its park judged to the overseer's relaunch. A terminal
-# item needs no relaunch: check_terminal_lanes records its cycle and closes
+# item with no work left needs no relaunch: check_terminal_lanes records its cycle and closes
 # it after this check commits the merge row. The heartbeat repeats the hand
-# while the open item's record still reads parked over that merge.
+# while that item's record still reads parked over that merge.
 # GitHub's search ceiling for one gh pr list; the key search refuses a page
 # that reaches it, since the item's own pull request may be past it.
 MERGED_SEARCH_PAGE=1000
