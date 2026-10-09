@@ -1,10 +1,9 @@
 # Adopted into .github/workflows/ by refresh/adopt-refresh.sh from a kendex release checkout, which checks
-# the declared environment and its secrets first. Configure only the
-# environment, secret-name inputs and matching secret mappings below.
-# GitHub requires named secret forwarding for environment secrets. The legacy
-# same-name pair also supplies upstream issue reporting. Custom name and neutral
-# alias resolution require a hosted check. The shared workflow runs the refresh
-# from the kendex release the major tag names.
+# selected environment policy and its fixed credential pairs first. Configure
+# only the environment below. Forward both fixed pairs by the same names.
+# The shared job chooses a complete KENDEX pair, then falls back to FLEET.
+# The FLEET pair also supplies upstream issue reporting. The shared job runs
+# the refresh from the kendex release the major tag names.
 # Opening a pull request needs that repository's app token.
 # Auto-merge depends on the published head becoming visible in GitHub.
 # review-gate SKILL.md defines the arm outcomes and merge requirements.
@@ -66,10 +65,8 @@ jobs:
     uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1
     with:
       environment: kendex
-      app-id-secret-name: FLEET_GH_APP_ID
-      app-private-key-secret-name: FLEET_GH_APP_PRIVATE_KEY
     secrets:
-      app-id: ${{ secrets.FLEET_GH_APP_ID }}
-      app-private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+      KENDEX_APP_ID: ${{ secrets.KENDEX_APP_ID }}
+      KENDEX_APP_PRIVATE_KEY: ${{ secrets.KENDEX_APP_PRIVATE_KEY }}
       FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
       FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}

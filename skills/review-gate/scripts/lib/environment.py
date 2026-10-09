@@ -98,9 +98,11 @@ def validate_environment(repository, config):
         if judgment["cause"]:
             refuse(judgment["cause"])
         secrets = rows(endpoint + "/secrets", "secrets")
-        judgment = environment_secrets(config.get("required_names", config["names"]), secrets)
-        if judgment["cause"]:
-            refuse(judgment["cause"])
+        # The shared job selects a complete fixed pair, never credentials
+        # from different pairs. Historical inline callers require all names.
+        pairs = config.get("pairs", [config["names"]])
+        if not any(not environment_secrets(pair, secrets)["cause"] for pair in pairs):
+            refuse("secrets")
     except ValueError:
         refuse("read")
 

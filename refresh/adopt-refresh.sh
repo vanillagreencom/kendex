@@ -81,6 +81,9 @@ except (InvalidCaller, UnicodeError):
     # still authorizes their replacement, never an unshipped malformed edit.
     copied_config = None
 selected_config = copied_config or template_config
+if selected_config is not None and selected_config["legacy_fields"]:
+    print("refresh-warning=legacy-caller-fields value=" + ",".join(selected_config["legacy_fields"]) +
+          " replacement=KENDEX_APP_ID,KENDEX_APP_PRIVATE_KEY,FLEET_GH_APP_ID,FLEET_GH_APP_PRIVATE_KEY")
 if selected_config is None:
     # Historical inline templates still declare their own environment.
     import re

@@ -10,6 +10,8 @@ class InvalidCaller(ValueError):
 
 CALL = re.compile(r"^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@[^\n]+\n?", re.M)
 DEFAULT_NAMES = ("FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY")
+NEUTRAL_NAMES = ("KENDEX_APP_ID", "KENDEX_APP_PRIVATE_KEY")
+ALIASES = ("app-id", "app-private-key")
 
 
 def configuration(data):
@@ -45,10 +47,13 @@ def configuration(data):
         if key in section:
             raise InvalidCaller("duplicate")
         section[key] = value
-    neutral = ("app-id", "app-private-key")
-    legacy = set(secrets) == set(DEFAULT_NAMES)
-    expected = DEFAULT_NAMES if legacy else neutral
-    if set(secrets) not in (set(DEFAULT_NAMES), set(neutral), set(DEFAULT_NAMES + neutral)):
+    if set(secrets) - set(DEFAULT_NAMES + NEUTRAL_NAMES + ALIASES):
+        raise InvalidCaller("names")
+    for pair in (DEFAULT_NAMES, NEUTRAL_NAMES, ALIASES):
+        if set(pair).intersection(secrets) and not set(pair).issubset(secrets):
+            raise InvalidCaller("names")
+    pairs = [list(pair) for pair in (NEUTRAL_NAMES, DEFAULT_NAMES) if set(pair).issubset(secrets)]
+    if not pairs or (set(ALIASES).intersection(secrets) and not set(DEFAULT_NAMES).issubset(secrets)):
         raise InvalidCaller("names")
     references = {}
     for key in secrets:
@@ -58,18 +63,13 @@ def configuration(data):
         # GitHub secret references are case insensitive; its API stores names
         # in uppercase, so the declared mapping uses the same comparison form.
         references[key] = match.group(1).upper()
-    names = [references[key] for key in expected]
+        expected = DEFAULT_NAMES[ALIASES.index(key)] if key in ALIASES else key
+        if references[key] != expected:
+            raise InvalidCaller("secret-names")
+    names = list(dict.fromkeys(references.values()))
     if set(inputs) - {"environment", "app-id-secret-name", "app-private-key-secret-name"}:
         raise InvalidCaller("inputs")
-    declared = [inputs.get("app-id-secret-name", DEFAULT_NAMES[0]).upper(),
-                inputs.get("app-private-key-secret-name", DEFAULT_NAMES[1]).upper()]
-    if names != declared or (legacy and names != list(DEFAULT_NAMES)):
-        raise InvalidCaller("secret-names")
-    if not legacy:
-        for key in DEFAULT_NAMES:
-            if key in references and references[key] != key:
-                raise InvalidCaller("legacy-secret-names")
-    required_names = list(dict.fromkeys(names + (list(DEFAULT_NAMES) if not legacy and set(DEFAULT_NAMES).issubset(secrets) else [])))
+    legacy_fields = [key for key in inputs if key.endswith("-secret-name")] + [key for key in ALIASES if key in secrets]
     environment = inputs.get("environment", "kendex")
     if environment.startswith('"'):
         try:
@@ -82,7 +82,8 @@ def configuration(data):
     # environment. Expressions and YAML objects cannot establish that fact.
     if not isinstance(environment, str) or not environment.strip() or any(c in environment for c in "\r\n${}[]#"):
         raise InvalidCaller("environment")
-    return {"environment": environment, "names": names, "required_names": required_names, "start": start, "end": end,
+    return {"environment": environment, "names": names, "pairs": pairs, "legacy_fields": legacy_fields,
+            "start": start, "end": end,
             "block": block, "text": text}
 
 

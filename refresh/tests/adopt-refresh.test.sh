@@ -610,56 +610,53 @@ else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
 git -C "$SKILL_DIR" show f24599cab98369094567af9dd1668706a348507c:refresh/kendex-refresh.yml >"$TMP/legacy-caller"
 ship_caller_template "$TMP/legacy-caller"
 
-# Each accepted declaration owns its expected environment and complete secret
-# set independently of the production parser. Every such row checks missing
-# secrets through the same refusal assertion, including retained legacy names.
+# The environment holds one complete fixed pair. Callers forward same-name
+# pairs only; legacy aliases and name inputs remain accepted for shipped callers.
+git -C "$SKILL_DIR" show 950254e9f:refresh/kendex-refresh.yml >"$TMP/compatibility-caller"
+ship_caller_template "$TMP/compatibility-caller"
 while IFS='|' read -r rule mutation pattern selected_environment expected_names; do
   sandbox
   cp "$CALLER" "$DIR/$TEMPLATE"
-  if [ "$rule" = legacy ]; then cp "$TMP/legacy-caller" "$DIR/$REFRESH"; fi
-  python3 - "$DIR/$TEMPLATE" "$rule" <<'CUSTOM'
+  case "$rule" in
+    legacy) cp "$TMP/legacy-caller" "$DIR/$TEMPLATE" ;;
+    compatibility|wrong-alias|aliases-without-fleet) cp "$TMP/compatibility-caller" "$DIR/$TEMPLATE" ;;
+  esac
+  python3 - "$DIR/$TEMPLATE" "$rule" "${selected_environment:-delivery}" <<'FIXED_CALLER'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); assert s.count('environment: kendex')==1
+p=Path(sys.argv[1]); s=p.read_text()
 rule=sys.argv[2]
-if rule in ('default', 'legacy'): raise SystemExit(0)
-for key in ('FLEET_GH_APP_ID', 'FLEET_GH_APP_PRIVATE_KEY'):
- s=s.replace('      '+key+': ${{ secrets.'+key+' }}\n', '')
-s=s.replace('environment: kendex', 'environment: delivery').replace('FLEET_GH_APP_ID', 'DELIVERY_ID').replace('FLEET_GH_APP_PRIVATE_KEY', 'DELIVERY_KEY')
-if rule=='combined':
- s += '      FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}\n      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}\n'
-if rule=='legacy-secret-names':
- s += '      FLEET_GH_APP_ID: ${{ secrets.DELIVERY_ID }}\n      FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}\n'
-if rule=='missing': s=s.replace('      app-private-key: ${{ secrets.DELIVERY_KEY }}\n', '')
+if rule=='legacy':
+ assert s.count('environment: kendex')==0 and sys.argv[3]=='kendex'
+ raise SystemExit(0)
+assert s.count('environment: kendex')==1
+s=s.replace('environment: kendex', 'environment: '+sys.argv[3])
+if rule=='custom': s=s.replace('secrets.KENDEX_APP_ID', 'secrets.CUSTOM_APP_ID')
+elif rule=='missing': s=s.replace('      KENDEX_APP_PRIVATE_KEY: ${{ secrets.KENDEX_APP_PRIVATE_KEY }}\n', '')
+elif rule=='inherit': s=s[:s.index('    secrets:')]+ '    secrets: inherit\n'
+elif rule=='expression': s=s.replace('${{ secrets.KENDEX_APP_ID }}', '${{ secrets.KENDEX_APP_ID || secrets.FALLBACK }}')
+elif rule=='wrong-alias': s=s.replace('app-id: ${{ secrets.FLEET_GH_APP_ID }}', 'app-id: ${{ secrets.KENDEX_APP_ID }}')
+elif rule=='aliases-without-fleet':
+ for key in ('FLEET_GH_APP_ID','FLEET_GH_APP_PRIVATE_KEY'):
+  s=s.replace('      '+key+': ${{ secrets.'+key+' }}\n', '')
+elif rule=='unknown-key': s += '      CUSTOM_APP_ID: ${{ secrets.CUSTOM_APP_ID }}\n'
 elif rule=='mixed-case':
- s=s.replace('app-id-secret-name: DELIVERY_ID', 'app-id-secret-name: Delivery_ID').replace('app-private-key-secret-name: DELIVERY_KEY', 'app-private-key-secret-name: Delivery_Key')
- s=s.replace('secrets.DELIVERY_ID', 'secrets.delivery_iD').replace('secrets.DELIVERY_KEY', 'secrets.delivery_kEY')
-elif rule=='inherit': s=s.replace('    secrets:\n      app-id: ${{ secrets.DELIVERY_ID }}\n      app-private-key: ${{ secrets.DELIVERY_KEY }}', '    secrets: inherit')
-elif rule=='expression': s=s.replace('${{ secrets.DELIVERY_ID }}', '${{ secrets.DELIVERY_ID || secrets.FALLBACK }}')
-elif rule=='secret-names': s=s.replace('app-id-secret-name: DELIVERY_ID', 'app-id-secret-name: WRONG_ID')
-elif rule=='environment': s=s.replace('environment: delivery', "environment: ${{ vars.DELIVERY_ENV }}")
+ for name in ('KENDEX_APP_ID','KENDEX_APP_PRIVATE_KEY','FLEET_GH_APP_ID','FLEET_GH_APP_PRIVATE_KEY'):
+  s=s.replace('secrets.'+name, 'secrets.'+name.lower())
+elif rule=='ignored-inputs': s=s.replace('    with:', '    with:\n      app-id-secret-name: CUSTOM_ID\n      app-private-key-secret-name: CUSTOM_KEY')
+elif rule=='environment': s=s.replace('environment: delivery', 'environment: ${{ vars.DELIVERY_ENV }}')
 elif rule=='duplicate': s=s.replace('      environment: delivery', '      environment: delivery\n      environment: delivery')
 elif rule=='inputs': s=s.replace('    with:', '    with:\n      unexpected: value')
-assert s != p.read_text(); p.write_text(s)
-CUSTOM
-  printf '{"environments":[{"name":"delivery","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
-  printf '{"secrets":[{"name":"DELIVERY_ID"},{"name":"DELIVERY_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
-  if [ "$rule" = mixed-case ]; then
-    printf '{"secrets":[{"name":"dELIVERY_ID"},{"name":"dELIVERY_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
-  fi
-  if [ "$rule" = legacy-secret-names ]; then
-    printf '{"secrets":[{"name":"DELIVERY_ID"},{"name":"DELIVERY_KEY"},{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
-  fi
-  if [ -n "$expected_names" ]; then
-    python3 - "$FIXTURES" "$selected_environment" "$expected_names" "$rule" <<'DECLARED_ENVIRONMENT'
+if s != p.read_text(): p.write_text(s)
+FIXED_CALLER
+  python3 - "$FIXTURES" "${selected_environment:-delivery}" "$expected_names" "$rule" <<'FIXED_ENVIRONMENT'
 import json
 from pathlib import Path
 import sys
-fixtures=Path(sys.argv[1]); environment=sys.argv[2]; names=sys.argv[3].split()
+fixtures=Path(sys.argv[1]); environment=sys.argv[2]; names=sys.argv[3].split() or ['KENDEX_APP_ID','KENDEX_APP_PRIVATE_KEY','FLEET_GH_APP_ID','FLEET_GH_APP_PRIVATE_KEY']
 (fixtures/'environments.json').write_text(json.dumps({'environments': [{'name': environment, 'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}}]}))
 (fixtures/('environment-secrets-'+environment+'.json')).write_text(json.dumps({'secrets': [{'name': name.lower() if sys.argv[4]=='mixed-case' else name} for name in names]}))
-DECLARED_ENVIRONMENT
-  fi
+FIXED_ENVIRONMENT
   if [[ "$mutation" = case-sensitive-* ]]; then
     owner="$DIR/refresh/lib/caller.py"
     [ "$mutation" != case-sensitive-api ] || owner="$DIR/.agents/skills/review-gate/scripts/lib/environment.py"
@@ -667,109 +664,132 @@ DECLARED_ENVIRONMENT
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
-changed=s.replace(old, old.replace('.upper()', ''))
-assert changed != s; p.write_text(changed)
+changed=s.replace(old, old.replace('.upper()', '')); assert changed != s; p.write_text(changed)
 CASE_CONTROL
-  fi
-  if [ "$mutation" = disabled ]; then
-    python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'MAPPING_CONTROL'
+  elif [ "$mutation" = disabled ]; then
+    python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'FIXED_MAPPING_CONTROL'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
-s=s.replace(old, 'if False and ('+old[3:-1]+'):' ); assert s != p.read_text(); p.write_text(s)
-MAPPING_CONTROL
+changed=s.replace(old, 'if False and ('+old[3:-1]+'):'); assert changed != s; p.write_text(changed)
+FIXED_MAPPING_CONTROL
   fi
   run_refresh_command "$DIR" "$DIR/$ADOPT"
   if [ -n "$expected_names" ] && [ "$mutation" = none ]; then
     if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then
-      ok "$rule declaration adopts with all expected credentials"
-    else bad "$rule declaration adoption" "$OUT"; fi
+      ok "$rule declaration adopts with a complete fixed pair"
+    else bad "$rule fixed-pair adoption" "$OUT"; fi
+    warning_count="$(awk '/^refresh-warning=legacy-caller-fields / { count++ } END { print count+0 }' <<<"$OUT")"
+    case "$rule" in
+      compatibility|ignored-inputs)
+        if [ "$warning_count" -eq 1 ] && grep -q ' replacement=KENDEX_APP_ID,KENDEX_APP_PRIVATE_KEY,FLEET_GH_APP_ID,FLEET_GH_APP_PRIVATE_KEY$' <<<"$OUT"; then
+          ok "$rule emits one compatibility record with the replacement mappings"
+        else bad "$rule compatibility warning" "$OUT"; fi ;;
+      *) [ "$warning_count" -eq 0 ] && ok "$rule emits no compatibility record" || bad "$rule unexpected compatibility warning" "$OUT" ;;
+    esac
+    if [ "$rule" = compatibility ]; then
+      file_edit "$DIR" "$ADOPT" 1 '^if selected_config is not None and selected_config\["legacy_fields"\]:' \
+        's/^if selected_config is not None/if False and selected_config is not None/'
+      run_refresh_command "$DIR" "$DIR/$ADOPT"
+      warning_count="$(awk '/^refresh-warning=legacy-caller-fields / { count++ } END { print count+0 }' <<<"$OUT")"
+      if [ "$RC" -eq 0 ] && [ "$warning_count" -eq 0 ]; then
+        ok 'control: suppressed warning turns the compatibility record assertion red'
+      else bad 'compatibility warning control' "$OUT"; fi
+      cp "$PRISTINE/$ADOPT" "$DIR/$ADOPT"
+    fi
     snapshot_adoption
-    for absent_name in $expected_names; do
-      python3 - "$FIXTURES/environment-secrets-$selected_environment.json" "$expected_names" "$absent_name" <<'MISSING_DECLARED_SECRET'
+    if [ "$rule" != both ]; then
+      for absent_name in $expected_names; do
+        python3 - "$FIXTURES/environment-secrets-$selected_environment.json" "$expected_names" "$absent_name" <<'MISSING_FIXED_SECRET'
 import json
 from pathlib import Path
 import sys
 Path(sys.argv[1]).write_text(json.dumps({'secrets': [{'name': name} for name in sys.argv[2].split() if name!=sys.argv[3]]}))
-MISSING_DECLARED_SECRET
+MISSING_FIXED_SECRET
+        run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+        if adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
+          ok "$rule declaration refuses an incomplete pair without $absent_name"
+        else bad "$rule incomplete pair=$absent_name" "$OUT"; fi
+      done
+    else
+      # One credential from each pair must not become a usable pair.
+      printf '{"secrets":[{"name":"KENDEX_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-$selected_environment.json"
       run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
       if adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
-        ok "$rule declaration refuses missing $absent_name before adoption"
-      else bad "$rule missing secret=$absent_name" "$OUT"; fi
-    done
-    if [ "$rule" = combined ]; then
-      # Retain the valid combined mapping and the refusal text. Dropping the
-      # retained legacy requirement must make the shared refusal assertion false.
-      file_edit "$DIR" refresh/lib/caller.py 1 '^    required_names = list\(dict.fromkeys' \
-        's/^    required_names = /    required_names = names # /'
-      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+        ok 'mixed credentials refuse before adoption'
+      else bad 'mixed credentials refusal' "$OUT"; fi
+      file_edit "$DIR" .agents/skills/review-gate/scripts/lib/environment.py 1 '^        if not any\(not environment_secrets' \
+        's/^        if not any/        if False and not any/'
+      run_refresh_command "$DIR" "$DIR/$ADOPT"
       if [ "$RC" -eq 0 ] && ! adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
-        ok 'control: removed legacy requirement turns the combined missing-secret refusal red'
-      else bad 'combined all-mapped-secrets control' "$OUT"; fi
+        ok 'control: accepting an incomplete pair turns the refusal red'
+      else bad 'complete environment pair control' "$OUT"; fi
     fi
-    python3 - "$FIXTURES/environment-secrets-$selected_environment.json" "$expected_names" <<'RESTORE_DECLARED_SECRETS'
+    python3 - "$FIXTURES/environment-secrets-$selected_environment.json" "$expected_names" <<'RESTORE_FIXED_SECRETS'
 import json
 from pathlib import Path
 import sys
 Path(sys.argv[1]).write_text(json.dumps({'secrets': [{'name': name} for name in sys.argv[2].split()]}))
-RESTORE_DECLARED_SECRETS
+RESTORE_FIXED_SECRETS
   elif [ "$rule" = mixed-case ]; then
-    matched=no
-    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then matched=yes; fi
-    case "$mutation:$matched" in
-      case-sensitive-*:no)
-        cause=secret-names; [ "$mutation" != case-sensitive-api ] || cause=secrets
-        if [ ! -e "$DIR/$REFRESH" ] &&
-            { { [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT"; } ||
-              { [ "$RC" -eq 1 ] && grep -qxF "refresh-error=environment value=delivery cause=$cause" <<<"$OUT"; }; }; then
-          ok "control: $mutation turns mixed-case adoption red"
-        else bad "mixed-case control=$mutation" "$OUT"; fi ;;
-      *) bad "mixed-case adoption mutation=$mutation" "$OUT" ;;
-    esac
+    cause=secret-names; [ "$mutation" != case-sensitive-api ] || cause=secrets
+    if [ ! -e "$DIR/$REFRESH" ] && { \
+        { [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT"; } || \
+        { [ "$RC" -eq 1 ] && grep -qxF "refresh-error=environment value=delivery cause=$cause" <<<"$OUT"; }; }; then
+      ok "control: $mutation turns mixed-case adoption red"
+    else bad "mixed-case control=$mutation" "$OUT"; fi
   else
-    cause="$rule"; [ "$rule" != missing ] || cause=names; [ "$rule" != inherit ] || cause=not-mapping
+    cause="$rule"
+    case "$rule" in
+      missing|unknown-key|aliases-without-fleet) cause=names ;;
+      custom|wrong-alias) cause=secret-names ;;
+      inherit) cause=not-mapping ;;
+    esac
     matched=no
     if [ "$RC" -eq 2 ] && grep -qxF "refresh-error=caller-secrets value=$DIR/$TEMPLATE cause=$cause" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then matched=yes; fi
     case "$mutation:$matched" in
       none:yes) ok "$rule mapping refuses before adoption" ;;
-      disabled:no) ok "control: disabled $rule rule turns the refusal assertion red" ;;
+      disabled:no) ok "control: disabled $rule rule turns the refusal red" ;;
       *) bad "$rule mapping mutation=$mutation" "$OUT" ;;
     esac
   fi
-  if [ "$rule" = custom ]; then
-    # A refreshed default template must not overwrite the installed choice.
-    cp "$DIR/$REFRESH" "$TMP/custom-workflow"
+  if [ "$rule" = neutral ]; then
+    cp "$DIR/$REFRESH" "$TMP/neutral-workflow"
     run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
-    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/custom-workflow" &&
+    if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/neutral-workflow" && \
         jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
-      ok 'refresh keeps the custom mapping and environment without a byte-identical render record'
-    else bad 'custom refresh preservation' "$OUT"; fi
+      ok 'refresh keeps the selected environment without a byte-identical render record'
+    else bad 'selected environment preservation' "$OUT"; fi
     file_edit "$DIR" refresh/lib/caller.py 1 '^    if replacement is None or config is None:' \
       's/if replacement is None or config is None:/if True or replacement is None or config is None:/'
     run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
-    if [ "$RC" -eq 0 ] && ! cmp -s "$DIR/$REFRESH" "$TMP/custom-workflow"; then
-      ok 'control: discarded configuration turns custom refresh preservation red'
-    else bad 'custom preservation control' "$OUT"; fi
+    if [ "$RC" -eq 0 ] && ! cmp -s "$DIR/$REFRESH" "$TMP/neutral-workflow"; then
+      ok 'control: discarded configuration turns environment preservation red'
+    else bad 'selected environment preservation control' "$OUT"; fi
   fi
 done <<'MAPPING_ROWS'
-default|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+fleet|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+neutral|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
+both|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
 legacy|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
-custom|none||delivery|DELIVERY_ID DELIVERY_KEY
-combined|none||delivery|DELIVERY_ID DELIVERY_KEY FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
-mixed-case|none||delivery|DELIVERY_ID DELIVERY_KEY
+compatibility|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+ignored-inputs|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
+mixed-case|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
 mixed-case|case-sensitive-reference|references[key] = match.group(1).upper()
-mixed-case|case-sensitive-declaration|inputs.get("app-id-secret-name", DEFAULT_NAMES[0]).upper()
 mixed-case|case-sensitive-api|{row["name"].upper() for row in secrets}
 missing|none|
-missing|disabled|if set(secrets) not in (set(DEFAULT_NAMES), set(neutral), set(DEFAULT_NAMES + neutral)):
+missing|disabled|if set(pair).intersection(secrets) and not set(pair).issubset(secrets):
+custom|none|
+custom|disabled|if references[key] != expected:
+wrong-alias|none|
+aliases-without-fleet|none|
+aliases-without-fleet|disabled|if not pairs or (set(ALIASES).intersection(secrets) and not set(DEFAULT_NAMES).issubset(secrets)):
+unknown-key|none|
+unknown-key|disabled|if set(secrets) - set(DEFAULT_NAMES + NEUTRAL_NAMES + ALIASES):
 inherit|none|
 inherit|disabled|if section is None or not match:
 expression|none|
 expression|disabled|if not match:
-secret-names|none|
-secret-names|disabled|if names != declared or (legacy and names != list(DEFAULT_NAMES)):
-legacy-secret-names|none|
-legacy-secret-names|disabled|if key in references and references[key] != key:
 environment|none|
 environment|disabled|if not isinstance(environment, str) or not environment.strip() or any(c in environment for c in "\r\n${}[]#"):
 duplicate|none|
@@ -778,5 +798,6 @@ inputs|none|
 inputs|disabled|if set(inputs) - {"environment", "app-id-secret-name", "app-private-key-secret-name"}:
 MAPPING_ROWS
 cp "$TMP/default-environments" "$FIXTURES/environments.json"
+cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

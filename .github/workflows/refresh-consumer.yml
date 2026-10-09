@@ -27,14 +27,22 @@ name: refresh-consumer
         type: string
         default: kendex
       app-id-secret-name:
+        description: Deprecated compatibility input; the shared job reads only the two fixed environment pairs.
         type: string
         default: FLEET_GH_APP_ID
       app-private-key-secret-name:
+        description: Deprecated compatibility input; the shared job reads only the two fixed environment pairs.
         type: string
         default: FLEET_GH_APP_PRIVATE_KEY
     # GitHub loads environment secrets when the called job starts. A caller
     # cannot select an environment on its calling job.
     secrets:
+      KENDEX_APP_ID:
+        required: false
+      KENDEX_APP_PRIVATE_KEY:
+        required: false
+      # Accepted for callers shipped before the fixed neutral pair. Those
+      # callers also forward the FLEET pair that the token steps still read.
       app-id:
         required: false
       app-private-key:
@@ -125,8 +133,8 @@ jobs:
         id: token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets[inputs.app-id-secret-name] || secrets.app-id || secrets.FLEET_GH_APP_ID }}
-          private-key: ${{ secrets[inputs.app-private-key-secret-name] || secrets.app-private-key || secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.KENDEX_APP_ID && secrets.KENDEX_APP_PRIVATE_KEY && secrets.KENDEX_APP_ID || secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.KENDEX_APP_ID && secrets.KENDEX_APP_PRIVATE_KEY || secrets.FLEET_GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
