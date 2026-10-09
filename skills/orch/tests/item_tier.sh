@@ -98,13 +98,17 @@ for row in "${ROWS[@]}"; do
   assert_eq "$(run_tier "$class" $args)" "$want" "$name"
 done
 
-# The filer emits Expected delta headers; launch passes the same body file.
-printf '**Expected delta**: %s lines, 1 test line\n' "$((SMALL_MAX + 1))" > "$TMP_ROOT/body"
-printf 'No sizing headers\n' > "$TMP_ROOT/empty-body"
-printf '**Expected delta**: junk\n' > "$TMP_ROOT/bad-body"
-printf '**Expected delta**: 4 lines, 0 test lines\n' > "$TMP_ROOT/zero-test-body"
-printf '**Expected delta**: 0 lines\n' > "$TMP_ROOT/zero-body"
-printf '**Expected delta**: %s lines\n' "$((SMALL_MAX + 1))" > "$TMP_ROOT/bare-body"
+# The filer emits Location and Expected delta headers; launch passes the same
+# body file. Every body but no-location-body names a one-subsystem Location.
+LOCATION='**Location**: `src/main.rs`'
+printf '%s\n**Expected delta**: %s lines, 1 test line\n' "$LOCATION" "$((SMALL_MAX + 1))" > "$TMP_ROOT/body"
+printf '%s\nNo sizing headers\n' "$LOCATION" > "$TMP_ROOT/empty-body"
+printf '%s\n**Expected delta**: junk\n' "$LOCATION" > "$TMP_ROOT/bad-body"
+printf '%s\n**Expected delta**: 4 lines, 0 test lines\n' "$LOCATION" > "$TMP_ROOT/zero-test-body"
+printf '%s\n**Expected delta**: 0 lines\n' "$LOCATION" > "$TMP_ROOT/zero-body"
+printf '%s\n**Expected delta**: %s lines\n' "$LOCATION" "$((SMALL_MAX + 1))" > "$TMP_ROOT/bare-body"
+printf '* %s\n**Expected delta**: 4 lines\n' "$LOCATION" > "$TMP_ROOT/bullet-location-body"
+printf 'Every test suite\n' > "$TMP_ROOT/no-location-body"
 while IFS='|' read -r args want raw; do
   assert_eq "$(TIER_RAW="${raw:-false}" run_tier - $args)" "$want" "body input: $args"
 done <<ROWS
@@ -118,7 +122,37 @@ done <<ROWS
 --body $TMP_ROOT/zero-test-body|tier=micro brief=micro cause=estimate-within-micro production=4 estimate=- delta=4 paths=0 rc=0|true
 --body $TMP_ROOT/zero-body|tier=micro brief=micro cause=estimate-within-micro production=0 estimate=- delta=0 paths=0 rc=0|true
 --body $TMP_ROOT/bare-body|tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 1)) estimate=- delta=$((SMALL_MAX + 1)) paths=0 rc=0|true
+--body $TMP_ROOT/bullet-location-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
+--body $TMP_ROOT/no-location-body|rc=1
+--production 1 --body $TMP_ROOT/no-location-body|rc=1
 ROWS
+
+# A body naming no Location is refused with one stderr line, which the
+# overseer's launch reads, and no tier on stdout.
+assert_no_location_refused() {
+  local out err rc=0
+  out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
+    --body "$TMP_ROOT/no-location-body" 2>"$TMP_ROOT/no-location-err")" || rc=$?
+  err="$(cat -- "$TMP_ROOT/no-location-err")"
+  assert_eq "rc=$rc stdout=[$out] stderr=[$err]" \
+    "rc=1 stdout=[] stderr=[item-tier-error: cause=no-location route=per-subsystem-split]" \
+    "a body with no Location is refused for a per-subsystem split"
+}
+assert_no_location_refused
+# Must-fail control: a copy that keeps the Location read but never refuses
+# answers as the script did before the refusal: standard on a guess.
+cp -R "$LAYOUT" "$TMP_ROOT/no-location-refusal"
+awk '/^  if ! grep -qE .*Location/ {hits++; print "  if false; then # " $0; next} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$TIER" > "$TMP_ROOT/no-location-refusal/orch/scripts/item-tier"
+TIER_BIN="$TMP_ROOT/no-location-refusal/orch/scripts/item-tier"
+assert_eq "$(run_tier - --body "$TMP_ROOT/no-location-body")" \
+  "tier=standard brief=start cause=body-without-tier-inputs rc=0" "control: without the refusal a no-Location body launches standard"
+if (PASS=0; FAIL=0; assert_no_location_refused >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "control no-location-refusal: the refusal assertion stays green"
+else
+  pass "control no-location-refusal: the refusal assertion turns red"
+fi
+unset TIER_BIN
 TIER_RAW=true
 assert_eq "$(run_tier - --production 1 --body "$TMP_ROOT/body" --path src/a --path src/b)" \
   "tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 1)) estimate=1 delta=$((SMALL_MAX + 1)) paths=2 rc=0" \
@@ -127,8 +161,8 @@ unset TIER_RAW
 
 # A malformed or empty header warns once on stderr, naming the line, and the
 # tier proceeds as with no delta. The wording past the line is not pinned.
-printf '**Expected delta**: about 4 lines\n' > "$TMP_ROOT/about-body"
-printf '**Expected delta**:\n' > "$TMP_ROOT/empty-delta-body"
+printf '%s\n**Expected delta**: about 4 lines\n' "$LOCATION" > "$TMP_ROOT/about-body"
+printf '%s\n**Expected delta**:\n' "$LOCATION" > "$TMP_ROOT/empty-delta-body"
 warn_count() { # BODY
   env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
     --production 1 --body "$1" 2>&1 >/dev/null | grep -c "^item-tier-warning: cause=invalid-delta line=\[$2\]" || true

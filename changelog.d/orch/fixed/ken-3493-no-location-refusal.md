@@ -1,0 +1,1 @@
+- Refuse to launch an item whose body names no Location: `item-tier --body` exits 1 with `item-tier-error: cause=no-location` instead of answering `tier=standard` on a size guess, and the overseer sends the item back to filing for a per-subsystem split.

@@ -26,7 +26,9 @@
 # `**Expected delta**: N lines` and `**Expected delta**: N lines, M test lines`,
 # with `1 line` and `1 test line` singular and `0` a stated zero. A malformed
 # header warns once on stderr, naming the line and these forms, and counts as
-# no delta. With no Location paths, estimate or valid delta, launch is standard.
+# no delta. A body with no `**Location**` line is refused: its span is unjudged,
+# so the item goes back to filing for a per-subsystem split. A body with a
+# Location but no paths, estimate or valid delta launches standard.
 # At least one of --production, --body, --floor and --base is required.
 # --repo (default .) is the checkout the classifier reads.
 #
@@ -39,7 +41,9 @@
 # the orch command the launch brief runs: micro, small, or start for
 # standard. CAUSE names the input that decided. Exit 2 is a usage or
 # environment failure, its `item-tier-error: cause=` line naming which, and
-# prints no tier.
+# prints no tier. Exit 1 is the no-Location refusal, one stderr line
+# `item-tier-error: cause=no-location route=per-subsystem-split`, and prints
+# no tier.
 set -euo pipefail
 # The narrow-change list's globs are bash patterns with extglob on.
 shopt -s extglob
@@ -101,6 +105,10 @@ estimate="$production"
 delta=""
 if [ -n "$body" ]; then
   body_text="$(cat -- "$body")" || die body-unreadable "cannot read --body '$body'"
+  if ! grep -qE '^[[:space:]]*([-*+][[:space:]]+)?[*_]*Location[*_]*[[:space:]]*:' <<<"$body_text"; then
+    printf 'item-tier-error: cause=no-location route=per-subsystem-split\n' >&2
+    exit 1
+  fi
   if ! expected_delta_read "$body_text"; then
     printf 'item-tier-warning: cause=invalid-delta line=[%s] accepted=[N lines] [N lines, M test lines] (1 line, 1 test line singular; 0 a stated zero); read as no delta\n' \
       "$EXPECTED_DELTA_LINE" >&2
