@@ -1292,7 +1292,7 @@ mutate_file "$claims_scripts/lanes" '"$(lane_account_name "${named:-$cfg}")"' '"
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
-mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" > "$tmp"' '"$7" "" > "$tmp"'
+mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" "${8:-}" > "$tmp"' '"$7" "" "${8:-}" > "$tmp"'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: a writer that drops the named spelling keys the claim by its target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-default-merged lanes)" || exit 1

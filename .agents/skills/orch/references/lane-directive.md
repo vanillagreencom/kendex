@@ -69,9 +69,9 @@ A `--cmd` launch's brief travels as a file. Write it under `tmp/` with the harne
 
 ## Caps
 
-The fleet cap refuses a launch before its worktree; a `--relaunch` meets it only where it adds a lane. It counts the `running`, `preparing` and `parked` lane records, so it bounds items in flight: a parked lane keeps its slot, and its resume adds no lane. No cap bounds the lanes on one account: `lanes pick` chooses the account by its headroom.
+The launch cap refuses a launch before its worktree; a `--relaunch` meets it only where it adds a lane to that cap. It counts `running`, `preparing` and `parked` records by their declared kind. `claude-cloud` uses `ORCH_OVERSEER_CLOUD_LANES`; every other kind, a cloud session's landing lane included, uses `ORCH_OVERSEER_LANES`. A parked lane keeps its slot, and its resume adds no lane. No cap bounds the lanes on one account: `lanes pick` chooses the account by its headroom.
 
-- `cap-reached`: launch once a lane closes.
+- `cap-reached`: `setting` names the cap reached. Launch once a lane counted by that cap closes.
 - `cap-unreadable`, `cap-lock-unopenable`, `cap-lock-failed`, `cap-reserve-failed`, `claim-unrecorded`: fix what the line names; never launch around it.
 
 A launch queued behind the cap, such as a chain script, passes `--wait-slot`, which waits for room; the overseer writes no counting loop. `--over-cap` admits one deliberate exception, recorded as the lane record's `over_cap`.

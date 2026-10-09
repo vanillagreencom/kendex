@@ -1,0 +1,1 @@
+- Claude cloud sessions use a separate per-overseer cap, set by `ORCH_OVERSEER_CLOUD_LANES`. Cloud sessions no longer consume fleet lane slots. Their landing lanes still use the fleet cap.

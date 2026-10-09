@@ -32,6 +32,7 @@ echo "=== a hosted launch goes through lane-host create and an ssh pane ==="
 # harness the host protocol does not name and a wake are refused before create,
 # and a create line missing a field fails the item before a window opens.
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
+
 # Every provider call the run made, in order: one `,`-joined verb and argument
 # list per call, the calls themselves joined with `;`. A row that asserts this
 # asserts the whole call sequence, so a call the launcher adds cannot pass
@@ -39,6 +40,58 @@ HOST_STUB="$TEST_DIR/fixtures/lane-host"
 host_call() { [[ -f "$RUN/host.log" ]] || { echo nolog; return; }; sed -E -e 's/ +$//' -e "s#$H/\\.##g" -e 's/ /,/g' "$RUN/host.log" | paste -sd';' -; }
 typed() { grep -cF -- "$1" "$RUN/tmux.log" 2>/dev/null || true; }
 said() { grep -cxF -- "$1" <<<"$OUT" || true; }
+
+echo "=== a Daytona launch and a cloud landing still need a fleet slot ==="
+fleet_cap_case() { # CASE NAME
+  local cap_case="$1" CAP_STATE="$TMP_ROOT/fleet-cap-$2" cloud_item=KEN-91 cap_args=()
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$CAP_STATE" init oversee >/dev/null
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$CAP_STATE" append oversee lanes \
+    '{"item":"KEN-90","kind":"ssh","host":"claude-cloud","status":"running","window":"stub:KEN-90"}' >/dev/null
+  [[ "$cap_case" != landing ]] || { cloud_item=KEN-3539; cap_args=(--relaunch); }
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$CAP_STATE" append oversee lanes \
+    '{"item":"'"$cloud_item"'","kind":"claude-cloud","host":"daytona","status":"running","window":"stub:'"$cloud_item"'","over_cap":"cloud"}' >/dev/null
+  [[ "${3:-}" != over ]] || cap_args+=(--over-cap)
+  run_ot "ORCH_OVERSEER_LANES=1;ORCH_OVERSEER_CLOUD_LANES=10;$CHOICE_CMD $COMPACTION_OFF_ALL" \
+    --state-dir "$CAP_STATE" --host "$HOST_STUB" --harness claude --lane "$H/.eclaude" --repo o/r \
+    ${cap_args[@]+"${cap_args[@]}"} KEN-3539
+  if [[ "${3:-}" == over ]]; then
+    assert_eq "rc=$RC record=$("$SCRIPTS_DIR/workflow-state" --state-dir "$CAP_STATE" get oversee '[.lanes[] | select(.item == "KEN-3539")] | first | [.kind, .over_cap, .status] | join(":")')" \
+      'rc=0 record=ssh:fleet:running' "a landing exception replaces the cloud exception with the cap it passed"
+    return
+  fi
+  assert_eq "rc=$RC calls=$(host_call) setting=$(awk '$2 == "cap-reached" {for(i=3;i<=NF;i++) if($i ~ /^setting=/) print substr($i,9)}' <<<"$OUT")" \
+    "rc=1 calls=accounts setting=ORCH_OVERSEER_LANES" \
+    "a $cap_case Daytona launch is refused at the full fleet cap with cloud records present"
+}
+for cap_case in fresh landing; do
+  fleet_cap_case "$cap_case" "$cap_case"
+done
+CAP_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-cloud-landing-cap/orch lib/lane-cap.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-cloud-landing-cap/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-cap.sh" \
+  'elif ($own | in_flight and same_cap) then "held"' 'elif ($own | in_flight) then "held"'
+SAVED_FAIL="$FAIL"
+FAIL=0
+fleet_cap_case landing control > "$TMP_ROOT/cloud-landing-cap-control.out"
+LANDING_CONTROL="$FAIL"
+FAIL="$SAVED_FAIL"
+assert_eq "$LANDING_CONTROL" 1 "control: reusing a cloud slot for a Daytona landing turns the fleet refusal row red"
+OPEN_TERMINAL="$CAP_SHIPPED"
+fleet_cap_case landing exception over
+OPEN_TERMINAL="$(mutant_scripts ctl-cloud-landing-exception/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-cloud-landing-exception/orch"
+mutate_file "$OPEN_TERMINAL" \
+  'if $rec.over_cap == null then . else . + {over_cap: $rec.over_cap} end' \
+  'if $rec.over_cap == null then . else . end'
+SAVED_FAIL="$FAIL"
+FAIL=0
+fleet_cap_case landing exception-control over > "$TMP_ROOT/cloud-landing-exception-control.out"
+LANDING_CONTROL="$FAIL"
+FAIL="$SAVED_FAIL"
+assert_eq "$LANDING_CONTROL" 1 "control: keeping the earlier cloud exception turns the landing cap assertion red"
+OPEN_TERMINAL="$CAP_SHIPPED"
+
 
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r KEN-40
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=KEN-40 host=$HOST_STUB path=/srv/lane")" \
