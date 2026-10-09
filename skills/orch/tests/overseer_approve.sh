@@ -40,11 +40,24 @@ case "$*" in
     case "$POST" in
       ok) printf '{"state":"APPROVED","user":{"login":"vanillagreen-overseer[bot]"},"commit_id":"%s"}\n' "$LIVE_HEAD" ;;
       unreadable) echo '{}' ;;
-      refused)
+      refused*)
         echo '{"message":"Unprocessable Entity"}'
         echo 'gh: Unprocessable Entity (HTTP 422)' >&2
         exit 1
         ;;
+    esac
+    ;;
+  'api repos/o/r/pulls/42/reviews --paginate --slurp')
+    case "$POST" in
+      refused-approved) printf '[[{"state":"COMMENTED"}],[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":"%s"}]]\n' "$LIVE_HEAD" ;;
+      refused-other-app) printf '[[{"state":"APPROVED","user":{"login":"other-app[bot]"},"commit_id":"%s"}]]\n' "$LIVE_HEAD" ;;
+      refused-old-head) echo '[[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":"old"}]]' ;;
+      refused-commented) printf '[[{"state":"COMMENTED","user":{"login":"review-app[bot]"},"commit_id":"%s"}]]\n' "$LIVE_HEAD" ;;
+      refused-read-failed) echo 'gh: Forbidden (HTTP 403)' >&2; exit 1 ;;
+      refused-unreadable) echo 'invalid JSON' ;;
+      refused-wrong-shape) echo '[{}]' ;;
+      refused-empty) : ;;
+      *) echo '[[]]' ;;
     esac
     ;;
   *) printf 'gh: unexpected argv=%s\n' "$*" >&2; exit 9 ;;
@@ -62,6 +75,7 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   (cd -- "$TMP_ROOT/cwd" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     ${setting[@]+"${setting[@]}"} \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
+    ORCH_OVERSEER_REVIEW_LOGIN="${REVIEW_LOGIN-review-app[bot]}" \
     bash "$script" "$@" > "$OUT" 2> "$ERR") || RC=$?
   STDERR_KEY="$(sed -n 1p "$ERR")"
   NCALLS="$(wc -l < "$CALLS" | tr -d ' ')"
@@ -107,11 +121,34 @@ token file unset||$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_O
 token file missing|@missing|$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$TMP_ROOT/missing|0
 token file empty|@token-empty|$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$TMP_ROOT/token-empty|0
 token file two lines|@token-two-lines|$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$TMP_ROOT/token-two-lines|0
-post refused|@token|$GIVEN|refused|$GIVEN|1|overseer-approve: post-failed pr=42 repo=o/r commit=$GIVEN|2
+post refused|@token|$GIVEN|refused|$GIVEN|1|overseer-approve: post-failed pr=42 repo=o/r commit=$GIVEN|3
 answer unreadable|@token|$GIVEN|unreadable|$GIVEN|1|overseer-approve: response-unread pr=42 repo=o/r commit=$GIVEN|2
 EOF
 run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" refused "${APPROVE[@]}"
 assert_contains "$(cat "$ERR")" 'gh: Unprocessable Entity (HTTP 422)' 'a refused post prints GitHub'"'"'s message' "$ERR"
+
+# The overseer consumes the state/login/commit line, even when POST failed.
+# label | reviews response | rc | stdout | refusal key
+while IFS='|' read -r label post want_rc want_out want_key; do
+  run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" "$post" "${APPROVE[@]}"
+  assert_eq "$RC|$(cat "$OUT")|${STDERR_KEY%% pr=*}" "$want_rc|$want_out|$want_key" "$label" "$ERR"
+  assert_eq "$(sed -n 3p "$CALLS")" "$TOKEN|api repos/o/r/pulls/42/reviews --paginate --slurp" \
+    "$label reads all review pages with the same token" "$ERR"
+done <<EOF
+approval despite HTTP 422|refused-approved|0|APPROVED review-app[bot] 0123456|
+another app's approval|refused-other-app|1||overseer-approve: post-failed
+approval on another head|refused-old-head|1||overseer-approve: post-failed
+app comment only|refused-commented|1||overseer-approve: post-failed
+reviews read failed|refused-read-failed|1||overseer-approve: read-back-failed
+reviews unreadable|refused-unreadable|1||overseer-approve: read-back-failed
+reviews wrong shape|refused-wrong-shape|1||overseer-approve: read-back-failed
+reviews empty|refused-empty|1||overseer-approve: read-back-failed
+EOF
+REVIEW_LOGIN=""
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" refused-approved "${APPROVE[@]}"
+unset REVIEW_LOGIN
+assert_eq "$RC|${STDERR_KEY%% pr=*}|$(cat "$OUT")" "1|overseer-approve: read-back-failed|" \
+  'an unset app identity cannot confirm an approval' "$ERR"
 run_approve "$RUN" "$TMP_ROOT/token" fail ok "${APPROVE[@]}"
 assert_contains "$(cat "$ERR")" 'gh: Not Found (HTTP 404)' 'a failed head read prints gh'"'"'s words' "$ERR"
 
@@ -157,6 +194,17 @@ mutate_file "$scripts/overseer-approve" '|| ! "$live" =~ ^[0-9a-f]{40}$ ]]' ']]'
 run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "${GIVEN}0" ok "${APPROVE[@]}"
 assert_eq "$RC|$NCALLS|$(jq -r .commit_id "$INPUT")" "0|2|${GIVEN}0" \
   'head-shape control posts the junk head' "$ERR"
+
+# Restore the previous failed-POST behavior in a disposable copy.
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" \
+  '  if ! response="$(GH_TOKEN="$token" gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate --slurp' \
+  '  oa_message post-failed "$PR_NUM" "$REPO" "$live" >&2
+  exit 1
+  if ! response="$(GH_TOKEN="$token" gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate --slurp'
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" refused-approved "${APPROVE[@]}"
+assert_eq "$RC|$NCALLS|${STDERR_KEY%% pr=*}|$(cat "$OUT")" "1|2|overseer-approve: post-failed|" \
+  'failed-POST control reports failure despite the existing approval' "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

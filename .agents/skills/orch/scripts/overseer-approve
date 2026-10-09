@@ -38,6 +38,10 @@ Environment:
                      this script never mints a token nor prints one. Read
                      from the caller's environment, then the project's
                      .env.local and kendex.settings.toml [env].
+  ORCH_OVERSEER_REVIEW_LOGIN
+                     the token app's bot login, such as
+                     vanillagreen-overseer[bot], from the same settings.
+                     Required to confirm an approval after a failed POST.
 
 Output: one line on success,
   <state> <reviewer login> <short commit>
@@ -61,13 +65,15 @@ Every refusal's first stderr line is `overseer-approve: <key> ...`:
                      named. Nothing is posted
   payload            the review payload could not be built
   post-failed        GitHub refused the review; its message follows
+  read-back-failed   the approval could not be confirmed after a failed POST;
+                     check the reviews before approving again
   response-unread    GitHub accepted the review, but its answer could not
                      be read
 
 Exit codes:
   0  approved
   1  repo-unresolved, repo-shape, head-read-failed, payload, post-failed,
-     response-unread, settings-load, scratch
+     read-back-failed, response-unread, settings-load, scratch
   2  usage, body-file
   3  credential
   4  head-moved
@@ -126,6 +132,10 @@ oa_message() {
     response-unread)
       printf 'overseer-approve: response-unread pr=%s repo=%s commit=%s\n' "$1" "$2" "$3"
       printf '%s\n' "GitHub accepted the review, but its answer could not be read; check the pull request's reviews before approving again."
+      ;;
+    read-back-failed)
+      printf 'overseer-approve: read-back-failed pr=%s repo=%s commit=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "The approval could not be confirmed; check the pull request's reviews before approving again."
       ;;
   esac
 }
@@ -219,9 +229,22 @@ payload="$(jq -c --arg sha "$live" '{commit_id: $sha} + .' "$SCRATCH/review")" \
 
 if ! response="$(GH_TOKEN="$token" gh api --method POST "repos/$REPO/pulls/$PR_NUM/reviews" \
   --input - <<<"$payload" 2>"$SCRATCH/err")"; then
-  oa_message post-failed "$PR_NUM" "$REPO" "$live" >&2
-  cat -- "$SCRATCH/err" >&2
-  exit 1
+  if ! response="$(GH_TOKEN="$token" gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate --slurp 2>"$SCRATCH/read-err" |
+    jq -cs --arg login "${ORCH_OVERSEER_REVIEW_LOGIN:-}" --arg sha "$live" '
+      if length != 1 then error("reviews response is empty or repeated") else .[0] end |
+      if $login == "" then error("ORCH_OVERSEER_REVIEW_LOGIN is unset")
+      else map(if type == "array" then . else error("reviews is not an array") end) | add // [] |
+        map(select(.state == "APPROVED" and .user.login == $login and .commit_id == $sha)) | last // empty end' \
+    2>>"$SCRATCH/read-err")"; then
+    oa_message read-back-failed "$PR_NUM" "$REPO" "$live" >&2
+    cat -- "$SCRATCH/read-err" >&2
+    exit 1
+  fi
+  if [[ -z "$response" ]]; then
+    oa_message post-failed "$PR_NUM" "$REPO" "$live" >&2
+    cat -- "$SCRATCH/err" >&2
+    exit 1
+  fi
 fi
 jq -er '"\(.state | strings) \(.user.login | strings) \(.commit_id | strings | .[0:7])"' <<<"$response" 2>/dev/null \
   || refuse 1 response-unread "$PR_NUM" "$REPO" "$live"
