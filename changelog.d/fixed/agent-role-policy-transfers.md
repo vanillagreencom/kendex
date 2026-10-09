@@ -1,1 +1,0 @@
-- Keep catalog role permissions and delegates after agent forks and source detach, and preserve explicit Pi delegation denies.

@@ -1,1 +1,0 @@
-- The overseer watch no longer reports an issue or pull request as an outside contribution when its author holds admin, maintain or write on the repository, so a private organization member's issues reach triage like any other fleet item.

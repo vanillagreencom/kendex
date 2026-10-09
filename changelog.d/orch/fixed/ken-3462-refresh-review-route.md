@@ -1,1 +1,0 @@
-- Let a consumer route its own kendex refresh pull request to the overseer instead of Copilot: `approval-wait --request-review` now answers `fallback cause=refresh` and sends no Copilot request for the head branch and app author the consumer declares in `REVIEW_GATE_REFRESH_REVIEW`, `REVIEW_GATE_REFRESH_BRANCH` and `REVIEW_GATE_REFRESH_AUTHOR`.

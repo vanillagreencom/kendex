@@ -1,1 +1,0 @@
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.

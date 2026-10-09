@@ -1,1 +1,0 @@
-- Require a succession reader to follow the live watch log when arming repeat watch delivery.

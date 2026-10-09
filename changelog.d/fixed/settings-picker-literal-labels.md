@@ -1,1 +1,0 @@
-- Settings pickers distinguish literal backslashes and double quotes from whitespace and empty values.

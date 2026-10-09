@@ -1,1 +1,0 @@
-- Required worktree claims block Claude prompts through the companion prompt hook and accept verified issue adoption from the same environment owner.

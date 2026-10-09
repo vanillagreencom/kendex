@@ -1,1 +1,0 @@
-- Documentation rewrites follow the selected project's refresh owner and lane permissions when kendex-owned inputs change. Ordinary local checkouts with no declared owner or recorded lane run refresh and verification directly.

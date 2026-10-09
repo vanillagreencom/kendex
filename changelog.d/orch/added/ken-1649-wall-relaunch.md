@@ -1,1 +1,0 @@
-- Relaunch a walled lane from the watch on an account with room for its model. Preserve its launch choices and report `lane-relaunched` without requiring an operator launch action. Report failed launches even when their windows stay open. `ORCH_WALL_RELAUNCH=ask` reports the wall for the overseer to handle.

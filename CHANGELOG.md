@@ -6,6 +6,114 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-09
+
+### Added
+
+- A catalog declares its agents' role policy in `kendex.toml` under `[role-policy.<claude|pi>.<role>]`: the tools each role loses (`deny-tools`) and, for Pi, the agents it may delegate to (`allowed-subagents`). Once declared, a role the table leaves out implies nothing. A catalog that declares none renders as before: only planners ask the user, reviewers write no Pi tasks, and Pi engineers delegate to `scout`.
+
+### Fixed
+
+- Keep catalog role permissions and delegates after agent forks and source detach, and preserve explicit Pi delegation denies.
+- Keep carried agent permission lists when users clear an optional Customize field or leave an unchanged list input.
+- Rendered agent files no longer end with a blank line when additional instructions have trailing whitespace.
+- Applying a scope clears revision conflicts caused by recorded commits while it keeps unrelated packages at their recorded revisions.
+- Safety scoring treats literal shell case patterns as mentions and still reports bypass commands in arm bodies and other source languages.
+- Read and edit single-line TOML literal settings in the desktop app, keeping backslashes and valid quote delimiters. Private credential file selection also accepts these settings.
+- Settings pickers distinguish literal backslashes and double quotes from whitespace and empty values.
+
+### Packages
+
+#### commit-guards
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### decider
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### deep-research
+
+- Accept single-line TOML literal strings in project settings, so a literal policy does not stop research commands.
+
+#### doc-limits
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### docs-writing
+
+- **Breaking:** Documentation rewrites migrate hand-written harness rules only when the consumer selects a migration policy and authorizes the affected files. Add the policy to `[skill-instructions].docs-writing` before an instruction migration.
+- Documentation rewrites follow the selected project's refresh owner and lane permissions when kendex-owned inputs change. Ordinary local checkouts with no declared owner or recorded lane run refresh and verification directly.
+
+#### github
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### lane-mail-check
+
+- Refuse an overseer's turn end when its succession reader follows an old log. Name the live watch log so the overseer can restore event delivery.
+
+#### linear
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### orch
+
+- Relaunch a walled lane from the watch on an account with room for its model. Preserve its launch choices and report `lane-relaunched` without requiring an operator launch action. Report failed launches even when their windows stay open. `ORCH_WALL_RELAUNCH=ask` reports the wall for the overseer to handle.
+- A stalled Claude cloud lane now records the cause of its stall: each directive sent to its session leaves the send's result, the CLI's words and the account's cloud credit (`remaining_dollars`, `locked_reason`) on the lane record as `directive_send`, `oversee-watch` closes a lane whose directive stays unanswered for `ORCH_CLOUD_STALL_MINUTES` (default 30) as `cloud-stall-closed` for a hosted relaunch on its branch, and `lane-close` writes that cause into the lane's fleet-log close row.
+- **Breaking:** Hosted watch mail passes read all lane mailboxes in one provider call per host. Providers must implement the `read-many` verb.
+- Scope a fix round's re-review and verification panels to the domains the fix diff touches and the defect classes it fixed, and refuse a panel copying every first-panel reviewer unless it says, per reviewer, why the fix diff concerns that domain.
+- **Breaking:** Post-merge retains checkout changes instead of restoring tracked files or removing new files. Route refresh through the declared repository owner and let that owner handle pending outputs. Local fleets with workflow-owned refresh use `post-merge --command-only` to synchronize and run their configured command without local refresh. Hosted control checkouts receive committed outputs through sync-base; refresh-only is reserved for an authorized owner outside the control host.
+- All-suite validation uses required pull-request CI when the classifier falls back to its conservative standard class. Local fallback records include the cause.
+- The succession helper and the restarted fleet watch each write their keyed lines to `oversee-watch.err` in one write, so neither line arrives torn by the other.
+- The overseer watch no longer reports an issue or pull request as an outside contribution when its author holds admin, maintain or write on the repository, so a private organization member's issues reach triage like any other fleet item.
+- `reconcile-work-items` reports an In Review item whose linked pull requests have all merged as `merged-in-review` on every sweep, whatever its age, with the `issues complete --post-merge-at` fix; before, only `started-stale` caught it, after a day with no update. Failed pull request probes report the issue and retain error details instead of reporting a clean sweep.
+- Let a consumer route its own kendex refresh pull request to the overseer instead of Copilot: `approval-wait --request-review` now answers `fallback cause=refresh` and sends no Copilot request for the head branch and app author the consumer declares in `REVIEW_GATE_REFRESH_REVIEW`, `REVIEW_GATE_REFRESH_BRANCH` and `REVIEW_GATE_REFRESH_AUTHOR`.
+- Stopping a repeat fleet watch run as a systemd user unit always removes its pid record, so the next start no longer reads a stale claim from that watch.
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+- Terminal launches in connected repositories use the overseer's fleet limit. Custom local terminal commands refuse an observed account mismatch.
+- Require a succession reader to follow the live watch log when arming repeat watch delivery.
+
+#### pre-commit-check
+
+- Commit checks distinguish bypass options from messages and Git data. A hook-path change before a bypass commit in the same command requires separate commands. Missing setup names the consent or main checkout owner route. Reader failures report an unavailable check and allow the command.
+
+#### preflight
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### review-gate
+
+- Consumer refresh accepts a declared protected environment with a complete `KENDEX_APP_ID` / `KENDEX_APP_PRIVATE_KEY` or `FLEET_GH_APP_ID` / `FLEET_GH_APP_PRIVATE_KEY` pair. Adoption preserves its environment and fixed mappings. Existing FLEET callers remain accepted; legacy secret-name inputs are ignored.
+- Environment data errors report the exception type without printing input values. Failed adoption reads terminate explicitly.
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+- Consumer refresh adoption refuses repository and organization Actions copies of its fixed credentials. Outside values cannot replace or complete the protected environment's pair, including credentials for optional upstream issue reporting.
+
+#### second-opinion
+
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
+#### session-drift-check
+
+- Ordinary worktrees keep actionable drift advice. Recorded lanes follow the declared refresh owner and retain explicit refresh-lane permissions.
+
+#### slack
+
+- Slack shows the chosen question option for an answer delivered by a program, without the program's raw record.
+
+#### worktree-prompt-claim
+
+- Blocks Claude prompts when the required worktree claim fails.
+
+#### worktree-session-claim
+
+- Required worktree claims block Claude prompts through the companion prompt hook and accept verified issue adoption from the same environment owner.
+
+#### worktree
+
+- Keeps required Claude prompts working after a workflow adopts the session's worktree lease under its issue ID.
+- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
+
 ## [1.13.0] - 2026-10-09
 
 ### Added
@@ -2208,7 +2316,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.13.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.0..HEAD
+[1.14.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.0
 [1.13.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.13.0
 [1.12.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.2
 [1.12.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.12.1

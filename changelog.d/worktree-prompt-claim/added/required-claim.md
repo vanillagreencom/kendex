@@ -1,1 +1,0 @@
-- Blocks Claude prompts when the required worktree claim fails.

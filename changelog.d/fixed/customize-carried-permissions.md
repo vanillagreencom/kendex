@@ -1,1 +1,0 @@
-- Keep carried agent permission lists when users clear an optional Customize field or leave an unchanged list input.
