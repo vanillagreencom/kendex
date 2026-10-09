@@ -1,6 +1,6 @@
 ---
 name: reviewer-correctness
-description: Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects.
+description: Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, cross-module side effects, and changed UI views' behaviour, accessibility included.
 model: inherit
 role: reviewer
 effort: high
@@ -24,7 +24,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 ### Boundary Probes
 
-For each changed predicate, parser, or guard, mentally execute:
+For each changed behaviour, mentally execute the applicable probes:
 
 - **Empty/boundary input.** Does empty string/list/file bypass the guard entirely? Exactly-at-the-limit values?
 - **Anchoring.** Does the pattern accept junk prefixes/suffixes (`kendex:PATH`, `PATH.bak`, `ID/extra`)?
@@ -34,11 +34,21 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Sibling consistency.** Two code paths answering the same question with different logic.
 - **Surface enumeration.** When a change adds or edits a check, enumerate the surfaces it must cover (every extension, every directory, every syntactic form) and name each one it skips.
 - **Declarative formats.** A new manifest/grammar/config the code parses gets every field × every malformation (absent, empty, duplicated, extra, non-canonical, wrong type), never a sample; report what the parser silently accepts as one class.
-- **Git plumbing.** Probe a consumer of git's machine-readable output with the whole enumeration it claims to handle: every status letter, `core.quotePath` escaping, `:(literal)` against a directory, the `0:` stage prefix, an `--amend` parent.
-- **Pre-steady-state.** Behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
+- **Producer contract.** When the diff renders, filters, keys on or drops a field or record kind from another component, read that producer, outside the diff when needed. Enumerate every kind it emits and every pair of records that only a dropped field tells apart. A mishandled or raw kind, or a dropped field that alone distinguishes records, is a finding. Fixtures holding a subset prove nothing about the remaining kinds.
+- **Git plumbing.** Apply Producer contract to git's machine-readable output: every status letter, `core.quotePath` escaping, `:(literal)` against a directory, the `0:` stage prefix, an `--amend` parent.
+- **Pre-steady-state.** Behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability. Include a navigation, scroll or focus target that exists only after an asynchronous load.
+- **Shared branches.** Read a loading, empty or error branch once per mode that reaches it. Text or state written for one mode only is a finding.
 - **Teardown symmetry.** For every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
 - **Staged vs worktree.** A `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
 - **Workflow order.** A `→ §N` route, a `Skip if`, or a `[PLACEHOLDER]` the diff adds to a workflow is executed in document order; name the section that runs it and the line that binds the placeholder, or the route is a finding.
+
+### Views
+
+For a diff that changes a UI component, judge its behaviour for keyboard and assistive-technology users against the platform's accessibility standard (WCAG on the web). Each finding cites the criterion it breaks.
+
+- **Landmarks.** Each link or control sits inside the landmark its purpose belongs to. Landmarks of the same role have distinct accessible names.
+- **Focus.** Opening or replacing a dialog moves focus into the new dialog. Closing it returns focus to an element that still exists. Include a change of dialog identity while a dialog is shown.
+- **Live regions.** A live region changes only with content a listener should hear. Values that update on a timer or per frame sit outside it.
 
 ### Removed Behavior
 
