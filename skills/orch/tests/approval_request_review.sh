@@ -183,16 +183,15 @@ for row in \
   run_action "$RUN" 0 --request-review --base-checkout "$BASE"
   assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "$want_rc|$want_out|$want_requests" "$label" "$ERR"
 done
-# Columns: label~base refresh lines~pull~caller env~old~new~rc~stdout~requests
+# Columns: label~base refresh lines~pull~caller env~old~new~rc~stdout~requests~mutant rc~mutant stdout~mutant requests
 for row in \
-  "refresh-route~$DECLARED~$REFRESH_PULL~~    if [[ \"\$refresh_rc\" -eq 0 ]]; then~    if false; then~0~fallback cause=refresh~0" \
-  "refresh-branch~$DECLARED~${REFRESH_PULL/kendex\/refresh/product}~~'.head.ref == \$branch and ~'~0~approval~1" \
-  "refresh-author~$DECLARED~${REFRESH_PULL/lanes-app/another}~~ and .user.login == \$author~~0~approval~1" \
-  "refresh-type~$DECLARED~${REFRESH_PULL/\"Bot\"/\"User\"}~~ and .user.type == \"Bot\"'~'~0~approval~1" \
-  "refresh-caller-env~~$REFRESH_PULL~REVIEW_GATE_REFRESH_REVIEW=overseer;REVIEW_GATE_REFRESH_BRANCH=kendex/refresh;REVIEW_GATE_REFRESH_AUTHOR=lanes-app[bot]~  unset REVIEW_GATE_REFRESH_REVIEW REVIEW_GATE_REFRESH_BRANCH REVIEW_GATE_REFRESH_AUTHOR~  :~0~approval~1" \
-  "refresh-identity-unset~${DECLARED/kendex\/refresh/}~$REFRESH_PULL~~    approval_message refresh-identity-unset >&2
-    return 2~    return 1~2~~0"; do
-  IFS='~' read -r label base_refresh pull run_env old new want_rc want_out want_requests <<< "$row"
+  "refresh-route~$DECLARED~$REFRESH_PULL~~    if [[ \"\$refresh_rc\" -eq 0 ]]; then~    if false; then~0~fallback cause=refresh~0~0~approval~1" \
+  "refresh-branch~$DECLARED~${REFRESH_PULL/kendex\/refresh/product}~~'.head.ref == \$branch and ~'~0~approval~1~0~fallback cause=refresh~0" \
+  "refresh-author~$DECLARED~${REFRESH_PULL/lanes-app/another}~~ and .user.login == \$author~~0~approval~1~0~fallback cause=refresh~0" \
+  "refresh-type~$DECLARED~${REFRESH_PULL/\"Bot\"/\"User\"}~~ and .user.type == \"Bot\"'~'~0~approval~1~0~fallback cause=refresh~0" \
+  "refresh-caller-env~~$REFRESH_PULL~REVIEW_GATE_REFRESH_REVIEW=overseer;REVIEW_GATE_REFRESH_BRANCH=kendex/refresh;REVIEW_GATE_REFRESH_AUTHOR=lanes-app[bot]~  unset REVIEW_GATE_REFRESH_REVIEW REVIEW_GATE_REFRESH_BRANCH REVIEW_GATE_REFRESH_AUTHOR~  :~0~approval~1~0~fallback cause=refresh~0" \
+  "refresh-identity-unset~${DECLARED/kendex\/refresh/}~$REFRESH_PULL~~  if [[ -z \"\$refresh_branch\" || -z \"\$refresh_author\" ]]; then~  if [[ -z \"\$refresh_branch\" || -z \"\$refresh_author\" ]] && false; then~2~~0~0~approval~1"; do
+  IFS='~' read -r label base_refresh pull run_env old new want_rc want_out want_requests mutant_rc mutant_out mutant_requests <<< "$row"
   IFS=';' read -r -a env_items <<< "$run_env"
   refresh_case '"enforce"' '' "$base_refresh" "$pull" ${env_items[@]+"${env_items[@]}"}
   scripts="$(mutant_scripts "$label/orch" approval-wait)"
@@ -200,6 +199,7 @@ for row in \
   ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/$label/review-gate"
   mutate_file "$scripts/approval-wait" "$old" "$new"
   run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "$mutant_rc|$mutant_out|$mutant_requests" "$label control reaches its changed behavior" "$ERR"
   if [[ "$RC|$(cat "$OUT")|$REQUESTS" == "$want_rc|$want_out|$want_requests" ]]; then
     fail "$label control did not turn its behavioral assertion red"
   else
