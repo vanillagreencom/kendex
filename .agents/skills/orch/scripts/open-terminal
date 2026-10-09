@@ -819,7 +819,7 @@ else launch_judge || exit 1; fi
 # the wait for the pane's own shell after the interrupt, and the prompt wait
 # after the second dial; a cloud launch makes one.
 #
-# All of them are reached only from open_tmux. A local --cmd template with a
+# A local --cmd template with a
 # lane reaches the account read and its premise. A wake reaches neither
 # setting, whatever its harness: it resumes an
 # existing session through open_wake, whose own wait is its own, so refusing
