@@ -5,6 +5,8 @@
 # STUB_CALL_LOG when set; the state lookup's failures through
 # STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
+# the mergeable read's failure through STUB_MERGEABLE_EXIT and its stderr
+# fixture through STUB_MERGEABLE_STDERR_FILE;
 # the branch-rule reads' failures through STUB_RULES_EXIT and
 # STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON_<id>,
 # per ruleset id, and its failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
@@ -394,8 +396,9 @@ case "${1:-}" in
                     exit 0
                 fi
                 if [[ "$*" == *"--json mergeable"* ]]; then
+                    [[ -z "${STUB_MERGEABLE_STDERR_FILE:-}" ]] || cat -- "$STUB_MERGEABLE_STDERR_FILE" >&2
                     echo "${STUB_MERGEABLE:-MERGEABLE}"
-                    exit 0
+                    exit "${STUB_MERGEABLE_EXIT:-0}"
                 fi
                 if [[ "$*" == *"--json reviewDecision,latestReviews"* ]]; then
                     latest="${STUB_REVIEW_LATEST:-}"

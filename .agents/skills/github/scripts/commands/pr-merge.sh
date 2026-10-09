@@ -247,6 +247,8 @@ Terminal and mutation rules:
   stdout is one object with these fields:
     can_merge   boolean readiness result
     issues      blocking issue strings
+                unknown: cause=computing when GitHub answers UNKNOWN;
+                unknown: cause=read-failed when the read fails or is invalid
     warnings    non-blocking issue strings
     mergeable   MERGEABLE, CONFLICTING, or UNKNOWN
     review      GitHub review decision
@@ -470,16 +472,35 @@ run_checks() {
         return 0
     fi
 
-    local mergeable
-    mergeable=$(gh pr view "$pr_num" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
+    local mergeable="UNKNOWN" mergeable_err mergeable_status=0 mergeable_detail=""
+    if ! mergeable_err=$(mktemp "${TMPDIR:-/tmp}/pr-merge-mergeable.XXXXXX"); then
+        mergeable_detail="could not create a temporary file for the mergeable lookup"
+    else
+        mergeable=$(gh pr view "$pr_num" --json mergeable --jq '.mergeable' 2>"$mergeable_err") || mergeable_status=$?
+        if [ "$mergeable_status" -ne 0 ]; then
+            mergeable_detail=$(sed -n '/[^[:space:]]/{p;q;}' "$mergeable_err") || mergeable_detail="gh pr view exited $mergeable_status; diagnostic read failed"
+            [ -n "$mergeable_detail" ] || mergeable_detail="gh pr view exited $mergeable_status with no diagnostic"
+        else
+            case "$mergeable" in
+            MERGEABLE | CONFLICTING | UNKNOWN) ;;
+            *) mergeable_detail="gh pr view returned invalid mergeable answer '$mergeable'" ;;
+            esac
+        fi
+        rm -f -- "$mergeable_err"
+    fi
+    if [ -n "$mergeable_detail" ]; then
+        mergeable="UNKNOWN"
+        can_merge=false
+        issues+=("unknown: cause=read-failed $mergeable_detail; retry, or arm with --auto")
+    elif [ "$mergeable" = "UNKNOWN" ]; then
+        can_merge=false
+        issues+=("unknown: cause=computing GitHub still computing mergeable status; retry, or arm with --auto")
+    fi
     if [ "$mergeable" = "MERGEABLE" ]; then
         : # ok
     elif [ "$mergeable" = "CONFLICTING" ]; then
         can_merge=false
         issues+=("conflicts: PR has merge conflicts. Resolve by rebasing onto your default branch and force-pushing")
-    else
-        can_merge=false
-        issues+=("unknown: GitHub still computing mergeable status; retry, or arm with --auto")
     fi
 
     # 2. Check CI status. The fetch tolerance (gh exit 8 with usable JSON)

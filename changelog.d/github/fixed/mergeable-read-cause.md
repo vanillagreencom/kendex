@@ -1,0 +1,1 @@
+- `pr-merge` distinguishes a failed mergeability read from GitHub still computing. Failed reads keep GitHub's error or exit code while preserving the existing retry route.

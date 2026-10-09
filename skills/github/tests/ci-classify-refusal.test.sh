@@ -84,6 +84,7 @@ thread_node() {
 W_ENV=()
 RUN_DIR=""
 CALL_LOG="$TMPDIR/calls.log"
+printf '\n \t\ngh: Server Error (HTTP 502)\nsecond diagnostic\n' >"$TMPDIR/mergeable.err"
 word() {
   local v="${1#*:}"
   case "$1" in
@@ -197,7 +198,8 @@ an unresolved review thread on a passing head is cause none, not retried|checks:
 a resolved review thread on a passing head is retried on the same head|checks:ci-required thread:true|123|0|cause=none;retry=same-head;note|1
 an unreadable thread count on a passing head is cause none, not retried|checks:ci-required env:STUB_THREAD_STATE_FAIL=true|123|0|cause=none;note|1
 a changes-requested review on a passing head is cause changes_requested, not retried|checks:ci-required review:CHANGES_REQUESTED|123|0|cause=changes_requested;issue=changes_requested: Reviewer requested changes|1
-a still-computing mergeable state is cause computing, retried on the same head|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: GitHub still computing mergeable status; retry, or arm with --auto;retry=same-head|1
+a still-computing mergeable state is cause computing, retried on the same head|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: cause=computing GitHub still computing mergeable status; retry, or arm with --auto;retry=same-head|1
+a failed mergeable read keeps computing classification and the same-head retry|checks:ci-required env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|123|0|cause=computing;issue=unknown: cause=read-failed gh: Server Error (HTTP 502); retry, or arm with --auto;retry=same-head|1
 a merged PR is cause merged before any check|checks:none state:MERGED merged-at|123|0|cause=merged|0
 a closed PR is cause closed|checks:none state:CLOSED|123|0|cause=closed|0
 "
@@ -218,7 +220,7 @@ control() { # NAME FROM TO ROWS
   CLASSIFY="$live"
 }
 control computing '    computing) return 0 ;;' '    computing) return 1 ;;' "\
-a still-computing mergeable state is not retried|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: GitHub still computing mergeable status; retry, or arm with --auto|1
+a still-computing mergeable state is not retried|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: cause=computing GitHub still computing mergeable status; retry, or arm with --auto|1
 "
 control none '    none) ;;' '    none) return 1 ;;' "\
 a passing head is not retried|checks:ci-required|123|0|cause=none;note|1

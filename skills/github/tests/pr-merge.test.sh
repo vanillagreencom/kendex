@@ -15,6 +15,22 @@ set -euo pipefail
 # shellcheck source=lib/pr-merge-world.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pr-merge-world.sh"
 
+# ci-classify-refusal and orch merge-pr consume the unknown: issue prefix.
+# The cause field distinguishes GitHub's UNKNOWN answer from an unreadable read.
+printf '\n \t\ngh: Server Error (HTTP 502)\nsecond diagnostic\n' >"$TMPDIR/mergeable.err"
+mutant_copy lost-mergeable-error \
+  '        issues+=("unknown: cause=read-failed $mergeable_detail; retry, or arm with --auto")' \
+  '        issues+=("unknown: GitHub still computing mergeable status; retry, or arm with --auto")' >/dev/null
+UNKNOWN_OPEN="state=OPEN mergeable=UNKNOWN at=-"
+READ_FAILED="unknown: cause=read-failed gh: Server Error (HTTP 502); retry, or arm with --auto"
+run_table "the mergeable read" "\
+a failed mergeable read keeps its first nonblank stderr line|checks:ci-required env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[$READ_FAILED] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>|check-mutant:lost-mergeable-error
+a failed mergeable read refuses the immediate merge with no mutation|checks:ci-required env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|immediate|1|-|{blocked};{transient};✗ unknown: cause=read-failed gh: Server Error (HTTP 502)\\; retry, or arm with --auto;{hint-auto}|calls=$CHECK auth=<unset>
+a real UNKNOWN answer names computing|checks:ci-required env:STUB_MERGEABLE=UNKNOWN|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[unknown: cause=computing GitHub still computing mergeable status; retry, or arm with --auto] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
+a silent mergeable failure names gh and its exit code|checks:ci-required env:STUB_MERGEABLE_EXIT=4|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[unknown: cause=read-failed gh pr view exited 4 with no diagnostic; retry, or arm with --auto] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
+an invalid successful mergeable answer is an unreadable read|checks:ci-required env:STUB_MERGEABLE=null|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[unknown: cause=read-failed gh pr view returned invalid mergeable answer 'null'; retry, or arm with --auto] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
+"
+
 run_table "the readiness check" "\
 pending checks block, transiently, one issue naming each|checks:pending2 checks-exit:8|check|0|merge=false transient=true $OPEN runs=- issues=[ci_pending: Cross-Platform (PENDING), Linux Integration (IN_PROGRESS)] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a failed check blocks permanently|checks:failed|check|0|merge=false transient=false $OPEN runs=- issues=[ci_failed: Lint (FAILURE)] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
