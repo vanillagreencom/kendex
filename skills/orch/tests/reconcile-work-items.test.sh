@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins for reconcile-work-items: the read-only sweep
-# reports the three write-without-read-back shapes and stays quiet on their
+# reports the write-without-read-back shapes and stays quiet on their
 # healthy twins. Fully offline: a Linear CLI stand-in answers the sweep's one
 # live read, `issues list --max [--team T] --format=raw`, from fixture rows,
 # and the PR probe is stubbed. LINEAR_TEAM is unset unless a case sets it.
@@ -58,7 +58,7 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   issue "T-7"  "pending child"           "In Progress" "started"   "$now" "T-5"
   issue "T-8"  "closed container"        "Done"        "completed" "$now"
   issue "T-9"  "done child of closed"    "Done"        "completed" "$now" "T-8"
-  issue "T-10" "stale started merged"    "In Review"   "started"   "$old"
+  issue "T-10" "stale started merged"    "In Progress" "started"   "$old"
   issue "T-11" "fresh started"           "In Progress" "started"   "$now"
   issue "T-12" "stale started live pr"   "In Progress" "started"   "$old"
   issue "T-13" "done with open boxes"    "Done"        "completed" "$now" "" "did:\n- [x] one\n- [ ] two"
@@ -66,11 +66,14 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   issue "T-15" "trashed parked"          "Todo"        "unstarted" "$now"
   issue "T-16" "ship the widget (One PR)" "In Review"  "started"   "$now"
   issue "T-17" "done bundle child"       "Done"        "completed" "$now" "T-16"
+  issue "T-18" "review all merged"       "In Review"   "started"   "$now"
+  issue "T-19" "review open and merged"  "In Review"   "started"   "$now"
+  issue "T-20" "review no own pr"        "In Review"   "started"   "$now"
 } | jq -s 'map(if .identifier == "T-15" then .trashed = true else . end)' >"$R/.tracker-fixture/issues.json"
 
 cat >"$TMP/gh-stub" <<'STUB'
 #!/usr/bin/env bash
-# args: pr list --state STATE --head BRANCH --json number --jq length
+# args: pr list --state all --head BRANCH --json state,mergedAt,isCrossRepository
 # A leaked repo redirect must never reach the probe.
 if [ -n "${GH_REPO:-}" ] || [ -n "${GITHUB_REPOSITORY:-}" ]; then
   echo "gh-stub: GH_REPO/GITHUB_REPOSITORY leaked into the probe" >&2
@@ -84,10 +87,15 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-case "$head:$state" in
-  t-10:merged) echo 1 ;;
-  t-12:open) echo 1 ;;
-  *) echo 0 ;;
+[ "$state" = all ] || { echo "gh-stub: unsupported state $state" >&2; exit 2; }
+merged='{"state":"MERGED","mergedAt":"2026-10-08T02:28:00Z","isCrossRepository":false}'
+case "$head" in
+  t-10 | t-18) echo "[$merged]" ;;
+  t-12) echo '[{"state":"OPEN","mergedAt":null,"isCrossRepository":false}]' ;;
+  t-19) echo "[$merged,{\"state\":\"OPEN\",\"mergedAt\":null,\"isCrossRepository\":false}]" ;;
+  # A fork's merged PR from a same-named branch links nothing to this item.
+  t-20) echo '[{"state":"MERGED","mergedAt":"2026-10-08T02:28:00Z","isCrossRepository":true}]' ;;
+  *) echo '[]' ;;
 esac
 STUB
 chmod +x "$TMP/gh-stub"
@@ -108,6 +116,12 @@ assert_not_contains "$OUT" "container-parked issue=T-5" "a container with a pend
 assert_not_contains "$OUT" "T-8" "a closed container stays quiet"
 case "$OUT" in *"started-stale issue=T-10"*"pr=merged"*) pass "the stale started item with a merged PR is reported" ;; *) fail "stale merged" "$OUT" ;; esac
 assert_not_contains "$OUT" "T-11" "a fresh started item stays quiet"
+assert_contains "$OUT" "merged-in-review issue=T-18 state=In Review merged-at=2026-10-08T02:28:00Z" \
+  "a fresh In Review item whose one PR merged is reported at once"
+assert_not_contains "$OUT" "T-19" "an In Review item with an open PR beside a merged one stays quiet"
+assert_not_contains "$OUT" "T-20" "an In Review item with no own linked PR stays quiet"
+assert_not_contains "$OUT" "merged-in-review issue=T-16" "an In Review item with no linked PR stays quiet"
+assert_not_contains "$OUT" "merged-in-review issue=T-10" "an In Progress item is never merged-in-review"
 assert_not_contains "$OUT" "T-12" "a stale item with a live PR stays quiet"
 assert_contains "$OUT" "done-unchecked issue=T-13" "the Done item with open boxes is reported"
 assert_not_contains "$OUT" "T-14" "a Done item with every box checked stays quiet"
@@ -184,6 +198,23 @@ mutate_file "$RW.team-mutant" '${LINEAR_TEAM:+--team "$LINEAR_TEAM"} ' ''
 (cd "$R" && LINEAR_TEAM=kendex RECONCILE_GH_CLI="$TMP/gh-stub" bash "$RW.team-mutant" >/dev/null 2>&1) || true
 [ "$(sort -u "$LINEAR_CALLS")" != "issues list --max --team kendex --format=raw" ] \
   && pass "control: without the team the team row fails" || fail "control: team row missed the dropped team"
+
+# Control: without the age bypass for In Review items, a fresh item whose PR
+# merged waits out the stale threshold and the T-18 row fails.
+jq -n --arg now "$now" '[{identifier:"T-18", title:"review all merged", state:{name:"In Review",type:"started"}, parent:null, description:"", updatedAt:$now}]' \
+  >"$R/.tracker-fixture/issues.json"
+cp -- "$RW" "$RW.age-mutant"
+mutate_file "$RW.age-mutant" '  [ "$istate" = "In Review" ] || [ "$age_hours" -ge "$STALE_HOURS" ] || continue' \
+  '  [ "$age_hours" -ge "$STALE_HOURS" ] || continue'
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" bash "$RW.age-mutant" 2>&1)" || RC=$?
+{ [ "$RC" -eq 0 ] && ! grep -q "merged-in-review issue=T-18" <<<"$OUT"; } \
+  && pass "control: without the age bypass the fresh merged In Review item is missed" \
+  || fail "control: age bypass" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+{ [ "$RC" -eq 1 ] && grep -q "merged-in-review issue=T-18" <<<"$OUT"; } \
+  && pass "the shipped sweep reports the same row the control misses" || fail "age bypass row" "rc=$RC out=$OUT"
 
 # --- settings-file threshold -------------------------------------------------
 # RECONCILE_STALE_HOURS set in the project's kendex.settings.toml (not the

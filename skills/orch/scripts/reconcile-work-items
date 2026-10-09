@@ -11,6 +11,8 @@
 #   container-parked  a parent in a non-terminal state whose non-canceled
 #                     children are all Done — the close that only merge-pr § 5
 #                     performs never ran
+#   merged-in-review  an In Review item whose branch-named PRs are all merged
+#                     (at least one), at any age — no later step moves it
 #   started-stale     an In Progress / In Review item untouched for longer
 #                     than the threshold whose branch-named PR is merged (or
 #                     unverifiable) — the item outlived its work
@@ -68,6 +70,7 @@ message() {
     clock-failed) printf 'The current time could not be read.\n' ;;
     invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
     container-parked) printf 'All non-canceled children are Done. Close the parent or state why it remains open.\n' ;;
+    merged-in-review) printf 'Every linked pull request has merged. Complete it with `issues complete --post-merge-at <mergedAt>`, which moves it to Done or Verifying.\n' ;;
     started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
     verifying-invalid) printf 'The Verifying checklist has invalid metadata or an open branch-provable box. Correct the item with evidence.\n' ;;
@@ -149,7 +152,26 @@ while IFS=$'\t' read -r pid ptitle pstate; do
   note container-parked "issue=$pid" "state=$pstate" "title=$ptitle"
 done <"$TMPD/containers"
 
-# --- started-stale -----------------------------------------------------------
+# --- merged-in-review, started-stale -----------------------------------------
+# probe_prs BRANCH prints "OPEN MERGED CLOSED-UNMERGED LATEST-MERGED-AT" for
+# this repository's PRs from BRANCH; it fails when the probe cannot answer, and
+# the caller then reports the PR state unverified rather than nothing.
+probe_prs() {
+  command -v "${GH_CLI%% *}" >/dev/null 2>&1 || return 1
+  # This repo's branch only — a fork's same-named branch is someone else's
+  # PR and must not vouch for this item. The probe answers for THIS checkout:
+  # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
+  # repository's same-named branch vouch for this item.
+  local listed
+  listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json state,mergedAt,isCrossRepository 2>/dev/null)" || return 1
+  jq -er '[.[] | select(.isCrossRepository | not)]
+    | [(map(select(.state == "OPEN")) | length),
+       (map(select(.state == "MERGED")) | length),
+       (map(select(.state != "OPEN" and .state != "MERGED")) | length),
+       (map(select(.state == "MERGED") | .mergedAt) | max // "none")]
+    | map(tostring) | join(" ")' <<<"$listed" 2>/dev/null
+}
+
 now_epoch="$(date -u +%s)" || config_error clock-failed command=date
 jq -r '
   .[] | select((.trashed // false) == false and .archivedAt == null)
@@ -170,25 +192,27 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
   # A timestamp neither form can read must never silently shrink the check.
   [ -n "$updated_epoch" ] || config_error invalid-timestamp "issue=$iid" "updated-at=$iupdated"
   age_hours=$(((now_epoch - updated_epoch) / 3600))
-  [ "$age_hours" -ge "$STALE_HOURS" ] || continue
+  [ "$istate" = "In Review" ] || [ "$age_hours" -ge "$STALE_HOURS" ] || continue
   branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
+  prs="$(probe_prs "$branch")" || prs=""
+  if [ -n "$prs" ]; then
+    read -r open merged unmerged merged_at <<<"$prs"
+    # Age plays no part here: the merge already happened and no later sweep
+    # step or lane moves an In Review item on its own.
+    if [ "$istate" = "In Review" ] && [ "$merged" -gt 0 ] && [ "$open" -eq 0 ] && [ "$unmerged" -eq 0 ]; then
+      note merged-in-review "issue=$iid" "state=$istate" "merged-at=$merged_at" "title=$ititle"
+      continue
+    fi
+  fi
+  [ "$age_hours" -ge "$STALE_HOURS" ] || continue
   pr_state="unverified"
-  if command -v "${GH_CLI%% *}" >/dev/null 2>&1; then
-    # This repo's branch only — a fork's same-named branch is someone
-    # else's PR and must not vouch for this item.
-    # The probes answer for THIS checkout: an inherited GH_REPO /
-    # GITHUB_REPOSITORY redirect would let another repository's same-named
-    # branch vouch for this item.
-    merged="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state merged --head "$branch" --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length' 2>/dev/null)" || merged=""
-    open="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state open --head "$branch" --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length' 2>/dev/null)" || open=""
-    if [ -n "$merged" ] && [ -n "$open" ]; then
-      if [ "$open" -gt 0 ]; then
-        continue # a live PR is a live item, whatever the clock says
-      elif [ "$merged" -gt 0 ]; then
-        pr_state="merged"
-      else
-        pr_state="absent"
-      fi
+  if [ -n "$prs" ]; then
+    if [ "$open" -gt 0 ]; then
+      continue # a live PR is a live item, whatever the clock says
+    elif [ "$merged" -gt 0 ]; then
+      pr_state="merged"
+    else
+      pr_state="absent"
     fi
   fi
   note started-stale "issue=$iid" "state=$istate" "age-hours=$age_hours" "pr=$pr_state" "title=$ititle"

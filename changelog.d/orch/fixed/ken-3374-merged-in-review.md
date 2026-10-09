@@ -1,0 +1,1 @@
+- `reconcile-work-items` reports an In Review item whose linked pull requests have all merged as `merged-in-review` on every sweep, whatever its age, with the `issues complete --post-merge-at` fix; before, only `started-stale` caught it, after a day with no update.
