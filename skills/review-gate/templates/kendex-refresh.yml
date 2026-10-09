@@ -12,8 +12,6 @@
 # Every consumer publishes change_class and waives product jobs on render.
 # The classifier's render proof remains required. Wire consumer CI through
 # harness-ci references/wiring.md, Consumer refresh CI, before adoption.
-# A manual repository_dispatch signal needs the organization's lanes app
-# and a manual run of the catalog's dispatch workflow.
 name: Refresh kendex
 
 "on":
