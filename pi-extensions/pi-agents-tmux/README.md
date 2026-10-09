@@ -52,7 +52,7 @@ An absent agent model or `subagentModelSource` set to `parent` requests inherita
 
 An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (with an optional `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the selected raw model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Core-selected model ids have no effort suffix. The child receives their effort through `--thinking`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
 
-kendex generates `allowed-subagents: scout` for engineer-role agents and denies `delegate_subagent` for every other role; override per agent under `[agent-frontmatter.pi]` in `kendex.toml`, where an explicit empty list turns delegation off.
+kendex resolves delegation targets from the catalog's role policy. Without a policy declaration or per-agent replacement, engineers get `allowed-subagents: scout` and other roles get no delegation targets. Set per-agent overrides under `[agent-frontmatter.pi.<agent>]` in `kendex.toml`. An explicit `allowed-subagents = []` turns delegation off. `role-deny-tools` replaces role tool restrictions, including with an empty list; `deny-tools` adds restrictions. Forks and source detachment carry declared policy into these manifest settings. Pi reads the resulting `deny-tools` and `allowed-subagents` in the installed agent file. The kendex repository's `docs/authoring/README.md` § Agent permissions documents these overrides and transfers.
 
 ## Setup
 

@@ -65,7 +65,9 @@ allowed-subagents = ["scout"]
 
 A consumer still declaring a retired item refreshes with one notice keyed by its name that carries its migration, and the item stays installed as it is; one never installed is not installed. A retired bundle refreshes the same way, its notice keyed `bundle <name>` and its installed members and what they require kept; `kendex refresh --prune` drops its declaration and removes the members nothing else needs. A declared bundle the catalog neither offers nor retires fails the refresh, and its installed members stay. `kendex refresh --prune` removes a retired item, its declaration, and any workflow adopted from its templates that still holds the template's bytes; a copy you edited, the item's or such a workflow, stays, and verify keeps failing it. Under the prune the keyed line names the catalog, says what this prune does with the item, and ends with the migration. An armed hook that requires a retired item is withheld on each tool it requires that item on, with a warning naming the item and carrying its migration where the catalog gives one: every tool the hook runs on for a skill in `requires-skills`, and for a hook in `requires`, the tools its `requires-on` line names, or every tool it runs on without one. This holds whether the retired item is kept or pruned. The withheld hook's installed copy goes as a leftover does. A copy you edited stays as an edit conflict and keeps the retired item it requires installed with it, under `kendex refresh --prune` too; once the retired item goes, by `kendex remove` or because it was never installed, every hook that requires it, directly or through another hook, goes with it, edited or not. Removing either hook of such a pair by name takes the other. A kept retired item stays installed until `kendex refresh --prune` even where every hook requiring it is withheld, except a retired hook whose installed copy requires a withheld hook: it is withheld with that hook, so neither runs alone. For a declared hook left uninstalled this way, `kendex verify` names the withholding and its fix. Any other item that requires a retired item installs, with that warning. A catalog that retires an item drops it, in the same change, from every list that requires it: a skill's `dependencies`, and a hook's `requires` and `requires-skills`.
 
-`[role-policy.<harness>.<role>]` sets what an agent's `role:` (`engineer`, `reviewer`, `planner`, `analyst`, `manager`) implies when kendex renders it. `deny-tools` lists the tools that role loses, in the harness's own names. Under Pi, `allowed-subagents` lists the agents that role may delegate to unless a manifest override names others. Declaring the table replaces the default for every role: a role it leaves out, and an agent with no role, imply nothing. Claude Code subagents never start subagents, so `Agent` stays denied there, and `allowed-subagents` under `claude` does not read. A table that does not read makes the whole catalog a finding. A catalog that declares none renders under the default: Claude Code denies `AskUserQuestion` to every agent but a planner; Pi denies `question` the same way and `tasks_write` to reviewers, and lets engineers delegate to `scout`.
+`[role-policy.<harness>.<role>]` sets the tool restrictions and delegation targets for an agent's `role:` (`engineer`, `reviewer`, `planner`, `analyst`, `manager`). `deny-tools` uses the harness's own tool names. Pi's `allowed-subagents` sets the delegation targets unless a per-agent override replaces them. Declaring `[role-policy]` replaces the defaults for every supported harness and role. An omitted harness, an omitted role, and an agent with no role get no role restrictions or delegation targets. Claude Code subagents cannot start subagents, so `Agent` stays denied there. A nonempty `allowed-subagents` list under `claude` is refused. An invalid policy makes the whole catalog a check finding.
+
+A catalog with no `[role-policy]` declaration keeps the current defaults. Claude Code denies `AskUserQuestion` to every agent except a planner. Pi denies `question` to every agent except a planner and denies `tasks_write` to reviewers. Pi engineers may delegate to `scout`; other roles have no default delegation targets. These defaults also apply to an agent with no role, with no delegation targets. [Per-agent overrides](#agent-permissions) can replace the role restrictions and Pi delegation targets.
 
 Without a `[marketplace]` table the directory listing falls back to what GitHub knows. A `kendex.toml` that exists but does not parse makes the whole catalog a finding, never a silently different catalog.
 
@@ -79,6 +81,24 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 - Output style: `output-styles/<name>.md`; [frontmatter and declarations](output-styles.md).
 
 A description is never guessed: an empty one stays empty and is a check finding. Tags come from `tags = [...]` in `[marketplace]` or per item in frontmatter, never inferred from names. A marketplace page renders the package's own body, the `SKILL.md` for a skill and the one file for every other kind; a `README.md` beside a skill ships with it and is listed, not rendered.
+
+## Agent permissions
+
+`[agent-frontmatter.<harness>.<agent>]` sets per-agent overrides in the catalog or consumer manifest. Consumer values replace catalog values per field. `deny-tools` combines both lists and adds restrictions to the agent's own tool permissions.
+
+- `role-deny-tools` replaces the role's tool restrictions for Claude Code or Pi. An explicit `[]` removes all role restrictions. It does not remove restrictions from `deny-tools`, the source agent, or the harness itself.
+- Pi's `allowed-subagents` replaces the role's delegation targets. An explicit `[]` turns delegation off. A nonempty list does not cancel an explicit deny of `delegate_subagent`.
+
+```toml
+[agent-frontmatter.pi.my-agent]
+role-deny-tools = []
+deny-tools = ["bash"]
+allowed-subagents = []
+```
+
+This agent has no role tool restrictions or delegation targets. It still loses `bash` and the [Pi orchestration tools](../adapters/pi.md#format).
+
+Forking an agent, including a fork beside the original, or keeping it when detaching its source carries its catalog settings into the consumer manifest. A declared role policy travels as per-agent `role-deny-tools` for Claude Code and Pi, plus Pi `allowed-subagents`. Empty lists travel too, so the local agent does not regain the defaults. Existing per-agent replacements take precedence over the role policy. Additional `deny-tools` restrictions stay separate and still apply. The fields are manifest settings; `role-deny-tools` is not a native agent frontmatter key. The renderer writes the resulting restrictions into each harness's native agent file.
 
 ## What a person reads
 
