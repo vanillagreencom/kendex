@@ -111,8 +111,8 @@ rg_standard_load() { # MANIFEST SCOPE
   fi
   # A name is uppercase letters, digits and underscores, and does not start
   # with a digit. GitHub stores every secret name uppercase, and the name
-  # lists rg_standard_held and rg_standard_missing read are that stored
-  # form, so a lowercase letter is refused: it would never match. An accepted
+  # list rg_standard_missing reads uses that stored form, so a lowercase
+  # letter is refused: it would never match. An accepted
   # name is the stored name, and two names differing only in case cannot
   # both be declared.
   invalid="$(LC_ALL=C grep -vxE -- '[A-Z_][A-Z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?
@@ -180,17 +180,6 @@ rg_standard_actors() { # KEY
       ;;
   esac
   printf '%s\n' "$actors"
-}
-
-# The names among WANT_SECRETS present in the newline list LISTED, one per
-# line; an exact whole-line match, so APP_ID_OLD is not APP_ID.
-rg_standard_held() { # LISTED
-  local name
-  for name in $WANT_SECRETS; do
-    if grep -qxF -- "$name" <<<"$1"; then
-      printf '%s\n' "$name"
-    fi
-  done
 }
 
 # The names among WANT_SECRETS absent from the newline list LISTED, one per

@@ -76,6 +76,8 @@ printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repo
 printf '{"environments":[{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
 printf '{"branch_policies":[{"name":"main","type":"branch"}]}\n' >"$FIXTURES/branch-policies.json"
 printf '{"secrets":[{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-kendex.json"
+printf '{"secrets":[]}\n' >"$FIXTURES/repository-secrets.json"
+printf '{"secrets":[]}\n' >"$FIXTURES/organization-actions-secrets.json"
 
 # run_refresh_command ROOT SCRIPT [ARGS...] keeps host credentials outside the
 # child and reports through the sandbox's OUT and RC contract.

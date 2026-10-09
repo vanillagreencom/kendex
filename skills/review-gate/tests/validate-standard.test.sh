@@ -274,6 +274,21 @@ while IFS='~' read -r name fail files edit overrides; do
   rows=$((rows + 1))
   drift_case "$name" "$fail" "$files" "$edit" "$overrides"
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
+  if [ "$overrides" = 'standard-secrets-outside=repository:APP_ID' ] && [ "$files" = repository-secrets.json ]; then
+    cp "$SKILL/scripts/lib/environment.py" "$TMP/placement-owner.keep"
+    python3 - "$SKILL/scripts/lib/environment.py" <<'PLACEMENT_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old='for row in scopes:'
+assert s.count(old)==1
+changed=s.replace(old, 'for row in []: # for row in scopes:'); assert changed!=s
+p.write_text(changed)
+PLACEMENT_CONTROL
+    drift_case "$name" "$fail" "$files" "$edit" "$overrides"
+    mv "$TMP/placement-owner.keep" "$SKILL/scripts/lib/environment.py"
+    if [ "$CASE_MATCH" = false ]; then ok 'control: disabled placement judgment turns the outside-secret report red';
+    else bad 'placement report control' "$CASE_DIFF"; fi
+  fi
 done <<'ROWS'
 a repository matching the standard~~~~
 a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:1:pull_request\,missing:pull_request^advisory:standard-required-approvals=absent^advisory:standard-stale-dismissal=absent

@@ -702,9 +702,7 @@ scopes="repository	repos/$FULL/actions/secrets
 organization	orgs/$OWNER/actions/secrets
 dependabot	repos/$FULL/dependabot/secrets
 dependabot-organization	orgs/$OWNER/dependabot/secrets"
-outside=""
-unreadable=""
-causes=""
+placement_data='[]'
 if [ -n "$ENVS" ]; then
   others="$(jq -r --arg n "$WANT_ENV" '.[] | select(.name != $n) | .name' <<<"$ENVS")" ||
     die environments-query "$WANT_ENV" "jq could not evaluate a query over the parsed environments"
@@ -716,25 +714,28 @@ environment:$env_name	repos/$FULL/environments/$(rg_uri "$env_name")/secrets"
 $others
 EOF_OTHERS
 else
-  unreadable="environments"
-  causes="environments: $ENVS_ERR"
+  placement_data="$(jq -n --arg error "$ENVS_ERR" '[{scope: "environments", error: $error}]')" ||
+    die environments-query "$WANT_ENV" "could not encode the failed environments read"
 fi
 while IFS='	' read -r label endpoint; do
-  if read_api "$endpoint" '.secrets[].name' --paginate; then
-    while IFS= read -r name; do
-      [ -n "$name" ] || continue
-      outside="${outside:+$outside;}$label:$name"
-    done <<EOF_HELD
-$(rg_standard_held "$READ_OUT")
-EOF_HELD
+  if read_api "$endpoint" '.secrets[] | @json' --paginate &&
+      secrets="$(printf '%s' "$READ_OUT" | jq -s '.' 2>/dev/null)"; then
+    placement_data="$(jq --arg label "$label" --argjson secrets "$secrets" '. + [{scope: $label, secrets: $secrets}]' <<<"$placement_data")" ||
+      die environments-query "$WANT_ENV" "could not encode the secret-name data"
   else
-    unreadable="${unreadable:+$unreadable,}$label"
-    causes="${causes:+$causes
-}$label: $READ_ERR"
+    placement_data="$(jq --arg label "$label" --arg error "${READ_ERR:-the response is not a list of named secrets}" '. + [{scope: $label, error: $error}]' <<<"$placement_data")" ||
+      die environments-query "$WANT_ENV" "could not encode a failed secret-name read"
   fi
 done <<EOF_SCOPES
 $scopes
 EOF_SCOPES
+judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" placement "$WANT_SECRETS" <<<"$placement_data")" ||
+  die environments-query "$WANT_ENV" "could not judge the secret-placement data"
+if ! outside="$(jq -r .outside <<<"$judgment")" ||
+    ! unreadable="$(jq -r .unreadable <<<"$judgment")" ||
+    ! causes="$(jq -r .causes <<<"$judgment")"; then
+  die environments-query "$WANT_ENV" "could not decode the secret-placement judgment"
+fi
 if [ -n "$unreadable" ]; then
   bad standard-secrets-outside "unreadable:$unreadable" "these secret-name reads failed${outside:+ (found outside $WANT_ENV so far: $outside)}:
 $causes"

@@ -36,6 +36,8 @@ name: refresh-consumer
         default: FLEET_GH_APP_PRIVATE_KEY
     # GitHub loads environment secrets when the called job starts. A caller
     # cannot select an environment on its calling job.
+    # Adoption refuses outside Actions copies of all four fixed names;
+    # otherwise a missing environment name could receive a caller value.
     secrets:
       KENDEX_APP_ID:
         required: false

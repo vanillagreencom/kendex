@@ -1,1 +1,1 @@
-- Consumer refresh accepts a declared environment and app-secret names. Adoption preserves these declarations and validates their mapping. Existing callers keep the current defaults.
+- Consumer refresh accepts a declared protected environment with a complete `KENDEX_APP_ID` / `KENDEX_APP_PRIVATE_KEY` or `FLEET_GH_APP_ID` / `FLEET_GH_APP_PRIVATE_KEY` pair. Adoption preserves its environment and fixed mappings. Existing FLEET callers remain accepted; legacy secret-name inputs are ignored.

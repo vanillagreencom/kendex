@@ -1,1 +1,1 @@
-- **Breaking:** Consumer refresh reads only the fixed KENDEX or FLEET credential pair from its protected environment. Replace custom secret names with `KENDEX_APP_ID` and `KENDEX_APP_PRIVATE_KEY`. Shipped FLEET callers remain accepted; their old name inputs and neutral aliases no longer select credentials.
+- Consumer refresh adoption refuses repository and organization Actions copies of its fixed credentials. Outside values cannot replace or complete the protected environment's pair, including credentials for optional upstream issue reporting.

@@ -619,7 +619,7 @@ while IFS='|' read -r rule mutation pattern selected_environment expected_names;
   cp "$CALLER" "$DIR/$TEMPLATE"
   case "$rule" in
     legacy) cp "$TMP/legacy-caller" "$DIR/$TEMPLATE" ;;
-    compatibility|wrong-alias|aliases-without-fleet) cp "$TMP/compatibility-caller" "$DIR/$TEMPLATE" ;;
+    compatibility|unforwarded|wrong-alias|aliases-without-fleet) cp "$TMP/compatibility-caller" "$DIR/$TEMPLATE" ;;
   esac
   python3 - "$DIR/$TEMPLATE" "$rule" "${selected_environment:-delivery}" <<'FIXED_CALLER'
 from pathlib import Path
@@ -666,6 +666,15 @@ import sys
 p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
 changed=s.replace(old, old.replace('.upper()', '')); assert changed != s; p.write_text(changed)
 CASE_CONTROL
+  elif [ "$mutation" = widened ]; then
+    python3 - "$DIR/refresh/lib/caller.py" <<'WIDEN_PAIR_FILTER'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); old='if set(pair).issubset(secrets)'
+assert s.count(old)==1
+changed=s.replace(old, 'if True or set(pair).issubset(secrets)'); assert changed!=s
+p.write_text(changed)
+WIDEN_PAIR_FILTER
   elif [ "$mutation" = disabled ]; then
     python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'FIXED_MAPPING_CONTROL'
 from pathlib import Path
@@ -675,7 +684,7 @@ changed=s.replace(old, 'if False and ('+old[3:-1]+'):'); assert changed != s; p.
 FIXED_MAPPING_CONTROL
   fi
   run_refresh_command "$DIR" "$DIR/$ADOPT"
-  if [ -n "$expected_names" ] && [ "$mutation" = none ]; then
+  if [ -n "$expected_names" ] && [ "$mutation" = none ] && [ "$rule" != unforwarded ]; then
     if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$DIR/$TEMPLATE"; then
       ok "$rule declaration adopts with a complete fixed pair"
     else bad "$rule fixed-pair adoption" "$OUT"; fi
@@ -731,6 +740,14 @@ from pathlib import Path
 import sys
 Path(sys.argv[1]).write_text(json.dumps({'secrets': [{'name': name} for name in sys.argv[2].split()]}))
 RESTORE_FIXED_SECRETS
+  elif [ "$rule" = unforwarded ]; then
+    matched=no
+    if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=environment value=delivery cause=secrets' <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then matched=yes; fi
+    case "$mutation:$matched" in
+      none:yes) ok 'a FLEET-only compatibility caller refuses a KENDEX-only environment' ;;
+      widened:no) [ "$RC" -eq 0 ] && ok 'control: a widened forwarded-pair filter turns the refusal red' || bad 'forwarded-pair control' "$OUT" ;;
+      *) bad "unforwarded pair mutation=$mutation" "$OUT" ;;
+    esac
   elif [ "$rule" = mixed-case ]; then
     cause=secret-names; [ "$mutation" != case-sensitive-api ] || cause=secrets
     if [ ! -e "$DIR/$REFRESH" ] && { \
@@ -773,6 +790,8 @@ neutral|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
 both|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
 legacy|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
 compatibility|none||kendex|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY
+unforwarded|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
+unforwarded|widened||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
 ignored-inputs|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
 mixed-case|none||delivery|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY
 mixed-case|case-sensitive-reference|references[key] = match.group(1).upper()
@@ -797,6 +816,85 @@ duplicate|disabled|if key in section:
 inputs|none|
 inputs|disabled|if set(inputs) - {"environment", "app-id-secret-name", "app-private-key-secret-name"}:
 MAPPING_ROWS
+
+# GitHub fills absent environment names from forwarded Actions values. The
+# token expressions read both fixed pairs, even when the other pair is
+# complete. Exercise the placement owner, not a second token selector.
+while IFS='|' read -r scope held outside mutation; do
+  sandbox
+  cp "$CALLER" "$DIR/$TEMPLATE"
+  cp "$TMP/default-environments" "$FIXTURES/environments.json"
+  cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  [ "$RC" -eq 0 ] || exit 1
+  snapshot_adoption
+  python3 - "$FIXTURES" "$scope" "$held" "$outside" <<'OUTSIDE_SECRETS'
+import json
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); scope, held, outside=sys.argv[2:]
+(p/'environments.json').write_text(json.dumps({'environments': [{'name': 'kendex', 'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}}]}))
+for filename in ('repository-secrets.json', 'organization-actions-secrets.json'):
+ (p/filename).write_text('{"secrets":[]}\n')
+(p/'environment-secrets-kendex.json').write_text(json.dumps({'secrets': [{'name': name} for name in held.split()]}))
+filename='repository-secrets.json' if scope=='repository' else 'organization-actions-secrets.json'
+(p/filename).write_text(json.dumps({'secrets': [{'name': name.lower()} for name in outside.split()]}))
+OUTSIDE_SECRETS
+  case "$mutation" in
+    judgment)
+      file_edit "$DIR" .agents/skills/review-gate/scripts/lib/environment.py 1 '^    for row in scopes:' \
+        's/for row in scopes:/for row in []: # for row in scopes:/' ;;
+    refusal)
+      file_edit "$DIR" .agents/skills/review-gate/scripts/lib/environment.py 1 '^        if placement\["cause"\]:' \
+        's/if placement\["cause"\]:/if False and placement["cause"]:/' ;;
+    none) ;;
+  esac
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  matched=no
+  if adoption_preserved "refresh-error=environment value=kendex cause=secrets-outside operation=$scope:$outside"; then matched=yes; fi
+  case "$mutation:$matched" in
+    none:yes) ok "$scope refuses outside $outside with environment names=$held" ;;
+    judgment:no|refusal:no)
+      [ "$RC" -eq 0 ] && ok "control: disabled placement $mutation turns refusal red" || bad "placement $mutation control" "$OUT" ;;
+    *) bad "$scope outside=$outside mutation=$mutation" "$OUT" ;;
+  esac
+  printf '{"secrets":[]}\n' >"$FIXTURES/repository-secrets.json"
+  printf '{"secrets":[]}\n' >"$FIXTURES/organization-actions-secrets.json"
+done <<'PLACEMENT_ROWS'
+repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_ID|none
+repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_PRIVATE_KEY|none
+organization|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_ID|none
+organization|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_PRIVATE_KEY|none
+repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY KENDEX_APP_ID|KENDEX_APP_PRIVATE_KEY|none
+organization|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY KENDEX_APP_PRIVATE_KEY|KENDEX_APP_ID|none
+repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|none
+repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_PRIVATE_KEY|none
+organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|none
+organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_PRIVATE_KEY|none
+repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_ID|FLEET_GH_APP_PRIVATE_KEY|none
+organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_PRIVATE_KEY|FLEET_GH_APP_ID|none
+repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_ID|judgment
+repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|refusal
+PLACEMENT_ROWS
+
+# A missing metadata permission cannot be treated as no outside copy.
+for scope in repository organization; do
+  sandbox
+  cp "$CALLER" "$DIR/$TEMPLATE"
+  cp "$TMP/default-environments" "$FIXTURES/environments.json"
+  cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  [ "$RC" -eq 0 ] || exit 1
+  snapshot_adoption
+  SHIM_FAIL=repository-secrets
+  endpoint=repos/acme/widgets/actions/secrets
+  if [ "$scope" = organization ]; then SHIM_FAIL=organization-actions-secrets; endpoint=orgs/acme/actions/secrets; fi
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  SHIM_FAIL=''
+  if adoption_preserved "refresh-error=environment value=kendex cause=read operation=$endpoint"; then
+    ok "$scope unreadable placement refuses before adoption"
+  else bad "$scope unreadable placement" "$OUT"; fi
+done
 cp "$TMP/default-environments" "$FIXTURES/environments.json"
 cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
