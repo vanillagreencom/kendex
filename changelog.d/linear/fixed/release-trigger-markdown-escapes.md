@@ -1,0 +1,1 @@
+- Release trigger globs stored by Linear with Markdown escapes match release tags.
