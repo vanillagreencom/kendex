@@ -6,6 +6,7 @@
 * -text
 skills/orch/scripts/open-terminal text eol=lf
 skills/orch/scripts/lanes text eol=lf
+skills/orch/scripts/refresh-ci-proof text eol=lf
 skills/orch/scripts/lib/account-wall.sh text eol=lf
 skills/orch/scripts/lib/lane-launch.sh text eol=lf
 kendex.toml text eol=lf

@@ -1,0 +1,1 @@
+- Consumer refresh approval reads the consumer's CI render proof and checks its engine version. A different kendex build on the overseer host no longer rejects a proved refresh.

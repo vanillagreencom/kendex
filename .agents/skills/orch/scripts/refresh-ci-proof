@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Read the consumer's render proof through GitHub's check-run and job APIs.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+refuse() {
+  printf 'refresh-ci-proof: cause=%s\n' "$1" >&2
+  exit 1
+}
+
+if [[ ${1:-} == --help ]]; then
+  cat <<'EOF'
+Usage: refresh-ci-proof PR_NUMBER HEAD_SHA --repo OWNER/REPO
+
+Read the latest GitHub Actions check named Classify the diff on HEAD_SHA.
+HEAD_SHA is a full lowercase commit SHA. The check and its job must have
+completed successfully on that head. Read the job log's measured render
+class and compare its render-verifier version with Engine version in the
+refresh pull request body. Read every changed path. The only permitted
+workflow path is HARNESS_CI_REFRESH_CALLER from the installed harness-ci.
+Renames also check the old path. This command reads GitHub and writes no
+approval. Run it from the trusted consumer checkout with gh authenticated.
+
+Success (exit 0):
+  refresh-ci-proof: head=SHA class=render measured=true version=VERSION job=ID
+
+Refusal (exit 1), consumed by references/copilot-head-notices.md:
+  refresh-ci-proof: cause=ci-proof-missing
+    Evidence is absent, unreadable, incomplete, pending, failed or on another head.
+  refresh-ci-proof: cause=class-not-render
+    The completed log does not prove a measured render.
+  refresh-ci-proof: cause=engine-mismatch
+    The body or verifier version is absent, ambiguous or different.
+  refresh-ci-proof: cause=workflow-changed
+    Another workflow path changed.
+EOF
+  exit 0
+fi
+
+[[ $# == 4 && $1 =~ ^[1-9][0-9]*$ && $2 =~ ^[0-9a-f]{40}$ && $3 == --repo && $4 =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse ci-proof-missing
+pr=$1 head=$2 repo=$4
+library="$SCRIPT_DIR/../../harness-ci/scripts/lib/change-class.sh"
+[[ -r $library ]] || refuse ci-proof-missing
+# harness-ci is optional: only this render route needs its caller contract.
+# shellcheck source=../../harness-ci/scripts/lib/change-class.sh
+source "$library" || refuse ci-proof-missing
+[[ -n ${HARNESS_CI_REFRESH_CALLER:-} ]] || refuse ci-proof-missing
+
+metadata="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing
+jq -e --arg head "$head" '
+  .head.sha == $head and (.body | type) == "string" and
+  (.changed_files | type) == "number" and .changed_files >= 0
+' >/dev/null <<<"$metadata" || refuse ci-proof-missing
+files="$(gh api "repos/$repo/pulls/$pr/files?per_page=100" --paginate --slurp)" || refuse ci-proof-missing
+# GitHub caps this endpoint. Compare with the PR count before trusting an empty search.
+jq -e --argjson metadata "$metadata" '
+  type == "array" and length > 0 and all(.[]; type == "array") and
+  (add | length) == $metadata.changed_files and
+  all(.[][]; (.filename | type) == "string" and
+    ((.previous_filename // "") | type) == "string")
+' >/dev/null <<<"$files" || refuse ci-proof-missing
+jq -e --arg caller "$HARNESS_CI_REFRESH_CALLER" '
+  all(.[][] | (.filename, (.previous_filename // ""));
+    (startswith(".github/workflows/") | not) or . == $caller)
+' >/dev/null <<<"$files" || refuse workflow-changed
+
+checks="$(gh api "repos/$repo/commits/$head/check-runs?check_name=Classify%20the%20diff&filter=latest&per_page=100" --paginate --slurp)" || refuse ci-proof-missing
+job="$(jq -er --arg head "$head" '
+  if type == "array" and length > 0 and all(.[]; (.check_runs | type) == "array") and
+    ([.[] | .check_runs[]] | length) == .[0].total_count
+  then [.[] | .check_runs[] | select(.name == "Classify the diff" and .app.slug == "github-actions")]
+  else error("unreadable checks") end |
+  max_by(.id) | select(.head_sha == $head and .status == "completed" and .conclusion == "success") |
+  .id | select(type == "number" and . > 0 and floor == .)
+' <<<"$checks")" || refuse ci-proof-missing
+job_metadata="$(gh api "repos/$repo/actions/jobs/$job")" || refuse ci-proof-missing
+jq -e --arg head "$head" --argjson job "$job" '
+  .id == $job and .head_sha == $head and .name == "Classify the diff" and
+  .status == "completed" and .conclusion == "success"
+' >/dev/null <<<"$job_metadata" || refuse ci-proof-missing
+log="$(gh api "repos/$repo/actions/jobs/$job/logs")" || refuse ci-proof-missing
+# Actions logs prefix each line with a timestamp. Ignore echoed shell commands.
+proof="$(awk '
+  { sub(/\r$/, ""); sub(/^[0-9][0-9][0-9][0-9]-[^ ]+ /, "") }
+  /^class: / { class = $0; classes++ }
+  /^render-verifier: / { verifier = $0; verifiers++ }
+  END { if (classes == 1) print class; if (verifiers == 1) print verifier }
+' <<<"$log")" || refuse ci-proof-missing
+[[ $proof =~ (^|$'\n')class:\ class=render\ measured=true($|\ ) ]] || refuse class-not-render
+version="$(sed -nE 's/^render-verifier: verifier=[^ ]+ version=([^ ]+)$/\1/p' <<<"$proof")" || refuse engine-mismatch
+engine="$(jq -er '
+  [.body | gsub("\r"; "") | scan("(?m)^Engine version: `?kendex ([^ `\n]+)") | .[0] | rtrimstr(".")] |
+  select(length == 1) | .[0]
+' <<<"$metadata")" || refuse engine-mismatch
+[[ -n $version && $version == "$engine" ]] || refuse engine-mismatch
+
+# A push during the paginated reads invalidates the entire proof.
+live="$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)" || refuse ci-proof-missing
+[[ $live == "$head" ]] || refuse ci-proof-missing
+printf 'refresh-ci-proof: head=%s class=render measured=true version=%s job=%s\n' "$head" "$version" "$job"
