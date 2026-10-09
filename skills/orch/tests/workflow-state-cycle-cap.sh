@@ -400,7 +400,7 @@ COPY_ROWS=(
 # copy_verdict [SCRIPT] N FIELD PANEL — a fresh item with FIRST recorded, then
 # the set's first stderr key, its status and the re-review count after it.
 copy_verdict() {
-  local bin=() n field panel err rc=0 sdc
+  local bin=("$WS") n field panel err rc=0 sdc
   [[ "$1" != /* ]] || { bin=("$1"); shift; }
   n="$1" field="$2" panel="$3"
   sdc="$TMP_ROOT/state-copy-$n-${#bin[@]}"
