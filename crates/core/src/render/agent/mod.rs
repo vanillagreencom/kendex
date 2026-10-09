@@ -135,16 +135,26 @@ pub fn merged_instructions(
     table: &std::collections::BTreeMap<String, String>,
     agent_name: &str,
 ) -> Option<String> {
+    merged_instructions_with(table, agent_name, str::trim_end)
+}
+
+/// The same merge with the caller's whitespace treatment. Capture also
+/// reads the verbatim values written by earlier renderings.
+pub(crate) fn merged_instructions_with<'a>(
+    table: &'a std::collections::BTreeMap<String, String>,
+    agent_name: &str,
+    text: impl Fn(&'a str) -> &'a str,
+) -> Option<String> {
     let shared = SHARED_INSTRUCTIONS
         .iter()
         .find_map(|key| table.get(*key))
-        .map(|text| text.trim_end());
+        .map(|value| text(value));
     // A package named `all` reads that key as everyone's, which it already
     // got as the shared entry; read twice it would render twice.
     let specific = table
         .get(agent_name)
         .filter(|_| !shared_instructions_key(agent_name))
-        .map(|text| text.trim_end());
+        .map(|value| text(value));
     match (shared, specific) {
         (None, None) => None,
         (None, Some(text)) => Some(text.to_owned()),

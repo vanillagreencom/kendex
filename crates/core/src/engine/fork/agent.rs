@@ -9,7 +9,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 use crate::render::agent::{
     EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
-    parse_source_agent,
+    merged_instructions_with, parse_source_agent,
 };
 
 use super::ForkOf;
@@ -101,8 +101,8 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         ))
     };
     let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
-    let read = wrapper(scope, &publisher, harness, &around).map_err(&render_refused)?;
-    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
+    let wrappers = capture_wrappers(of, &publisher, &around).map_err(&render_refused)?;
+    let bytes = source_form(&published, &edited_text, name, &wrappers)?;
     let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
         .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let on_disk = stated(harness, &edited_text).map_err(|problem| {
@@ -208,7 +208,7 @@ fn source_form(
     published: &[u8],
     edited: &str,
     name: &str,
-    wrapper: Option<&(String, String)>,
+    wrappers: &[Option<(String, String)>],
 ) -> Result<Vec<u8>> {
     let refused = |problem: String| CoreError::ForkNameUnusable {
         name: crate::names::shown(name),
@@ -220,7 +220,7 @@ fn source_form(
     let body = crate::frontmatter::split(edited)
         .map(|(_, body)| body)
         .unwrap_or(edited);
-    let prose = prose(body, wrapper);
+    let prose = prose(body, wrappers);
     Ok(format!("---\n{frontmatter}---\n\n{prose}").into_bytes())
 }
 
@@ -230,21 +230,26 @@ fn source_form(
 /// holds. Everything else is the person's text and stays byte-for-byte as
 /// the rendered harness said it, including that harness's vocabulary and
 /// any line of theirs that reads like a banner.
-fn prose(body: &str, wrapper: Option<&(String, String)>) -> String {
-    let mut kept = body;
-    if let Some((before, after)) = wrapper {
-        // The renderer always writes LF and the file is whatever the
-        // person's editor saved, so each edge is compared in the
-        // document's own convention. The slice still comes off the
-        // original text, which is what keeps their endings.
-        let as_saved = |edge: &String| match crlf(body) {
-            true => edge.replace('\n', "\r\n"),
-            false => edge.clone(),
-        };
-        let (before, after) = (as_saved(before), as_saved(after));
-        kept = kept.strip_prefix(before.as_str()).unwrap_or(kept);
-        kept = kept.strip_suffix(after.as_str()).unwrap_or(kept);
-    }
+fn prose(body: &str, wrappers: &[Option<(String, String)>]) -> String {
+    // The renderer writes LF; compare each edge in the saved convention
+    // while retaining slices of the original text for the person's body.
+    let as_saved = |edge: &String| match crlf(body) {
+        true => edge.replace('\n', "\r\n"),
+        false => edge.clone(),
+    };
+    // Each edge can still have the verbatim instruction whitespace an
+    // earlier rendering wrote. Match either complete wrapper, never a
+    // whitespace-normalized version of the person's edited section.
+    let kept = wrappers
+        .iter()
+        .flatten()
+        .find_map(|(before, _)| body.strip_prefix(as_saved(before).as_str()))
+        .unwrap_or(body);
+    let kept = wrappers
+        .iter()
+        .flatten()
+        .find_map(|(_, after)| kept.strip_suffix(as_saved(after).as_str()))
+        .unwrap_or(kept);
     format!("{}\n", kept.trim_start_matches('\n').trim_end())
 }
 
@@ -257,6 +262,7 @@ fn crlf(body: &str) -> bool {
         .is_some_and(|at| body.as_bytes()[..at].last() == Some(&b'\r'))
 }
 
+#[derive(Clone)]
 struct Around<'a> {
     model_classes: std::collections::BTreeMap<String, String>,
     skills: Vec<crate::render::agent::RequiredSkill>,
@@ -264,6 +270,30 @@ struct Around<'a> {
     launch: Option<String>,
     additional: Option<String>,
     hooks: Vec<&'a crate::manifest::CustomHook>,
+}
+
+fn capture_wrappers(
+    of: &ForkOf,
+    publisher: &SourceAgent,
+    around: &Around,
+) -> std::result::Result<[Option<(String, String)>; 2], String> {
+    let historical = Around {
+        launch: merged_instructions_with(
+            &of.manifest.agent_launch_instructions,
+            of.name,
+            std::convert::identity,
+        ),
+        additional: merged_instructions_with(
+            &of.manifest.agent_additional_instructions,
+            of.name,
+            std::convert::identity,
+        ),
+        ..around.clone()
+    };
+    Ok([
+        wrapper(of.scope, publisher, of.harness, &historical)?,
+        wrapper(of.scope, publisher, of.harness, around)?,
+    ])
 }
 
 /// What this rendering puts before and after an agent's own body. Asking

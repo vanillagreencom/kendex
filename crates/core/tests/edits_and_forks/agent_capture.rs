@@ -2,6 +2,230 @@ use std::fs;
 
 use super::*;
 
+type InstructionCase = (
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+    bool,
+);
+
+const INSTRUCTION_CASES: [InstructionCase; 10] = [
+    (
+        "specific additional newline",
+        "rev = \"Specific rule.\\n\"\n",
+        None,
+        Some("Specific rule.\n"),
+        false,
+    ),
+    (
+        "specific launch newline",
+        "rev = \"Specific rule.\\n\"\n",
+        Some("Specific rule.\n"),
+        None,
+        false,
+    ),
+    (
+        "specific launch newline with editor CRLF",
+        "rev = \"Specific rule.\\n\"\n",
+        Some("Specific rule.\n"),
+        None,
+        true,
+    ),
+    (
+        "specific launch spaces tabs and carriage returns",
+        "rev = \"Specific rule. \\t\\r\"\n",
+        Some("Specific rule. \t\r"),
+        None,
+        false,
+    ),
+    (
+        "shared all launch newline",
+        "all = \"Shared rule.\\n\"\n",
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule.\n\n<!-- kendex:shared-instructions:end -->",
+        ),
+        None,
+        false,
+    ),
+    (
+        "shared star additional newline",
+        "\"*\" = \"Shared rule.\\n\"\n",
+        None,
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule.\n\n<!-- kendex:shared-instructions:end -->",
+        ),
+        false,
+    ),
+    (
+        "shared all precedes star",
+        "all = \"Shared rule.\\n\"\n\"*\" = \"Unused shared rule.\\n\"\n",
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule.\n\n<!-- kendex:shared-instructions:end -->",
+        ),
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule.\n\n<!-- kendex:shared-instructions:end -->",
+        ),
+        false,
+    ),
+    (
+        "shared and specific spaces tabs carriage returns and newlines",
+        "all = \"Shared rule. \\t\\r\\n\"\nrev = \"Specific rule. \\t\\r\\n\"\n",
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule. \t\r\n\n<!-- kendex:shared-instructions:end -->\n\nSpecific rule. \t\r\n",
+        ),
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule. \t\r\n\n<!-- kendex:shared-instructions:end -->\n\nSpecific rule. \t\r\n",
+        ),
+        false,
+    ),
+    (
+        "current normalized shared and specific instructions",
+        "all = \"Shared rule. \\t\\r\\n\"\nrev = \"Specific rule. \\t\\r\\n\"\n",
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule.\n<!-- kendex:shared-instructions:end -->\n\nSpecific rule.",
+        ),
+        Some(
+            "<!-- kendex:shared-instructions:start -->\nShared rule.\n<!-- kendex:shared-instructions:end -->\n\nSpecific rule.",
+        ),
+        false,
+    ),
+    (
+        "leading whitespace and editor CRLF",
+        "\"*\" = \"\\n  Shared rule.\\n\"\nrev = \"\\n  Specific rule.\\n\"\n",
+        Some(
+            "<!-- kendex:shared-instructions:start -->\n\n  Shared rule.\n\n<!-- kendex:shared-instructions:end -->\n\n\n  Specific rule.\n",
+        ),
+        Some(
+            "<!-- kendex:shared-instructions:start -->\n\n  Shared rule.\n\n<!-- kendex:shared-instructions:end -->\n\n\n  Specific rule.\n",
+        ),
+        true,
+    ),
+];
+
+/// The shipped renderers accepted instruction strings with their original
+/// trailing whitespace. Forking those files must not turn project rules
+/// into source text that survives removal of the manifest's instructions.
+#[test]
+fn historical_instruction_whitespace_is_not_captured_by_either_fork_route() {
+    for case in INSTRUCTION_CASES {
+        for harness in [HarnessId::Claude, HarnessId::Gemini, HarnessId::Pi] {
+            for beside in [false, true] {
+                for disabled in [false, true] {
+                    assert_instruction_capture(case, harness, beside, disabled);
+                }
+            }
+        }
+    }
+}
+
+fn instruction_file(w: &World, harness: HarnessId, name: &str, disabled: bool) -> PathBuf {
+    let path = rendered(w, harness, name);
+    if disabled {
+        path.with_extension("md.disabled")
+    } else {
+        path
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled: bool) -> World {
+    use kendex_core::manifest::FrontmatterOverrides;
+    use kendex_core::render::agent::{EffectiveAgent, generate, parse_source_agent};
+    use kendex_core::render::permission::PermissionIntent;
+
+    let (_, entries, launch, additional, crlf) = case;
+    let mut project = format!("enabled = {}\n\n", !disabled);
+    if launch.is_some() {
+        project.push_str(&format!("[agent-launch-instructions]\n{entries}\n"));
+    }
+    if additional.is_some() {
+        project.push_str(&format!("[agent-additional-instructions]\n{entries}\n"));
+    }
+    let w = agent_world(
+        &format!("\"{}\"", harness.name()),
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        &project,
+    );
+    let source =
+        parse_source_agent("---\nname: rev\ndescription: agent rev\n---\nMy body.\n").unwrap();
+    // Drive the unchanged renderer with the exact merged strings
+    // from the release that wrote this installation.
+    let effective = EffectiveAgent {
+        source: &source,
+        harness,
+        scope: &w.scope,
+        skills: vec![],
+        overrides: FrontmatterOverrides::default(),
+        model_classes: Default::default(),
+        permissions: PermissionIntent::Unspecified,
+        launch_instructions: launch.map(str::to_owned),
+        additional_instructions: additional.map(str::to_owned),
+        custom_hooks: vec![],
+    };
+    let legacy = generate(&effective).unwrap().text;
+    let legacy = if crlf {
+        legacy.replace('\n', "\r\n")
+    } else {
+        legacy
+    };
+    fs::write(instruction_file(&w, harness, "rev", disabled), legacy).unwrap();
+    w
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_instruction_capture(
+    case: InstructionCase,
+    harness: HarnessId,
+    beside: bool,
+    disabled: bool,
+) {
+    use kendex_core::render::agent::parse_source_agent;
+
+    let (label, _, _, _, _) = case;
+    let w = instruction_capture_world(case, harness, disabled);
+    let name = if beside { "rev-mine" } else { "rev" };
+    let plan = if beside {
+        fork::fork_beside(
+            &w.env,
+            &w.scope,
+            ItemKind::Agent,
+            "rev",
+            harness,
+            name,
+            None,
+        )
+    } else {
+        fork::fork(&w.env, &w.scope, ItemKind::Agent, name, harness)
+    }
+    .unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let local = fs::read_to_string(captured(&w, name)).unwrap();
+    let local = parse_source_agent(&local).unwrap();
+    assert_eq!(
+        local.body, "My body.\n",
+        "{label}: {harness:?}, beside={beside}, disabled={disabled}"
+    );
+
+    let mut manifest = manifest_of(&w);
+    manifest.agent_launch_instructions.clear();
+    manifest.agent_additional_instructions.clear();
+    fs::write(
+        manifest::manifest_path(&w.env, &w.scope),
+        toml::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    resettle(&w);
+    let after = fs::read_to_string(instruction_file(&w, harness, name, disabled)).unwrap();
+    for rule in ["Shared rule.", "Specific rule."] {
+        assert!(!after.contains(rule), "{label}: {after}");
+    }
+    assert!(after.ends_with("My body.\n"), "{label}: {after:?}");
+}
+
 /// The rendered body is the fork's source. A Gemini tool name therefore
 /// stays a Gemini tool name when Claude renders the fork, while generated
 /// sections still come from the manifest exactly once.
