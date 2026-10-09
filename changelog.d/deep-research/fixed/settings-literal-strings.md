@@ -1,0 +1,1 @@
+- Accept single-line TOML literal strings in project settings, so a literal policy does not stop research commands.

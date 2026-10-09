@@ -527,6 +527,7 @@ test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back 
   const env = { ...process.env };
   delete env.EXA_API_KEY;
   delete env.EXA_MOCK_RESPONSE_FILE;
+  delete env.KENDEX_ENV_FILE;
 
   // The default file is still the default: a project naming nothing reads
   // .env.local exactly as it always has.
@@ -536,19 +537,32 @@ test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back 
   assert.equal(byDefault.status, 0, byDefault.stderr);
   assert.match(readFileSync(local, "utf8"), /FromEnvLocal/);
 
-  // Named, the chosen file answers instead — and the single-quoted value
-  // the app writes is stripped of exactly its quotes and nothing else.
-  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.secrets"\n');
-  writeFileSync(join(dir, ".env.secrets"), `EXA_MOCK_RESPONSE_FILE='${chosenMock}'\nEXA_API_KEY='k'\n`);
-  const chosen = join(dir, "chosen.md");
-  const byName = spawnSync(process.execPath, [script, "report", "q", "--output", chosen], { encoding: "utf8", env, cwd: dir });
-  assert.equal(byName.status, 0, byName.stderr);
-  assert.match(readFileSync(chosen, "utf8"), /FromChosen/);
+  // The app and consumer policies emit both quote forms. Backslashes in
+  // unrelated literal values must not make the named credential file unreadable.
+  const rows = [
+    ['".env.secrets"', ".env.secrets", "FromChosen"],
+    ["'.env.secrets'", ".env.secrets", "FromChosen"],
+    ["'.env.# secrets'# trailing comment", ".env.# secrets", "FromChosen"],
+    ["''", ".env.local", "FromEnvLocal"],
+  ];
+  const policy = String.raw`(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)`;
+  for (const [raw, named, expected] of rows) {
+    const unrelated = String.raw`OTHER = 'a\b[.]c' # literal backslash`;
+    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\nKENDEX_ENV_FILE = ${raw}\n${unrelated}\nQUOTED = '  a#b = "c"  '\nCOMMAND_SAFETY_DENY_PATTERN = '${policy}'\n`);
+    if (named !== ".env.local") {
+      writeFileSync(join(dir, named), `EXA_MOCK_RESPONSE_FILE='${chosenMock}'\nEXA_API_KEY='k'\n`);
+    }
+    const chosen = join(dir, "chosen.md");
+    const byName = spawnSync(process.execPath, [script, "report", "q", "--output", chosen], { encoding: "utf8", env, cwd: dir });
+    assert.equal(byName.status, 0, `${raw}: ${byName.stderr}`);
+    assert.equal(readFileSync(chosen, "utf8").includes(expected), true, raw);
+  }
 
   // A missing credential names the file this project reads. Told to write
   // the key into .env.local while the loader reads .env.secrets, a person
   // follows the message and the failure stands. .env.local still holds a
   // key here, so naming it would also be naming a file that is set.
+  writeFileSync(join(dir, "kendex.settings.toml"), "[env]\nKENDEX_ENV_FILE = '.env.secrets'\n");
   writeFileSync(join(dir, ".env.secrets"), "");
   const missing = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
   const said = diagnostic(missing);
@@ -619,6 +633,10 @@ test("a settings file the shell loader would refuse stops the run", () => {
     ['[[env]]\nKENDEX_ENV_FILE = ".env.a"\n', "settings-table-header"],
     // An unrelated value outside the contract refuses it too.
     ['[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = 900\n', "settings-value-syntax"],
+    ["[env]\nKENDEX_ENV_FILE = '.env.a'\nOTHER = 'a'b'\n", "settings-value-syntax"],
+    ["[env]\nKENDEX_ENV_FILE = '.env.a'\nOTHER = 'unfinished\n", "settings-value-syntax"],
+    ["[env]\nKENDEX_ENV_FILE = '.env.a'\nOTHER = '''first\nsecond'''\n", "settings-value-syntax"],
+    ["[env]\nKENDEX_ENV_FILE = '.env.a'\nOTHER = '''value'''\n", "settings-value-syntax"],
     ['\ufeff[env]\nKENDEX_ENV_FILE = ".env.a"\n', "settings-byte-order-mark"],
   ];
   for (const [body, key] of rows) {
@@ -638,18 +656,19 @@ test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () 
   const env = { ...process.env };
   delete env.EXA_API_KEY;
   delete env.EXA_MOCK_RESPONSE_FILE;
-  for (const named of ["/etc/passwd", "../outside.env", "a/../../outside.env", "C:keys.env"]) {
-    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\nKENDEX_ENV_FILE = "${named}"\n`);
+  delete env.KENDEX_ENV_FILE;
+  for (const raw of ['"/etc/passwd"', '"../outside.env"', '"a/../../outside.env"', '"C:keys.env"', String.raw`'a\b[.]c'`]) {
+    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\nKENDEX_ENV_FILE = ${raw}\n`);
     const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
     const parsed = diagnostic(result);
-    assert.equal(parsed.key, "private-env-path", named);
-    assert.equal(parsed.value, "KENDEX_ENV_FILE", named);
+    assert.equal(parsed.key, "private-env-path", raw);
+    assert.equal(parsed.value, "KENDEX_ENV_FILE", raw);
   }
   // A value outside the settings contract is refused rather than read
   // past: the shell loader fails the whole file over one, so reading past
   // it here would have this package answer from .env.local while every
   // other package refuses to start.
-  for (const line of ['KENDEX_ENV_FILE = "keys\\local.env"', "KENDEX_ENV_FILE = '.env.secrets'", "KENDEX_ENV_FILE = .env.secrets"]) {
+  for (const line of ['KENDEX_ENV_FILE = "keys\\local.env"', "KENDEX_ENV_FILE = 'a'b'", "KENDEX_ENV_FILE = .env.secrets"]) {
     writeFileSync(join(dir, "kendex.settings.toml"), `[env]\n${line}\n`);
     const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
     assert.equal(diagnostic(result).key, "settings-value-syntax", line);

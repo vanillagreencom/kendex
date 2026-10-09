@@ -1574,9 +1574,9 @@ FORKS
 require_rows change-class-fork-point "$fork_rows"
 
 # A base settings file kendex-env.sh refuses measures nothing: a
-# single-quoted value is outside the settings contract.
+# literal with an embedded apostrophe is outside the settings contract.
 refused="$(new_repo change-class-base-refused)"
-printf "[env]\nORCH_SIZE_TEST_PATHS = 'checks/*'\n" >"$refused/kendex.settings.toml"
+printf "[env]\nORCH_SIZE_TEST_PATHS = 'checks/'*'\n" >"$refused/kendex.settings.toml"
 commit_paths "$refused" baseline seed.txt
 refused_base="$(git -C "$refused" rev-parse HEAD)"
 git -C "$refused" checkout -q -B case "$refused_base"

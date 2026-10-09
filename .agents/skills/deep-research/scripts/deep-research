@@ -114,9 +114,9 @@ async function loadEnvFile(path) {
 // project names one file once.
 //
 // The grammar is the kendex settings contract: a lone [env] header, and a
-// single-line double-quoted value holding no " and no \, with an optional
-// trailing comment. A file that does not say it keeps its secrets
-// somewhere else means .env.local, which is what every project without
+// single-line basic string holding no " and no \, or a literal string
+// holding no ', with an optional trailing comment. A file that does not
+// say it keeps its secrets somewhere else means .env.local, which is what every project without
 // the key has always used.
 const PRIVATE_ENV_DEFAULT = ".env.local";
 
@@ -165,10 +165,11 @@ async function namedEnvFile(path) {
     }
     seen.add(key);
     const value = trimmed.slice(trimmed.indexOf("=") + 1).trim();
-    if (!/^"[^"\\]*"[ \t]*(?:#.*)?$/.test(value)) {
-      fail("settings-value-syntax", path, `${path}: unsupported syntax for ${key} (expected a single-line basic string with no '"' and no '\\').`);
+    const string = value.match(/^(?:"([^"\\]*)"|'([^']*)')[ \t]*(?:#.*)?$/);
+    if (!string) {
+      fail("settings-value-syntax", path, `${path}: unsupported syntax for ${key} (expected a single-line basic string with no '"' and no '\\', or a literal string with no apostrophe).`);
     }
-    if (key === "KENDEX_ENV_FILE") named = value.slice(1, value.indexOf('"', 1));
+    if (key === "KENDEX_ENV_FILE") named = string[1] ?? string[2];
   }
   return named;
 }
