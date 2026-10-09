@@ -42,7 +42,6 @@ export type SetField = <K extends keyof DraftFrontmatter>(
   value: DraftFrontmatter[K],
 ) => void;
 
-/** Empty means unset: a blank field is left out of the manifest entirely. */
 export function FrontmatterFields({
   overrides,
   onSet,
