@@ -356,8 +356,8 @@ impl SeededEnv {
         }
     }
 
-    /// The default where the strict reader can read one: a plain one-line
-    /// double-quoted string.
+    /// The default where the strict reader can read one: a one-line basic
+    /// string without escapes or a literal string.
     fn decoded(&self) -> Option<String> {
         crate::settings_template::decoded_value(self.entry.opening())
     }

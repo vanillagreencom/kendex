@@ -225,7 +225,7 @@ pub fn sites(text: &str) -> Vec<Site> {
 /// The four refusals are the ones every shipped loader enforces: a
 /// byte-order mark, a `[`-leading line that is not a lone `[name]`
 /// header, a key assigned twice inside `[env]`, and a value in `[env]`
-/// outside the single-line basic-string grammar. Read in file order, so
+/// outside the single-line basic or literal string grammar. Read in file order, so
 /// the reason returned is the first one a loader would hit.
 pub fn loaders_refuse(text: &str) -> Option<String> {
     if text.starts_with('\u{feff}') {
@@ -325,25 +325,20 @@ fn readable(site: &Site, key: &str) -> std::result::Result<String, String> {
         }
     }
     site.value.clone().ok_or_else(|| {
-        "its value is not a one-line double-quoted string free of \" and \\".to_owned()
+        "its value is not a one-line basic string without escapes or a literal string".to_owned()
     })
 }
 
 /// Whether this text can be written as a whole `[env]` value: one line
-/// between double quotes, with nothing in it the quotes cannot hold. The
+/// between basic or literal quotes, with nothing the chosen quotes cannot hold. The
 /// grammar is the shell loaders', spelled once here so an edit and the
 /// template check refuse the same strings.
 pub fn check_value(value: &str) -> std::result::Result<(), String> {
     if value.contains('\n') || value.contains('\r') {
         return Err("a value is one line, and this one has a line break in it".to_owned());
     }
-    if value.contains('"') {
-        return Err(
-            "a value is written between double quotes, so it cannot contain one".to_owned(),
-        );
-    }
-    if value.contains('\\') {
-        return Err("there are no escapes here, so a value cannot contain a backslash".to_owned());
+    if value.contains('\'') && value.contains(['"', '\\']) {
+        return Err("a value with a quote or backslash needs literal quotes, which cannot hold an apostrophe".to_owned());
     }
     // A control character is not TOML between quotes, and is not something
     // a shell that exported it would survive either. A tab is the one the
@@ -376,7 +371,22 @@ pub fn apply_edits(
         if out[inner.clone()] == value {
             continue;
         }
-        out.replace_range(inner, &value);
+        let quote = out.as_bytes()[inner.start - 1];
+        let needs_literal = value.contains(['"', '\\']);
+        let keep_quote = match quote {
+            b'"' => !needs_literal,
+            b'\'' => !value.contains('\''),
+            _ => unreachable!("a readable span starts after a string delimiter"),
+        };
+        if keep_quote {
+            out.replace_range(inner, &value);
+        } else {
+            let quote = if needs_literal { '\'' } else { '"' };
+            out.replace_range(
+                inner.start - 1..inner.end + 1,
+                &format!("{quote}{value}{quote}"),
+            );
+        }
         changed.push(key);
     }
     Ok((out, changed))

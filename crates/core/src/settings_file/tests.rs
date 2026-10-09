@@ -87,15 +87,18 @@ fn what_is_in_the_way_is_named_by_its_lines_rather_than_guessed_at() {
 }
 
 /// The grammar an edit is held to is the loaders', spelled once: what
-/// cannot survive a round trip through one double-quoted line is refused
+/// cannot survive a round trip through either supported quoted form is refused
 /// rather than written and silently misread.
 #[test]
 fn a_value_that_no_quoted_line_could_hold_is_refused() {
     assert!(check_value("plain words, # and punctuation").is_ok());
     assert!(check_value("").is_ok());
     assert!(check_value("two\nlines").is_err());
-    assert!(check_value("a \"quote\"").is_err());
-    assert!(check_value("a \\ backslash").is_err());
+    assert!(check_value("a \"quote\"").is_ok());
+    assert!(check_value("a \\ backslash").is_ok());
+    assert!(check_value("it's plain").is_ok());
+    assert!(check_value("it's a \"quote\"").is_err());
+    assert!(check_value("it's a \\ backslash").is_err());
 }
 
 /// The whole point of splicing rather than rewriting: an edit moves the
@@ -116,6 +119,50 @@ fn an_edit_moves_the_value_span_and_leaves_every_other_byte_alone() {
         out,
         "# header\r\n\r\n[env]\r\n# how loud\r\nMODE = \"loud\" # a trailing note\r\nOTHER = \"x\"\r\n"
     );
+}
+
+#[test]
+fn literal_values_and_edits_keep_bytes_and_usable_delimiters() {
+    for (before, value, after) in [
+        ("'quiet'", "loud", "'loud'"),
+        (r"'a\b[.]c'", r"c\d[.]e", r"'c\d[.]e'"),
+        ("\"quiet\"", r"a\b[.]c", r"'a\b[.]c'"),
+        ("'quiet'", "it's loud", "\"it's loud\""),
+        ("\"quiet\"", "loud", "\"loud\""),
+        ("'quiet'", "", "''"),
+    ] {
+        let text = format!("# header\r\n[env]\r\nMODE = {before} # keep\r\nOTHER = 'ours'\r\n");
+        assert!(loaders_refuse(&text).is_none());
+        let (out, changed) = apply_edits(
+            &text,
+            &[set("noise", "MODE", value)],
+            &[seeded("noise", "MODE", "MODE = 'quiet'")],
+            Path::new("/w/kendex.settings.toml"),
+        )
+        .unwrap();
+        assert_eq!(changed, ["MODE"]);
+        assert_eq!(
+            out,
+            format!("# header\r\n[env]\r\nMODE = {after} # keep\r\nOTHER = 'ours'\r\n")
+        );
+        assert!(loaders_refuse(&out).is_none());
+        assert_eq!(
+            current(&out, "MODE"),
+            Current::Value {
+                value: value.to_owned(),
+                line: 3
+            }
+        );
+    }
+    for written in [
+        "'''long'''",
+        "'a'b'",
+        "'unterminated",
+        "'a' tail",
+        "\"a\\b\"",
+    ] {
+        assert!(loaders_refuse(&format!("[env]\nMODE = {written}\n")).is_some());
+    }
 }
 
 /// Two edits in one pass. The second's span is read after the first has
@@ -166,11 +213,14 @@ fn a_reset_writes_the_named_skill_template_default() {
             key: "MODE".to_owned(),
             value: SettingsEditValue::Reset,
         }],
-        &[seeded("noise", "MODE", "MODE = \"stock\"")],
+        &[seeded("noise", "MODE", r"MODE = 'a\b[.]c'")],
         Path::new("/w/kendex.settings.toml"),
     )
     .unwrap();
-    assert!(out.contains("MODE = \"stock\" # a trailing note"), "{out}");
+    assert_eq!(
+        out,
+        "[env]\n# how loud\nMODE = 'a\\b[.]c' # a trailing note\nOTHER = \"x\"\n"
+    );
 }
 
 /// The declaration is what an edit is checked against, so the skill it
@@ -219,7 +269,7 @@ fn an_edit_on_an_unreadable_key_refuses_and_names_the_lines() {
 fn a_value_the_grammar_refuses_never_reaches_the_file() {
     let refused = apply_edits(
         FILE,
-        &[set("noise", "MODE", "a \"quoted\" word")],
+        &[set("noise", "MODE", "a \"quoted\" person's word")],
         &[seeded("noise", "MODE", "MODE = \"quiet\"")],
         Path::new("/w/f.toml"),
     )

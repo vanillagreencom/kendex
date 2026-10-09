@@ -157,14 +157,34 @@ fn a_comment_swallows_the_rest_of_its_line() {
 /// names exactly the characters between the quotes.
 #[test]
 fn a_span_covers_the_value_and_only_where_one_is_readable() {
-    let text = "[env]\nMODE = \"quiet\" # keep\n";
-    let row = &rows(text)[1];
-    let (_, value, at) = row.assignment().unwrap();
-    let inner = quoted_span(value, at).unwrap();
-    assert_eq!(&text[inner], "quiet");
-    assert_eq!(decoded(value), Some("quiet".to_owned()));
+    for (written, expected) in [
+        ("\"quiet\" # keep", "quiet"),
+        ("'quiet' # keep", "quiet"),
+        ("''#keep", ""),
+        (r#"'  a#b = "c"\d  ' # don't change"#, r#"  a#b = "c"\d  "#),
+        (r"'a\b[.]c'", r"a\b[.]c"),
+    ] {
+        let text = format!("[env]\nMODE = {written}\n");
+        let walked = rows(&text);
+        let (_, value, at) = walked[1].assignment().unwrap();
+        let inner = quoted_span(value, at).unwrap();
+        assert_eq!(&text[inner], expected);
+        assert_eq!(decoded(value).as_deref(), Some(expected));
+    }
 
-    for refused in [" 3", " \"\"\"a\"\"\"", " \"a\\tb\"", " \"a\" b", " x\"a\""] {
+    for refused in [
+        " 3",
+        " \"\"\"a\"\"\"",
+        " \"a\\tb\"",
+        " \"a\" b",
+        " x\"a\"",
+        " '''a'''",
+        " 'a'b'",
+        " 'a",
+        " 'a' b",
+        " 'a\nb'",
+        " 'a\rb'",
+    ] {
         assert_eq!(quoted_span(refused, 0), None, "{refused}");
     }
 }

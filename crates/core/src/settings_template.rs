@@ -13,7 +13,7 @@
 //! `skills/*/scripts/lib/kendex-env.sh` and
 //! `skills/*/scripts/lib/settings.sh` read, wherever its keys land: a lone
 //! `[name]` header, a key spelled as a shell identifier, a value that is
-//! one double-quoted string free of `"` and `\`, and after that value
+//! one basic string without escapes or one literal string, and after that value
 //! nothing but the required marker. A line those loaders refuse or
 //! silently skip is a finding here, as are the rules only a template has —
 //! a comment block over every key, the optional `# values:` line inside
@@ -84,8 +84,8 @@ pub struct TemplateEntry {
     pub key: String,
     /// The comment block above the key, `#` markers stripped, in order.
     pub comment: Vec<String>,
-    /// The default with its quotes removed. There are no escapes to
-    /// decode: a value carrying `"` or `\` is a finding, not a row.
+    /// The default with its quotes removed. Basic strings accept no
+    /// escapes. Literal strings keep every byte between their quotes.
     pub value: String,
     /// The values the comment block's `# values:` line lists, in the order
     /// it lists them. Empty where the block carries no such line, which is

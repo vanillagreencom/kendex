@@ -33,7 +33,16 @@ underscore-lead	loads	_WAIT	"900"	[env]\n# How long to wait.\n_WAIT = "900"
 header-after-env	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"\n\n[other]
 bare-number	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = 900
 bare-word	refused	WAIT	-	[env]\n# A switch.\nWAIT = true
-single-quoted	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = '900'
+single-quoted	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = '900'
+literal-empty	loads	WAIT	""	[env]\n# How long to wait.\nWAIT = ''
+literal-backslash	loads	WAIT	"a\b[.]c"	[env]\n# A pattern.\nWAIT = 'a\\b[.]c'
+literal-quote	loads	WAIT	"say "hi""	[env]\n# A quote.\nWAIT = 'say "hi"'
+literal-hash	loads	WAIT	"a#b=c"	[env]\n# A pattern.\nWAIT = 'a#b=c'#required
+literal-apostrophe	refused	WAIT	-	[env]\n# A word.\nWAIT = 'a'b'
+literal-multiline	refused	WAIT	-	[env]\n# A word.\nWAIT = '''a'''
+literal-unclosed	refused	WAIT	-	[env]\n# A word.\nWAIT = 'a
+literal-trailing-junk	refused	WAIT	-	[env]\n# A word.\nWAIT = 'a' tail
+literal-host-policy	loads	WAIT	"(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)"	[env]\n# A host policy.\nWAIT = '(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)'
 multi-line-string	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = """900"""
 value-holds-quote	refused	WAIT	-	[env]\n# A quote.\nWAIT = "say \\"hi\\""
 value-holds-backslash	refused	WAIT	-	[env]\n# A path.\nWAIT = "C:\\\\tools"

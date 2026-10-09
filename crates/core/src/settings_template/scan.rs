@@ -566,9 +566,9 @@ fn decode_entry(
         problems.push(TemplateFinding {
             line,
             problem: format!(
-                "{shown}'s default is not a one-line double-quoted string free of \" and \\"
+                "{shown}'s default is not a one-line basic string without escapes or a literal string"
             ),
-            fix: "spell every default as a plain \"...\" string on one line".to_owned(),
+            fix: "spell every default as a basic string without escapes or a literal string on one line".to_owned(),
         });
     }
     // A credential declaration publishes metadata and nothing else. A

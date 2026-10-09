@@ -232,20 +232,23 @@ fn closes_at(content: &str, kind: Open) -> Option<usize> {
 }
 
 /// The byte range between the quotes of a value the shell loaders read —
-/// one double-quoted string on one line, free of `"` and `\`, optionally
-/// followed by a `#` comment. `at` is where `value` sits in the source.
+/// one basic string without escapes, or one literal string, on one line,
+/// optionally followed by a `#` comment. Literal bytes are not decoded.
+/// `at` is where `value` sits in the source.
 /// `None` for every other shape, so a span is only ever produced for a
 /// value this reader has already proven is a plain single-line string.
 pub fn quoted_span(value: &str, at: usize) -> Option<Range<usize>> {
-    let open = value.find('"')?;
+    let open = value.len() - value.trim_start().len();
+    let quote = *value.as_bytes().get(open)?;
+    if !matches!(quote, b'"' | b'\'') {
+        return None;
+    }
     let rest = &value[open + 1..];
-    let close = rest.find('"')?;
+    let close = rest.find(char::from(quote))?;
     let after = rest[close + 1..].trim_start();
     let closed = after.is_empty() || after.starts_with('#');
     let inner = &rest[..close];
-    // Everything before the opening quote must be whitespace: a value that
-    // starts with anything else is not a string the loaders read.
-    (closed && value[..open].trim().is_empty() && !inner.contains('\\'))
+    (closed && !inner.contains(['\n', '\r']) && (quote == b'\'' || !inner.contains('\\')))
         .then(|| at + open + 1..at + open + 1 + close)
 }
 

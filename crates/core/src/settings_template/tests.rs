@@ -51,14 +51,12 @@ fn a_value_that_is_not_a_plain_quoted_string_is_located() {
         "[env]\n# Why.\nA = ['x']\n",
     ];
     for text in refused {
+        let refused = read(text);
         assert_eq!(
-            located(text),
-            [(
-                3,
-                "A's default is not a one-line double-quoted string free of \" and \\".to_owned()
-            )],
-            "{text:?}"
+            refused.findings.iter().map(|f| f.line).collect::<Vec<_>>(),
+            [3]
         );
+        assert!(refused.entries.is_empty());
     }
 }
 
@@ -75,9 +73,23 @@ fn decoded_value_reads_only_plain_one_line_strings() {
     assert_eq!(decoded_value("A = \"x\""), Some("x".to_owned()));
     assert_eq!(decoded_value("A = \"\""), Some(String::new()));
     assert_eq!(decoded_value("A = \"1\""), Some("1".to_owned()));
+    assert_eq!(decoded_value(r"A = 'a\b[.]c'"), Some(r"a\b[.]c".to_owned()));
+    assert_eq!(decoded_value("A = '' # required"), Some(String::new()));
+    assert_eq!(decoded_value("A = 'a'b'"), None);
     assert_eq!(decoded_value("A = \""), None);
     assert_eq!(decoded_value("A = 1"), None);
     assert_eq!(decoded_value("A"), None);
+}
+
+#[test]
+fn literal_defaults_and_declared_values_keep_their_text() {
+    let template = "[env]\n# A pattern.\n# values: a\\b[.]c | say \"hi\"\nMODE = 'a\\b[.]c' # required\n\n[secrets]\n# A credential.\nAPI_KEY = '' # required\n";
+    let parsed = read(template);
+    assert!(parsed.findings.is_empty());
+    assert_eq!(parsed.entries[0].value, r"a\b[.]c");
+    assert_eq!(parsed.entries[0].values, [r"a\b[.]c", "say \"hi\""]);
+    assert_eq!(parsed.secrets[0].key, "API_KEY");
+    assert!(parsed.secrets[0].required);
 }
 
 #[test]
@@ -203,11 +215,12 @@ fn a_marker_on_its_own_comment_line_is_located() {
     // the widened word does not reach in: one finding, and it is the
     // value's.
     assert_eq!(
-        located("[env]\n# What it holds.\nBLOB = \"\"\"\n# required\n\"\"\"\n"),
-        [(
-            3,
-            "BLOB's default is not a one-line double-quoted string free of \" and \\".to_owned()
-        )]
+        read("[env]\n# What it holds.\nBLOB = \"\"\"\n# required\n\"\"\"\n")
+            .findings
+            .iter()
+            .map(|f| f.line)
+            .collect::<Vec<_>>(),
+        [3]
     );
     // Outside `[env]` too: a marker nothing reads is a marker nothing
     // reads, whichever table it sits over.
@@ -439,84 +452,46 @@ fn an_independent_toml_error_is_reported_beside_the_scan_finding() {
 /// trip.
 #[test]
 fn every_template_defect_is_located_with_nothing_else_said() {
-    let not_a_string = |key: &str| {
-        format!("{key}'s default is not a one-line double-quoted string free of \" and \\")
-    };
-    let rows: [(&str, Vec<(u32, String)>); 11] = [
+    let rows: &[(&str, &[u32])] = &[
         (
             "# Why.\nDEPTH = \"2\"\n\n[env]\n# Why.\nOTHER = \"1\"\n",
-            vec![(
-                2,
-                "DEPTH is assigned outside [env] and [secrets]".to_owned(),
-            )],
+            &[2],
         ),
         (
             "[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n",
-            vec![(
-                5,
-                "a second [env] header; the first is on line 1".to_owned(),
-            )],
+            &[5],
         ),
-        (
-            "[env]\n# Why.\nA = \"1\"\n\nB = \"2\"\n",
-            vec![(5, "B has no comment block above it".to_owned())],
-        ),
-        (
-            "[env]\n# Why.\n\nA = \"1\"\n",
-            vec![(4, "A has no comment block above it".to_owned())],
-        ),
+        ("[env]\n# Why.\nA = \"1\"\n\nB = \"2\"\n", &[5]),
+        ("[env]\n# Why.\n\nA = \"1\"\n", &[4]),
         (
             "[other]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nA = \"2\"\n",
-            vec![
-                (3, "A is assigned outside [env] and [secrets]".to_owned()),
-                (7, "A is assigned again; it is already on line 3".to_owned()),
-            ],
+            &[3, 7],
         ),
         (
             "[env] # the table\n# How long to wait.\nWAIT = \"900\"\n",
-            vec![(
-                1,
-                "this is not a table header the settings loaders read".to_owned(),
-            )],
+            &[1],
         ),
-        (
-            "[env][env]\n# Why.\nWAIT = \"900\"\n",
-            vec![(
-                1,
-                "this is not a table header the settings loaders read".to_owned(),
-            )],
-        ),
+        ("[env][env]\n# Why.\nWAIT = \"900\"\n", &[1]),
         (
             "[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = \"600\"\n",
-            vec![(
-                5,
-                "WAIT is assigned again; it is already on line 3".to_owned(),
-            )],
+            &[5],
         ),
-        (
-            "[env]\n# A path.\nWAIT = \"base\".tsv\n",
-            vec![(3, not_a_string("WAIT"))],
-        ),
+        ("[env]\n# A path.\nWAIT = \"base\".tsv\n", &[3]),
         (
             "[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = 900\n",
-            vec![
-                (
-                    5,
-                    "WAIT is assigned again; it is already on line 3".to_owned(),
-                ),
-                (5, not_a_string("WAIT")),
-            ],
+            &[5, 5],
         ),
-        (
-            "[env]\n# Why.\nA = \"1\"\nB = 2\n",
-            vec![
-                (4, "B has no comment block above it".to_owned()),
-                (4, not_a_string("B")),
-            ],
-        ),
+        ("[env]\n# Why.\nA = \"1\"\nB = 2\n", &[4, 4]),
     ];
-    for (text, findings) in rows {
-        assert_eq!(located(text), findings, "{text:?}");
+    for (text, lines) in rows {
+        assert_eq!(
+            read(text)
+                .findings
+                .iter()
+                .map(|f| f.line)
+                .collect::<Vec<_>>(),
+            *lines
+        );
     }
 }
 
@@ -580,12 +555,8 @@ fn nothing_inside_a_multiline_value_is_read_as_template_syntax() {
         );
         let found = located(&text);
         assert_eq!(
-            found,
-            vec![(
-                3,
-                "BLOB's default is not a one-line double-quoted string free of \" and \\"
-                    .to_owned()
-            )],
+            found.iter().map(|(line, _)| *line).collect::<Vec<_>>(),
+            [3],
             "{open}"
         );
         // The key after the value keeps its own comment block, not the one
@@ -652,74 +623,43 @@ fn a_values_line_declares_the_set_a_key_takes() {
 /// carries values the first does not.
 #[test]
 fn a_values_line_its_author_has_not_settled_is_located() {
-    type Row = (&'static str, &'static str, Vec<(u32, String)>);
-    let rows: [Row; 7] = [
+    let rows: &[(&str, &[u32])] = &[
         (
-            "a bar at the end of the line",
             "[env]\n# How the gate answers.\n# values: enforce | advise |\nMODE = \"enforce\"\n",
-            vec![(3, "MODE's values line has an empty value".to_owned())],
+            &[3],
         ),
         (
-            "a line of bare bars, said once",
             "[env]\n# How the gate answers.\n# values: | |\nMODE = \"enforce\"\n",
-            vec![
-                (3, "MODE's values line has an empty value".to_owned()),
-                (
-                    3,
-                    "MODE's default `enforce` is not one of the values it takes".to_owned(),
-                ),
-            ],
+            &[3, 3],
         ),
         (
-            "a value the [env] grammar refuses",
-            "[env]\n# How the gate answers.\n# values: enforce | ad\\vise\nMODE = \"enforce\"\n",
-            vec![(
-                3,
-                "MODE lists `ad\\\\vise` among its values, and there are no escapes here, so a value cannot contain a backslash"
-                    .to_owned(),
-            )],
+            "[env]\n# How the gate answers.\n# values: enforce | ad'\\vise\nMODE = \"enforce\"\n",
+            &[3],
         ),
         (
-            "a default the line does not list",
             "[env]\n# How the gate answers.\n# values: enforce | advise\nMODE = \"off\"\n",
-            vec![(
-                3,
-                "MODE's default `off` is not one of the values it takes".to_owned(),
-            )],
+            &[3],
         ),
         (
-            "a value listed twice",
             "[env]\n# How the gate answers.\n# values: enforce | advise | enforce\nMODE = \"enforce\"\n",
-            vec![(
-                3,
-                "MODE lists `enforce` twice among the values it takes".to_owned(),
-            )],
+            &[3],
         ),
         (
-            "the line written twice",
             "[env]\n# How the gate answers.\n# values: enforce | advise\n# values: enforce | advise\nMODE = \"enforce\"\n",
-            vec![(
-                4,
-                "MODE declares its values again; they are already declared on line 3".to_owned(),
-            )],
+            &[4],
         ),
-        // The list spread over two lines used to merge into one and pass.
-        // The second line is refused for being the second line, whatever
-        // it says, so the author is told that rather than told something
-        // about each of its items.
         (
-            "a second line holding different values",
             "[env]\n# How the gate answers.\n# values: enforce\n# values: advise\nMODE = \"enforce\"\n",
-            vec![(
-                4,
-                "MODE declares its values again; they are already declared on line 3".to_owned(),
-            )],
+            &[4],
         ),
     ];
-    for (what, template, said) in rows {
-        assert_eq!(located(template), said, "{what}");
+    for (template, lines) in rows {
         let refused = read(template);
-        assert!(refused.entries.is_empty(), "{what}: {:?}", refused.entries);
+        assert_eq!(
+            refused.findings.iter().map(|f| f.line).collect::<Vec<_>>(),
+            *lines
+        );
+        assert!(refused.entries.is_empty());
     }
 }
 

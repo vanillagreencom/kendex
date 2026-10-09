@@ -1,0 +1,1 @@
+- Read and edit single-line TOML literal settings in the desktop app, keeping backslashes and valid quote delimiters. Private credential file selection also accepts these settings.

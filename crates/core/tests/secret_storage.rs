@@ -622,18 +622,31 @@ fn a_private_file_nothing_can_read_answers_unknown() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_read_says_where_a_value_would_go() {
-    let f = fixture(TEMPLATE);
-    let missing = read_secrets(&f.project, None, None).unwrap();
-    assert_eq!(missing.view.destination.file, ".env.local");
-    assert!(!missing.view.destination.chosen);
+    for (settings, chosen) in [
+        (None, false),
+        (
+            Some(
+                "[env]\nCOMMAND_SAFETY_DENY_PATTERN = 'a\\b[.]c'\nKENDEX_ENV_FILE = '.env.local'\n",
+            ),
+            true,
+        ),
+    ] {
+        let f = fixture(TEMPLATE);
+        if let Some(settings) = settings {
+            fs::write(f.project.join("kendex.settings.toml"), settings).unwrap();
+        }
+        let missing = read_secrets(&f.project, settings, None).unwrap();
+        assert_eq!(missing.view.destination.file, ".env.local");
+        assert_eq!(missing.view.destination.chosen, chosen);
 
-    fs::write(f.private(".env.local"), "").unwrap();
-    fs::write(f.project.join(".gitignore"), "/.env.local\n").unwrap();
-    let there = read_secrets(&f.project, None, None).unwrap();
-    assert_eq!(
-        there.view.destination.state,
-        kendex_core::settings_secret::DestinationState::Ready
-    );
+        fs::write(f.private(".env.local"), "").unwrap();
+        fs::write(f.project.join(".gitignore"), "/.env.local\n").unwrap();
+        let there = read_secrets(&f.project, settings, None).unwrap();
+        assert_eq!(
+            there.view.destination.state,
+            kendex_core::settings_secret::DestinationState::Ready
+        );
+    }
 }
 
 /// Every regular file under a directory, following no link.

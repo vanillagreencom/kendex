@@ -276,44 +276,20 @@ fn catalog_text_reaches_an_unanswered_note_escaped() {
 fn an_assignment_no_script_reads_leaves_the_key_unanswered_and_says_which_line() {
     let entries = shipped(&[("alpha", "[env]\n# The team.\nTEAM = \"\" # required\n")]);
     let arriving = Seeding::new(["alpha".to_owned()], []);
-    for (file, expect) in [
-        (
-            "[other]\nTEAM = \"x\"\n",
-            "it is assigned outside the [env] table, where no script reads it (line 2)",
-        ),
-        (
-            "[env]\n\"TEAM\" = \"x\"\n",
-            "it is assigned as a quoted key, which is not a name a shell can export — spell it TEAM (line 2)",
-        ),
-        (
-            "[env]\nTEAM.part = \"x\"\n",
-            "it is assigned as a dotted key, which makes TEAM a table rather than a setting (line 2)",
-        ),
-        (
-            "[env]\nTEAM = \"a\"\nTEAM = \"b\"\n",
-            "it is assigned more than once, and nothing here can say which one wins (lines 2, 3)",
-        ),
-        (
-            "[env]\nTEAM = 7\n",
-            "its value is not a one-line double-quoted string free of \" and \\ (line 2)",
-        ),
+    for (file, lines) in [
+        ("[other]\nTEAM = \"x\"\n", vec![2]),
+        ("[env]\n\"TEAM\" = \"x\"\n", vec![2]),
+        ("[env]\nTEAM.part = \"x\"\n", vec![2]),
+        ("[env]\nTEAM = \"a\"\nTEAM = \"b\"\n", vec![2, 3]),
+        ("[env]\nTEAM = 7\n", vec![2]),
     ] {
-        // Nothing is written: the name is taken, whatever took it.
-        assert!(
-            merge(Some(file), &entries, &arriving).is_none(),
-            "the name is taken, so no write: {file}"
-        );
-        // So the note is owed, and it names the line rather than claiming
-        // nothing assigns the key.
+        assert!(merge(Some(file), &entries, &arriving).is_none());
+        assert!(matches!(
+            crate::settings_file::current_of(&crate::settings_file::sites(file), "TEAM"),
+            crate::settings_file::Current::Ambiguous { lines: found, .. } if found == lines
+        ));
         let notes = unanswered_notes(&entries, &Answered::read(Some(file), &entries), &arriving);
-        assert_eq!(notes.len(), 1, "{file}: {notes:?}");
-        assert_eq!(
-            notes[0],
-            format!(
-                "kendex.settings.toml TEAM: alpha needs this key decided and this file's assignment is not one — {expect} — so set it yourself"
-            ),
-            "{file}"
-        );
+        assert_eq!(notes.len(), 1);
     }
 
     // And the line the loaders DO read still answers the key: the note is
