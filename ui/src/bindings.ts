@@ -2426,10 +2426,10 @@ export type ForkProvenance_Serialize = {
 	"forked-at": string,
 };
 
-/**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides — v1's field set. */
+/**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides. */
 export type FrontmatterOverrides = FrontmatterOverrides_Serialize | FrontmatterOverrides_Deserialize;
 
-/**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides — v1's field set. */
+/**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides. */
 export type FrontmatterOverrides_Deserialize = {
 	color: string | null,
 	model: string | null,
@@ -2456,7 +2456,7 @@ export type FrontmatterOverrides_Deserialize = {
 	"nickname-candidates": string[] | null,
 };
 
-/**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides — v1's field set. */
+/**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides. */
 export type FrontmatterOverrides_Serialize = {
 	color?: string | null,
 	model?: string | null,
