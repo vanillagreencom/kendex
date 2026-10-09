@@ -66,7 +66,13 @@ PR_COPILOT_REQUESTS = "on"
 # checkout. "overseer" with either identity key empty is refused.
 # values: copilot | overseer
 REVIEW_GATE_REFRESH_REVIEW = "copilot"
+
+# Exact head branch of this repository's kendex refresh pull request.
+# Required when REVIEW_GATE_REFRESH_REVIEW is overseer.
 REVIEW_GATE_REFRESH_BRANCH = ""
+
+# App bot login that authors this repository's kendex refresh pull request.
+# Required when REVIEW_GATE_REFRESH_REVIEW is overseer.
 REVIEW_GATE_REFRESH_AUTHOR = ""
 
 # Seconds to keep waiting for the build to start before treating its
