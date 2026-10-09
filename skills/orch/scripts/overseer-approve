@@ -285,7 +285,7 @@ if [[ "$HOLD_COPILOT" -eq 1 ]]; then
   hold_started="$(date +%s)"
   held_run=""
   while :; do
-    if ! runs="$(GH_TOKEN="$token" orch_copilot_check_runs "$REPO" "$live" 2>"$SCRATCH/err")"; then
+    if ! runs="$(GH_TOKEN="$token" orch_copilot_check_runs "$REPO" "$live" "$PR_NUM" 2>"$SCRATCH/err")"; then
       oa_message copilot-read-failed "$PR_NUM" "$REPO" "$live" >&2
       cat -- "$SCRATCH/err" >&2
       exit 1

@@ -36,6 +36,7 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CALLS"
 case "$*" in
+  'api repos/o/r/issues/42/timeline?per_page=100 --paginate --slurp') echo '[[]]' ;;
   'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
     [[ "$*" == "api repos/o/r/commits/$LIVE_HEAD/check-runs?filter=all&per_page=100 --paginate --slurp" ]] || exit 9
     count="$(cat "$CHECK_READS")"
