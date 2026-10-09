@@ -12,8 +12,9 @@
 # diagnostic that leaves the exit status alone. A gate that cannot answer says so
 # on its own channel; nothing it writes can be mistaken for what it found.
 #
-# artifact_content_gates is the single entry point; the individual gates below
-# are its steps and are not called directly by review-artifact-check.
+# review-artifact-check calls artifact_value_count_gate before reading .verdict.
+# It calls artifact_content_gates after the verdict read.
+# The individual content gates below are steps of artifact_content_gates.
 #
 # Rejection details start with `review-artifact-check: <code> key=value ...`.
 # English explanation follows that line. emit_unavailable retains the JSON
