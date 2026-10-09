@@ -89,6 +89,32 @@ job_permissions() { # WORKFLOW JOB
   ' "$1" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
 
+# Evaluate each expression in a workflow-level concurrency value with the
+# same evaluator as job conditions, retaining the text between expressions.
+concurrency_value() { # WORKFLOW KEY CONTEXT_JSON
+  local raw ctx="$3" out="" expr value
+  raw="$(awk -v key="$2" '
+    /^concurrency:/ { on = 1; next }
+    on && /^[^ ]/ { exit }
+    on && $1 == key ":" { sub(/^ *[a-z-]+: */, ""); print }
+  ' "$1")"
+  [ -n "$raw" ] || { printf 'no-concurrency-%s' "$2"; return 0; }
+  while [ -n "$raw" ]; do
+    case "$raw" in
+      *'${{'*)
+        out="$out${raw%%'${{'*}"
+        raw="${raw#*'${{'}"
+        expr="${raw%%'}}'*}"
+        raw="${raw#*'}}'}"
+        value="$(gh_eval value "$ctx" "$expr" | jq -er 'if . == null then "" else tostring end')" || return 1
+        out="$out$value"
+        ;;
+      *) out="$out$raw"; raw="" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 # Whether the job named CI runs on EVENT with every job it needs at RESULT:
 # `yes`, `no`, or the refusal gh_eval printed.
 ci_runs() { # WORKFLOW EVENT RESULT

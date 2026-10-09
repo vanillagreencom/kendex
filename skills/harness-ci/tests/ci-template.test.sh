@@ -34,6 +34,8 @@
 #      and execute no script from it, even when both subject scripts exit 0,
 #      and read the exclusion list from the default branch, even when the
 #      PR adds a row excluding every path.
+#   7. concurrency: two heads of one PR share a group and cancel, while
+#      merge-group and default-branch runs each keep their own group.
 # Must-fail arms plant a lane condition without its status function, one
 # running only on a true verdict, one without its `lanes` term, CI without
 # the waiver, a lane output forwarding the action's `lanes` in place of the
@@ -42,7 +44,8 @@
 # template without merge_group, a render-reach step that fails the job, and
 # an evaluator that refuses every expression, a credential scanner or
 # installer read from the PR, guards checked out at its merge ref, and an
-# exclusion list read from the PR.
+# exclusion list read from the PR, a concurrency group missing its event,
+# and cancellation that also reaches merge groups.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -153,6 +156,41 @@ LANES="$(lane_jobs "$TEMPLATE" | tr '\n' ' ' | sed 's/ $//')"
 assert_eq "CI needs every other job" \
   "$(job_needs "$TEMPLATE" | cut -f1 | grep -vxF "$CI_JOB" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" \
   "$(job_needs "$TEMPLATE" | awk -F '\t' -v j="$CI_JOB" '$1 == j { print $2 }' | tr ',' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+
+# GitHub's pull_request and merge_group events produce separate payloads.
+# The merge-group row uses a run id equal to the PR number, so a group
+# missing event_name collides even without a PR field on the merge group.
+check_concurrency() { # TEMPLATE
+  local workflow event pr run group cancel ctx rows=0
+  while IFS='|' read -r workflow event pr run group cancel; do
+    rows=$((rows + 1))
+    ctx="$(jq -cn --arg w "$workflow" --arg e "$event" --argjson p "$pr" --argjson r "$run" \
+      '{github: {workflow: $w, event_name: $e, run_id: $r}}
+      | if $e == "pull_request" then .github.event = {pull_request: {number: $p}} else . end')"
+    assert_eq "concurrency for $workflow $event PR=$pr run=$run" "$group $cancel" \
+      "$(concurrency_value "$1" group "$ctx") $(concurrency_value "$1" cancel-in-progress "$ctx")"
+  done <<'ROWS'
+CI|pull_request|42|7|CI-pull_request-42|true
+CI|pull_request|42|8|CI-pull_request-42|true
+CI|pull_request|43|7|CI-pull_request-43|true
+Other|pull_request|42|7|Other-pull_request-42|true
+CI|merge_group|0|42|CI-merge_group-42|false
+CI|merge_group|0|43|CI-merge_group-43|false
+CI|push|0|42|CI-push-42|false
+CI|push|0|43|CI-push-43|false
+ROWS
+  require_rows concurrency "$rows"
+  [ "$FAIL" -eq 0 ]
+}
+check_concurrency "$TEMPLATE"
+plant "$TEMPLATE" '-${{ github.event_name }}' '' "$SANDBOX/no-concurrency-event.yml"
+plant "$TEMPLATE" "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" \
+  'cancel-in-progress: true' "$SANDBOX/cancel-all.yml"
+for control in no-concurrency-event cancel-all; do
+  status=0
+  (FAIL=0; check_concurrency "$SANDBOX/$control.yml") >"$SANDBOX/$control.log" 2>&1 || status=$?
+  assert_eq "must-fail: concurrency rows reject $control" 1 "$status"
+done
 
 # --- 2. The job set ---------------------------------------------------------
 
