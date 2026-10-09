@@ -46,7 +46,6 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 ### Consumer refresh review
 
 - This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages (KEN-3338). Each consumer's committed `kendex.settings.toml` `[env]` declares `REVIEW_GATE_REFRESH_REVIEW = "overseer"`, `REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh"` and `REVIEW_GATE_REFRESH_AUTHOR = "vanillagreen-fleet-lanes[bot]"`. A consumer without them gets a Copilot request on that head; add them there through a lane in that repository.
-
 <!-- kendex:project-instructions:end -->
 
 # Orchestration

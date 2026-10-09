@@ -33,7 +33,6 @@ Enforce a rule on the platform where it can hold it (GitHub settings and ruleset
 ### Compatibility
 
 From 1.0, kendex keeps a retired consumer-visible form reading, with one warning that names the new form, until the next major release. This overrides § Cleanup's no-shim line here; the rule is `changelog.d/README.md` § Release standard.
-
 <!-- kendex:project-instructions:end -->
 
 # Code Quality

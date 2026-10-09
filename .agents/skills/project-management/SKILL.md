@@ -72,7 +72,6 @@ Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Sha
   }
 }
 ```
-
 <!-- kendex:project-instructions:end -->
 
 # Project Management
