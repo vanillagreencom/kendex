@@ -12,14 +12,17 @@ if [[ ${1:-} == --help ]]; then
   cat <<'EOF'
 Usage: refresh-ci-proof PR_NUMBER HEAD_SHA --repo OWNER/REPO
 
-Read the latest GitHub Actions check named Classify the diff on HEAD_SHA.
+Read the latest trusted GitHub Actions check named Classify the diff on HEAD_SHA.
 HEAD_SHA is a full lowercase commit SHA. The check and its job must have
-completed successfully on that head. Read the job log's measured render
+completed successfully on that head. Its pull_request run must come from
+an unchanged consumer workflow, excluding HARNESS_CI_REFRESH_CALLER.
+Read the job log's measured render
 class and compare its render-verifier version with Engine version in the
 refresh pull request body. Read every changed path. The only permitted
 workflow path is HARNESS_CI_REFRESH_CALLER from the installed harness-ci.
 Renames also check the old path. This command reads GitHub and writes no
 approval. Run it from the trusted consumer checkout with gh authenticated.
+Raw job logs require gh 2.97.0 or later. Log control bytes stay in the parser.
 
 Success (exit 0):
   refresh-ci-proof: head=SHA class=render measured=true version=VERSION job=ID
@@ -65,20 +68,52 @@ jq -e --arg caller "$HARNESS_CI_REFRESH_CALLER" '
 ' >/dev/null <<<"$files" || refuse workflow-changed
 
 checks="$(gh api "repos/$repo/commits/$head/check-runs?check_name=Classify%20the%20diff&filter=latest&per_page=100" --paginate --slurp)" || refuse ci-proof-missing
-job="$(jq -er --arg head "$head" '
+candidates="$(jq -ec '
   if type == "array" and length > 0 and all(.[]; (.check_runs | type) == "array") and
     ([.[] | .check_runs[]] | length) == .[0].total_count
   then [.[] | .check_runs[] | select(.name == "Classify the diff" and .app.slug == "github-actions")]
   else error("unreadable checks") end |
-  max_by(.id) | select(.head_sha == $head and .status == "completed" and .conclusion == "success") |
-  .id | select(type == "number" and . > 0 and floor == .)
+  if all(.[]; (.id | type == "number" and . > 0 and floor == .)) then .
+  else error("unreadable job identity") end
 ' <<<"$checks")" || refuse ci-proof-missing
-job_metadata="$(gh api "repos/$repo/actions/jobs/$job")" || refuse ci-proof-missing
+trusted='[]'
+rows="$(jq -c '.[]' <<<"$candidates")" || refuse ci-proof-missing
+while IFS= read -r candidate; do
+  [[ -n $candidate ]] || continue
+  job="$(jq -er '.id' <<<"$candidate")" || refuse ci-proof-missing
+  job_metadata="$(gh api "repos/$repo/actions/jobs/$job")" || refuse ci-proof-missing
+  run="$(jq -er --argjson job "$job" '
+    select(.id == $job and .name == "Classify the diff") |
+    .run_id | select(type == "number" and . > 0 and floor == .)
+  ' <<<"$job_metadata")" || refuse ci-proof-missing
+  run_metadata="$(gh api "repos/$repo/actions/runs/$run")" || refuse ci-proof-missing
+  jq -e --argjson run "$run" '
+    .id == $run and (.path | type) == "string" and (.event | type) == "string" and
+    (.head_sha | type) == "string" and (.repository.full_name | type) == "string"
+  ' >/dev/null <<<"$run_metadata" || refuse ci-proof-missing
+  # required_contexts proves ruleset-required source definitions, not these
+  # local CI jobs. The unchanged consumer workflow is trusted here; the
+  # mutable refresh caller cannot supply its own ownership proof.
+  if jq -e --arg head "$head" --arg repo "$repo" --arg caller "$HARNESS_CI_REFRESH_CALLER" '
+    .head_sha == $head and .event == "pull_request" and
+    (.repository.full_name | ascii_downcase) == ($repo | ascii_downcase) and
+    (.path | split("@")[0] | startswith(".github/workflows/") and . != $caller)
+  ' >/dev/null <<<"$run_metadata"; then
+    trusted="$(jq -cn --argjson trusted "$trusted" --argjson check "$candidate" --argjson job "$job_metadata" '
+      $trusted + [{check:$check, job:$job}]
+    ')" || refuse ci-proof-missing
+  fi
+done <<<"$rows"
+selected="$(jq -ec --arg head "$head" '
+  max_by(.check.id) | select(.check.head_sha == $head and .check.status == "completed" and .check.conclusion == "success")
+' <<<"$trusted")" || refuse ci-proof-missing
+job="$(jq -er '.job.id' <<<"$selected")" || refuse ci-proof-missing
+job_metadata="$(jq -ec '.job' <<<"$selected")" || refuse ci-proof-missing
 jq -e --arg head "$head" --argjson job "$job" '
   .id == $job and .head_sha == $head and .name == "Classify the diff" and
   .status == "completed" and .conclusion == "success"
 ' >/dev/null <<<"$job_metadata" || refuse ci-proof-missing
-log="$(gh api "repos/$repo/actions/jobs/$job/logs")" || refuse ci-proof-missing
+log="$(gh api "repos/$repo/actions/jobs/$job/logs" --allow-escape-sequences)" || refuse ci-proof-missing
 # Actions logs prefix each line with a timestamp. Ignore echoed shell commands.
 proof="$(awk '
   { sub(/\r$/, ""); sub(/^[0-9][0-9][0-9][0-9]-[^ ]+ /, "") }

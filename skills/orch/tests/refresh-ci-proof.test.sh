@@ -25,10 +25,15 @@ case "$*" in
   'api repos/o/r/pulls/42/files?per_page=100 --paginate --slurp') cat "$WORLD/files.json" ;;
   'api repos/o/r/commits/'*'/check-runs?check_name=Classify%20the%20diff&filter=latest&per_page=100 --paginate --slurp') cat "$WORLD/checks.json" ;;
   'api repos/o/r/actions/jobs/72') cat "$WORLD/job.json" ;;
-  'api repos/o/r/actions/jobs/72/logs')
+  'api repos/o/r/actions/jobs/74') cat "$WORLD/extra-job.json" ;;
+  'api repos/o/r/actions/runs/20') cat "$WORLD/run.json" ;;
+  'api repos/o/r/actions/runs/30') cat "$WORLD/extra-run.json" ;;
+  'api repos/o/r/actions/jobs/72/logs --allow-escape-sequences')
     [[ ! -e $WORLD/log-failed ]] || exit 1
     cat "$WORLD/log"
     ;;
+  'api repos/o/r/actions/jobs/74/logs --allow-escape-sequences') cat "$WORLD/extra-log" ;;
+  'api repos/o/r/actions/jobs/'*'/logs') exit 1 ;;
   *) printf 'fixture: unexpected=%s\n' "$*" >&2; exit 9 ;;
 esac
 EOF
@@ -42,10 +47,12 @@ world() {
   printf '%s\n' "$HEAD_SHA" > "$WORLD/live"
   printf '[[{"filename":".agents/skills/orch/SKILL.md"}]]\n' > "$WORLD/files.json"
   jq -n --arg head "$HEAD_SHA" '[{total_count:1,check_runs:[{id:72,name:"Classify the diff",app:{slug:"github-actions"},head_sha:$head,status:"completed",conclusion:"success"}]}]' > "$WORLD/checks.json"
-  jq -n --arg head "$HEAD_SHA" '{id:72,name:"Classify the diff",head_sha:$head,status:"completed",conclusion:"success"}' > "$WORLD/job.json"
+  jq -n --arg head "$HEAD_SHA" '{id:72,run_id:20,name:"Classify the diff",head_sha:$head,status:"completed",conclusion:"success"}' > "$WORLD/job.json"
+  jq -n --arg head "$HEAD_SHA" '{id:20,path:".github/workflows/ci.yml",event:"pull_request",head_sha:$head,repository:{full_name:"o/r"}}' > "$WORLD/run.json"
+  printf '2026-10-09T08:00:00.000Z ##[group]Run \033[36;1mclassify the diff\033[0m\r\n' > "$WORLD/log"
   printf '%s\r\n' \
     '2026-10-09T08:00:00.000Z render-verifier: verifier=path version=1.13.0' \
-    '2026-10-09T08:00:01.000Z class: class=render measured=true cause=render-proof' > "$WORLD/log"
+    '2026-10-09T08:00:01.000Z class: class=render measured=true cause=render-proof' >> "$WORLD/log"
   case "$1" in
     render) ;;
     caller) printf '[[{"filename":".github/workflows/kendex-refresh.yml"}]]\n' > "$WORLD/files.json" ;;
@@ -66,6 +73,32 @@ world() {
     partial-checks) jq '.[0].total_count=2' "$WORLD/checks.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/checks.json" ;;
     job-pending) jq '.status="in_progress"' "$WORLD/job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/job.json" ;;
     job-head) jq '.head_sha="old"' "$WORLD/job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/job.json" ;;
+    caller-origin) jq '.path=".github/workflows/kendex-refresh.yml"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    wrong-run-head) jq '.head_sha="old"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    wrong-run-event) jq '.event="push"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    wrong-run-repo) jq '.repository.full_name="other/r"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    wrong-run-id) jq '.id=30' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    multiple-green|latest-pending|latest-failed|forged-caller)
+      jq '.[0].total_count=2 | .[0].check_runs += [.[0].check_runs[0] + {id:74}]' "$WORLD/checks.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/checks.json"
+      jq '.id=74 | .run_id=30' "$WORLD/job.json" > "$WORLD/extra-job.json"
+      jq '.id=30' "$WORLD/run.json" > "$WORLD/extra-run.json"
+      cp "$WORLD/log" "$WORLD/extra-log"
+      case "$1" in
+        multiple-green) ;;
+        latest-pending|latest-failed)
+          state=in_progress conclusion=null
+          [[ $1 != latest-failed ]] || { state=completed; conclusion='"failure"'; }
+          jq --arg state "$state" --argjson conclusion "$conclusion" '.[0].check_runs[1] += {status:$state,conclusion:$conclusion}' "$WORLD/checks.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/checks.json"
+          jq --arg state "$state" --argjson conclusion "$conclusion" '. += {status:$state,conclusion:$conclusion}' "$WORLD/extra-job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/extra-job.json"
+          ;;
+        forged-caller)
+          printf '[[{"filename":".github/workflows/kendex-refresh.yml"},{"filename":"src/product.ts"}]]\n' > "$WORLD/files.json"
+          jq '.changed_files=2' "$WORLD/pr.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/pr.json"
+          jq '.path=".github/workflows/kendex-refresh.yml"' "$WORLD/extra-run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/extra-run.json"
+          sed 's/class=render/class=standard/' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log"
+          ;;
+      esac
+      ;;
     moved) printf 'old\n' > "$WORLD/live" ;;
     missing-caller) rm "$TMP_ROOT/skills/harness-ci/scripts/lib/change-class.sh" ;;
     *) fail 'fixture row exists' "$1"; exit 1 ;;
@@ -84,13 +117,17 @@ while IFS='|' read -r row cause; do
   world "$row"
   read_proof "$SCRIPT"
   if [[ $cause == pass ]]; then
+    expected_job=72
+    [[ $row != multiple-green ]] || expected_job=74
     assert_eq "$RC" 0 "$row exit" "$WORLD/err"
-    assert_eq "$OUT" "refresh-ci-proof: head=$HEAD_SHA class=render measured=true version=1.13.0 job=72" "$row proof"
+    assert_eq "$OUT" "refresh-ci-proof: head=$HEAD_SHA class=render measured=true version=1.13.0 job=$expected_job" "$row proof"
   else
     assert_eq "$RC" 1 "$row exit" "$WORLD/err"
     assert_eq "$ERR" "refresh-ci-proof: cause=$cause" "$row cause"
     assert_eq "$OUT" '' "$row grants no proof"
   fi
+  assert_not_contains "$OUT" $'\033' "$row output keeps log controls private"
+  assert_not_contains "$(cat "$WORLD/err")" $'\033' "$row errors keep log controls private"
 done <<'EOF'
 render|pass
 caller|pass
@@ -111,15 +148,20 @@ wrong-app|ci-proof-missing
 partial-checks|ci-proof-missing
 job-pending|ci-proof-missing
 job-head|ci-proof-missing
+caller-origin|ci-proof-missing
+wrong-run-head|ci-proof-missing
+wrong-run-event|ci-proof-missing
+wrong-run-repo|ci-proof-missing
+wrong-run-id|ci-proof-missing
+multiple-green|pass
+latest-pending|ci-proof-missing
+latest-failed|ci-proof-missing
+forged-caller|class-not-render
 moved|ci-proof-missing
 EOF
 
-# Each control removes one rule from a disposable production copy. The same
-# row's exit assertion turns red because the defective reader grants proof.
-while IFS='|' read -r row old replacement; do
-  world "$row"
-  mutated="$TMP_ROOT/skills/orch/scripts/mutated"
-  python3 - "$SCRIPT" "$mutated" "$old" "$replacement" <<'PY'
+mutate() {
+  python3 - "$SCRIPT" "$1" "$2" "$3" <<'PY'
 from pathlib import Path
 import sys
 source, target, old, replacement = sys.argv[1:]
@@ -127,8 +169,17 @@ text = Path(source).read_text()
 assert text.count(old) == 1, (old, text.count(old))
 changed = text.replace(old, replacement)
 assert text != changed
-Path(target).write_text(changed)
+with Path(target).open("w", newline="\n") as output:
+    output.write(changed)
 PY
+}
+
+# Each control removes one rule from a disposable production copy. The same
+# row's exit assertion turns red because the defective reader grants proof.
+while IFS='|' read -r row old replacement; do
+  world "$row"
+  mutated="$TMP_ROOT/skills/orch/scripts/mutated"
+  mutate "$mutated" "$old" "$replacement"
   read_proof "$mutated"
   assert_eq "$RC" 0 "$row control makes refusal row red" "$WORLD/err"
   assert_contains "$OUT" 'class=render measured=true' "$row control reaches proof"
@@ -138,14 +189,29 @@ workflow|or . == $caller)|or true)
 partial-files|length) == $metadata.changed_files|length) >= 0
 standard|class=render\ measured=true|class=standard\ measured=true
 unmeasured|class=render\ measured=true|class=render\ measured=false
-pending|.status == "completed" and .conclusion == "success")|true)
-wrong-head|.head_sha == $head and .status == "completed" and .conclusion == "success")|.status == "completed" and .conclusion == "success")
+pending|.check.status == "completed" and .check.conclusion == "success")|true)
+wrong-head|.check.head_sha == $head and .check.status == "completed" and .check.conclusion == "success")|.check.status == "completed" and .check.conclusion == "success")
 wrong-app|and .app.slug == "github-actions"|and true
 partial-checks|length) == .[0].total_count|length) >= 0
 job-pending|  .status == "completed" and .conclusion == "success"|  true
 job-head|.id == $job and .head_sha == $head and .name|.id == $job and .name
+caller-origin|and . != $caller|and true
+forged-caller|and . != $caller|and true
+wrong-run-head|.head_sha == $head and .event|true and .event
+wrong-run-event|.event == "pull_request"|true
+wrong-run-repo|== ($repo|!= (""
+wrong-run-id|.id == $run and (.path|true and (.path
+latest-pending|max_by(.check.id)|min_by(.check.id)
+latest-failed|max_by(.check.id)|min_by(.check.id)
 moved|[[ $live == "$head" ]]|[[ true ]]
 EOF
+
+# Without the documented raw-log option, gh rejects the producer's color bytes.
+world render
+mutate "$TMP_ROOT/skills/orch/scripts/no-raw-option" ' --allow-escape-sequences)' ')'
+read_proof "$TMP_ROOT/skills/orch/scripts/no-raw-option"
+assert_eq "$RC" 1 'raw-log control makes accepted render row red'
+assert_eq "$ERR" 'refresh-ci-proof: cause=ci-proof-missing' 'raw-log control names unavailable proof'
 
 world missing-caller
 read_proof "$SCRIPT"
