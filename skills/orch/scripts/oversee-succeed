@@ -415,6 +415,10 @@
 #
 # Output: every line is `oversee-succeed: <key> <field>=<value>` first, with the
 # explanation and any failing dependency's own stderr under it.
+# From the mode decision on, every live self-succession refusal writes its
+# keyed line to the fleet log and sends it to the owner through lane-mail.
+# Both carry the trigger as mark, unknown before a trigger was judged, and
+# only headroom carries the account and reset. Check and print write neither.
 #
 # Every REFUSAL is on stderr and ends the run at exit 1, with ONE exception:
 # `no-lane-qualifies` ends it at exit 3, which is the status `lanes pick`
@@ -518,6 +522,7 @@ message() { # KEY FIELD=VALUE...
     successor-dialog) text='The successor stopped at a dialog nobody is there to answer; the caller keeps running. The pane line follows.' ;;
     successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
+    owner-notice-unwritten) text='The succession refusal could not reach the owner channel. The key field names the refusal and the step field names the failed operation. The original refusal and its exit status stand.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
     successor-wrong-lane) text='The successor is running on another account than the one picked, so a wrapper on PATH replaced the selection; the caller keeps running.' ;;
     successor-lane-unobserved) text='The account the successor runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
@@ -543,10 +548,49 @@ die_status() { # STATUS KEY FIELD=VALUE...
   shift
   message "$@" >&2
   [[ ! -s "${DEP_ERR:-}" ]] || cat -- "$DEP_ERR" >&2
+  [[ "${MODE:-}" != succeed ]] || fleet_log_refusal "$@"
   exit "$status"
 }
 
 die() { die_status 1 "$@"; }
+
+# One file feeds the fleet log and the owner relay. The keyed line omits the
+# longer explanation so the fleet row does not grow with human-readable prose.
+fleet_log_refusal() { # KEY FIELD=VALUE...
+  local key="$1" dir field mark="${MARK_KIND:-unknown}" marked=0 refusal
+  for field in "$@"; do
+    case "$field" in mark=*) marked=1 ;; esac
+  done
+  if (( ! marked )); then
+    set -- "$@" "mark=$mark"
+    [[ "$mark" != headroom ]] || set -- "$@" "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"
+  fi
+  if ! dir="$(mktemp -d)"; then
+    message fleet-log-unwritten "key=$key" step=mktemp >&2
+    message owner-notice-unwritten "key=$key" step=mktemp >&2
+    return 0
+  fi
+  if ! message "$@" | sed -n '1p' > "$dir/notice"; then
+    message fleet-log-unwritten "key=$key" step=write >&2
+    message owner-notice-unwritten "key=$key" step=write >&2
+  else
+    if ! ol_fleet_log "$dir/notice" "$dir/record" "$dir/err"; then
+      message fleet-log-unwritten "key=$key" step=append >&2
+      [[ ! -s "$dir/err" ]] || cat -- "$dir/err" >&2
+    fi
+    if ! "$SCRIPT_DIR/lane-mail" notice --item overseer --to owner --file "$dir/notice" >/dev/null 2>"$dir/err"; then
+      IFS= read -r refusal < "$dir/err" || refusal=""
+      # lane-mail refuses text the owner already received within its day window.
+      case "$refusal" in
+        'lane-mail: duplicate id='* | 'lane-mail: owner-notice-repeated='*) ;;
+        *)
+          message owner-notice-unwritten "key=$key" step=send >&2
+          [[ ! -s "$dir/err" ]] || cat -- "$dir/err" >&2 ;;
+      esac
+    fi
+  fi
+  rm -rf -- "${dir:?}"
+}
 
 # Validation reads ASCII classes, whatever the caller's locale.
 matches() { # VALUE REGEX
@@ -1501,11 +1545,9 @@ message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}" "trust=${LAN
 # ol_session_abandon, the same one `oversee launch` runs; the words are this
 # script's.
 SUCC_PANE="" SUCC_WINDOW=""
-# A refusal the fleet log carries too (header, Output), through
-# lib/overseer-launch.sh § ol_fleet_log_notice.
+# die_status reports the refusal after the successor has been closed.
 abandon() {
   ol_session_abandon || { message record-unwritten field=overseer step=restore >&2; [[ -z "$OL_DETAIL" ]] || printf '%s\n' "$OL_DETAIL" >&2; }
-  [[ "$MODE" != succeed ]] || ol_fleet_log_notice "$@"
   die "$@"
 }
 # A shell tool that times out signals this script. The traps are set before

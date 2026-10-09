@@ -1009,8 +1009,8 @@ ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # the fleet log's time from its own clock, so the record written here and the
 # one an overseer writes by hand are dated by one reader. Every overseer notice
 # the fleet log carries goes through here: the watch's, at its start and from
-# its passes, oversee-succeed's refusal of a self-succession once its
-# successor launch began, and either launcher's `checkout-unsynced`.
+# its passes, oversee-succeed's refusal of a live self-succession, and either
+# launcher's `checkout-unsynced`.
 ol_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...]
   local notice="$1" record="$2" errf="$3"
   shift 3

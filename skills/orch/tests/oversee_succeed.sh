@@ -451,6 +451,98 @@ recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/
 orec() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 fleet_state
 
+# The owner relay consumes keyed refusal lines. Every refusal uses the same
+# channel contract, including failures before a mark could be measured.
+OWNER_NOTICES="$TMP_ROOT/work/tmp/lane-mail/overseer/to-overseer.jsonl"
+refusal_evidence() { # KEY
+  jq -nr --arg prefix "oversee-succeed: $1 " --slurpfile state "$FLEET_STATE" --slurpfile mail "$OWNER_NOTICES" '
+    [$state[0].fleet_log[]? | select(.kind == "close" and .item == "overseer" and (.text | startswith($prefix)))] as $rows
+    | [$mail[] | select(.kind == "notice" and .to == "owner" and (.text | startswith($prefix)))] as $notices
+    | ($rows[0].text // "" | split(" ")) as $fields
+    | [($rows | length),
+       ([$fields[] | select(startswith("mark=")) | ltrimstr("mark=")] | first // "none"),
+       ([$fields[] | select(startswith("account=")) | ltrimstr("account=")] | first // "none"),
+       ([$fields[] | select(startswith("resets=")) | ltrimstr("resets=")] | first // "none"),
+       ($notices | length), ($rows[0].text == $notices[0].text)] | map(tostring) | join("|")'
+}
+refusal_case() { # NAME SCRIPT SCENARIO
+  local name="$1" script="$2" scenario="$3" screen="$MARK" ttl="" pref=claude:fable:high
+  local -a args=()
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  case "$scenario" in
+    headroom)
+      screen="$UNDER_MARK"
+      claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json" ;;
+    lanes) ttl=forever ;;
+    copilot) args=(--harness copilot) ;;
+    window) pref=claude:claude-sonnet-4-5:high ;;
+    check) args=(--check-marks --harness unknown) ;;
+    print) args=(--print-launch-line --harness copilot) ;;
+  esac
+  new_caller "$screen"
+  fleet_state
+  : > "$OWNER_NOTICES"
+  USAGE_TTL="$ttl" SUCCEED_BIN="$script" run_succeed "$name" "$pref" ${args[@]+"${args[@]}"}
+}
+while IFS='|' read -r scenario key status mark account resets; do
+  refusal_case "refusal-$scenario" "$SUCCEED" "$scenario"
+  assert_eq "$RC|$(caller_open)|$(overseers)|$(refusal_evidence "$key")" \
+    "$status|yes|0|1|$mark|$account|$resets|1|true" \
+    "pre-launch $key: one fleet row and one owner notice share the mark and only headroom names an account"
+done <<ROWS
+headroom|no-lane-qualifies|3|headroom|claude|$CLAUDE_USAGE_SESSION_RESET
+copilot|copilot-account-unknown|1|unknown|none|none
+lanes|lanes-failed|1|context|none|none
+window|model-window-unknown|1|context|none|none
+ROWS
+# Dropping the pre-launch fleet row must turn the same evidence assertion red.
+REFUSALCTL="$(mutant_scripts refusalctl oversee-succeed)" || exit 1
+mutate_file "$REFUSALCTL/oversee-succeed" '    if ! ol_fleet_log "$dir/notice" "$dir/record" "$dir/err"; then' '    if ! :; then'
+refusal_case refusal-row-control "$REFUSALCTL/oversee-succeed" headroom
+assert_eq "$RC|$(refusal_evidence no-lane-qualifies)" "3|0|none|none|none|1|false" \
+  "control: skipping the pre-launch row breaks the fleet and owner evidence contract"
+
+# Refusing check and print commands still leave both channels untouched.
+READONLYCTL="$(mutant_scripts refusal-readonlyctl oversee-succeed)" || exit 1
+mutate_file "$READONLYCTL/oversee-succeed" '  [[ "${MODE:-}" != succeed ]] || fleet_log_refusal "$@"' '  fleet_log_refusal "$@"'
+for scenario in check print; do
+  key=invalid-harness
+  [[ "$scenario" != print ]] || key=copilot-account-unknown
+  refusal_case "readonly-$scenario" "$SUCCEED" "$scenario"
+  assert_eq "$RC|$(refusal_evidence "$key")" "1|0|none|none|none|0|true" \
+    "$scenario refuses without writing either channel"
+  refusal_case "readonly-control-$scenario" "$READONLYCTL/oversee-succeed" "$scenario"
+  assert_eq "$RC|$(refusal_evidence "$key")" "1|1|unknown|none|none|1|true" \
+    "control: unconditional reporting breaks $scenario's read-only contract"
+done
+
+# The same refusal after the minute deduplication window takes lane-mail's
+# owner-notice-repeated path. The owner keeps one notice and each run logs.
+while IFS='|' read -r variant age; do
+  script="$SUCCEED"
+  if [[ "$variant" == control ]]; then
+    REPEATCTL="$(mutant_scripts refusal-repeatctl oversee-succeed)" || exit 1
+    mutate_file "$REPEATCTL/oversee-succeed" "        'lane-mail: duplicate id='* | 'lane-mail: owner-notice-repeated='*) ;;" "        'lane-mail: impossible='*) ;;"
+    script="$REPEATCTL/oversee-succeed"
+  fi
+  refusal_case "refusal-repeat-$variant" "$script" headroom
+  jq -c --argjson age "$age" '.at = ((.at | fromdateiso8601) - $age | todate)' "$OWNER_NOTICES" > "$OWNER_NOTICES.aged"
+  mv -- "$OWNER_NOTICES.aged" "$OWNER_NOTICES"
+  SUCCEED_BIN="$script" run_succeed "refusal-repeat-again-$variant" claude:fable:high
+  failures="$(awk '/^oversee-succeed: owner-notice-unwritten / { n++ } END { print n+0 }' <<<"$OUT")"
+  want_failures=0
+  [[ "$variant" != control ]] || want_failures=1
+  assert_eq "$RC|$failures|$(refusal_evidence no-lane-qualifies)" \
+    "3|$want_failures|2|headroom|claude|$CLAUDE_USAGE_SESSION_RESET|1|true" \
+    "repeat $variant: an owner notice already delivered leaves the refusal status and both fleet rows intact"
+done <<'ROWS'
+minute|0
+live|210
+control|210
+ROWS
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+fleet_state
+
 # record_order RECORDER — whether the --context argument was present at the
 # instant RECORDER wrote the caller's record: the order in-pane relies on to
 # hand the success row below its measured reading.
@@ -964,14 +1056,14 @@ rm -f "$TMP_ROOT/idle"
 idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
 idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
 assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")|$(caller_open)|$(overseers)|$(grep -c '^oversee-succeed: watch-' <<<"$OUT")|$(idle_log)" \
-  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0|0|close overseer oversee-succeed: successor-not-working window=@N waited=N The successor never showed a running turn; the caller keeps running." \
+  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0|0|close overseer oversee-succeed: successor-not-working window=@N waited=N mark=context" \
   "never working: refused after its whole budget, caller kept, successor closed, no watch handed over, the refusal in the fleet log"
 assert_eq "$(tm list-windows -t fleet -F '#{window_id} #{window_index}')" "$IDLE_LAYOUT" \
   "an abandoned succession restores the base-index caller and unrelated windows"
 # Its control: an abandon that writes no fleet log row leaves the session that
 # reads the log next with no word that the succession failed.
 IDLECTL="$(mutant_scripts idlectl oversee-succeed)" || exit 1
-mutate_file "$IDLECTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || ol_fleet_log_notice "$@"' '  :'
+mutate_file "$IDLECTL/oversee-succeed" '    if ! ol_fleet_log "$dir/notice" "$dir/record" "$dir/err"; then' '    if ! :; then'
 new_caller "$MARK"
 fleet_state
 touch "$TMP_ROOT/idle"
@@ -982,7 +1074,7 @@ assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-
   "control: an abandon that skips the fleet log row leaves no row"
 # A fleet log that refuses the row: the refusal still closes the successor,
 # keeps the caller and exits 1, and the notice names the refusal and the step
-# before the refusal's own line. The stand-in refuses `append-file` alone, so
+# after the refusal's own line. The stand-in refuses `append-file` alone, so
 # every record write the succession makes still lands.
 LOGFAIL="$(mutant_scripts logfail)" || exit 1
 rm -f -- "${LOGFAIL:?}/workflow-state"
@@ -998,7 +1090,7 @@ touch "$TMP_ROOT/idle"
 VIRTUAL_CLOCK=1 SUCCEED_BIN="$LOGFAIL/oversee-succeed" run_succeed logfail 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "${TMP_ROOT:?}/idle"
 assert_eq "$RC|$(grep -e '^oversee-succeed: fleet-log-unwritten ' -e '^oversee-succeed: successor-not-working ' -e '^fixture: ' <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)|$(idle_log)" \
-  "1|oversee-succeed: fleet-log-unwritten key=successor-not-working step=append;fixture: append refused;oversee-succeed: successor-not-working window=@N waited=N;|yes|0|" \
+  "1|oversee-succeed: successor-not-working window=@N waited=N;oversee-succeed: fleet-log-unwritten key=successor-not-working step=append;fixture: append refused;|yes|0|" \
   "a fleet log that refuses the row leaves the refusal standing: successor closed, caller kept, the notice keyed"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
@@ -2132,7 +2224,7 @@ assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-
   "a dead-pane relaunch whose successor never works writes no fleet log row"
 # Its control: an abandon that logs in every mode writes the row here too.
 DEADLOGCTL="$(mutant_scripts deadlogctl oversee-succeed)" || exit 1
-mutate_file "$DEADLOGCTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || ol_fleet_log_notice "$@"' '  ol_fleet_log_notice "$@"'
+mutate_file "$DEADLOGCTL/oversee-succeed" '  [[ "${MODE:-}" != succeed ]] || fleet_log_refusal "$@"' '  fleet_log_refusal "$@"'
 new_caller "$MARK"
 new_dead_pane
 fleet_state
