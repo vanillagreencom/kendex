@@ -1792,13 +1792,12 @@ jobs:
           - crate: kendex-cli
             leg: whole
     runs-on: macos-latest
-    # CLI job maxima over the 15 successful main-push runs cited at test:
-    # render-lint 478s, rest 760s, verify-lock 682s. Add 25% and round up
-    # to minutes: 10, 16, 15. The new apply-locked leg keeps the unsplit
-    # rest maximum, including compile and partition-check time: 16 minutes.
-    # These samples include cache hits; cold-cache job time is unmeasured.
+    # Every CLI job reserves the existing 20-minute cold-compile allowance,
+    # its measured test bound, and 5 minutes for setup and cleanup. The
+    # calculation and warm-cache evidence are beside the cited runs at test.
+    # Warm job maxima cannot bound a cold build, including the new leg's key.
     # The whole-crate jobs retain their compile + test + setup allowance.
-    timeout-minutes: ${{ matrix.leg == 'render-lint' && 10 || matrix.leg == 'rest' && 16 || matrix.leg == 'verify-lock' && 15 || matrix.leg == 'apply-locked' && 16 || 40 }}
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 33 || matrix.leg == 'rest' && 38 || matrix.leg == 'verify-lock' && 37 || matrix.leg == 'apply-locked' && 38 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1908,6 +1907,11 @@ jobs:
       # 37865455977. Raw job timestamps and rest logs are attached to KEN-3530.
       # Step maxima: render-lint 382s, unsplit rest 618s, verify-lock 538s.
       # Each bound is ceil(maximum * 1.25 / 60): 8, 13, 12 minutes.
+      # CLI job ceilings reserve 20 minutes for compile + this test bound +
+      # 5 minutes for setup: render-lint 33, rest 38, verify-lock 37,
+      # apply-locked 38. Measured warm job maxima are 478s, 760s, 682s
+      # respectively; those cache-hit samples do not measure cold builds.
+      # Cold-cache job time remains unmeasured, so its compile reserve stays.
       # Historical apply_locked:: work finished within 136.405s of the
       # integration harness starting, including preceding and concurrent
       # tests. This is an estimate, not a standalone leg measurement.
