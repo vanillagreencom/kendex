@@ -123,6 +123,78 @@ for row in \
   assert_eq "rc=$RC err=$ERR called=$(called)" "rc=2 err=$want called=$call" "$label"
 done
 
+echo "=== every session send records its result and the account's credit ==="
+# A scripts tree whose lane-mail is a copy, OLD replaced by NEW where given,
+# and whose lanes is a stub: it logs ORCH_LANE_DIRS and its argv, prints
+# STUB_LANES_OUT and exits STUB_LANES_RC. Its workflow-state exits
+# STUB_STATE_UPDATE_RC on an update where that is set. Its path lands in
+# LANE_MAIL_BIN.
+credit_scripts() { # NAME [OLD NEW]
+  local dir
+  dir="$(mutant_scripts "$1" lane-mail)" || exit 1
+  [[ $# -lt 3 ]] || mutate_file "$dir/lane-mail" "$2" "$3"
+  rm -- "${dir:?}/lanes" "${dir:?}/workflow-state"
+  cat > "$dir/lanes" <<'EOF'
+#!/usr/bin/env bash
+printf 'dirs=%s argv=%s\n' "${ORCH_LANE_DIRS:-}" "$*" >> "$STUB_LANES_LOG"
+printf '%s\n' "${STUB_LANES_OUT:-[]}"
+exit "${STUB_LANES_RC:-0}"
+EOF
+  cat > "$dir/workflow-state" <<EOF
+#!/usr/bin/env bash
+[[ -z "\${STUB_STATE_UPDATE_RC:-}" || " \$* " != *" update "* ]] || exit "\$STUB_STATE_UPDATE_RC"
+exec "$REPO_ROOT/skills/orch/scripts/workflow-state" "\$@"
+EOF
+  chmod +x "$dir/lanes" "$dir/workflow-state"
+  LANE_MAIL_BIN="$dir/lane-mail"
+}
+ACCOUNT="$TMP_ROOT/.eclaude"
+listing() { # CREDITS-JSON — one lanes list --json record for the account
+  jq -cn --arg dir "$ACCOUNT" --argjson c "$1" '[{config_dir: "/other", credits: {remaining_dollars: 99, locked_reason: null}}, {config_dir: $dir, credits: $c}]'
+}
+# The send's record: the type of its at, its result, its credit, and whether
+# its text carries the CLI's words.
+send_record() { # CLI-WORDS
+  jq -c --arg cli "$1" '.lanes[] | select(.item == "CC-1") | .directive_send
+    | if . == null then null else [(.at | type), .result, .credit, (.text | contains($cli))] end' "$STATE/workflow-state-oversee.json"
+}
+clear_send() {
+  jq '.lanes |= map(del(.directive_send))' "$STATE/workflow-state-oversee.json" > "$STATE/next.json"
+  mv -- "$STATE/next.json" "$STATE/workflow-state-oversee.json"
+}
+credit_scripts credit
+OPEN_CREDIT='{"remaining_dollars":12.5,"locked_reason":null}'
+LOCKED_CREDIT='{"remaining_dollars":0,"locked_reason":"spend_limit"}'
+# LABEL|claude answer|lanes listing|lanes exit|send exit|CLI words|recorded result|recorded credit
+for row in \
+  "a delivered send|{\"ok\":true}|$(listing "$OPEN_CREDIT")|0|0||sent|$OPEN_CREDIT" \
+  "an archived session|$ARCHIVED|$(listing "$LOCKED_CREDIT")|0|2|is archived|archived|$LOCKED_CREDIT" \
+  "a failed send and a failed credit read|$MISSING|[]|1|2|Session not found|failed|\"unread\"" \
+  "a listing with no credit body|{\"ok\":true}|$(listing null)|0|0||sent|\"unread\""; do
+  IFS='|' read -r label answer lanes lanes_rc want_rc cli result credit <<<"$row"
+  clear_send
+  rm -f -- "${TMP_ROOT:?}/lanes.log"
+  lm STUB_CLAUDE_OUT="$answer" STUB_LANES_OUT="$lanes" STUB_LANES_RC="$lanes_rc" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
+  assert_eq "rc=$RC record=$(send_record "$cli")" "rc=$want_rc record=[\"number\",\"$result\",$credit,true]" \
+    "$label: the lane record holds the send's result, its words and the credit reading"
+  assert_eq "$(cat "$TMP_ROOT/lanes.log")" "dirs=$ACCOUNT argv=list --harness claude --local --json" \
+    "$label: the credit is read for the record's account alone"
+done
+# A record write that fails leaves the send's own outcome standing.
+clear_send
+lm STUB_STATE_UPDATE_RC=1 STUB_LANES_OUT="$(listing "$OPEN_CREDIT")" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
+assert_eq "rc=$RC out=$OUT err=$ERR" \
+  "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD err=lane-mail: send-unrecorded=CC-1" \
+  "a record that cannot be written is noted and the delivery stands"
+clear_send
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+credit_scripts credit-unrecorded '  lm_send_record "$answer" "$cause"
+' ''
+lm STUB_CLAUDE_OUT="$ARCHIVED" STUB_LANES_OUT="$(listing "$LOCKED_CREDIT")" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
+assert_eq "record=$(send_record "is archived")" "record=null" \
+  "control: a send that records nothing fails the record rows"
+unset LANE_MAIL_BIN
+
 echo "=== a lane on a mailbox kind keeps its mailbox ==="
 lm ORCH_LANE_HOST="$OTHER_HOST_PROVIDER" -- send --item CC-2 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
 assert_eq "rc=$RC called=$(called) lines=$(wc -l < "$CHECKOUT/tmp/lane-mail/CC-2/to-lane.jsonl" | tr -d ' ')" "rc=0 called=no lines=1" \

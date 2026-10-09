@@ -96,6 +96,10 @@ case "$verb" in
     expr="$1"
     jq "${args[@]}" "$expr" "$LANE_CLOSE_STATE" >"$LANE_CLOSE_STATE.next"
     mv -- "$LANE_CLOSE_STATE.next" "$LANE_CLOSE_STATE" ;;
+  append-file)
+    [[ "${LANE_CLOSE_APPEND_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_APPEND_FAIL"
+    jq --arg f "$1" --slurpfile e "$2" '.[$f] = ((.[$f] // []) + $e)' "$LANE_CLOSE_STATE" >"$LANE_CLOSE_STATE.next"
+    mv -- "$LANE_CLOSE_STATE.next" "$LANE_CLOSE_STATE" ;;
   *) exit 2 ;;
 esac
 EOF
@@ -2139,6 +2143,45 @@ MUTANT="$(mutant cloud-window-order '    remove_item_files
     remove_item_files')"
 assert_eq "$(cloud_files_refused "$MUTANT")" 'rc=1 refused=1 kill=1' \
   'control: a stop=none close that kills the window before the files go fails the kill=0 pin'
+
+echo '=== a cloud lane closed after a directive logs the send cause ==='
+# The record's directive_send, lane-mail's reading at the send, reaches one
+# fleet-log close row as its keyed readings; a record with none logs nothing.
+cloud_send_close() { # SCRIPT SEND
+  : >"$LANE_CLOSE_WORKTREE_CALLS"
+  cloud_state
+  jq --argjson send "$2" '.lanes[0].directive_send = $send' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
+  LANE_CLOSE_WORKTREE_MERGED=0 run_close "$1"
+}
+# rc, record status, and per fleet-log row its kind, item and keyed readings.
+cloud_send_logged() {
+  printf 'rc=%s status=%s rows=%s' "$RC" "$(jq -r '.lanes[0].status' "$STATE")" \
+    "$(jq -c '[.fleet_log[]? | [.kind, .item, (.text | [scan("(?:send|credit|locked|cli)=[^ ]*")] | join(" "))]]' "$STATE")"
+}
+# LABEL|directive_send|logged readings, none for no row
+for row in \
+  'a credit read|{"at":1,"result":"failed","text":"exit=1 Session\n  not found","credit":{"remaining_dollars":4.5,"locked_reason":null}}|send=failed credit=4.5 locked=none cli=exit=1' \
+  'a locked credit|{"at":1,"result":"archived","text":"archived","credit":{"remaining_dollars":0,"locked_reason":"out_of_credit"}}|send=archived credit=0 locked=out_of_credit cli=archived' \
+  'an unread credit|{"at":1,"result":"sent","text":"","credit":"unread"}|send=sent credit=unread cli=' \
+  'no directive sent|null|none'; do
+  IFS='|' read -r label send want <<<"$row"
+  rows='[]'
+  [[ "$want" == none ]] || rows="$(jq -cn --arg t "$want" '[["close", "KEN-1", $t]]')"
+  cloud_send_close "$SCRIPT" "$send"
+  assert_eq "$(cloud_send_logged)" "rc=0 status=done rows=$rows" "$label: the close logs the send's cause readings" "$TMP_ROOT/err"
+done
+LANE_CLOSE_APPEND_FAIL=1 cloud_send_close "$SCRIPT" '{"at":1,"result":"sent","text":"","credit":"unread"}'
+assert_eq "rc=$RC refused=$(grep -c '^lane-close: fleet-log-failed item=KEN-1 cause=append$' "$TMP_ROOT/err" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 refused=1 status=done' 'a fleet-log row that cannot be written refuses with the record done'
+MUTANT="$(mutant cloud-send-log '    log_send_cause
+' '')"
+cloud_send_close "$MUTANT" '{"at":1,"result":"failed","text":"x","credit":"unread"}'
+assert_eq "$(cloud_send_logged)" 'rc=0 status=done rows=[]' \
+  'control: a stop=none close that skips the send cause fails the logged row'
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+MUTANT="$(mutant cloud-send-refuse '|| { rm -f -- "$file"; message fleet-log-failed "item=$ITEM" "cause=append" >&2; exit 1; }' '|| true')"
+LANE_CLOSE_APPEND_FAIL=1 cloud_send_close "$MUTANT" '{"at":1,"result":"sent","text":"","credit":"unread"}'
+assert_eq "rc=$RC" 'rc=0' 'control: an append that fails read as written fails the refusal row'
 
 echo '=== a cloud close deletes the item branch its default branch contains ==='
 # A cloud session pushes its commits to origin, so the local item branch

@@ -363,6 +363,16 @@ The long pass's events, checked and reported in this order:
                              digest. Reported once
                              and again every ORCH_OVERSEER_MARK_REPEAT passes
                              while it stands; a change starts a fresh window
+  EVENT cloud-stall-closed <item> directive_age=<secs>
+                             in place of a start-stalled or lane-stalled line:
+                             the lane's record carries the directive_send
+                             lane-mail wrote, sent at or after the lane last
+                             moved, ORCH_CLOUD_STALL_MINUTES ago, and nothing
+                             was pushed since, so the watch closed the lane
+                             through lane-close, whose lane-closed lines come
+                             first and whose fleet-log row names the send's
+                             cause; the item waits on a hosted relaunch on its
+                             branch
   EVENT lane-long <item> age=<secs> review_rounds=<n> repeated_class_rounds=<n> stage=<step>
                              a running or parked --state record is
                              ORCH_WATCH_LANE_AGE_SECS past its launched_at,
@@ -1019,6 +1029,10 @@ Environment:
                               lane-stalled goes out, a positive whole number,
                               default 3600, provisional until a cloud lane run
                               measures one
+  ORCH_CLOUD_STALL_MINUTES    minutes a stalled cloud lane may leave its
+                              recorded directive unanswered before the watch
+                              closes it, cloud-stall-closed, a positive whole
+                              number, default 30
   ORCH_WATCH_LANE_AGE_SECS    seconds after a record's launched_at a running
                               or parked lane is reported lane-long, a positive
                               whole number, default 12600
@@ -1128,6 +1142,7 @@ ow_message() { # REASON FIELD=VALUE...
     host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. Nothing of the fleet is carried.' ;;
     lane-age-secs-invalid) text='ORCH_WATCH_LANE_AGE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-long-rounds-unread) text='The lane workflow state or its round counts could not be read. The lane-long event carries unavailable counts.' ;;
+    cloud-stall-minutes-invalid) text='ORCH_CLOUD_STALL_MINUTES takes a positive whole number of minutes, with no leading zero.' ;;
     lane-stall-secs-invalid) text='ORCH_WATCH_LANE_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-stall-unread) text='The digest of a lane pull request body could not be taken, so whether the lane moved is unknown. The watch stops rather than report a stall it did not measure.' ;;
     pr-read-failed) text='The open pull request on the item branch could not be listed, so this pass settles nothing about a lane whose kind writes no file this watch reads: no start-stalled or lane-stalled goes out for it and its rows stand. gh'"'"'s own words follow.' ;;

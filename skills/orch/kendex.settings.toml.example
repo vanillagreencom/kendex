@@ -350,6 +350,12 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # start-stalled, on every harness.
 # ORCH_WATCH_START_STALL_SECS = "600"
 
+# Minutes a stalled Claude cloud lane may leave its one directive unanswered,
+# nothing pushed, before oversee-watch closes it as cloud-stall-closed for a
+# hosted relaunch on its branch. A fleet that sees repeated cloud stalls drops
+# cloud from ORCH_LANE_PREFERENCE instead of raising this.
+# ORCH_CLOUD_STALL_MINUTES = "30"
+
 # Age threshold in seconds for lane-long on a running or parked lane.
 # Repeat schedule: oversee-watch --help, event lane-long.
 # ORCH_WATCH_LANE_AGE_SECS = "12600"

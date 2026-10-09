@@ -18,12 +18,15 @@ LAUNCHED_EPOCH="$(date -u -d "$LAUNCHED" +%s 2>/dev/null || date -u -j -f '%Y-%m
 
 # One running claude-cloud record, issue-1, its mail_root the local worktree
 # its launch made, which holds no status file, and WINDOW its window, none
-# where it is not given.
+# where it is not given. DIRECTIVE_AGE, where set, is the age in seconds past
+# LAUNCHED at which lane-mail recorded a directive sent to it.
 cloud_state() { # [WINDOW]
   mkdir -p "$STUB_DIR/wt/issue-1"
-  jq -n --arg root "$STUB_DIR/wt/issue-1" --arg at "$LAUNCHED" --arg window "${1:-}" '{issue_id: "oversee", triaged: [], lanes: [
+  jq -n --arg root "$STUB_DIR/wt/issue-1" --arg at "$LAUNCHED" --arg window "${1:-}" \
+    --arg sent "${DIRECTIVE_AGE:+$((LAUNCHED_EPOCH + DIRECTIVE_AGE))}" '{issue_id: "oversee", triaged: [], lanes: [
     {item: "issue-1", window: (if $window == "" then null else $window end), host: "claude-cloud", kind: "claude-cloud", mail_root: $root, harness: "claude",
-     session_id: "session_01CLOUD", launched_at: $at, running_at: $at, status: "running"}]}' > "$STUB_DIR/state.json"
+     session_id: "session_01CLOUD", launched_at: $at, running_at: $at, status: "running"}
+    + (if $sent == "" then {} else {directive_send: {at: ($sent | tonumber), result: "sent", text: "", credit: "unread"}} end)]}' > "$STUB_DIR/state.json"
 }
 # open_pr HEAD BODY — the item branch's open pull request, or none where HEAD
 # is empty.
@@ -43,13 +46,23 @@ printf '%s\n' "\$*" >> "\$STUB_DIR/mail.calls"
 exec "$REPO_ROOT/skills/orch/scripts/lane-mail" "\$@"
 EOF
 chmod +x "$MAIL_LOG_BIN"
+# The cloud close as lane-close answers it for a stop=none record: it logs
+# its argv to the case's lane-close.args and keeps the session.
+CLOSE_BIN="$TMP_ROOT/cloud-close"
+cat > "$CLOSE_BIN" <<'EOF'
+#!/usr/bin/env bash
+if [[ " $* " == *" --terminal-state "* ]]; then printf 'open\n'; exit 0; fi
+printf '%s\n' "$*" >> "$STUB_DIR/lane-close.args"
+printf 'lane-close: host-kept kind=claude-cloud session=session_01CLOUD\n'
+EOF
+chmod +x "$CLOSE_BIN"
 # watch AGE [ENV=VAL...] — one pass at LAUNCHED + AGE seconds; EVENTS holds its
 # EVENT lines joined by `|`, the heartbeat left out, and RC its status.
 watch() {
   local age="$1" out
   shift
   printf '%s\n' "$((LAUNCHED_EPOCH + age))" > "$STUB_DIR/now.epoch"
-  out="$(WATCH_BIN="${CLOUD_WATCH:-${WATCH_BIN:-}}" run_watch OVERSEE_WATCH_LANE_MAIL="$MAIL_LOG_BIN" ORCH_WATCH_LANE_STALL_SECS=1800 "$@" -- \
+  out="$(WATCH_BIN="${CLOUD_WATCH:-${WATCH_BIN:-}}" run_watch OVERSEE_WATCH_LANE_MAIL="$MAIL_LOG_BIN" OVERSEE_WATCH_LANE_CLOSE="$CLOSE_BIN" ORCH_WATCH_LANE_STALL_SECS=1800 "$@" -- \
     --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null)" && RC=0 || RC=$?
   EVENTS="$(grep '^EVENT ' <<<"$out" | grep -v '^EVENT heartbeat' | paste -sd '|' - || true)"
 }
@@ -95,6 +108,38 @@ CASE_LABEL="the body changes" stall_case stall_body \
   "100|abc111|## Lane status working||" "1900|abc111|## Lane status pushed fix||"
 CASE_LABEL="the head changes" stall_case stall_head \
   "100|abc111|## Lane status working||" "1900|abc222|## Lane status working||"
+
+echo "=== a directive left unanswered past ORCH_CLOUD_STALL_MINUTES closes the lane ==="
+# The record's directive went out at DIRECTIVE_AGE; the default bound is 30
+# minutes. A close runs the harness's lane-close stub, whose argv the closes
+# row reads.
+CLOSED="EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1800"
+closes() { awk 'END { print NR + 0 }' "$STUB_DIR/lane-close.args" 2>/dev/null || echo 0; }
+# LABEL|NAME|DIRECTIVE_AGE|rows as stall_case takes them
+for row in \
+  "a stalled pull request with no push since the directive|stall_bound|2000|100,abc111,b,;1900,abc111,b,EVENT lane-stalled issue-1 age=1800;3799,abc111,b,;3800,abc111,b,$CLOSED" \
+  "a head pushed after the directive|stall_bound_moved|2000|100,abc111,b,;1900,abc111,b,EVENT lane-stalled issue-1 age=1800;2100,abc222,b,;3800,abc222,b,;3900,abc222,b,EVENT lane-stalled issue-1 age=1800" \
+  "a lane that never opened its pull request|start_bound|700|600,,,EVENT start-stalled issue-1 age=600;2499,,,;2500,,,$CLOSED"; do
+  IFS='|' read -r label name sent steps <<<"$row"
+  IFS=';' read -r -a passes <<<"$steps"
+  stall_rows=()
+  for step in "${passes[@]}"; do
+    IFS=',' read -r age head body want <<<"$step"
+    stall_rows+=("$age|$head|$body|$want")
+  done
+  DIRECTIVE_AGE="$sent" CASE_LABEL="$label" stall_case "$name" "${stall_rows[@]}"
+  want_closes=0
+  [[ "$steps" != *cloud-stall-closed* ]] || want_closes=1
+  assert_eq "closes=$(closes) args=$(head -n 1 "$STUB_DIR/lane-close.args" 2>/dev/null || true)" \
+    "closes=$want_closes args=$([[ "$want_closes" -eq 0 ]] || printf -- '--state-dir %s issue-1' "$STUB_DIR")" \
+    "$label: lane-close runs only past the bound" "$STUB_DIR/err"
+done
+new_case cloud_bound_invalid
+cloud_state
+open_pr abc111 b
+watch 100 ORCH_CLOUD_STALL_MINUTES=0
+assert_eq "rc=$RC refused=$(grep -c '^oversee-watch: cloud-stall-minutes-invalid value=0' "$STUB_DIR/err" || true)" "rc=2 refused=1" \
+  "a bound of zero minutes is refused"
 
 echo "=== controls ==="
 # cloud_mutant NAME SCRIPT OLD NEW — a copy of the scripts with one rule of
@@ -151,6 +196,15 @@ cloud_mutant stall-repeat lib/watch-host-kinds.sh '    if (( passes == 0 )); the
 CASE_LABEL="control: reported every pass, the quiet pass after a report" stall_case stall_repeat_mutant \
   "100|abc111|## Lane status working||" "1900|abc111|## Lane status working|EVENT lane-stalled issue-1 age=1800" \
   "1960|abc111|## Lane status working|EVENT lane-stalled issue-1 age=1860"
+# shellcheck disable=SC2016
+cloud_mutant bound-none lib/watch-host-kinds.sh '  [[ -n "$at" ]] && (( at >= $2 && PASS_NOW - at >= CLOUD_STALL_SECS )) || return 1' '  return 1'
+DIRECTIVE_AGE=2000 CASE_LABEL="control: without the bound the unanswered lane is left running" stall_case stall_bound_mutant \
+  "100|abc111|b|" "1900|abc111|b|EVENT lane-stalled issue-1 age=1800" "3800|abc111|b|"
+assert_eq "closes=$(closes)" "closes=0" "control: without the bound no lane-close runs" "$STUB_DIR/err"
+# shellcheck disable=SC2016
+cloud_mutant bound-since lib/watch-host-kinds.sh '(( at >= $2 && PASS_NOW' '(( PASS_NOW'
+DIRECTIVE_AGE=2000 CASE_LABEL="control: a directive older than the last push" stall_case stall_bound_since_mutant \
+  "100|abc111|b|" "1900|abc111|b|EVENT lane-stalled issue-1 age=1800" "2100|abc222|b|"   "3900|abc222|b|EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1900"
 unset CLOUD_WATCH
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -115,6 +115,7 @@ message() { # REASON FIELD=VALUE...
     parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch records its cycle and closes a terminal item at merge, or hands an open item to the overseer as parked-merged.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     host-absent) printf '%s\n' "The lane mailbox could not be read, mail-status= being lane-mail's exit, and the provider's list names no sandbox for this terminal item, so no session holds an ask. The record closes with no provider stop or close; its files and window go as in any full close." ;;
+    fleet-log-failed) printf '%s\n' "The lane closed and its record reads done, but the fleet-log row naming the cause of its directive_send could not be written: cause=scratch-unmade a mktemp that failed, cause=append workflow-state's append-file, its own words above. The record keeps directive_send; write the close row by hand from it." ;;
     host-kept) printf '%s\n' 'The host kind has no stop: the session runs on until the operator archives it from the claude.ai sidebar. The record reads done and the local worktree is removed.' ;;
     host-capabilities-unread) printf '%s\n' 'lane-host could not declare the capability line of the host the record names, or declared a stop this close has no arm for; lane-host'"'"'s own words are above this line. Nothing was stopped and the record is unchanged.' ;;
     worktree-remove-failed) printf '%s\n' "The item's worktree on this machine could not be removed; worktree remove names the cause above this line. The record is unchanged, and a second close retries the removal." ;;
@@ -207,7 +208,10 @@ removes the item's files as below, then kills the record's window where a
 pane carries it, the session's local client, then removes its worktree on
 this machine, the record's mail_root, through worktree remove, records it done and prints
 host-kept kind=KIND session=ID, the session the operator archives from the
-claude.ai sidebar. --park refuses on its stop-sandbox --check read.
+claude.ai sidebar. Where the record carries the directive_send lane-mail
+wrote, one fleet-log close row names its result, the CLI's words and the
+account credit read at the send; one that cannot be written refuses as
+fleet-log-failed with the record done. --park refuses on its stop-sandbox --check read.
 Before harness start, close stops the recorded preparation job and closes
 its window. A saved selection continuation uses the started harness's close
 checks. --keep-sandbox ends the harness, closes its window and
@@ -939,6 +943,27 @@ refuse_listed_launch_pane() {
   esac
 }
 
+# A cloud lane closed after a directive carries that send's cause readings,
+# the record's directive_send lane-mail wrote, into one fleet-log close row,
+# so the relaunch decision names them: the send's result and the CLI's words,
+# and the account's cloud credit at the send. A record with none logs nothing.
+# The record already reads done and keeps directive_send, so a row that cannot
+# be written refuses as fleet-log-failed with nothing else to undo.
+log_send_cause() {
+  local row file
+  row="$(jq -c --arg item "$ITEM" '.directive_send | objects
+    | {kind: "close", item: $item, text: ("cloud lane closed; its last directive send=\(.result) "
+        + (.credit | if type == "object" then "credit=\(.remaining_dollars // "none") locked=\(.locked_reason // "none")" else "credit=unread" end)
+        + " cli=\(.text | gsub("\\s+"; " ") | .[0:300])")}' <<<"$record")" \
+    || { message record-invalid "item=$ITEM" "field=directive_send" >&2; exit 1; }
+  [[ -n "$row" ]] || return 0
+  file="$(mktemp)" || { message fleet-log-failed "item=$ITEM" "cause=scratch-unmade" >&2; exit 1; }
+  printf '%s\n' "$row" > "$file"
+  "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} append-file oversee fleet_log "$file" >/dev/null \
+    || { rm -f -- "$file"; message fleet-log-failed "item=$ITEM" "cause=append" >&2; exit 1; }
+  rm -f -- "$file"
+}
+
 # The record's host kind declares whether this machine can stop its lane. A
 # stop=none kind, a Claude cloud session, has no harness or sandbox to reach
 # and no mailbox to ask: the close removes the item's files, then closes the
@@ -963,6 +988,7 @@ case "$host_stop" in
     [[ -x "$WORKTREE" ]] || { message helper-missing "item=$ITEM" "path=$WORKTREE" >&2; exit 1; }
     "$WORKTREE" remove "$mail_root" >&2 || { message worktree-remove-failed "item=$ITEM" "path=$mail_root" >&2; exit 1; }
     update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }
+    log_send_cause
     lane_capability host_kind kind
     message host-kept "kind=$host_kind" "session=$(record_field session_id)"
     exit 0 ;;

@@ -443,6 +443,12 @@ START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 # lane-stalled goes out. Provisional: the first cloud acceptance run sets it.
 LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
 [[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
+# How long a stalled cloud lane may leave its one directive unanswered before
+# the watch closes it for a hosted relaunch: lib/watch-host-kinds.sh
+# cloud_stall_close.
+CLOUD_STALL_MINUTES="${ORCH_CLOUD_STALL_MINUTES:-30}"
+[[ "$CLOUD_STALL_MINUTES" =~ ^[1-9][0-9]*$ ]] || die cloud-stall-minutes-invalid "" "value=$CLOUD_STALL_MINUTES"
+CLOUD_STALL_SECS=$((CLOUD_STALL_MINUTES * 60))
 # Age threshold in seconds for lane-long on a running or parked lane.
 # Repeat schedule: oversee-watch --help, event lane-long.
 LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-12600}"
@@ -1929,6 +1935,11 @@ check_start_stall() {
     age=$((PASS_NOW - running))
     if (( age < START_STALL_SECS )); then
       rows="$(lane_row_clear start-stalled "$rows" "$item")"
+      continue
+    fi
+    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} && cloud_stall_close "$item" "$running"; then
+      lane_row_commit "$rows"
+      [[ -z "$CLOSE_TERMED" ]] || exit 143
       continue
     fi
     passes=0

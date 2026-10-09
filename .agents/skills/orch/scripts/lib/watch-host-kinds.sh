@@ -6,9 +6,9 @@
 # judgement of a lane whose kind declares status=none, which no process read
 # reaches, and the lane-long age of every running or parked lane. Sourced by oversee-watch, and like the rest of its lib/ it reads
 # that script's globals (SCRIPT_DIR, HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN,
-# PASS_NOW, MARK_REPEAT, LANE_STALL_SECS, LANE_AGE_SECS, LANE_AGES,
-# RECORDED_ITEMS) and calls its `die`, `ow_message`,
-# `lane_failure_set` and lane row helpers, and those of lib/lane-gitfile.sh and
+# PASS_NOW, MARK_REPEAT, LANE_STALL_SECS, CLOUD_STALL_SECS, LANE_AGE_SECS,
+# LANE_AGES, RECORDED_ITEMS, FLEET_STATE) and calls its `die`, `ow_message`,
+# `close_hosted_lane`, `lane_failure_set` and lane row helpers, and those of lib/lane-gitfile.sh and
 # lib/lane-capabilities.sh, which that script sources before this file.
 
 # The records host_route sorts by their host kind: the host each hosted record
@@ -255,6 +255,11 @@ check_lane_stall() {
     IFS='|' read -r head digest since passes <<<"$prior"
     age=$((PASS_NOW - since))
     (( age >= LANE_STALL_SECS )) || continue
+    if cloud_stall_close "$item" "$since"; then
+      lane_row_commit "$rows"
+      [[ -z "$CLOSE_TERMED" ]] || exit 143
+      continue
+    fi
     if [[ -z "$passes" ]]; then passes=0
     else passes=$(( passes + 1 )); (( passes < MARK_REPEAT )) || passes=0; fi
     if (( passes == 0 )); then
@@ -265,6 +270,26 @@ check_lane_stall() {
   done
   rows="$(lane_row_prune lane-stalled "$rows" ${items[@]+"${items[@]}"})"
   lane_row_commit "$rows"
+}
+
+# A stalled cloud lane that answered no directive: the directive_send
+# lane-mail recorded on its record is at or after SINCE, the last move the
+# stall check saw, and CLOUD_STALL_SECS old with nothing pushed since. No read
+# of a cloud session's state tells a long step from a dead session (Claude
+# Code 2.1.295 documents none), so the bound decides: close_hosted_lane closes
+# the record through lane-close, whose fleet-log row carries the send's cause
+# readings, and cloud-stall-closed hands the item to the overseer's hosted
+# relaunch on its branch. Status 0 for a lane closed, 1 for one the bound does
+# not reach or whose close did not close it.
+cloud_stall_close() { # ITEM SINCE
+  local at
+  at="$(jq -r --arg item "$1" '[.lanes[]? | objects | select(.item == $item) | .directive_send.at | numbers] | first // empty' <<<"$FLEET_STATE")" \
+    || die state-invalid "" "item=$1" "field=directive_send"
+  [[ -n "$at" ]] && (( at >= $2 && PASS_NOW - at >= CLOUD_STALL_SECS )) || return 1
+  close_hosted_lane "$1" || { PASS_FAILED=1; return 1; }
+  [[ "$CLOSE_RESULT" == closed ]] || return 1
+  echo "EVENT cloud-stall-closed $1 directive_age=$((PASS_NOW - at))"
+  PASS_EVENT=1
 }
 
 # A running or parked lane LANE_AGE_SECS past its record's launched_at, which
