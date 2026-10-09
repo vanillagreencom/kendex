@@ -25,7 +25,10 @@ Options:
                      seconds with the same token. A completed hold exits 5
                      without posting: run check-review-replies on the head
                      again before another approval call. An expired hold
-                     approves as usual. Other approval routes omit this flag
+                     rechecks the exact original live head, then approves
+                     as usual. Every fallback approval passes this flag.
+                     Proved-render refresh and copilot-declined-unchanged
+                     approval routes omit it
   --repo OWNER/REPO  the repository; default GH_REPO, then the working
                      directory (`gh repo view`, then the origin remote).
                      Pass it for a pull request outside the working
@@ -260,15 +263,20 @@ case "$repo_status" in
   *) refuse 1 repo-unresolved ;;
 esac
 
-live_status=0
-live="$(GH_TOKEN="$token" gh api "repos/$REPO/pulls/$PR_NUM" --jq .head.sha 2>"$SCRATCH/err")" \
-  || live_status=$?
-if [[ $live_status -ne 0 || ! "$live" =~ ^[0-9a-f]{40}$ ]]; then
-  oa_message head-read-failed "$PR_NUM" "$REPO" >&2
-  cat -- "$SCRATCH/err" >&2
-  exit 1
-fi
-[[ "$live" == "$HEAD_SHA"* ]] || refuse 4 head-moved "$PR_NUM" "$HEAD_SHA" "$live"
+# The first read accepts a caller's prefix. After a hold, the full original
+# head is the expected value, so a fix push cannot authorize an old head.
+oa_read_live_head() { # EXPECTED_SHA_OR_PREFIX
+  local expected="$1" live_status=0
+  live="$(GH_TOKEN="$token" gh api "repos/$REPO/pulls/$PR_NUM" --jq .head.sha 2>"$SCRATCH/err")" \
+    || live_status=$?
+  if [[ $live_status -ne 0 || ! "$live" =~ ^[0-9a-f]{40}$ ]]; then
+    oa_message head-read-failed "$PR_NUM" "$REPO" >&2
+    cat -- "$SCRATCH/err" >&2
+    exit 1
+  fi
+  [[ "$live" == "$expected"* ]] || refuse 4 head-moved "$PR_NUM" "$expected" "$live"
+}
+oa_read_live_head "$HEAD_SHA"
 if [[ "$HOLD_COPILOT" -eq 1 ]]; then
   hold_secs="${ORCH_COPILOT_HOLD_SECS-600}"
   [[ "$hold_secs" =~ ^[1-9][0-9]*$ ]] || refuse 1 copilot-hold-setting "$hold_secs"
@@ -295,6 +303,7 @@ if [[ "$HOLD_COPILOT" -eq 1 ]]; then
     fi
     if [[ -n "$held_run" && "$waited" -ge "$hold_secs" ]]; then
       oa_message copilot-hold-expired "$PR_NUM" "$REPO" "$live" "$held_run" "$waited" >&2
+      oa_read_live_head "$live"
       break
     fi
     if [[ "$runs" == '[]' ]]; then

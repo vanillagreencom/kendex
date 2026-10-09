@@ -15,6 +15,7 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 TOKEN=ghs_fixtureOverseerReviewToken
 GIVEN=0123456789abcdef0123456789abcdef01234567
 MOVED=fedcba9876543210fedcba9876543210fedcba98
+PREFIX_MOVED=01234567fedcba9876543210fedcba9876543210
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home" "$TMP_ROOT/cwd"
 printf '%s\n' "$TOKEN" > "$TMP_ROOT/token"
 : > "$TMP_ROOT/token-empty"
@@ -25,6 +26,7 @@ INPUT="$TMP_ROOT/input"
 OUT="$TMP_ROOT/out"
 ERR="$TMP_ROOT/err"
 CHECK_READS="$TMP_ROOT/check-reads"
+HEAD_READS="$TMP_ROOT/head-reads"
 CLOCK="$TMP_ROOT/clock"
 SLEEPS="$TMP_ROOT/sleeps"
 
@@ -56,8 +58,13 @@ case "$*" in
     printf '[{"check_runs":[{"name":"CI","status":"in_progress"},{"name":"copilot-pull-request-reviewer","id":71,"status":"completed"}]},{"check_runs":[{"name":"copilot-pull-request-reviewer","id":72,"status":"%s","started_at":%s}]}]\n' "$state" "$started"
     ;;
   'api repos/o/r/pulls/42 --jq .head.sha')
-    if [[ $LIVE_HEAD == fail ]]; then echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi
-    echo "$LIVE_HEAD"
+    count="$(cat "$HEAD_READS")"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$HEAD_READS"
+    head="$LIVE_HEAD"
+    [[ "$count" -eq 1 ]] || head="$AFTER_HOLD_HEAD"
+    if [[ $head == fail ]]; then echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi
+    echo "$head"
     ;;
   'api --method POST repos/o/r/pulls/42/reviews --input -')
     cat > "$INPUT"
@@ -111,6 +118,7 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   [[ -z "$token_file" ]] || setting=("ORCH_OVERSEER_REVIEW_TOKEN_FILE=$token_file")
   : > "$CALLS"
   printf '0\n' > "$CHECK_READS"
+  printf '0\n' > "$HEAD_READS"
   printf '0\n' > "$CLOCK"
   : > "$SLEEPS"
   rm -f -- "$INPUT"
@@ -119,6 +127,7 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
     ${setting[@]+"${setting[@]}"} \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
     CHECK_MODE="${CHECK_MODE-finishing}" CHECK_READS="$CHECK_READS" \
+    HEAD_READS="$HEAD_READS" AFTER_HOLD_HEAD="${AFTER_HOLD_HEAD-$live}" \
     CLOCK="$CLOCK" SLEEPS="$SLEEPS" ORCH_COPILOT_HOLD_SECS="${HOLD_SECS-600}" \
     ORCH_OVERSEER_REVIEW_LOGIN="${REVIEW_LOGIN-review-app[bot]}" \
     "$BASH" "$script" "$@" > "$OUT" 2> "$ERR") || RC=$?
@@ -173,6 +182,27 @@ zero bound|running|yes|0|1|no|0|copilot-hold-setting
 EOF
 unset CHECK_MODE HOLD_SECS
 
+# A review-fix push can change the head during the hold. A caller's short
+# prefix must still bind the full initial head when expiry permits approval.
+CHECK_MODE=running HOLD_SECS=3
+while IFS='|' read -r label after_head given_head want_rc want_key; do
+  AFTER_HOLD_HEAD="$after_head"
+  run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok 42 "$given_head" \
+    --body-file "$TMP_ROOT/body" --repo o/r --hold-copilot
+  posted=no
+  [[ ! -f "$INPUT" ]] || posted=yes
+  last_key="$(sed -n 's/^overseer-approve: \([^ ]*\).*/\1/p' "$ERR" | tail -1)"
+  assert_eq "$RC|$posted|$(cat "$HEAD_READS")|$last_key" \
+    "$want_rc|no|2|$want_key" "$label" "$ERR"
+  assert_eq "$(cat "$SLEEPS")" 3 "$label follows the expired hold" "$ERR"
+done <<EOF
+head moved during hold|$MOVED|$GIVEN|4|head-moved
+same prefix moved during hold|$PREFIX_MOVED|${GIVEN:0:8}|4|head-moved
+head reread failed|fail|$GIVEN|1|head-read-failed
+EOF
+assert_contains "$(cat "$ERR")" 'gh: Not Found (HTTP 404)' 'failed reread keeps the API error' "$ERR"
+unset CHECK_MODE HOLD_SECS AFTER_HOLD_HEAD
+
 CHECK_MODE=finishing
 run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
 assert_eq "$STDERR_KEY" \
@@ -190,6 +220,9 @@ run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
 assert_eq "$(cat "$SLEEPS")|$(sed -n 2p "$ERR")" \
   "3|overseer-approve: copilot-hold-expired pr=42 repo=o/r head=$GIVEN run=72 waited=3" \
   'expiry names the held run and measured duration' "$ERR"
+assert_eq "$(cat "$HEAD_READS")|$(sed -n 4p "$CALLS")" \
+  "2|$TOKEN|api repos/o/r/pulls/42 --jq .head.sha" \
+  'expiry rereads the full live head with the approval token before POST' "$ERR"
 CHECK_MODE=failed HOLD_SECS=600
 run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
 assert_contains "$(cat "$ERR")" 'gh: Resource not accessible by integration (HTTP 403)' \
@@ -284,7 +317,7 @@ assert_contains "$(sed -n '3,$p' "$ERR")" 'kendex-env: ' 'the loader'"'"'s words
 scripts="$(mutant_scripts mutant/orch overseer-approve)"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant/github"
 mutate_file "$scripts/overseer-approve" \
-  '[[ "$live" == "$HEAD_SHA"* ]] || refuse 4 head-moved' 'true || refuse 4 head-moved'
+  '[[ "$live" == "$expected"* ]] || refuse 4 head-moved' 'true || refuse 4 head-moved'
 run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$MOVED" ok "${APPROVE[@]}"
 assert_eq "$RC|$NCALLS|$(cat "$OUT")" "0|2|APPROVED vanillagreen-overseer[bot] fedcba9" \
   'head-check control approves the moved head' "$ERR"
@@ -340,6 +373,35 @@ mutate_file "$scripts/overseer-approve" '"$waited" -ge "$hold_secs"' '"$waited" 
 CHECK_MODE=finishing HOLD_SECS=10
 run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
 assert_eq "$RC|$(cat "$OUT")" '5|' 'bound control refuses after the hold expired' "$ERR"
+unset CHECK_MODE HOLD_SECS
+
+# This control keeps the initial head read, but bypasses only the reread
+# after expiry. The moved-head and failed-read rows above reject its POST.
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" '      oa_read_live_head "$live"' \
+  '      : # oa_read_live_head "$live"'
+CHECK_MODE=running HOLD_SECS=3
+while IFS= read -r after_head; do
+  AFTER_HOLD_HEAD="$after_head"
+  run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+  assert_eq "$RC|$(cat "$HEAD_READS")|$(jq -r .commit_id "$INPUT")" "0|1|$GIVEN" \
+    'reread control approves without checking the post-hold head' "$ERR"
+done <<EOF
+$MOVED
+fail
+EOF
+unset CHECK_MODE HOLD_SECS AFTER_HOLD_HEAD
+
+# The zero-bound row already proves normal refusal. Removing that refusal
+# alone authorizes an immediate approval even while Copilot still runs.
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+mutate_file "$scripts/overseer-approve" \
+  '[[ "$hold_secs" =~ ^[1-9][0-9]*$ ]] || refuse 1 copilot-hold-setting "$hold_secs"' \
+  'true || refuse 1 copilot-hold-setting "$hold_secs"'
+CHECK_MODE=running HOLD_SECS=0
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$CHECK_READS")|$(cat "$SLEEPS")|$(jq -r .commit_id "$INPUT")" "0|1||$GIVEN" \
+  'setting control approves immediately with a zero bound' "$ERR"
 unset CHECK_MODE HOLD_SECS
 
 scripts="$(mutant_scripts mutant/orch lib/copilot-check-runs.sh)"
