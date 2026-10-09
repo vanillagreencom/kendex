@@ -1341,7 +1341,29 @@ table \
   "an alias names an excluded lane as its directory name does|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_EXCLUDE=personal|$LIST|aliases=eclaude,nclaude,openclaude fetched=eclaude,nclaude" \
   "an ORCH_LANE_DIRS whose every entry is excluded still keeps discovery off|ORCH_LANE_DIRS=$H/.eclaude;ORCH_LANE_EXCLUDE=eclaude|$LIST|length=0 fetched=none" \
   "pick never returns a retired lane, even the one with the most headroom|ORCH_LANE_RETIRE=claude=2000-01-01|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude" \
-  "a lane before its retirement date is picked as usual|ORCH_LANE_RETIRE=claude=2999-12-31|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+  "a lane before its retirement date is picked as usual|ORCH_LANE_RETIRE=claude=2999-12-31|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "retirement dates name aliases and directories, including future dates|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_RETIRE=personal=2999-12-31,eclaude=2000-01-01|$LIST|personal.retire_date=2999-12-31 personal.status=ok eclaude.retire_date=2000-01-01 eclaude.status=retired nclaude.retire_date=null"
+RETIRE_EXPECT='personal.retire_date=2999-12-31 personal.status=ok eclaude.retire_date=2000-01-01 eclaude.status=retired nclaude.retire_date=null'
+retire_control="$(mutant_scripts retire-date lanes)"
+mutate_file "$retire_control/lanes" 'retire_date: (if $retire == "" then null else $retire end),' '"_retire_control": (if $retire == "" then null else $retire end),'
+LANES="$retire_control/lanes"
+run_lanes 'ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_RETIRE=personal=2999-12-31,eclaude=2000-01-01' list --harness claude --json
+rc=0
+( FAIL=0; assert_eq "$(observe "$RETIRE_EXPECT")" "$RETIRE_EXPECT" 'retirement dates'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/retire-date-control.log" || rc=$?
+assert_eq "$RC:$rc" '0:1' 'the retirement date row rejects a record without retire_date'
+LANES="$SCRIPTS_DIR/lanes"
+for verb in pick host-accounts check state context; do
+  table "cache-only is refused by $verb||$verb --cache-only|rc=1 key=unknown-option,arg1=--cache-only"
+done
+scope_control="$(mutant_scripts cache-only-scope lanes)"
+mutate_file "$scope_control/lanes" '[[ "$SUB" == list ]] || die unknown-option "$@"; CACHE_ONLY=true;' ': "$SUB" || die unknown-option "$@"; CACHE_ONLY=true;'
+LANES="$scope_control/lanes"
+run_lanes '' pick --cache-only
+scope_expect='rc=1 key=unknown-option,arg1=--cache-only'
+rc=0
+( FAIL=0; assert_eq "$(observe "$scope_expect")" "$scope_expect" 'cache-only flag scope'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/cache-only-scope-control.log" || rc=$?
+assert_eq "$RC:$rc" '3:1' 'the option scope row rejects a parser that accepts cache-only for pick'
+LANES="$SCRIPTS_DIR/lanes"
 printf 'not json' > "$H/.claude/.credentials.json"
 table \
   "a lane past its retirement date is listed as retired, unread and unfetched|ORCH_LANE_RETIRE=claude=2000-01-01|$LIST|claude.status=retired claude.headroom_pct=null fetched=eclaude,nclaude"

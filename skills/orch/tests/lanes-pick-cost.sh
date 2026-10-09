@@ -89,10 +89,10 @@ for homes in 4 8 12; do
   counts+=("$COUNT")
 done
 assert_eq "$((counts[2]-counts[1]))" "$((counts[1]-counts[0]))" 'equal home increments add equal executable calls'
-# Captured from main 6783004931cc4e4d998647bf9c281d138c130143. Only the
-# fixture directory and account number vary; fields, ordering, spaces and
-# final newlines stay pinned. The comparison reads the raw stdout files.
-EXPECTED_LIST_ROW='{"alias":"NAMEclaude","harness":"claude","config_dir":"CONFIG_DIR","measured_through":"local","status":"no_credentials","refreshable":false,"plan":null,"session_5h_pct":null,"weekly_pct":null,"model_pct":null,"model_label":null,"model_buckets":[],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":null,"binding_bucket":null,"binding_resets_at":null,"usage_age_s":null,"resets":{"session":null,"weekly":null,"model":null,"monthly":null},"detail":"no credential file at CONFIG_DIR/.credentials.json","wall":null,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":null,"binding_projected_headroom_pct":null,"session_projected_headroom_pct":null,"session_burn_pct_per_lane_hour":null,"session_charge_hours":null,"projected_headroom_pct":null,"projected_window":null,"verdict":"unmeasured"}'
+# The fixture directory and account number vary; captured fields and the
+# retirement field stay pinned, with ordering, spaces and final newlines.
+# The comparison reads the raw stdout files.
+EXPECTED_LIST_ROW='{"alias":"NAMEclaude","harness":"claude","config_dir":"CONFIG_DIR","retire_date":null,"measured_through":"local","status":"no_credentials","refreshable":false,"plan":null,"session_5h_pct":null,"weekly_pct":null,"model_pct":null,"model_label":null,"model_buckets":[],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":null,"binding_bucket":null,"binding_resets_at":null,"usage_age_s":null,"resets":{"session":null,"weekly":null,"model":null,"monthly":null},"detail":"no credential file at CONFIG_DIR/.credentials.json","wall":null,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":null,"binding_projected_headroom_pct":null,"session_projected_headroom_pct":null,"session_burn_pct_per_lane_hour":null,"session_charge_hours":null,"projected_headroom_pct":null,"projected_window":null,"verdict":"unmeasured"}'
 write_expected_list() { # HOMES FORMAT
   local names width=9 name dir row comma="" header='LANE     '
   case "$1" in
@@ -141,9 +141,9 @@ done
 run_lanes 4 ' work = 2099-01-01 , cclaude = 2000-01-01 ' "$TMP_ROOT/provider" pick json
 printf 'parity: exit=%s record=%s\n' "$RC" "${OUT//$TMP_ROOT/ROOT}"
 assert_eq "$RC" 0 'provider policy fixture picks with the baseline exit'
-# This record is captured from the unpatched script, with only its scratch
-# root replaced. Keep every public field in the comparison.
-EXPECTED='{"alias":"work","harness":"claude","config_dir":"ROOT/home/.aclaude","measured_through":"host","status":"ok","refreshable":false,"plan":null,"session_5h_pct":10,"weekly_pct":20,"model_pct":null,"model_label":null,"model_buckets":[],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":80,"binding_bucket":"weekly","binding_resets_at":null,"usage_age_s":null,"resets":{"session":null,"weekly":null,"model":null,"monthly":null},"detail":null,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":0.1488095238095238,"binding_projected_headroom_pct":80,"session_projected_headroom_pct":90,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":80,"projected_window":{"bucket":"weekly","pct":20,"resets_at":null},"selection_score":80,"effective_headroom_pct":80,"qualifying_count":2}'
+# Keep every captured public field and the retirement field in the
+# comparison, with only the scratch root replaced.
+EXPECTED='{"alias":"work","harness":"claude","config_dir":"ROOT/home/.aclaude","retire_date":"2099-01-01","measured_through":"host","status":"ok","refreshable":false,"plan":null,"session_5h_pct":10,"weekly_pct":20,"model_pct":null,"model_label":null,"model_buckets":[],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":80,"binding_bucket":"weekly","binding_resets_at":null,"usage_age_s":null,"resets":{"session":null,"weekly":null,"model":null,"monthly":null},"detail":null,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":0.1488095238095238,"binding_projected_headroom_pct":80,"session_projected_headroom_pct":90,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":80,"projected_window":{"bucket":"weekly","pct":20,"resets_at":null},"selection_score":80,"effective_headroom_pct":80,"qualifying_count":2}'
 assert_eq "${OUT//$TMP_ROOT/ROOT}" "$EXPECTED" 'provider policy fixture keeps the baseline JSON' "$TMP_ROOT/err"
 rc=0
 err="$(cd "$TMP_ROOT/home" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_RETIRE='cclaude=2000-01-01' \

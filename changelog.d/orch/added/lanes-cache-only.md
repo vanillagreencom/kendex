@@ -1,0 +1,1 @@
+- Account records include their retirement date. `lanes list --cache-only` reads cached usage and credits without usage requests, token renewal, or provider account calls.

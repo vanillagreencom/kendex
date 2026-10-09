@@ -76,10 +76,192 @@ cache_run() { # STATE POLICY COMMAND...
     REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" \
     LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$FIXTURE_DIR" \
+    FETCH_LOG="$TMP_ROOT/fetch-log" FETCH_STATUS="${FETCH_STATUS:-200}" FETCH_RETRY_AFTER=300 \
+    ORCH_LANES_TOKEN_CMD="$TMP_ROOT/token" ORCH_LANES_CLAUDE_CLIENT_ID=fixture-client TOKEN_LOG="$TMP_ROOT/token-log" TOKEN_STATUS="${TOKEN_STATUS:-400}" \
     OVERSEE_WATCH_STATE_DIR="$state" ORCH_LANE_HOST="$PROVIDER" \
     LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts" LANE_HOST_STUB_LOG="$TMP_ROOT/provider-log" \
     "${policy[@]}" "$LANES" "$@")
 }
+
+# Credit values are from the cached usage body, independently of credentials.
+for body in "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.eclaude.json"; do
+  jq '.iguana_necktie = {limit_dollars: 50, used_dollars: 20, remaining_dollars: 30, resets_at: "2099-08-01T06:00:00Z", locked_reason: null}' "$body" > "$body.tmp"
+  mv "$body.tmp" "$body"
+done
+cat > "$TMP_ROOT/token" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'called\n' >> "$TOKEN_LOG"
+printf '%s\n{}\n' "$TOKEN_STATUS"
+STUB
+chmod +x "$TMP_ROOT/token"
+
+cache_only_observed() {
+  local fetched tokens providers
+  fetched="$(sed 's/^\.//' "$TMP_ROOT/fetch-log" | sort | paste -sd, -)"
+  tokens="$(grep -c . "$TMP_ROOT/token-log" || true)"
+  providers="$(grep -c accounts "$TMP_ROOT/provider-log" || true)"
+  printf '%s fetched=%s tokens=%s providers=%s' "$(jq -r '.[] | select(.alias == "claude") | [.status, (.credits.remaining_dollars | tostring), (.usage_age_s | if . == null then "null" else "number" end), (.session_5h_pct | tostring)] | join(":")' "$TMP_ROOT/out")" "${fetched:-none}" "$tokens" "$providers"
+}
+
+# oversee-watch calls this writer after a claimed lane shows the harness's
+# weekly-limit banner. Every cache-only row reads beside that same live wall.
+stage_cache_wall() { # STATE
+  (source "$TEST_DIR/../scripts/lib/lane-claims.sh" && source "$TEST_DIR/../scripts/lib/account-wall.sh" \
+    && OVERSEE_WATCH_STATE_DIR="$1" account_wall_record "" "$H/.claude" "$WALL_UNTIL" "$WALL_NOW" \
+      "$ACCOUNT_WALL_DRAWN""You've hit your weekly limit") \
+    && compgen -G "$1/walls/*.json" >/dev/null \
+    || { echo "stage_cache_wall: no wall record under $1" >&2; exit 1; }
+}
+WALL_NOW="$(date +%s)"
+WALL_UNTIL=$((WALL_NOW + 86400))
+WALL_RESET="$(jq -nr --argjson at "$WALL_UNTIL" '$at | todate')"
+
+cache_only_windows() { # empty|figure
+  jq -r --arg kind "$1" --arg s "$CLAUDE_USAGE_SESSION_RESET" --arg w "$WALL_RESET" '
+    .[] | select(.alias == "claude")
+    | if $kind == "empty" then
+        ([.session_5h_pct, .weekly_pct, .model_pct, .monthly_pct, .headroom_pct,
+          .binding_bucket, .binding_resets_at, .model_label] | all(. == null))
+        and .model_buckets == [] and .credits == null
+        and .resets == {session: null, weekly: null, model: null, monthly: null}
+      else
+        .session_5h_pct == 10 and .weekly_pct == 100 and .model_pct == 5
+        and .monthly_pct == null and .headroom_pct == 0
+        and .model_label == "Opus"
+        and .model_buckets == [{label: "Opus", pct: 5, resets_at: "2099-08-01T06:00:00Z"}]
+        and (.credits | del(.measured_at)) == {unit: "usd", limit_dollars: 50, used_dollars: 20,
+          remaining_dollars: 30, resets_at: "2099-08-01T06:00:00Z", locked_reason: null}
+        and .binding_bucket == "weekly" and .binding_resets_at == $w
+        and .resets == {session: $s, weekly: $w, model: "2099-08-01T06:00:00Z", monthly: null}
+      end' "$TMP_ROOT/out"
+}
+
+for row in 'fresh||ok:30:number:10' 'stale||unreachable:null:null:null' \
+  'widened|--max-age 900|ok:30:number:10' 'ttl-zero||unreachable:null:null:null' \
+  'reset||unreachable:null:null:null' 'refused||refused:null:number:null' \
+  'token-refused||expired:null:number:null' 'expired||ok:30:number:10' \
+  'fresh-token-400||expired:null:number:null' 'fresh-token-403||expired:null:number:null' \
+  'fresh-usage-403||refused:null:number:null' 'fresh-usage-429||rate_limited:30:number:10' \
+  'ttl-zero-429||rate_limited:30:number:10' 'stale-429||rate_limited:30:number:10' \
+  'reset-429||rate_limited:null:number:null' 'old-429||rate_limited:null:number:null' \
+  'cold-429||rate_limited:null:number:null' \
+  'missing-credentials||ok:30:number:10' 'absent||unreachable:null:null:null'; do
+  IFS='|' read -r name args expected <<<"$row"
+  state="$TMP_ROOT/cache-only-$name"
+  make_lane "$H" claude
+  cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  policy=ORCH_LANES_USAGE_TTL=300
+  case "$name" in
+    stale|widened) age_usage_record "$state" "$H/.claude" 600 ;;
+    ttl-zero) policy=ORCH_LANES_USAGE_TTL=0 ;;
+    reset|reset-429)
+      for record in "$state"/usage/*.json; do
+        jq '.usage.five_hour.resets_at = "2000-01-01T00:00:00Z"' "$record" > "$record.tmp"
+        mv "$record.tmp" "$record"
+      done ;;
+    refused|token-refused)
+      age_usage_record "$state" "$H/.claude" 600
+      ;;
+    ttl-zero-429) policy=ORCH_LANES_USAGE_TTL=0 ;;
+    stale-429) age_usage_record "$state" "$H/.claude" 600 ;;
+    old-429) age_usage_record "$state" "$H/.claude" 18001 ;;
+    cold-429) rm -- "${state:?}"/usage/*.json ;;
+    expired) make_lane "$H" claude -3600 ;;
+    missing-credentials) rm -- "${H:?}/.claude/.credentials.json" ;;
+    absent) rm -- "${state:?}"/usage/*.json ;;
+  esac
+  # Normal measurement is the producer of both refusal kinds. Its shipped
+  # writers keep the last figure beside token renewal or usage HTTP failures.
+  code=""
+  case "$name" in
+    token-refused|fresh-token-400|fresh-token-403)
+      code=400; [[ "$name" != fresh-token-403 ]] || code=403
+      make_lane "$H" claude -3600
+      TOKEN_STATUS="$code" cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out" ;;
+    refused|fresh-usage-403|*-429)
+      code=403; [[ "$name" != *-429 ]] || code=429
+      FETCH_STATUS="$code" cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out" ;;
+  esac
+  stage_cache_wall "$state"
+  : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
+  # args contains only the literal --max-age row above.
+  cache_run "$state" "$policy" list --cache-only --json $args > "$TMP_ROOT/out"
+  assert_eq "$(cache_only_observed)" "$expected fetched=none tokens=0 providers=0" "cache-only $name uses only its record"
+  windows=empty; [[ "$expected" != *:10 ]] || windows=figure
+  assert_eq "$(cache_only_windows "$windows")" true "cache-only $name reports every window, reset and headroom"
+  [[ -z "$code" ]] || assert_contains "$(jq -r '.[] | select(.alias == "claude") | .detail' "$TMP_ROOT/out")" "HTTP $code" "cache-only $name preserves the refusal cause"
+done
+make_lane "$H" claude
+
+# Each endpoint prevention rule has a control that reaches its own stub.
+original_lanes="$LANES"
+for rule in fetch token provider; do
+  state="$TMP_ROOT/cache-only-control-$rule-state"
+  cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  control_dir="$(mutant_scripts "cache-only-control-$rule" lanes)"
+  expected='ok:30:number:10 fetched=none tokens=0 providers=0'
+  case "$rule" in
+    fetch)
+      age_usage_record "$state" "$H/.claude" 600
+      mutate_file "$control_dir/lanes" $'if [[ "$CACHE_ONLY" == true ]]; then\n\t\t\tstatus=unreachable' $'if [[ "$CACHE_ONLY" == false ]]; then\n\t\t\tstatus=unreachable'
+      expected='unreachable:null:null:null fetched=none tokens=0 providers=0' ;;
+    token)
+      make_lane "$H" claude -3600
+      mutate_file "$control_dir/lanes" $'if [[ "$CACHE_ONLY" != true ]]; then\n\t\tif [[ "$harness" == pi ]]' $'if [[ "$CACHE_ONLY" == true ]]; then\n\t\tif [[ "$harness" == pi ]]' ;;
+    provider)
+      mutate_file "$control_dir/lanes" 'CACHE_ONLY=true; LOCAL_ONLY=true; shift' 'CACHE_ONLY=true; LOCAL_ONLY=false; shift' ;;
+  esac
+  LANES="$control_dir/lanes"
+  : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
+  cache_run "$state" ORCH_LANES_USAGE_TTL=300 list --cache-only --json > "$TMP_ROOT/out"
+  rc=0
+  ( FAIL=0; assert_eq "$(cache_only_observed)" "$expected" 'cache-only endpoints'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/cache-only-control-$rule.log" || rc=$?
+  assert_eq "$rc" 1 "cache-only row rejects the $rule endpoint control"
+  case "$rule" in
+    fetch) assert_eq "$(grep -c . "$TMP_ROOT/fetch-log" || true)" 1 'fetch control reaches the stale account usage endpoint' ;;
+    token) assert_eq "$(grep -c . "$TMP_ROOT/token-log" || true)" 1 'token control reaches the expired account token endpoint' ;;
+    provider) assert_eq "$(grep -c accounts "$TMP_ROOT/provider-log" || true)" 1 'provider control reaches the accounts endpoint' ;;
+  esac
+  LANES="$original_lanes"
+  make_lane "$H" claude
+done
+
+# Each new refusal priority and the empty-window rule is independently
+# disabled. The same shipped writers and row observers must reject it.
+for rule in wall token-priority usage-priority; do
+  state="$TMP_ROOT/cache-only-control-$rule-state"
+  cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  control_dir="$(mutant_scripts "cache-only-control-$rule" lanes)"
+  case "$rule" in
+    wall)
+      rm -- "${state:?}"/usage/*.json
+      mutate_file "$control_dir/lanes" 'if [[ "$CACHE_ONLY" != true || "$buckets" != '\''{}'\'' ]]; then' 'if true; then'
+      expected='unreachable:null:null:null fetched=none tokens=0 providers=0' ;;
+    token-priority)
+      make_lane "$H" claude -3600
+      TOKEN_STATUS=400 cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+      mutate_file "$control_dir/lanes" 'if [[ "$CACHE_ONLY" == true ]] && refusal=' 'if [[ "$CACHE_ONLY" == false ]] && refusal='
+      expected='expired:null:number:null fetched=none tokens=0 providers=0' ;;
+    usage-priority)
+      FETCH_STATUS=403 cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+      mutate_file "$control_dir/lanes" '"$USE_CACHE" == "true" && -z "$refusal"' '"$USE_CACHE" == "true"'
+      expected='refused:null:number:null fetched=none tokens=0 providers=0' ;;
+  esac
+  stage_cache_wall "$state"
+  LANES="$control_dir/lanes"
+  : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
+  cache_run "$state" '' list --cache-only --json > "$TMP_ROOT/out"
+  rc=0
+  ( FAIL=0
+    assert_eq "$(cache_only_observed)" "$expected" 'cache-only recorded answer'
+    assert_eq "$(cache_only_windows empty)" true 'cache-only empty windows'
+    [[ "$FAIL" == 0 ]]
+  ) > "$TMP_ROOT/cache-only-control-$rule.log" || rc=$?
+  assert_eq "$rc" 1 "cache-only row rejects the $rule control"
+  LANES="$original_lanes"
+  make_lane "$H" claude
+done
 
 for row in 'exclude|ORCH_LANE_EXCLUDE=claude|0' 'retire|ORCH_LANE_RETIRE=claude=2000-01-01|1'; do
   IFS='|' read -r name policy retired <<<"$row"

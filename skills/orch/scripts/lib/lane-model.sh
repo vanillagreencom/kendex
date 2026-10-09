@@ -480,8 +480,10 @@ lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR
 # within, under the strict comparison read_usage_cache makes: a figure at or
 # past it is one a refused refresh served, which says nothing about the window
 # now. A figure 0 seconds old is the one this run's own fetch returned, which
-# no window is shorter than: a TTL of 0 serves nothing and fetches every run,
-# and that fetch's figure stands.
+# no window is shorter than: a TTL of 0 disables ordinary cached figures,
+# so a normal measurement fetches when no refusal answers it, and that fetch's
+# figure stands. A retained figure served for a live usage refusal keeps its
+# own age and still has to pass this bound.
 #
 # A Pi root is judged on another rule, because its Copilot pool is one reading
 # whichever copy of the seat makes it, and the local record is the
