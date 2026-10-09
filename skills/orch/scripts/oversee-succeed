@@ -454,11 +454,7 @@
 # after the close is recorded in the watch error log.
 # `successor-working` goes to stdout only after the close succeeded, and a real
 # handoff has ended this script's window by then.
-# In the self-succession mode alone, every refusal from `successor-launch` on
-# is also one `close` row in the fleet log, its keyed line and its text joined,
-# so the session that reads the log next learns the succession failed and the
-# predecessor kept the fleet; `fleet-log-unwritten` on stderr says that row
-# could not be written. A --dead-pane or --walled-pane run writes none: the
+# A --dead-pane or --walled-pane run writes no refusal row: the
 # watch that ran it logs its failed relaunch itself.
 set -euo pipefail
 
