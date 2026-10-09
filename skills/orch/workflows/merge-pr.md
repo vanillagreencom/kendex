@@ -146,11 +146,7 @@ The following conditions are merge gates, not advice:
   - `off` — informational; never gate or wait.
   - `approval`: a GitHub-native approval verdict is required. Before the first approval wait on this head, run [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) with caller context `worktree: [WORKTREE_PATH]`, `lifecycle: "managed"`, `issue_id: [STATE_KEY]`, and `pr_number: [PR_NUMBER]`. Keep `[REVIEW_BASE_CHECKOUT]` bound above. Bypass only its **Skip if** conditions, as [submit-pr.md § 2 step 1](submit-pr.md#2-push-and-submit) does for its first pushed head. With no Copilot review, the head takes **Head moved**. That existing route owns the current-head review and pending-request reads, the request decision, and [Copilot request routing](../references/gates.md#copilot-requests).
 
-  **Return from the head route.** A read or request failure that stops § 7.2 stops this step too. If it resolves `off`, take the `off` route above. If the route or its wait reports a head other than `[CHECK_HEAD]`, discard the prior result and return to § 3's head read and readiness check. Otherwise keep the status, exit code and head of any terminal approval wait it ran. After its body checks and notices, return that answer to the result routes below. Run the command below only when § 7.2 ran no approval wait:
-
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
+  **Return from the head route.** A read or request failure that stops § 7.2 stops this step too. If it resolves `off`, take the `off` route above. If the route or its wait reports a head other than `[CHECK_HEAD]`, discard the prior result and return to § 3's head read and readiness check. Otherwise keep the status, exit code and head of any terminal approval wait it ran. After its body checks and notices, return that answer to the result routes below. Only when § 7.2 ran no approval wait, poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]`.
 
   After either wait exhausts its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
