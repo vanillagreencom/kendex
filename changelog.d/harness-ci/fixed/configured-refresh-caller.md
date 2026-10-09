@@ -1,0 +1,1 @@
+- Consumer refreshes can prove adopted callers with preserved environment and secret mappings as render changes. Edits outside the accepted configuration still require standard review and product checks.

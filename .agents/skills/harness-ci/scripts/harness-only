@@ -63,6 +63,10 @@
 # script, and a red step is the honest report of one.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/change-class.sh
+. "$SCRIPT_DIR/lib/change-class.sh"
+
 event=""
 base=""
 head="HEAD"
@@ -429,6 +433,9 @@ if [ "$classification" != render-candidate ]; then
 fi
 while IFS= read -r path; do
   [ -n "$path" ] || continue
+  if [ "$classification" = render-candidate ] && [ "$path" = "$HARNESS_CI_REFRESH_CALLER" ]; then
+    continue
+  fi
   seen=false
   for endpoint in "$base" "$head"; do
     entry="$(git_repo ls-tree "$endpoint" -- "$path")" || verdict false \

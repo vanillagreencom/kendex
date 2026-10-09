@@ -12,6 +12,10 @@
 # GLOBS is newline-separated, with bash patterns matching the whole path.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
 
+# The adopted caller can lack an inventory entry when adoption preserves its
+# configuration. Candidacy permits proof setup; release comparison owns it.
+HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
+
 change_class_path_match() { # PATH GLOBS
   local glob
   PATH_MATCH_HIT=""

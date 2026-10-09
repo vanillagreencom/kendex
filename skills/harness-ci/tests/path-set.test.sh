@@ -111,6 +111,7 @@ for mutation in 'del(.path)' '.template = null' '.templateHash = "bad"' '.extra 
 done
 git -C "$repo" checkout -q -B valid "$valid_head"
 original="$HARNESS_ONLY"
+cp -R "$(dirname "$original")/lib" "$SANDBOX/lib"
 [ "$(grep -Fc 'else .path end)' "$original")" -eq 1 ]
 sed 's/else .path end)/else .template end)/' "$original" >"$SANDBOX/harness-only"
 cmp -s "$original" "$SANDBOX/harness-only" && { echo "control changed no bytes" >&2; exit 1; }

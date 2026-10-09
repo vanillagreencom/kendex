@@ -253,9 +253,10 @@ assert_eq 'native relative fetch keeps the judged working tree at its original c
   "$(git -C "$partial" rev-parse HEAD)"
 
 # The public transport is a local release fixture. The classifier still runs
-# its own fetch and exact-pin comparison; no ownership operation is stubbed.
+# its own fetch and release comparison; no ownership operation is stubbed.
 release_catalog="$(new_repo released-caller)"
-mkdir -p "$release_catalog/skills/review-gate/templates"
+mkdir -p "$release_catalog/skills/review-gate/templates" "$release_catalog/refresh/lib"
+cp "$TEST_DIR/../../../refresh/lib/caller.py" "$release_catalog/refresh/lib/caller.py"
 released_template="$SANDBOX/released-caller.yml"
 cp "$TEST_DIR/../../review-gate/templates/kendex-refresh.yml" "$released_template"
 cp "$released_template" \
@@ -270,6 +271,12 @@ sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v2|' "$released_template" \
 git -C "$release_catalog" add -A
 git -C "$release_catalog" commit -q -m 'unreleased branch caller'
 git -C "$release_catalog" branch v2
+sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v3|' "$released_template" \
+  >"$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
+rm "$release_catalog/refresh/lib/caller.py"
+git -C "$release_catalog" add -A
+git -C "$release_catalog" commit -q -m 'release without caller module'
+git -C "$release_catalog" tag v3
 release_bin="$SANDBOX/release-bin"
 mkdir -p "$release_bin"
 real_git="$(command -v git)"
@@ -285,8 +292,17 @@ done
 exec '$real_git' "\${args[@]}"
 WRAPPER
 chmod +x "$release_bin/git"
+pythonless_bin="$SANDBOX/pythonless-bin"
+mkdir -p "$pythonless_bin"
+# Keep the classifier's other tools available while omitting the interpreter.
+for tool in awk basename bash cat chmod cmp cp cut dirname env grep jq mkdir mktemp mv rm sed sort tail tr uname wc; do
+  ln -s "$(command -v "$tool")" "$pythonless_bin/$tool"
+done
+normalization_mutant="$(mutant caller-normalization change-class \
+  '    sys.exit(0 if caller.normalized(head) == caller.normalized(template) else 1)' \
+  '    sys.exit(0)')"
 caller_rows=0
-while IFS='|' read -r label variation help_mode extra expected; do
+while IFS='|' read -r label variation help_mode extra expected mutation; do
   caller_rows=$((caller_rows + 1))
   reset_case
   set_verifier clean
@@ -295,6 +311,37 @@ while IFS='|' read -r label variation help_mode extra expected; do
   mkdir -p "$repo/.github/workflows"
   cp "$released_template" "$repo/.github/workflows/kendex-refresh.yml"
   case "$variation" in
+    fleet | neutral | both | legacy | fleet-edited | invalid-secret)
+      python3 - "$repo/.github/workflows/kendex-refresh.yml" "$variation" <<'CONFIGURE'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+variation = sys.argv[2]
+assert text.count("      environment: kendex\n") == 1
+if variation in ("neutral", "both"):
+    text = text.replace("environment: kendex", "environment: delivery")
+else:
+    text = text.replace("    with:\n      environment: kendex\n", "")
+if variation != "both":
+    pair = "FLEET_GH" if variation == "neutral" else "KENDEX"
+    for suffix in ("APP_ID", "APP_PRIVATE_KEY"):
+        name = pair + "_" + suffix
+        line = "      " + name + ": ${{ secrets." + name + " }}\n"
+        assert text.count(line) == 1
+        text = text.replace(line, "")
+if variation == "legacy":
+    text = text.replace("    secrets:\n", "    with:\n      app-id-secret-name: FLEET_GH_APP_ID\n      app-private-key-secret-name: FLEET_GH_APP_PRIVATE_KEY\n    secrets:\n      app-id: ${{ secrets.FLEET_GH_APP_ID }}\n      app-private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}\n")
+elif variation == "fleet-edited":
+    assert text.count("cancel-in-progress: false") == 1
+    text = text.replace("cancel-in-progress: false", "cancel-in-progress: true")
+elif variation == "invalid-secret":
+    text = text.replace("secrets.FLEET_GH_APP_ID", "secrets.CUSTOM_APP_ID")
+assert text != path.read_text()
+path.write_text(text)
+CONFIGURE
+      ;;
     symlink)
       # A consumer PR can replace its workflow with a link to released bytes.
       rm "$repo/.github/workflows/kendex-refresh.yml"
@@ -308,9 +355,10 @@ while IFS='|' read -r label variation help_mode extra expected; do
       sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v999999|' \
         "$repo/.github/workflows/kendex-refresh.yml" >"$SANDBOX/unavailable-caller"
       mv "$SANDBOX/unavailable-caller" "$repo/.github/workflows/kendex-refresh.yml" ;;
-    branch-only | commit-pin)
+    branch-only | commit-pin | missing-module)
       pin=v2
       [ "$variation" != commit-pin ] || pin="$release_commit"
+      [ "$variation" != missing-module ] || pin=v3
       sed "s|refresh-consumer.yml@v1$|refresh-consumer.yml@$pin|" "$released_template" \
         >"$repo/.github/workflows/kendex-refresh.yml" ;;
   esac
@@ -324,7 +372,11 @@ while IFS='|' read -r label variation help_mode extra expected; do
   fi
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "$label"
-  caller_err="$(PATH="$release_bin:$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  caller_classifier="$CHANGE_CLASS"
+  [ "$mutation" != normalized ] || caller_classifier="$normalization_mutant"
+  caller_path="$release_bin:$stub_bin:$PATH"
+  [ "$variation" != missing-python ] || caller_path="$release_bin:$stub_bin:$pythonless_bin"
+  caller_err="$(PATH="$caller_path" "$caller_classifier" --repo "$repo" \
     --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "$label classification" "class=$expected" \
     "$(sed -n 's/^class: \(class=[^ ]*\).*/\1/p' <<<"$caller_err")"
@@ -348,10 +400,19 @@ while IFS='|' read -r label variation help_mode extra expected; do
 done <<'CALLERS'
 adopted released caller|released|supported||render
 adopted released caller with legacy verifier|released|legacy||render
+FLEET pair with default environment|fleet|supported|.agents/skills/orch/SKILL.md|render
+KENDEX pair with delivery environment|neutral|supported|.agents/skills/orch/SKILL.md|render
+both pairs with delivery environment|both|supported|.agents/skills/orch/SKILL.md|render
+legacy aliases with FLEET pair|legacy|supported|.agents/skills/orch/SKILL.md|render
+FLEET caller with changed concurrency|fleet-edited|supported||standard
+caller with invalid secret configuration|invalid-secret|supported||standard
+must-fail: skipped normalization accepts changed concurrency|fleet-edited|supported||render|normalized
 symlink to released caller|symlink|supported||standard
 byte-edited caller|byte-edited|supported||standard
 unpublished caller bytes|unreleased|supported||standard
 unavailable release|unavailable|supported||standard
+release without caller module|missing-module|supported||standard
+host without Python interpreter|missing-python|supported||standard
 version-shaped branch without release tag|branch-only|supported||standard
 arbitrary commit pin|commit-pin|supported||standard
 caller and engine render with legacy verifier|released|legacy|.agents/skills/orch/SKILL.md|render

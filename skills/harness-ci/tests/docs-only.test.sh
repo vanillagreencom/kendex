@@ -81,6 +81,7 @@ assert_eq "docs mode writes an empty outside list where every path is inside" \
 if [ -z "${DOCS_ONLY_CONTROL:-}" ]; then
   [ ! -L "$HARNESS_ONLY" ] || { echo "the classifier control refuses a symlink" >&2; exit 1; }
   mutant="$SANDBOX/harness-only-mutant"
+  cp -R "$(dirname "$HARNESS_ONLY")/lib" "$SANDBOX/lib"
   if ! awk '
     BEGIN { changed = 0 }
     /^      \*\/\*\) ;;$/ {

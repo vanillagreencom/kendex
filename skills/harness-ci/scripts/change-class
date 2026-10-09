@@ -983,7 +983,7 @@ named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.o
 RENDER_WORKFLOW_CHECKED=false
 released_workflow_owned() { # PATH
   local pin history="$work/release-history" template=skills/review-gate/templates/kendex-refresh.yml
-  [ "$1" = .github/workflows/kendex-refresh.yml ] || return 1
+  [ "$1" = "$HARNESS_CI_REFRESH_CALLER" ] || return 1
   RENDER_WORKFLOW_CHECKED=true
   [ -f "$proof_tree/$1" ] && [ ! -L "$proof_tree/$1" ] || return 1
   pin="$(sed -n 's|^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@\([^[:space:]]*\)$|\1|p' "$proof_tree/$1")" || return 1
@@ -1002,7 +1002,24 @@ released_workflow_owned() { # PATH
       }
   git -C "$history" show "FETCH_HEAD:$template" >"$work/release-template" \
     2>>"$work/release-stderr" || return 1
-  cmp -s "$proof_tree/$1" "$work/release-template"
+  command -v python3 >/dev/null 2>&1 || return 1
+  git -C "$history" show FETCH_HEAD:refresh/lib/caller.py >"$work/release-caller.py" \
+    2>>"$work/release-stderr" || return 1
+  python3 -I - "$work/release-caller.py" "$proof_tree/$1" "$work/release-template" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("released_caller", sys.argv[1])
+caller = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(caller)
+head, template = (Path(path).read_bytes() for path in sys.argv[2:])
+try:
+    caller.configuration(head)
+    sys.exit(0 if caller.normalized(head) == caller.normalized(template) else 1)
+except caller.InvalidCaller:
+    sys.exit(1)
+PY
 }
 render_paths_covered() { # [narrow]
   local path owns foreign position owned partial head_entry inventory_status owned_status retired=""
