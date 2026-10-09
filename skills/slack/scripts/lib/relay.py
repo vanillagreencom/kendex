@@ -600,7 +600,7 @@ class RootRelay:
         seen count, skipped notice ids and asks whose posts landed."""
         seen = self.master_read(events)
         routed = self.routes(events, seen or 0)
-        skipped = [str(envelope["id"]) for envelope, route in routed if route == "seen"]
+        skipped = [str(envelope["id"]) for envelope, route, _ in routed if route == "seen"]
         asks: List[str] = []
         # Stamp the resume now, not when presence expired: skipped notices
         # can be newer, and must stay carried until their age bars a post.
@@ -615,11 +615,11 @@ class RootRelay:
                 seen=seen if seen is not None else "none", skipped=skipped, asks=asks
             )
 
-    def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str]]:
+    def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
         `answer`, `resolution`, `seen` for a notice the master read on resume,
         `overdue` for a carried reserved ask open past its deadline, or `skip`
-        for another that never posts."""
+        for another that never posts; answers carry their ask's record."""
         closures = {str(e["id"]): e for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
         closed = {e.get("re") for e in closures.values()}
@@ -637,13 +637,13 @@ class RootRelay:
             if env_id in closures:
                 thread_ts = state.by_envelope.get(str(envelope.get("re", "")))
                 if thread_ts in state.threads and env_id not in state.resolutions:
-                    routed.append((envelope, "resolution"))
+                    routed.append((envelope, "resolution", {}))
                 if envelope["kind"] == "resolution":
                     continue
             if (envelope.get("reserved") is True and env_id in state.carried and env_id not in closed
                     and env_id not in answered and overdue_id(env_id) not in state.carried
                     and at_epoch(str(envelope["deadline"])) <= self.clock()):
-                routed.append((envelope, "overdue"))
+                routed.append((envelope, "overdue", {}))
             if env_id in state.carried or env_id in self.skipped:
                 continue
             at = at_epoch(str(envelope["at"]))
@@ -674,15 +674,16 @@ class RootRelay:
                 route = "answer"
             else:
                 route = "skip"
-            routed.append((envelope, route))
+            ask = by_id.get(str(envelope.get("re", "")), {}) if route == "answer" else {}
+            routed.append((envelope, route, ask))
         return routed
 
     def post_events(
-        self, routed: List[Tuple[Dict, str]], landed: Optional[List[str]] = None
+        self, routed: List[Tuple[Dict, str, Dict]], landed: Optional[List[str]] = None
     ) -> None:
         """Posts what `routes` gives each envelope; `landed`, when given,
         collects the ids of the asks whose post landed."""
-        for envelope, route in routed:
+        for envelope, route, ask in routed:
             if route == "ask":
                 if self.post_ask(envelope) and landed is not None:
                     landed.append(str(envelope["id"]))
@@ -691,7 +692,7 @@ class RootRelay:
             elif route == "notice":
                 self.post_notice(envelope)
             elif route == "answer":
-                self.post_answer(envelope)
+                self.post_answer(envelope, ask)
             elif route == "resolution":
                 self.journal.append(t="resolved", id=str(envelope["re"]), source=str(envelope["id"]))
             elif route in ("skip", "seen"):
@@ -832,7 +833,7 @@ class RootRelay:
                 {"ts": landed, "text": envelope.get("text", "")}, "bot", str(envelope["id"]))}
             self._out(envelope, "notice", "resolved", thread=thread_ts or landed, **fields)
 
-    def post_answer(self, envelope: Dict) -> None:
+    def post_answer(self, envelope: Dict, ask: Dict) -> None:
         ask_id = str(envelope.get("re", ""))
         if ask_id not in self.state.by_envelope:
             self.skipped.add(str(envelope["id"]))
@@ -840,6 +841,11 @@ class RootRelay:
         thread_ts = self.state.post_thread(ask_id)
         if envelope.get("by") == "default":
             text = f"No answer by the deadline: {envelope.get('text', '')} stands."
+        elif envelope.get("delivery_id"):
+            # The writer's record belongs in lane-mail; the ask owns the choices.
+            option = next((line for line in envelope.get("text", "").splitlines()
+                           if line in ask.get("options", [])), None)
+            text = f"Answered: {option}." if option is not None else "Answered outside the chat."
         else:
             text = f"Answered in the chat: {envelope.get('text', '')}"
         landed = self._send(envelope, "answer", text, thread_ts)

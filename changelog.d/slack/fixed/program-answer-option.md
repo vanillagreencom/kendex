@@ -1,0 +1,1 @@
+- Slack shows the chosen question option for an answer delivered by a program, without the program's raw record.
