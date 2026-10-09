@@ -381,60 +381,6 @@ assert_eq "$(state '.fleet_log | map(.kind + ":" + .item) | join(",")')" '"cycle
 assert_eq "$(state '.fleet_log[0].text')" "\"$(sed 's/^rc=0 //' <<<"$(record KEN-2 micro)")\"" \
   "and its text is the printed line"
 
-echo "=== local stage history survives delegation stamp replacement ==="
-STAGES='[{"kind":"implement","round_id":"impl-1","start":10,"end":40},{"kind":"review","round_id":"review-1","start":45,"end":70},{"kind":"fix","round_id":"fix-1","start":75,"end":100},{"kind":"fix","round_id":"fix-2","start":110,"end":140}]'
-# Execute the shipped workflow's update filters through workflow-state.
-# The stage instructions, rather than the checker self-checks, own these writes.
-DEV_STAGE_START="$(sed -n "s/^.*workflow-state update .*'\(\.dev_round_id as .*\)'$/\1/p" "$TEST_DIR/../workflows/dev-start.md")"
-REVIEW_STAGE_START="$(sed -n "s/^.*workflow-state update .*'\(\.review_round_id as .*\)'$/\1/p" "$TEST_DIR/../workflows/review-pr.md")"
-STAGE_END="$(sed -n "s/^.*workflow-state update .*'\(\.stages = .*\)'$/\1/p" "$TEST_DIR/../workflows/dev-start.md")"
-stage_case() {
-  local kind rid start end field stamp filter
-  new_case "$1"; printf micro > "$CASE/class"; timeline 1500
-  printf '{}' > "$REPO/tmp/workflow-state-KEN-1.json"
-  while read -r kind rid start end; do
-    field=dev_round_id stamp=dev_delegated_at filter="$DEV_STAGE_START"
-    [[ "$kind" != review ]] || { field=review_round_id; stamp=review_delegated_at; filter="$REVIEW_STAGE_START"; }
-    "$LAYOUT/orch/scripts/workflow-state" --state-dir "$REPO/tmp" update KEN-1 \
-      --arg field "$field" --arg stamp "$stamp" --arg rid "$rid" --argjson start "$start" '.[$field] = $rid | .[$stamp] = $start'
-    "$LAYOUT/orch/scripts/workflow-state" --state-dir "$REPO/tmp" update KEN-1 --arg kind "$kind" "$filter"
-    "$LAYOUT/orch/scripts/workflow-state" --state-dir "$REPO/tmp" update KEN-1 --arg round "$rid" --argjson end "$end" "$STAGE_END"
-    "$LAYOUT/orch/scripts/workflow-state" --state-dir "$REPO/tmp" set KEN-1 "$stamp" 999
-    "$LAYOUT/orch/scripts/workflow-state" --state-dir "$REPO/tmp" update KEN-1 --arg kind "$kind" "$filter"
-    "$LAYOUT/orch/scripts/workflow-state" --state-dir "$REPO/tmp" update KEN-1 --arg round "$rid" --argjson end 999 "$STAGE_END"
-  done <<'ROWS'
-implement impl-1 10 40
-review review-1 45 70
-fix fix-1 75 100
-fix fix-2 110 140
-ROWS
-}
-stage_report() { (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" report); }
-stage_case stages
-got="$(record KEN-1 micro)"
-assert_eq "$(state '.lanes[0].cycle.stages')" "$STAGES" "each round keeps its own start and end from workflow state"
-assert_eq "$(wc -l < "$CASE/out" | tr -d ' ')" '1' "stage history leaves the cycle row on one line"
-# The overseer reads the machine-readable stage rows for a long-lane cause.
-STAGE_ROWS='stage item=KEN-1 kind=implement round_id=impl-1 start=10 end=40
-stage item=KEN-1 kind=review round_id=review-1 start=45 end=70
-stage item=KEN-1 kind=fix round_id=fix-1 start=75 end=100
-stage item=KEN-1 kind=fix round_id=fix-2 start=110 end=140'
-assert_eq "$(stage_report | sed -n '/^stage /p')" "$STAGE_ROWS" "report shows every local stage, including distinct fix rounds"
-edit_json "$REPO/tmp/workflow-state-KEN-1.json" '.stages[-1].end = null'
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[0].cycle.stages[-1].end')" null "unfinished stages keep an unknown end"
-assert_eq "$(stage_report | sed -n '/^stage /p' | tail -n 1)" \
-  'stage item=KEN-1 kind=fix round_id=fix-2 start=110 end=-' "report leaves an unfinished end unmeasured"
-edit_json "$REPO/tmp/workflow-state-KEN-1.json" '.stages = []'
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[0].cycle.stages')|$(stage_report | sed -n '/^stage /p')" '[]|' "an empty recorded list stays empty"
-edit_json "$REPO/tmp/workflow-state-KEN-1.json" 'del(.stages)'
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[0].cycle.stages')" null "legacy state has unknown stage history"
-rm -- "$REPO/tmp/workflow-state-KEN-1.json"
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[0].cycle.stages')" null "unread state has unknown stage history"
-
 echo "=== a negative round interval is refused at write ==="
 # negative_write NAME: a case for a met micro whose review round reads -40 s,
 # as pr-timeline gives a head whose first check suite postdates its review.
@@ -1000,16 +946,6 @@ control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's over
 }
 
 echo "=== controls ==="
-control m-stages oversee-cycle 'stages: $stages,' 'stages: null,'
-stage_case c-stages
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[0].cycle.stages')" null "control: dropping local history turns the stage record assertion red"
-control m-stage-report oversee-cycle '.cycle.stages[]?' '.cycle.stages[]? | select(false)'
-stage_case c-stage-report
-record KEN-1 micro >/dev/null
-assert_eq "$(stage_report | sed -n '/^stage /p')" '' "control: suppressing stage rows turns the report assertion red"
-RUN_BIN=""
-rm -- "$REPO/tmp/workflow-state-KEN-1.json"
 # Each independent refusal is disabled alone. The mutant must get past the
 # flag guard, so a different refusal is not credited as this guard working.
 while IFS='|' read -r name anchor replacement form; do
@@ -1219,7 +1155,7 @@ control m-kept-hardlink lib/lane-gitfile.sh 'readable = lambda m: m.isfile() or 
 hardlink_case c-kept-hardlink
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
   "control: taking regular files alone, a hard-link entry reads as missing"
-control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then'
+control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"} || return $?' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" || return $?'
 gone_case c-kept
 assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
   "control: without the kept= archive, a gone sandbox has no rounds"
@@ -1335,6 +1271,134 @@ assert_eq "$(cloud_seen '"small"' caps-broken | cut -d' ' -f5)" 'unread=0' \
 control m-tier-none oversee-cycle '  none) ;;' '  none) usage_error --tier ;;'
 assert_eq "$(cloud_seen null | cut -d' ' -f1)" 'rc=2' \
   "control: a stated null tier taken as missing refuses the record"
+RUN_BIN=""
+
+echo '=== running lanes read script-written rounds across a resume ==='
+new_case live-stages
+printf micro > "$CASE/class"; timeline 1500
+WS="$LAYOUT/orch/scripts/workflow-state"
+SF="$REPO/tmp/workflow-state-KEN-1.json"
+"$WS" --state-dir "$REPO/tmp" init KEN-1 --worktree "$REPO" >/dev/null
+edit_json "$CASE/state/workflow-state-oversee.json" ".lanes[0] += {status: \"running\", tier: \"micro\", mail_root: \"$REPO\", pending_pr: {pr: 7}}"
+stage_command() {
+  (cd "$REPO" && env -u ORCH_STATE_DIR "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" stages "$1")
+}
+dev_stage() {
+  local kind="$1" rid args=()
+  rid="$("$WS" --state-dir "$REPO/tmp" new-round-id KEN-1 dev_round_id)"
+  jq -n --arg kind "$kind" --arg rid "$rid" --arg commit "$MERGE" '
+    {schema_version:1,issue:"KEN-1",branch:"main",round_id:$rid,kind:$kind,commit:$commit,
+     validate:"pass",validate_mode:"full",validate_time:{started_at:"2026-01-01T00:00:00Z",ended_at:"2026-01-01T00:55:00Z",seconds:3300},items:[]}
+    | if $kind == "implement" then .baseline_lines=1 else .items=[{n:1,decision:"Applied",reasoning:"fixed"}] end' \
+    > "$REPO/tmp/dev-return-KEN-1-$rid.json"
+  if [[ "$kind" == fix ]]; then
+    jq -n --arg rid "$rid" --arg base "$MERGE" '{schema_version:2,issue:"KEN-1",round_id:$rid,base_sha:$base,adds:[],items:[{n:1,text:"fix"}]}' \
+      > "$REPO/tmp/dev-round-KEN-1-$rid.json"
+    args=(--expect-items-from-round)
+  fi
+  env -u DEV_VALIDATE_RANGE_CMD ORCH_STATE_DIR="$REPO/tmp" "$LAYOUT/orch/scripts/dev-artifact-check" \
+    --worktree "$REPO" --issue KEN-1 --round-id "$rid" ${args[@]+"${args[@]}"} > "$CASE/check.out"
+  assert_eq "$(jq -r '.ok' "$CASE/check.out")" true "$kind artifact accepted"
+}
+review_stage() {
+  local rid
+  rid="$("$WS" --state-dir "$REPO/tmp" new-round-id KEN-1 review_round_id)"
+  jq -n --arg head "$MERGE" '{verdict:"pass",head:$head,dirty_paths:[]}' > "$REPO/tmp/review-r-live.json"
+  "$LAYOUT/orch/scripts/review-artifact-check" "$REPO" r 0 --issue KEN-1 --state-dir "$REPO/tmp" > "$CASE/check.out"
+  assert_eq "$(jq -r '.ok' "$CASE/check.out")" true 'review artifact accepted'
+}
+dev_stage implement
+review_stage
+dev_stage fix
+dev_stage fix
+"$WS" --state-dir "$REPO/tmp" update KEN-1 '.handoff={remaining:["fix"],resumed_at:null}'
+"$WS" --state-dir "$REPO/tmp" handoff-resume KEN-1 >/dev/null
+dev_stage fix
+review_stage
+open_round="$("$WS" --state-dir "$REPO/tmp" new-round-id KEN-1 dev_round_id)"
+rows="$(stage_command KEN-1)"
+assert_eq "$(jq -c '[.stages[] | .kind] | sort' "$SF")" \
+  '["dev","fix","fix","fix","implement","review","review","validate","validate","validate","validate"]' 'all resumed rounds and each validate run exist'
+assert_eq "$(jq -r '[.stages[] | select(.round_id != $round) | .end != null] | all' --arg round "$open_round" "$SF")" true 'completed rounds have ends'
+assert_eq "$(grep -c '^stage item=KEN-1 ' <<<"$rows")" "$(jq '.stages | length' "$SF")" 'running command prints each discovered stage'
+assert_contains "$rows" "kind=dev round_id=$open_round" 'running command includes open round'
+assert_contains "$rows" "end=-" 'open round has unknown end'
+assert_eq "$(sed -E 's/.* start=([0-9]+) .*/\1/' <<<"$rows" | sort -n)" \
+  "$(sed -E 's/.* start=([0-9]+) .*/\1/' <<<"$rows")" 'running rows sort by start'
+assert_eq "$(state '.lanes[0] | has("cycle")')" false 'running read creates no cycle'
+record KEN-1 micro >/dev/null
+assert_eq "$(state '.lanes[0].cycle.stages')" "$(jq -c '.stages' "$SF")" 'record copies the same stages'
+control m-stages oversee-cycle 'stages: $stages,' 'stages: null,'
+record KEN-1 micro >/dev/null
+assert_eq "$(state '.lanes[0].cycle.stages')" null 'control: dropping cycle stages fails same-stage copy'
+RUN_BIN=""
+control m-stage-reader oversee-cycle "'sort_by(.start)[]" "'sort_by(.start)[] | select(false)"
+assert_eq "$(stage_command KEN-1)" '' 'control: hiding discovered rows fails running-stage count'
+RUN_BIN=""
+cp "$SF" "$CASE/stage-state.saved"
+mv -- "$SF" "$REPO/tmp/workflow-state-pr-7.json"
+assert_eq "$(stage_command KEN-1)" "$rows" 'lane PR key resolves when item key is absent'
+record KEN-1 micro >/dev/null
+assert_eq "$(state '.lanes[0].cycle.stages')" "$(jq -c '.stages' "$REPO/tmp/workflow-state-pr-7.json")" 'record shares PR fallback'
+rm -- "$REPO/tmp/workflow-state-pr-7.json"
+for item in KEN-unknown KEN-1; do
+  rc=0
+  stage_command "$item" > "$CASE/out" 2> "$CASE/err" || rc=$?
+  assert_eq "$rc" 1 "$item without readable state refuses"
+  case "$item" in KEN-unknown) expected='record-missing=KEN-unknown' ;; *) expected='stages-unread item=KEN-1 cause=no-state' ;; esac
+  assert_eq "$(cat "$CASE/err")" "oversee-cycle: $expected" "$item refusal identifies missing evidence"
+done
+cp "$CASE/state/workflow-state-oversee.json" "$CASE/stage-fleet.saved"
+# Interrupted external state edits can leave broken JSON. workflow-state
+# update can also write a stages value that the row formatter cannot read.
+# The overseer's refusal reader consumes the first stderr line.
+for broken in lane-json fleet-json stages-object stages-false stages-string stages-number; do
+  cp "$CASE/stage-state.saved" "$SF"
+  cp "$CASE/stage-fleet.saved" "$CASE/state/workflow-state-oversee.json"
+  case "$broken" in
+    lane-json) printf 'not json' > "$SF" ;;
+    fleet-json) printf 'not json' > "$CASE/state/workflow-state-oversee.json" ;;
+    stages-object) "$WS" --state-dir "$REPO/tmp" update KEN-1 '.stages={wrong:true}' ;;
+    stages-false) "$WS" --state-dir "$REPO/tmp" update KEN-1 '.stages=false' ;;
+    stages-string) "$WS" --state-dir "$REPO/tmp" update KEN-1 '.stages="wrong"' ;;
+    stages-number) "$WS" --state-dir "$REPO/tmp" update KEN-1 '.stages=7' ;;
+  esac
+  rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+  assert_eq "$rc" 1 "$broken refuses running read"
+  assert_eq "$(sed -n '1p' "$CASE/err")" 'oversee-cycle: stages-unread=KEN-1' "$broken puts the keyed refusal first"
+  [[ -n "$(sed -n '2,$p' "$CASE/err")" ]] && pass "$broken keeps the read diagnostic" || fail "$broken keeps the read diagnostic"
+done
+control m-stage-error-order oversee-cycle \
+  '(jq -c '\''.stages | if . == null then [] else . end'\'' <<<"$LANE_ITEM_STATE" | print_stages "$ITEM") 2>"$WORK/state.err"' \
+  '(jq -c '\''.stages | if . == null then [] else . end'\'' <<<"$LANE_ITEM_STATE" | print_stages "$ITEM")'
+rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+[[ "$(sed -n '1p' "$CASE/err")" != 'oversee-cycle: stages-unread=KEN-1' ]] \
+  && pass 'control: uncaptured formatter stderr fails first-line assertion' || fail 'control: uncaptured formatter stderr fails first-line assertion'
+RUN_BIN=""
+"$WS" --state-dir "$REPO/tmp" update KEN-1 '.stages=false'
+control m-stage-false oversee-cycle \
+  "'.stages | if . == null then [] else . end'" "'.stages // []'"
+rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+assert_eq "$rc|$(cat "$CASE/err")" '0|' 'control: defaulting false to an empty array fails unread-data refusal'
+RUN_BIN=""
+printf 'not json' > "$SF"
+control m-stage-unread oversee-cycle 'read_lane_state || refuse stages-unread "$ITEM" "$WORK/state.err"' 'read_lane_state || true'
+rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+assert_eq "$(cat "$CASE/err")" 'oversee-cycle: stages-unread item=KEN-1 cause=no-state' 'control: swallowing read failure fails unread-cause assertion'
+RUN_BIN=""
+rm -- "$SF"
+cloud_case stages-cloud null
+rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+assert_eq "$rc|$(cat "$CASE/err")" '1|oversee-cycle: stages-unread item=KEN-1 cause=no-state' 'files=none has no readable stages'
+control m-stage-no-state oversee-cycle 'if [[ -z "$LANE_ITEM_STATE" ]]; then' 'if false; then'
+rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
+assert_eq "$rc" 0 'control: absent-state refusal disabled accepts an empty read'
+RUN_BIN=""
+control m-stage-no-record oversee-cycle '[[ -n "$lane" ]] || refuse record-missing "$ITEM"
+  read_lane_state' '[[ -n "$lane" ]] || lane="{}"
+  read_lane_state'
+rc=0; stage_command KEN-unknown > "$CASE/out" 2> "$CASE/err" || rc=$?
+assert_eq "$(cat "$CASE/err")" 'oversee-cycle: stages-unread item=KEN-unknown cause=no-state' 'control: absent-lane refusal disabled fails record-missing assertion'
 RUN_BIN=""
 
 echo "pass: $PASS  fail: $FAIL"

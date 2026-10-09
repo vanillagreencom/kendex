@@ -7,8 +7,19 @@
 #                 [--tier micro|small|standard] [--repo OWNER/REPO] ITEM
 #   oversee-cycle [--state-dir DIR] rollup
 #   oversee-cycle [--state-dir DIR] report
+#   oversee-cycle [--state-dir DIR] stages ITEM
 #
 # --state-dir is the fleet state's directory, as workflow-state takes it.
+# stages reads a running lane without writing a cycle. It reads the item key,
+# then pr-N from the lane record when the item has no state. Rows sort by start:
+#   stage item=ITEM kind=K round_id=RID start=EPOCH end=EPOCH|-
+# Restack validation rows also carry reason=restack. workflow-state new-round-id
+# writes dev and review starts. dev-artifact-check closes implement/fix rounds
+# and writes validate stages. review-artifact-check closes accepted review
+# members. worktree-push writes restack validate stages once per run directory.
+# A failed restack range run pushes nothing and records no restack stage.
+# No lane record refuses record-missing. A failed state read refuses
+# stages-unread. No state under either key refuses stages-unread cause=no-state.
 #
 # record reads the lane record ITEM names in the oversee state, the merged
 # pull request's stamps from the github skill's `pr-timeline`, and the class
@@ -227,19 +238,62 @@ VERB="${1:-}"
 [[ $# -eq 0 ]] || shift
 case "$VERB" in
   --help | -h) usage; exit 0 ;;
-  record | rollup | report) ;;
+  record | rollup | report | stages) ;;
   *) usage_error "${VERB:-verb}" ;;
 esac
 
 WORK="$(mktemp -d)" || refuse mktemp failed
 trap 'rm -rf -- "$WORK"' EXIT
 
-STATE_FILE="$("$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} path oversee)" || refuse state-missing path
+STATE_FILE="$("$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} path oversee 2>"$WORK/state.err")" \
+  || refuse state-missing path "$WORK/state.err"
 # A fleet with no state yet, a session stopping before its first launch, has
 # nothing to roll up; a record for a lane it never launched refuses.
 if [[ ! -f "$STATE_FILE" ]]; then
+  [[ "$VERB" != stages ]] || refuse record-missing "${1:-item}"
   [[ "$VERB" == record ]] || exit 0
   refuse state-missing "$STATE_FILE"
+fi
+
+# record and stages resolve the same live or archived state. A failed read
+# never falls back: another key cannot answer for an unreadable record.
+read_lane_state() {
+  local pr_key
+  LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
+  LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
+  LANE_SINCE="$(jq -r '.session_since // .launched_at // ""' <<<"$lane" 2>"$WORK/state.err")" || return 1
+  LANE_KEPT="$(jq -r --arg item "$ITEM" --arg since "$LANE_SINCE" '
+    [.fleet_log[]? | select(.item == $item and ((.at // "") >= $since)) | .text | strings
+     | capture("(^|\\s)kept=(?<p>/.*[^\\s])\\s*$") | .p] | last // empty' "$STATE_FILE" 2>"$WORK/state.err")" || return 1
+  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"} || return $?
+  [[ -z "$LANE_ITEM_STATE" ]] || return 0
+  pr_key="$(jq -r '.pending_pr.pr // .parked.pr // .cycle.pr // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
+  [[ "$pr_key" =~ ^[1-9][0-9]*$ ]] || return 0
+  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "pr-$pr_key" \
+    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}
+}
+
+print_stages() {
+  jq -r --arg item "$1" 'sort_by(.start)[]
+    | "stage item=\($item) kind=\(.kind) round_id=\(.round_id) start=\(.start) end=\(.end // "-")"
+      + (if .reason == null then "" else " reason=\(.reason)" end)'
+}
+
+if [[ "$VERB" == stages ]]; then
+  [[ $# == 1 && "$1" != -* ]] || usage_error item
+  ITEM="$1"
+  lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | first // empty' "$STATE_FILE" 2>"$WORK/state.err")" \
+    || refuse stages-unread "$ITEM" "$WORK/state.err"
+  [[ -n "$lane" ]] || refuse record-missing "$ITEM"
+  read_lane_state || refuse stages-unread "$ITEM" "$WORK/state.err"
+  if [[ -z "$LANE_ITEM_STATE" ]]; then
+    printf 'oversee-cycle: stages-unread item=%s cause=no-state\n' "$ITEM" >&2
+    exit 1
+  fi
+  (jq -c '.stages | if . == null then [] else . end' <<<"$LANE_ITEM_STATE" | print_stages "$ITEM") 2>"$WORK/state.err" \
+    || refuse stages-unread "$ITEM" "$WORK/state.err"
+  exit 0
 fi
 
 log_row() { # ITEM TEXT
@@ -334,22 +388,13 @@ case "$launch_tier" in
 esac
 case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 [[ -n "$REPO" ]] || REPO="$(jq -r '.repo // empty' <<<"$lane")"
-LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
-LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
 # The archive a close of the hosted lane kept, from the fleet log's last
 # `kept=PATH` row for the item since its current session began, so a close of
 # an earlier run of a relaunched item is never read as this one's. The path
 # is the rest of the row, since a fleet directory may hold spaces and the
 # provider prints it unescaped as the line's last field.
-LANE_SINCE="$(jq -r '.session_since // .launched_at // ""' <<<"$lane")" || refuse state-unreadable "$STATE_FILE"
-LANE_KEPT="$(jq -r --arg item "$ITEM" --arg since "$LANE_SINCE" '
-  [.fleet_log[]? | select(.item == $item and ((.at // "") >= $since)) | .text | strings
-   | capture("(^|\\s)kept=(?<p>/.*[^\\s])\\s*$") | .p] | last // empty' "$STATE_FILE")" \
-  || refuse state-unreadable "$STATE_FILE"
-
 rounds=null stages=null rounds_unread=""
-if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-  "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"}; then
+if ! read_lane_state; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
   stages="$(jq -c '.stages // null' <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" \

@@ -84,6 +84,9 @@ NEW_A2="$(printf 'd%.0s' {1..39})3"
 # tmp/, never in the state directory.
 wt="$TMP_ROOT/wt"
 git init -q -b main "$wt"
+git -C "$wt" config gc.auto 0
+git -C "$wt" config maintenance.auto false
+git -C "$wt" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
 mkdir -p "$wt/tmp"
 
 # The worktree-private file every rewrite records its map in. It outlives the
@@ -836,6 +839,78 @@ for row in \
   esac
   assert_eq "rc=$RUN_RC $got" "rc=$want_rc $want" "control: shared $rule rule changes the push result" "$run_err"
 done
+
+echo '=== a pushed restack records the newest finished run once ==='
+work="$TMP_ROOT/work-restack-timing"
+reset_state "$work"
+timing_head="$(git -C "$wt" rev-parse HEAD)"
+run_old="$(validate_run_dir "$wt/tmp/dev-validate-old" range 0 "$timing_head" 1)"
+run_new="$(validate_run_dir "$wt/tmp/dev-validate-new" range 0 "$timing_head" 2)"
+run_other="$(validate_run_dir "$wt/tmp/dev-validate-other" range 0 "$OLD_A" 3)"
+printf 'validate: lanes=shell selection=subset\n' > "$run_new/log"
+"$STATE" --state-dir "$work/tmp" update KEN-1 '.stages=[]'
+for round in first second; do
+  printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+  STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+  assert_eq "$RUN_RC" 0 "$round restack push passes" "$run_err"
+done
+assert_eq "$(jq -c '.stages' <<<"$(state_json "$work")")" \
+  "[{\"kind\":\"validate\",\"reason\":\"restack\",\"round_id\":null,\"run_dir\":\"$run_new\",\"start\":1767225600,\"end\":1767228900}]" 'restack records newest run once with real run times'
+assert_eq "$(jq -c '.validate_rounds' <<<"$(state_json "$work")")" \
+  '[{"round_id":"restack-new","kind":"restack","mode":"range","seconds":3300,"lanes":"shell","selection":"subset"}]' 'restack validation minutes match stage run'
+"$STATE" --state-dir "$work/tmp" init oversee >/dev/null
+"$STATE" --state-dir "$work/tmp" update oversee --arg root "$work" '.lanes=[{item:"KEN-1",host:null,mail_root:$root,pending_pr:{pr:7}}]'
+stage_rows="$(cd "$work" && "$REPO_ROOT/skills/orch/scripts/oversee-cycle" --state-dir "$work/tmp" stages KEN-1)"
+assert_eq "$stage_rows" 'stage item=KEN-1 kind=validate round_id=null start=1767225600 end=1767228900 reason=restack' 'running lane displays worktree-push restack times'
+echo '=== skipped re-tests and push-time rewrites do not relabel earlier runs ==='
+for route in skip push-rewrite; do
+  reset_state "$work"
+  case "$route" in
+    skip)
+      git -C "$wt" commit -q --allow-empty -m skipped-restack
+      skip_head="$(git -C "$wt" rev-parse HEAD)"
+      "$STATE" --state-dir "$work/tmp" update KEN-1 --arg head "$skip_head" --arg validated "$timing_head" \
+        '.restack_skips=[{head:$head,condition:"no-conflict",validated_head:$validated,paths:[]}]'
+      printf 'rebase-hop:\nrebase-map: %s %s\n' "$timing_head" "$skip_head" > "$restack_map_file"
+      STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+      ;;
+    push-rewrite)
+      git -C "$wt" reset -q --hard "$timing_head"
+      STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+      ;;
+  esac
+  assert_eq "$RUN_RC|$(jq -c '[(.stages // []),(.validate_rounds // [])]' <<<"$(state_json "$work")")" \
+    '0|[[],[]]' "$route records no earlier validation as a restack"
+done
+git -C "$wt" reset -q --hard "$timing_head"
+reset_state "$work"
+PUSH_SAVED="$PUSH"
+PUSH="$(mutant_scripts unbound-restack-run worktree-push)/worktree-push"
+mutate_file "$PUSH" 'and .head == $head' 'and true'
+git -C "$wt" commit -q --allow-empty -m skipped-restack-control
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$timing_head" "$(git -C "$wt" rev-parse HEAD)" > "$restack_map_file"
+STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$(jq -r '.stages[0].run_dir' <<<"$(state_json "$work")")" "$run_other" 'control: an unbound writer records an earlier run after a skipped retest'
+PUSH="$PUSH_SAVED"
+git -C "$wt" reset -q --hard "$timing_head"
+reset_state "$work"
+PUSH="$(mutant_scripts push-run-as-restack worktree-push)/worktree-push"
+mutate_file "$PUSH" "restack_validation_head=''" 'restack_validation_head="$(git -C "$worktree_abs" rev-parse HEAD)"'
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$(jq -r '.stages[0].run_dir' <<<"$(state_json "$work")")" "$run_new" 'control: a push-only map relabels an earlier dev run when no pending restack is required'
+PUSH="$PUSH_SAVED"
+reset_state "$work"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+STUB_PUSH_STDOUT='' STUB_PUSH_EXIT=7 run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC|$(jq -c '.stages // []' <<<"$(state_json "$work")")" '7|[]' 'failed push records no restack stage'
+reset_state "$work"
+PUSH_SAVED="$PUSH"
+PUSH="$(mutant_scripts no-restack-stage worktree-push)/worktree-push"
+mutate_file "$PUSH" 'record_restack_validation ||' 'true ||'
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC|$(jq -c '.stages // []' <<<"$(state_json "$work")")" '0|[]' 'control: dropping restack write fails stage observation'
+PUSH="$PUSH_SAVED"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

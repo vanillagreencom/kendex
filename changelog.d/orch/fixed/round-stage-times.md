@@ -1,0 +1,1 @@
+- Round checks record start, end and validation times automatically. `oversee-cycle stages ITEM` shows running lanes, resumed rounds and pushed restack validation runs.

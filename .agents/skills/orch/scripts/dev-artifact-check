@@ -981,8 +981,35 @@ check_once() {
       return 2
     }
   fi
+  if [[ "$round_mode" == true ]] && (( rc == 0 || rc == 1 )) \
+    && jq -e '.reason != "missing" and .reason != "invalid"' >/dev/null 2>&1 <<<"$out"; then
+    record_stage "$out" || printf 'dev-artifact-check: stage-unrecorded issue=%s round=%s\n' "$issue" "$round_id" >&2
+  fi
   printf '%s\n' "$out"
   return "$rc"
+}
+
+# Timing is advisory: a failed state write cannot alter artifact acceptance.
+# Local ad-hoc keys can name artifacts without a workflow state.
+record_stage() {
+  local result="$1" state now
+  state="$("$SCRIPT_DIR/workflow-state" path "$issue" 2>/dev/null)" || return 1
+  [[ -f "$state" ]] || return 0
+  now="$(date +%s)" || return 1
+  "$SCRIPT_DIR/workflow-state" update "$issue" --arg round "$round_id" --argjson end "$now" \
+    --slurpfile artifact "$file" --argjson result "$result" '
+      $artifact[0].kind as $kind
+      | .stages = ((.stages // []) | map(if .round_id == $round and .kind != "validate"
+          then .kind = $kind | .end //= $end else . end))
+      | if $result.validate_time == null then . else
+          $result.validate_time as $time
+          | .stages = ([(.stages // [])[] | select(.round_id != $round or .kind != "validate")]
+              + [{kind: "validate", round_id: $round, start: ($time.started_at | fromdateiso8601), end: ($time.ended_at | fromdateiso8601)}])
+          | .validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)]
+              + [({round_id: $round, kind: $kind, mode: $result.validate_mode, seconds: $time.seconds}
+                + (if $result.validate_lanes == null then {} else {lanes: $result.validate_lanes} end)
+                + (if $result.validate_selection == null then {} else {selection: $result.validate_selection} end))])
+        end' >/dev/null 2>&1
 }
 
 # Shared tail: --expect-items grammar (both modes), then validate — once, or,

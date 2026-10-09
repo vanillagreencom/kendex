@@ -93,6 +93,10 @@
 # resolution above the push is what stands between a wrong argument and a wrong
 # write, refusing a state that records another issue or another worktree.
 # State directory resolution is defined by `workflow-state --help`.
+# A successful push with a pending restack map records the newest finished
+# validation run for its pre-push head through dev-validate-run --record,
+# once per run directory. A skipped re-test has no run for that head.
+# Failed pushes and failed restack batteries record no restack validation stage.
 #
 # Exit codes:
 #   push failed  -> the push's own exit code, always — any printed map is
@@ -410,6 +414,7 @@ reconcile_restack_hop() {
 consume_rebase_map_file() {
 	restack_summary_key="$1"
 	[[ -e "$restack_map_file" ]] || return 0
+	push_restacked=true
 	rebase_map_load "$restack_map_file" \
 		|| consume_fail "${REBASE_MAP_FAIL_ARGS[@]}" "file=$restack_map_file"
 	# The record names SHAs recorded against a state file. With no record there
@@ -421,7 +426,15 @@ consume_rebase_map_file() {
 	rm -f -- "$restack_map_file" || consume_fail restack-map-clear "file=$restack_map_file"
 }
 
+push_restacked=false
 consume_rebase_map_file restack-reconcile
+# Only a map present before the push binds a restack run. A push-time rewrite
+# has no validation run for its new head yet.
+restack_validation_head=''
+if [[ "$push_restacked" == true ]]; then
+	restack_validation_head="$(git -C "$worktree_abs" rev-parse HEAD)" \
+		|| fail not-worktree "path=$worktree_abs"
+fi
 
 push_out="$(mktemp)" || fail temp-file command=mktemp
 trap 'rm -f "$push_out"' EXIT
@@ -452,4 +465,37 @@ cat "$push_out" || true
 
 restack_pushed=true
 consume_rebase_map_file sha-reconcile
+
+# This is a local timing record, below the decision-record bar: the push owns
+# the restack map and is the first required script holding the item and run.
+record_restack_validation() {
+	local dir record candidate latest='' latest_dir='' start=-1 candidate_start
+	[[ "$state_present" == true && -n "$restack_validation_head" ]] || return 0
+	for dir in "$worktree_abs"/tmp/dev-validate-*; do
+		[[ -d "$dir" ]] || continue
+		record="$("$SCRIPT_DIR/dev-validate-run" --record --run-dir "$dir" 2>/dev/null)" || return 1
+		candidate="$(jq -cn --arg record "$record" --arg head "$restack_validation_head" '
+			($record | split(" ") | map(select(contains("=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)
+			| select(.verdict != "unfinished" and .seconds != null and .head == $head)')" || return 1
+		[[ -n "$candidate" ]] || continue
+		candidate_start="$(jq -r '.start' <<<"$candidate")" || return 1
+		if (( candidate_start > start )); then
+			start="$candidate_start" latest="$candidate" latest_dir="$dir"
+		fi
+	done
+	[[ -n "$latest" ]] || return 0
+	"$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update "$issue" --arg dir "$latest_dir" --argjson run "$latest" '
+		if any(.stages[]?; .run_dir == $dir) then . else
+			.stages = ((.stages // []) + [{kind: "validate", reason: "restack", round_id: null, run_dir: $dir,
+				start: ($run["started-at"] | fromdateiso8601), end: ($run["ended-at"] | fromdateiso8601)}])
+			| .validate_rounds = ((.validate_rounds // []) + [({round_id: ("restack-" + ($dir | split("/") | last | ltrimstr("dev-validate-"))),
+				kind: "restack", mode: $run["validate-mode"], seconds: ($run.seconds | tonumber)}
+				+ (if $run.lanes == null then {} else {lanes: $run.lanes} end)
+				+ (if $run.selection == null then {} else {selection: $run.selection} end))])
+		end' >/dev/null 2>&1
+}
+
+if [[ "$push_rc" == 0 && "$push_restacked" == true ]]; then
+	record_restack_validation || printf 'worktree-push: stage-unrecorded issue=%s\n' "$issue" >&2
+fi
 exit "$push_rc"
