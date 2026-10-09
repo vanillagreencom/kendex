@@ -1153,11 +1153,18 @@ read_base_ref() {
 # approval. The notice file is the once-per-head key, so it is created
 # exclusively and removed only by the send that failed to deliver it.
 copilot_fallback_notice() {
-  local box notice text
+  local box notice text copilot_runs
   [ -n "$LANE_MAIL_FILE" ] && [ -n "$1" ] || return 0
   box="${LANE_MAIL_FILE%/*}"
   [ -d "$box" ] || return 0
   notice="$box/copilot-fallback-$1.md"
+  if [ ! -e "$notice" ]; then
+    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$1" "$PR_NUM" 2>"$GH_ERR_FILE"); then
+      emit_error copilot-flight-failed
+      return 1
+    fi
+    [ "$copilot_runs" = '[]' ] || return 0
+  fi
   text="copilot-fallback PR #$PR_NUM head $1 cause=off"$'\n'"Lane status: tmp/lane-status-$ITEM.md"
   if ! (set -o noclobber; cat >"$notice" <<<"$text") 2>/dev/null; then
     # An earlier poll or wait on this head created it, or the write failed.
@@ -1313,11 +1320,7 @@ while true; do
     exit 1
   fi
   if [ "$COPILOT_REQUESTS" = off ]; then
-    if ! copilot_runs=$(orch_copilot_check_runs "$REPO" "$last_head_sha" "$PR_NUM" 2>"$GH_ERR_FILE"); then
-      emit_error copilot-flight-failed
-      exit 1
-    fi
-    [ "$copilot_runs" != '[]' ] || copilot_fallback_notice "$last_head_sha"
+    copilot_fallback_notice "$last_head_sha" || exit 1
   fi
   if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg reviewer "$COPILOT_REVIEWER" '
     any(.latestReviews[]?; .author.login == $reviewer and .state == "COMMENTED")' >/dev/null <<<"$view_json"; then

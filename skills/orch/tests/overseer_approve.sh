@@ -36,7 +36,13 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CALLS"
 case "$*" in
-  'api repos/o/r/issues/42/timeline?per_page=100 --paginate --slurp') echo '[[]]' ;;
+  'api repos/o/r/issues/42/timeline?per_page=100 --paginate --slurp')
+    if [[ "$CHECK_MODE" == timeline ]]; then
+      jq -nc --arg head "$LIVE_HEAD" --argjson count "$(cat "$CHECK_READS")" '
+        [[{event:"review_requested",id:73,created_at:"2026-10-09T06:41:20Z",requested_reviewer:{login:"Copilot"}}],
+         if $count > 1 then [{event:"reviewed",id:81,user:{login:"Copilot"},commit_id:$head,submitted_at:"2026-10-09T06:41:30Z"}] else [] end]'
+    else echo '[[]]'; fi
+    ;;
   'api repos/o/r/commits/'*'/check-runs?filter=all&per_page=100 --paginate --slurp')
     [[ "$*" == "api repos/o/r/commits/$LIVE_HEAD/check-runs?filter=all&per_page=100 --paginate --slurp" ]] || exit 9
     count="$(cat "$CHECK_READS")"
@@ -46,6 +52,7 @@ case "$*" in
     started='"2026-10-09T06:41:20Z"'
     case "$CHECK_MODE" in
       completed) state=completed ;;
+      timeline) echo '[{"check_runs":[]}]'; exit 0 ;;
       finishing) [[ "$count" -eq 1 ]] || state=completed ;;
       queued) state=queued; started=null; [[ "$count" -eq 1 ]] || state=completed ;;
       failed) echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;
@@ -169,6 +176,7 @@ while IFS='|' read -r label mode flag bound want_rc want_post want_reads want_ke
 done <<'EOF'
 in-progress run completes|finishing|yes|600|5|no|2|copilot-finished
 queued run completes|queued|yes|600|5|no|2|copilot-finished
+pending timeline work is reviewed|timeline|yes|600|5|no|2|copilot-finished
 run outlasts bound|running|yes|3|0|yes|2|copilot-hold-expired
 run completes at bound|finishing|yes|10|0|yes|2|copilot-hold-expired
 flag absent during run|running|no|3|0|yes|0|
@@ -182,6 +190,13 @@ invalid bound|running|yes|invalid|1|no|0|copilot-hold-setting
 zero bound|running|yes|0|1|no|0|copilot-hold-setting
 EOF
 unset CHECK_MODE HOLD_SECS
+
+CHECK_MODE=timeline
+run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$STDERR_KEY|$(cat "$SLEEPS")" \
+  "overseer-approve: copilot-in-flight pr=42 repo=o/r head=$GIVEN run=73 started_at=2026-10-09T06:41:20Z|10" \
+  'timeline hold names the pending request and polls before finishing' "$ERR"
+unset CHECK_MODE
 
 # A review-fix push can change the head during the hold. A caller's short
 # prefix must still bind the full initial head when expiry permits approval.
@@ -343,6 +358,15 @@ assert_eq "$RC|$NCALLS|${STDERR_KEY%% pr=*}|$(cat "$OUT")" "1|2|overseer-approve
 # Today's approval path, with the flag accepted but its hold bypassed, posts
 # before the fixture's running review finishes. The normal completion row
 # above rejects that behavior. Other controls remove each independent guard.
+scripts="$(mutant_scripts mutant/orch overseer-approve)"
+# shellcheck disable=SC2016
+mutate_file "$scripts/overseer-approve" 'orch_copilot_check_runs "$REPO" "$live" "$PR_NUM"' \
+  'orch_copilot_check_runs "$REPO" "$live"'
+CHECK_MODE=timeline
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$CHECK_READS")|$(cat "$OUT")" \
+  '0|1|APPROVED vanillagreen-overseer[bot] 0123456' 'timeline control approves before the pending request is reviewed' "$ERR"
+
 scripts="$(mutant_scripts mutant/orch overseer-approve)"
 mutate_file "$scripts/overseer-approve" 'if [[ "$HOLD_COPILOT" -eq 1 ]]; then' \
   'if false; then # if [[ "$HOLD_COPILOT" -eq 1 ]]; then'

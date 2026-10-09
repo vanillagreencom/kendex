@@ -78,7 +78,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: `oversee-watch --help` | |
 | `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | `overseer-approve`'s app token: an absolute path, one line, mode 600, outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |
 | `ORCH_OVERSEER_REVIEW_LOGIN` | The token app's bot login, such as `vanillagreen-overseer[bot]`. Required for failed-POST read-back; unset refuses confirmation | |
-| `ORCH_COPILOT_HOLD_SECS` | Maximum fallback approval hold for a Copilot check run on the live head: `overseer-approve --help`. Requires the token app's repository Checks: read permission | `600` |
+| `ORCH_COPILOT_HOLD_SECS` | Bound for current-head Copilot checks and pending timeline work: `copilot-wait --help`, `overseer-approve --help`. Requires the token app's repository Checks: read permission | `600` |
 | `ORCH_LANE_HOST` | `lane-host`'s host: `local`, `claude-cloud` (Claude Code's own cloud sessions) or a provider executable, each a [host kind](schemas/lane-host.md#host-kinds) | `local` |
 | `ORCH_LANE_HOST_MAX_CALLS` / `ORCH_LANE_HOST_BUSY_WAIT_SECS` | Per-home long-call cap and seconds to wait at that cap; [Host protocol](schemas/lane-host.md#provider-protocol) places the verbs | `4` / `30` |
 | `ORCH_LANE_HOST_SHORT_MAX_CALLS` / `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | Independent per-home short-call cap and wait; mailbox reads can run while long calls wait on sandbox preparation | `4` / `30` |

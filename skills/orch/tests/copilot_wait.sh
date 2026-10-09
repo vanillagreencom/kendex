@@ -2,7 +2,7 @@
 # Surface: copilot-wait and its shared Copilot run/timeline reader.
 # Inputs: scripts/copilot-wait, scripts/lib/copilot-check-runs.sh,
 # scripts/lib/{gh-auth,gh-repo,lane-mail-nap}.sh, scripts/orch-env,
-# github/scripts/lib/{gh-auth,gh-repo,repo-probe,repo-paths}.sh.
+# github/scripts/lib/{gh-auth,gh-repo,kendex-env,bounded}.sh.
 # The same GitHub stubs drive the wait and the old read-without-wait control.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -27,10 +27,23 @@ cat > "$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  'auth status'*) exit 0 ;;
+  'auth status'*)
+    if [[ "${GH_TOKEN:-}${GITHUB_TOKEN:-}" == stale || "${MODE:-}" == auth-dead ]]; then
+      echo 'auth failed' >&2; exit 1
+    fi
+    exit 0
+    ;;
+  'api user --jq .login')
+    if [[ "${GH_TOKEN:-}${GITHUB_TOKEN:-}" == stale || "${MODE:-}" == auth-dead ]]; then
+      echo 'auth failed' >&2; exit 1
+    fi
+    echo fixture-user
+    ;;
   'repo view'*) echo o/r ;;
   'pr view 42 --repo o/r --json headRefOid --jq .headRefOid')
     head="$HEAD_A"
+    [[ "$MODE" != head-fail && !( "$MODE" == head-confirm-fail && "$(cat "$READS")" -gt 0 ) ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
+    [[ "$MODE" != auth-valid || "${GH_TOKEN:-}${GITHUB_TOKEN:-}" == valid ]] || exit 9
     if [[ "$MODE" == moved && "$(cat "$READS")" -ge 1 ]]; then head="$HEAD_B"; fi
     [[ "$MODE" != invalid-head ]] || head=null
     echo "$head"
@@ -40,7 +53,7 @@ case "$*" in
     status=completed
     case "$MODE" in
       finishing|moved|mail) [[ "$count" -gt 1 ]] || status=in_progress ;;
-      active) status=in_progress ;;
+      active|active-old-review|reviews-fail) status=in_progress ;;
       review-landed) status=in_progress ;;
       queued) status=queued ;;
       fail) echo 'HTTP 403: Forbidden' >&2; exit 1 ;;
@@ -54,22 +67,30 @@ case "$*" in
     case "$MODE" in
       timeline-fail) echo 'HTTP 403: Forbidden' >&2; exit 1 ;;
       timeline-invalid) echo '[{}]'; exit 0 ;;
-      timeline-request|timeline-work|timeline-reviewed|timeline-old-review|timeline-human-review)
+      timeline-request|timeline-work|timeline-reviewed|timeline-old-review|timeline-stale-review|timeline-human-review|timeline-removed|timeline-human-removed)
         event=review_requested
         [[ "$MODE" != timeline-work ]] || event=copilot_work_started
         jq -nc --arg event "$event" --arg head "$HEAD_A" --arg mode "$MODE" '
-          [[{event:"reviewed",user:{login:"Copilot"},commit_id:"old",id:40},
+          [[{event:"reviewed",user:{login:"Copilot"},commit_id:"old",id:40,submitted_at:"2026-10-09T06:40:00Z"},
             {event:$event,id:73,created_at:"2026-10-09T07:23:47Z",
-             requested_reviewer:{login:"Copilot",type:"Bot"},actor:{login:"bmethod",type:"User"}}],
-           if $mode == "timeline-reviewed" then [{event:"reviewed",user:{login:"Copilot"},commit_id:$head,id:41}]
-           elif $mode == "timeline-old-review" then [{event:"reviewed",user:{login:"Copilot"},commit_id:"old",id:41}]
-           elif $mode == "timeline-human-review" then [{event:"reviewed",user:{login:"colleague"},commit_id:$head,id:41}]
+             requested_reviewer:(if $mode == "timeline-work" then null else {login:"Copilot",type:"Bot"} end),actor:{login:"bmethod",type:"User"}}],
+           if $mode == "timeline-reviewed" then [{event:"reviewed",user:{login:"Copilot"},commit_id:$head,id:41,submitted_at:"2026-10-09T07:27:06Z"}]
+           elif $mode == "timeline-old-review" then [{event:"reviewed",user:{login:"Copilot"},commit_id:"old",id:41,submitted_at:"2026-10-09T07:27:06Z"}]
+           elif $mode == "timeline-stale-review" then [{event:"reviewed",user:{login:"Copilot"},commit_id:"old",id:41,submitted_at:"2026-10-09T06:40:00Z"}]
+           elif $mode == "timeline-human-review" then [{event:"reviewed",user:{login:"colleague"},commit_id:$head,id:41,submitted_at:"2026-10-09T07:27:06Z"}]
+           elif $mode == "timeline-removed" then [{event:"review_request_removed",requested_reviewer:{login:"Copilot"}}]
+           elif $mode == "timeline-human-removed" then [{event:"review_request_removed",requested_reviewer:{login:"colleague"}}]
            else [] end]'
         ;;
       *) echo '[[]]' ;;
     esac
     ;;
   'api repos/o/r/pulls/42/reviews?per_page=100 --paginate --slurp')
+    [[ "$MODE" != reviews-fail ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
+    if [[ "$MODE" == active-old-review ]]; then
+      jq -nc --arg head "$HEAD_B" '[[{id:81,user:{login:"Copilot"},commit_id:$head,state:"APPROVED",submitted_at:"2026-10-09T07:27:06Z"}]]'
+      exit 0
+    fi
     if [[ "$(cat "$READS")" -le 1 ]]; then echo '[[]]'; exit 0; fi
     jq -nc --arg head "$HEAD_A" --arg mode "$MODE" '[[{id:81,user:{login:"Copilot"},commit_id:$head,state:"APPROVED",
       submitted_at: (if $mode == "review-landed" then "2026-10-09T07:27:06Z" else "2026-10-09T06:40:13Z" end)}]]'
@@ -89,9 +110,10 @@ esac
 STUB
 chmod +x "$TMP_ROOT/bin/gh"
 SCRIPT="$TMP_ROOT/repo/.agents/skills/orch/scripts/copilot-wait"
-run_wait() { # MODE [BOUND] [ITEM]
+run_wait() { # MODE [BOUND] [ITEM] [TOKEN_VARIABLE=VALUE]
   echo 0 > "$TMP_ROOT/reads"
-  local args=() mail=""
+  local args=() auth=() mail=""
+  [[ -z "${4:-}" ]] || auth=("$4")
   if [[ -n "${3:-}" ]]; then
     args=(--item "$3")
     mail="$TMP_ROOT/repo/tmp/lane-mail/$3/to-lane.jsonl"
@@ -99,6 +121,7 @@ run_wait() { # MODE [BOUND] [ITEM]
   fi
   RC=0
   OUT=$(cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" \
+    ${auth[@]+"${auth[@]}"} \
     MODE="$1" HEAD_A="$HEAD_A" HEAD_B="$HEAD_B" READS="$TMP_ROOT/reads" \
     STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
     STUB_MAIL_TO="$mail" ORCH_COPILOT_HOLD_SECS="${2:-20}" \
@@ -110,11 +133,15 @@ rows=(
   'review-landed|20|0|settled|81|72|10'
   'completed|20|0|none|none|none|0'
   'active|3|1|expired|none|72|3'
+  'active-old-review|3|1|expired|none|72|3'
   'queued|3|1|expired|none|72|3'
   'timeline-request|3|1|expired|none|73|3'
   'timeline-work|3|1|expired|none|73|3'
   'timeline-reviewed|3|0|none|none|none|0'
-  'timeline-old-review|3|1|expired|none|73|3'
+  'timeline-old-review|3|0|none|none|none|0'
+  'timeline-stale-review|3|1|expired|none|73|3'
+  'timeline-removed|3|0|none|none|none|0'
+  'timeline-human-removed|3|1|expired|none|73|3'
   'timeline-human-review|3|1|expired|none|73|3'
   'moved|20|0|none|none|none|10'
 )
@@ -124,12 +151,24 @@ for row in "${rows[@]}"; do
   assert_eq "$RC $(field state) $(field review) $(field run) $(field waited)" \
     "$rc $state $review $run $waited" "$mode: current-head result" "$TMP_ROOT/err"
 done
-for mode in fail timeline-fail timeline-invalid invalid-head; do
+for mode in fail timeline-fail timeline-invalid invalid-head head-fail head-confirm-fail reviews-fail; do
   run_wait "$mode"
   assert_eq "$RC" 1 "$mode: failed reads refuse" "$TMP_ROOT/err"
   assert_eq "$OUT" '' "$mode: failed reads print no passing result"
-  assert_contains "$(cat "$TMP_ROOT/err")" 'copilot-wait: read-failed operation=' "$mode: keyed refusal"
+  assert_contains "$(sed -n 1p "$TMP_ROOT/err")" 'copilot-wait: read-failed operation=' "$mode: refusal starts with its key"
+  if [[ "$mode" == *fail ]]; then
+    assert_contains "$(cat "$TMP_ROOT/err")" 'HTTP 403: Forbidden' "$mode: refusal retains the API detail"
+  fi
 done
+for token in GH_TOKEN=stale GITHUB_TOKEN=stale GH_TOKEN=valid GITHUB_TOKEN=valid; do
+  mode=completed
+  [[ "$token" != *=valid ]] || mode=auth-valid
+  run_wait "$mode" 20 '' "$token"
+  assert_eq "$RC $(field state)" '0 none' "$token: available credentials reach the head read" "$TMP_ROOT/err"
+done
+run_wait auth-dead 20 '' GH_TOKEN=stale
+assert_eq "$RC $OUT" '3 ' 'unavailable environment and keyring credentials refuse' "$TMP_ROOT/err"
+assert_eq "$(sed -n 1p "$TMP_ROOT/err")" 'copilot-wait: auth-unavailable pr=42' 'auth refusal starts with its key'
 run_wait mail 20 KEN-9
 assert_eq "$RC" 5 'lane mail interrupts without a verdict' "$TMP_ROOT/err"
 assert_eq "$OUT" 'copilot-wait: mail=1' 'lane mail uses the waiter contract'
@@ -180,11 +219,34 @@ run_wait active 3
 assert_eq "$(field state)" none 'must-fail: active-check discovery cannot become none'
 cp "$TMP_ROOT/reader.pristine" "$READER"
 # shellcheck disable=SC2016
-mutate "$SCRIPT" '  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM")" || refuse copilot' \
-  '  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM")" || runs="[]" # refuse copilot'
+mutate "$SCRIPT" '  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM" 2>"$ERR_FILE")" || refuse copilot' \
+  '  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM" 2>"$ERR_FILE")" || runs="[]" # refuse copilot'
 run_wait fail
 assert_eq "$RC $(field state)" '0 none' 'must-fail: the refusal row rejects a failed read treated as none'
 cp "$TMP_ROOT/wait.pristine" "$SCRIPT"
+# shellcheck disable=SC2016
+mutate "$SCRIPT" 'orch_sanitize_gh_env 2>>"$AUTH_ERR_FILE" || true' ': # orch_sanitize_gh_env 2>>"$AUTH_ERR_FILE" || true'
+run_wait completed 20 '' GH_TOKEN=stale
+assert_eq "$RC" 3 'must-fail: inherited stale credentials require the shared keyring fallback'
+cp "$TMP_ROOT/wait.pristine" "$SCRIPT"
+# shellcheck disable=SC2016
+mutate "$SCRIPT" '  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM" 2>"$ERR_FILE")" || refuse copilot' \
+  '  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM")" || refuse copilot'
+run_wait fail
+assert_eq "$(sed -n 1p "$TMP_ROOT/err")" 'HTTP 403: Forbidden' 'must-fail: failed-read rows reject dependency stderr before the refusal'
+cp "$TMP_ROOT/wait.pristine" "$SCRIPT"
+mutate "$READER" '$event.submitted_at >= .started_at' 'false and $event.submitted_at >= .started_at'
+run_wait timeline-old-review 3
+assert_eq "$(field state)" expired 'must-fail: the completed previous-head cycle must close'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" '$event.submitted_at >= .started_at' 'true'
+run_wait timeline-stale-review 3
+assert_eq "$(field state)" none 'must-fail: a delayed older review cannot close a newer timeline request'
+cp "$TMP_ROOT/reader.pristine" "$READER"
+mutate "$READER" '$event.event == "review_request_removed" and' 'false and $event.event == "review_request_removed" and'
+run_wait timeline-removed 3
+assert_eq "$(field state)" expired 'must-fail: removed requests must close'
+cp "$TMP_ROOT/reader.pristine" "$READER"
 # shellcheck disable=SC2016
 mutate "$SCRIPT" '      and ($since == "" or ((.submitted_at | type) == "string" and .submitted_at >= $since)))] |' \
   '      and (true or $since == "" or ((.submitted_at | type) == "string" and .submitted_at >= $since)))] |'

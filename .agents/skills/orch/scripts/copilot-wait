@@ -31,8 +31,20 @@ source "$SCRIPT_DIR/lib/gh-repo.sh"
 source "$SCRIPT_DIR/lib/copilot-check-runs.sh"
 source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-if [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then orch_load_env_bot_token "$PROJECT_ROOT" || true; fi
-orch_github_auth_status || { printf 'copilot-wait: auth-unavailable pr=%s\n' "$PR_NUM" >&2; exit 3; }
+SCRATCH=$(mktemp -d 2>&1) || {
+  printf 'copilot-wait: scratch pr=%s\n%s\n' "$PR_NUM" "$SCRATCH" >&2
+  exit 1
+}
+trap 'rm -rf -- "${SCRATCH:?}"' EXIT
+ERR_FILE="$SCRATCH/err"
+AUTH_ERR_FILE="$SCRATCH/auth-err"
+if [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then orch_load_env_bot_token "$PROJECT_ROOT" 2>"$AUTH_ERR_FILE" || true; fi
+orch_sanitize_gh_env 2>>"$AUTH_ERR_FILE" || true
+if ! orch_github_auth_status 2>>"$AUTH_ERR_FILE"; then
+  printf 'copilot-wait: auth-unavailable pr=%s\n' "$PR_NUM" >&2
+  cat -- "$AUTH_ERR_FILE" >&2
+  exit 3
+fi
 REPO="$(orch_resolve_gh_repo "$PROJECT_ROOT")" || exit 1
 BOUND="$("$SCRIPT_DIR/orch-env" ORCH_COPILOT_HOLD_SECS 600)" || exit 2
 [[ "$BOUND" =~ ^[1-9][0-9]*$ ]] || { printf 'copilot-wait: invalid-bound value=%q\n' "$BOUND" >&2; exit 2; }
@@ -41,6 +53,8 @@ start="$(date +%s)"
 held_head="" run=none started_at=none
 refuse() {
   printf 'copilot-wait: read-failed operation=%s pr=%s repo=%s head=%s\n' "$1" "$PR_NUM" "$REPO" "${head:-unreadable}" >&2
+  cat -- "$AUTH_ERR_FILE" >&2
+  cat -- "$ERR_FILE" >&2
   exit 1
 }
 read_review() { # START_TIME_OR_EMPTY
@@ -57,18 +71,18 @@ read_review() { # START_TIME_OR_EMPTY
       then error("review identity is unreadable") else .id | tostring end end' <<<"$reviews"
 }
 while :; do
-  head="$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq .headRefOid)" || refuse head
+  head="$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq .headRefOid 2>"$ERR_FILE")" || refuse head
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || refuse head
   if [[ "$head" != "$held_head" ]]; then run=none; started_at=none; held_head="$head"; fi
-  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM")" || refuse copilot
+  runs="$(orch_copilot_check_runs "$REPO" "$head" "$PR_NUM" 2>"$ERR_FILE")" || refuse copilot
   waited=$(( $(date +%s) - start ))
   if [[ "$runs" == '[]' ]]; then
     state=none review=none
     if [[ "$run" != none ]]; then
-      review=$(read_review '') || refuse reviews
+      review=$(read_review '' 2>"$ERR_FILE") || refuse reviews
       state=settled
     fi
-    confirmed=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq .headRefOid) || refuse head
+    confirmed=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq .headRefOid 2>"$ERR_FILE") || refuse head
     [[ "$confirmed" =~ ^[0-9a-f]{40}$ ]] || refuse head
     if [[ "$confirmed" != "$head" ]]; then
       if [[ "$waited" -ge "$BOUND" ]]; then state=expired; head="$confirmed"; run=none; started_at=none; review=none; break; fi
@@ -76,14 +90,14 @@ while :; do
     fi
     break
   fi
-  run=$(jq -r '.[0].id' <<<"$runs") || refuse copilot
-  started_at=$(jq -r '.[0].started_at // "none"' <<<"$runs") || refuse copilot
+  run=$(jq -r '.[0].id' <<<"$runs" 2>"$ERR_FILE") || refuse copilot
+  started_at=$(jq -r '.[0].started_at // "none"' <<<"$runs" 2>"$ERR_FILE") || refuse copilot
   # GitHub can publish the submitted review before its check becomes completed.
   # An older review on a re-requested head does not settle that new request.
   if [[ "$started_at" != none ]]; then
-    review=$(read_review "$started_at") || refuse reviews
+    review=$(read_review "$started_at" 2>"$ERR_FILE") || refuse reviews
     if [[ "$review" != none ]]; then
-      confirmed=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq .headRefOid) || refuse head
+      confirmed=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq .headRefOid 2>"$ERR_FILE") || refuse head
       if [[ "$confirmed" == "$head" ]]; then state=settled; break; fi
     fi
   fi
@@ -92,6 +106,7 @@ while :; do
   [[ "$nap" -le 10 ]] || nap=10
   lane_mail_nap "$nap"
 done
+cat -- "$AUTH_ERR_FILE" >&2
 printf 'copilot-wait: result state=%s pr=%s repo=%s head=%s review=%s run=%s started_at=%s waited=%s\n' \
   "$state" "$PR_NUM" "$REPO" "$head" "$review" "$run" "$started_at" "$waited"
 [[ "$state" != expired ]]

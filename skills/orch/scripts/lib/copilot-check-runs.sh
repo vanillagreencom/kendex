@@ -27,10 +27,10 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
     printf '%s\n' "$active"
     return 0
   fi
-  # GitHub emits review_requested before the head check exists. Timeline
-  # order closes that gap; a review on another commit cannot settle this head.
+  # Requests have no head field. A submitted review closes its older request
+  # cycle across pushes; a delayed older review cannot close a newer request.
   timeline=$(gh api "repos/$1/issues/$3/timeline?per_page=100" --paginate --slurp) || return $?
-  jq -ce --arg head "$2" --argjson checks "$checks" '
+  jq -ce --argjson checks "$checks" '
     if type != "array" or length == 0 or any(.[]; type != "array")
     then error("timeline pages are unreadable") else add end |
     reduce .[] as $event (null;
@@ -41,9 +41,16 @@ orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
       then if ($event.id | type) != "number" or ($event.created_at | type) != "string"
            then error("Copilot timeline identity is unreadable")
            else {id: $event.id, started_at: $event.created_at} end
-      elif $event.event == "reviewed" and $event.commit_id == $head and
+      elif $event.event == "review_request_removed" and
+           ($event.requested_reviewer.login == "copilot-pull-request-reviewer[bot]" or
+            $event.requested_reviewer.login == "Copilot")
+      then null
+      elif $event.event == "reviewed" and
            ($event.user.login == "copilot-pull-request-reviewer[bot]" or $event.user.login == "Copilot")
-      then null else . end) |
+      then if . != null and ($event.submitted_at | type) == "string" and
+              $event.submitted_at >= .started_at
+           then null else . end
+      else . end) |
     if . == null then [] else . as $request |
       if any($checks[]; .status == "completed" and .started_at != null and .started_at >= $request.started_at)
       then [] else [$request] end end' <<<"$timeline"
