@@ -1,1 +1,0 @@
-- **Breaking:** Consumers no longer refresh on a `kendex-refresh` event. A release reaches each consumer at its next 6-hourly run. For a fix that cannot wait, run the refresh workflow by hand. Consumers take the new caller through their next refresh.

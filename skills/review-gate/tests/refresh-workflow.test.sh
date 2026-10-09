@@ -36,17 +36,14 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
   for file in "$@"; do
     index=$((index + 1))
     caller_events="$(triggers "$file")" || return 2
-    for event in workflow_dispatch schedule; do
+    for event in repository_dispatch workflow_dispatch schedule; do
       case $'\n'"$caller_events"$'\n' in
         *$'\n'"$event"$'\n'*) ;;
         *) printf 'caller=%s trigger-missing=%s\n' "$index" "$event"; failed=1 ;;
       esac
     done
-    case $'\n'"$caller_events"$'\n' in
-      *$'\nrepository_dispatch\n'*) printf 'caller=%s trigger-forbidden=repository_dispatch\n' "$index"; failed=1 ;;
-    esac
     cron="$(schedule_cron "$file")" || return 2
-    if [ "$cron" != '17 */6 * * *' ]; then
+    if [ "$cron" != '17 * * * *' ]; then
       printf 'caller=%s cron=%s\n' "$index" "$cron"
       failed=1
     fi
@@ -59,8 +56,8 @@ for file in "$TEMPLATE" "$CALLER"; do
 done
 
 # Each control uses the same assertions as the shipped callers.
-plant "$TEMPLATE" '    - cron: "17 */6 * * *"' '    - cron: "*/30 * * * *"' "$TMP_ROOT/template.yml"
-plant "$CALLER" '    - cron: "17 */6 * * *"' '    - cron: "*/30 * * * *"' "$TMP_ROOT/caller.yml"
+plant "$TEMPLATE" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
+plant "$CALLER" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
 
 while IFS='|' read -r shape expected_exit; do
   case "$shape" in
@@ -71,7 +68,7 @@ while IFS='|' read -r shape expected_exit; do
   result="$(check_cadence "$@")" || status=$?
   expected=''
   if [ "$shape" = unfixed ]; then
-    expected=$'caller=1 cron=*/30 * * * *\ncaller=2 cron=*/30 * * * *'
+    expected=$'caller=1 cron=17 */6 * * *\ncaller=2 cron=17 */6 * * *'
   fi
   if [ "$status" != "$expected_exit" ] || [ "$result" != "$expected" ]; then
     printf 'refresh-workflow: case=%s exit=%s result=[%s]\n' "$shape" "$status" "$result" >&2
@@ -83,8 +80,8 @@ current|0
 unfixed|1
 CASES
 
-# Fleet release dispatch must start no refresh run. Each caller also keeps
-# its manual entry and schedule; unrelated YAML cannot satisfy those rows.
+# A missing dispatch receiver, manual entry or schedule must fail in either
+# caller. Change the event key so unrelated YAML still cannot satisfy it.
 for source in template caller; do
   case "$source" in
     template) file="$TEMPLATE"; index=1 ;;
@@ -92,11 +89,7 @@ for source in template caller; do
   esac
   for event in repository_dispatch workflow_dispatch schedule; do
     mutant="$TMP_ROOT/$source-$event.yml"
-    case "$event" in
-      repository_dispatch)
-        plant "$file" '  workflow_dispatch: {}' $'  repository_dispatch:\n    types: [kendex-refresh]\n  workflow_dispatch: {}' "$mutant" ;;
-      *) plant "$file" "  $event:" "  ignored_$event:" "$mutant" ;;
-    esac
+    plant "$file" "  $event:" "  ignored_$event:" "$mutant"
     case "$source" in
       template) set -- "$mutant" "$CALLER" ;;
       caller) set -- "$TEMPLATE" "$mutant" ;;
@@ -104,7 +97,6 @@ for source in template caller; do
     status=0
     result="$(check_cadence "$@")" || status=$?
     expected="caller=$index trigger-missing=$event"
-    [ "$event" != repository_dispatch ] || expected="caller=$index trigger-forbidden=$event"
     [ "$event" != schedule ] || expected+=$'\n'"caller=$index cron="
     if [ "$status" != 1 ] || [ "$result" != "$expected" ]; then
       printf 'refresh-workflow: control=%s-%s exit=%s result=[%s]\n' "$source" "$event" "$status" "$result" >&2
