@@ -8,8 +8,8 @@
 # `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
 # `--mode render-candidate` permits new head-owned paths and the adopted refresh
 # caller without an inventory entry to gate render-proof prerequisites. It
-# never authorizes a CI skip. Caller contract: ../SKILL.md § Shared refresh
-# caller ownership.
+# never authorizes a CI skip.
+# Caller contract: ../SKILL.md § Shared refresh caller ownership.
 #
 # Usage:
 #   harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
