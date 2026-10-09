@@ -4,6 +4,7 @@
 # existing lead identity and refusal formats, not a second wake implementation.
 # HOOK_UNDER_TEST selects the planted copy for each must-fail control.
 set -euo pipefail
+export MSYS=winsymlinks:nativestrict
 
 # shellcheck source=lib/lane-mail-world.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
@@ -28,6 +29,24 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   fi
   case "$scenario" in
     armed) start_wake_watch repeat; start_follow ;;
+    succession-stale | succession-armed)
+      # watch-handover writes the live stdout log beside the fleet state.
+      # An idle linked reader cannot arm a follow running on an old log.
+      start_wake_watch repeat
+      printf 'pid=%s\nstate=%s\npane=none\norigin=succession\ncwd=%s\n' "$WAKE_PID" "$WAKE_STATE" "$LANE" \
+        > "${WAKE_STATE%/*}/oversee-watch.pid"
+      live_log="${WAKE_STATE%/*}/oversee-watch.log"
+      : > "$live_log"
+      : > "$LANE/tmp/old-watch.log"
+      mkdir -p "$LANE/tmp/waiter.fixture" "$LANE/tmp/waiter.linked"
+      ln -s "$LANE/tmp/old-watch.log" "$LANE/tmp/waiter.fixture/watch.log"
+      ln -s "$live_log" "$LANE/tmp/waiter.linked/watch.log"
+      [ -L "$LANE/tmp/waiter.fixture/watch.log" ] && [ -L "$LANE/tmp/waiter.linked/watch.log" ]
+      start_follow
+      if [ "$scenario" = succession-armed ]; then
+        wake_process "$LANE/tmp/waiter.linked/follow.sh" "$LANE/tmp/waiter.linked/watch.log" 1
+      fi
+      ;;
     no-follow | continuation | continuation-mark | agent-id | agent-type | subagent-stop | other-session | no-pgrep | probe-error | probe-error-mark | watch-probe-error | record-cwd | record-armed | missing-cwd | unreadable-record)
       start_wake_watch repeat
       ;;
@@ -117,6 +136,16 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   if [ "$decision" = block ]; then want_objects=1; fi
   got="$got replies=$objects event=$event"
   want="$want replies=$want_objects event=$want_event"
+  case "$scenario" in
+    succession-stale | succession-armed)
+      # The re-arm instruction carries the log path the caller must link.
+      log_paths=$(grep -Fc -- "$live_log" "$ERR_FILE" || :)
+      want_paths=0
+      [ "$scenario" != succession-stale ] || want_paths=1
+      got="$got log=$log_paths"
+      want="$want log=$want_paths"
+      ;;
+  esac
   if [ -n "$wake_notice" ]; then
     row=$(jq -rs 'map([.event, .harness] | join(":")) | join(",")' \
       "$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl") || exit 1
@@ -143,6 +172,14 @@ armed|claude|0|-|-|-|0
 armed|codex|0|-|-|-|0
 armed|copilot|0|-|-|-|0
 armed|pi|0|-|-|-|0
+succession-stale|claude|2|wake=unarmed|-|-|1
+succession-stale|codex|2|wake=unarmed|-|-|1
+succession-stale|copilot|0|wake=unarmed|block|-|1
+succession-stale|pi|2|wake=unarmed|-|-|1
+succession-armed|claude|0|-|-|-|0
+succession-armed|codex|0|-|-|-|0
+succession-armed|copilot|0|-|-|-|0
+succession-armed|pi|0|-|-|-|0
 no-follow|claude|2|wake=unarmed|-|-|1
 no-follow|codex|2|wake=unarmed|-|-|1
 no-follow|copilot|0|wake=unarmed|block|-|1
@@ -194,6 +231,9 @@ if [ -z "$SELECTED" ]; then
   wake_control disabled no-follow:claude \
     '      refuse wake unarmed "$start"' \
     '      message wake unarmed "$start"; return 0'
+  wake_control stale-log-accepted succession-stale:claude \
+    '        [ "$dir/watch.log" -ef "$log" ] || continue' \
+    '        : "$dir/watch.log" "$log"'
   wake_control continued-held continuation:claude \
     '      [ "$CONTINUED" != true ] || { wake_report wake unarmed "$start"; return 0; }' \
     '      [ "$CONTINUED" != true ] || refuse wake unarmed "$start"'

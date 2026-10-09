@@ -10,7 +10,7 @@ Read that watch's log without starting another watch on the same fleet state. A 
 
 ## Repeat watch
 
-The registered overseer's lead turn end refuses with `lane-mail-check: wake=unarmed` when the repeat watch is live but its follow is not running on the watch claim's cwd. Re-arm with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]` from the next unhandled line. The hook starts no process.
+The registered overseer's lead turn end refuses with `lane-mail-check: wake=unarmed` when a launcher-owned repeat watch is live but its follow does not run on a reader whose `watch.log` is the watch's stdout log. A hand-opened watch keeps the reader-path check under the watch claim's cwd. Re-arm with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]` from the next unhandled line. The hook starts no process.
 
 Read the `log` field of the launch's `watch-started` line. After a handover, the stdout log is `oversee-watch.log` beside the fleet state. Read `oversee-watch.err` beside it for restart failures. Create a fresh reader directory with `mktemp -d tmp/waiter.XXXXXX` from the watch claim's cwd. Use its absolute path as `[RUN_DIR]`. Link `[RUN_DIR]/watch.log` to that stdout log. Save the numbered follow below as `[RUN_DIR]/follow.sh`. The reader directory uses the path the turn-end wake check recognizes. It owns no watch claim.
 

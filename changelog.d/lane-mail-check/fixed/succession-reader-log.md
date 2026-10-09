@@ -1,0 +1,1 @@
+- Refuse an overseer's turn end when its succession reader follows an old log. Name the live watch log so the overseer can restore event delivery.

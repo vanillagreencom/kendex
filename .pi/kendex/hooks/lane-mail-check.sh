@@ -1178,11 +1178,13 @@ watch_live() {
 }
 
 # session_gate owns identity. The repeat claim names no follow, so pgrep is
-# the fallback for watch-delivery's follow on its cwd. Single passes wake on
-# exit; a master without a claim opts in through orch-env. No harness setting
+# the fallback for watch-delivery's reader. A succession writes beside the
+# fleet state, so an old reader on the same cwd can no longer deliver events.
+# Single passes wake on exit; a master without a claim opts in through orch-env.
+# No harness setting
 # holds a turn on process liveness. Pending context must not skip other marks.
 wake_check() {
-  local state record mode cwd pattern start rc answer escaped cause key
+  local state record mode cwd origin log dir pattern start rc answer escaped cause key
   [ "$ROLE" = overseer ] || return 0
   state=$(cd -- "$ROOT" && "$SCRIPTS/workflow-state" path "$OVERSEER_ITEM" 2>&1) ||
     { wake_report wake-state "$SCRIPTS/workflow-state" "$state"; return 0; }
@@ -1197,7 +1199,7 @@ wake_check() {
       rc=0
       watch_pid_live "$3" || rc=$?
       case "$rc" in
-        0) printf "repeat\t%s" "$WATCH_CWD" ;;
+        0) printf "repeat\t%s\t%s\t%s" "$WATCH_CWD" "$WATCH_ORIGIN" "$WATCH_LOG_FILE" ;;
         1) printf "single\t" ;;
         *) exit "$rc" ;;
       esac' \
@@ -1208,12 +1210,19 @@ wake_check() {
     return 0
   fi
   mode=${answer%%"$TAB"*}
-  cwd=${answer#*"$TAB"}
+  answer=${answer#*"$TAB"}
+  cwd=${answer%%"$TAB"*}
+  answer=${answer#*"$TAB"}
+  origin=${answer%%"$TAB"*}
+  log=${answer#*"$TAB"}
   case "$mode" in
     repeat)
       [ -n "$cwd" ] || { wake_report wake-record "$record" "the live watch claim names no cwd"; return 0; }
       pattern=$cwd
       start='sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]'
+      if [ "$origin" = succession ]; then
+        start="Link [RUN_DIR]/watch.log to $log, then $start"
+      fi
       ;;
     single)
       [ -x "$SCRIPTS/orch-env" ] || { wake_report wake-setting "$SCRIPTS/orch-env" "orch-env is unavailable"; return 0; }
@@ -1237,15 +1246,28 @@ wake_check() {
   command -v pgrep >/dev/null 2>&1 || { wake_report wake-tools pgrep; return 0; }
   if [ "$mode" != master ]; then
     command -v sed >/dev/null 2>&1 || { wake_report wake-tools sed; return 0; }
-    escaped=$(printf '%s' "$pattern" | sed 's/[][\\.*^$+?(){}|]/\\&/g' 2>&1) ||
-      { wake_report wake-process "$pattern" "$escaped"; return 0; }
-    case "$mode" in
-      repeat) pattern="follow[.]sh $escaped/tmp/waiter[.][^/]*/watch[.]log" ;;
-      single) pattern="oversee-watc[h].*--state[ =]$escaped([[:space:]]|$)" ;;
-    esac
+    if [ "$mode" = repeat ] && [ "$origin" = succession ]; then
+      pattern=""
+      for dir in "$cwd"/tmp/waiter.*; do
+        [ "$dir/watch.log" -ef "$log" ] || continue
+        escaped=$(printf '%s' "$dir" | sed 's/[][\\.*^$+?(){}|]/\\&/g' 2>&1) ||
+          { wake_report wake-process "$dir" "$escaped"; return 0; }
+        pattern="${pattern:+$pattern|}follow[.]sh $escaped/watch[.]log([[:space:]]|$)"
+      done
+    else
+      escaped=$(printf '%s' "$pattern" | sed 's/[][\\.*^$+?(){}|]/\\&/g' 2>&1) ||
+        { wake_report wake-process "$pattern" "$escaped"; return 0; }
+      case "$mode" in
+        repeat) pattern="follow[.]sh $escaped/tmp/waiter[.][^/]*/watch[.]log" ;;
+        single) pattern="oversee-watc[h].*--state[ =]$escaped([[:space:]]|$)" ;;
+      esac
+    fi
   fi
-  rc=0
-  answer=$(pgrep -f -- "$pattern" 2>&1) || rc=$?
+  rc=1
+  if [ -n "$pattern" ]; then
+    rc=0
+    answer=$(pgrep -f -- "$pattern" 2>&1) || rc=$?
+  fi
   case "$rc" in
     0) return 0 ;;
     1)
