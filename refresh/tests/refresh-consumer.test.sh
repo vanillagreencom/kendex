@@ -1373,13 +1373,17 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
-old = 'ol_preference_entries() { # VALUE'
+declarations = [line for line in s.splitlines(keepends=True)
+                if line.startswith('ol_preference_entries() {')]
+assert len(declarations) == 1
+old = declarations[0]
 assert s.count(old) == 1
-changed = s.replace(old, old + '''
-  if [[ -n ${GH_TOKEN+x} || -n ${GITHUB_TOKEN+x} || -n ${TEST_SECRET+x} ]]; then
+# Insert after the complete declaration so its argument comment stays a comment.
+changed = s.replace(old, old + '''  if [[ -n ${GH_TOKEN+x} || -n ${GITHUB_TOKEN+x} || -n ${TEST_SECRET+x} ]]; then
     printf 'parse-error=credential-present\\n' >&2
     return 87
-  fi''')
+  fi
+''')
 assert changed != s
 p.write_text(changed)
 PY_GUARD

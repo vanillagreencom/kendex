@@ -3137,7 +3137,7 @@ cloud_cli_wait() { # PANE
 # except an account refusal, which closes it once the session is read. Status
 # 75 is an item another session owns; 1 a failure, its keyed line printed.
 cloud_session_launch() {
-  local wt branch words model cmd form line pane session prompt prompt_file rc=0 launched_at record_rc=0 detached=false exit_rc=0
+  local wt branch words choice cmd form line pane session prompt prompt_file rc=0 launched_at record_rc=0 detached=false exit_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
   wt="$("$WORKTREE_CLI" create "$wt_id" --no-checkout)" || rc=$?
   [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
@@ -3155,7 +3155,7 @@ cloud_session_launch() {
   prompt_file="$(git -C "$wt" rev-parse --absolute-git-dir)/cloud-prompt" && printf '%s' "$prompt" > "$prompt_file" \
     || { ot_message cloud-prompt-failed "item=$item" >&2; return 1; }
   "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
-  model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" || return 1
+  choice="$(launch_choice_write claude "$LAUNCH_MODEL" "$LAUNCH_EFFORT")" || return 1
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   tmux_window_open "$wt" "$title" || return 1
   pane="$LAUNCH_PANE"
@@ -3168,7 +3168,7 @@ cloud_session_launch() {
   # the checkout; with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set it clones.
   # That variable goes once that bug is fixed, KEN-2741 being its removal
   # point.
-  cmd="claude --model $(lane_single_quote "$model") --cloud=\"\$(cat -- $(lane_single_quote "$prompt_file"))\""
+  cmd="claude $choice --cloud=\"\$(cat -- $(lane_single_quote "$prompt_file"))\""
   form="$(lane_launch_form "$cmd" claude "${LANE_ENV#*=}")" || return 1
   LANE_FORM="$form"
   cmd="$(lane_launch_line "$cmd" claude "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$form")" || return 1

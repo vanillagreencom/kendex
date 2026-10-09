@@ -333,7 +333,7 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
     OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=1 OT_SCREEN_FILE="$TMP_ROOT/cloud-screen" OT_HARNESS_SCREEN="$TMP_ROOT/host-screen" OT_SSH_SCREEN="$TMP_ROOT/ssh-screen" \
     LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host" OT_SLEEP_INSTANT=1 \
     TERMINAL=ghostty OT_CAPTURE="$RUN/command" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$root/open-terminal" ${terminal_args[@]+"${terminal_args[@]}"} --state-dir "$RUN/state" --harness claude --lane auto \
-    --cmd 'claude --dangerously-skip-permissions {brief}' ${brief_args[@]+"${brief_args[@]}"} ${shape_args[@]+"${shape_args[@]}"} "${items[@]}" \
+    --cmd "$rejudge_command" ${brief_args[@]+"${brief_args[@]}"} ${shape_args[@]+"${shape_args[@]}"} "${items[@]}" \
     > "$RUN/out" 2> "$RUN/err") || rc=$?
   local record key=none
   record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee \
@@ -350,6 +350,11 @@ for row in room floor locked expired no-repo missing-credit unread-credit no-bri
   want="$SSH_WANT"
   case "$row" in room) want="$CLOUD_WANT" ;; no-brief) want='1|cloud-brief-missing|' ;; esac
   assert_eq "$CLOUD_OBS" "$want" "hosted preference: $row" "$RUN/err"
+  if [[ "$row" == room ]]; then
+    command="$(sed -n '/^clear; /p' "$RUN/tmux")"
+    assert_eq "$(launch_choice_launch_model claude "$command"):$(launch_choice_effort claude "$command")" \
+      'claude-opus-5-5:high' 'the cloud-first preference passes its model and high effort to Claude' "$RUN/err"
+  fi
 done
 LOCAL_PREF='claude@claude-cloud:claude-opus-5-5:high,codex@local:gpt-6.1-sol:high'
 LOCAL_WANT='0|none|codex|local||gpt-6.1-sol|codex@local:gpt-6.1-sol:high|none'

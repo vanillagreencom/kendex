@@ -180,7 +180,7 @@ pasted() {
 }
 # `ran` where the pane took an Nth paste, `none` where it did not.
 typed() { [[ "$(pasted "$1")" == none ]] && echo none || echo ran; }
-LAUNCH_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 env CLAUDE_CONFIG_DIR='$LANE_DIR' claude --model 'claude-sonnet-5-5' --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-1/.git/cloud-prompt')\""
+LAUNCH_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 env CLAUDE_CONFIG_DIR='$LANE_DIR' claude --model claude-sonnet-5-5 --effort high --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-1/.git/cloud-prompt')\""
 # The launch line run as the pane's shell runs it, `clear` and `claude` this
 # suite's stubs, claude writing its arguments to $ARGV: `cloud=brief` where
 # its one --cloud= value is the first prompt, `other` where a --cloud word is
@@ -220,7 +220,7 @@ assert_eq "$(grep -c -- "^new-window .* -n CC-1 -c $TMP_ROOT/wt/CC-1 " "$TMUX_LO
   "the item's window opens in the item worktree"
 assert_eq "print-words=$(print_words)" "print-words=0" "the launch line holds neither -p nor --print"
 assert_eq "$(pasted 1)" "$LAUNCH_LINE" \
-  "the window runs claude --cloud interactively under the lane's account, the lane's model by its id, the description read from the worktree's git directory, CCR_FORCE_BUNDLE cleared and the #81776 workaround"
+  "the window runs claude --cloud interactively under the lane's account with its model id and selected effort, the description read from the worktree's git directory, CCR_FORCE_BUNDLE cleared and the #81776 workaround"
 assert_eq "$(described) pasted=$(typed 2)" "cloud=brief ref=0 pasted=none" \
   "claude takes the brief file's text closed by the session words as its --cloud= description, never the mailbox words, with no --ref and nothing pasted after its line"
 # branch_named ITEM BRANCH — the prompt file the launch of ITEM wrote: whether
@@ -388,7 +388,7 @@ LAUNCHER_BIN="$TMP_ROOT/launcher-bin"
 mkdir -p "$LAUNCHER_BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$LAUNCHER_BIN/eclaude"
 chmod +x "$LAUNCHER_BIN/eclaude"
-LAUNCHER_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 '$LAUNCHER_BIN/eclaude' --model 'claude-sonnet-5-5' --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-16/.git/cloud-prompt')\""
+LAUNCHER_LINE="clear; env -u CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 '$LAUNCHER_BIN/eclaude' --model claude-sonnet-5-5 --effort high --cloud=\"\$(cat -- '$TMP_ROOT/wt/CC-16/.git/cloud-prompt')\""
 run_ot PATH="$LAUNCHER_BIN:$BIN:$OT_BIN:$PATH" -- "${CLOUD[@]}" CC-16
 assert_eq "rc=$RC line=$([[ "$(pasted 1)" == "$LAUNCHER_LINE" ]] && echo launcher || echo other)" "rc=0 line=launcher" \
   "the lane's launcher, by the path the judge resolved and with no env prefix, starts the CLI" "$TMP_ROOT/err"
@@ -699,16 +699,27 @@ ARG_EDITS=(
   'workaround| CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 $cmd" ->  $cmd"'
   'bundle clear|env -u CCR_FORCE_BUNDLE  -> env '
   'account prefix|  cmd="$(lane_launch_line "$cmd" claude "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$form")" || return 1 -> '
-  'model| --model $(lane_single_quote "$model") -> '
-  'model id|model="$(launch_choice_model_id claude "$LAUNCH_MODEL")" -> model="$LAUNCH_MODEL"'
+  'model|choice="$(launch_choice_write claude "$LAUNCH_MODEL" "$LAUNCH_EFFORT")" -> choice="$(launch_choice_write claude "$LAUNCH_MODEL" "$LAUNCH_EFFORT")"; choice="$(launch_choice_write claude "" "$LAUNCH_EFFORT")"'
+  'effort|choice="$(launch_choice_write claude "$LAUNCH_MODEL" "$LAUNCH_EFFORT")" -> choice="$(launch_choice_write claude "$LAUNCH_MODEL" "$LAUNCH_EFFORT")"; choice="$(launch_choice_write claude "$LAUNCH_MODEL" "")"'
 )
 for i in "${!ARG_EDITS[@]}"; do
   edit="${ARG_EDITS[$i]#*|}"
   mutant "arg-$i" "${edit%% -> *}" "${edit#* -> }"
   run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
+  if [[ "${ARG_EDITS[$i]%%|*}" == effort ]]; then
+    assert_eq "$RC" 0 "control: omitting effort still launches the cloud session" "$TMP_ROOT/err"
+  fi
   assert_eq "line=$([[ "$(pasted 1)" == "$LAUNCH_LINE" ]] && echo held || echo broke)" "line=broke" \
     "control: a launch without the ${ARG_EDITS[$i]%%|*} fails the launch line row" "$TMP_ROOT/err"
 done
+# The shared argument writer owns alias mapping. Keep the model-id control at
+# that owner after the cloud caller stopped writing model arguments itself.
+mutant_root model-id
+# shellcheck disable=SC2016
+mutate_file "$MUTANT_ROOT/scripts/lib/lane-launch.sh" 'if [[ "$1" == claude ]]; then lane_adapter_claude_model_id' 'if [[ "$1" == claude ]] && false; then lane_adapter_claude_model_id'
+run_ot SCRIPT="$MUTANT_ROOT/scripts/open-terminal" -- "${CLOUD[@]}" CC-1
+assert_eq "line=$([[ "$(pasted 1)" == "$LAUNCH_LINE" ]] && echo held || echo broke)" "line=broke" \
+  "control: a launch without model alias mapping fails the launch line row" "$TMP_ROOT/err"
 # One per description rule, each broken in turn: the description row fails.
 # NAME|OLD -> NEW: --ref restored beside the description, an option the CLI
 # does not have, and the description dropped, which the CLI refuses as
@@ -752,7 +763,8 @@ late_rows "$MUTANT" CC-60 CC-61
 assert_eq "late=$([[ "$LATE" == "rc=0 session=session_01CLOUD" ]] && echo held || echo broke) unseen=$([[ "$UNSEEN" == "rc=1 unseen=1 "* ]] && echo held || echo broke)" \
   "late=broke unseen=broke" "control: without the start wait both rows fail" "$TMP_ROOT/err"
 # -p restored beside --cloud, the line the CLI refuses: the print row fails.
-mutant print 'cmd="claude --model' 'cmd="claude -p --model'
+# shellcheck disable=SC2016
+mutant print 'cmd="claude $choice' 'cmd="claude -p $choice'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-10
 assert_eq "print-words=$(print_words)" "print-words=1" "control: a launch line restoring -p fails the print row" "$TMP_ROOT/err"
 # One per exited-CLI rule, each removed in turn: the exited row fails. NAME|OLD
