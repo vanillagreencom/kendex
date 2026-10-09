@@ -6,6 +6,23 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.14.3] - 2026-10-09
+
+### Packages
+
+#### block-bare-cd
+
+- Commands that write files through a here-document can contain a `cd` line without being refused. Bare `cd` lines outside a completed here-document still refuse the command.
+
+#### orch
+
+- Claude cloud sessions use a separate per-overseer cap, set by `ORCH_OVERSEER_CLOUD_LANES`. Cloud sessions no longer consume fleet lane slots. Their landing lanes still use the fleet cap.
+- Account records include their retirement date. `lanes list --cache-only` reads cached usage and credits without usage requests, token renewal, or provider account calls.
+- Wait for Copilot work before reading findings or requesting approval, close pending timeline work after a later Copilot review, and hold fallback notices while its review is running.
+- Progress reports list recorded direct pushes under Landed and count their items toward the report cadence.
+- Skip the successor account scan when an overseer has room and its qualifying mark cannot fire. Keep the below-mark result for this settled check.
+- Consumer refresh approval reads the latest proof from an unchanged consumer CI workflow and checks its engine version, pull request and measured diff. It fetches the remote proof commits without moving the checkout and accepts repeated matching range records. It accepts normal Actions log bytes privately. A different kendex build on the overseer host no longer rejects a proved refresh.
+
 ## [1.14.2] - 2026-10-09
 
 ### Packages
@@ -2382,7 +2399,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.2..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.3..HEAD
+[1.14.3]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.3
 [1.14.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.2
 [1.14.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.1
 [1.14.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.0

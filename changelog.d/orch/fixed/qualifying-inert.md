@@ -1,1 +1,0 @@
-- Skip the successor account scan when an overseer has room and its qualifying mark cannot fire. Keep the below-mark result for this settled check.
