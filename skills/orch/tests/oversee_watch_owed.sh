@@ -527,7 +527,11 @@ mkdir -p "$MUTANT_DIR/linear/scripts/lib"
 cp "$REPO_ROOT/skills/linear/scripts/lib/issue-validation.sh" "$MUTANT_DIR/linear/scripts/lib/issue-validation.sh"
 mutate_file "$MUTANT_DIR/linear/scripts/lib/issue-validation.sh" \
   'gsub("\\\\(?<punct>[\\x21-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e])"; .punct)' '.'
+rm -- "$TMP_ROOT/repo/.agents/skills/linear"
+ln -s "$MUTANT_DIR/linear" "$TMP_ROOT/repo/.agents/skills/linear"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+rm -- "$TMP_ROOT/repo/.agents/skills/linear"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/repo/.agents/skills/linear"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: skipping parser unescape violates the escaped glob's due status" "$ERR"
 release_world release_waiting
 printf '%s\n' '[]' >"$STUB_DIR/releases.owner_releases.json"
