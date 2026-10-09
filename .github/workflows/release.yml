@@ -8,11 +8,11 @@
 # release consumers' shared refresh workflow runs and starts no build. A push
 # to main publishes one immutable build, then changes the fixed channel's
 # single feed pointer.
-# Pull requests are covered by the per-crate checks. No build cache:
-# the only release-profile cache main saves (catalog-check's x86_64
-# kendex-cli build) is keyed to that job and built without --target, so no
-# lane here could restore it; a cache step would only pay for saves that
-# tag runs never reuse. Every lane runs
+# Pull requests are covered by the per-crate checks. The Intel macOS lane
+# restores a Rust dependency cache saved only by trusted main runs. Later
+# main and tag runs reuse it; tags never save. Bundles are removed before
+# the post-job save, so signed and notarized installers stay out of it.
+# Every lane runs
 # on a GitHub-standard runner, which is free for a public repository.
 # Each Apple architecture gets its own native lane rather than one
 # universal binary: the updater keys its artifacts per architecture and a
@@ -65,6 +65,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.target == 'x86_64-apple-darwin'
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -254,6 +259,12 @@ jobs:
           name: assets-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+      # The cache saves after the job's steps. Remove installers even when
+      # an earlier step fails, before that post-job action can save them.
+      - name: Remove Intel macOS bundles before caching
+        if: always() && matrix.target == 'x86_64-apple-darwin'
+        run: rm -rf target/x86_64-apple-darwin/release/bundle
+        shell: bash
 
   publish:
     needs: build
