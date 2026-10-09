@@ -447,7 +447,24 @@ The long pass's events, checked and reported in this order:
                              that sees the banner gone, replaced or its window
                              gone keeps the wall, from that first pass, in the
                              `pauses` of the last fleet record naming the
-                             window
+                             window. Where the watch asked `lanes pick` for the
+                             lane's harness and model, the spent account
+                             excluded, its answer is the line right under the
+                             event: `pick lane=<config-dir>`, `pick none` or
+                             `pick unjudged exit=<N>`. Under
+                             ORCH_WALL_RELAUNCH=auto a qualifying account is
+                             relaunched onto and reported as lane-relaunched,
+                             so this event carries `pick lane=` only where the
+                             relaunch was refused
+  EVENT lane-relaunched <item> lane=<config-dir> from=<config-dir>
+                             under ORCH_WALL_RELAUNCH=auto, the walled lane's
+                             window was killed by its pane id and the
+                             record's own `open-terminal --relaunch` started
+                             detached on the picked account; `log=<path>`
+                             follows, the launch's output. Reported in place
+                             of usage-limit, never beside it. Until that
+                             launch exits, inside ORCH_WATCH_PREPARE_SECS, the
+                             lane's missing window is no window-gone
   EVENT usage-limit-passed <lane> [<config-dir>] resets=<utc>
                              the same banner, naming a reset that has gone by:
                              the screen is remembering a spent window that has
@@ -953,6 +970,10 @@ Environment:
                               dialog arrive whole; the Codex model picker's
                               slice is 19 lines, so it keeps its bottom 12 and
                               loses the startup box above them
+  ORCH_WALL_RELAUNCH          `auto` (default) relaunches a walled lane on an
+                              account `lanes pick` qualifies, as
+                              lane-relaunched; `ask` reports usage-limit with
+                              the pick's answer and relaunches nothing
   ORCH_WATCH_PREPARE_SECS     seconds a lane handed to a background launch
                               job may read preparing before
                               lane-prepare-stuck goes out, a positive whole
@@ -968,7 +989,9 @@ Environment:
                               heartbeat roster; a missing one exits 2. The read
                               takes the same 60 second ceiling and usage age as
                               the overseer's own mark judgement
-  OVERSEE_WATCH_REPORT        path to oversee-report, whose `due` judges the
+  OVERSEE_WATCH_OPEN_TERMINAL path to open-terminal, which a lane-relaunched
+                              relaunch runs
+  OVERSEE_WATCH_REPORT       path to oversee-report, whose `due` judges the
                               report-due event; with --state a missing one
                               exits 2
   OVERSEE_WATCH_SUCCEED       path to oversee-succeed, which records the
@@ -1146,6 +1169,8 @@ ow_message() { # REASON FIELD=VALUE...
     root-duplicate) text='Name each --root item once: two roots for one lane would read one mailbox and drain the other.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
     host-capabilities-unread) text='lane-host could not declare the capability line of a host a lane record names, or declared a value this watch has no arm for, so nothing says where that lane is read or how it is judged; lane-host'"'"'s own words are above this line. Nothing of the fleet is carried.' ;;
+    wall-relaunch-invalid) text='ORCH_WALL_RELAUNCH takes auto or ask.' ;;
+    wall-relaunch-refused) text='The watch did not relaunch this walled lane, and reports usage-limit in its place. The reason names the rule or the step that stopped it: lane-working (the judge did not read the lane walled), record-unnamed (no running lane record names its item, harness and model), account-unknown (neither a live claim nor the record names the spent account), spent-account (the pick handed back the account that walled), flags-unbuilt (no launch words for that harness), marker-unwritten (the pending marker of the relaunch could not be written), stop-failed (the hosted harness did not stop) or kill-failed (the window did not close).' ;;
     lane-age-secs-invalid) text='ORCH_WATCH_LANE_AGE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     lane-long-rounds-unread) text='The lane workflow state or its round counts could not be read. The lane-long event carries unavailable counts.' ;;
     cloud-stall-minutes-invalid) text='ORCH_CLOUD_STALL_MINUTES takes a positive whole number of minutes, with no leading zero.' ;;

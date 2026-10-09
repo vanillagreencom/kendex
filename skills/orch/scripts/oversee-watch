@@ -213,6 +213,8 @@ source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 source "$SCRIPT_DIR/lib/watch-host-kinds.sh"
 # shellcheck source=lib/watch-pid.sh
 source "$SCRIPT_DIR/lib/watch-pid.sh"
+# shellcheck source=lib/lane-launch.sh
+source "$SCRIPT_DIR/lib/lane-launch.sh"
 # shellcheck source=lib/mailbox-append.sh
 source "$SCRIPT_DIR/lib/mailbox-append.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
@@ -223,6 +225,7 @@ LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
 SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
 LANES_CLI="${OVERSEE_WATCH_LANES:-$SCRIPT_DIR/lanes}"
 REPORT_CLI="${OVERSEE_WATCH_REPORT:-$SCRIPT_DIR/oversee-report}"
+OPEN_TERMINAL="${OVERSEE_WATCH_OPEN_TERMINAL:-$SCRIPT_DIR/open-terminal}"
 # Consecutive `exited` readings of the overseer pane before the death is news.
 # One is a poll that caught a live session between its harness and its shell,
 # the same reason the lane-exited check debounces.
@@ -453,6 +456,10 @@ CLOUD_STALL_SECS=$((CLOUD_STALL_MINUTES * 60))
 # Repeat schedule: oversee-watch --help, event lane-long.
 LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-12600}"
 [[ "$LANE_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-age-secs-invalid "" "value=$LANE_AGE_SECS"
+# Who runs the usage-limit route: `auto` relaunches a walled lane here
+# (wall_route), `ask` reports it with the pick's answer for the overseer.
+WALL_RELAUNCH="${ORCH_WALL_RELAUNCH:-auto}"
+[[ "$WALL_RELAUNCH" == auto || "$WALL_RELAUNCH" == ask ]] || die wall-relaunch-invalid "" "value=$WALL_RELAUNCH"
 # The state's records the pane never judges and the start-stall check reads,
 # rebuilt by every fleet read: `<window>=<item>` for each Pi lane, judged from
 # the rows its own hook writes (lib/session-rows.sh), and `<item>=<epoch it went
@@ -3512,6 +3519,100 @@ lane_note() { # LANE
     die state-invalid "" "option=--state" "path=$STATE_FILE"
 }
 
+# The usage-limit route (../references/oversee-events.md § Event kinds,
+# usage-limit) for a lane first read walled this pass. The lane's running record
+# names its item, harness and model, and `lanes pick` judges an account for that
+# model with the spent one excluded. Under ORCH_WALL_RELAUNCH=auto a qualifying
+# account takes the lane: the window is killed by its pane id and the
+# record's own relaunch runs detached, since it waits on a harness screen for
+# minutes. Returns 0 once that relaunch started and lane-relaunched is
+# printed; 1 leaves the usage-limit event to the caller, with WALL_PICK the
+# pick's answer line, empty where no pick ran.
+WALL_PICK=""
+wall_relaunch_marker() { printf '%s/wall-relaunch.%s' "$PW_STATE_DIR" "${1//[^A-Za-z0-9._-]/_}"; }
+# Whether LANE's window is gone because a relaunch wall_route started is still
+# opening it: the marker stands with no exit beside it, inside the bound a
+# background launch has to prepare in. A relaunch that ended, or outran that
+# bound, leaves the gone window to window-gone.
+wall_relaunch_pending() { # LANE
+  local marker started
+  marker="$(wall_relaunch_marker "$1")"
+  [[ -f "$marker" && ! -f "$marker.exit" ]] || return 1
+  started="$(cat -- "$marker")" || return 1
+  [[ "$started" =~ ^[0-9]+$ && $((PASS_NOW - started)) -lt "$PREPARE_SECS" ]]
+}
+wall_route() { # LANE OBS_STATE SPENT PANE_KEY
+  local lane="$1" spent="$3" pane_id="${4##* }" errf="$WORK_DIR/wall-pick.err" rc=0
+  local record fields item harness model effort host tracker repo account to words perm out log launch marker
+  WALL_PICK=""
+  # The judge's walled reading alone is a wall: a working lane quoting a limit
+  # is never pre-empted.
+  [[ "$2" == walled ]] || { ow_message wall-relaunch-refused "lane=$lane" reason=lane-working >&2; return 1; }
+  record="$(jq -c --arg w "$lane" "$LANE_RUNNING_JQ"'[.lanes[]? | select(running and .window == $w)] | last // {}' \
+    <<<"${FLEET_STATE:-null}")" || die state-invalid "" "option=--state" "path=$STATE_FILE"
+  fields="$(jq -r '[.item, .harness, .model, .effort, .host, .tracker, .repo, .account] | map(. // "" | tostring) | join("\u001f")' \
+    <<<"$record")" || die state-invalid "" "option=--state" "path=$STATE_FILE"
+  IFS=$'\x1f' read -r item harness model effort host tracker repo account <<<"$fields"
+  [[ -n "$item" && -n "$harness" && -n "$model" ]] \
+    || { ow_message wall-relaunch-refused "lane=$lane" reason=record-unnamed >&2; return 1; }
+  spent="${spent:-$account}"
+  [[ -n "$spent" ]] || { ow_message wall-relaunch-refused "lane=$lane" reason=account-unknown >&2; return 1; }
+  bounded_account_read "" "$errf" env ORCH_LANE_HOST="${host:-local}" "$LANES_CLI" \
+    pick --harness "$harness" --model "$model" --exclude-lane "$spent" --json || rc=$?
+  if [[ "$rc" -eq 0 ]] && to="$(jq -er '.config_dir | strings' <<<"$BOUNDED_OUT" 2>/dev/null)"; then
+    WALL_PICK="pick lane=$to"
+  elif [[ "$rc" -eq 3 ]]; then
+    WALL_PICK="pick none"
+    return 1
+  else
+    WALL_PICK="pick unjudged exit=$rc"
+    [[ ! -s "$errf" ]] || cat -- "$errf" >&2
+    return 1
+  fi
+  [[ "$WALL_RELAUNCH" == auto ]] || return 1
+  # The spent account is never relaunched onto before its reset.
+  [[ "$(lane_claims_canon "$to")" != "$(lane_claims_canon "$spent")" ]] \
+    || { ow_message wall-relaunch-refused "lane=$lane" reason=spent-account "account=$to" >&2; return 1; }
+  if ! words="$(launch_choice_write "$harness" "$model" "$effort")"; then
+    ow_message wall-relaunch-refused "lane=$lane" reason=flags-unbuilt "harness=$harness" >&2
+    return 1
+  fi
+  # A harness with no permission spelling, pi, takes no permission word.
+  perm="$(launch_choice_permission_write "$harness")" || perm=""
+  if [[ -n "$host" ]]; then
+    out="$(ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" stop --item "$item" --harness "$harness" 2>"$errf")" || rc=$?
+    if [[ "$rc" -ne 0 ]] || ! grep -qE "^stopped item=$item processes=[0-9]+$" <<<"$out"; then
+      ow_message wall-relaunch-refused "lane=$lane" reason=stop-failed "exit=$rc" >&2
+      cat -- "$errf" >&2
+      return 1
+    fi
+  fi
+  marker="$(wall_relaunch_marker "$lane")"
+  rm -f -- "$marker.exit"
+  if ! printf '%s\n' "$PASS_NOW" > "$marker"; then
+    ow_message wall-relaunch-refused "lane=$lane" reason=marker-unwritten "path=$marker" >&2
+    return 1
+  fi
+  if ! tmux kill-window -t "$pane_id" 2>"$errf"; then
+    rm -f -- "$marker"
+    ow_message wall-relaunch-refused "lane=$lane" reason=kill-failed "pane=$pane_id" >&2
+    cat -- "$errf" >&2
+    return 1
+  fi
+  launch=("$OPEN_TERMINAL" --tmux --relaunch --harness "$harness" --lane "$to" --launch-flags "$words${perm:+ $perm}" \
+    --state-dir "$FLEET_STATE_DIR")
+  [[ -z "$tracker" ]] || launch+=(--tracker "$tracker")
+  [[ -z "$repo" ]] || launch+=(--repo "$repo")
+  [[ -z "$host" ]] || launch+=(--host "$host")
+  # open-terminal names a GitHub item by its number.
+  if [[ "$tracker" == github ]]; then launch+=("${item#issue-}"); else launch+=("$item"); fi
+  log="$FLEET_STATE_DIR/wall-relaunch-$item.log"
+  # The exit status lands beside the marker, which ends wall_relaunch_pending.
+  lane_run_detached "$log" "$log" "$BASH" -c '"${@:2}"; printf "%s\n" "$?" > "$1"' wall-relaunch "$marker.exit" "${launch[@]}"
+  echo "EVENT lane-relaunched $item lane=$to from=$spent"
+  printf 'log=%s\n' "$log"
+}
+
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
@@ -3558,7 +3659,7 @@ check_lanes() {
     # Provider failures stay unjudged; local probe failures still permit pane judgment.
     [[ -n "$hosted_item" || "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
     states+="$i"$'\t'"$state"$'\t'"$LANE_EXIT_SOURCE"$'\t'"$LANE_WALL_KIND"$'\n'
-    if [[ "$state" == gone ]]; then
+    if [[ "$state" == gone ]] && ! wall_relaunch_pending "$lane"; then
       echo "EVENT window-gone $lane"
       PASS_EVENT=1
     fi
@@ -3712,8 +3813,15 @@ check_lanes() {
     [[ -n "$banner" ]] || die limit-banner-missing "" "lane=$lane"
     account_wall_record "$PROJECT_ROOT" "$claimed" "$reset_at" "$PASS_NOW" "$banner" "${LANE_ROWS[$i]:+row}" || true
     [[ -z "$quiet" ]] || continue
+    WALL_PICK=""
+    if [[ "$event" == usage-limit ]] && wall_route "$lane" "$(lane_obs_state "$states" "$i")" "$claimed" "$pane_key"; then
+      PASS_EVENT=1
+      asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|lane-relaunched|$seen_key")"
+      continue
+    fi
     [[ "$wall_kind" == auth ]] || wall_kind=""
     echo "EVENT $event $lane${claimed:+ $claimed}$reset_note${wall_kind:+ wall_kind=$wall_kind}"
+    [[ -z "$WALL_PICK" ]] || printf '%s\n' "$WALL_PICK"
     banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
     PASS_EVENT=1
     asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$reported_event|$seen_key")"

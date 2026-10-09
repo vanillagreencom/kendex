@@ -156,6 +156,10 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # it for a handoff at the next safe point.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
+# A walled lane is relaunched by oversee-watch on an account with headroom for
+# its model, and the overseer spends no turn on it.
+ORCH_WALL_RELAUNCH = "auto"
+
 # Lane pane output. No person reads a lane's pane: the overseer learns a lane's
 # state from lane-mail, the lane status file and what the watch reads off the
 # pane, so narration, recaps and closing summaries are output tokens nobody

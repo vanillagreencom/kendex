@@ -407,6 +407,12 @@ case "${1:-}" in
         f="${f##*/cmd-}"; printf '%s\n' "${f%%.*}"
       done; } | sort -u
     exit 0 ;;
+  # `kill-window -t <pane id>`, the walled lane's relaunch: the target is
+  # logged to kill-window.calls, and kill-window-fail makes the call fail.
+  kill-window)
+    printf '%s\n' "$(dash_t "$@")" >> "$STUB_DIR/kill-window.calls"
+    [[ ! -f "$STUB_DIR/kill-window-fail" ]] || { echo "can't find pane" >&2; exit 1; }
+    exit 0 ;;
   capture-pane)
     lane=""; join=0
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$(lane_name "$2")"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done

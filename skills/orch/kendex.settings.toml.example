@@ -252,6 +252,11 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # point. This setting never marks a Codex account running on its credits.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
+# Who relaunches a lane its account walled. "auto" has oversee-watch relaunch
+# it at once on an account with room for its model; "ask" reports the wall to
+# the overseer with that pick's answer.
+# ORCH_WALL_RELAUNCH = "auto"
+
 # Earlier context handoff percentage. Shared rule and boundary behavior:
 # references/oversee-events.md, Judgement rules.
 # ORCH_HANDOFF_CONTEXT_PCT = "90"

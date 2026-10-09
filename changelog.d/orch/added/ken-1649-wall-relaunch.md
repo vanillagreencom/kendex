@@ -1,0 +1,1 @@
+- Relaunch a lane its account walled from the watch itself, at once, on an account with room for its model, reported as `lane-relaunched`; the overseer is told of a wall only when no account qualifies or `ORCH_WALL_RELAUNCH` is `ask`.
