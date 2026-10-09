@@ -101,10 +101,11 @@ RUNTIMES="docker podman"
 # refuses it unless /etc/containers/registries.conf names an
 # unqualified-search registry, which a bare podman install does not. On such a
 # host the short name took this pass to `no-bash32=podman` with a runtime
-# installed and working. `docker.io/library/` is what both resolve with no
-# registry configuration, and it names the same content: the digest is
-# unchanged.
-IMAGE="docker.io/library/bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
+# installed and working. Docker Hub refused anonymous pulls from shared CI
+# runner IPs past its limit on 2026-10-09. Google's Docker Hub cache at
+# `mirror.gcr.io/library/` serves the same digest. Both runtimes resolve that
+# fully qualified name with no registry configuration.
+IMAGE="mirror.gcr.io/library/bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
 # Seconds a container run may take. `--init` is what lets a signal end it:
 # bash as container PID 1 ignores SIGTERM, so no `timeout` could stop a hung
 # pass and the container outlived the run that started it.
