@@ -36,12 +36,15 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
   for file in "$@"; do
     index=$((index + 1))
     caller_events="$(triggers "$file")" || return 2
-    for event in repository_dispatch workflow_dispatch schedule; do
+    for event in workflow_dispatch schedule; do
       case $'\n'"$caller_events"$'\n' in
         *$'\n'"$event"$'\n'*) ;;
         *) printf 'caller=%s trigger-missing=%s\n' "$index" "$event"; failed=1 ;;
       esac
     done
+    case $'\n'"$caller_events"$'\n' in
+      *$'\nrepository_dispatch\n'*) printf 'caller=%s trigger-forbidden=repository_dispatch\n' "$index"; failed=1 ;;
+    esac
     cron="$(schedule_cron "$file")" || return 2
     if [ "$cron" != '17 */6 * * *' ]; then
       printf 'caller=%s cron=%s\n' "$index" "$cron"
@@ -80,8 +83,8 @@ current|0
 unfixed|1
 CASES
 
-# A missing dispatch receiver, manual entry or schedule must fail in either
-# caller. Change the event key so unrelated YAML still cannot satisfy it.
+# Fleet release dispatch must start no refresh run. Each caller also keeps
+# its manual entry and schedule; unrelated YAML cannot satisfy those rows.
 for source in template caller; do
   case "$source" in
     template) file="$TEMPLATE"; index=1 ;;
@@ -89,7 +92,11 @@ for source in template caller; do
   esac
   for event in repository_dispatch workflow_dispatch schedule; do
     mutant="$TMP_ROOT/$source-$event.yml"
-    plant "$file" "  $event:" "  ignored_$event:" "$mutant"
+    case "$event" in
+      repository_dispatch)
+        plant "$file" '  workflow_dispatch: {}' $'  repository_dispatch:\n    types: [kendex-refresh]\n  workflow_dispatch: {}' "$mutant" ;;
+      *) plant "$file" "  $event:" "  ignored_$event:" "$mutant" ;;
+    esac
     case "$source" in
       template) set -- "$mutant" "$CALLER" ;;
       caller) set -- "$TEMPLATE" "$mutant" ;;
@@ -97,6 +104,7 @@ for source in template caller; do
     status=0
     result="$(check_cadence "$@")" || status=$?
     expected="caller=$index trigger-missing=$event"
+    [ "$event" != repository_dispatch ] || expected="caller=$index trigger-forbidden=$event"
     [ "$event" != schedule ] || expected+=$'\n'"caller=$index cron="
     if [ "$status" != 1 ] || [ "$result" != "$expected" ]; then
       printf 'refresh-workflow: control=%s-%s exit=%s result=[%s]\n' "$source" "$event" "$status" "$result" >&2
