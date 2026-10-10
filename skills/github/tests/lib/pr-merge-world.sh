@@ -85,6 +85,8 @@
 #          keys=[<the JSON's keys>]`; otherwise stdout, `-` when empty
 #   err    stderr's lines joined by `;`, leading spaces dropped, blank lines
 #          dropped, `{word}` macros expanded (see err_macro)
+#          protocol:<lines> compares merge outcomes, issue categories and
+#          causes, and volatile-note presence without explanatory prose
 #   calls  `calls=<each gh call by kind, in order> auth=<the GH_TOKEN each
 #          call saw, distinct values in order>`
 #   control optional mutant argv: the same row assertion must reject it;
@@ -461,6 +463,19 @@ err_lines() {
   # pins <tmp> rather than a directory no second run produces. An empty
   # stderr is `-`, as stdout's is.
   local text
+  if [[ "${1:-full}" == protocol ]]; then
+    # orch reads the merge outcome; ci-classify-refusal reads issue categories
+    # and causes. The queue contract also requires the volatile warning.
+    text="$(awk '
+      { sub(/^[[:space:]]*/, "") }
+      /^BLOCKED PR #[0-9]+/ { print $1 " " $2 " " $3; next }
+      /^QUEUED IN MERGE QUEUE PR #[0-9]+/ { print; next }
+      /^NOTE: queue\/auto-merge state is VOLATILE/ { print "volatile-note"; next }
+      /^✗ / { print $2 ($3 ~ /^cause=/ ? " " $3 : "") }
+    ' "$TMPDIR/stderr" | paste -s -d ';' -)" || return 1
+    printf '%s' "${text:--}"
+    return
+  fi
   text="$(sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR_PHYSICAL|<tmp>|g" -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -)" || return 1
   printf '%s' "${text:--}"
 }
@@ -475,7 +490,7 @@ run() {
     -u GH_CONFIG_DIR \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_MERGE_REFUSED="$MERGE_REFUSED" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
-  printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
+  printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines "${2:-full}")" "$(calls)" "$(auth)"
 }
 
 # A must-fail control's subject: lib/mutant-copy.sh's copy under
@@ -546,7 +561,7 @@ assert_mutant_fails() { # GOT WANT NAME
 }
 
 run_table() {
-  local title="$1" rows="$2" n=0 label world argv rc out err want got row field control expected
+  local title="$1" rows="$2" n=0 label world argv rc out err want got row field control expected err_mode
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
@@ -555,9 +570,13 @@ run_table() {
       [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
     n=$((n + 1))
+    err_mode=full
+    case "$err" in
+      protocol:*) err_mode=protocol; err="${err#protocol:}" ;;
+    esac
     # shellcheck disable=SC2086
     build $world
-    got="$(run "$argv")"
+    got="$(run "$argv" "$err_mode")"
     # A rendering aid for writing rows; the run is refused after the loop.
     if [[ "${GITHUB_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
@@ -571,8 +590,8 @@ run_table() {
       # shellcheck disable=SC2086
       build $world
       case "$control" in
-        same:*) assert_eq "$(run "${control#same:}")" "$expected" "clean fixture: $label" ;;
-        *) assert_mutant_fails "$(run "$control")" "$expected" "$label" ;;
+        same:*) assert_eq "$(run "${control#same:}" "$err_mode")" "$expected" "clean fixture: $label" ;;
+        *) assert_mutant_fails "$(run "$control" "$err_mode")" "$expected" "$label" ;;
       esac
     fi
   done <<<"$rows"
