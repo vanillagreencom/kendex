@@ -156,6 +156,7 @@ run_ctx() { # [args...]
     LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" ORCH_STATE_DIR="${CTX_FLEET:-$FLEET}" \
     ORCH_LANES_FETCH_CMD="$FETCHER" \
     HOSTED_DIR="$HOSTED_DIR" HOST_DOWN="${CTX_HOST_DOWN:-}" TMUX_LOG="$TMUX_LOG" \
+    LANE_HOST_STUB_ACCOUNTS="${CTX_PROVIDER_ACCOUNTS:-}" LANE_HOST_STUB_LOG="$TMP_ROOT/provider.log" \
     ORCH_LANE_DIRS="${CTX_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_LANE_COPILOT_POOL="${CTX_POOL:-}" \
     TMUX_PANES_FILE="$PANES" \
     TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
@@ -499,6 +500,16 @@ mutate_file "$CALLER_SEAT_CTRL/lanes" '(if $x.caller == true then [] else $seats
 lanes_table "$(CTX_LANES="$CALLER_SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
   "control: without the caller exemption its row is marked|overseer|caller=true handoff_required=true"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
+printf 'account=%s\tharness=claude\tseat=1\n' "$H/.claude" > "$TMP_ROOT/provider-seats"
+: > "$TMP_ROOT/provider.log"
+lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$TMP_ROOT/provider-seats" run_ctx --json)" \
+  "provider-only seat marks its running lane at reserve|ken-104|headroom_pct=50 handoff_required=true"
+assert_eq "$(awk '$1 == "accounts" { n++ } END { print n+0 }' "$TMP_ROOT/provider.log")" 1 'context reads provider seats in one accounts call'
+PROVIDER_SEAT_CTRL="$(mutant_scripts mutant-context-provider-seat lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$PROVIDER_SEAT_CTRL/lanes" 'host_account_rows "$HOST_ACCOUNTS_ROWS" all seats' 'host_account_rows "" all seats'
+lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$TMP_ROOT/provider-seats" CTX_LANES="$PROVIDER_SEAT_CTRL/lanes" run_ctx --json)" \
+  "control: dropping provider seats leaves its running lane unmarked|ken-104|headroom_pct=50 handoff_required=false"
 printf '%s\n' "$CLAUDE_PLAN" > "$FIXTURE_DIR/.claude.json"
 ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
 

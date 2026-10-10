@@ -18,6 +18,7 @@ unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_L
 unset ORCH_OVERSEER_SEAT_RESERVE_PCT ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_HOST ORCH_STATE_DIR
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
+PROVIDER="$TEST_DIR/fixtures/lane-host"
 
 TMP_ROOT="$(mktemp -d)" || { echo "lanes-pick-spread: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lanes-pick-spread: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -167,6 +168,7 @@ table() {
     IFS='|' read -r label env stage_spec rate args expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
+    : > "$RUN/provider.log"
     stage "$stage_spec"
     if [[ -n "$rate" ]]; then
       IFS=':' read -r rate_lane rate_now rate_prior rate_claims rate_elapsed rate_age rate_bucket <<<"$rate"
@@ -189,6 +191,7 @@ table() {
       ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" OVERSEE_WATCH_STATE_DIR="$STORE" ORCH_STATE_DIR="$FLEET" \
       STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
       TMUX_PANES_FILE="$RUN/panes" PATH="$BIN:$OT_BIN:$PATH" OT_WT_LOG="$RUN/worktree.log" \
+      LANE_HOST_STUB_LOG="$RUN/provider.log" LANE_HOST_STUB_ACCOUNTS= LANE_HOST_STUB_NO_ACCOUNTS= LANE_HOST_STUB_ACCOUNTS_STATUS=0 \
       OT_CAPTURE="$RUN/ghostty" WORKTREE_CLI="$OT_BIN/worktree" TERMINAL=ghostty TMUX= ORCH_LANE_HOST=local ORCH_LANE_PREFERENCE= \
       ORCH_LANE_DIRS= ORCH_LANE_ALIASES= ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL= ORCH_LANE_BURN_PCT_PER_HOUR= ORCH_LANE_MAX_PCT= ORCH_OVERSEER_SEAT_RESERVE_PCT= \
       ${env_args[@]+"${env_args[@]}"} "${command[@]}" 2>"$RUN/err")
@@ -198,6 +201,7 @@ table() {
       name="${token%%=*}"
       case "$name" in
         rc) value="$RC" ;;
+        accounts_calls) value="$(awk '$1 == "accounts" { n++ } END { print n+0 }' "$RUN/provider.log")" ;;
         out) value="$OUT" ;;
         launched) value="$(awk '$1 == "open-terminal:" && $2 == "terminal-opened" { print "yes" }' <<<"$OUT")"; value="${value:-no}" ;;
         sample_claims) value="$(jq -r --arg dir "$H/.1codex" 'select(.config_dir == $dir) | .sample_claims' "$STORE"/usage/*.json)" || exit 1 ;;
@@ -500,6 +504,38 @@ table \
   "a pick with room names no reserve refusal|$ALL_DIRS|own:a||$PICK|rc=0 keyed.pick-seat-omitted=none" \
   "the named form on a non-seat keeps the lane threshold|$ALL_DIRS|own:a||pick --lane $H/.bclaude --harness claude --json|rc=0 config_dir=$H/.bclaude"
 
+# The provider is the only seat producer: no fleet record or live claim.
+printf 'account=%s/\tharness=claude\tsession-5h-pct=20\tseat=1\naccount=%s\tharness=claude\tsession-5h-pct=30\n' \
+  "$H/.aclaude" "$H/.bclaude" > "$TMP_ROOT/remote-seats"
+REMOTE="ORCH_LANE_HOST=$PROVIDER;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/remote-seats;ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude"
+for cache in '' '--no-cache'; do
+  table "provider-only seat ranks last $cache|$REMOTE|||$PICK $cache|rc=0 config_dir=$H/.bclaude accounts_calls=1"
+done
+table "provider-only seat ranks last with no TTL|$REMOTE;ORCH_LANES_USAGE_TTL=0|||$PICK|rc=0 config_dir=$H/.bclaude accounts_calls=1"
+printf 'account=%s\tharness=claude\tsession-5h-pct=50\tseat=1\n' "$H/.aclaude" > "$TMP_ROOT/remote-seats"
+REMOTE="$REMOTE;ORCH_LANE_DIRS=$H/.aclaude"
+REMOTE_OMISSION="provider-only seat at reserve is omitted|$REMOTE|||$PICK|rc=3 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=50,reserve=50 accounts_calls=1"
+table "$REMOTE_OMISSION" \
+  "named provider-only seat uses the reserve|$REMOTE|||pick --lane $H/.aclaude --harness claude --json --no-cache|rc=3 verdict=seat-reserve accounts_calls=1" \
+  "overseer pick bypasses provider reserve|$REMOTE|||$PICK --for-overseer|rc=0 config_dir=$H/.aclaude keyed.pick-seat-omitted=none accounts_calls=1" \
+  "local host ignores the remote seat|$REMOTE;ORCH_LANE_HOST=local|||$PICK|rc=0 config_dir=$H/.aclaude keyed.pick-seat-omitted=none accounts_calls=0" \
+  "absent accounts verb adds no seat|$REMOTE;LANE_HOST_STUB_NO_ACCOUNTS=1|||$PICK --no-cache|rc=0 config_dir=$H/.aclaude keyed.pick-seat-omitted=none accounts_calls=1" \
+  "failed accounts verb adds no seat or call|$REMOTE;LANE_HOST_STUB_ACCOUNTS_STATUS=1|||$PICK --no-cache|rc=0 config_dir=$H/.aclaude keyed.host-accounts-unreadable=host-accounts-unreadable,host=$PROVIDER,exit=1 keyed.pick-seat-omitted=none accounts_calls=1"
+CTRL="$(mutant_scripts mutant-provider-seat lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'host_account_rows "$HOST_ACCOUNTS_ROWS" all seats' 'host_account_rows "" all seats'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: dropping provider seats admits the reserve account|$REMOTE|||$PICK|rc=0 config_dir=$H/.aclaude keyed.pick-seat-omitted=none accounts_calls=1"
+rc=0
+( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$REMOTE_OMISSION"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/provider-seat-control.log" || rc=$?
+RUN_SEQ=$((RUN_SEQ + 1))
+assert_eq "$rc" 1 'dropping the provider seat read fails the same omission row'
+for seat in absent 0 true broken 01; do
+  mark=""; [[ "$seat" == absent ]] || mark=$'\t'"seat=$seat"
+  printf 'account=%s\tharness=claude\tsession-5h-pct=50%s\n' "$H/.aclaude" "$mark" > "$TMP_ROOT/remote-seats"
+  table "seat=$seat keeps the measured row without a seat|$REMOTE|||$PICK|rc=0 config_dir=$H/.aclaude session_5h_pct=50 keyed.pick-seat-omitted=none accounts_calls=1"
+done
+
 CTRL="$(mutant_scripts mutant-reserve-parse lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$CTRL/lanes" 'pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"' 'if false; then pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"; fi; SEAT_RESERVE=50'
@@ -575,10 +611,10 @@ CTRL="$(mutant_scripts mutant-pool-seats lanes)" || exit 1
 mutate_file "$CTRL/lanes" '"$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
-	# After the claim load:' '"$for_overseer" != true && "$harness" != pi ]]; then
+	hosted="$HOSTED_ROWS"' '"$for_overseer" != true && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
-	# After the claim load:'
+	hosted="$HOSTED_ROWS"'
 rm -- "$CTRL/lib/lane-model.sh" || exit 1
 cp -p -- "$TEST_DIR/../scripts/lib/lane-model.sh" "$CTRL/lib/lane-model.sh" || exit 1
 mutate_file "$CTRL/lib/lane-model.sh" 'if .harness != "copilot" and .harness != "pi"' 'if true'
