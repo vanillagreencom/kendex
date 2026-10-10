@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Exa-powered research specialist for producing evidence-backed findings reports from project research prompts. Use for research issues, technology investigations, vendor/library comparisons, architectural option analysis, and current-state web research.
-model: inherit
+model: standard
 role: analyst
 effort: high
 color: purple

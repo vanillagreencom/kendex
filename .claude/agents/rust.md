@@ -2,7 +2,7 @@
 name: rust
 description: "Rust implementation specialist for non-Iced code. Use for domain logic, systems programming, and project-defined performance work."
 tags: performance
-model: inherit
+model: opus
 effort: high
 background: false
 disallowedTools: Agent, AskUserQuestion

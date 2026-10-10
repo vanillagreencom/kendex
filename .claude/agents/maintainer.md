@@ -2,7 +2,7 @@
 name: maintainer
 description: "Maintenance specialist for documentation, stale references, links, lint, and file or configuration organization. Use for changes settled by reading."
 tags: docs, refactoring
-model: inherit
+model: opus
 effort: high
 background: false
 disallowedTools: Agent, AskUserQuestion

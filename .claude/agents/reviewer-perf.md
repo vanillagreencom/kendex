@@ -2,7 +2,7 @@
 name: reviewer-perf
 description: "Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection."
 tags: review, performance
-model: inherit
+model: opus
 effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion

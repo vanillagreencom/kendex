@@ -2,7 +2,7 @@
 name: runtime
 description: "Runtime specialist for non-UI shell, Python, TypeScript and Go code. Use for scripts, services, automation and Pi extensions."
 tags: automation
-model: inherit
+model: opus
 effort: high
 background: false
 disallowedTools: Agent, AskUserQuestion

@@ -1,7 +1,7 @@
 ---
 name: reviewer-safety
 description: Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state).
-model: inherit
+model: standard
 role: reviewer
 effort: high
 color: red

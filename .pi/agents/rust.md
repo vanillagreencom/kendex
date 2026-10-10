@@ -4,6 +4,7 @@ description: "Rust implementation specialist for non-Iced code. Use for domain l
 tags: performance
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 allowed-subagents: scout
+model: standard:high
 effort: high
 color: orange
 pane: true

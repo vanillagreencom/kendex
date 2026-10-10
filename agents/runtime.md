@@ -1,7 +1,7 @@
 ---
 name: runtime
 description: Runtime specialist for non-UI shell, Python, TypeScript and Go code. Use for scripts, services, automation and Pi extensions.
-model: inherit
+model: standard
 role: engineer
 effort: high
 color: orange

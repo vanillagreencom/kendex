@@ -4,6 +4,7 @@ description: "Runtime specialist for non-UI shell, Python, TypeScript and Go cod
 tags: automation
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 allowed-subagents: scout
+model: standard:high
 effort: high
 color: orange
 pane: true
