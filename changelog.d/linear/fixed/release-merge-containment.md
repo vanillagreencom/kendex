@@ -1,0 +1,1 @@
+- Completion help explains that release verification in the item's merge repository waits for a release that contains its latest merge commit.

@@ -1,0 +1,1 @@
+- Release verification in the item's merge repository starts at the first matching release that contains its latest merge commit.

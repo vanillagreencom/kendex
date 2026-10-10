@@ -514,8 +514,97 @@ release_world release_first
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "the first matching publication after merge fires" "$ERR"
 assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "the deadline uses the first matching publication" "$ERR"
+assert_eq "$(awk '/^api repos\/.*\/compare\// {n++} END {print n+0}' "$STUB_DIR/gh.calls")" 0 "a release in another repository makes no compare call" "$ERR"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=due events=' "release evidence stays due on every pass" "$ERR"
+
+# GitHub's compare response is the containment evidence. The older merged row
+# comes last to prove selection uses merge time, not the API's row order.
+own_release_world() {
+  release_world "$1" 'release owner/repo v*'
+  cp "$STUB_DIR/releases.owner_releases.json" "$STUB_DIR/releases.owner_repo.json"
+  printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-01T00:00:00Z","mergeCommit":{"oid":"1111111111111111111111111111111111111111"}},{"number":2,"headRefName":"ken-1","mergedAt":"2026-09-30T00:00:00Z","mergeCommit":{"oid":"2222222222222222222222222222222222222222"}}]' >"$STUB_DIR/merged.json"
+  jq -nc --arg status "$2" '{status:$status}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json"
+  jq -nc --arg status "$3" '{status:$status}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v3.json"
+}
+while IFS='|' read -r name first second status deadline calls; do
+  own_release_world "release_contains_$name" "$first" "$second"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(box_status)" "rc=0 status=$status" "$name containment status" "$ERR"
+  assert_contains "$(verification_lines)" "deadline=$deadline" "$name containment deadline" "$ERR"
+  assert_eq "$(awk '/^api repos\/.*\/compare\// {n++} END {print n+0}' "$STUB_DIR/gh.calls")" "$calls" "$name compares only matching candidates through the first contained tag" "$ERR"
+  if [[ "$status" == waiting ]]; then
+    assert_eq "$(verification_events)" '' "$name raises no verification event" "$ERR"
+  fi
+done <<'ROWS'
+behind_then_ahead|behind|ahead|due|2026-10-03T00:00:00Z|2
+behind_then_identical|behind|identical|due|2026-10-03T00:00:00Z|2
+first_ahead|ahead|behind|due|2026-10-02T12:00:00Z|1
+first_identical|identical|behind|due|2026-10-02T12:00:00Z|1
+behind_and_diverged|behind|diverged|waiting|+24h|2
+ROWS
+while IFS='|' read -r name setup; do
+  own_release_world "release_compare_unread_$name" behind ahead
+  case "$setup" in
+    fail) echo 'HTTP 502' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.err" ;;
+    missing) echo '{}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json" ;;
+    number) echo '{"status":42}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json" ;;
+    unknown) echo '{"status":"unknown"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json" ;;
+    oid) jq 'map(.mergeCommit.oid = null)' "$STUB_DIR/merged.json" >"$STUB_DIR/invalid-oid.json"; mv -- "$STUB_DIR/invalid-oid.json" "$STUB_DIR/merged.json" ;;
+  esac
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC status=$(box_status) key=$(grep -c '^oversee-watch: verifying-release-unread ' "$ERR" || true)" 'rc=2 status= key=1' "$name compare evidence refuses instead of waiting" "$ERR"
+done <<'ROWS'
+read|fail
+missing_status|missing
+numeric_status|number
+unknown_status|unknown
+missing_oid|oid
+ROWS
+# Each control changes a disposable production copy and reaches the same
+# containment assertion. The first restores the old publication-only choice.
+while IFS='@' read -r name first old new; do
+  own_release_world "release_contains_control_$name" "$first" ahead
+  MUTANT_DIR="$TMP_ROOT/release-contains-$name"
+  MUTANT_WATCH="$(mutant_scripts "release-contains-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  got="rc=$RC $(box_status) deadline=$(awk '$1 == "verifying" && $2 == "KEN-1" {for(i=1;i<=NF;i++) if($i ~ /^deadline=/) print substr($i,10)}' <<<"$OUT")"
+  if [[ "$got" != 'rc=0 status=due deadline=2026-10-03T00:00:00Z' ]]; then
+    pass "control: $name violates the contained release contract"
+  else
+    fail "control: $name violates the contained release contract" "$OUT"
+  fi
+done <<'ROWS'
+old_code@behind@if [[ -n "$oid" ]]; then@if false; then
+behind_contained@behind@ahead|identical)@ahead|identical|behind)
+diverged_contained@diverged@ahead|identical)@ahead|identical|diverged)
+latest_merge@behind@max_by(.at) // null@min_by(.at) // null
+ROWS
+while IFS='@' read -r name setup old new; do
+  own_release_world "release_compare_guard_$name" behind ahead
+  case "$setup" in
+    failed) echo 'HTTP 502' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.err" ;;
+    malformed) echo '{"status":"unknown"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json" ;;
+    oid) jq 'map(.mergeCommit.oid = "invalid")' "$STUB_DIR/merged.json" >"$STUB_DIR/invalid-oid.json"; mv -- "$STUB_DIR/invalid-oid.json" "$STUB_DIR/merged.json" ;;
+  esac
+  MUTANT_DIR="$TMP_ROOT/release-compare-guard-$name"
+  MUTANT_WATCH="$(mutant_scripts "release-compare-guard-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_file "$MUTANT_WATCH" "$old" "$new"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 2 "$name refuses unreadable containment evidence" "$ERR"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "control: $name bypasses its evidence guard" "$ERR"
+done <<'ROWS'
+failed_read@failed@|| die verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo" "tag=$tag"@|| comparison=behind
+malformed_status@malformed@*) die verifying-release-unread "" "issue=$id" "repo=$repo" "tag=$tag" "status=$comparison" ;;@*) continue ;;
+missing_commit@oid@select(test("^[0-9a-fA-F]{40}$"))@""
+ROWS
+
 release_world release_escaped 'release owner/releases v\*'
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "a Markdown-escaped release glob fires in the first pass" "$ERR"
