@@ -9,6 +9,252 @@ use std::collections::BTreeMap;
 use std::fs;
 
 #[test]
+fn native_bindings_select_only_the_requested_harness_and_class() {
+    use kendex_core::harness::models::{ResolutionContext, resolve_model};
+    use kendex_core::render::agent::{EffectiveAgent, generate, parse_source_agent};
+    let scope = Scope::Global;
+    let source =
+        parse_source_agent("---\nname: worker\ndescription: Work\nmodel: standard\n---\nBody.\n")
+            .unwrap();
+    for harness in HarnessId::ALL {
+        let mut agent = EffectiveAgent {
+            source: &source,
+            harness,
+            scope: &scope,
+            skills: vec![],
+            overrides: Default::default(),
+            model_classes: Default::default(),
+            model_bindings: Default::default(),
+            permissions: EffectiveAgent::intent(&source, &Default::default()),
+            launch_instructions: None,
+            additional_instructions: None,
+            custom_hooks: vec![],
+            role_policy: None,
+        };
+        let unbound = generate(&agent).unwrap().text;
+        let other_harness = if harness == HarnessId::Codex {
+            "copilot"
+        } else {
+            "codex"
+        };
+        agent.model_bindings = BTreeMap::from([(
+            other_harness.into(),
+            BTreeMap::from([("standard".into(), "gpt-6.1-sol".into())]),
+        )]);
+        assert_eq!(
+            generate(&agent).unwrap().text,
+            unbound,
+            "another harness's binding"
+        );
+        for (class, selector, changes) in [
+            ("light", "gpt-6.1-luna", false),
+            (
+                "standard",
+                "gpt-6.1-sol",
+                matches!(harness, HarnessId::Codex | HarnessId::Copilot),
+            ),
+        ] {
+            agent.model_bindings = BTreeMap::from([(
+                harness.name().into(),
+                BTreeMap::from([(class.into(), selector.into())]),
+            )]);
+            let rendered = generate(&agent).unwrap();
+            if changes {
+                match harness {
+                    HarnessId::Codex => assert_eq!(
+                        rendered.text.parse::<toml::Table>().unwrap()["model"].as_str(),
+                        Some(selector)
+                    ),
+                    HarnessId::Copilot => assert_eq!(
+                        parse_source_agent(&rendered.text).unwrap().model.as_str(),
+                        selector
+                    ),
+                    _ => unreachable!(),
+                }
+                let resolved = resolve_model(
+                    &ModelRequest::Class {
+                        class: ModelClass::Standard,
+                    },
+                    ResolutionContext::Render(harness, &agent.model_bindings),
+                    &agent.model_classes,
+                );
+                assert!(resolved.diagnostics().is_empty());
+            } else {
+                assert_eq!(rendered.text, unbound, "{harness:?}/{class}");
+            }
+        }
+        if harness == HarnessId::Codex {
+            agent.overrides.model = Some("gpt-6-astra".into());
+            let rendered = generate(&agent).unwrap();
+            assert_eq!(
+                rendered.text.parse::<toml::Table>().unwrap()["model"].as_str(),
+                Some("gpt-6-astra")
+            );
+        }
+    }
+}
+
+#[test]
+fn binding_validation_names_each_rejected_location() {
+    for (text, location) in [
+        ("model-bindings = 1", "model-bindings"),
+        ("model-bindings.codex = 1", "model-bindings.codex"),
+        (
+            "model-bindings.claude.standard = 'opus'",
+            "model-bindings.claude",
+        ),
+        (
+            "model-bindings.pi.standard = 'openai/sol'",
+            "model-bindings.pi",
+        ),
+        (
+            "model-bindings.cursor.standard = 'sol'",
+            "model-bindings.cursor",
+        ),
+        (
+            "model-bindings.opencode.standard = 'sol'",
+            "model-bindings.opencode",
+        ),
+        (
+            "model-bindings.gemini.standard = 'sol'",
+            "model-bindings.gemini",
+        ),
+        (
+            "model-bindings.antigravity.standard = 'sol'",
+            "model-bindings.antigravity",
+        ),
+        (
+            "model-bindings.other.standard = 'sol'",
+            "model-bindings.other",
+        ),
+        (
+            "model-bindings.codex.opus = 'sol'",
+            "model-bindings.codex.opus",
+        ),
+        (
+            "model-bindings.codex.standard = ''",
+            "model-bindings.codex.standard",
+        ),
+        (
+            "model-bindings.codex.standard = ' sol'",
+            "model-bindings.codex.standard",
+        ),
+        (
+            "model-bindings.codex.standard = 's ol'",
+            "model-bindings.codex.standard",
+        ),
+        (
+            "model-bindings.codex.standard = 1",
+            "model-bindings.codex.standard",
+        ),
+    ] {
+        let error = manifest::parse_text(
+            std::path::Path::new("kendex.toml"),
+            &format!("schema = 6\n{text}\n"),
+        )
+        .unwrap_err();
+        let kendex_core::error::CoreError::ManifestInvalid { findings, .. } = error else {
+            panic!("wrong refusal kind")
+        };
+        assert!(
+            findings.iter().any(|finding| finding.location == location),
+            "{location}"
+        );
+    }
+}
+
+#[test]
+fn bindings_merge_round_trip_and_hash_only_their_harness() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let path = manifest::manifest_path(&env, &Scope::Global);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "schema = 6\n[model-bindings.codex]\nstandard = 'gpt-6-sol'\nlight = 'gpt-6.1-luna'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n").unwrap();
+    let manifest::ManifestFile::Current(mut project) = manifest::parse_text(
+        std::path::Path::new("kendex.toml"),
+        "schema = 6\nmodel-bindings.codex.standard = 'gpt-6.1-sol'\n",
+    )
+    .unwrap() else {
+        panic!("current manifest")
+    };
+    let saved = toml::to_string(&project).unwrap();
+    assert_eq!(
+        manifest::parse_text(std::path::Path::new("kendex.toml"), &saved).unwrap(),
+        manifest::ManifestFile::Current(project.clone())
+    );
+    let policy = manifest::model_bindings(
+        &env,
+        &Scope::Project {
+            root: home.join("project"),
+        },
+        &project,
+    )
+    .unwrap();
+    assert_eq!(policy["codex"]["standard"], "gpt-6.1-sol");
+    assert_eq!(policy["codex"]["light"], "gpt-6.1-luna");
+    assert_eq!(policy["copilot"]["standard"], "claude-opus-4.6");
+    let before = project.clone();
+    project
+        .model_bindings
+        .get_mut("codex")
+        .unwrap()
+        .insert("standard".into(), "gpt-6-astra".into());
+    for harness in HarnessId::ALL {
+        let old = kendex_core::hash::relevant_sections(&before, ItemKind::Agent, "worker", harness);
+        let new =
+            kendex_core::hash::relevant_sections(&project, ItemKind::Agent, "worker", harness);
+        assert_eq!(old != new, harness == HarnessId::Codex, "{harness:?}");
+    }
+    fs::write(&path, "not a manifest").unwrap();
+    assert!(
+        manifest::model_bindings(
+            &env,
+            &Scope::Project {
+                root: home.join("project")
+            },
+            &project
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn plan_readback_refuses_provider_qualified_codex_binding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("project");
+    let catalog = home.join("catalog");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("agents/worker.md"),
+        "---\nname: worker\ndescription: Work\nmodel: standard\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = ['codex']\n[agents.worker]\nsource = 'cat'\n[model-bindings.codex]\nstandard = 'openai/gpt-6.1-sol'\n", source_path(&catalog))).unwrap();
+    let report = kendex_core::engine::audit(
+        &env,
+        &Scope::Project {
+            root: project.clone(),
+        },
+    )
+    .unwrap();
+    assert!(report.refused.iter().any(|row| row.name == "worker"
+        && row.harness == HarnessId::Codex
+        && row.refusal == kendex_core::engine::desired::RefusalKind::Render));
+    assert!(!project.join(".codex/agents/worker.toml").exists());
+    fs::create_dir_all(project.join(".github")).unwrap();
+    fs::write(project.join(".github/allowed_models.txt"), "gpt-6.1-sol\n").unwrap();
+    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = ['copilot']\n[agents.worker]\nsource = 'cat'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n", source_path(&catalog))).unwrap();
+    let report = kendex_core::engine::audit(&env, &Scope::Project { root: project }).unwrap();
+    // Copilot report consumers read the stable first line, not the explanation.
+    assert!(report.warnings.iter().any(|row| row.message.lines().next() == Some("kendex-model-disallowed: harness=copilot agent=worker requested=claude-opus-4.6 allowed=gpt-6.1-sol")));
+}
+
+#[test]
 fn manifest_round_trip_validation_and_policy_hash() {
     let text = "schema = 6\nmodel-classes.fast = \"custom/fast-v2\"\n";
     let parsed = manifest::parse_text(std::path::Path::new("kendex.toml"), text).unwrap();
@@ -103,6 +349,7 @@ fn every_native_renderer_keeps_valid_class_representation() {
                 skills: vec![],
                 overrides: Default::default(),
                 model_classes: policy,
+                model_bindings: Default::default(),
                 permissions: EffectiveAgent::intent(&source, &Default::default()),
                 launch_instructions: None,
                 additional_instructions: None,

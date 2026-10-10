@@ -159,6 +159,7 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
         skills: vec![],
         overrides: FrontmatterOverrides::default(),
         model_classes: Default::default(),
+        model_bindings: Default::default(),
         permissions: PermissionIntent::Unspecified,
         launch_instructions: launch.map(str::to_owned),
         additional_instructions: additional.map(str::to_owned),

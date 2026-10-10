@@ -82,6 +82,7 @@ fn model(agent: &EffectiveAgent, effort: Option<&str>) -> (Option<String>, Optio
         crate::model::HarnessId::Pi,
         model,
         &agent.model_classes,
+        &agent.model_bindings,
     );
     let suffix = effort.map(|e| format!(":{e}")).unwrap_or_default();
     (
@@ -197,6 +198,7 @@ mod tests {
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Pi,
             scope,

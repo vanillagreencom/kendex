@@ -90,6 +90,7 @@ mod verify_base_owned;
 mod verify_excluded_members;
 mod verify_hook_pins;
 mod verify_hook_switch;
+mod verify_model_bindings;
 mod verify_records;
 mod verify_tracked_outputs;
 mod writes_locked;

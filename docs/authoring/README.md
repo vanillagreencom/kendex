@@ -82,6 +82,27 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 
 A description is never guessed: an empty one stays empty and is a check finding. Tags come from `tags = [...]` in `[marketplace]` or per item in frontmatter, never inferred from names. A marketplace page renders the package's own body, the `SKILL.md` for a skill and the one file for every other kind; a `README.md` beside a skill ships with it and is listed, not rendered.
 
+## Agent models
+
+An agent requests a portable model class through its `model:` field. Consumer settings select models for that class at run time or in a native agent file. These settings belong in the personal or project manifest, not the catalog manifest. Project values replace personal values per class, and bindings replace them per harness and class.
+
+```toml
+[model-classes]
+standard = "openai/gpt-6.1-sol"
+
+[model-bindings.codex]
+standard = "gpt-6.1-sol"
+
+[model-bindings.copilot]
+standard = "claude-opus-4.6"
+```
+
+`model-classes.<class>` supplies a provider-qualified selector to runtime class resolution through `kendex tier-model`. It does not put that selector in a static agent file. `[model-bindings.<harness>]` selects a native model for a class in a Codex or Copilot agent file. Other harnesses reject bindings. Claude Code already renders the class family alias. Pi keeps the class for runtime dispatch.
+
+Bindings use canonical class names and nonempty selectors with no whitespace. The model owner, `crates/core/src/harness/models.rs`, declares the classes. Render preview checks the selector against the harness loader. A binding gives no compatibility warning. Without a binding, the agent keeps its existing render. `inherit` keeps the session model. A per-agent `[agent-frontmatter.<harness>.<agent>] model` replaces the request before binding selection, so it takes precedence.
+
+On Copilot a bound model outranks the launch model. Bind a class when its agents must use that model even if the session uses another. Bindings change no runtime `model-classes` selection.
+
 ## Agent permissions
 
 `[agent-frontmatter.<harness>.<agent>]` sets per-agent overrides in the catalog or consumer manifest. Consumer values replace catalog values per field. `deny-tools` combines both lists and adds restrictions to the agent's own tool permissions.

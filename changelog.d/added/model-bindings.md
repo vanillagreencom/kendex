@@ -1,0 +1,1 @@
+- Bind agent model classes to native models on Codex and Copilot with `[model-bindings.<harness>]` in `kendex.toml`.

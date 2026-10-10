@@ -26,7 +26,12 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     let mode = mode(o);
     out.push_str(&format!("mode: {mode}\n"));
     let model = agent.model_request();
-    let resolved = render_model(HarnessId::Opencode, model, &agent.model_classes);
+    let resolved = render_model(
+        HarnessId::Opencode,
+        model,
+        &agent.model_classes,
+        &agent.model_bindings,
+    );
     warnings.extend(resolved.warning.map(|w| {
         crate::render::RenderWarning::with_fix(w, "use a provider/model id or a tier alias")
     }));
@@ -197,6 +202,7 @@ mod tests {
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Opencode,
             scope,

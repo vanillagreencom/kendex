@@ -469,7 +469,7 @@ fn exact_haiku_compatibility_substitution_stops_at_four_point_five() {
         let context = context("anthropic", &[id, "claude-sonnet-5"]);
         let request = format!("anthropic/{id}");
         // Installed Pi frontmatter is the producer of the later dispatch request.
-        let rendered = render_model(HarnessId::Pi, &request, &BTreeMap::new());
+        let rendered = render_model(HarnessId::Pi, &request, &BTreeMap::new(), &BTreeMap::new());
         assert_eq!(rendered.id.as_deref(), Some(request.as_str()));
         let result = resolve(rendered.id.as_deref().unwrap(), &context);
         assert_eq!(
@@ -517,7 +517,7 @@ fn overrides_replace_members_but_do_not_create_access() {
     assert_ne!(selected(result).concrete_id.as_deref(), Some("unavailable"));
     let context = context("openai", &["gpt-6.1-luna"]);
     let policy = BTreeMap::from([("standard".into(), "openai/gpt-6.1-sol".into())]);
-    let rendered = render_model(HarnessId::Pi, "standard", &policy);
+    let rendered = render_model(HarnessId::Pi, "standard", &policy, &BTreeMap::new());
     let request = ModelRequest::parse(rendered.id.as_deref().unwrap()).unwrap();
     assert_eq!(request.class(), Some(ModelClass::Standard));
     let result = resolve_model(&request, ResolutionContext::Runtime(&context), &policy);
@@ -678,13 +678,15 @@ fn collector_missing_active_provider_is_failed_not_complete_empty() {
 fn native_alias_and_renderer_boundaries() {
     for harness in HarnessId::ALL {
         assert!(
-            render_model(harness, "inherit", &BTreeMap::new())
+            render_model(harness, "inherit", &BTreeMap::new(), &BTreeMap::new())
                 .id
                 .is_none()
         );
         let pin = "anthropic/claude-haiku-4-5";
         assert_eq!(
-            render_model(harness, pin, &BTreeMap::new()).id.as_deref(),
+            render_model(harness, pin, &BTreeMap::new(), &BTreeMap::new())
+                .id
+                .as_deref(),
             Some(pin)
         );
         let hint = resolve_model(
@@ -697,15 +699,25 @@ fn native_alias_and_renderer_boundaries() {
         );
     }
     assert_eq!(
-        render_model(HarnessId::Claude, "fast", &BTreeMap::new())
-            .id
-            .as_deref(),
+        render_model(
+            HarnessId::Claude,
+            "fast",
+            &BTreeMap::new(),
+            &BTreeMap::new()
+        )
+        .id
+        .as_deref(),
         Some("sonnet")
     );
     assert_eq!(
-        render_model(HarnessId::Claude, "anthropic/opus", &BTreeMap::new())
-            .id
-            .as_deref(),
+        render_model(
+            HarnessId::Claude,
+            "anthropic/opus",
+            &BTreeMap::new(),
+            &BTreeMap::new()
+        )
+        .id
+        .as_deref(),
         Some("opus")
     );
     for harness in [
@@ -717,12 +729,16 @@ fn native_alias_and_renderer_boundaries() {
         HarnessId::Cursor,
     ] {
         for class in ["top", "standard", "light", "fast"] {
-            assert!(render_model(harness, class, &BTreeMap::new()).id.is_none());
+            assert!(
+                render_model(harness, class, &BTreeMap::new(), &BTreeMap::new())
+                    .id
+                    .is_none()
+            );
         }
     }
     for class in ["top", "standard", "light", "fast"] {
         assert_eq!(
-            render_model(HarnessId::Pi, class, &BTreeMap::new())
+            render_model(HarnessId::Pi, class, &BTreeMap::new(), &BTreeMap::new())
                 .id
                 .as_deref(),
             Some(class)
@@ -762,7 +778,7 @@ fn guard_render_blind_rows_are_the_pi_values_that_render_no_model() {
         .into_iter()
         .flat_map(|(root, harness, omitted)| {
             values.clone().map(move |value| {
-                let rendered = render_model(harness, value, &BTreeMap::new()).id;
+                let rendered = render_model(harness, value, &BTreeMap::new(), &BTreeMap::new()).id;
                 (
                     root,
                     value.to_owned(),

@@ -70,6 +70,7 @@ mod tests {
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Cursor,
             scope,

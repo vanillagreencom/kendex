@@ -671,6 +671,11 @@ pub fn relevant_sections(
             for (class, selector) in &manifest.model_classes {
                 push("model-classes", class, selector);
             }
+            if let Some(bindings) = manifest.model_bindings.get(harness.name()) {
+                for (class, selector) in bindings {
+                    push("model-bindings", class, selector);
+                }
+            }
             if let Some(skills) = manifest.agent_skills.get(name) {
                 push("agent-skills", name, &skills.join(","));
             }

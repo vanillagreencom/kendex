@@ -52,6 +52,7 @@ pub fn output_style_count(count: usize) -> Option<Finding> {
 const TOP_LEVEL: &[&str] = &[
     "schema",
     "model-classes",
+    "model-bindings",
     "sources",
     "install",
     "agents",
@@ -196,6 +197,7 @@ pub fn validate(table: &Table) -> Vec<Finding> {
     items::validate_forks(table, &mut findings);
     validate_frontmatter(table, &mut findings);
     validate_model_classes(table, &mut findings);
+    validate_model_bindings(table, &mut findings);
     validate_hooks(table, &mut findings);
     findings
 }
@@ -223,6 +225,72 @@ fn validate_model_classes(table: &Table, findings: &mut Vec<Finding>) {
                 problem,
                 fix: "select a provider-qualified exact id or native family".into(),
             });
+        }
+    }
+}
+
+// Consumer manifests produce these bindings; native loader shape checks stay in render readback.
+fn validate_model_bindings(table: &Table, findings: &mut Vec<Finding>) {
+    let Some(value) = table.get("model-bindings") else {
+        return;
+    };
+    let fix = "use [model-bindings.codex] or [model-bindings.copilot] with canonical class keys and native selectors";
+    let Some(bindings) = value.as_table() else {
+        findings.push(Finding {
+            location: "model-bindings".into(),
+            problem: "expected a table".into(),
+            fix: fix.into(),
+        });
+        return;
+    };
+    for (harness, value) in bindings {
+        let reason = match harness.as_str() {
+            "codex" | "copilot" => None,
+            "claude" => Some("Claude Code already renders the class's family alias"),
+            "pi" => Some("Pi already resolves the class at run time"),
+            "cursor" => Some("Cursor agent files carry no model"),
+            "opencode" | "gemini" | "antigravity" => {
+                Some("native class bindings are supported only for Codex and Copilot")
+            }
+            _ => Some("unknown binding harness"),
+        };
+        if let Some(problem) = reason {
+            findings.push(Finding {
+                location: format!("model-bindings.{harness}"),
+                problem: problem.into(),
+                fix: fix.into(),
+            });
+            continue;
+        }
+        let Some(classes) = value.as_table() else {
+            findings.push(Finding {
+                location: format!("model-bindings.{harness}"),
+                problem: "expected a table".into(),
+                fix: fix.into(),
+            });
+            continue;
+        };
+        for (class, value) in classes {
+            let problem = if !crate::harness::models::TIERS
+                .iter()
+                .any(|row| row.name == class)
+            {
+                Some("unknown canonical model class")
+            } else if !value
+                .as_str()
+                .is_some_and(|v| !v.is_empty() && !v.chars().any(char::is_whitespace))
+            {
+                Some("model selector must be a nonempty string with no whitespace")
+            } else {
+                None
+            };
+            if let Some(problem) = problem {
+                findings.push(Finding {
+                    location: format!("model-bindings.{harness}.{class}"),
+                    problem: problem.into(),
+                    fix: fix.into(),
+                });
+            }
         }
     }
 }

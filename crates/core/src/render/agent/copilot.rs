@@ -30,7 +30,12 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     push(format!("description: {}", yaml_quoted(&source.description)));
     push("include-custom-instructions: true".to_owned());
     let model = agent.model_request();
-    let resolved = render_model(HarnessId::Copilot, model, &agent.model_classes);
+    let resolved = render_model(
+        HarnessId::Copilot,
+        model,
+        &agent.model_classes,
+        &agent.model_bindings,
+    );
     warnings.extend(resolved.warning.map(RenderWarning::new));
     if let Some(id) = &resolved.id {
         push(format!("model: {}", yaml_scalar(id)));
@@ -115,6 +120,7 @@ mod tests {
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Copilot,
             scope,

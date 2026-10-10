@@ -724,6 +724,27 @@ pub(super) fn desired_state(
     Ok(second)
 }
 
+#[derive(Default)]
+struct ConsumerModels {
+    classes: BTreeMap<String, String>,
+    bindings: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+fn consumer_models(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    expansion: &super::expansion::Expansion,
+) -> Result<ConsumerModels> {
+    if expansion.of(ItemKind::Agent).is_empty() {
+        return Ok(ConsumerModels::default());
+    }
+    Ok(ConsumerModels {
+        classes: crate::manifest::model_class_overrides(env, scope, manifest)?,
+        bindings: crate::manifest::model_bindings(env, scope, manifest)?,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compute(
     source_hashes: &crate::hash::SourceHashes,
@@ -759,11 +780,7 @@ fn compute(
     state.selector_bases = selector_bases(&expansion, manifest, held);
     state.kept_members =
         super::bundles::kept_members(lock, manifest, &state.kept_bundles, &expansion);
-    let model_classes = if expansion.of(ItemKind::Agent).is_empty() {
-        BTreeMap::new()
-    } else {
-        crate::manifest::model_class_overrides(env, scope, manifest)?
-    };
+    let models = consumer_models(env, scope, manifest, &expansion)?;
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
     // What the sources' current checkouts offer, read once. Item-level pins
     // do not widen this inventory.
@@ -814,7 +831,8 @@ fn compute(
             let reasons = reasons_for(kind, name, &harnesses, &expansion, &state.kept_members);
             let ctx = ItemCtx {
                 source_hashes,
-                model_classes: &model_classes,
+                model_classes: &models.classes,
+                model_bindings: &models.bindings,
                 env,
                 scope,
                 manifest,
@@ -1005,6 +1023,7 @@ fn reasons_for(
 pub(super) struct ItemCtx<'a> {
     source_hashes: &'a crate::hash::SourceHashes,
     pub(super) model_classes: &'a BTreeMap<String, String>,
+    pub(super) model_bindings: &'a BTreeMap<String, BTreeMap<String, String>>,
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
     pub(super) manifest: &'a Manifest,

@@ -29,7 +29,12 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     }
     push("kind: local".to_owned());
     let model = agent.model_request();
-    let resolved = render_model(HarnessId::Gemini, model, &agent.model_classes);
+    let resolved = render_model(
+        HarnessId::Gemini,
+        model,
+        &agent.model_classes,
+        &agent.model_bindings,
+    );
     warnings.extend(resolved.warning.map(RenderWarning::new));
     // Omission keeps the session model without introducing a native selector.
     if let Some(id) = &resolved.id {
@@ -115,6 +120,7 @@ mod tests {
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Gemini,
             scope,
