@@ -258,7 +258,7 @@ echo "=== controls ==="
 # Without the tier the score alone orders the pair, and the credit-backed
 # account's is the higher.
 CTRL="$(mutant_scripts mutant-credit-rank lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,'
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._seat, ._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: without the tier the credit-backed account is picked over plan room|$(dirs hcodex pcodex)|$PICK|rc=0 config_dir=$H/.hcodex binding_bucket=credits"
 
@@ -346,7 +346,7 @@ cloud_control() {
   mutate_file "$CTRL/$2" "$3" "$4"
   LANES_UNDER_TEST="$CTRL/lanes" table "$5"
 }
-cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,' \
+cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._seat, ._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,' \
   "control: without the tier key plan room outranks the credit|$CLOUD;$(dirs gclaude bclaude);$(repos gclaude bclaude)|$CPICK|rc=0 config_dir=$H/.gclaude"
 # shellcheck disable=SC2016  # Keep the tier call as a jq comment in the mutant.
 cloud_control mutant-named-cloud-tier lib/lane-model.sh '      | with_lane_tier($pool; $cloud_floor; $retire; $now)' '      # | with_lane_tier($pool; $cloud_floor; $retire; $now)' \

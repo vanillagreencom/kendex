@@ -2568,7 +2568,7 @@ table \
   "a host row with no reading of its own leaves this machine's reading of the account in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-bare.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=local"
 # Control: a pick that never asks for the host rows reads the token-only folder
 # as this machine's no_credentials, and nothing is picked.
-lanes_mutant mutant-pick-local-only lanes '"\$SEATS" "\$hosted" "\$model")"' '"$SEATS" "[]" "$model")"'
+lanes_mutant mutant-pick-local-only lanes '"\$exclude" "\$hosted" "\$model")"' '"$exclude" "[]" "$model")"'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \
@@ -2610,7 +2610,7 @@ table \
   "control: a raw-spelled host row leaves the named folder on the local reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-slash.tsv|$PICK_LANE $H/.tclaude|rc=5 measured_through=local"
 LANES="$LANES_PATCHED"
 # Control: a public record that keeps the match key carries it out of both forms.
-lanes_mutant mutant-public-id lib/lane-model.sh '^def lane_public: del(\(.*\), \._id);$' 'def lane_public: del(\1);'
+lanes_mutant mutant-public-id lib/lane-model.sh '^def lane_public: del(\(.*\), \._id, \._seat);$' 'def lane_public: del(\1, ._seat);'
 LANES="$TMP_ROOT/mutant-public-id/scripts/lanes"
 table \
   "control: a record keeping the match key hands it to a pick caller|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 hasid=true" \
