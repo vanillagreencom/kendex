@@ -72,27 +72,36 @@ fn parsed_guard_reports_each_command_time_over_caller_layouts() {
     // The same writer can target its own project; a launch marker still
     // refuses that write until the explicit override is present.
     fs::write(fixture.linked.join("kendex.toml"), "schema = 7\n").expect("own manifest");
-    let env = Env::host_rooted(&fixture.root).with_cwd(&fixture.linked);
+    let environments = [
+        Env::host_rooted(&fixture.root).with_cwd(&fixture.linked),
+        Env::host_rooted(&fixture.root)
+            .with_cwd(&fixture.main)
+            .with_lane_origin(&fixture.linked),
+    ];
     let cli = crate::Cli::try_parse_from(["kendex", "refresh", "--scope", "project"])
         .expect("own writer");
-    assert!(
-        check_project_writes_in(&cli, &env)
-            .expect("own check")
-            .is_none()
-    );
+    for env in &environments {
+        assert!(
+            check_project_writes_in(&cli, env)
+                .expect("unmarked check")
+                .is_none()
+        );
+    }
     fixture.mark();
-    let marked = check_project_writes_in(&cli, &env)
-        .expect("marked check")
-        .expect("marked refusal");
-    assert!(marked.starts_with("lane-refresh: item=KEN-3464;"));
     let overridden =
         crate::Cli::try_parse_from(["kendex", "refresh", "--scope", "project", "--lane-refresh"])
             .expect("override writer");
-    assert!(
-        check_project_writes_in(&overridden, &env)
-            .expect("override check")
-            .is_none()
-    );
+    for env in &environments {
+        let marked = check_project_writes_in(&cli, env)
+            .expect("marked check")
+            .expect("marked refusal");
+        assert!(marked.starts_with("lane-refresh: item=KEN-3464;"));
+        assert!(
+            check_project_writes_in(&overridden, env)
+                .expect("override check")
+                .is_none()
+        );
+    }
     samples.sort_unstable();
     let median = samples[samples.len() / 2];
     let max = samples.last().expect("guard samples");

@@ -73,8 +73,8 @@ fn check_project_writes_in(
         }
         // orch's open-terminal exports the launch root inside the pane shell.
         // A later cd changes the destination but preserves this lane origin.
-        if let Some(origin) = std::env::var_os("KENDEX_LANE_ORIGIN")
-            && let Some(item) = kendex_core::lane::marked_worktree(std::path::Path::new(&origin))?
+        if let Some(origin) = env.lane_origin()
+            && let Some(item) = kendex_core::lane::marked_worktree(origin)?
         {
             return Ok(lane_refusal(item));
         }
