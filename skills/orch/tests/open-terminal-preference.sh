@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Lane preference routing, through the real launcher and fleet record writer.
 # lanes owns room; this consumer fixture answers its documented exit codes and
-# logs the harness and model it was asked to judge. No live account is read.
+# logs the harness and model it was asked to judge. Captured launch commands
+# run private harness recorders, so argument checks include command files.
+# Inputs: open-terminal, lane-launch, overseer-launch and the shared fixtures.
+# No live account is read.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -27,6 +30,14 @@ printf '{"version":"0.12.0","pi":{"extensions":["./extensions/lane-mail-wake.ts"
 printf 'export const reading = {context_window: 1};\n' > "$TMP_ROOT/pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
 BIN="$TMP_ROOT/bin"
 ot_stub_bin "$BIN"
+for harness in claude codex pi; do
+  cat > "$BIN/$harness" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\0' "${0##*/}" "$@" > "$PREFERENCE_ARGV"
+STUB
+  chmod +x "$BIN/$harness"
+done
 cat > "$BIN/lanes" <<'STUB'
 #!/usr/bin/env bash
 [[ "$1" == pick ]] || exit 0
@@ -48,6 +59,24 @@ assert_eq "$(cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIREC
 printf '[env]\nORCH_LANE_PREFERENCE = "%s"\n' "$PREF" > "$REPO/kendex.settings.toml"
 assert_eq "$(cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" scripts/orch-env ORCH_LANE_PREFERENCE '')" "$PREF" 'orch-env reads the program preference from settings'
 OT="$REPO/scripts/open-terminal"
+
+# Read the arguments from the child, after executing the captured transport.
+# NUL separates arguments; shell quoting lets the existing readers consume
+# them without losing spaces or prompt newlines.
+executed_command() { # LINE
+  local word quoted command=""
+  : > "$RUN/argv"
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" \
+    PI_CODING_AGENT_DIR="$TMP_ROOT/pi" PREFERENCE_ARGV="$RUN/argv" \
+    "$BASH" -c 'clear() { :; }; eval "$1"' preference "$1" > "$RUN/replay.out" 2> "$RUN/replay.err" \
+    || { cat "$RUN/replay.err" >&2; return 1; }
+  [[ -s "$RUN/argv" ]] || { echo 'open-terminal-preference: argv=missing' >&2; return 1; }
+  while IFS= read -r -d '' word; do
+    printf -v quoted '%q' "$word"
+    command+="$quoted "
+  done < "$RUN/argv"
+  printf '%s\n' "$command"
+}
 
 # Each observation uses fresh state, an explicit child environment and a GUI
 # stub. A successful GUI dispatch is asynchronous, so wait for its capture,
@@ -74,7 +103,7 @@ observe() { # PREFERENCE WALL MODE TEXT
     end=$((SECONDS + 10))
     while [[ ! -s "$RUN/command" ]] && (( SECONDS < end )); do sleep 0.01; done
     [[ -s "$RUN/command" ]] || { echo 'open-terminal-preference: capture=missing' >&2; exit 1; }
-    cmd="$(cat -- "$RUN/command")"
+    cmd="$(executed_command "$(cat -- "$RUN/command")")" || exit 1
     if { launch_choice_words_present 'pi' "$cmd" &&
          launch_choice_words_present '--model github-copilot/gpt-6.1-sol --thinking high' "$cmd"; } ||
        { launch_choice_words_present 'codex' "$cmd" &&
@@ -94,6 +123,7 @@ observe() { # PREFERENCE WALL MODE TEXT
       launch_choice_words_present '-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0' "$cmd" &&
       ! launch_choice_words_present '--exclude-tools question' "$cmd" || written=no
   fi
+  OBS_CMD="$cmd"
   OBS="$rc|$key|$record|$written|$(paste -sd, - < "$RUN/picks")"
   [[ -s "$RUN/picks" ]] || OBS+=none
 }
@@ -131,7 +161,7 @@ for mode in flags cmd; do
   observe 'codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high' none "$mode" "$text"
   assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' 'Pi skips Codex and selects the next eligible entry'
   assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=pi target=codex' 'permission skip names entry and both harnesses'
-  assert_file_not_contains "$RUN/command" '--dangerously-bypass-approvals-and-sandbox' 'Pi preference does not grant target bypass'
+  assert_file_not_contains "$RUN/argv" '--dangerously-bypass-approvals-and-sandbox' 'Pi preference does not grant target bypass'
 done
 # The caller chooses permissions, not the model preference. Only an exact
 # full-bypass posture reaches the cross-harness flag writer.
@@ -149,17 +179,17 @@ while IFS='|' read -r mode flags want model entry; do
   record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0] | [.harness,.model,.preference_entry] | join("|")' | tr -d '\"')"
   assert_eq "$record" "$want|$model|$entry" "$mode permission eligibility for [$flags]" "$RUN/err"
   if [[ "$want" == codex ]]; then
-    if launch_choice_words_present '--dangerously-bypass-approvals-and-sandbox' "$(cat -- "$RUN/command")"; then pass 'cross-harness launch writes the authorized target bypass'
+    if launch_choice_words_present '--dangerously-bypass-approvals-and-sandbox' "$OBS_CMD"; then pass 'cross-harness launch writes the authorized target bypass'
     else fail 'cross-harness launch lacks its authorized target bypass'; fi
-    if launch_choice_words_present "$expected_source_bypass" "$(cat -- "$RUN/command")"; then fail 'source bypass was retained'; else pass 'source bypass is replaced'; fi
+    if launch_choice_words_present "$expected_source_bypass" "$OBS_CMD"; then fail 'source bypass was retained'; else pass 'source bypass is replaced'; fi
   else
     assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
   fi
 done < "$TMP_ROOT/permission-rows"
 
-# One control for routing and one for each new refusal rule. Each mutation
+# One control for routing, each refusal rule and saved argument delivery. Each mutation
 # keeps the tested call or comparison, but removes its effect in a private copy.
-for control in routing model settings grammar command permission; do
+for control in routing model settings grammar command permission snapshot; do
   mutant_file=open-terminal
   [[ "$control" != settings ]] || mutant_file=lib/overseer-launch.sh
   MUTANT="$(mutant_scripts "mutant-$control" "$mutant_file")/open-terminal"
@@ -193,6 +223,22 @@ for control in routing model settings grammar command permission; do
       mutate_file "$OT" 'if ! ol_entry_permitted "$preference_entry"; then' 'if ! { ol_entry_permitted "$preference_entry" || true; }; then'
       observe 'codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high' none flags ''
       assert_eq "$OBS" '1|lane-resolution-failed|none|none|none|no|codex:gpt-6.1-sol' 'control: without permission eligibility the walk tries forbidden Codex instead of Pi' ;;
+    snapshot)
+      # Corrupt the saved launch effort after its original write. Keep the
+      # transport invocation intact, so only child argv can detect this.
+      mutate_file "$OT" 'printf '\''%s\n'\'' "$cmd" > "$brief_command_file"' \
+        'printf '\''%s\n'\'' "$cmd" > "$brief_command_file" && printf '\''%s\n'\'' "${cmd/high/low}" > "$brief_command_file"'
+      observe "$PREF" none cmd 'pi --exclude-tools question {brief}'
+      assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|no|pi:github-copilot/gpt-6.1-sol' \
+        'control: the child receives the corrupted snapshot effort'
+      CONTROL_RC=0
+      (
+        FAIL=0
+        assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' \
+          'model-free command gets the preference'
+        [[ "$FAIL" -eq 0 ]]
+      ) > "$RUN/snapshot-assertion" 2>&1 || CONTROL_RC=$?
+      assert_eq "$CONTROL_RC" 1 'control: the same preference assertion rejects a corrupted command snapshot' "$RUN/snapshot-assertion" ;;
   esac
 done
 # The real claim writer is the producer that walls Fable between batch items.
@@ -264,6 +310,7 @@ for surface in batch wait; do
     commands=''
     while IFS= read -r command; do
       [[ -n "$command" ]] || continue
+      command="$(executed_command "$command")" || exit 1
       commands+="$(launch_choice_launch_model claude "$command"):$(launch_choice_effort claude "$command"),"
     done <<<"$(sed -n '/^clear; /p' "$RUN/tmux" 2>/dev/null || true)"
     records="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes | map([.item,.harness,.model,.preference_entry,(.pick.account // "none" | split("/") | last),(.pick.claims | tostring)] | join(":")) | join(",")' | tr -d '\"')"
