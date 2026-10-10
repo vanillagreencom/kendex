@@ -435,9 +435,9 @@ jobs:
   # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
   # their steps records.
   #
-  # THE macOS LEG runs the full shell roster on main pushes, and the queue's
-  # three macOS shards in a merge group, on the runner whose /bin/bash is 3.2.57,
-  # the shell every skill claims to support (skills/AGENTS.md).
+  # THE macOS LEG uses the shard selection stated in tools/ci-job-set's
+  # header. It runs on the runner whose /bin/bash is 3.2.57, the shell every
+  # skill claims to support (skills/AGENTS.md).
   # tools/bash32-lint scans the source for that claim; this leg runs it, which is the only way
   # to reach what a text scan cannot — a quoted builtin name, a construct
   # assembled at runtime. The image's only
