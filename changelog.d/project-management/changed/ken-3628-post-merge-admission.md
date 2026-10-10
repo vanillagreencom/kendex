@@ -1,0 +1,1 @@
+- Admit post-merge checks only for deployment, live use over time or a person's check, with readable evidence and a sample that occurs within the verification window.
