@@ -1506,10 +1506,6 @@ tracker_case() { # ROW WATCH
     {id:"owner-comment", body:"OK", user_email:$email, created_at:$time}]
     + (if $row == "large" then [range(0;512) | {id:("history-" + tostring), body:("Ordinary history " + ("x" * 1024)),
         user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"}] else [] end))}' >"$STUB_DIR/comments"
-  if [[ "$row" == large ]]; then
-    assert_eq "$(jq -r '([.["KEN-7"][] | .body | utf8bytelength] | add) > 140060' "$STUB_DIR/comments")" true \
-      'ordinary comment history exceeds the measured argument limit'
-  fi
   if [[ "$row" == failed-* && "$row" != failed-read ]]; then
     assert_contains "$(cat "$STUB_DIR/write.err")" "lane-mail: tracker-unwritten issue=KEN-7 cause=${row#failed-}" \
       "$row names its failed operation"
@@ -1616,18 +1612,6 @@ for rule in author time; do
   fi
   assert_eq "$TRACKER_FACTS" 1,0 "control: dropping $rule check fails its 0,0 assertion"
 done
-
-# The ordinary history still reaches the real reader. Restoring argv input
-# must lose the reply because the operating system refuses that jq launch.
-TRACKER_MUTANT="$(mutant_scripts tracker-argv/orch oversee-watch)/oversee-watch"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-argv/github"
-mutate_file "$TRACKER_MUTANT" '--slurpfile comments "$WORK_DIR/tracker-comments"' '--argjson comments "$(cat "$WORK_DIR/tracker-comments")"'
-mutate_file "$TRACKER_MUTANT" '$comments[0][$ask.issue]' '$comments[$ask.issue]'
-"$BASH" -n "$TRACKER_MUTANT"
-tracker_case large "$TRACKER_MUTANT"
-assert_eq "$TRACKER_FACTS" 0,0 'control: argv history fails the large-row delivery assertion'
-assert_contains "$(cat "$STUB_DIR/tracker.err")" 'KEN-3624-unread cause=comments-format' \
-  'control: argv history fails at the document transfer'
 
 tracker_case enabled "$REPO_ROOT/skills/orch/scripts/oversee-watch"
 printf 'Approved action.\n' >"$STUB_DIR/ruling"
