@@ -579,6 +579,9 @@ mutate_file "$CTRL/lanes" '"$for_overseer" != true && "$harness" != copilot && "
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	# After the claim load:'
+rm -- "$CTRL/lib/lane-model.sh" || exit 1
+cp -p -- "$TEST_DIR/../scripts/lib/lane-model.sh" "$CTRL/lib/lane-model.sh" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" 'if .harness != "copilot" and .harness != "pi"' 'if true'
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=copilot table \
   "control: a reserve on Copilot wrongly refuses the pool seat|$CP_ENV=10/100;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|own:a||pick --harness copilot --json|rc=3 walled=0 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.acopilot,projected-headroom=90,reserve=100"
 
