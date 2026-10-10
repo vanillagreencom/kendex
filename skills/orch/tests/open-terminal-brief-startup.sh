@@ -122,8 +122,8 @@ orch_fixture_shared_libs "${OLD%/scripts}"
 git -C "${OLD%/scripts}" init -q
 git -C "${OLD%/scripts}" config gc.auto 0
 git -C "${OLD%/scripts}" config maintenance.auto false
-mutate_file "$OLD/open-terminal" 'cmd="bash $(lane_single_quote "$brief_command_file")"' \
-  'cmd="bash $(lane_single_quote "$brief_command_file")"; cmd="$(cat -- "$brief_command_file")"'
+mutate_file "$OLD/open-terminal" 'cmd="source $(lane_single_quote "$brief_command_file")"' \
+  'cmd="source $(lane_single_quote "$brief_command_file")"; cmd="$(cat -- "$brief_command_file")"'
 
 run_case() { # NAME SCRIPT HARNESS SHELL
   local name="$1" ot="$2" harness="$3" shell="$4"

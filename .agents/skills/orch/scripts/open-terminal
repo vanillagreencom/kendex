@@ -2917,6 +2917,10 @@ launch_finish() {
         && printf '%s\n' "$cmd" > "$brief_command_file" \
         || { ot_message brief-command-failed "item=$item" >&2; return 1; }
       cmd="bash $(lane_single_quote "$brief_command_file")"
+      # A tmux pane keeps its functions and the origin after the harness exits.
+      if [[ "$WAKE" != true && "$TERMINAL_MODE" == tmux ]]; then
+        cmd="source $(lane_single_quote "$brief_command_file")"
+      fi
     fi
   fi
   if [[ "$WAKE" == true ]]; then

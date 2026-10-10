@@ -27,6 +27,9 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
+source "$SCRIPTS_DIR/lib/lane-launch.sh"
+# The launch library enables errexit; refusal rows record nonzero results.
+set +e
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-brief-file: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-brief-file: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-brief-file: scratch=resolve-failed" >&2; exit 1; }
@@ -109,7 +112,7 @@ run_ot() {
     LANE_HOST_STUB_DIR="$TMP_ROOT/provider" LANE_HOST_STUB_LOG="$RUN/host.log" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ORCH_LANE_MAX_PCT=95 \
     OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" OT_CAPTURE="$RUN/gui" \
-    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" \
+    OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree-path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$ot" "$@" 2>&1)
   RC=$?
@@ -182,12 +185,71 @@ while IFS='|' read -r harness flags; do
   run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
     --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness "$harness" \
     --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
-  line="$(typed_line 'clear; bash ')" || line=""
+  line="$(typed_line 'clear; source ')" || line=""
   assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
     "$TMUX_BRIEF_ASSERTION ($harness)" "$OUT"
 done <<'ROWS'
 claude|--model opus --effort high
 pi|--model github-copilot/claude-sonnet-5 --thinking high
+ROWS
+
+# The tmux command is caller shell text. A startup function must remain
+# callable, and a later command in that pane must inherit the launch origin.
+FISH="$(command -v fish)" || { echo 'brief-file: fish-missing' >&2; exit 1; }
+pane_received() { # LINE SHELL
+  local line="$1" shell="$2" harness=unrun origin=absent
+  : > "$RECEIVED"
+  : > "$RUN/pane-origin"
+  if [[ "$shell" == "$FISH" ]]; then
+    printf 'function pane_harness; %s $argv; end\n' "$(lane_single_quote "$HARNESS_STUB")" > "$RUN/pane-script"
+  else
+    printf 'pane_harness() { %s "$@"; }\n' "$(lane_single_quote "$HARNESS_STUB")" > "$RUN/pane-script"
+  fi
+  printf '%s\ncd %s\nprintf '\''%%s'\'' "$KENDEX_LANE_ORIGIN" > %s\n' \
+    "$line" "$(lane_single_quote "$TMP_ROOT/home")" "$(lane_single_quote "$RUN/pane-origin")" >> "$RUN/pane-script"
+  env -i PATH="$PATH" HOME="$TMP_ROOT/home" LANG=C "$shell" "$RUN/pane-script" > "$RUN/pane.out" 2> "$RUN/pane.err" \
+    || { cat "$RUN/pane.err" >&2; return 1; }
+  cmp -s "$RECEIVED" "$BRIEF_WANT" && harness=verbatim
+  [[ "$(cat "$RUN/pane-origin")" == "$(cat "$RUN/worktree-path")" ]] && origin=retained
+  printf 'harness=%s origin=%s\n' "$harness" "$origin"
+}
+pane_row() { # OT SHELL COMMAND
+  local ot="$1" shell="$2" command="$3" line
+  run_ot "$ot" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub" --tmux --harness claude \
+    --cmd "$command --model opus --effort high $QUESTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
+  line="$(typed_line 'clear; ')" || line=""
+  PANE_GOT="rc=$RC $(pane_received "$line" "$shell")" || exit 1
+}
+assert_pane_received() {
+  assert_eq "$PANE_GOT" 'rc=0 harness=verbatim origin=retained' \
+    "the $PANE_KIND command keeps the complete brief and origin in the ${PANE_SHELL##*/} pane after cd" "$RUN/pane.err"
+}
+PANE_OT="$(mutant_scripts brief-pane-child open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/brief-pane-child" init -q
+git -C "$TMP_ROOT/brief-pane-child" config gc.auto 0
+git -C "$TMP_ROOT/brief-pane-child" config maintenance.auto false
+orch_fixture_shared_libs "$TMP_ROOT/brief-pane-child"
+mutate_file "$PANE_OT" 'cmd="source $(lane_single_quote "$brief_command_file")"' \
+  'cmd="bash $(lane_single_quote "$brief_command_file")"'
+while IFS='|' read -r PANE_SHELL PANE_KIND; do
+  PANE_CMD="$HARNESS_STUB"; [[ "$PANE_KIND" != function ]] || PANE_CMD=pane_harness
+  pane_row "$OT" "$PANE_SHELL" "$PANE_CMD"
+  assert_pane_received
+  # Restoring the child-shell defect must fail the same contract assertion.
+  # Function rows lose the command; external rows lose only the pane origin.
+  pane_row "$PANE_OT" "$PANE_SHELL" "$PANE_CMD"
+  CONTROL_RC=0
+  (
+    FAIL=0
+    assert_pane_received
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$RUN/pane-assertion.out" 2>&1 || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" 1 "control: the child-shell transport fails the same $PANE_KIND pane assertion (${PANE_SHELL##*/})" "$RUN/pane-assertion.out"
+done <<ROWS
+$BASH|external
+$FISH|external
+$BASH|function
+$FISH|function
 ROWS
 
 # The provider's prefix is the reference one, a login shell, so the remote
@@ -225,7 +287,7 @@ ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" |
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \
   --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
-line="$(typed_line 'clear; bash ')" || line=""
+line="$(typed_line 'clear; source ')" || line=""
 APPEND_GOT="rc=$RC harness=$(received "$line")"
 assert_eq "$APPEND_GOT" "rc=0 harness=altered" \
   "control: Pi still launches but receives the appended mailbox-monitor instruction" "$OUT"
