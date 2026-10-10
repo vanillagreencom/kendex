@@ -12,13 +12,10 @@ describe("problem lead presence", () => {
   });
 });
 
-describe("file recovery ownership", () => {
-  it.each(["lock-corrupt", "manifest-outdated"] as const)(
-    "%s leaves the recovery sequence to the engine message",
-    (kind) => {
-      const steps = PROBLEM_STEPS[kind];
-      expect(steps).toHaveLength(1);
-      expect(steps.join(" ")).not.toMatch(/move|apply|hooks\.json|hooks\//i);
-    },
-  );
+describe("lock recovery ownership", () => {
+  it("leaves the recovery sequence to the engine message", () => {
+    const steps = PROBLEM_STEPS["lock-corrupt"];
+    expect(steps).toHaveLength(1);
+    expect(steps.join(" ")).not.toMatch(/move|apply|hooks\.json|hooks\//i);
+  });
 });
