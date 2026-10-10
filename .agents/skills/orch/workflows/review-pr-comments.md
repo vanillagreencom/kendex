@@ -97,8 +97,8 @@ Decision context (read before classifying — do NOT suggest changes that contra
 Comments for your review:
 [For each comment:]
 ---
-Source ID: [THREAD_ID or COMMENT_ID]
-Source Type: [inline or pr-level]
+Source ID: [THREAD_ID, COMMENT_ID or file:line]
+Source Type: [inline, pr-level or review-body]
 Author: @[AUTHOR]
 File: [PATH]:[LINE] (or "general" if no file)
 Comment: "[BODY]"
@@ -336,7 +336,7 @@ With workflow state `pr_order` reading `open-first-returned`, publish through `.
 
 ### 6.3 Re-Triage Or Exit
 
-**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7.
+**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7. For `source_type: "review-body"`, collect § 6.3's replies in one `Dispositions at [HEAD_SHA]` PR comment, bound to the head after any fix push, with each line opening with its `source_id` (`file:line`), per `check-review-replies --help`. Post it with `post-comment --body-file`; record each item in `pr_comment_review.replied` with its `source_id` and `source_type`. These items use neither `post-reply` nor `resolve-thread`; continue to this section's single `iterations` increment.
 
 | Outcome | Reply body |
 |---------|------------|
@@ -420,10 +420,10 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
 
-A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id` and `state` per line:
+A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state] | @tsv'
+env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state, .body] | @tsv'
 ```
 
 A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` runs the body check below, and its exit `0` ends this step: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
@@ -465,7 +465,7 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` runs th
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
 
-A `head=` other than `[HEAD_SHA]` ends this step: the new head takes its own route. Answer exit `1` as [submit-pr.md](submit-pr.md) § 6.1 directs, each `suppressed-entry` in the `Dispositions at [HEAD_SHA]` comment, then run the check again. Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
+A `head=` other than `[HEAD_SHA]` ends this step: the new head takes its own route. On exit `1` with `suppressed-entry` lines, loop to § 2 with each entry as an item: `source_type: "review-body"`, `source_id: "[file:line]"`, and the finding's text from the review at `[HEAD_SHA]` in the reviews read above. This pass uses §§ 5–6, including Recurrence before the cap, the fix set, verification and cause records; § 6.3 posts its body replies and counts the pass once. Return here after that pass, bind the current head and run the body check again. Other exit `1` rules use the reply rewrite in [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates). Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
 
 **Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own approval wait decides the head.
 
