@@ -778,6 +778,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     pr_order="${order_line#pr-order=}"
   fi
   selection_previewed=false
+  ci_admission_attempted=false
   selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
     || die unreadable-setting setting=DEV_VALIDATE_SELECTION_CMD
   if [[ "$validate_mode" != full ]]; then
@@ -802,8 +803,9 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   classify "$class_base"
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
-  if [[ "$validate_mode" == ci || ( "$pr_order" == push-first && "$validate_mode" == range ) ]]; then
-    validate_mode=range
+  if [[ "$validate_mode" == ci || "$pr_order" == push-first ]]; then
+    ci_admission_attempted=true
+    [[ "$requested_mode" == full ]] || validate_mode=range
     ci_fallback=class-uncovered
     if ci_class_covered && ci_runs_validation; then
       if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then
@@ -814,7 +816,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         # CI eligibility uses the branch. The repository's local bound uses
         # the fix round, which --base names, before CI can bypass its checks.
         if [[ -z "$orphaned_sha" ]]; then
-          class_base="$base_sha"
+          class_base=""
+          [[ "$requested_mode" == full ]] || class_base="$base_sha"
           classify "$class_base"
           if [[ -z "$class_fallback" ]] && preview_selection; then
             case "$selection" in
@@ -837,22 +840,6 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         || die orphaned-base-unresolved "base=$orphaned_sha"
     fi
   fi
-  if [[ "$validate_mode" == full && "$pr_order" == push-first ]]; then
-    ci_fallback=class-uncovered
-    if ci_class_covered && ci_runs_validation; then
-      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then
-        validate_mode=ci
-      else
-        selection_previewed=true
-        ci_fallback=selection-unread
-        if preview_selection; then
-          case "$selection" in
-            selection=all|selection=subset) validate_mode=ci; class_base="" ;;
-          esac
-        fi
-      fi
-    fi
-  fi
   if [[ "$validate_mode" == full ]]; then
     if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")"; then
       die unreadable-setting setting=DEV_VALIDATE_CMD
@@ -864,8 +851,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     if [[ -n "${selection_cmd//[[:space:]]/}" ]]; then
       if preview_selection && { [[ "$selection" == selection=all ]] \
           || [[ "$requested_mode" == range && "$selection" == selection=subset ]]; }; then
-        ci_fallback=class-uncovered
-        if ci_class_covered && ci_runs_validation; then
+        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered
+        if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then
           validate_mode=ci
           class_base=""
         elif [[ "$ci_fallback" == pr-not-open && "$selection" == selection=all ]]; then

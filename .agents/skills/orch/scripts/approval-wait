@@ -250,8 +250,9 @@ stop: stdout stays empty and stderr says why.
 
   --mark-ready   With --request-review only, mark an open draft ready through
                  gh pr ready, confirm that head, then use the request route above.
-                 An already ready head prints MODE ready=unchanged head=SHA and
-                 sends no duplicate request. A failed ready command or changed
+                 An already ready head uses the same request route. The caller
+                 skips a head recorded in pr_approval.copilot_rerequest_head.
+                 A failed ready command or changed
                  head returns nonzero and sends no request. Without this flag,
                  an approval request on a draft prints fallback cause=draft and
                  sends no request. Drafts take no Copilot wait or fallback notice.
@@ -945,18 +946,6 @@ read_request_head() {
 if $RESOLVE_MODE || $REQUEST_REVIEW; then
   resolve_gate_mode || exit 2
   answer="$GATE_MODE"
-  if $MARK_READY; then
-    read_request_head || exit 2
-    if [[ "$request_draft" == false ]]; then
-      printf '%s ready=unchanged head=%s\n' "$answer" "$request_head"
-      exit 0
-    fi
-    ready_head="$request_head"
-    gh pr ready "$PR_NUM" --repo "$REPO" >&2 || { approval_message ready-failed >&2; exit 2; }
-    read_request_head || exit 2
-    [[ "$request_draft" == false && "$request_head" == "$ready_head" ]] \
-      || { approval_message ready-head-moved >&2; exit 2; }
-  fi
   if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then
     refresh_rc=0
     refresh_review_route || refresh_rc=$?
@@ -965,20 +954,31 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
       answer='fallback cause=refresh'
     elif [[ "$COPILOT_REQUESTS" == off ]]; then
       answer='fallback cause=off'
-    else
-      if ! $MARK_READY; then
-        read_request_head || exit 2
-        if [[ "$request_draft" == true ]]; then
-          printf 'fallback cause=draft\n'
-          exit 0
-        fi
+    fi
+  fi
+  if $MARK_READY; then
+    read_request_head || exit 2
+    if [[ "$request_draft" == true ]]; then
+      ready_head="$request_head"
+      gh pr ready "$PR_NUM" --repo "$REPO" >&2 || { approval_message ready-failed >&2; exit 2; }
+      read_request_head || exit 2
+      [[ "$request_draft" == false && "$request_head" == "$ready_head" ]] \
+        || { approval_message ready-head-moved >&2; exit 2; }
+    fi
+  fi
+  if $REQUEST_REVIEW && [[ "$answer" == approval ]]; then
+    if ! $MARK_READY; then
+      read_request_head || exit 2
+      if [[ "$request_draft" == true ]]; then
+        printf 'fallback cause=draft\n'
+        exit 0
       fi
-      request_rc=0
-      gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
-      if [[ "$request_rc" -ne 0 ]]; then
-        approval_message copilot-request-refused >&2
-        answer="fallback cause=refused exit=$request_rc"
-      fi
+    fi
+    request_rc=0
+    gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
+    if [[ "$request_rc" -ne 0 ]]; then
+      approval_message copilot-request-refused >&2
+      answer="fallback cause=refused exit=$request_rc"
     fi
   fi
   printf '%s\n' "$answer"

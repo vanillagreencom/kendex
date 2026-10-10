@@ -888,6 +888,7 @@ case "$path" in
     ;;
   *) exit 9 ;;
 esac
+[[ -z "${STUB_CI_LOG:-}" ]] || printf '%s\n' "$path" >> "$STUB_CI_LOG"
 if [[ -n "$filter" ]]; then jq -r "$filter" <<<"$payload" || exit $?; else printf '%s\n' "$payload"; fi
 exit "$status"
 SH
@@ -1097,7 +1098,7 @@ ci_control 'an empty pull request base accepted' \
 ci_control 'an unread rule named as unrequired' 'if [[ "$unread" == true ]]; then' 'if false; then' \
   'a ruleset read that fails runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|context-unrequired'
-ci_control 'the class cause unrecorded' $'    validate_mode=range\n    ci_fallback=class-uncovered\n' $'    validate_mode=range\n' \
+ci_control 'the class cause unrecorded' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n' \
   'a render diff, whose checks CI stands down, runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|'
 ci_control 'render among the covered classes' \
@@ -1115,8 +1116,11 @@ ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
 # fallback, and the record proves which exact head remains pending.
 PUSH_ROWS=(
   'implement before PR|push-first|pr-no-pr|standard|CI|full|none|ci||pending'
+  'implement subset before PR|push-first|pr-no-pr|standard|CI|full|subset|ci||pending'
   'implement default order|review-first|pr-no-pr|standard|CI|full|all|full|pr-not-open|pass'
   'unrequired base|push-first|unrequired|standard|CI|full|none|full|context-unrequired|pass'
+  'fix unrequired full fallback|push-first|unrequired|standard|CI|ci|none|full|context-unrequired|pass|unset'
+  'fix subset unrequired full fallback|push-first|unrequired|standard|CI|ci|subset|full|context-unrequired|pass|unset'
   'uncovered class|push-first|rules|render|CI|full|none|full|class-uncovered|pass'
   'unread rules|push-first|rules-fail|standard|CI|full|none|full|rules-unread|pass'
   'unset context|push-first|rules|standard||full|none|full|setting-empty|pass'
@@ -1126,13 +1130,17 @@ PUSH_ROWS=(
   'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
 )
 push_rows() { # SCRIPT [LABEL]
-  local row label order world class context request selector want_mode fallback verdict proj args dir head n=0
+  local row label order world class context request selector want_mode fallback verdict local_range proj args dir head n=0
   for row in "${PUSH_ROWS[@]}"; do
-    IFS='|' read -r label order world class context request selector want_mode fallback verdict <<<"$row"
+    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "push-${label// /-}-${1##*/}-${3:-live}" "$context")"
     printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$proj/kendex.settings.toml"
+    if [[ "$local_range" == unset ]]; then
+      sed '/^DEV_VALIDATE_RANGE_CMD =/d' "$proj/kendex.settings.toml" > "$proj/settings.next"
+      mv "$proj/settings.next" "$proj/kendex.settings.toml"
+    fi
     [[ "$selector" == none ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
     git -C "$proj" add kendex.settings.toml
     git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m policy
@@ -1142,23 +1150,42 @@ push_rows() { # SCRIPT [LABEL]
     [[ "$order" != push-first || "$world" != pr-no-pr ]] || STUB_RULES=CI
     args=(--worktree "$proj" --poll 1 --validate-mode "$request")
     [[ "$request" == full ]] || args+=(--base HEAD)
-    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true run_script "$1" "${args[@]}"
+    : > "$TMP_ROOT/push-rule-reads"
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_CI_LOG="$TMP_ROOT/push-rule-reads" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true run_script "$1" "${args[@]}"
     dir="$(run_dir_of "$OUT")"
     run_script "$1" --record --run-dir "$dir"
     if [[ -z "${2:-}" ]]; then
       assert_eq "$RC $(record_field validate-mode "$OUT") $(record_field ci-fallback "$OUT") $(record_field verdict "$OUT") $(record_field head "$OUT")" \
         "0 $want_mode $fallback $verdict $head" "$label" "$ERR"
+      if [[ "$local_range" == unset ]]; then
+        assert_eq "$(paste -sd, "$TMP_ROOT/push-rule-reads")" 'repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main' \
+          "$label reads each required-context source once" "$ERR"
+      fi
       if [[ "$want_mode" == ci ]]; then
         assert_eq "$([[ -f "$dir/log" && -f "$dir/cmd" && ! -s "$dir/cmd" ]] && echo no-command || echo wrong-run)" no-command "$label starts no validation command"
         run_script "$1" --last-pass --worktree "$proj"
         assert_eq "$RC $OUT" '1 last-pass=none' "$label provides no passing validation run" "$ERR"
       fi
     else
-      printf '%s|%s|%s\n' "$(record_field validate-mode "$OUT")" "$(record_field ci-fallback "$OUT")" "$(record_field verdict "$OUT")"
+      if [[ "${3:-}" == rule-reads ]]; then
+        paste -sd, "$TMP_ROOT/push-rule-reads"
+      else
+        printf '%s|%s|%s\n' "$(record_field validate-mode "$OUT")" "$(record_field ci-fallback "$OUT")" "$(record_field verdict "$OUT")"
+      fi
     fi
   done
 }
 push_rows "$CI_SCRIPT"
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'ci_admission_attempted=true' $'ci_admission_attempted=true\n    ci_runs_validation || :'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'fix unrequired full fallback' rule-reads)" \
+  'repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main,repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main' \
+  'control: repeated CI admission breaks the single required-context read'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
+  'selection=all|selection=subset) validate_mode=ci; [[ "$requested_mode" != full || "$selection" != selection=subset ]] || validate_mode=full; class_base="" ;;'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement subset before PR' full-subset)" 'full|selection-unread|pass' \
+  'control: dropping full subset admission breaks the implement CI record while range admission stays intact'
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" '|| record_verdict=pending' '|| true'
 assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement before PR' pending-record)" 'ci||pass' \
@@ -1319,9 +1346,9 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 }
 # shellcheck disable=SC2016 # private production mutations
 {
-ci_extension_control $'    validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if true; then'  \
+ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if true; then'  \
   'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
-ci_extension_control $'          class_base="$base_sha"\n          classify "$class_base"' $'          class_base="$base_sha"\n          classify ""' \
+ci_extension_control $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify "$class_base"' $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify ""' \
   'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'
 ci_extension_control $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
   $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all) validate_mode=ci; class_base="" ;;' \
@@ -2169,8 +2196,8 @@ selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
-  $'        ci_fallback=class-uncovered\n        if ci_class_covered && ci_runs_validation; then' \
-  $'        ci_fallback=class-uncovered\n        if ci_runs_validation; then # ci_class_covered' \
+  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n        if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then' \
+  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n        if [[ "$ci_admission_attempted" == false ]] && ci_runs_validation; then # ci_class_covered' \
   'an all selection CI does not cover retains local execution'
 selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
@@ -2179,7 +2206,7 @@ selection_control 'rejecting a conservative standard fallback turns explicit CI 
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
   'a ci standard fallback all selection uses required PR CI'
 selection_control 'omitting the automatic class fallback turns its record red' \
-  $'        ci_fallback=class-uncovered\n' '' \
+  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n' '' \
   'an all selection CI does not cover retains local execution'
 for row in "${SELECTION_ROWS[@]}"; do
   IFS='|' read -r label requested _ selected _ _ _ _ _ want_launch want_rc _ <<<"$row"

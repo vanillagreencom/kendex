@@ -160,13 +160,16 @@ With `pr_order` reading `push-first`, read the existing PR's draft flag before a
    .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,isDraft,headRefOid
    ```
 
-   Only an open draft takes these commands, from `[WORKTREE_PATH]`. Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing).
+   Bind the open PR's head as `[HEAD_SHA]`. A closed PR stops this pass. From `[WORKTREE_PATH]`, read the existing request record and request an unrecorded head. A failed record read stops this pass before the request. This includes a PR a person made ready, or a retry after the ready transition succeeded but the request failed. Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing).
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --base-checkout [REVIEW_BASE_CHECKOUT]
+   COPILOT_REQUESTED_HEAD="$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_approval.copilot_rerequest_head // empty')"
+   if [[ "$COPILOT_REQUESTED_HEAD" != "[HEAD_SHA]" ]]; then
+     env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --base-checkout [REVIEW_BASE_CHECKOUT]
+   fi
    ```
 
-   This existing request owner marks the draft ready, confirms its head, and requests that head once. Route its answer by [Copilot requests](../references/gates.md#copilot-requests). Record the head in `pr_approval.copilot_rerequest_head`, so the later head route sends no duplicate request. A nonzero return stops this pass. After the request is recorded, move `pr_order` to `push-first-pushed` with `workflow-state set`, and write the lane's `Review: pass` line. A draft pass sends no request and never runs the head route. An already ready head uses [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route)'s existing head-bound request record.
+   The existing request owner checks the request policy before marking a draft ready. It confirms the head and requests it, including an already ready head with no recorded request. Route its answer by [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass and leaves the request record unset, so the next pass resumes here. A head already recorded takes no request. Then move `pr_order` to `push-first-pushed` with `workflow-state set`, and write the lane's `Review: pass` line. Complete this request route before [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route)'s later wait. A draft pass before internal review sends no request and never runs the head route.
 
 5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** workflow state `pr_order` reads `open-first` or `push-first`: the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened has not returned, and the pass after [review-pr.md](review-pr.md) § 9 arms it, as a review-first PR is armed once its review returns.
 

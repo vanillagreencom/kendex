@@ -141,6 +141,9 @@ live() {
   line="$(command_at "$1" "$2")"
   [[ -n "$line" ]] || { printf 'live: no live command holds %s\n' "$2" >&2; return 1; }
   line="${line#*$'\t'}"
+  if [[ "$2" == "$RESOLVE" ]]; then
+    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /dev-validate-run --resolve-mode/ {exit}' "$1")"
+  fi
   line="${line//\[MAIN_REPO_ROOT\]\/.agents\/skills\/orch\/scripts\//${6:-$REPO_ROOT/skills/orch/scripts}/}"
   line="${line//\[WT_PATH\]/$3}"
   line="${line//\[BASE_BRANCH\]/$4}"
@@ -149,7 +152,7 @@ live() {
   [[ "$2" != "$RANGE" ]] || line="$line --poll 1"
   (cd "$3" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH \
-    -u ORCH_STATE_DIR ORCH_WORKTREE_BIN="$NETWORK_PUSH" "$BASH" -c "$line")
+    -u ORCH_STATE_DIR -u ORCH_PR_ORDER ORCH_WORKTREE_BIN="$NETWORK_PUSH" "$BASH" -c "$line")
 }
 
 fixture_failed() { echo "merge-pr-restack-wiring: fixture=failed step=$1" >&2; exit 1; }
@@ -287,6 +290,8 @@ cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$2" in
+  status) exit 0 ;;
+  view) printf '{"state":"OPEN","baseRefName":"main"}\n' ;;
   'repos/{owner}/{repo}/rules/branches/main') printf 'CI\n' ;;
   'repos/{owner}/{repo}/branches/main') : ;;
   *) exit 9 ;;
@@ -303,9 +308,27 @@ assert_contains "$CI_RECORD" 'validate-mode=ci selection=unreported verdict=pend
 assert_contains "$CI_RECORD" "head=$(git -C "$CI_WT" rev-parse HEAD)" 'restack CI record binds the restacked head'
 assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
 MUTANT_SCRIPTS="$(mutant_scripts ci-restack-mode dev-validate-run)" || fixture_failed ci-mutant
-mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '"$pr_order" == push-first && "$validate_mode" == range' 'false && "$validate_mode" == range'
+mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '"$validate_mode" == ci || "$pr_order" == push-first' '"$validate_mode" == ci || false'
 CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main - "$MUTANT_SCRIPTS")" || fixture_failed ci-control
 assert_eq "$CI_RESOLVED" validate-mode=range 'control: dropping automatic CI breaks the push-first restack mode'
+
+# Execute the workflow's mode block for every order under a covered subset.
+for order in review-first open-first push-first; do
+  sed '/^ORCH_PR_ORDER =/d; /^DEV_VALIDATE_SELECTION_CMD =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
+  mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
+  printf 'ORCH_PR_ORDER = "%s"\nDEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' "$order" >> "$CI_WT/kendex.settings.toml"
+  want=range
+  [[ "$order" != push-first ]] || want=ci
+  CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-resolve
+  assert_eq "$CI_RESOLVED" "validate-mode=$want" "$order keeps its restack validation order with subset CI coverage"
+done
+cp "$RESTACK_DOC" "$TMP_ROOT/restack-order-mutant.md"
+mutate_file "$TMP_ROOT/restack-order-mutant.md" '[[ "$PR_ORDER" != pr-order=push-first ]] ||' 'false ||'
+sed '/^ORCH_PR_ORDER =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
+mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
+printf 'ORCH_PR_ORDER = "review-first"\n' >> "$CI_WT/kendex.settings.toml"
+CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-order-mutant.md" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-control
+assert_eq "$CI_RESOLVED" validate-mode=ci 'control: applying the opt-in base to every order breaks review-first restack validation'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

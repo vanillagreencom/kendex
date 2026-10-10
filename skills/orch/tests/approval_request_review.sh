@@ -31,6 +31,7 @@ case "$1 $2" in
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
     if [[ "$*" == *'--json state,isDraft,headRefOid'* ]]; then
       [[ "${HEAD_READ_FAIL:-false}" != true ]] || exit 1
+      [[ "${HEAD_READ_FAIL_AFTER_READY:-false}" != true || ! -s "$TRANSITION_LOG" ]] || exit 1
       draft=false
       [[ ! -f "$DRAFT_FILE" ]] || draft="$(cat "$DRAFT_FILE")"
       head=current-head
@@ -98,6 +99,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
     REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review REVIEW_GATE_SETTINGS_FILE=/dev/null \
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
     DRAFT_FILE="$DRAFT_FILE" HEAD_FILE="$HEAD_FILE" TRANSITION_LOG="$TRANSITION_LOG" \
+    ORCH_STATE_DIR="$TMP_ROOT/state" REVIEW_BASE_FIXTURE="$BASE" \
     REQUEST_EXIT="$request_exit" PULL_JSON="$PULL_JSON" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     "$BASH" "$script" 42 "$@" > "$OUT" 2> "$ERR") || RC=$?
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
@@ -164,7 +166,7 @@ ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
 for row in \
   'draft held|true|no|0|false|false|0|fallback cause=draft|0|none' \
   'ready transition|true|yes|0|false|false|0|approval|1|ready,request head=current-head draft=false' \
-  'already ready|false|yes|0|false|false|0|approval ready=unchanged head=current-head|0|none' \
+  'already ready without request|false|yes|0|false|false|0|approval|1|request head=current-head draft=false' \
   'ready failed|true|yes|8|false|false|2||0|ready' \
   'ready head changed|true|yes|0|true|false|2||0|ready' \
   'head unreadable|true|yes|0|false|true|2||0|none'; do
@@ -190,19 +192,43 @@ run_action "$RUN" 0 "${READY_ARGS[@]}"
 assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|fallback cause=draft|0' \
   'control: removing the publication flag breaks its ready request'
 ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
-# A second call on the same now-ready head sends no duplicate request.
+# Drive submit's real record comparison and the real request owner.
+PUBLICATION_SCRIPT="$TMP_ROOT/publication.sh"
+code="$(awk '/^[[:space:]]*COPILOT_REQUESTED_HEAD=/ {take=1} take {print} take && /^[[:space:]]*fi$/ {exit}' "$REPO_ROOT/skills/orch/workflows/submit-pr.md")"
+[[ -n "$code" ]] || exit 1
+code="${code//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
+code="${code//\[PR_NUMBER\]/42}"
+code="${code//\[ISSUE_ID\]/KEN-3231}"
+code="${code//\[HEAD_SHA\]/current-head}"
+code="${code//\[REVIEW_BASE_CHECKOUT\]/\"\$REVIEW_BASE_FIXTURE\"}"
+printf 'set -euo pipefail\n%s\n' "$code" > "$PUBLICATION_SCRIPT"
+STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+"$STATE" --state-dir "$TMP_ROOT/state" init KEN-3231 --worktree "$TMP_ROOT/catalog" >/dev/null
+"$STATE" --state-dir "$TMP_ROOT/state" set KEN-3231 pr_order push-first-returned >/dev/null
 printf 'true\n' > "$DRAFT_FILE"
 printf 'current-head\n' > "$HEAD_FILE"
-run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
-first_requests="$REQUESTS"
-run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
-assert_eq "$first_requests $REQUESTS $(cat "$TRANSITION_LOG")" '1 0 ' 'one request across repeated ready transitions' "$ERR"
+RUN_ENV=(HEAD_READ_FAIL_AFTER_READY=true)
+run_action "$PUBLICATION_SCRIPT" 0
+assert_eq "$RC|$REQUESTS|$(cat "$DRAFT_FILE")|$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-3231 '.pr_approval.copilot_rerequest_head // empty')" \
+  '2|0|false|' 'a failed read after ready leaves an unrecorded ready head' "$ERR"
+RUN_ENV=()
+run_action "$PUBLICATION_SCRIPT" 0
+assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$TRANSITION_LOG")" '0|approval|1|request head=current-head draft=false' \
+  'submit retries the already ready head through the real request owner' "$ERR"
+"$STATE" --state-dir "$TMP_ROOT/state" update KEN-3231 '.pr_approval.copilot_rerequest_head = "current-head"' >/dev/null
+"$STATE" --state-dir "$TMP_ROOT/state" set KEN-3231 pr_order push-first-pushed >/dev/null
+run_action "$PUBLICATION_SCRIPT" 0
+assert_eq "$RC|$REQUESTS|$(cat "$TRANSITION_LOG")" '0|0|' 'submit skips the recorded request head' "$ERR"
+cp "$PUBLICATION_SCRIPT" "$TMP_ROOT/publication-mutant.sh"
+mutate_file "$TMP_ROOT/publication-mutant.sh" 'if [[ "$COPILOT_REQUESTED_HEAD" != "current-head" ]]; then' 'if true; then'
+run_action "$TMP_ROOT/publication-mutant.sh" 0
+assert_eq "$REQUESTS" 1 'control: ignoring the request record duplicates the ready head request' "$ERR"
 ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
 # Controls retain the matched behavior text, so each guard's reachable defect
 # changes its own observation rather than merely removing an assertion.
 scripts="$(mutant_scripts draft-request approval-wait)" || exit 1
-mutate_file "$scripts/approval-wait" 'if [[ "$request_draft" == true ]]; then' 'if false; then'
+mutate_file "$scripts/approval-wait" $'if [[ "$request_draft" == true ]]; then\n        printf' $'if false; then\n        printf'
 printf 'true\n' > "$DRAFT_FILE"
 run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
 assert_eq "$REQUESTS" 1 'control: a draft bypass breaks the no-draft-request row' "$ERR"
@@ -213,16 +239,26 @@ RUN_ENV=(MOVE_READY_HEAD=true)
 run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
 assert_eq "$REQUESTS" 1 'control: ignoring the moved head breaks the head-confirmation row' "$ERR"
 RUN_ENV=()
-scripts="$(mutant_scripts ready-duplicate approval-wait)" || exit 1
-mutate_file "$scripts/approval-wait" 'if [[ "$request_draft" == false ]]; then' 'if false; then'
+scripts="$(mutant_scripts ready-recovery approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" 'if $MARK_READY; then' $'if $MARK_READY; then\n    read_request_head || exit 2\n    if [[ "$request_draft" == false ]]; then printf "approval\\n"; exit 0; fi'
 printf 'false\n' > "$DRAFT_FILE"
 run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
-assert_eq "$REQUESTS" 1 'control: ignoring the existing ready flag breaks request deduplication' "$ERR"
+assert_eq "$REQUESTS" 0 'control: treating ready as requested breaks recovery' "$ERR"
+write_settings "$BASE/kendex.settings.toml" '"enforce"' '' 'REVIEW_GATE_REFRESH_REVIEW = "junk"'
+printf 'true\n' > "$DRAFT_FILE"
+run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$RC|$REQUESTS|$(cat "$DRAFT_FILE")|$(cat "$TRANSITION_LOG")" '2|0|true|' \
+  'an unreadable refresh policy refuses before the ready transition' "$ERR"
+scripts="$(mutant_scripts ready-policy approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" '[[ "$refresh_rc" -le 1 ]] || exit 2' '[[ "$refresh_rc" -le 1 ]] || :'
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$(cat "$DRAFT_FILE")" false 'control: ignoring the refresh failure crosses the ready transition' "$ERR"
+write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
 rm -f -- "${DRAFT_FILE:?}" "${HEAD_FILE:?}"
 
 # Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests~action (default --request-review)
 for row in \
-  'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
+  'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$answer" == approval ]]; then~if $REQUEST_REVIEW && [[ "$answer" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
   'settings-failure~["off"]~~~0~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0~--resolve-mode' \
   'unknown-policy~"junk"~~~0~*) approval_message policy-mode-invalid >&2; return 1 ;;~*) approval_message policy-mode-invalid >&2; return 0 ;;~2~~0' \
   'base-directory~"off"~~~0~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
