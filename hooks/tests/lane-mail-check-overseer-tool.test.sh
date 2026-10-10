@@ -38,6 +38,64 @@ tool_overseer() { # NAME [JUDGE]
 }
 tool_record() { jq -r '"\(.tokens) \(.gap)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null || echo none; }
 
+. "$TEST_DIR/lib/process-count.sh"
+process_count_setup "$TMP_ROOT" "$TMUX_BIN:$PATH"
+tool_overseer overseer_tool_cost
+write_transcript "$TRANSCRIPT" 100000
+# Warm the fixture's legacy record before counting this read-only call.
+overseer_tool "$TRANSCRIPT"
+start_wake_watch repeat
+peer_send 'The watch owns this note.'
+state_stub delegate
+process_count_reset
+overseer_tool "$TRANSCRIPT" s1 "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG"
+starts=$(wc -l < "$STATE_LOG" | tr -d ' ')
+printf 'cost overseer workflow-state=%s processes=%s\n' "$starts" "$(process_count_total)"
+assert_eq "RC=$RC starts=$starts path=$(grep -cx path "$STATE_LOG" || :) context=$(context_line)" \
+  'RC=0 starts=1 path=0 context=-' 'the identified overseer reuses its state path while a watch holds its mail'
+assert_eq "$(overseer_unread 'The watch owns this note.')" 1 'the live watch keeps its unread note'
+state_stub no-filename
+process_count_reset
+overseer_tool "$TRANSCRIPT" s1 "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG"
+assert_eq "RC=$RC starts=$(wc -l < "$STATE_LOG" | tr -d ' ') path=$(grep -cx path "$STATE_LOG" || :) context=$(context_line)" \
+  'RC=0 starts=2 path=1 context=-' 'a successful identity read with no filename falls back to the path verb'
+state_stub identify-fails
+process_count_reset
+overseer_tool "$TRANSCRIPT" s1 "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG"
+assert_eq "RC=$RC starts=$(wc -l < "$STATE_LOG" | tr -d ' ') path=$(grep -cx path "$STATE_LOG" || :) context=$(context_line) unread=$(overseer_unread 'The watch owns this note.')" \
+  'RC=0 starts=1 path=0 context=- unread=1' 'failed identification reads no path and leaves the watch note unread'
+stop_wake_processes
+if [ "${1:-}" = --cost-row ]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  wake_mutant no-state-cache '  if [ -z "$FLEET_STATE" ]; then' '  if true; then'
+  control_rc=0
+  env "HOOK_UNDER_TEST=$MUTANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-overseer-tool.test.sh" --cost-row \
+    > "$TMP_ROOT/state-cost.control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control: a second state-path lookup makes the start-count assertion red'
+fi
+
+# Checkout names and launch homes are filesystem paths. The extra state-file
+# field must preserve their tabs and backslashes.
+saved_home=$OVERSEER_HOME_DIR
+OVERSEER_HOME_DIR="$TMP_ROOT/"$'overseer\\home'
+overseer_transcript
+tool_overseer $'overseer\tcheckout'
+write_transcript "$TRANSCRIPT" 600000
+overseer_tool "$TRANSCRIPT"
+assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" \
+  'RC=0 context=PostToolUse lane-mail-check: context=600000 record=600000 null' \
+  'the returned state path keeps checkout tabs and launch-home backslashes intact'
+peer_send 'Tabbed checkout note.'
+overseer_tool "$TRANSCRIPT"
+assert_eq "RC=$RC note=$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF 'Tabbed checkout note.')" 'RC=0 note=1' \
+  'the watch check uses the intact returned state path'
+OVERSEER_HOME_DIR=$saved_home
+overseer_transcript
+
 tool_overseer overseer_tool_mark
 write_transcript "$TRANSCRIPT" 100000
 overseer_tool "$TRANSCRIPT"
@@ -226,10 +284,12 @@ told_refused_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
   write_transcript "$TRANSCRIPT" 100000
   peer_send 'Held by a refusal.'
-  state_stub path-fails
+  watch_stub
   overseer_tool "$TRANSCRIPT" s2
   local refused
   refused="RC=$RC first=$(first_line) fleet=$(grep -c '^lane-mail-check: fleet-state=' "$ERR_FILE")"
+  rm -f -- "$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh"
+  ln -s -- "$REPO_ROOT/skills/orch/scripts/lib/watch-pid.sh" "$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh"
   state_stub delegate
   overseer_tool "$TRANSCRIPT" s2
   HELD="$refused then=$(context_line)"
@@ -239,7 +299,7 @@ assert_eq "$HELD" "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT fl
   "a refused call carries the gap ahead of its refusal, and the next call does not tell it again" "$ERR_FILE"
 variant refuse-drops-notice -e 's/^  \[ "\$ARM" != deliver \] || text="\$TOOL_NOTICE\$text"$/  :/'
 told_refused_rows control_overseer_tool_told_refused "$VARIANT_PATH"
-assert_eq "${HELD%% fleet=*}" "RC=2 first=lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+assert_eq "${HELD%% fleet=*}" "RC=2 first=lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
   "control: a hook whose refusal drops the notice refuses the call with the gap withheld"
 
 # A transcript the payload names and nothing can read is a refusal the

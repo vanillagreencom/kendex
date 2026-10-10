@@ -3237,11 +3237,11 @@ expect 0 - "a session with a peer note standing and no reader beside the hook is
 # nor passed as read.
 named_session peer_state_broken
 peer_send 'Unjudged.'
-state_stub path-fails
+watch_stub
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
-  "a fleet state path the install's workflow-state does not print refuses the named session, never reads or passes the mailbox"
-assert_eq "$(grep -c '^workflow-state: lock-failed' "$ERR_FILE")" "1" "the script's own keyed line is replayed under the hook's"
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
+  "a watch-library read that cannot answer refuses the named session, never reads or passes the mailbox"
+assert_eq "$(grep -c '^watch-pid: record=unreadable' "$ERR_FILE")" "1" "the script's own keyed line is replayed under the hook's"
 assert_eq "$(overseer_unread 'Unjudged.')" "1" "and the note stays unread"
 # The same broken read would refuse any arm that reached it: the halt arm, a
 # subagent's turn end and a session the record does not name never do.
@@ -3255,7 +3255,7 @@ stop "${OTHER_ENV[@]}"
 expect 0 - "nor a session the fleet record does not name"
 
 named_session peer_no_mailbox
-state_stub path-fails
+watch_stub
 stop "${SESSION_ENV[@]}"
 assert_eq "RC=$RC fleet-state=$(grep -c '^lane-mail-check: fleet-state=' "$ERR_FILE" || :)" "RC=0 fleet-state=0" \
   "the named session with no overseer mailbox never judges mail protection, independent of the wake probe"
@@ -3314,27 +3314,27 @@ expect 0 - "control: a record read in the call's own directory names no session 
 mutant peer-halt-reads -e '/^    \[ "\$ARM" != halt \] || return 0$/d'
 named_session control_peer_halt "$MUTANT_PATH"
 peer_send 'Halt arm.'
-state_stub path-fails
+watch_stub
 CALL_ENV=("${SESSION_ENV[@]}")
 tool halt
 # shellcheck disable=SC2034 # run_payload in lib/lane-mail-world.sh reads it
 CALL_ENV=()
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
   "control: without the halt exclusion the halt arm judges the overseer mailbox"
 
 mutant peer-subagent-reads -e '/^    \[ "\$CALLER" != subagent \] || return 0$/d'
 named_session control_peer_subagent "$MUTANT_PATH"
 peer_send 'Subagent.'
-state_stub path-fails
+watch_stub
 run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}' "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
   "control: without the lead-only rule a subagent's turn end judges the overseer mailbox"
 
 mutant peer-no-file-test -e '/^    \[ -e "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || \[ -L "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || return 0$/d'
 named_session control_peer_nofile "$MUTANT_PATH"
-state_stub path-fails
+watch_stub
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/workflow-state" \
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
   "control: without the file test the named session with no overseer mailbox judges the fleet state"
 
 mutant peer-reader-refuses -e 's@^    resolve_reader || return 0$@    resolve_reader || refuse "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"@'
@@ -3345,7 +3345,7 @@ stop "${OTHER_ENV[@]}"
 expect 2 "lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
   "control: refusing where no reader resolves holds every session in the checkout on mail none of them reads"
 
-mutant peer-path-passes -e 's@^    refuse fleet-state "\$SCRIPTS/workflow-state" @    return 0 # @'
+mutant peer-path-passes -e 's@^    refuse fleet-state "\$SCRIPTS/workflow-state" @    return 0 # @' -e 's/input_filename/""/'
 named_session control_peer_state "$MUTANT_PATH"
 peer_send 'Path unread.'
 state_stub path-fails

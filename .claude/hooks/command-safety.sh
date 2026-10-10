@@ -63,22 +63,33 @@ for dependency in jq git grep cat dirname; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 input="$(cat 2>&1)" || refuse payload unreadable "$input"
-command_text="$(jq -r '
+fields="$(jq -r '
   def command_arg:
     if type == "object" then (.command // .cmd)
     elif type == "string" then
       (try fromjson catch null)
       | if type == "object" then (.command // .cmd) else null end
     else null end;
-  [.tool_input.command, .tool_input.cmd, (.toolArgs | command_arg), .command, .cmd]
+  . as $payload
+  | [.tool_input.command, .tool_input.cmd, (.toolArgs | command_arg), .command, .cmd]
   | map(select(. != null))
   | if length == 0 then error("missing command") else .[0] end
   | if type == "string" then .
     elif type == "array" and all(.[]; type == "string") then join(" ")
     else error("invalid command") end
+  | sub("\n+$"; "") as $command
+  | if $command == "" then "\t"
+    elif $payload.cwd != null and ($payload.cwd | type) != "string"
+    then "invalid-cwd"
+    else [($payload.cwd // "" | sub("\n+$"; "")), $command] | @tsv end
 ' <<<"$input" 2>/dev/null)" || refuse payload invalid-json
+[ -n "$fields" ] || exit 0
+[ "$fields" != invalid-cwd ] || refuse payload invalid-cwd
+# TSV escapes tabs, newlines and backslashes, so only the field boundary is
+# a literal tab. printf decodes data without evaluating shell syntax.
+printf -v cwd '%b' "${fields%%$'\t'*}"
+printf -v command_text '%b' "${fields#*$'\t'}"
 [ -n "$command_text" ] || exit 0
-cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd else error("invalid cwd") end' <<<"$input" 2>/dev/null)" || refuse payload invalid-cwd
 [ -n "$cwd" ] || cwd="$PWD"
 # The requested path is kept: the substitution below holds cd's own words when
 # the directory cannot be entered, and the physical path when it can, so the
@@ -102,7 +113,7 @@ if [ "$root_status" -ne 0 ]; then
 fi
 
 lib=
-hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || refuse hook unlocatable
+hook_dir="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || refuse hook unlocatable
 at="$hook_dir"
 levels=0
 # Registered hook layouts keep the scope's skills one or two directories
