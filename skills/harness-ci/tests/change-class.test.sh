@@ -2039,6 +2039,7 @@ else
 
   # kendex reaches this sandbox alone: its home, its caches and its state are
   # all under SANDBOX, so the suite never writes the developer's own install.
+  # An independent fixture cannot inherit the launcher's lane identity.
   # A failed call names itself. The output is captured rather than discarded
   # and every call is checked: with the output dropped under `set -e`, a runner
   # whose kendex lacks a flag this section passes died at exit 2 with no FAIL
@@ -2048,7 +2049,8 @@ else
   kendex_here() { # WORKDIR ARGS...
     local where="$1" status=0
     shift
-    (cd -- "$where" && HOME="$render_home" KENDEX_REAL_HOME=1 \
+    (cd -- "$where" && env -i PATH="$PATH" SystemRoot="${SystemRoot:-}" \
+      TMPDIR="${TMPDIR:-$SANDBOX}" HOME="$render_home" KENDEX_REAL_HOME=1 \
       XDG_CONFIG_HOME="$render_home/.config" \
       XDG_CACHE_HOME="$render_home/.cache" \
       XDG_DATA_HOME="$render_home/.local/share" \
