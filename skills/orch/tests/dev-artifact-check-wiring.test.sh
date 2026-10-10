@@ -73,7 +73,8 @@ pins \
   "review-pr-comments' delegation carries the Round ID line|$REVIEW_PR_COMMENTS|Round ID: [DEV_ROUND_ID]|yes" \
   "review-pr-comments' delegation carries the Artifact Key line|$REVIEW_PR_COMMENTS|$ARTIFACT_KEY_LINE|yes" \
   "ci-fix re-stamps dev_delegated_at|$CI_FIX|$WATCHDOG_STAMP|yes" \
-  "ci-fix mints a fresh dev_round_id before delegating|$CI_FIX|$ROUND_STAMP|yes" \
+  "ci-fix mints a token without a dev stage before delegating|$CI_FIX|workflow-state new-round-id [ISSUE_ID] ci_round_id|yes" \
+  "ci-fix never mints an unclosed dev stage|$CI_FIX|$ROUND_STAMP|no" \
   "merge-pr-restack asks worktree-push before the restack|$ORCH/workflows/merge-pr-restack.md|worktree-push --check-live-round --worktree [WT_PATH] --issue [ISSUE]|yes"
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
   pins "$wf.md carries no legacy positional dev-artifact-check call|$ORCH/workflows/$wf.md|$LEGACY_CHECK|no"

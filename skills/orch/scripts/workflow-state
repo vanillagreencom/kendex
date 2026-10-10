@@ -965,10 +965,19 @@ cmd_set_now() {
 cmd_new_round_id() {
     local issue_id="$1"
     local field="$2"
-    local value
+    local value now kind
 
     value="$(date +%s%N)-$RANDOM"
-    cmd_set "$issue_id" "$field" "$value"
+    case "$field" in
+        dev_round_id) kind=dev ;;
+        review_round_id) kind=review ;;
+        *) cmd_set "$issue_id" "$field" "$value"; echo "$value"; return ;;
+    esac
+    now="$(date +%s)" || return 1
+    # Round identity and its start share the locked write. Recovery mints here too.
+    cmd_update "$issue_id" --arg field "$field" --arg round "$value" --arg kind "$kind" --argjson now "$now" '
+        .[$field] = $round
+        | .stages = ((.stages // []) + [{kind: $kind, round_id: $round, start: $now, end: null}])' || return 1
     echo "$value"
 }
 

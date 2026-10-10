@@ -101,7 +101,6 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
 
-   Run [dev-start.md § Store Stage Start](dev-start.md#store-stage-start) as kind `fix` before delegating.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
@@ -184,11 +183,11 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
 
    A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
 
-   First run [dev-start.md § Store Validation Time](dev-start.md#store-validation-time) for every `reason` but `missing` and `invalid`, before B or the reason routes the round, as [dev-start.md § 3](dev-start.md#3-accept-the-round) states; no row below names it again.
+   `dev-artifact-check` records the round end and validation time before B or its reason routes the round.
 
    | A (verdict) | B (git) | Action |
    |---|---|---|
-| `accept` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Run [dev-start.md § Store Stage End](dev-start.md#store-stage-end) for `[DEV_ROUND_ID]`. Then read the item decisions, commits, and validate status from the return when present, else from the artifact. Run [dev-start.md § Store Proposed Rules](dev-start.md#store-proposed-rules), then [dev-start.md § Store Near-Ceiling Lines](dev-start.md#store-near-ceiling-lines) — a fix round records its own list, so a binary blob moved out of Git stops being carried and a blob pushed into the warn band starts being. → step 6. |
+| `accept` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Read the item decisions, commits, and validate status from the return when present, else from the artifact. Run [dev-start.md § Store Proposed Rules](dev-start.md#store-proposed-rules), then [dev-start.md § Store Near-Ceiling Lines](dev-start.md#store-near-ceiling-lines) — a fix round records its own list, so a binary blob moved out of Git stops being carried and a blob pushed into the warn band starts being. → step 6. |
    | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
    | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
    | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |

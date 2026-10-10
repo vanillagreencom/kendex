@@ -84,6 +84,9 @@ NEW_A2="$(printf 'd%.0s' {1..39})3"
 # tmp/, never in the state directory.
 wt="$TMP_ROOT/wt"
 git init -q -b main "$wt"
+git -C "$wt" config gc.auto 0
+git -C "$wt" config maintenance.auto false
+git -C "$wt" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
 mkdir -p "$wt/tmp"
 
 # The worktree-private file every rewrite records its map in. It outlives the
@@ -91,6 +94,7 @@ mkdir -p "$wt/tmp"
 # left by the block above would refuse the next block's push before it ran.
 restack_map_file="$(git -C "$wt" rev-parse --git-path kendex-rebase-map)"
 [[ "$restack_map_file" == /* ]] || restack_map_file="$wt/$restack_map_file"
+pending_validation_file="${restack_map_file%/*}/kendex-restack-validation"
 
 # Fresh state with recorded fix commits on both surfaces: a short prefix of
 # OLD_A in fixed_items; in pr_comment_review.fixes one prefix of OLD_B
@@ -99,6 +103,7 @@ restack_map_file="$(git -C "$wt" rev-parse --git-path kendex-rebase-map)"
 reset_state() {
   local work="$1"
   rm -f "$restack_map_file"
+  rm -f "$pending_validation_file"
   rm -rf "$work"
   mkdir -p "$work"
   (cd "$work" \
@@ -836,6 +841,225 @@ for row in \
   esac
   assert_eq "rc=$RUN_RC $got" "rc=$want_rc $want" "control: shared $rule rule changes the push result" "$run_err"
 done
+
+echo '=== a pushed restack records the newest finished run once ==='
+work="$TMP_ROOT/work-restack-timing"
+reset_state "$work"
+timing_head="$(git -C "$wt" rev-parse HEAD)"
+run_old="$(validate_run_dir "$wt/tmp/dev-validate-old" range 0 "$timing_head" 1)"
+run_new="$(validate_run_dir "$wt/tmp/dev-validate-new" range 0 "$timing_head" 2)"
+run_other="$(validate_run_dir "$wt/tmp/dev-validate-other" range 0 "$OLD_A" 3)"
+echo '=== recording-only arguments cannot select a push or another read-only mode ==='
+for row in 'push-argument^--no-rebase^argument=--no-rebase' 'conflicting-mode^--check-live-round^argument=--record-restack-validation'; do
+  IFS='^' read -r label argument expected <<<"$row"
+  run_push "$work" --record-restack-validation "$run_new" --worktree "$wt" --issue KEN-1 "$argument"
+  assert_eq "$RUN_RC|$(sed -n '1p' "$run_err")" "1|worktree-push: check-argument $expected" "$label refuses before a push or timing write"
+done
+PUSH_SAVED="$PUSH"
+for rule in push-argument conflicting-mode; do
+  PUSH="$(mutant_scripts "record-$rule" worktree-push)/worktree-push"
+  case "$rule" in
+    push-argument)
+      mutate_file "$PUSH" '[[ "$check_live_round" == true || -n "$record_run_dir" ]]' '[[ "$check_live_round" == true ]]'
+      argument=--no-rebase
+      ;;
+    conflicting-mode)
+      mutate_file "$PUSH" '[[ "$check_live_round" != true || -z "$record_run_dir" ]]' 'true'
+      argument=--check-live-round
+      ;;
+  esac
+  run_push "$work" --record-restack-validation "$run_new" --worktree "$wt" --issue KEN-1 "$argument"
+  assert_eq "$RUN_RC" 0 "control: removing $rule refusal fails the recording-only argument row"
+done
+PUSH="$PUSH_SAVED"
+reset_state "$work"
+printf 'validate: lanes=shell selection=subset\n' > "$run_new/log"
+"$STATE" --state-dir "$work/tmp" update KEN-1 '.stages=[]'
+for round in first second; do
+  printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+  STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+  assert_eq "$RUN_RC" 0 "$round restack push passes" "$run_err"
+done
+assert_eq "$(jq -c '.stages' <<<"$(state_json "$work")")" \
+  "[{\"kind\":\"validate\",\"reason\":\"restack\",\"round_id\":null,\"run_dir\":\"$run_new\",\"start\":1767225600,\"end\":1767228900}]" 'restack records newest run once with real run times'
+assert_eq "$(jq -c '.validate_rounds' <<<"$(state_json "$work")")" \
+  '[{"round_id":"restack-new","kind":"restack","mode":"range","seconds":3300,"lanes":"shell","selection":"subset"}]' 'restack validation minutes match stage run'
+"$STATE" --state-dir "$work/tmp" init oversee >/dev/null
+"$STATE" --state-dir "$work/tmp" update oversee --arg root "$work" '.lanes=[{item:"KEN-1",host:null,mail_root:$root,pending_pr:{pr:7}}]'
+stage_rows="$(cd "$work" && "$REPO_ROOT/skills/orch/scripts/oversee-cycle" --state-dir "$work/tmp" stages KEN-1)"
+assert_eq "$stage_rows" 'stage item=KEN-1 kind=validate round_id=null start=1767225600 end=1767228900 reason=restack' 'running lane displays worktree-push restack times'
+echo '=== skipped re-tests and push-time rewrites do not relabel earlier runs ==='
+for route in skip push-rewrite; do
+  reset_state "$work"
+  case "$route" in
+    skip)
+      git -C "$wt" commit -q --allow-empty -m skipped-restack
+      skip_head="$(git -C "$wt" rev-parse HEAD)"
+      "$STATE" --state-dir "$work/tmp" update KEN-1 --arg head "$skip_head" --arg validated "$timing_head" \
+        '.restack_skips=[{head:$head,condition:"no-conflict",validated_head:$validated,paths:[]}]'
+      printf 'rebase-hop:\nrebase-map: %s %s\n' "$timing_head" "$skip_head" > "$restack_map_file"
+      STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+      ;;
+    push-rewrite)
+      git -C "$wt" reset -q --hard "$timing_head"
+      STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+      ;;
+  esac
+  assert_eq "$RUN_RC|$(jq -c '[(.stages // []),(.validate_rounds // [])]' <<<"$(state_json "$work")")" \
+    '0|[[],[]]' "$route records no earlier validation as a restack"
+done
+git -C "$wt" reset -q --hard "$timing_head"
+reset_state "$work"
+PUSH_SAVED="$PUSH"
+PUSH="$(mutant_scripts unbound-restack-run worktree-push)/worktree-push"
+mutate_file "$PUSH" 'select(.verdict != "unfinished" and .seconds != null and .head == $head)' \
+  'select(.verdict != "unfinished" and .seconds != null and true)'
+git -C "$wt" commit -q --allow-empty -m skipped-restack-control
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$timing_head" "$(git -C "$wt" rev-parse HEAD)" > "$restack_map_file"
+STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$(jq -r '.stages[0].run_dir' <<<"$(state_json "$work")")" "$run_other" 'control: an unbound writer records an earlier run after a skipped retest'
+PUSH="$PUSH_SAVED"
+git -C "$wt" reset -q --hard "$timing_head"
+reset_state "$work"
+PUSH="$(mutant_scripts push-run-as-restack worktree-push)/worktree-push"
+mutate_file "$PUSH" "restack_validation_head=''" 'restack_validation_head="$(git -C "$worktree_abs" rev-parse HEAD)"'
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$(jq -r '.stages[0].run_dir' <<<"$(state_json "$work")")" "$run_new" 'control: a push-only map relabels an earlier dev run when no pending restack is required'
+PUSH="$PUSH_SAVED"
+reset_state "$work"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+STUB_PUSH_STDOUT='' STUB_PUSH_EXIT=7 run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC|$(jq -c '.stages // []' <<<"$(state_json "$work")")" '7|[]' 'failed push records no restack stage'
+reset_state "$work"
+PUSH_SAVED="$PUSH"
+PUSH="$(mutant_scripts no-restack-stage worktree-push)/worktree-push"
+mutate_file "$PUSH" 'record_restack_validation() {' 'record_restack_validation() { return 0'
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+STUB_PUSH_STDOUT='' run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC|$(jq -c '.stages // []' <<<"$(state_json "$work")")" '0|[]' 'control: dropping restack write fails stage observation'
+PUSH="$PUSH_SAVED"
+
+echo '=== a real publication retry keeps the reconciled restack timing identity ==='
+# The shipped push owner rebases before invoking Git's transport. Only that
+# transport is replaced: the first publication fails, while all Git reads,
+# SHA reconciliation and the retry use the production owners.
+real_git="$(command -v git)"
+native_retry_case() (
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0
+  export GIT_CEILING_DIRECTORIES="$TMP_ROOT" WORKTREE_DEFAULT_BRANCH=main
+  export ORCH_WORKTREE_BIN="$REPO_ROOT/skills/worktree/scripts/worktree"
+  local label="$1" route="$2" area main lane old head map pending run rc=0
+  area="$TMP_ROOT/native-$label"
+  main="$area/main" lane="$area/lane"
+  mkdir -p "$main" "$area/bin"
+  git init -q -b main "$main"
+  git -C "$main" config user.name fixture
+  git -C "$main" config user.email fixture@example.com
+  git -C "$main" config gc.auto 0
+  git -C "$main" config maintenance.auto false
+  git -C "$main" commit -q --allow-empty -m base
+  git init -q --bare "$area/remote.git"
+  git -C "$area/remote.git" config gc.auto 0
+  git -C "$area/remote.git" config maintenance.auto false
+  git -C "$main" remote add origin "$area/remote.git"
+  git -C "$main" push -q origin main
+  git -C "$main" worktree add -qb lane "$lane"
+  printf 'feature\n' > "$lane/feature"
+  git -C "$lane" add feature
+  git -C "$lane" commit -qm feature
+  old="$(git -C "$lane" rev-parse HEAD)"
+  git -C "$main" commit -q --allow-empty -m advance
+  git -C "$main" push -q origin main
+  git -C "$lane" rebase main > "$area/rebase.log" 2>&1
+  head="$(git -C "$lane" rev-parse HEAD)"
+  map="$(git -C "$lane" rev-parse --git-path kendex-rebase-map)"
+  pending="${map%/*}/kendex-restack-validation"
+  printf 'rebase-hop:\nrebase-map: %s %s\n' "$old" "$head" > "$map"
+  run="$(validate_run_dir "$lane/tmp/dev-validate-restack" range 0 "$head" 1)"
+  printf 'tmp/\n' >> "$(git -C "$lane" rev-parse --git-path info/exclude)"
+  "$STATE" --state-dir "$main/tmp" init KEN-1 --worktree "$lane" --branch lane >/dev/null
+  "$STATE" --state-dir "$main/tmp" update KEN-1 --arg old "$old" \
+    '.stages=[] | .validate_rounds=[] | .fixed_items=[{commit:$old,description:"fixture",source:"pr-review"}]'
+  cat > "$area/bin/git" <<'SH'
+#!/usr/bin/env bash
+for argument in "$@"; do
+  if [[ "$argument" == push && -e "$PUSH_FAIL_FLAG" ]]; then
+    printf 'fatal: fixture publication transport failed\n' >&2
+    exit 128
+  fi
+done
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$area/bin/git"
+  export REAL_GIT="$real_git" PUSH_FAIL_FLAG="$area/transport-down" PATH="$area/bin:$PATH"
+  cd "$main"
+  if [[ "$route" != success && "$route" != timing-write ]]; then
+    touch "$PUSH_FAIL_FLAG"
+    "$PUSH" --state-dir "$main/tmp" --worktree "$lane" --issue KEN-1 > "$area/failed.out" 2> "$area/failed.err" || rc=$?
+    jq -cn --argjson rc "$rc" --argjson state "$(cat "$main/tmp/workflow-state-KEN-1.json")" \
+      --arg refusal "$(grep '^worktree-push-failed:' "$area/failed.err" || true)" \
+      --arg head "$head" --argjson map "$([[ -e "$map" ]] && echo true || echo false)" \
+      --argjson pending "$([[ -e "$pending" ]] && echo true || echo false)" \
+      '{phase:"failed",rc:$rc,refusal:$refusal,map:$map,pending:$pending,matched:($state.fixed_items[0].commit==$head),rows:[$state.stages,$state.validate_rounds]}'
+    rm -f "$PUSH_FAIL_FLAG"
+    # The saved run stays authoritative even if a later run finishes on the
+    # same head. A retry on a changed head must not claim the saved run.
+    validate_run_dir "$lane/tmp/dev-validate-later" range 0 "$head" 2 >/dev/null
+    if [[ "$route" == changed-head ]]; then
+      git -C "$lane" commit -q --allow-empty -m changed-head
+      head="$(git -C "$lane" rev-parse HEAD)"
+    fi
+  fi
+  for attempt in first duplicate; do
+    if [[ "$route" == timing-write && "$attempt" == duplicate ]]; then
+      PUSH="$PUSH_SAVED"
+    fi
+    rc=0
+    "$PUSH" --state-dir "$main/tmp" --worktree "$lane" --issue KEN-1 > "$area/$attempt.out" 2> "$area/$attempt.err" || rc=$?
+    if [[ "$rc" != 0 ]]; then
+      cat "$area/$attempt.err" "$area/$attempt.out" >&2
+    fi
+    jq -cn --argjson rc "$rc" --argjson state "$(cat "$main/tmp/workflow-state-KEN-1.json")" \
+      --arg head "$head" --arg published "$(git -C "$main" ls-remote origin refs/heads/lane)" \
+      --arg diagnostic "$(grep '^worktree-push: stage-unrecorded' "$area/$attempt.err" || true)" \
+      --argjson pending "$([[ -e "$pending" ]] && echo true || echo false)" \
+      '{phase:"done",rc:$rc,pending:$pending,published:($published|startswith($head)),diagnostic:$diagnostic,rows:[$state.stages,$state.validate_rounds]}'
+  done
+)
+for route in success retry changed-head; do
+  native_retry_case "$route" "$route" > "$TMP_ROOT/native-$route.jsonl"
+  observed="$(jq -sc 'map({phase,rc,pending,published,matched,map,counts:(.rows|map(length)),run:.rows[0][0].run_dir})' "$TMP_ROOT/native-$route.jsonl")"
+  case "$route" in
+    success) expected='[{"phase":"done","rc":0,"pending":false,"published":true,"matched":null,"map":null,"counts":[1,1],"run":"RUN"},{"phase":"done","rc":0,"pending":false,"published":true,"matched":null,"map":null,"counts":[1,1],"run":"RUN"}]' ;;
+    retry) expected='[{"phase":"failed","rc":1,"pending":true,"published":null,"matched":true,"map":false,"counts":[0,0],"run":null},{"phase":"done","rc":0,"pending":false,"published":true,"matched":null,"map":null,"counts":[1,1],"run":"RUN"},{"phase":"done","rc":0,"pending":false,"published":true,"matched":null,"map":null,"counts":[1,1],"run":"RUN"}]' ;;
+    changed-head) expected='[{"phase":"failed","rc":1,"pending":true,"published":null,"matched":true,"map":false,"counts":[0,0],"run":null},{"phase":"done","rc":0,"pending":true,"published":true,"matched":null,"map":null,"counts":[0,0],"run":null},{"phase":"done","rc":0,"pending":true,"published":true,"matched":null,"map":null,"counts":[0,0],"run":null}]' ;;
+  esac
+  expected="${expected//RUN/$TMP_ROOT/native-$route/lane/tmp/dev-validate-restack}"
+  assert_eq "$observed" "$expected" "native $route preserves publication status and bound timing identity"
+  if [[ "$route" != success ]]; then
+    assert_eq "$(jq -sr 'first.refusal' "$TMP_ROOT/native-$route.jsonl")" \
+      'worktree-push-failed: origin/lane' "native $route reaches the publication transport failure"
+  fi
+  if [[ "$route" != changed-head ]]; then
+    assert_eq "$(jq -sc 'last.rows[0][0] | [.kind,.reason,.round_id,.start,.end]' "$TMP_ROOT/native-$route.jsonl")" \
+      '["validate","restack",null,1767225600,1767228900]' "native $route records the finished restack times"
+  fi
+done
+PUSH_SAVED="$PUSH"
+PUSH="$(mutant_scripts retry-timing-write-fails worktree-push)/worktree-push"
+mutate_file "$PUSH" 'record_restack_validation() {' 'record_restack_validation() { return 1'
+native_retry_case timing-write timing-write > "$TMP_ROOT/native-timing-write.jsonl"
+assert_eq "$(jq -sc 'map({rc,pending,published,diagnostic,counts:(.rows|map(length))})' "$TMP_ROOT/native-timing-write.jsonl")" \
+  '[{"rc":0,"pending":true,"published":true,"diagnostic":"worktree-push: stage-unrecorded issue=KEN-1","counts":[0,0]},{"rc":0,"pending":false,"published":true,"diagnostic":"","counts":[1,1]}]' \
+  'a failed advisory timing write keeps its retry identity and the successful push status'
+PUSH="$PUSH_SAVED"
+PUSH="$(mutant_scripts lost-retry-timing worktree-push)/worktree-push"
+mutate_file "$PUSH" 'save_pending_validation() {' 'save_pending_validation() { return 0'
+native_retry_case lost retry > "$TMP_ROOT/native-lost.jsonl"
+assert_eq "$(jq -sc 'map({rc,published,counts:(.rows|map(length))})' "$TMP_ROOT/native-lost.jsonl")" \
+  '[{"rc":1,"published":null,"counts":[0,0]},{"rc":0,"published":true,"counts":[0,0]},{"rc":0,"published":true,"counts":[0,0]}]' \
+  'control: losing the private timing identity fails recording after a real successful retry'
+PUSH="$PUSH_SAVED"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

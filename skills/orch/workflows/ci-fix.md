@@ -73,13 +73,13 @@ Infer the agent from the component paths or issue labels. Apply [Delegation](../
 Stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Each command takes the one state key as `[ISSUE_ID]`: the caller's `issue_id` when managed, § 1's `[STATE_KEY]` standalone.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] ci_round_id
 ```
 
 Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
 
 ```bash
-.agents/skills/orch/scripts/round-prune [ISSUE_ID]
+.agents/skills/orch/scripts/round-prune --ci [ISSUE_ID]
 ```
 
 ```bash
@@ -88,7 +88,7 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
-This agent pushes its fix directly and writes **no** dev-return artifact; the round-mode check for this token reports `ok == false`, which is expected. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
+This route uses `ci_round_id` for CI fixes and integration analysis. Apply the [Round Closure exception](../references/skill-rules.md#round-closure) to its watchdog. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).

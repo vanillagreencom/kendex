@@ -427,6 +427,33 @@ probe_table \
   "a stat that speaks first is still not ahead of the refusal|noisy-stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false" \
   "the same holds without --wait|noisy-stat|review-freshrev-1@after=qa_ok|%W freshrev %D|rc=2 stderr_code=mtime stdout_nonempty=false"
 
+echo '=== accepted reviewers close the current batch at the latest mtime ==='
+source "$TEST_DIR/lib/growth-state.sh"
+WS="$TEST_DIR/../scripts/workflow-state"
+SD="$TMP_ROOT/review-state"
+stage 'review-a-1@after=pass;review-b-1@later=pass'
+"$WS" --state-dir "$SD" init KEN-1 >/dev/null
+RID="$("$WS" --state-dir "$SD" new-round-id KEN-1 review_round_id)"
+for row in "a|$AFTER" "b|$LATER" "a|$LATER"; do
+  IFS='|' read -r reviewer expected <<<"$row"
+  out="$("$CHECK" "$WT" "$reviewer" "$DELEG" --issue KEN-1 --state-dir "$SD")"
+  assert_eq "$(jq -r '.ok' <<<"$out")|$("$WS" --state-dir "$SD" get KEN-1 '.stages[0].end')" "true|$expected" "$reviewer accepted with batch end $expected"
+done
+for row in 'stale|issue' 'fresh|no-issue'; do
+  IFS='|' read -r age mode <<<"$row"
+  "$WS" --state-dir "$SD" update KEN-1 '.stages[0].end = null'
+  boundary="$DELEG"; [[ "$age" != stale ]] || boundary="$LATER2"
+  issue_args=(); [[ "$mode" != issue ]] || issue_args=(--issue KEN-1 --state-dir "$SD")
+  rc=0
+  "$CHECK" "$WT" a "$boundary" ${issue_args[@]+"${issue_args[@]}"} >/dev/null || rc=$?
+  assert_eq "$("$WS" --state-dir "$SD" get KEN-1 '.stages[0].end')" null "$age $mode records no end"
+done
+"$WS" --state-dir "$SD" update KEN-1 '.stages[0].end = null'
+MUTANT="$(mutant_scripts review-no-end review-artifact-check)/review-artifact-check"
+mutate_file "$MUTANT" 'record_review_stage "$path" ||' 'true ||'
+"$MUTANT" "$WT" a "$DELEG" --issue KEN-1 --state-dir "$SD" >/dev/null
+assert_eq "$("$WS" --state-dir "$SD" get KEN-1 '.stages[0].end')" null 'control: dropping review write fails fresh-member closure'
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

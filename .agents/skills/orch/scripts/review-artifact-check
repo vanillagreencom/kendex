@@ -237,6 +237,9 @@ emit() {
         else {measurement_suppressed: $measurement_suppressed} end)
      + (if $declined == null then {}
         else {repeats: [at_declined("blockers"), at_declined("suggestions")]} end)' 2>/dev/null)"; then
+    if [[ "$ok" == true && -n "${declined_issue:-}" ]]; then
+      record_review_stage "$path" || printf 'review-artifact-check: stage-unrecorded issue=%s\n' "$declined_issue" >&2
+    fi
     printf '%s\n' "$out"
     review_artifact_reported=1
     return 0
@@ -266,6 +269,15 @@ file_mtime() {
   mtime="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
   [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
   printf '%s' "$mtime"
+}
+
+record_review_stage() {
+  local end
+  end="$(file_mtime "$1")" || return 1
+  "$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} update "$declined_issue" --argjson end "$end" '
+    .review_round_id as $round
+    | .stages = ((.stages // []) | map(if .round_id == $round and .kind == "review"
+        then .end = ([.end // 0, $end] | max) else . end))' >/dev/null 2>&1
 }
 
 # Help must not depend on the gates lib: its source-time mktemp can fail

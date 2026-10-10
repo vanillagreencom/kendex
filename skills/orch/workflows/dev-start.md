@@ -79,8 +79,6 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 
-Run [Store Stage Start](#store-stage-start) as kind `implement` before delegating.
-
 Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
 
 ```bash
@@ -149,14 +147,6 @@ Handoff from prior agents:
 - [extracted handoff notes]
 </delegation_format>
 
-### Store Stage Start
-
-The implement and fix delegation paths run this write after their delegation stamp. `[KIND]` is `implement` or `fix`. A replacement round appends its own entry and leaves the interrupted round unchanged. A repeated write keeps the entry already recorded for this round.
-
-```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg kind [KIND] '.dev_round_id as $round | if any(.stages[]?; .round_id == $round) then . else .stages = ((.stages // []) + [{kind: $kind, round_id: $round, start: .dev_delegated_at, end: null}]) end'
-```
-
 ## 3. Accept The Round
 
 Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only — run A/B on the § 2 watchdog deadline rather than waiting for one.
@@ -186,11 +176,11 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
 
-Before B or the check's `reason` routes the round, run [Store Validation Time](#store-validation-time) for every `reason` but `missing` and `invalid`: that artifact passed the schema gate, so its echoed `validate_time` is the round's own. A round the table then accepts, retries, replaces with a fresh round or escalates keeps its validation minutes, and no row below names the step again.
+`dev-artifact-check` records the round end and its validation time for every `reason` but `missing` and `invalid`. A retry or escalation keeps that time.
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Stage End for `[DEV_ROUND_ID]`, then Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
@@ -199,18 +189,6 @@ Before B or the check's `reason` routes the round, run [Store Validation Time](#
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
 Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
-
-### Store Stage End
-
-The dev workflow runs this write on acceptance for the stage's `[STAGE_ROUND_ID]`. The review workflow runs it when all stage members resolve under [review-pr.md § 3](review-pr.md#3-collect-results). A repeated write keeps the first end time. A stage interrupted before its closure point keeps `end: null`.
-
-```bash
-.agents/skills/orch/scripts/git-context timestamp epoch
-```
-
-```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [STAGE_ROUND_ID] --argjson end [EPOCH_FROM_PREVIOUS_COMMAND] '.stages = ((.stages // []) | map(if .round_id == $round then .end //= $end else . end))'
-```
 
 ### Store Proposed Rules
 
@@ -250,19 +228,11 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.near_ceiling = [NEAR_CEILING_ARRAY]'
 ```
 
-### Store Validation Time
+### Validation status
 
-Every artifact past the schema gate runs this subsection, implement and fix alike, before B or the retry reason routes the round, as [§ 3](#3-accept-the-round) states. [merge-pr-restack.md](merge-pr-restack.md) runs its write for a restack's range run, as kind `restack`. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it and `.restack_skips`, and `oversee-report`'s Validation row reads both.
+`dev-artifact-check` records each schema-valid round's end and validation time before its verdict routes the round. `worktree-push` records a restack's validation after a successful push. The scripts write `validate_rounds` and `stages` together.
 
-`[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
-
-`[VALIDATE_LANES]` and `[VALIDATE_SELECTION]` are the echoed `validate_lanes` and `validate_selection` as JSON values, or `null` when absent. The write carries reported lanes and selection without changing the invocation mode.
-
-```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [DEV_ROUND_ID] --arg kind [KIND] --arg mode [VALIDATE_MODE] --argjson seconds [SECONDS] --argjson lanes [VALIDATE_LANES] --argjson selection [VALIDATE_SELECTION] '.validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)] + [({round_id: $round, kind: $kind, mode: $mode, seconds: $seconds} + (if $lanes == null then {} else {lanes: $lanes} end) + (if $selection == null then {} else {selection: $selection} end))])'
-```
-
-A lane under an overseer then rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive), followed by each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes for a restack that skipped its re-test.
+A lane under an overseer rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive). It then lists each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes.
 
 ### Store QA State
 

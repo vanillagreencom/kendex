@@ -103,8 +103,8 @@ lane_hosted_clone() {
   LANE_HOSTED_CLONE="${common%/.git}"
 }
 
-# lane_hosted_state_path CLONE STATE_DIR ITEM — sets LANE_HOSTED_STATE_PATH to
-# the item's workflow-state file on its host: STATE_DIR joined to the clone
+# lane_hosted_state_path CLONE STATE_DIR STATE_KEY: sets LANE_HOSTED_STATE_PATH to
+# the workflow-state file on its host: STATE_DIR joined to the clone
 # root where it is relative, as workflow-state joins it there.
 LANE_HOSTED_STATE_PATH=""
 lane_hosted_state_path() {
@@ -178,8 +178,8 @@ lane_hosted_state_dir() {
   LANE_HOSTED_STATE_DIR="${LANE_HOSTED_STATE_DIR:-tmp}"
 }
 
-# lane_archived_state ITEM ARCHIVE SCRATCH ROOT — sets LANE_ITEM_STATE to the
-# item's workflow state in ARCHIVE, the `kept=` archive lane-host close wrote
+# lane_archived_state STATE_KEY ARCHIVE SCRATCH ROOT: sets LANE_ITEM_STATE to the
+# workflow state in ARCHIVE, the `kept=` archive lane-host close wrote
 # of the clone's and the worktree's tmp, empty where it holds none. Its
 # `lane-host-state` member names the state file's member, the one the lane
 # resolved, or is an empty line where the lane wrote none, so no other copy of
@@ -229,8 +229,11 @@ lane_archived_state() {
     | jq -c . 2>>"$3/state.err")" || { LANE_ITEM_STATE=""; return 2; }
 }
 
-# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE]
-# — sets LANE_ITEM_STATE to the item's own workflow-state JSON, empty where
+# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY]
+# ITEM identifies the launched lane for every host request. STATE_KEY defaults
+# to ITEM and selects only the workflow-state file, including older archives
+# without a recorded member. A PR-key fallback keeps the host's item identity.
+# Sets LANE_ITEM_STATE to the item's own workflow-state JSON, empty where
 # the lane has written none. A local lane's, HOST empty, is under the project
 # state directory of its own checkout, ROOT, where ROOT is a directory, so a
 # lane of another repository reads from that repository, and of the caller's
@@ -251,13 +254,13 @@ lane_archived_state() {
 # carrying its line.
 LANE_ITEM_STATE=""
 lane_item_state() {
-  local path files rc=0
+  local path files rc=0 state_key="${9:-$4}"
   LANE_ITEM_STATE=""
   if [[ -z "$5" ]]; then
     if [[ -n "$6" && -d "$6" ]]; then
-      path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2
+      path="$(cd -- "$6" && "$1" path "$state_key" 2>"$7/state.err")" || return 2
     else
-      path="$("$1" path "$4" 2>"$7/state.err")" || return 2
+      path="$("$1" path "$state_key" 2>"$7/state.err")" || return 2
     fi
     [[ -f "$path" ]] || return 0
     LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
@@ -266,18 +269,18 @@ lane_item_state() {
   lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2
   lane_capability files files
   [[ "$files" != none ]] || return 0
-  ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" || rc=$?
+  ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" || rc=$?
   [[ "$rc" -eq 0 && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]] || return "$rc"
-  lane_archived_state "$4" "$8" "$7" "$6"
+  lane_archived_state "$state_key" "$8" "$7" "$6"
 }
 
-# lane_hosted_item_state LANE_HOST_CLI ITEM ROOT SCRATCH — lane_item_state's
+# lane_hosted_item_state LANE_HOST_CLI ITEM ROOT SCRATCH [STATE_KEY]: lane_item_state's
 # live read of a hosted lane, under the caller's ORCH_LANE_HOST, with its
 # statuses; LANE_HOSTED_GONE is 1 where the host answered that the worktree
 # is gone.
 LANE_HOSTED_GONE=0
 lane_hosted_item_state() {
-  local rc=0
+  local rc=0 state_key="${5:-$2}"
   LANE_HOSTED_GONE=0
   lane_hosted_clone "$1" "$2" "$3" "$4/gitfile" "$4/state.err" || rc=$?
   case "$rc" in
@@ -286,7 +289,7 @@ lane_hosted_item_state() {
     3) printf '%s\n' "$3/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$4/state.err"; return 2 ;;
     *) return "$rc" ;;
   esac
-  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$2"
+  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$state_key"
   rc=0
   lane_host_fetch "$1" "$2" "$LANE_HOSTED_STATE_PATH" "$4/item-state.json" "$4/state.err" || rc=$?
   case "$rc" in
@@ -296,7 +299,7 @@ lane_hosted_item_state() {
   esac
   rc=0
   lane_hosted_state_dir "$1" "$2" "$3" "$4" || return $?
-  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$2"
+  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$state_key"
   lane_host_fetch "$1" "$2" "$LANE_HOSTED_STATE_PATH" "$4/item-state.json" "$4/state.err" || rc=$?
   case "$rc" in
     0) LANE_ITEM_STATE="$(jq -c . -- "$4/item-state.json" 2>"$4/state.err")" || return 2 ;;

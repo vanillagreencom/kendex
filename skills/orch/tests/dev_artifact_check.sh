@@ -721,6 +721,82 @@ probe_table \
   "a jq that speaks first is still not ahead of the refusal, either mode^noisy-jq^$WAITING^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
   "the same holds single-shot^noisy-jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
 
+echo "=== round checks record stages after the schema gate ==="
+source "$TEST_DIR/lib/virtual-clock.sh"
+mkdir -p "$TMP_ROOT/clock-bin"
+virtual_clock_install "$TMP_ROOT/clock-bin" "$TMP_ROOT/clock"
+WT="$FW"
+STAGE_SD="$TMP_ROOT/stage-state"
+STAGE_FILE="$STAGE_SD/workflow-state-$ISSUE.json"
+stage_observed() {
+  jq -c '{kind: .stages[0].kind, end: .stages[0].end,
+    validate: [.stages[] | select(.kind == "validate") | {kind, round_id, start, end}], rounds: (.validate_rounds // [])}' "$STAGE_FILE"
+}
+stage_closed() {
+  jq -r --arg kind "$1" '.stages[0].kind == $kind and .stages[0].end == 1767230000' "$STAGE_FILE"
+}
+stage_rows=(
+  'implement^impl^.^0^implement^true'
+  'fix^fix^.validate="pass" | .validate_mode="full" | .validate_time={started_at:"2026-01-01T00:00:00Z",ended_at:"2026-01-01T00:55:00Z",seconds:3300}^0^fix^true'
+  'failing without run^impl^.validate="FAILING: lint" | .validate_mode=null | .validate_time=null^0^implement^false'
+  'missing^none^.^1^dev^false'
+  'invalid^impl^del(.kind)^1^dev^false'
+)
+for row in "${stage_rows[@]}"; do
+  IFS='^' read -r label base filter want_rc kind timed <<<"$row"
+  "$STATE" --state-dir "$STAGE_SD" init "$ISSUE" >/dev/null
+  "$STATE" --state-dir "$STAGE_SD" update "$ISSUE" --arg round "$R" '.stages=[{kind:"dev",round_id:$round,start:1,end:null}]'
+  rm -f "$ARTIFACT"
+  case "$base" in impl) printf '%s' "$VALID_IMPL" | jq "$filter" > "$ARTIFACT" ;;
+    fix) printf '%s' "$VALID_FIX" | jq "$filter" > "$ARTIFACT" ;;
+  esac
+  args=()
+  if [[ "$base" == fix ]]; then
+    jq -n --arg issue "$ISSUE" --arg round "$R" --arg sha "$FW_HEAD" '{schema_version:2,issue:$issue,round_id:$round,base_sha:$sha,adds:[],items:[{n:1,text:"one"},{n:2,text:"two"}]}' > "$WT/tmp/dev-round-$ISSUE-$R.json"
+    args=(--expect-items-from-round)
+  fi
+  printf '1767230000\n' > "$STUB_CLOCK"
+  SHIM_PATH="$TMP_ROOT/clock-bin" ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
+  assert_eq "$RC" "$want_rc" "$label preserves artifact status" "$ERR"
+  if [[ "$kind" == dev ]]; then
+    assert_eq "$(jq -c '.stages' "$STAGE_FILE")" "[{\"kind\":\"dev\",\"round_id\":\"$R\",\"start\":1,\"end\":null}]" "$label writes no stage"
+  else
+    assert_eq "$(stage_closed "$kind")" true "$label closes with artifact kind at the injected time"
+    first="$(stage_observed)"
+    printf '1767230060\n' > "$STUB_CLOCK"
+    SHIM_PATH="$TMP_ROOT/clock-bin" ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
+    assert_eq "$(stage_observed)" "$first" "$label recheck keeps first end and one run"
+    assert_eq "$(stage_closed "$kind")" true "$label recheck keeps the first injected end"
+    if [[ "$timed" == true ]]; then
+      assert_eq "$(jq -c '[.stages[1] | {kind,round_id,start,end}]' "$STAGE_FILE")" \
+        "[{\"kind\":\"validate\",\"round_id\":\"$R\",\"start\":1767225600,\"end\":1767228900}]" "$label validation uses run times"
+      assert_eq "$(jq -c '.validate_rounds' "$STAGE_FILE")" "[{\"round_id\":\"$R\",\"kind\":\"$kind\",\"mode\":\"full\",\"seconds\":3300}]" "$label records validation minutes"
+    else
+      assert_eq "$(jq -c '[.stages[] | select(.kind == "validate")]' "$STAGE_FILE")" '[]' 'no run creates no validate stage'
+    fi
+  fi
+done
+printf '%s' "$VALID_IMPL" > "$ARTIFACT"
+ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R"
+stage_out="$OUT"
+rm -f "$STAGE_FILE"
+ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R"
+assert_eq "$OUT|$RC|$(test -f "$STAGE_FILE" && echo exists || echo absent)" "$stage_out|0|absent" 'an ad-hoc key creates no state and changes no result'
+printf 'invalid json' > "$STAGE_FILE"
+ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R"
+assert_eq "$OUT|$RC" "$stage_out|0" 'unreadable state preserves result and status'
+assert_file_contains "$ERR" "dev-artifact-check: stage-unrecorded issue=$ISSUE round=$R" 'unreadable state reports unrecorded stage'
+"$STATE" --state-dir "$STAGE_SD" init "$ISSUE" >/dev/null
+"$STATE" --state-dir "$STAGE_SD" update "$ISSUE" --arg round "$R" '.stages=[{kind:"dev",round_id:$round,start:1,end:null}]'
+STAGE_MUTANT="$(mutant_scripts no-stage dev-artifact-check)/dev-artifact-check"
+mutate_file "$STAGE_MUTANT" 'record_stage "$out" ||' 'true ||'
+ORCH_STATE_DIR="$STAGE_SD" "$STAGE_MUTANT" --worktree "$WT" --issue "$ISSUE" --round-id "$R" >/dev/null
+assert_eq "$(jq -r '.stages[0].end == null' "$STAGE_FILE")" true 'control: skipping the write fails implement closure'
+STAGE_MUTANT="$(mutant_scripts wrong-end dev-artifact-check)/dev-artifact-check"
+mutate_file "$STAGE_MUTANT" '--argjson end "$now"' '--argjson end 0'
+PATH="$TMP_ROOT/clock-bin:$PATH" ORCH_STATE_DIR="$STAGE_SD" "$STAGE_MUTANT" --worktree "$WT" --issue "$ISSUE" --round-id "$R" >/dev/null
+assert_eq "$(stage_closed implement)" false 'control: a wrong numeric end fails the same closure assertion'
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

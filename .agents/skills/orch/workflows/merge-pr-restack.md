@@ -48,19 +48,19 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    .agents/skills/orch/scripts/workflow-state update [ISSUE] --arg head [HEAD] --arg condition [CONDITION] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '.restack_skips = ((.restack_skips // []) + [{head: $head, condition: $condition, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}])'
    ```
 
-   A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Store Validation Time](dev-start.md#store-validation-time) sets out. Any other exit, whatever it prints, runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
+   A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. Any other exit, whatever it prints, runs the range command over the branch as it now sits on the base, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness, the way a fix round's run is:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
    ```
 
-   Once the run ends, record its minutes before routing its verdict. Read the run's record, with `[RUN_DIR]` the `run-dir=` value the run printed:
+   Bind `[RUN_DIR]` to the run's `run-dir=` line and read its head and times after it ends:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]
    ```
 
-   A record with a `seconds=` field takes [dev-start.md § Store Validation Time](dev-start.md#store-validation-time)'s write, with `[ISSUE_ID]` being `[ISSUE]`, `[DEV_ROUND_ID]` being `restack-` and the run directory's name after `dev-validate-`, `[KIND]` being `restack`, `[VALIDATE_MODE]` the record's `validate-mode` and `[SECONDS]` its `seconds`. `[VALIDATE_LANES]` is the record's `lanes` as a JSON string, or `null` when absent; `[VALIDATE_SELECTION]` is its `selection` as a JSON string. An exit-0 record with no `seconds=` field has no wall time, and records nothing.
+   `worktree-push` reads the newest finished run for the pre-push restacked head through `dev-validate-run --record` after a successful push. It records the restack stage and validation minutes once per run directory. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.
 
    A start refused as `run-live` ran nothing and is no result: take [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate)'s route for that refusal, then start the range run again.
 
@@ -80,7 +80,13 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    git -C [WT_PATH] rev-parse HEAD
    ```
 
-   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's skip check again on it, and where it does not skip, its range run, then record and route the result as step 2 does. A pass or a skip goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
+   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's skip check again on it, and where it does not skip, its range run and record read. Route a non-passing result as step 2 does. After a pass, bind `[RUN_DIR]` to this second run and record its timing through the same owner:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --record-restack-validation [RUN_DIR] --worktree [WT_PATH] --issue [ISSUE]
+   ```
+
+   This command publishes nothing. Its timing write is advisory (`worktree-push --help`). A pass or a skip goes to step 4 with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
 4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head, wait for its CI and take the merge route again.
 
