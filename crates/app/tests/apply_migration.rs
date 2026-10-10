@@ -3,7 +3,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 
@@ -83,7 +83,7 @@ fn schema5_fixture() -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture(manifest: impl FnOnce(&std::path::Path) -> String) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();

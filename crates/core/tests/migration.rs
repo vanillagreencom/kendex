@@ -126,13 +126,26 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
-    for global in [false, true] {
+    for (global, crlf) in [(false, false), (false, true), (true, false), (true, true)] {
         let mut f = fixture("6   # pinned");
         if global {
             f.scope = Scope::Global;
             f.manifest_path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
             fs::create_dir_all(f.env.home.join(".claude")).unwrap();
             fs::create_dir_all(f.manifest_path.parent().unwrap()).unwrap();
+        }
+        // Git for Windows emits this input under its default autocrlf setting.
+        if crlf {
+            let root = f.manifest_path.parent().unwrap();
+            fs::write(&f.manifest_path, &f.original).unwrap();
+            git(root, &["init", "-q"]);
+            git(root, &["config", "core.autocrlf", "true"]);
+            git(root, &["add", "kendex.toml"]);
+            fs::remove_file(&f.manifest_path).unwrap();
+            git(root, &["checkout", "--", "kendex.toml"]);
+            let checked_out = fs::read_to_string(&f.manifest_path).unwrap();
+            assert_eq!(checked_out, f.original.replace('\n', "\r\n"));
+            f.original = checked_out;
         }
         let expected = f.original.replacen("schema = 6", "schema = 7", 1);
         fs::write(&f.manifest_path, &expected).unwrap();
