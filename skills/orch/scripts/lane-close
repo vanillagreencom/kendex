@@ -45,7 +45,7 @@ message() { # REASON FIELD=VALUE...
         'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading, taken for the model the record names, or over the whole account where it names none, and run under the record'"'"'s host, so a hosted lane'"'"'s reading is the provider'"'"'s where its accounts row carries one:' \
         '  room            lanes pick --lane read room, and the banner names a reset still ahead in resets=,' \
         '                  or resets=unresolved: a reset clause this host could not resolve, such as one in a zone it has no zoneinfo for.' \
-        '  walled          lanes pick --lane read the account at or above ORCH_LANE_MAX_PCT.' \
+        '  walled          lanes pick --lane read the account at or above ORCH_LANE_MAX_PCT, or a seat at or below its reserve.' \
         '  unmeasured      lanes pick --lane measured nothing for the account; its words are on the lines above.' \
         '  unlisted        the recorded account is no configured lane of the harness.' \
         '  read-failed     lanes pick --lane failed; its words are on the lines above.' \

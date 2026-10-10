@@ -92,6 +92,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Review-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](references/gates.md) | |
 | `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account, Codex credits exempt; bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
+| `ORCH_OVERSEER_SEAT_RESERVE_PCT` | Plan room kept for the overseer. Seats return last above it; lanes on seats hand off at it. Keep above `ORCH_OVERSEER_HEADROOM_PCT`; 100 admits no seat, 0 uses the lane limit alone | `50` |
 | `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable, after plan room, since credits never reset. Provisional; lane-day arithmetic: [guide](kendex.settings.toml.example) | `5000` |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the shared CI change classification | empty |

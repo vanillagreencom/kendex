@@ -18,7 +18,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # repository of its own, so neither the environment nor kendex.settings.toml
 # supplies one: the rows asserting a mark assert the script default, and the
 # row that wants a setting passes it.
-unset ORCH_HANDOFF_HEADROOM_PCT ORCH_HANDOFF_CONTEXT_PCT ORCH_LANE_HOST ORCH_STATE_DIR
+unset ORCH_OVERSEER_SEAT_RESERVE_PCT ORCH_HANDOFF_HEADROOM_PCT ORCH_HANDOFF_CONTEXT_PCT ORCH_LANE_HOST ORCH_STATE_DIR
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of the must-fail controls below.
@@ -415,10 +415,31 @@ assert_eq "$(grep -oE '[0-9.]+k cr +- ' <<<"$CREDIT_ROW" | tr -s ' ')" "62.3k cr
   "the table shows the credits row's balance as its HEADROOM and leaves it unmarked"
 CREDIT_CTRL="$(mutant_scripts mutant-context-credits lanes)" || exit 1
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-mutate_file "$CREDIT_CTRL/lanes" 'map(with_lane_verdict(.wall; $max; $credit_floor))) as $u' 'map(with_lane_verdict(.wall; $max; 1e18))) as $u'
+mutate_file "$CREDIT_CTRL/lanes" 'with_lane_seat_verdict(.wall; $max; $credit_floor;' 'with_lane_seat_verdict(.wall; $max; 1e18;'
 lanes_table "$(CTX_LANES="$CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: judged with no credit room the lane on credits is marked|ken-102|handoff_required=true"
 printf '%s\n' "$CODEX_PLAN" > "$FIXTURE_DIR/.codex.json"
+ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
+
+echo "=== a lane on the overseer seat hands off at its reserve ==="
+CLAUDE_PLAN="$(cat "$FIXTURE_DIR/.claude.json")"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg a "$H/claude-link" '{account:$a}')" >/dev/null
+lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
+  "a seat lane at the reserve is marked|ken-104|headroom_pct=50 handoff_required=true" \
+  "the caller on the same account keeps the ordinary mark|overseer|caller=true headroom_pct=50 handoff_required=false"
+SEAT_CTRL="$(mutant_scripts mutant-context-seat lib/lane-model.sh)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$SEAT_CTRL/lib/lane-model.sh" '[$max, 100 - $reserve] | min' '$max'
+lanes_table "$(CTX_LANES="$SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "control: without the reserve the seat lane is not marked|ken-104|headroom_pct=50 handoff_required=false"
+CALLER_SEAT_CTRL="$(mutant_scripts mutant-context-caller-seat lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CALLER_SEAT_CTRL/lanes" '(if $x.caller == true then [] else $seats end)' '$seats'
+lanes_table "$(CTX_LANES="$CALLER_SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
+  "control: without the caller exemption its row is marked|overseer|caller=true handoff_required=true"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
+printf '%s\n' "$CLAUDE_PLAN" > "$FIXTURE_DIR/.claude.json"
 ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
 
 echo "=== the caller's own pane is the overseer, reported with no stored reading ==="

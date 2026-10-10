@@ -304,7 +304,7 @@ def with_lane_selection_score($now):
       (if .projected_headroom_pct == null then null
        else .projected_headroom_pct * (if $hours == null then 1 else 1 + 1 / (1 + $hours) end) end)};
 
-def lane_public: del(._rate_prior, ._rate_elapsed_s, ._rate_sample_claims, ._tier, ._expires, ._score, ._credit_unread, ._id);
+def lane_public: del(._rate_prior, ._rate_elapsed_s, ._rate_sample_claims, ._tier, ._expires, ._score, ._credit_unread, ._id, ._seat);
 
 # One spelling for every reset a lane record carries: whole-second UTC with a
 # Z, the form Codex resets are rendered in. The Claude usage endpoint writes
@@ -371,6 +371,14 @@ def with_lane_verdict($wall; $max; $credit_floor):
               usage_rate_pct_per_min: null, projected_wall_minutes: null}
     else . + {verdict: $v} end;
 
+# Fleet lane launches and turn-end handoff reads share the seat reserve.
+# The overseer passes no seats when it judges its own account. Credits retain
+# the credit room rule because they spend no included plan window.
+def with_lane_seat_verdict($wall; $max; $credit_floor; $seats; $reserve):
+  . + {_seat: (if ((._id // .config_dir) as $d | any($seats[]; . == $d)) then 1 else 0 end)}
+  | with_lane_verdict($wall; (if ._seat == 1 then [$max, 100 - $reserve] | min else $max end); $credit_floor)
+  | if ._seat == 1 and .verdict == "walled" then .verdict = "seat-reserve" else . end;
+
 # with_lane_tier($pool; $cloud_floor; $retire; $now) over one judged record
 # applies the expires-first rule, `lanes --help` § pick, whose one statement
 # that is. It adds the fields of the key, which lane_public drops as they order
@@ -411,15 +419,15 @@ def with_lane_cloud_repo($cloud_repo):
 # $cloud_repo the accounts whose ORCH_LANE_CLOUD_REPOS entry names the
 # repository of the checkout, and every other account takes the verdict
 # cloud-repo-unset; null for any other launch.
-def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo):
+def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo; $seats; $reserve):
   def neg: if . == null then null else 0 - . end;
   [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn; $now)
     | with_lane_selection_score($now)
-    | with_lane_verdict(judged_wall; $max; $credit_floor)
+    | with_lane_seat_verdict(judged_wall; $max; $credit_floor; $seats; $reserve)
     | with_lane_tier($pool; $cloud_floor; $retire; $now)
     | with_lane_cloud_repo($cloud_repo) ]
   | { chosen: ([ .[] | select(.verdict == "room") ]
-                | sort_by([._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall]) | first
+                | sort_by([._seat, ._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall]) | first
                 | if . == null then null
                   else . + {effective_headroom_pct: (if .wall == null then null else 100 - .wall end)}
                   | del(.wall, .verdict) | lane_public end),
@@ -430,6 +438,7 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
                              elif .projected_window == null then .binding_resets_at else .projected_window.resets_at end
                            | strings ] | min),
       unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
+      seats: [ .[] | select(.verdict == "seat-reserve") | {config_dir, projected_headroom_pct} ],
       cloud_repo_unset: [ .[] | select(.verdict == "cloud-repo-unset") | .config_dir ],
       cloud_credit_unread: [ .[] | select(._credit_unread) | .alias ],
       refusals: [ .[] | select(.refusal != null) | {config_dir, refusal} ],
@@ -440,26 +449,26 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
 # POOL is the kind's declared pool, CLOUD_FLOOR the cloud credit floor in
 # dollars, RETIRE a JSON object of config_dir to ORCH_LANE_RETIRE date and
 # CLOUD_REPO the JSON array of admitted config dirs, or null.
-lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT CREDIT_FLOOR POOL CLOUD_FLOOR RETIRE CLOUD_REPO
+lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT CREDIT_FLOOR POOL CLOUD_FLOOR RETIRE CLOUD_REPO SEATS RESERVE
   local now
   now="$(date +%s)" || return 1
   jq -c --arg model "$1" --argjson floor "$2" --argjson burn "$3" \
     --argjson max "$4" --argjson credit_floor "$5" --arg pool "$6" --argjson cloud_floor "$7" \
-    --argjson retire "$8" --argjson cloud_repo "$9" --argjson now "$now" "$LANE_MODEL_JQ"'
-    lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo)'
+    --argjson retire "$8" --argjson cloud_repo "$9" --arg seats "${10}" --argjson reserve "${11}" --argjson now "$now" "$LANE_MODEL_JQ"'
+    lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $cloud_floor; $retire; $cloud_repo; ($seats | split("\n") | map(select(. != ""))); $reserve)'
 }
 
 # Judge one record by the pick tiers, using the reading or the launch projection.
 # The caller loads lane_tier_inputs so it can name the repository on refusal.
-lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR
+lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR SEATS RESERVE
   local now
   now="$(date +%s)" || return 1
   jq -c --arg model "$2" --argjson floor "$3" --argjson burn "$4" \
-    --argjson max "$5" --argjson projected "$6" --argjson credit_floor "$7" \
+    --argjson max "$5" --argjson projected "$6" --argjson credit_floor "$7" --arg seats "$8" --argjson reserve "$9" \
     --arg pool "$TIER_POOL" --argjson cloud_floor "$CLOUD_CREDIT_FLOOR" \
     --argjson retire "$TIER_RETIRE" --argjson cloud_repo "$TIER_CLOUD_REPO" --argjson now "$now" "$LANE_MODEL_JQ"'
     with_lane_binding($model; $floor) | with_lane_projection($burn; $now)
-    | with_lane_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor)
+    | with_lane_seat_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor; ($seats | split("\n") | map(select(. != ""))); $reserve)
       | with_lane_tier($pool; $cloud_floor; $retire; $now)
       | with_lane_cloud_repo($cloud_repo)
   ' <<<"$1"

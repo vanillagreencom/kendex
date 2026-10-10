@@ -910,6 +910,25 @@ assert_eq "$(transferable_status claude '--model fable --dangerously-skip-permis
   "0|0|1|1|1|1|1|1|0|0|1|1" \
   "the transfer judge admits one full bypass alone and refuses a mix, a restricted word, and nothing; copilot's tools-only word is restricted"
 
+# A caller below the lane reserve still has room at its overseer mark.
+SEAT_RECORD="$("$SRC_DIR/workflow-state" --state-dir "$TMP_ROOT/work/tmp" get oversee '.overseer // {}')"
+"$SRC_DIR/workflow-state" --state-dir "$TMP_ROOT/work/tmp" set oversee overseer "$(jq -nc --arg a "$H/.claude" '{account:$a}')" >/dev/null
+new_known_claude_caller 'Seat reserve fixture'
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+run_succeed seatreserve '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: account-below-mark headroom=40" \
+  "an overseer on its seat at 40 percent room keeps its own mark"
+RESERVECTL="$(mutant_scripts seatreservectl oversee-succeed)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$RESERVECTL/oversee-succeed" '--harness "$CALLER_ACCOUNT_HARNESS" --for-overseer' '--harness "$CALLER_ACCOUNT_HARNESS"'
+SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed seatreservectl '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=headroom value=40 mark=$TRIGGER succession=on account=claude resets=$CLAUDE_USAGE_SESSION_RESET" \
+  "control: omitting --for-overseer wrongly fires on the seat reserve"
+"$SRC_DIR/workflow-state" --state-dir "$TMP_ROOT/work/tmp" set oversee overseer "$SEAT_RECORD" >/dev/null
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
 # `lanes pick` names above the trigger, never back onto the walled one.
@@ -1622,7 +1641,7 @@ for pick_row in \
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: $pick_want" "qualifying pick row $pick_name"
   picks="$(grep '^pick ' "$TMP_ROOT/qualifying-picks.log")"
   assert_eq "$(sed -n 1p <<<"$picks")" \
-    "pick --lane $H/.claude --harness claude --min-headroom-pct $TRIGGER --model claude-fable-5-1 --json" \
+    "pick --lane $H/.claude --harness claude --for-overseer --min-headroom-pct $TRIGGER --model claude-fable-5-1 --json" \
     "qualifying $pick_name reads the caller first"
   if [[ "$pick_calls" == caller ]]; then
     assert_eq "$(wc -l <<<"$picks" | tr -d ' ')" 1 "an inert qualifying mark runs only the caller pick"

@@ -1035,7 +1035,7 @@ if (( JUDGES )); then
   caller_rc=4 caller_record=""
   if ol_account_measured "$CALLER_ACCOUNT_HARNESS"; then
     caller_rc=0
-    caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" \
+    caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" --for-overseer \
       --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--model "$CALLER_ACCOUNT_MODEL"} \
       --json 2>"$DEP_ERR")" || caller_rc=$?
   fi
