@@ -143,6 +143,13 @@ case "$cmd" in
         worktree="${1:-.}"
         git_context="$(git -C "$worktree" rev-parse --git-common-dir --show-toplevel)"
         git_common_dir="${git_context%%$'\n'*}"
+        git_toplevel="${git_context#*$'\n'}"
+        # Git prints paths containing newlines verbatim. Keep the separate
+        # reads for those paths so neither field can split the other.
+        if [[ "$git_context" == *$'\n'*$'\n'* ]]; then
+            git_common_dir="$(git -C "$worktree" rev-parse --git-common-dir)"
+            git_toplevel="$(git -C "$worktree" rev-parse --show-toplevel)"
+        fi
         case "$git_common_dir" in
             # Git answers relative to the worktree it was asked about, so the
             # value is resolved from there and printed physical. A caller
@@ -152,7 +159,7 @@ case "$cmd" in
             # link to a nested directory would climb from the link's own place
             # and answer an ancestor of it rather than the checkout.
             */.git) cd -P -- "$worktree" && cd -P -- "${git_common_dir%/*}" && pwd -P ;;
-            *) printf '%s\n' "${git_context#*$'\n'}" ;;
+            *) printf '%s\n' "$git_toplevel" ;;
         esac
         ;;
     timestamp)

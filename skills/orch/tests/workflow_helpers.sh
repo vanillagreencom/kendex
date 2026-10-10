@@ -198,6 +198,109 @@ assert_eq "$(cmp -s "$relative_gc" "$GC" && echo same || echo differs)" "differs
 assert_eq "$("$relative_gc" common-root "$deep_repo/sub/deeper")" "../.." \
   "control: unresolved, the answer is a path against the caller's own directory"
 
+# Git's real producer prints embedded newlines verbatim in either path field.
+# Check the helper's bytes and the local ownership check through a real send.
+common_root_paths() { # SCRIPTS CASE-DIR
+  python3 - "$1" "$2" "$WS" <<'PY_COMMON_ROOT'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+scripts, home, writer = map(Path, sys.argv[1:])
+home.mkdir()
+env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
+       if key in os.environ}
+for label, main_name, linked_name in (
+        ("ordinary", "main", "linked"),
+        ("common-field", "main\ncheckout", "linked"),
+        ("top-field", "main", "linked\ncheckout"),
+        ("both-fields", "main\ncheckout", "linked\ncheckout")):
+    case = home / label
+    case.mkdir()
+    main, linked = case / main_name, case / linked_name
+    main.mkdir()
+    main = main.resolve()
+    linked = linked.absolute()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(main), *args], check=True,
+                              env=env, capture_output=True, timeout=20)
+
+    git("init", "-q", "-b", "main")
+    git("config", "gc.auto", "0")
+    git("config", "maintenance.auto", "false")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com",
+        "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+        "commit", "--allow-empty", "-qm", "fixture")
+    git("worktree", "add", "-qb", "ken-1", str(linked))
+    # The same workflow-state writer that oversee register uses supplies the
+    # required checkout-local overseer record; no host or pane is contacted.
+    for args in (("init", "oversee"), ("set", "oversee", "overseer", '{"window":"@1"}')):
+        subprocess.run([str(writer), *args], cwd=main, env=env,
+                       check=True, capture_output=True, timeout=20)
+    nested = linked / "sub" / "deeper"
+    nested.mkdir(parents=True)
+    alias = case / "alias"
+    alias.symlink_to(nested, target_is_directory=True)
+    expected = os.fsencode(main) + b"\n"
+    roots = [subprocess.run([str(scripts / "git-context"), "common-root", str(path)],
+                            env=env, capture_output=True, timeout=20)
+             for path in (main, linked, nested, alias)]
+    roots.append(subprocess.run([str(scripts / "git-context"), "common-root", "."],
+                               cwd=nested, env=env, capture_output=True, timeout=20))
+    text = case / "directive.txt"
+    text.write_text("Owner directive.\n")
+    send = subprocess.run([str(scripts / "lane-mail"), "send", "--item", "overseer",
+                           "--root", str(main), "--directive", "--file", str(text)],
+                          cwd=linked, env=env, capture_output=True, timeout=20)
+    matched = all(root.returncode == 0 and root.stdout == expected for root in roots)
+    print(f"common-root case={label} bytes={int(matched)} send={send.returncode}", flush=True)
+    assert matched, "common-root-delimited-path"
+    assert send.returncode == 0, ("common-root-valid-send", send.stderr)
+    envelope = json.loads((main / "tmp/lane-mail/overseer/to-lane.jsonl").read_text())
+    assert envelope["kind"] == "directive" and envelope["text"] == "Owner directive.", \
+        "common-root-directive-delivery"
+PY_COMMON_ROOT
+}
+
+# The existing private-copy helper keeps the mutant beside the real reader
+# and its dependencies. Removing only the fallback must break the same check.
+source "$TEST_DIR/lib/growth-state.sh"
+common_mutant="$(mutant_scripts common-root-mutant git-context)"
+python3 - "$common_mutant/git-context" <<'PY_COMMON_MUTANT'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+old = r'''        if [[ "$git_context" == *$'\n'*$'\n'* ]]; then'''
+text = path.read_text()
+assert text.count(old) == 1
+path.write_text(text.replace(old, "        if false; then"))
+PY_COMMON_MUTANT
+assert_eq "$(cmp -s "$common_mutant/git-context" "$GC" && echo same || echo differs)" "differs" \
+  "control: the common-root mutant removes the newline fallback"
+bash -n "$common_mutant/git-context"
+for common_round in before-1 before-2 before-3 before-4 before-5 control \
+                    after-1 after-2 after-3 after-4 after-5; do
+  common_scripts="$SKILL_DIR/scripts"
+  [[ "$common_round" != control ]] || common_scripts="$common_mutant"
+  common_rc=0
+  common_root_paths "$common_scripts" "$TMP_ROOT/common-root-$common_round" \
+    >"$TMP_ROOT/common-root-$common_round.log" 2>&1 || common_rc=$?
+  if [[ "$common_round" == control ]]; then
+    cat "$TMP_ROOT/common-root-$common_round.log"
+    assert_eq "$common_rc" 1 "control: combined newline fields fail the common-root assertions"
+    assert_file_contains "$TMP_ROOT/common-root-$common_round.log" 'AssertionError: common-root-delimited-path' \
+      "control: the mutant reaches the root-byte assertion"
+    assert_file_contains "$TMP_ROOT/common-root-$common_round.log" 'case=common-field bytes=0 send=2' \
+      "control: the corrupt root also refuses the valid linked-checkout send"
+  else
+    assert_eq "$common_rc" 0 "$common_round: real Git path fields preserve root bytes and permit delivery" \
+      "$TMP_ROOT/common-root-$common_round.log"
+  fi
+done
+
 # The comment-triage baseline is an RFC-3339 UTC instant compared against
 # GitHub timestamps; a locale-shaped or local-zone value would silently
 # mis-filter every re-triage pass.
