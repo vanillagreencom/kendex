@@ -448,6 +448,29 @@ MS_INSIDE="$variant"
 # common Git directory lies outside.
 plant_variant common-dir-check 'owned_git=$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null) || owned_git="."' 'owned_git="."'
 MS_TOP_ONLY="$variant"
+
+if [ -d /proc/self ] && command -v setsid >/dev/null; then
+  plant_variant detached-cleanup '  cleanup_workspace' '  :'
+  MS_GROUP_ONLY="$variant"
+  for script in "$MS" "$MS_GROUP_ONLY"; do
+    export DETACHED_PID_FILE="$TMP/detached.pid"
+    rc=0
+    out=$("$script" --worktree "$REPO" --sha "$SHA_BASE" --build true --mutate false --stability 1 \
+      --test 'setsid sleep 1000 >/dev/null 2>&1 & echo $! > "$DETACHED_PID_FILE"; exit 0' 2>&1) || rc=$?
+    child=$(cat "$DETACHED_PID_FILE")
+    child_stopped=no
+    if stopped "$child"; then child_stopped=yes; fi
+    if [ "$script" = "$MS" ]; then
+      assert_case "detached child stops and is reported" "rc=$rc;stopped=$child_stopped;notice=$(output_has "notice=workspace-process-ended pid=$child")" "rc=2;stopped=yes;notice=yes"
+    else
+      assert_case "group-only teardown fails detached-child assertion" "$child_stopped" no
+      cwd=$(readlink "/proc/$child/cwd" 2>/dev/null) || cwd=""
+      case "$cwd" in "$RUNTIME_TMP"/mutation-stability.*/*) kill -KILL "$child" ;; esac
+      stopped "$child" || fail "detached control cleanup" "owned child did not stop"
+    fi
+  done
+fi
+
 LINKED="$TMP/linked"
 git -C "$REPO" worktree add -q --detach "$LINKED" "$SHA_BASE"
 REPO_PHYSICAL=$(cd "$REPO" && pwd -P) || exit 2

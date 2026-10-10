@@ -1,0 +1,1 @@
+- Mutation checks stop Linux processes that remain in their scratch workspace, including detached sessions, before they remove the workspace.

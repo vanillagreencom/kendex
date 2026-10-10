@@ -162,11 +162,11 @@ if [ "$root_status" -ne 0 ]; then
   [ -z "$root_result" ] || printf '%s\n' "$root_result" >&2
   exit 2
 fi
-ROOT="$root_result"
+ROOT=$(physical_dir . "$root_result") || refuse temp-resolve-failed path "$root_result" "could not resolve the mutation workspace; workspace kept"
 ACTIVE_PID="" ACTIVE_GROUP=""
 
 # The build or test command runs as its own process group, so the signal goes
-# to the group and reaches whatever it started. `signal` first so a build gets
+# to that group; cleanup_workspace covers detached Linux sessions. `signal` first so a build gets
 # to write out what it was doing; KILL after the grace, because a group that
 # ignored the first one is not going to answer a second.
 #
@@ -199,9 +199,35 @@ cleanup_active() {
   ACTIVE_PID="" ACTIVE_GROUP=""
 }
 
+# Linux permits ownership checks by cwd even after a child starts a session.
+# Recheck before each signal: a saved PID can be reused by another process.
+cleanup_workspace() {
+  [ ! -d /proc/self ] || command -v readlink >/dev/null || refuse cleanup-unavailable path "$ROOT" "readlink is required; workspace kept"
+  sweep=0
+  while [ -d /proc/self ]; do
+    found=0
+    for entry in /proc/[0-9]*/cwd; do
+      cwd=$(readlink "$entry" 2>/dev/null) || continue
+      case "$cwd/" in "$ROOT/"*) ;; *) continue ;; esac
+      found=1
+      [ "$sweep" -lt 20 ] || refuse cleanup-incomplete path "$ROOT" "workspace still has live processes; workspace kept"
+      pid=${entry#/proc/}; pid=${pid%/cwd}
+      signal=KILL
+      [ "$sweep" -ne 0 ] || signal=TERM
+      if kill -s "$signal" "$pid" 2>/dev/null; then
+        notice workspace-process-ended pid "$pid" "sent $signal to a process inside the mutation workspace"
+      fi
+    done
+    [ "$found" -ne 0 ] || break
+    sleep 0.05
+    sweep=$((sweep + 1))
+  done
+}
+
 cleanup() {
   trap - EXIT HUP INT TERM
   cleanup_active
+  cleanup_workspace
   [ "$KEEP" = 1 ] || rm -rf "$ROOT"
 }
 trap cleanup EXIT
