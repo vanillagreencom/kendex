@@ -212,6 +212,7 @@ case "$1" in
     ;;
   # A hand-deleted declaration's file stays after refresh; apply removes it.
   apply)
+    [ "${2:-}" != --plan ] || exit 0
     [ "${TEST_APPLY_EXIT:-0}" -eq 0 ] || exit "$TEST_APPLY_EXIT"
     rm -f -- .claude/hooks/leftover.sh ;;
   verify)
@@ -1000,7 +1001,7 @@ for row in apply apply-control apply-failure apply-failure-control; do
   calls="$(awk '{ print $1 }' "$TMP/state/kendex" | tr '\n' ' ')"
   case "$row" in
     apply)
-      if [ "$RC" -eq 0 ] && [ "$calls" = 'help refresh apply verify --version ' ] &&
+      if [ "$RC" -eq 0 ] && [ "$calls" = 'apply help refresh apply verify --version ' ] &&
           grep -qxF 'apply --scope project --yes --leave' "$TMP/state/kendex" &&
           [ "$after" != "$before" ] &&
           ! git --git-dir="$TMP/remote" cat-file -e refs/heads/kendex/refresh:.claude/hooks/leftover.sh 2>/dev/null; then
@@ -1013,7 +1014,7 @@ for row in apply apply-control apply-failure apply-failure-control; do
       else bad 'apply control' "$OUT"; fi ;;
     apply-failure)
       if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=apply value=5' <<<"$OUT" &&
-          [ "$calls" = 'help refresh apply ' ] && [ "$after" = "$before" ] &&
+          [ "$calls" = 'apply help refresh apply ' ] && [ "$after" = "$before" ] &&
           ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
         ok 'a failed apply stops the run before publication'
       else bad 'apply failure' "$OUT"; fi ;;
@@ -2125,6 +2126,8 @@ else
   cat >"$TMP/bin/kendex" <<'REAL_KENDEX_SH'
 #!/usr/bin/env bash
 set -euo pipefail
+# The render call clears test variables, so its executable path is fixture data.
+if [ "$1" = bot-instructions-render ]; then exec "@REAL_KENDEX@" "$@"; fi
 printf '%s\n' "$*" >>"$TEST_STATE/kendex"
 if [ "$TEST_KENDEX_OUTPUT" = failed ] && [ "$1" = refresh ]; then
   printf 'catalog read failed\n' >&2
@@ -2137,6 +2140,118 @@ else
   exec "$TEST_REAL_KENDEX" "$@"
 fi
 REAL_KENDEX_SH
+  file_edit "$TMP/bin" kendex 1 '@REAL_KENDEX@' "s|@REAL_KENDEX@|$REAL_KENDEX|"
+  REAL_MANIFEST_SCHEMA="$(real_manifest_schema)"
+  # The real refresh refuses the old schema unless the runner edits it first.
+  # The same assertion judges each disposable runner control.
+  for row in previous older newer missing current step-control distance-control table-control; do
+    real_refresh_fixture "schema-$row"
+    file_edit "$repo" .agents/skills/probe/SKILL.md 1 '^Hand edit\.$' '/^Hand edit\.$/d'
+    printf 'New upstream content.\n' >>"$real_root/git/owner/catalog/skills/probe/SKILL.md"
+    commit "$real_root/git/owner/catalog"
+    committed="$REAL_MANIFEST_SCHEMA"
+    case "$row" in
+      previous | step-control | table-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
+      older | distance-control) committed=$((REAL_MANIFEST_SCHEMA - 2)) ;;
+      newer) committed=$((REAL_MANIFEST_SCHEMA + 1)) ;;
+    esac
+    python3 - "$repo/kendex.toml" "$committed" "$row" "$bot_table" <<'SCHEMA_FIXTURE'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+data = path.read_bytes()
+_, rest = data.split(b"\n", 1)
+schema = b"" if sys.argv[3] == "missing" else f"schema = {sys.argv[2]}\n".encode()
+path.write_bytes(schema + rest + b"\n" + sys.argv[4].encode())
+SCHEMA_FIXTURE
+    runner="$repo/refresh/refresh-consumer.sh"
+    cp "$runner" "$real_root/schema-runner"
+    if [[ "$row" == *-control ]]; then
+      python3 - "$runner" "$row" <<'SCHEMA_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+text = path.read_text()
+if sys.argv[2] == "step-control":
+    old = 'if [[ "$schema_probe" =~ $schema_pattern ]]; then'
+    new = 'if false && [[ "$schema_probe" =~ $schema_pattern ]]; then'
+elif sys.argv[2] == "distance-control":
+    old, new = "if previous + 1 == current:", "if previous < current:"
+else:
+    old = '''    candidates = []
+    for index, line in enumerate(lines):
+        content = line.rstrip(b"\\r\\n")
+        if content.lstrip().startswith(b"["):
+            break
+        if content == f"schema = {previous}".encode():
+            candidates.append(index)
+    if len(candidates) == 1:
+        index = candidates[0]
+        lines[index] = lines[index].replace(f"schema = {previous}".encode(), f"schema = {current}".encode(), 1)
+        path.write_bytes(b"".join(lines))'''
+    new = '''    for index, line in enumerate(lines):
+        content = line.rstrip(b"\\r\\n")
+        if content.startswith(b"schema = "):
+            lines[index] = f"schema = {current}".encode() + line[len(content):]
+    path.write_bytes(b"".join(lines))'''
+assert text.count(old) == 1
+changed = text.replace(old, new)
+assert changed != text
+path.write_text(changed)
+SCHEMA_CONTROL
+    fi
+    publish_real_fixture
+    git -C "$repo" show main:kendex.toml >"$real_root/schema-before"
+    run_real_refresh
+    schema_passed=no
+    case "$row" in
+      older | newer | missing | distance-control)
+        if real_refresh_stopped 'refresh-error=refresh value=' &&
+            cmp -s "$real_root/schema-before" "$repo/kendex.toml"; then schema_passed=yes; fi ;;
+      previous | current | step-control | table-control)
+        if [ "$RC" -eq 0 ] && [ -s "$TMP/state/creates" ]; then
+          git --git-dir="$real_root/remote" show refs/heads/kendex/refresh:kendex.toml >"$real_root/schema-after"
+          if python3 - "$real_root/schema-before" "$real_root/schema-after" "$committed" "$REAL_MANIFEST_SCHEMA" <<'SCHEMA_ASSERT'
+from pathlib import Path
+import sys
+before, after = (Path(p).read_bytes() for p in sys.argv[1:3])
+old, current = sys.argv[3:]
+assert after == before.replace(f"schema = {old}\n".encode(), f"schema = {current}\n".encode(), 1)
+SCHEMA_ASSERT
+          then
+            paths="$(git --git-dir="$real_root/remote" diff --name-only main refs/heads/kendex/refresh -- kendex.toml)"
+            if { [ "$row" != current ] && [ "$paths" = kendex.toml ]; } ||
+                { [ "$row" = current ] && [ -z "$paths" ]; }; then schema_passed=yes; fi
+          fi
+        fi ;;
+    esac
+    cp "$real_root/schema-runner" "$runner"
+    case "$row:$schema_passed" in
+      step-control:no)
+        if real_refresh_stopped 'refresh-error=refresh value='; then
+          ok 'control: no schema edit leaves the real refresh refused'
+        else bad "$row schema control" "$OUT"; fi ;;
+      distance-control:no)
+        if ! cmp -s "$real_root/schema-before" "$repo/kendex.toml" &&
+            grep -qxF "schema = $REAL_MANIFEST_SCHEMA" "$repo/kendex.toml"; then
+          ok 'control: a wider schema distance changes the refused manifest'
+        else bad "$row schema control" "$OUT"; fi ;;
+      table-control:no)
+        if python3 - "$real_root/schema-before" "$repo/kendex.toml" "$committed" "$REAL_MANIFEST_SCHEMA" <<'TABLE_CONTROL_ASSERT'
+from pathlib import Path
+import sys
+before, after = (Path(p).read_bytes() for p in sys.argv[1:3])
+old, current = sys.argv[3:]
+expected = before.replace(f"schema = {old}\n".encode(), f"schema = {current}\n".encode(), 1)
+assert after == expected.replace(b"schema = 1\n", f"schema = {current}\n".encode(), 1)
+TABLE_CONTROL_ASSERT
+        then ok 'control: an unbounded rewrite also changes the bot-instructions schema'
+        else bad "$row schema control" "$OUT"; fi ;;
+      *-control:yes) bad "$row schema control" "$OUT" ;;
+      *:yes) ok "$row real schema refresh preserves every other manifest byte" ;;
+      *) bad "$row real schema refresh" "$OUT" ;;
+    esac
+  done
   for row in local upstream shared multiple discard-control baseline; do
     real_refresh_fixture "$row"
     expected_edits='.agents/skills/probe/SKILL.md'

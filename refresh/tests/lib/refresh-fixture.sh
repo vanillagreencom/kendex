@@ -336,6 +336,24 @@ path.write_text(json.dumps(entries) + "\n")
 PY
 }
 
+# The engine's refusal is the refresh runner's schema-number interface.
+real_manifest_schema() {
+  local root="$TMP/schema-probe" output
+  mkdir -p "$root/home" "$root/project"
+  printf 'schema = 1\n' >"$root/project/kendex.toml"
+  output="$(cd -- "$root/project" && env -i PATH="$PATH" HOME="$root/home" KENDEX_REAL_HOME=1 \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 KENDEX_UI=plain \
+    "$REAL_KENDEX" apply --plan --scope project 2>&1 || true)"
+  python3 - "$output" <<'ENGINE_SCHEMA'
+import re
+import sys
+match = re.search(r"it is a schema 1 manifest, and this kendex writes schema ([0-9]+)", sys.argv[1])
+if not match:
+    raise SystemExit("refresh-fixture: engine-schema=missing")
+print(match[1])
+ENGINE_SCHEMA
+}
+
 # Each row owns its local catalog, HOME, edit and install record.
 real_refresh_fixture() { # NAME
   sandbox
@@ -350,7 +368,7 @@ real_refresh_fixture() { # NAME
   git -C "$real_root/git/owner/catalog" config user.email fixture@example.invalid
   git -C "$real_root/git/owner/catalog" add -A
   git -C "$real_root/git/owner/catalog" commit -qm fixture
-  printf 'schema = 7\n[sources.cat]\nrepo = "owner/catalog"\n[install]\nharnesses = ["claude"]\nmethod = "symlink"\n[skills.probe]\nsource = "cat"\n' >"$repo/kendex.toml"
+  printf 'schema = %s\n[sources.cat]\nrepo = "owner/catalog"\n[install]\nharnesses = ["claude"]\nmethod = "symlink"\n[skills.probe]\nsource = "cat"\n' "$REAL_MANIFEST_SCHEMA" >"$repo/kendex.toml"
   (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
@@ -385,6 +403,7 @@ run_real_refresh() {
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" \
     TEST_REAL_GIT="$REAL_GIT" TEST_REAL_KENDEX="$REAL_KENDEX" TEST_KENDEX_OUTPUT="${KENDEX_OUTPUT:-normal}" \
+    TEST_LEASE_REMOTE="$real_root/remote" \
     TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" \
     TEST_CLASS=render TEST_MEASURED=true TEST_CLASS_EXIT=0 TEST_REASON=cause=renders-match-their-sources \
     KENDEX_REAL_HOME=1 KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain bash "$runner" 2>&1)" || RC=$?
