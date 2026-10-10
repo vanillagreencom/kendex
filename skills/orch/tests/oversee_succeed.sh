@@ -768,7 +768,7 @@ ENTRYMODECTL="$(mutant_scripts entrymodectl oversee-succeed)" || exit 1
 mutate_file "$ENTRYMODECTL/oversee-succeed" \
   '(( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"' ':'
 # NAME|CALLER|ENTRY|FLAGS|MODE|CODEX USAGE|EXIT|KEYS|LINE|SCRIPT (a control)
-for row in \
+ENTRY_ROWS="$(printf '%s\n' \
   "claude-codex|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|" \
   "codex-claude|codex|claude:fable:high|--dangerously-bypass-approvals-and-sandbox --verbose|--print-launch-line|20|0||$ENTRY_CLAUDE_LINE|" \
   "same-harness|claude|claude:fable:high|--permission-mode dontAsk --verbose|--print-launch-line|20|0||$ENTRY_SAME_LINE|" \
@@ -781,8 +781,8 @@ for row in \
   "check-mode|claude|codex:gpt-6-astra:high||--check-marks|20|1|mode-conflict;||" \
   "caller-control|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|$ENTRYCTL/oversee-succeed" \
   "count-control|claude|codex:gpt-6-astra:high,claude:fable:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||$ENTRYCOUNTCTL/oversee-succeed" \
-  "mode-control|claude|codex:gpt-6-astra:high||--check-marks|20|1|mode-conflict;||$ENTRYMODECTL/oversee-succeed"; do
-  IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage row_rc row_keys row_line row_script <<<"$row"
+  "mode-control|claude|codex:gpt-6-astra:high||--check-marks|20|1|mode-conflict;||$ENTRYMODECTL/oversee-succeed")"
+while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage row_rc row_keys row_line row_script; do
   fleet_state
   row_lane="CLAUDE_CONFIG_DIR=$H/.claude"
   if [[ "$row_caller" == codex ]]; then
@@ -835,7 +835,7 @@ for row in \
       assert_eq "$(jq -r --arg d "$TMP_ROOT/work" '.projects[$d].hasTrustDialogAccepted' "$H/.claude/.claude.json")" \
         true 'print entry prepares the picked claude account trust' ;;
   esac
-done
+done <<<"$ENTRY_ROWS"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 
