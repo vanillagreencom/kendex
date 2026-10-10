@@ -46,6 +46,10 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
 
+## Item text
+
+Stored `text` starts with `#[N] | [AGENT] | [LOCATION]` on its first line. Copy the header and that item's fields verbatim. Exclude outer `---` separators, leading blank lines, code fences and delegation headings from stored text. This contract applies to both `--items-file` and inline `--item` text.
+
 **`reach` is required per item, on both routes.** It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
 
 The item's location is the text after the second `|` on the first line of `text`. Before writing a non-cut round, the writer reads the issue's `pr_comment_review.patched_causes` once through `workflow-state get`. Location strings match after blanks at both ends are removed. Case, path and symbol remain unchanged. Empty, `TBD` and `general` locations match nothing; an older entry with no `location` stays valid and matches nothing. A match requires `recurrence`, whose meaning [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) owns. The inline form has no such field. An unanswered match exits 2 with `dev-round-write: repeat-location n=[N] location=[LOCATION] commit=[SHA]` first on stderr and writes no record. Unreadable state exits 2 with `dev-round-write: patched-state issue=[ID]` first on stderr. A refused stamp can take a corrected items file under the same round id. `--cut` skips the comparison.

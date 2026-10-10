@@ -16,16 +16,14 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 ## 1. Build Fix Items
 
-`items` provided (managed) → use them directly, → § 2.
+`items` provided (managed) → use them under [dev-round.md § Item text](../schemas/dev-round.md#item-text), → § 2.
 
 Standalone: synthesize from conversation context, reading the relevant files first. Format each as:
 
 ```text
----
 #[N] | [conversation] | [location or "TBD"]
 Description: "[WHAT IS WRONG]"
 Recommendation: "[HOW TO FIX]"
----
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
@@ -119,7 +117,7 @@ Before stamping or delegating the round, check its base:
    ```
 
 
-   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
+   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. Copy `[ITEM_TEXT]` under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
    Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry in the delegation. The key is the one carrier: the artifact's own path is addressed by `dev_round_id`, which the stamp above has already overwritten.
 
