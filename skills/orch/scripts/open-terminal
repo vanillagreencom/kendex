@@ -2745,7 +2745,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
 # caller checks it, which suspends errexit for this whole body, so every
 # substitution here is checked explicitly.
 launch_finish() {
-  local context_session brief_prompt_file="" brief_prompt_dir rc=0
+  local context_session brief_prompt_file="" brief_prompt_dir brief_command_file rc=0
   LANE_MARKER_REASON=marker-failed
   if [[ "$host_pending_step" == selection ]]; then
     record_session="" LAUNCH_ALLOW_ALL=null
@@ -2854,6 +2854,8 @@ launch_finish() {
     # exits, so the shell stays to run it rather than exec the first.
     local run="exec $cmd"
     [[ "$RELAUNCH_ROUTE" != resume-or-fresh ]] || run="{ $cmd; }"
+    # Keep the marked launch root when a lane's tool shell changes directory.
+    run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
   elif [[ -n "$LANE_ENV" || "$HARNESS" == codex || "$HARNESS" == copilot ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
@@ -2905,6 +2907,21 @@ launch_finish() {
     # check reads as skip, whatever prefix the line below carries.
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
     cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
+  fi
+  if [[ "$LANE_HOST" == local ]]; then
+    cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"
+    if [[ -n "$brief_prompt_file" ]]; then
+      # Login shells can change directory during startup. Keep the explicit
+      # origin and the complete launch line off the terminal's input queue.
+      brief_command_file="$(mktemp "$brief_prompt_dir/local-command.XXXXXX")" \
+        && printf '%s\n' "$cmd" > "$brief_command_file" \
+        || { ot_message brief-command-failed "item=$item" >&2; return 1; }
+      cmd="bash $(lane_single_quote "$brief_command_file")"
+      # A tmux pane keeps its functions and the origin after the harness exits.
+      if [[ "$WAKE" != true && "$TERMINAL_MODE" == tmux ]]; then
+        cmd="source $(lane_single_quote "$brief_command_file")"
+      fi
+    fi
   fi
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || return 1

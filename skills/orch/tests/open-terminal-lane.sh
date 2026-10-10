@@ -198,18 +198,18 @@ lane_launch() {
   # command, not the harness word, so the prefix is all this row matches on.
   # The value the prefix must name: the lane itself, or the home `home=` gives
   # a row whose launch builds one.
-  local want="clear; env $var='$prefix_home' "
+  local want="&& env $var='$prefix_home' "
   if [[ -z "$template" ]]; then
     [[ "$harness" != codex ]] || want+="ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' "
     want+="$harness "
   fi
   grep -qF "$want" "$runs/tmux.log" && form=prefix
-  grep -qF "clear; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
+  grep -qF "&& '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
   for f in $fields; do
     case "$f" in
       rc) value="$rc" ;;
       form) value="$form" ;;
-      bare) value="$(grep -cF "clear; '$launcher' " "$runs/tmux.log" || true)" ;;
+      bare) value="$(grep -cF "&& '$launcher' " "$runs/tmux.log" || true)" ;;
       verified) value="$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" ;;
       mismatch) value="$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" ;;
       closed) value="$(grep -c '^kill-window' "$runs/tmux.log" || true)" ;;
@@ -261,6 +261,25 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" -
 assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form" "cmd=true {item}" clock=virtual)" \
   "rc=0 form=prefix" \
   "a --cmd template retains its command under the selected account prefix"
+
+# A bare launcher makes the pane resolve PATH again instead of using the
+# account launcher's resolved path. The same positive comparison must reject it.
+ACCOUNT_FORM_CONTROL="$(mutant_scripts account-form lib/lane-launch.sh)" || exit 1
+orch_fixture_shared_libs "${ACCOUNT_FORM_CONTROL%/scripts}"
+mutate_file "$ACCOUNT_FORM_CONTROL/lib/lane-launch.sh" \
+  '"${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }"' \
+  '"${compaction:+env $compaction }" "$(lane_single_quote "${form##*/}")" "${cmd#"$harness" }"'
+ACCOUNT_FORM_OBS="$(lane_launch "$ACCOUNT_FORM_CONTROL/open-terminal" account-form-control claude "$LNLANE" "$LNLANE" - "rc form bare" clock=virtual)"
+assert_eq "$ACCOUNT_FORM_OBS" "rc=0 form=none bare=1" \
+  "control: an unresolved launcher is read as bare instead of the account's absolute path"
+ACCOUNT_FORM_RC=0
+(
+  assert_eq "$ACCOUNT_FORM_OBS" "rc=0 form=launcher bare=0" \
+    "a lane whose launcher is on PATH launches through it by the absolute path the judge resolved, with no env prefix"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/account-form-assertion.out" 2>&1 || ACCOUNT_FORM_RC=$?
+assert_eq "$ACCOUNT_FORM_RC" 1 \
+  "control: the same account-launch assertion rejects the unresolved launcher" "$TMP_ROOT/account-form-assertion.out"
 
 table \
   "a custom account launch refuses an invalid bound before opening its pane|ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD|--harness claude --lane $OUTSIDE_LANE KEN-89|rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \

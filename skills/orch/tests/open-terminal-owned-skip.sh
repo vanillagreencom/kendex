@@ -539,8 +539,8 @@ OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case 
   --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
 await_file "$TMP_ROOT/launch-codex-cmd.cmd"
 LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
-assert_eq "${LAUNCH_CODEX_CMD##* && }" \
-  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11 '$UNATTENDED_TEXT'" \
+assert_eq "${LAUNCH_CODEX_CMD#* && }" \
+  "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-11' && env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11 '$UNATTENDED_TEXT'" \
   "a codex --cmd launch runs its substituted template exactly, with no update setting added"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"

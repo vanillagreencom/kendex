@@ -14,7 +14,7 @@ A worktree is where a lane works, and a write that lands in the main checkout fr
 
 - Do resolve the project a bare verb writes from the working directory through `project_root_from` in `crates/core/src/discover.rs`. A marker inside a worktree makes that folder a project without requiring a manifest.
 - Do apply the cross-checkout restriction to the command families selected by `writing_scopes` in `crates/cli/src/commands/lane_refresh.rs`. Its `check` compares the actual caller with their resolved writing destinations before bootstrap writes. Global scope and read or preview runs pass. `hooks/block-worktree-refresh.sh` queries only the installed executable on its own PATH with `--worktree-project-write-capability` before an advisory. Only one plain bare kendex call can receive that advisory. Other plain project-writer matches retain baseline refusals, including compound commands, prefixes and executable paths, without a capability query or execution: Claude PreToolUse runs before Bash approval. Global, read and preview inputs retain their existing classification. Quoted titles, messages and heredoc data stay outside the plain scan. The CLI answers before bootstrap with the fixed JSON object `{"worktree_project_write_guard":1}`. An absent capability, failed call or unreadable answer refuses with the executable's update route. This closes the install window for these plain commands because catalog refresh and executable update are independent. The hook neither resolves targets nor reads quoted data as execution. `remedy_target` in `crates/core/src/drift/report.rs` resolves the project for the check report.
-- Do refuse a project-scope `refresh`, `apply` or `updates --apply` from a marked lane worktree unless the caller passes `--lane-refresh`; `crates/core/src/lane.rs` reads the marker the orch skill's `lane-marker` writes.
+- Do refuse a project-scope `refresh`, `apply` or `updates --apply` from a marked lane worktree unless the caller passes `--lane-refresh`; `crates/core/src/lane.rs` reads the marker the orch skill's `lane-marker` writes. The CLI also checks the `KENDEX_LANE_ORIGIN` launch root that orch's `open-terminal` exports inside local and hosted lane shells, so changing directory into main does not hide the invoking lane.
 - Do decide once whether a tree is the source, where the artifact is built in `crates/core/src/engine/desired_skill.rs`; a copy delivered elsewhere from an in-place declaration is a render like any other.
 - Do take `--project-path PATH` as the explicit project target for the verbs that accept it. A linked caller needs `--lane-refresh` to write another checkout with `refresh`, `apply` or `updates --apply`; that flag overrides both the marked-lane and cross-checkout checks. Other guarded project-writing verbs require a caller in the destination checkout.
 - Never let a record own an in-place source tree: no edit hold, take-over or removal reaches it, and `refresh`, `check` and `verify` compare the links, the block and the entry point alone.
@@ -25,7 +25,7 @@ A worktree is where a lane works, and a write that lands in the main checkout fr
 
 ## Revisit when
 
-A harness reads a project from somewhere other than the working directory's checkout, so the predicate cannot answer from the directory alone.
+A lane starts through a route that does not preserve its launch root.
 
 ## Not governed
 

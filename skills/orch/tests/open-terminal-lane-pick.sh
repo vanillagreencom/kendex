@@ -749,13 +749,23 @@ marked() {
   local option=()
   [[ -z "${4:-}" ]] || option=("$4")
   mkdir -p "$runs" "$caller"
+  local harness=true
+  if [[ "${5:-}" == origin ]]; then
+    # Read at the harness boundary: a shell assignment alone reaches no child.
+    cat > "$runs/origin-child" <<'CHILD'
+#!/bin/sh
+printf '%s' "${KENDEX_LANE_ORIGIN-}" > "$1"
+CHILD
+    chmod +x "$runs/origin-child"
+    harness="'$runs/origin-child' '$runs/origin.env'"
+  fi
   git -C "$caller" init -q
   git -C "$caller" config gc.auto 0
   git -C "$caller" config maintenance.auto false
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
-    "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" ${option[@]+"${option[@]}"} KEN-40 2>&1 )" || rc=$?
+    "$script" --harness claude --cmd "$harness $QUESTION_OFF_ALL" ${option[@]+"${option[@]}"} KEN-40 2>&1 )" || rc=$?
   wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"
   if [[ -f "$wt/.git/lane-mail/ken-40" ]]; then
     marker=other
@@ -768,6 +778,14 @@ marked() {
     [[ "$(cat "$wt/.git/lane-refresh")" != "$wt" ]] || refresh=root
   fi
   printf 'rc=%s marker=%s box=%s refresh=%s refused=%s' "$rc" "$marker" "$box" "$refresh" "$(grep -c '^open-terminal: marker-failed item=KEN-40 ' <<<"$out" || true)"
+  if [[ "${5:-}" == origin ]]; then
+    local command origin
+    command="$(sed -n 's/^clear; //p' "$runs/tmux.log")" || return 1
+    env -u KENDEX_LANE_ORIGIN bash -c "$command" || return 1
+    origin="$(cat "$runs/origin.env")" || return 1
+    [[ "$origin" != "$wt" ]] || origin=root
+    printf ' origin=%s' "${origin:-absent}"
+  fi
 }
 
 assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=made refresh=none refused=0" \
@@ -776,6 +794,24 @@ assert_eq "$(marked "$OPEN_TERMINAL" refresh "$OT_STUB_BIN/worktree" --lane-refr
   "a --lane-refresh launch also writes the refresh record holding the lane's root"
 assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none box=none refresh=none refused=1" \
   "a tree git cannot mark fails the item instead of launching it"
+
+ORIGIN_EXPECTED="rc=0 marker=root box=made refresh=none refused=0 origin=root"
+assert_eq "$(marked "$OPEN_TERMINAL" origin "$OT_STUB_BIN/worktree" '' origin)" "$ORIGIN_EXPECTED" \
+  "the launched harness child inherits its lane origin"
+ORIGIN_DROPPED="$(mutant_scripts ctl-origin-dropped open-terminal)/open-terminal" || exit 1
+mutate_file "$ORIGIN_DROPPED" \
+  'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"' \
+  'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"; cmd="${cmd#export }"'
+origin_control="$(marked "$ORIGIN_DROPPED" origin-dropped "$OT_STUB_BIN/worktree" '' origin)" || exit 1
+assert_eq "$origin_control" \
+  "rc=0 marker=root box=made refresh=none refused=0 origin=absent" \
+  "control: a plain assignment marks and launches the lane but gives its child no origin"
+if (FAIL=0; assert_eq "$origin_control" "$ORIGIN_EXPECTED" 'origin inheritance'; [[ "$FAIL" -eq 0 ]]) \
+  > "$TMP_ROOT/origin-inheritance-control.log"; then
+  fail "control: a plain assignment must fail the unchanged inheritance assertion"
+else
+  pass "control: a plain assignment fails the unchanged inheritance assertion"
+fi
 
 # The must-fail control for the option: a copy that reads --lane-refresh and
 # hands lane-marker nothing for it, so the refresh row above turns red.

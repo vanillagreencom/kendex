@@ -82,7 +82,7 @@ OT="$REPO/scripts/open-terminal"
 # the command after the pane's `cd ... && ` (none when nothing launched), and
 # CREATED, whether a worktree was made for ITEM.
 launch() {
-  local item="$1" cap="$TMP_ROOT/cap-$1"
+  local item="$1" cap="$TMP_ROOT/cap-$1" origin
   shift
   [[ ! -e "$cap" ]] || rm -- "$cap"
   RC=0
@@ -94,7 +94,15 @@ launch() {
     # open_gui starts the terminal in the background, so its capture lands
     # after open-terminal has exited.
     for _ in $(seq 1 50); do [[ -s "$cap" ]] && break; sleep 0.1; done
-    [[ ! -s "$cap" ]] || { CMD="$(cat "$cap")"; CMD="${CMD##* && }"; CMD="${CMD#env CODEX_HOME=* }"; CMD="${CMD#ORCH_COMPACTION_OVERRIDES=* }"; }
+    if [[ -s "$cap" ]]; then
+      CMD="$(cat "$cap")"
+      CMD="${CMD#* && }"
+      origin="${CMD%% && *}"
+      CMD="${CMD#* && }"
+      CMD="${CMD#env CODEX_HOME=* }"
+      CMD="${CMD#ORCH_COMPACTION_OVERRIDES=* }"
+      CMD="$origin && $CMD"
+    fi
   fi
   CREATED=no
   [[ ! -d "$TMP_ROOT/wt/$(tr '[:lower:]' '[:upper:]' <<<"$item")" ]] || CREATED=yes
@@ -123,12 +131,15 @@ for row in \
   "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5 $UNATTENDED_TEXT'|a caller's own copy of the words is carried once" \
   ; do
   IFS='|' read -r harness flags item want what <<<"$row"
+  root="$TMP_ROOT/wt/$item"
   flag_args=()
   [[ "$flags" == - ]] || flag_args=(--launch-flags "$flags")
   if [[ "$item" == *#* ]]; then
     flag_args+=(--tracker github --repo "${item%#*}")
     item="${item#*#}"
+    root="$TMP_ROOT/wt/issue-$item"
   fi
+  want="export KENDEX_LANE_ORIGIN='$root' && $want"
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
   case "$harness:$item" in
@@ -243,19 +254,19 @@ done
 # No rewrite at all: the id is judged and the bare alias written.
 lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
 launch CC-9 --harness claude --launch-flags '--model sonnet'
-assert_eq "$CMD" "claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-9' && claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
   "control: without the rewrite a claude alias reaches the command as named"
 # The attached form missed: the alias runs as named, judged so, and keeps its
 # compaction on, the attached row's value and words both gone.
 ATTACHED='      words="${words//"$nl$spelling$model$nl"/$nl$spelling$model_id$nl}"'
 lead_control "$ATTACHED" '      :'
 launch CC-21 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-21' && claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
   "control: an attached alias the rewrite misses keeps its compaction on"
 # The same miss with no judge after it: compaction off on the bare alias.
 lead_control "$ATTACHED" '      :' '      || model_id="$model"' '      || :'
 launch CC-22 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-22' && claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
   "control: without the check after it, that miss turns compaction off on the bare alias"
 # The unattended words gone from the text LAUNCH_UNATTENDED_TEXT: a claude
 # --cmd launch carrying none of them then launches, which the gate row above

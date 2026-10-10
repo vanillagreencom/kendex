@@ -13,7 +13,7 @@
 # The refusals, each with its control: a --brief-file with no {brief}, a
 # {brief} with no --brief-file, a path that is not a readable file, a file
 # holding only whitespace, and a {brief} inside a quote or behind a backslash.
-# A local brief snapshot that cannot be created also refuses the launch.
+# A local prompt or command snapshot that cannot be created refuses the launch.
 # The inline-brief rows, balanced and unbalanced, are
 # open-terminal-claude-handoff.sh's.
 set -uo pipefail
@@ -27,6 +27,9 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
+source "$SCRIPTS_DIR/lib/lane-launch.sh"
+# The launch library enables errexit; refusal rows record nonzero results.
+set +e
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-brief-file: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-brief-file: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-brief-file: scratch=resolve-failed" >&2; exit 1; }
@@ -109,7 +112,7 @@ run_ot() {
     LANE_HOST_STUB_DIR="$TMP_ROOT/provider" LANE_HOST_STUB_LOG="$RUN/host.log" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ORCH_LANE_MAX_PCT=95 \
     OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" OT_CAPTURE="$RUN/gui" \
-    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" \
+    OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree-path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$ot" "$@" 2>&1)
   RC=$?
@@ -182,12 +185,71 @@ while IFS='|' read -r harness flags; do
   run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
     --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness "$harness" \
     --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
-  line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
+  line="$(typed_line 'clear; source ')" || line=""
   assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
     "$TMUX_BRIEF_ASSERTION ($harness)" "$OUT"
 done <<'ROWS'
 claude|--model opus --effort high
 pi|--model github-copilot/claude-sonnet-5 --thinking high
+ROWS
+
+# The tmux command is caller shell text. A startup function must remain
+# callable, and a later command in that pane must inherit the launch origin.
+FISH="$(command -v fish)" || { echo 'brief-file: fish-missing' >&2; exit 1; }
+pane_received() { # LINE SHELL
+  local line="$1" shell="$2" harness=unrun origin=absent
+  : > "$RECEIVED"
+  : > "$RUN/pane-origin"
+  if [[ "$shell" == "$FISH" ]]; then
+    printf 'function pane_harness; %s $argv; end\n' "$(lane_single_quote "$HARNESS_STUB")" > "$RUN/pane-script"
+  else
+    printf 'pane_harness() { %s "$@"; }\n' "$(lane_single_quote "$HARNESS_STUB")" > "$RUN/pane-script"
+  fi
+  printf '%s\ncd %s\nprintf '\''%%s'\'' "$KENDEX_LANE_ORIGIN" > %s\n' \
+    "$line" "$(lane_single_quote "$TMP_ROOT/home")" "$(lane_single_quote "$RUN/pane-origin")" >> "$RUN/pane-script"
+  env -i PATH="$PATH" HOME="$TMP_ROOT/home" LANG=C "$shell" "$RUN/pane-script" > "$RUN/pane.out" 2> "$RUN/pane.err" \
+    || { cat "$RUN/pane.err" >&2; return 1; }
+  cmp -s "$RECEIVED" "$BRIEF_WANT" && harness=verbatim
+  [[ "$(cat "$RUN/pane-origin")" == "$(cat "$RUN/worktree-path")" ]] && origin=retained
+  printf 'harness=%s origin=%s\n' "$harness" "$origin"
+}
+pane_row() { # OT SHELL COMMAND
+  local ot="$1" shell="$2" command="$3" line
+  run_ot "$ot" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub" --tmux --harness claude \
+    --cmd "$command --model opus --effort high $QUESTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
+  line="$(typed_line 'clear; ')" || line=""
+  PANE_GOT="rc=$RC $(pane_received "$line" "$shell")" || exit 1
+}
+assert_pane_received() {
+  assert_eq "$PANE_GOT" 'rc=0 harness=verbatim origin=retained' \
+    "the $PANE_KIND command keeps the complete brief and origin in the ${PANE_SHELL##*/} pane after cd" "$RUN/pane.err"
+}
+PANE_OT="$(mutant_scripts brief-pane-child open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/brief-pane-child" init -q
+git -C "$TMP_ROOT/brief-pane-child" config gc.auto 0
+git -C "$TMP_ROOT/brief-pane-child" config maintenance.auto false
+orch_fixture_shared_libs "$TMP_ROOT/brief-pane-child"
+mutate_file "$PANE_OT" 'cmd="source $(lane_single_quote "$brief_command_file")"' \
+  'cmd="bash $(lane_single_quote "$brief_command_file")"'
+while IFS='|' read -r PANE_SHELL PANE_KIND; do
+  PANE_CMD="$HARNESS_STUB"; [[ "$PANE_KIND" != function ]] || PANE_CMD=pane_harness
+  pane_row "$OT" "$PANE_SHELL" "$PANE_CMD"
+  assert_pane_received
+  # Restoring the child-shell defect must fail the same contract assertion.
+  # Function rows lose the command; external rows lose only the pane origin.
+  pane_row "$PANE_OT" "$PANE_SHELL" "$PANE_CMD"
+  CONTROL_RC=0
+  (
+    FAIL=0
+    assert_pane_received
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$RUN/pane-assertion.out" 2>&1 || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" 1 "control: the child-shell transport fails the same $PANE_KIND pane assertion (${PANE_SHELL##*/})" "$RUN/pane-assertion.out"
+done <<ROWS
+$BASH|external
+$FISH|external
+$BASH|function
+$FISH|function
 ROWS
 
 # The provider's prefix is the reference one, a login shell, so the remote
@@ -225,7 +287,7 @@ ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" |
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \
   --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
-line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
+line="$(typed_line 'clear; source ')" || line=""
 APPEND_GOT="rc=$RC harness=$(received "$line")"
 assert_eq "$APPEND_GOT" "rc=0 harness=altered" \
   "control: Pi still launches but receives the appended mailbox-monitor instruction" "$OUT"
@@ -268,7 +330,7 @@ mutant() {
   mutate_file "$MUTANT_OT" "$2" "$3"
 }
 
-echo "=== a failed local brief snapshot opens no terminal ==="
+echo "=== a failed local snapshot opens no terminal ==="
 # open-terminal creates this snapshot after the worktree. Fail that mktemp
 # alone so the fixture reaches the refusal when the disk cannot create it.
 PROMPT_FAIL_BIN="$TMP_ROOT/prompt-fail-bin"
@@ -279,7 +341,7 @@ cat > "$PROMPT_FAIL_BIN/mktemp" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
-  */local-prompt.XXXXXX)
+  */local-"$OT_PROMPT_FAIL_KIND".XXXXXX)
     printf '%s\n' "$1" >> "$OT_PROMPT_FAIL_LOG"
     exit 1
     ;;
@@ -290,34 +352,38 @@ chmod +x "$PROMPT_FAIL_BIN/mktemp"
 run_prompt_failure() {
   local opened=no
   : > "$PROMPT_FAIL_LOG"
-  run_ot "$1" "TMUX=;PATH=$PROMPT_FAIL_BIN:$OT_STUB_BIN:$PATH;OT_REAL_MKTEMP=$REAL_MKTEMP;OT_PROMPT_FAIL_LOG=$PROMPT_FAIL_LOG" \
+  run_ot "$1" "TMUX=;PATH=$PROMPT_FAIL_BIN:$OT_STUB_BIN:$PATH;OT_REAL_MKTEMP=$REAL_MKTEMP;OT_PROMPT_FAIL_LOG=$PROMPT_FAIL_LOG;OT_PROMPT_FAIL_KIND=$SNAPSHOT_KIND" \
     --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" KEN-5
   # A successful control waits for the detached terminal stub to acknowledge
   # the launch before the refusal assertion reads its capture.
   if [[ "$RC" -eq 0 ]]; then gui_line >/dev/null || exit 1; fi
   [[ ! -e "$RUN/gui" ]] || opened=yes
-  PROMPT_FAILURE_GOT="rc=$RC diagnostic=$(grep -cxF 'open-terminal: brief-prompt-failed item=KEN-5' <<<"$OUT") snapshot=$(wc -l < "$PROMPT_FAIL_LOG" | tr -d '[:space:]') opened=$opened"
+  PROMPT_FAILURE_GOT="rc=$RC diagnostic=$(grep -cxF "open-terminal: $SNAPSHOT_KEY item=KEN-5" <<<"$OUT") snapshot=$(wc -l < "$PROMPT_FAIL_LOG" | tr -d '[:space:]') opened=$opened"
 }
 assert_prompt_failure_refused() {
   assert_eq "$PROMPT_FAILURE_GOT" "rc=1 diagnostic=1 snapshot=1 opened=no" \
-    "a failed local brief snapshot reports its key, fails the launch and opens no terminal" "$OUT"
+    "a failed local $SNAPSHOT_KIND snapshot reports its key, fails the launch and opens no terminal" "$OUT"
 }
-run_prompt_failure "$OT"
-assert_prompt_failure_refused
-
-mutant brief-prompt-failure '|| { ot_message brief-prompt-failed "item=$item" >&2; return 1; }' \
-  '|| { ot_message brief-prompt-failed "item=$item" >&2; :; }'
-run_prompt_failure "$MUTANT_OT"
-assert_eq "$PROMPT_FAILURE_GOT" "rc=0 diagnostic=1 snapshot=1 opened=yes" \
-  "control: the failed snapshot still reports its key but opens a terminal without its refusal" "$OUT"
-CONTROL_RC=0
-(
-  FAIL=0
+while IFS='|' read -r SNAPSHOT_KIND SNAPSHOT_KEY; do
+  run_prompt_failure "$OT"
   assert_prompt_failure_refused
-  [[ "$FAIL" -eq 0 ]]
-) > "$TMP_ROOT/prompt-failure-assertion.out" 2>&1 || CONTROL_RC=$?
-assert_eq "$CONTROL_RC" "1" \
-  "control: the same snapshot refusal assertion fails when the launch continues" "$TMP_ROOT/prompt-failure-assertion.out"
+  mutant "brief-$SNAPSHOT_KIND-failure" "|| { ot_message $SNAPSHOT_KEY \"item=\$item\" >&2; return 1; }" \
+    "|| { ot_message $SNAPSHOT_KEY \"item=\$item\" >&2; :; }"
+  run_prompt_failure "$MUTANT_OT"
+  assert_eq "$PROMPT_FAILURE_GOT" "rc=0 diagnostic=1 snapshot=1 opened=yes" \
+    "control: the failed $SNAPSHOT_KIND snapshot still reports its key but opens a terminal without its refusal" "$OUT"
+  CONTROL_RC=0
+  (
+    FAIL=0
+    assert_prompt_failure_refused
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$TMP_ROOT/prompt-failure-assertion.out" 2>&1 || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" "1" \
+    "control: the same $SNAPSHOT_KIND snapshot refusal assertion fails when the launch continues" "$TMP_ROOT/prompt-failure-assertion.out"
+done <<'ROWS'
+prompt|brief-prompt-failed
+command|brief-command-failed
+ROWS
 
 INLINE_CMD="$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL 'an inline brief'"
 refusal_row "a brief file beside a command with no {brief} is refused, since it would reach no harness" \

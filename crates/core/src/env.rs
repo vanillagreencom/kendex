@@ -58,6 +58,9 @@ pub struct Env {
     /// sets it with `with_cwd` or leaves it unset, so what a core function
     /// answers about the current project depends on its arguments alone.
     cwd: Option<PathBuf>,
+    /// The lane's launch root, captured without a Unicode conversion. A
+    /// fixture leaves it unset unless it supplies its own origin.
+    lane_origin: Option<PathBuf>,
     vars: BTreeMap<String, String>,
     source_cache_wait: SourceCacheWait,
     invocation: Arc<Mutex<Invocation>>,
@@ -98,6 +101,7 @@ pub struct Held {
 impl Env {
     pub fn detect() -> Result<Self> {
         let real_home = real_home_opt_in();
+        let lane_origin = std::env::var_os("KENDEX_LANE_ORIGIN").map(PathBuf::from);
         let vars = HARNESS_VARS
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
@@ -107,6 +111,7 @@ impl Env {
         if let Some(RealHome::Root(home)) = &real_home {
             let mut env = Self::host_rooted(home);
             env.cwd = std::env::current_dir().ok();
+            env.lane_origin = lane_origin;
             env.vars = vars;
             return Ok(env);
         }
@@ -121,6 +126,7 @@ impl Env {
             data_dir: data_dir.clone(),
             temp_dir: std::env::temp_dir(),
             cwd: std::env::current_dir().ok(),
+            lane_origin,
             vars: BTreeMap::new(),
             source_cache_wait: SourceCacheWait::Foreground,
             invocation: Arc::default(),
@@ -138,6 +144,7 @@ impl Env {
         let mut env = Self::rooted(home, HOST_OS);
         env.real_home = machine.home;
         env.cwd = machine.cwd;
+        env.lane_origin = machine.lane_origin;
         for (key, value) in sandbox_vars(vars) {
             env = env.with_var(&key, &value);
         }
@@ -309,6 +316,7 @@ impl Env {
             // asks this fixture must read the same answer.
             temp_dir: std::env::temp_dir(),
             cwd: None,
+            lane_origin: None,
             vars: BTreeMap::new(),
             source_cache_wait: SourceCacheWait::Foreground,
             invocation: Arc::default(),
@@ -325,6 +333,17 @@ impl Env {
     /// directory, or a process whose working directory is gone.
     pub fn cwd(&self) -> Option<&Path> {
         self.cwd.as_deref()
+    }
+
+    /// A fixture whose invoking lane started at the given root.
+    pub fn with_lane_origin(mut self, root: impl Into<PathBuf>) -> Self {
+        self.lane_origin = Some(root.into());
+        self
+    }
+
+    /// Where the invoking lane started, independent of later directory changes.
+    pub fn lane_origin(&self) -> Option<&Path> {
+        self.lane_origin.as_deref()
     }
 
     /// A fixture whose platform temporary directory is the given one.
@@ -511,7 +530,7 @@ mod tests {
     fn a_sandbox_resolves_to_its_own_home_and_keeps_what_is_safe() {
         let env = Env::resolve(
             Some(PathBuf::from("/data/kendex-dev")),
-            Env::fake("/home/pat", FakeOs::Linux),
+            Env::fake("/home/pat", FakeOs::Linux).with_lane_origin("/fixtures/lane"),
             BTreeMap::from([
                 ("KENDEX_GIT_BASE".to_owned(), "file:///fixtures".to_owned()),
                 (
@@ -529,6 +548,7 @@ mod tests {
             Some("/fixtures/gemini.json")
         );
         assert_eq!(env.var("CODEX_HOME"), None);
+        assert_eq!(env.lane_origin(), Some(Path::new("/fixtures/lane")));
     }
 
     /// Without a sandbox the machine's own roots and every var stand.
@@ -536,12 +556,13 @@ mod tests {
     fn a_real_build_resolves_to_the_machine_it_is_on() {
         let env = Env::resolve(
             None,
-            Env::fake("/home/pat", FakeOs::Linux),
+            Env::fake("/home/pat", FakeOs::Linux).with_lane_origin("/fixtures/lane"),
             BTreeMap::from([("CODEX_HOME".to_owned(), "/home/pat/.codex".to_owned())]),
         );
         assert_eq!(env.home, PathBuf::from("/home/pat"));
         assert_eq!(env.real_home(), Path::new("/home/pat"));
         assert_eq!(env.var("CODEX_HOME"), Some("/home/pat/.codex"));
+        assert_eq!(env.lane_origin(), Some(Path::new("/fixtures/lane")));
     }
 
     /// The lock, the harness dirs it applies into and the caches all hang

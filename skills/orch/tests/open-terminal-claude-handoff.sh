@@ -315,7 +315,7 @@ wait_capture() {
 #   launched        whether the GUI terminal stub was invoked
 #   cmd~<text>      whether the captured GUI command carries <text>, or
 #                   `nocapture` when the stub was never invoked
-#   tail            the captured GUI command after its last `&& `
+#   tail            the captured GUI command after its directory guard `&& `
 #   log~<text>      whether the tmux log carries <text>
 #   resends         how many tmux calls re-sent the brief
 #   fullresends     how many of those were exactly the brief, nothing more
@@ -337,7 +337,7 @@ observe() {
       stderr1~*) value="$(sed -n '1p' "$ERR")"; [[ "$value" == "$needle" ]] && value=true || value=false ;;
       launched) value="$(wait_capture && echo true || echo false)" ;;
       cmd~*) if wait_capture; then value="$(grep -qF -- "$needle" "$CAP" && echo true || echo false)"; else value=nocapture; fi ;;
-      tail) if wait_capture; then value="$(cat "$CAP")"; value="${value##*&& }"; value="${value// /+}"; else value=nocapture; fi ;;
+      tail) if wait_capture; then value="$(cat "$CAP")"; value="${value#*&& }"; value="${value// /+}"; else value=nocapture; fi ;;
       log~*) value="$(grep -qF -- "$needle" "$OT_TMUX_LOG" && echo true || echo false)" ;;
       resends) value="$(grep -cF -- "$RESEND" "$OT_TMUX_LOG" || true)" ;;
       fullresends) value="$(grep -cFx -- "$RESEND" "$OT_TMUX_LOG" || true)" ;;
@@ -376,7 +376,7 @@ launch_table \
   "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$PROMPTN'=true stderr~open-terminal:+permission-prompt=false" \
   "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42+${UNATTENDED// /+}'=true" \
   "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model claude-sonnet-4-6 --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'claude-sonnet-4-6'+'--permission-mode'+'bypassPermissions'+'$PROMPTN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
-  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$PROMPTN' stderr~open-terminal:+permission-prompt+flags==true" \
+  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=export+KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-737'+&&+claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$PROMPTN' stderr~open-terminal:+permission-prompt+flags==true" \
   "an unflagged codex launch warns for the same unattended prompt|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt+flags==true" \
   "codex's unattended permission word suppresses the warning|gui-codex|-|--dangerously-bypass-approvals-and-sandbox|-|rc=0 cmd~--dangerously-bypass-approvals-and-sandbox=true stderr~open-terminal:+permission-prompt=false" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$PROMPTN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
