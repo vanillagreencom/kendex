@@ -27,3 +27,9 @@ Read the reference for the task before acting.
 | Choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [references/communication.md](references/communication.md) |
+| Start a continuing session, reconcile open work or transfer control | [references/long-session.md](references/long-session.md) |
+| Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
+| Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
+| Use an automation browser, fill a form or handle a bot check | [references/browser.md](references/browser.md) |
+| Handle credentials, account limits, sign-in or official records | [references/accounts-and-secrets.md](references/accounts-and-secrets.md) |
+| Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
