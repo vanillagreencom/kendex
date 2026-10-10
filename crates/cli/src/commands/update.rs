@@ -202,7 +202,9 @@ fn run_on_with_source(
             source_install,
         )? {
             record_command_on(env, current_exe, update_channel)?;
-            out(&format!("updated to {latest}"));
+            for line in installed_message(&feed, update_channel)?.lines() {
+                out(line);
+            }
             return Ok(());
         }
         out(&missing_asset_message(
@@ -264,8 +266,19 @@ fn run_on_with_source(
         return Err(command_failure(latest, app_replaced, &error).into());
     }
     record_command_on(env, current_exe, update_channel)?;
-    out(&format!("updated to {latest}"));
+    for line in installed_message(&feed, update_channel)?.lines() {
+        out(line);
+    }
     Ok(())
+}
+
+fn installed_message(
+    feed: &ReleaseFeed,
+    update_channel: UpdateChannel,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let latest = feed.version.as_str();
+    let notes = feed.release_notes_url(update_channel)?;
+    Ok(format!("updated to {latest}\nwhat changed: {notes}"))
 }
 
 fn install_main_fallback(

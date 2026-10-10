@@ -1,0 +1,1 @@
+- `kendex update` prints the release notes link after it installs.

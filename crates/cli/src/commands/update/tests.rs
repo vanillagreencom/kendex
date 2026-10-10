@@ -11,6 +11,31 @@ use fixture_url::file_url;
 use crate::test_util::no_record_on_this_runner;
 
 #[test]
+fn an_installed_release_links_its_notes_below_the_version() {
+    let rows = [
+        (UpdateChannel::Release, "1.2.3", "v1.2.3"),
+        (
+            UpdateChannel::Main,
+            "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef",
+            "rolling-main",
+        ),
+    ];
+    for (channel, version, tag) in rows {
+        let body = format!(r#"{{"schema":1,"version":"{version}","assets":{{}}}}"#);
+        let feed = ReleaseFeed::parse(body.as_bytes()).unwrap();
+        let expected = format!(
+            "updated to {version}\nwhat changed: https://github.com/vanillagreencom/kendex/releases/tag/{tag}"
+        );
+        let check = |message: &str| assert_eq!(message, expected);
+        check(&installed_message(&feed, channel).unwrap());
+
+        // A copy without the notes must fail the same assertion.
+        let without_notes = |feed: &ReleaseFeed| format!("updated to {}", feed.version);
+        assert!(std::panic::catch_unwind(|| check(&without_notes(&feed))).is_err());
+    }
+}
+
+#[test]
 fn git_flag_selects_the_main_feed() {
     assert_eq!(update_channel(true), UpdateChannel::Main);
     assert_eq!(
