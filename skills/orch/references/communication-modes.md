@@ -51,16 +51,19 @@ Under `engineer` every key keeps its own default, listed in [README.md](../READM
 ```text
 [WHAT THIS CHANGES FOR THE USER, ONE SENTENCE]
 
-A. [OUTCOME OF THE FIRST PATH]
-   Gains: [WHAT THE USER GETS]
-   Costs: [WHAT THE USER GIVES UP]
-   Odds: [HOW LIKELY THAT COST IS]
-B. [OUTCOME OF THE SECOND PATH]
-   Gains: [WHAT THE USER GETS]
-   Costs: [WHAT THE USER GIVES UP]
-   Odds: [HOW LIKELY THAT COST IS]
+**A. [OUTCOME OF THE FIRST PATH]**
 
-Recommended: [A OR B], because [ONE SENTENCE IN OUTCOME TERMS].
+- Gains: [WHAT THE USER GETS]
+- Costs: [WHAT THE USER GIVES UP]
+- Odds: [HOW LIKELY THAT COST IS]
+
+**B. [OUTCOME OF THE SECOND PATH]**
+
+- Gains: [WHAT THE USER GETS]
+- Costs: [WHAT THE USER GIVES UP]
+- Odds: [HOW LIKELY THAT COST IS]
+
+**Recommended:** [A OR B], because [ONE SENTENCE IN OUTCOME TERMS].
 ```
 
 The template carries outcomes only. A question in the set names no mechanism the user does not act on, and no option by its internal name. A gate outside the set keeps its own option list under both modes and asks only where its autonomy key is set to `ask`.
