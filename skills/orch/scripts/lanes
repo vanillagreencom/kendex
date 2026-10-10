@@ -163,7 +163,8 @@
 #         its projected room exceeds ORCH_OVERSEER_SEAT_RESERVE_PCT (default 50).
 #         A seat is an account `.overseer.account` names in this checkout's fleet
 #         state, and every fleet state a live claim in the store names, which
-#         is each fleet sharing OVERSEE_WATCH_STATE_DIR that runs a lane; a
+#         is each fleet sharing OVERSEE_WATCH_STATE_DIR that runs a lane. The
+#         host provider also names seats held on any machine with seat=1; a
 #         fleet state that cannot be read refuses the pick with exit 1.
 #         --for-overseer judges seats as ordinary accounts, with no reserve.
 #         --json prints that lane's whole record, which carries headroom_pct,
@@ -196,7 +197,7 @@
 #         each named on a `lanes: pick-seat-omitted lane=DIR projected-headroom=N
 #         reserve=N` line. They return when their projected room exceeds the
 #         reserve. Copilot and Pi pool picks keep seats and charge their claims
-#         at the monthly burn; they read no fleet state for seats. Under --json that exit
+#         at the monthly burn; they read no fleet state or provider seat marks. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
 #         "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}]}` on stdout,
 #         the same counts, so a caller
@@ -2591,10 +2592,10 @@ collect_lanes() {
 # through the usage cache under ORCH_LANES_USAGE_TTL, like every usage figure
 # here: they are windows, and whether the host holds an account for a launch
 # gate is `host-accounts --no-cache`'s answer, never this one.
-HOSTED_ROWS="[]" HOSTED_READ=local
+HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS=""
 host_lane_rows() { # HARNESS [READINGS]
 	local rows hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0
-	HOSTED_ROWS="[]" HOSTED_READ=local
+	HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS=""
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || return 0
 	rows="$(host_accounts_answer "$ORCH_LANE_HOST")" || accounts_rc=$?
 	case "$accounts_rc" in
@@ -2602,6 +2603,8 @@ host_lane_rows() { # HARNESS [READINGS]
 		2) HOSTED_READ=absent; return 0 ;;
 		*) HOSTED_READ=failed; return 0 ;;
 	esac
+	# Keep this command's answer for seats too, even with no cache or a zero TTL.
+	HOST_ACCOUNTS_ROWS="$rows"
 	# Seed host-only paths through the protocol's parser before child shells
 	# emit their readings. The emitting pass reports any invalid cached row.
 	host_account_rows "$rows" "$1" canon 2>/dev/null || hosted_rc=$?
@@ -2646,7 +2649,7 @@ host_lane_rows() { # HARNESS [READINGS]
 # that rather than matching the provider's bytes for itself, and the account
 # field, the harness match and the dropped invalid row are decided once.
 #
-# Fields: `account` and `harness`, plus the optional `status`, `detail`,
+# Fields: `account` and `harness`, plus the optional `seat`, `status`, `detail`,
 # `session-5h-pct`, `weekly-pct`, `model-pct`, `monthly-pct`, `model-label`,
 # `session-resets`, `weekly-resets`, `model-resets` and `monthly-resets`. A
 # `harness=pi` row names a Pi root and carries that root's Copilot pool as
@@ -2658,7 +2661,8 @@ host_lane_rows() { # HARNESS [READINGS]
 # so the refusal it names (`http-429-rate_limit_error`,
 # `http-403-permission_error`) reaches a reader of the record whatever status
 # word the provider chose. It judges nothing: the status alone decides the
-# row. A field this script cannot read drops the whole row with a notice: a
+# row. Only seat=1 marks a seat; any other seat value keeps the row unmarked.
+# A usage field this script cannot read drops the whole row with a notice: a
 # percentage nobody can parse must not be judged as room.
 #
 # Status: 0 the provider answered, rows or none; 2 the optional verb is absent,
@@ -2688,13 +2692,13 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # policy that does not retire the account, since the record it sits in is
 # stamped with every setting the retirement was matched through, the alias
 # map included, and the day, and is a miss under any other.
-host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON]
+host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said rest alias
-	local account harness status detail s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
+	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
-		account=""; harness=""; status="ok"; detail=""; bad=""; said=""
+		account=""; harness=""; status="ok"; detail=""; seat=""; bad=""; said=""
 		s_pct=null; w_pct=null; m_pct=null; mo_pct=null
 		m_label=""; s_reset=""; w_reset=""; m_reset=""; mo_reset=""
 		rest="$line"$'\t'
@@ -2708,6 +2712,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON]
 				harness) harness="$value" ;;
 				status) status="$value"; said="${value:+status}" ;;
 				detail) detail="$value" ;;
+				seat) seat="$value" ;;
 				model-label) m_label="$value" ;;
 				session-resets) s_reset="$value" ;;
 				weekly-resets) w_reset="$value" ;;
@@ -2756,6 +2761,12 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON]
 		fi
 		if [[ "$mode" == canon ]]; then
 			lane_canon "$account" || return 1
+			continue
+		fi
+		if [[ "$mode" == seats ]]; then
+			[[ "$seat" == 1 ]] || continue
+			lane_canon "$account" || return 1
+			printf '%s\n' "$LANE_CANON"
 			continue
 		fi
 		lane_alias_for "$account" silent; alias="$LANE_ALIAS"
@@ -3148,6 +3159,7 @@ cmd_pick_lane() {
 		fi
 		message pick-lane-claims >&2
 	fi
+	pick_host_rows "$harness"
 	SEATS=""
 	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
@@ -3166,7 +3178,6 @@ cmd_pick_lane() {
 	# `lanes: pick-local-reading` line. A dir the provider holds and discovery
 	# does not reach is judged on the provider's row alone, which is then no
 	# longer a lane with no record.
-	pick_host_rows "$harness"
 	hosted="$HOSTED_ROWS"
 	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	if [[ -n "$record" && -z "$found" ]]; then
@@ -3277,7 +3288,7 @@ cmd_pick_lane() {
 	esac
 }
 
-# The overseer seats, one canonical config dir a line: `.overseer.account` of
+# The overseer seats, one canonical config dir a line: provider seat=1 rows and `.overseer.account` of
 # this checkout's fleet state, and of every fleet state a live claim in the
 # store names. Claims carry the state file of the fleet that launched them, so
 # where OVERSEE_WATCH_STATE_DIR puts several fleets on one store, each peer
@@ -3297,7 +3308,7 @@ cmd_pick_lane() {
 # the step and the state it could not read, for the caller's refusal.
 SEATS="" SEATS_STEP="" SEATS_STATE=""
 overseer_seats() {
-	local fleets claimed f account
+	local fleets claimed f account provider_seats
 	SEATS="" SEATS_STATE=oversee
 	SEATS_STEP=fleet-state
 	fleets="$("$SCRIPT_DIR/workflow-state" exists --json oversee | jq -r 'if .exists then .path else empty end')" || return 1
@@ -3312,6 +3323,9 @@ overseer_seats() {
 		lane_canon "$account" || return 1
 		SEATS+="$LANE_CANON"$'\n'
 	done < <(printf '%s\n%s\n' "$fleets" "$claimed" | sort -u)
+	# host_lane_rows already read host_accounts_answer; failures leave no rows.
+	provider_seats="$(host_account_rows "$HOST_ACCOUNTS_ROWS" all seats)" || return 1
+	SEATS+="${provider_seats:+$provider_seats$'\n'}"
 }
 
 cmd_pick() {
@@ -3331,12 +3345,12 @@ cmd_pick() {
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
+	# After the claim load: emit_lane counts claims on every host row it writes.
+	pick_host_rows "$harness"
 	SEATS=""
 	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
-	# After the claim load: emit_lane counts claims on every host row it writes.
-	pick_host_rows "$harness"
 	hosted="$HOSTED_ROWS"
 	# With neither a provider row nor an override entry nothing measures this
 	# Pi launch: exit 1 where the accounts read failed, which a retry can
@@ -3981,6 +3995,7 @@ case "$SUB" in
 		# below counts that global's rows against each account.
 		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
+		pick_host_rows all
 		usage="$(collect_lanes all)"
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
 		while (( usage_i < usage_count )); do
