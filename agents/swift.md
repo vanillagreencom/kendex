@@ -1,7 +1,7 @@
 ---
 name: swift
 description: Swift application specialist for SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds/tests. Excludes non-UI runtime and data persistence. React Native and Expo go to frontend.
-model: inherit
+model: standard
 role: engineer
 effort: high
 color: cyan

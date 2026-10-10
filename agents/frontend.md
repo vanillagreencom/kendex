@@ -1,7 +1,7 @@
 ---
 name: frontend
 description: Declarative UI specialist for TypeScript/React web, mobile and terminal views, plus Quickshell QML/JavaScript. Use for view layers and their UI messages, not non-UI runtime logic or Iced.
-model: inherit
+model: standard
 role: engineer
 effort: high
 color: cyan

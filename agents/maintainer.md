@@ -1,7 +1,7 @@
 ---
 name: maintainer
 description: Maintenance specialist for documentation, stale references, links, lint, and file or configuration organization. Use for changes settled by reading.
-model: inherit
+model: standard
 role: engineer
 effort: high
 color: green

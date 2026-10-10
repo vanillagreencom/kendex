@@ -4,6 +4,7 @@ description: "Maintenance specialist for documentation, stale references, links,
 tags: docs, refactoring
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 allowed-subagents: scout
+model: standard:high
 effort: high
 color: green
 pane: true

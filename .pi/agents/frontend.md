@@ -4,6 +4,7 @@ description: "Declarative UI specialist for TypeScript/React web, mobile and ter
 tags: ui
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 allowed-subagents: scout
+model: standard:high
 effort: high
 color: cyan
 pane: true

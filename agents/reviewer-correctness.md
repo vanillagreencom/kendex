@@ -1,7 +1,7 @@
 ---
 name: reviewer-correctness
 description: Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, cross-module side effects, and changed UI views' behaviour, accessibility included.
-model: inherit
+model: standard
 role: reviewer
 effort: high
 color: red
