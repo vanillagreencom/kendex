@@ -39,10 +39,7 @@ export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   // lock and the project-only version 10 recovery share this problem kind,
   // so repeating either sequence here would give the other one wrong steps.
   "lock-corrupt": ["Follow the recovery steps in the message above"],
-  "manifest-outdated": [
-    "Move the file named above to another folder. kendex does not convert it or change it",
-    "Write what you want installed into a new file with the same name, then run kendex apply in a terminal. Copy what you need from the file you moved",
-  ],
+  "manifest-outdated": ["Follow the recovery steps in the message above"],
   "schema-too-new": [
     "Update kendex to the latest version",
     "Scan again after you update",

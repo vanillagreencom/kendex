@@ -46,10 +46,8 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
     // the same floor, ceiling, and step the settings file is held to, and
     // two copies of three numbers is two places for them to drift.
     let builder = builder.constant("ZOOM", kendex_core::settings::ZOOM);
-    // The schema the editor mints into a draft for a scope with no
-    // manifest yet. `save::check` validates that draft before the plan's
-    // `manifest::save` would stamp anything, so a second copy of this
-    // number in the UI is a first save refused by its own validator.
+    // The schema for an editor draft with no manifest yet. Exporting the
+    // writer's constant keeps the UI from maintaining a second value.
     let builder = builder.constant("MANIFEST_SCHEMA", kendex_core::manifest::MANIFEST_SCHEMA);
     // The version of the terms this build asks about, and where the two
     // documents are published. The first-run screen decides from the same

@@ -22,10 +22,7 @@ function draft(overrides: Partial<Draft> = {}): Draft {
 }
 
 describe("emptyDraft", () => {
-  // The backend validates this draft before anything stamps a schema on
-  // it, so a literal here is a first save on a scope with no kendex.toml
-  // refused by our own validator. The number comes from the same constant
-  // the writer uses; nothing in this file may hard-code one.
+  // The exported constant keeps the draft aligned with the manifest writer.
   it("carries the schema this build writes", () => {
     expect(emptyDraft().schema).toBe(MANIFEST_SCHEMA);
   });
