@@ -23,6 +23,8 @@ The primary agent assigns a review to a specialist. The specialist reads the cha
 
 kendex also installs orch, github, code-quality and docs-writing. Add linear for Linear review work. The installed `scripts/mutation-stability` requires perl.
 
+On Linux, `mutation-stability` also requires python3 (Python 3.9 or later) with [`os.pidfd_open`](https://docs.python.org/3/library/os.html#os.pidfd_open) and [`signal.pidfd_send_signal`](https://docs.python.org/3/library/signal.html#signal.pidfd_send_signal), plus Linux kernel 5.3 or later with pidfd support. If this support is unavailable, the run reports cleanup failure and keeps its scratch workspace.
+
 Set project review instructions in `kendex.toml` under `[skill-instructions]`. Add instructions for a review agent under `[agent-additional-instructions]` in the same file.
 
 ## Licence
