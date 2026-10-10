@@ -17,7 +17,7 @@ cp -R "$SK_ROOT/skills/slack/tests" "$MUTANT/skills/slack/tests"
 cp -R "$SK_ROOT/skills/slack/scripts" "$MUTANT/skills/slack/scripts"
 cp -R "$SK_ROOT/skills/slack/systemd" "$MUTANT/skills/slack/systemd"
 ln -s "$SK_ROOT/skills/orch" "$MUTANT/skills/orch"
-python3 - "$MUTANT/skills/slack/tests/lib/harness.sh" <<'PY' || exit 1
+python3 - "$MUTANT/skills/slack/tests/lib/harness.sh" "$MUTANT/skills/slack/tests/reload.test.sh" <<'PY' || exit 1
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
@@ -31,6 +31,20 @@ changed = text.replace(line, 'GIT_CEILING_DIRECTORIES=""\n')
 if changed == text:
     sys.exit("git-boundary: mutation-unchanged")
 path.write_text(changed)
+path = Path(sys.argv[2])
+text = path.read_text()
+line = 'mkdir -p "$SK_RUN_FROM"\n'
+if text.count(line) != 1:
+    sys.exit("git-boundary: measurement-match-failed")
+probe = '''(cd "$SK_RUN_FROM" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C "$BASH" -c '
+printf "git-boundary-measurement: scratch=%s\\n" "$1"
+printf "git-boundary-measurement: pwd=%s\\n" "$(pwd -P)"
+rc=0
+top="$(git rev-parse --show-toplevel 2>&1)" || rc=$?
+printf "git-boundary-measurement: git-exit=%s top=%s\\n" "$rc" "$top"
+' probe "$SK_TMP")
+'''
+path.write_text(text.replace(line, line + probe))
 PY
 
 while read -r name tree; do
@@ -41,6 +55,7 @@ while read -r name tree; do
   RC=0
   env -u GIT_CEILING_DIRECTORIES TMPDIR="$LANE/tmp" "$BASH" "$SUITE" >"$SK_TMP/$name.out" 2>&1 || RC=$?
   OUT="$(cat "$SK_TMP/$name.out")"
+  sed -n '/^git-boundary-measurement:/p' "$SK_TMP/$name.out"
   case "$tree" in
     real)
       assert_eq "$RC" "0" "reload passes with scratch inside a repository"
