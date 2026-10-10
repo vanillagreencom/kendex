@@ -2855,7 +2855,7 @@ launch_finish() {
     local run="exec $cmd"
     [[ "$RELAUNCH_ROUTE" != resume-or-fresh ]] || run="{ $cmd; }"
     # Keep the marked launch root when a lane's tool shell changes directory.
-    run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path"); $run"
+    run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
   elif [[ -n "$LANE_ENV" || "$HARNESS" == codex || "$HARNESS" == copilot ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
@@ -2909,7 +2909,7 @@ launch_finish() {
     cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
   fi
   if [[ "$LANE_HOST" == local ]]; then
-    cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt"); $cmd"
+    cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"
     if [[ -n "$brief_prompt_file" ]]; then
       # Login shells can change directory during startup. Keep the explicit
       # origin and the complete launch line off the terminal's input queue.

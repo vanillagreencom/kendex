@@ -96,12 +96,12 @@ launch() {
     for _ in $(seq 1 50); do [[ -s "$cap" ]] && break; sleep 0.1; done
     if [[ -s "$cap" ]]; then
       CMD="$(cat "$cap")"
-      CMD="${CMD##* && }"
-      origin="${CMD%%; *}"
-      CMD="${CMD#*; }"
+      CMD="${CMD#* && }"
+      origin="${CMD%% && *}"
+      CMD="${CMD#* && }"
       CMD="${CMD#env CODEX_HOME=* }"
       CMD="${CMD#ORCH_COMPACTION_OVERRIDES=* }"
-      CMD="$origin; $CMD"
+      CMD="$origin && $CMD"
     fi
   fi
   CREATED=no
@@ -139,7 +139,7 @@ for row in \
     item="${item#*#}"
     root="$TMP_ROOT/wt/issue-$item"
   fi
-  want="export KENDEX_LANE_ORIGIN='$root'; $want"
+  want="export KENDEX_LANE_ORIGIN='$root' && $want"
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
   case "$harness:$item" in
@@ -254,19 +254,19 @@ done
 # No rewrite at all: the id is judged and the bare alias written.
 lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
 launch CC-9 --harness claude --launch-flags '--model sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-9'; claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-9' && claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
   "control: without the rewrite a claude alias reaches the command as named"
 # The attached form missed: the alias runs as named, judged so, and keeps its
 # compaction on, the attached row's value and words both gone.
 ATTACHED='      words="${words//"$nl$spelling$model$nl"/$nl$spelling$model_id$nl}"'
 lead_control "$ATTACHED" '      :'
 launch CC-21 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-21'; claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-21' && claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
   "control: an attached alias the rewrite misses keeps its compaction on"
 # The same miss with no judge after it: compaction off on the bare alias.
 lead_control "$ATTACHED" '      :' '      || model_id="$model"' '      || :'
 launch CC-22 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-22'; claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-22' && claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
   "control: without the check after it, that miss turns compaction off on the bare alias"
 # The unattended words gone from the text LAUNCH_UNATTENDED_TEXT: a claude
 # --cmd launch carrying none of them then launches, which the gate row above

@@ -800,8 +800,8 @@ assert_eq "$(marked "$OPEN_TERMINAL" origin "$OT_STUB_BIN/worktree" '' origin)" 
   "the launched harness child inherits its lane origin"
 ORIGIN_DROPPED="$(mutant_scripts ctl-origin-dropped open-terminal)/open-terminal" || exit 1
 mutate_file "$ORIGIN_DROPPED" \
-  'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt"); $cmd"' \
-  'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt"); $cmd"; cmd="${cmd#export }"'
+  'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"' \
+  'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"; cmd="${cmd#export }"'
 origin_control="$(marked "$ORIGIN_DROPPED" origin-dropped "$OT_STUB_BIN/worktree" '' origin)" || exit 1
 assert_eq "$origin_control" \
   "rc=0 marker=root box=made refresh=none refused=0 origin=absent" \

@@ -93,19 +93,68 @@ assert_eq "$LANDING_CONTROL" 1 "control: keeping the earlier cloud exception tur
 OPEN_TERMINAL="$CAP_SHIPPED"
 
 
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r KEN-40
+# Replay the actual provider command with a controlled cd result. The
+# directory guard must cover both exec and the resume-or-fresh command group.
+CD_HARNESS="$TMP_ROOT/cd-harness"
+cat > "$CD_HARNESS" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'started\n' >> "$CD_HARNESS_LOG"
+STUB
+chmod +x "$CD_HARNESS"
+cd_guard_result() { # CD_STATUS
+  local line rc=0 attempted=no started=no
+  line="$(grep -m1 '^exec bash -lc ' "$RUN/tmux.log")" || return 1
+  : > "$RUN/cd-attempt"
+  : > "$RUN/harness-started"
+  env -i PATH="$PATH" HOME="$TMP_ROOT" CD_GUARD_STATUS="$1" \
+    CD_ATTEMPT_LOG="$RUN/cd-attempt" CD_HARNESS_LOG="$RUN/harness-started" \
+    "$BASH" -c '
+      cd() { printf "attempted\n" >> "$CD_ATTEMPT_LOG"; return "$CD_GUARD_STATUS"; }
+      claude() { printf "started\n" >> "$CD_HARNESS_LOG"; }
+      export -f cd claude
+      eval "$1"
+    ' cd-guard "$line" > "$RUN/cd-replay.out" 2> "$RUN/cd-replay.err" || rc=$?
+  [[ ! -s "$RUN/cd-attempt" ]] || attempted=attempted
+  [[ ! -s "$RUN/harness-started" ]] || started=started
+  printf 'rc=%s cd=%s harness=%s\n' "$rc" "$attempted" "$started"
+}
+assert_failed_cd() { # OBSERVATION
+  assert_eq "$1" 'rc=1 cd=attempted harness=no' \
+    'a failed hosted cd starts no harness' "$RUN/cd-replay.err"
+}
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;cmd=$CD_HARNESS --model opus --effort high" --harness claude --lane work --repo o/r KEN-40
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=KEN-40 host=$HOST_STUB path=/srv/lane")" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;put,--item,KEN-40,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 assert_eq "$(ot_hosted_relaunch_text "$RUN/tmux.log")" \
-  "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN='/srv/lane'; exec true --model opus --effort high $QUESTION_OFF_ALL'" \
+  "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN='/srv/lane' && exec $CD_HARNESS --model opus --effort high $QUESTION_OFF_ALL'" \
   "the remote shell exports the host's lane origin"
-# The refresh record a hosted launch puts where the lane's .git names its
-# worktree git directory: the lane's root for --lane-refresh, else empty, which
-# the drift hook reads as no refresh lane, since the host has no verb that
-# deletes it.
+assert_eq "$(cd_guard_result 0)" 'rc=0 cd=attempted harness=started' \
+  'the hosted exec starts its harness after a successful cd'
+assert_failed_cd "$(cd_guard_result 1)"
+# The refresh record belongs to the hosted worktree's git directory, not its
+# root. Without --lane-refresh the drift hook must read an empty record.
 hosted_refresh() { local f="$RUN/remote/srv/clone/.git/worktrees/lane/lane-refresh"; [[ -f "$f" ]] && printf '[%s]' "$(cat "$f")" || printf none; }
 assert_eq "refresh=$(hosted_refresh)" "refresh=[]" "a hosted launch without --lane-refresh empties the refresh record"
+CD_GUARD_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-hosted-cd/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-hosted-cd/orch"
+mutate_file "$OPEN_TERMINAL" 'run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"' \
+  'run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path"); $run"'
+run_ot "ORCH_LANE_HOST=$HOST_STUB;cmd=$CD_HARNESS --model opus --effort high" --harness claude --lane "$H/.eclaude" --repo o/r KEN-40
+CD_CONTROL_GOT="$(cd_guard_result 1)" || exit 1
+assert_eq "$CD_CONTROL_GOT" 'rc=0 cd=attempted harness=started' \
+  'control: the semicolon starts the hosted harness after a failed cd'
+CD_CONTROL_RC=0
+(
+  FAIL=0
+  assert_failed_cd "$CD_CONTROL_GOT"
+  [[ "$FAIL" -eq 0 ]]
+) > "$RUN/cd-assertion.out" 2>&1 || CD_CONTROL_RC=$?
+assert_eq "$CD_CONTROL_RC" 1 \
+  'control: the failed-cd assertion rejects the restored semicolon' "$RUN/cd-assertion.out"
+OPEN_TERMINAL="$CD_GUARD_SHIPPED"
 
 # The overseer instruction selects the host. This exception row measures
 # the fleet's declared capability and the launch it admits, not the instruction.
@@ -212,13 +261,16 @@ UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && printf '%s' "$LA
 # hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude
 # relaunch, the continuation line and the start brief each closing on the
 # unattended words.
-hosted_resume() { printf "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=%s/srv/lane%s; { claude %s --continue %s%s %s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s %s%s; }'" "$Q" "$Q" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$UNATTENDED_TEXT" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$UNATTENDED_TEXT" "$Q"; }
+hosted_resume() { printf "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=%s/srv/lane%s && { claude %s --continue %s%s %s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s %s%s; }'" "$Q" "$Q" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$UNATTENDED_TEXT" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$UNATTENDED_TEXT" "$Q"; }
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every envelope it prints, answers and directives alike, as its text directs, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line KEN-41)"
 run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch KEN-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume KEN-41 KEN-41 '/orch start KEN-41')")" \
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,KEN-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,KEN-41,/srv/lane/.git;put,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;put,--item,KEN-41,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-41,/srv/lane/tmp/lane-mail/KEN-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
+assert_eq "$(cd_guard_result 0)" 'rc=0 cd=attempted harness=started' \
+  'the hosted resume group starts its harness after a successful cd'
+assert_failed_cd "$(cd_guard_result 1)"
 HOSTED_LINE='Resume the orch workflow for KEN-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item KEN-48 first and act on every envelope it prints, answers and directives alike, as its text directs.'
 PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
 run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-48
@@ -315,7 +367,7 @@ printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 COPILOT_HOSTED="flags=--model claude-opus-5 --reasoning-effort high --allow-all"
 run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r KEN-1935
-COPILOT_REMOTE="exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=${Q}/srv/lane$Q; exec env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS=\"\$HOME/.agents/skills\" COPILOT_ALLOW_ALL=true copilot $Q--autopilot$Q"
+COPILOT_REMOTE="exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=${Q}/srv/lane$Q && exec env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS=\"\$HOME/.agents/skills\" COPILOT_ALLOW_ALL=true copilot $Q--autopilot$Q"
 assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep -c '^create,--item,KEN-1935,--repo,o/r,--harness,copilot,--account,1copilot$') remote=$(typed "$COPILOT_REMOTE") local=$(typed COPILOT_HOME=)" \
   "rc=0 launched=1 create=1 remote=1 local=0" \
   "a hosted copilot launch creates with --harness copilot and runs copilot under the launch policy, the provider setting COPILOT_HOME"
