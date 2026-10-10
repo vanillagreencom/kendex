@@ -62,3 +62,50 @@ fn an_explicit_root_outranks_os_directories() {
         "{output:?}"
     );
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fixture_data_and_trash_stay_inside_each_home() {
+    const INNER: &str = "KENDEX_TEST_FIXTURE_TRASH";
+    if std::env::var_os(INNER).is_some() {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        let detected = Env::detect().unwrap();
+        assert!(detected.installed_command_file().starts_with(&home));
+        assert!(detected.trash_dir().starts_with(&home));
+        return;
+    }
+
+    let fixtures = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+    let launch = |home: &std::path::Path, system: bool| {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                &exact_test(
+                    module_path!(),
+                    "fixture_data_and_trash_stay_inside_each_home",
+                ),
+            ])
+            .env_clear()
+            .envs(fixture_env(home))
+            .env("XDG_DATA_HOME", home.parent().unwrap())
+            .env(INNER, "1");
+        if system {
+            command.env("KENDEX_REAL_HOME", "1");
+        }
+        command.spawn().unwrap()
+    };
+    let mut children = fixtures
+        .each_ref()
+        .map(|fixture| launch(&rooted(fixture), false));
+    for child in &mut children {
+        assert!(child.wait().unwrap().success());
+    }
+    // The previous system-home opt-in must fail the same containment checks.
+    assert!(
+        !launch(&rooted(&fixtures[0]), true)
+            .wait()
+            .unwrap()
+            .success()
+    );
+}
