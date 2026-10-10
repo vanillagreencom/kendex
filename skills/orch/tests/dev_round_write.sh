@@ -22,8 +22,10 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo 'dev_round_write: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'dev_round_write: scratch=not-a-directory' >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'dev_round_write: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
 # reads the process environment first: a developer's own range command would
 # otherwise decide the fix receipts' acceptance.
@@ -197,6 +199,78 @@ run_write --worktree "$WT" --issue i --round-id 5-9 --items-file "$ITEMS" --item
 assert_eq "$(observe "rc=2")" "rc=2" "--items-file with --item is refused: one item source" "$ERR"
 run_write --worktree "$WT" --issue i --round-id 5-10 --items-file "$TMP_ROOT/nope.json"
 assert_eq "$(observe "rc=2")" "rc=2" "--items-file with a nonexistent path is refused" "$ERR"
+
+echo "=== recurrence candidates require an item answer ==="
+# Both workflows produce these location headers and patch records. A missing
+# state exercises the real workflow-state reader, not a stand-in for it.
+repeat_case() { # NAME PATCHES LOCATION ANSWER MODE EXPECT_RC [WRITER]
+  local name="$1" patches="$2" location="$3" answer="$4" mode="$5" expected="$6" writer="${7:-$WRITE_BIN}" rid="repeat-$1" issue=i
+  local text="#1 | reviewer-error | $location" first="" record
+  "$STATE" --state-dir "$WT/tmp" set i pr_comment_review.patched_causes "$patches" >/dev/null
+  [[ "$mode" != no-history ]] || "$STATE" --state-dir "$WT/tmp" update i 'del(.pr_comment_review.patched_causes)' >/dev/null
+  jq -n --arg text "$text" --arg reach "$OK_REACH" --arg answer "$answer" \
+    '[{n: 1, text: $text, reach: $reach} + (if $answer == "ABSENT" then {} else {recurrence: $answer} end)]' > "$ITEMS"
+  [[ "$mode" != unread ]] || issue=missing
+  local args=(--worktree "$WT" --issue "$issue" --round-id "$rid")
+  if [[ "$mode" == inline ]]; then args+=(--item 1 "$text" "$OK_REACH"); else args+=(--items-file "$ITEMS"); fi
+  [[ "$mode" != cut ]] || args+=(--cut)
+  local WRITE_BIN="$writer"
+  run_write "${args[@]}"
+  record="$WT/tmp/dev-round-$issue-$rid.json"
+  IFS= read -r first < "$ERR" || true
+  assert_eq "$RC" "$expected" "$name: recurrence verdict" "$ERR"
+  assert_eq "$([[ -f "$record" ]] && echo yes || echo no)" "$([[ "$expected" == 0 ]] && echo yes || echo no)" "$name: record placement" "$ERR"
+  if [[ "$expected" == 0 && "$answer" != ABSENT ]]; then
+    assert_eq "$(rec '.items[0].recurrence')" "$answer" "$name: recurrence is preserved" "$ERR"
+  elif [[ "$expected" == 2 ]]; then
+    case "$mode:$answer" in
+      unread:*) assert_eq "$first" 'dev-round-write: patched-state issue=missing' "$name: unread state has a keyed refusal first" "$ERR" ;;
+      *:ABSENT) assert_eq "$first" 'dev-round-write: repeat-location n=1 location=src/x.rs (`f`) commit=aaa111' "$name: repeat has a keyed refusal first" "$ERR" ;;
+      *) assert_file_contains "$ERR" 'dev-round-write: invalid-items' "$name: invalid recurrence is refused" ;;
+    esac
+  fi
+}
+PATCH='[{"cause":"unchecked read","commit":"aaa111","location":" src/x.rs (`f`) "}]'
+# NAME^PATCHES^LOCATION^RECURRENCE^MODE^RC
+for row in \
+  "same^$PATCH^src/x.rs (\`f\`)^ABSENT^file^2" \
+  "close^$PATCH^src/x.rs (\`f\`)^structural-close^file^0" \
+  "different_cause^$PATCH^src/x.rs (\`f\`)^This finding concerns output ownership.^file^0" \
+  "trimmed^$PATCH^  src/x.rs (\`f\`)  ^ABSENT^file^2" \
+  "other_symbol^$PATCH^src/x.rs (\`g\`)^ABSENT^file^0" \
+  "case_sensitive^$PATCH^src/X.rs (\`f\`)^ABSENT^file^0" \
+  "tbd^$PATCH^TBD^ABSENT^file^0" \
+  "general^$PATCH^general^ABSENT^file^0" \
+  "empty^$PATCH^^ABSENT^file^0" \
+  'old_entry^[{"cause":"unchecked read","commit":"aaa111"}]^src/x.rs (`f`)^ABSENT^file^0' \
+  'no_history^[]^src/x.rs (`f`)^ABSENT^no-history^0' \
+  'invalid_location^[{"cause":"unchecked read","commit":"aaa111","location":"general"}]^general^ABSENT^file^0' \
+  "cut^$PATCH^src/x.rs (\`f\`)^ABSENT^cut^0" \
+  "inline^$PATCH^src/x.rs (\`f\`)^ABSENT^inline^2" \
+  "blank^$PATCH^src/x.rs (\`f\`)^   ^file^2" \
+  "multiline^$PATCH^src/x.rs (\`f\`)^MULTILINE^file^2" \
+  'unread^[]^src/x.rs (`f`)^ABSENT^unread^2'; do
+  IFS='^' read -r name patches location answer mode expected <<<"$row"
+  [[ "$answer" != MULTILINE ]] || answer=$'first\nsecond'
+  repeat_case "$name" "$patches" "$location" "$answer" "$mode" "$expected"
+done
+# A refused stamp placed no record, so the corrected file keeps its token.
+repeat_case same "$PATCH" 'src/x.rs (`f`)' structural-close file 0
+for control in comparison state blank multiline; do
+  MUTANT="$(mutant_scripts "repeat-$control" dev-round-write)/dev-round-write" || exit 1
+  answer=ABSENT
+  case "$control" in
+    comparison) mutate_file "$MUTANT" 'if [[ -n "$repeats" ]]; then' 'if false; then'; mode=file; patches="$PATCH" ;;
+    state) mutate_file "$MUTANT" $'    || die patched-state\n  repeats=' $'    || patched_causes="[]"\n  repeats='; mode=unread; patches='[]' ;;
+    blank) mutate_file "$MUTANT" 'and ((.recurrence | gsub("[[:space:]]"; "")) != "")' 'and true'; mode=file; patches="$PATCH"; answer='   ' ;;
+    multiline) mutate_file "$MUTANT" 'and (.recurrence | test("[\r\n]") | not)' 'and true'; mode=file; patches="$PATCH"; answer=$'first\nsecond' ;;
+  esac
+  if (FAIL=0; repeat_case "control-$control" "$patches" 'src/x.rs (`f`)' "$answer" "$mode" 2 "$MUTANT"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/control-$control.out"; then
+    fail "$control: mutation did not redden the recurrence row"
+  else
+    assert_file_contains "$TMP_ROOT/control-$control.out" 'got:      0' "$control: the planted defect accepts a refused round"
+  fi
+done
 
 echo "=== the reach bar: an item names the producer that reaches the finding ==="
 # A fix round that answers a review thread rather than a producer patches a

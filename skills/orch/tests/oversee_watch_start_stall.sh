@@ -236,9 +236,15 @@ rounds_case() { # NAME STATE [WATCH_BIN]
   WATCH_BIN="${3:-}" watch 12601
 }
 REPEATED_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}'
+LOCATION_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111","location":" src/x.rs (`f`) "},{"cause":"stale count","commit":"bbb222","location":"src/x.rs (`f`)"}]}}'
 # NAME|STATE|REVIEW|REPEATED
 for row in \
   "two_bot_rounds|$REPEATED_STATE|2|1" \
+  "different_causes_one_location|$LOCATION_STATE|2|1" \
+  'one_location_one_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"aaa111","location":"src/x.rs (`f`)"}]}}|1|0' \
+  'ht_2098|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"8f27054b","location":"src/x.rs (`f`)"},{"cause":"b","commit":"e4ed9beb","location":"src/x.rs (`f`)"},{"cause":"c","commit":"70110a24","location":"src/x.rs (`f`)"},{"cause":"d","commit":"d48cc623","location":"src/x.rs (`f`)"}]}}|2|3' \
+  'unknown_locations|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"general"},{"cause":"b","commit":"bbb222","location":"general"}]}}|2|0' \
+  'new_symbol|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"bbb222","location":"src/x.rs (`g`)"}]}}|2|0' \
   'internal_and_bot|{"first_panel":{"agents":["reviewer-error"]},"rereview_cycles":1,"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}|4|1' \
   'no_classes|{"first_panel":{"agents":["reviewer-error"]},"rereview_cycles":1,"pr_comment_review":{"iterations":2}}|4|-' \
   'same_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"aaa111"}]}}|1|0' \
@@ -375,6 +381,17 @@ if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601
 else
   assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=0' \
     "control: removing repeated rounds reddens their event row"
+fi
+LOCATION_WATCH="$(mutant_scripts lane-long-location/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-long-location/github"
+# shellcheck disable=SC2016
+mutate_file "${LOCATION_WATCH%/*}/lib/watch-host-kinds.sh" 'and .location == $location' 'and false'
+rounds_case lane_long_location_mutant "$LOCATION_STATE" "$LOCATION_WATCH"
+if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=1 stage=dev round 1" location-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
+  fail "control: removing location matches did not redden their event row"
+else
+  assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=0' \
+    "control: removing location matches reddens their event row"
 fi
 # The status file never looked for: a lane that wrote its file is reported
 # stalled all the same.

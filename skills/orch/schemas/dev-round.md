@@ -42,11 +42,13 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent |
 | `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation. Defaults to `false`; readers treat an absent field as `false` and refuse a non-boolean value. A fix round requests `ci` only when this is `true`, regardless of `source`; otherwise it requests `range`. The runner may fall back to local validation. `dev-artifact-check` accepts a `ci` receipt only when this is `true` |
-| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
+| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding; optional `recurrence` is one non-blank line preserved from `--items-file` |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
 
 **`reach` is required per item, on both routes.** It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
+
+The item's location is the text after the second `|` on the first line of `text`. Before writing a non-cut round, the writer reads the issue's `pr_comment_review.patched_causes` once through `workflow-state get`. Location strings match after blanks at both ends are removed. Case, path and symbol remain unchanged. Empty, `TBD` and `general` locations match nothing; an older entry with no `location` stays valid and matches nothing. A match requires `recurrence`, whose meaning [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) owns. The inline form has no such field. An unanswered match exits 2 with `dev-round-write: repeat-location n=[N] location=[LOCATION] commit=[SHA]` first on stderr and writes no record. Unreadable state exits 2 with `dev-round-write: patched-state issue=[ID]` first on stderr. A refused stamp can take a corrected items file under the same round id. `--cut` skips the comparison.
 
 An item that prescribes a mechanism tells the delegate to measure it first and report a mismatch instead of complying.
 

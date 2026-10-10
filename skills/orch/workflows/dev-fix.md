@@ -135,7 +135,7 @@ Before stamping or delegating the round, check its base:
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
-   A nonzero exit names a usage or environment failure. Report it and stop.
+   A `repeat-location` exit takes [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence). Add its answer to the items file and retry the same round id: the refusal wrote no record. Every other nonzero exit names a usage or environment failure. Report it and stop.
 
    When a reviewer or the orchestrator decides a cut, mint a fresh round id, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`:
 
@@ -239,12 +239,14 @@ Before stamping or delegating the round, check its base:
    A fixed item's root cause is recorded too, in `pr_comment_review.patched_causes` — the one record [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) reads, whichever loop patched the cause. `pr-review`, `qa-review`, and `review` rounds reach that rule through this step, and a cause missing from it is one the next pass reads as never patched and answers with an ordinary patch round. One entry per fixed item, through a file like the entry above:
 
    ```json
-   {"cause": "[ONE_LINE]", "commit": "[SHA]"}
+   {"cause": "[ONE_LINE]", "commit": "[SHA]", "location": "[LOCATION]"}
    ```
 
    ```bash
    .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes tmp/patched-cause-[ISSUE_ID].json
    ```
+
+   Copy `[LOCATION]` from the fixed item's header as written.
 
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles

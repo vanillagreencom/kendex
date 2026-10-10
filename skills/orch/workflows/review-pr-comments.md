@@ -198,8 +198,10 @@ The `fix set` is every § 5 row marked Fixing plus every `structural-close` row:
 
 ```json
 {"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
-{"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]"}
+{"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]", "location": "[LOCATION]"}
 ```
+
+Copy `[LOCATION]` from the fixed item's header as written.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.frozen_causes [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json
@@ -259,7 +261,7 @@ When the list is non-empty, pass those exact repository-relative paths to the wr
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open [PR_OPEN] [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
-A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. A nonzero exit names a usage or environment failure. Report it and stop.
+A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. A `repeat-location` exit takes [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence). Add its answer to the items file and retry the same round id: the refusal wrote no record. Every other nonzero exit names a usage or environment failure. Report it and stop.
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 
