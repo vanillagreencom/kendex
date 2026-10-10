@@ -1,1 +1,0 @@
-- The CI template cancels superseded pull-request runs. The wiring guide adds native cache controls and the conditions for reusing complete lane proof.
