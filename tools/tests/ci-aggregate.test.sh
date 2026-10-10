@@ -130,13 +130,14 @@ mkdir -p "$INSTALL_WORLD/classifier"
 for origin in subject trusted; do
   install_dir="$INSTALL_WORLD"
   [ "$origin" != trusted ] || install_dir="$INSTALL_WORLD/classifier"
-  printf '#!/bin/sh\nprintf "source=%%s\\n" "%s" > "$RECORD"\nprintf "arg=%%s\\n" "$@" >> "$RECORD"\n' \
+  printf '#!/bin/sh\nprintf "source=%%s\\n" "%s" >> "$RECORD"\nprintf "arg=%%s\\n" "$@" >> "$RECORD"\n' \
     "$origin" >"$install_dir/install.sh"
   chmod 644 "$install_dir/install.sh"
 done
 plant "$WORKFLOW" '--git' '--version stale-build' "$TMP/wf-fixed-installer.yml" changes
 plant "$WORKFLOW" '--cli-only' '' "$TMP/wf-desktop-installer.yml" changes
 plant "$WORKFLOW" 'classifier/install.sh' 'install.sh' "$TMP/wf-subject-installer.yml" changes
+plant "$WORKFLOW" 'classifier/install.sh' 'install.sh --git --cli-only; sh classifier/install.sh' "$TMP/wf-subject-then-trusted.yml" changes
 INSTALL_EXPECTED='arg=--cli-only
 arg=--git
 source=trusted'
@@ -159,6 +160,7 @@ workflow|$WORKFLOW|yes
 must-fail: restored fixed version|$TMP/wf-fixed-installer.yml|no
 must-fail: desktop installation|$TMP/wf-desktop-installer.yml|no
 must-fail: subject installer|$TMP/wf-subject-installer.yml|no
+must-fail: subject then trusted installer|$TMP/wf-subject-then-trusted.yml|no
 ROWS
 
 # Only the action's accepted macOS record reaches the coverage selector.
