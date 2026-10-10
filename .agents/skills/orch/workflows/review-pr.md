@@ -492,7 +492,7 @@ Record each created issue:
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] audit_issues_created "[CREATED_ISSUE_ID]"
 ```
 
-**Children created to be worked here** (Linear only). When the audit created `make_child` issues under `[ISSUE_ID]`, delegate them immediately via `⤵ workflows/dev-start.md § 1-4` with context `worktree`, `lifecycle`: inherit, `issue_id`, and `audit_bundle: true`. If delegation is skipped, FIRST detach every `audit_issues_created` entry from `[ISSUE_ID]`, or `merge-pr.md` cascade-Dones them:
+**Children created to be worked here** (Linear only). When the audit created `make_child` issues under `[ISSUE_ID]`, delegate them immediately via `⤵ workflows/dev-start.md § 1-4` with context `worktree`, `lifecycle`: inherit, `issue_id`, and `audit_bundle: true`. The managed call must pass dev-start's § 2 live Ancestor gate before delegation. If delegation is skipped, including a gate refusal, FIRST detach every `audit_issues_created` entry from `[ISSUE_ID]`, or `merge-pr.md` cascade-Dones them:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues update [CHILD_ID] --remove-parent

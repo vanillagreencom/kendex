@@ -67,11 +67,11 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 Verifying → stop development preparation. Its post-merge readings belong to the overseer under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
 
-Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to the `--with-bundle` output.
+Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) from this live read, including any further reads the gate requires.
 
 - **Container** → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; never select a deeper descendant directly), pick one, and re-run this section for it.
 - **Explicit single-PR bundle** (`(one PR)` in the title, or a leaf whose description carries an internal checklist) → the parent IS the work item.
-- **Child of a container** → the child is the PR unit, gated on its own non-terminal `state_type` and the union of its own and every container ancestor's blockers. Blocked or terminal → stop and name the live blockers.
+- **Child of a container** → the child is the PR unit. Apply the Ancestor gate to it. Blocked or terminal → stop and name the live blockers.
 
 **GitHub**:
 
