@@ -42,36 +42,7 @@ kendex add vanillagreencom/kendex --skill slack
 
 ## Slack app
 
-Create one Slack app per machine from this manifest and install it to the workspace. Copy its bot token into the project's private env file as `SLACK_BOT_TOKEN`. Under the app's Basic Information, create an app-level token with the `connections:write` scope and copy it into the same file as `SLACK_APP_TOKEN`.
-
-```yaml
-display_information:
-  name: kendex
-  description: Relays a kendex overseer's mailbox to a private channel
-features:
-  bot_user:
-    display_name: kendex
-    always_online: false
-oauth_config:
-  scopes:
-    bot:
-      - chat:write
-      - files:read
-      - files:write
-      - groups:history
-      - groups:read
-      - groups:write
-      - reactions:write
-      - users:read
-      - users:read.email
-settings:
-  event_subscriptions:
-    bot_events:
-      - message.groups
-  org_deploy_enabled: false
-  socket_mode_enabled: true
-  token_rotation_enabled: false
-```
+Create one Slack app per machine from [this manifest](app-manifest.yaml) and install it to the workspace. Copy its bot token into the project's private env file as `SLACK_BOT_TOKEN`. Under the app's Basic Information, create an app-level token with the `connections:write` scope and copy it into the same file as `SLACK_APP_TOKEN`.
 
 | Scope | What the relay does with it |
 |-------|-----------------------------|

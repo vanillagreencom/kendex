@@ -1,0 +1,26 @@
+display_information:
+  name: kendex
+  description: Relays a kendex overseer's mailbox to a private channel
+features:
+  bot_user:
+    display_name: kendex
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - files:read
+      - files:write
+      - groups:history
+      - groups:read
+      - groups:write
+      - reactions:write
+      - users:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.groups
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

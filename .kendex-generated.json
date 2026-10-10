@@ -783,6 +783,7 @@
   ".agents/skills/second-opinion/workflows/review.md",
   ".agents/skills/slack/README.md",
   ".agents/skills/slack/SKILL.md",
+  ".agents/skills/slack/app-manifest.yaml",
   ".agents/skills/slack/kendex.settings.toml.example",
   ".agents/skills/slack/schemas/journal.md",
   ".agents/skills/slack/scripts/lib/__init__.py",
