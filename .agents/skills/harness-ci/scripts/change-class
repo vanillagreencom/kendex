@@ -201,7 +201,7 @@
 # settings come from this process's environment, else from the [env] tables of
 # kendex.settings.toml and .kendex/settings.toml, the second winning, as the
 # base endpoint's commit holds them. HARNESS_CI_STANDARD_PATHS (additional
-# narrow-class exclusions, blank-separated, unset or empty adds none),
+# exclusions before render and size classes, blank-separated, unset or empty adds none),
 # HARNESS_CI_QUEUE_PATHS (the repository's
 # own queue globs, blank-separated, set empty where the shipped list is the
 # whole list) and HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) come
@@ -234,7 +234,8 @@
 # A measured class needs --event pull_request or --event merge_group and an
 # orch beside this package carrying the measurement contract below; any other
 # event, and a checkout without that orch, answer render or standard and never
-# a measured class. The render class reads nothing of orch's.
+# a size class. Repository path settings use orch's shared settings reader
+# before a render can be granted; render proof needs no measurement contract.
 set -euo pipefail
 # The narrow-change list's globs are bash patterns with extglob on.
 shopt -s extglob
@@ -818,6 +819,15 @@ fi
 ! path_class_matches before-render standard ||
   answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
 
+# Repository exclusions add to the shared list and precede every render and
+# size class. The base alone declares them so the change cannot select its
+# own review class, even when generated ownership is proved.
+base_settings || answer standard "$MEASURE_CAUSE"
+set_globs "${HARNESS_CI_STANDARD_PATHS:-}"
+if path_matches any; then
+  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured
+fi
+
 # The render proof weighs the tree at the range's head and no other: the
 # commit harness-only resolved --head to, checked out into a directory of this
 # script's own. The judged checkout's working tree is never weighed. Anything
@@ -1199,13 +1209,6 @@ case "$inventory_change" in
 esac
 
 change_class_path_load "$NARROW_CONF" || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE"
-# Repository exclusions add to the shared list. The base alone declares
-# them so the change cannot select its own review class.
-base_settings || answer standard "$MEASURE_CAUSE"
-set_globs "${HARNESS_CI_STANDARD_PATHS:-}"
-if path_matches any; then
-  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured
-fi
 if path_class_matches narrow standard; then
   narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"
   # Package outputs outside the engine inventory can still be proved by
