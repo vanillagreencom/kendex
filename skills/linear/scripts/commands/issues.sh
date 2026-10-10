@@ -218,7 +218,9 @@ Complete Options:
                         at or after merge, or release OWNER/REPO TAG-GLOB.
                         Deadlines follow the trigger by at most 72 hours.
                         Release deadlines use +Nh after the first matching
-                        publication after merge. Other deadlines use UTC.
+                        publication after merge. In a repository where the
+                        item merged, that release must contain its latest
+                        merge commit. Other deadlines use UTC.
                         Without this option, explicit completion sets Done.
   --done-when-met <all|N[,N...]>
                          Tick the "## Done when" checklist boxes the caller

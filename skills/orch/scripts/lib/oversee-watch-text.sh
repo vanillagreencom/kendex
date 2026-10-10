@@ -582,6 +582,8 @@ The long pass's events, checked and reported in this order:
                              blocker; waiting means the trigger has not fired.
                              A missing Trigger means merge. Release triggers
                              use the first matching publication after merge.
+                             In a repository where the item merged, that
+                             release must contain its latest merge commit.
                              Printed with the event block or heartbeat. An item
                              with none prints verifying <item> boxes=0.
   EVENT heartbeat            --max-loops long passes with no event, after

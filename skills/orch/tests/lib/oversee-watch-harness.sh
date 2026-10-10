@@ -224,6 +224,15 @@ case "${1:-} ${2:-}" in
     [[ "${3:-}" == --jq ]] && filter="$4"
     jq -rn --arg p "$(cat "$STUB_DIR/permission.$login.txt")" "{permission: \$p} | $filter"
     exit ;;
+  "api repos/"*/compare/*)
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    comparison="${2#repos/}"
+    slug="$(printf '%s' "$comparison" | tr -c 'A-Za-z0-9._-' '_')"
+    [[ ! -f "$STUB_DIR/compare.$slug.err" ]] || { cat "$STUB_DIR/compare.$slug.err" >&2; exit 1; }
+    [[ -f "$STUB_DIR/compare.$slug.json" ]] || { echo "stub: missing-compare path=$comparison" >&2; exit 2; }
+    [[ "${3:-}" == --jq && "${4:-}" == .status ]] || { echo 'stub: unmodeled-compare-filter' >&2; exit 2; }
+    jq -r .status "$STUB_DIR/compare.$slug.json"
+    exit ;;
   "api graphql")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     if [[ -f "$STUB_DIR/graphql-fail" ]]; then
