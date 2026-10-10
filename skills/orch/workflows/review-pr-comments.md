@@ -133,7 +133,7 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 ## 5. Triage Report
 
-Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7.
+Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions.
 
 **Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
@@ -343,8 +343,8 @@ With workflow state `pr_order` reading `open-first-returned`, publish through `.
 | Applied | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
 | Skipped, blocked, or declined, nothing filed | `Declined: [REASON]` |
 | Blocked or skipped → issue | `Tracked: [CREATED_ISSUE_ID]` |
-| Already fixed | The finding's `draft_response` |
-| Question | The finding's `draft_response` |
+| Already fixed | Review-body: `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]`, using its verified fix SHA; otherwise the finding's `draft_response` |
+| Question | Review-body: `Declined: [VERIFIED_DECISION_FLOW_REASON]`, answering its non-defect claim; otherwise the finding's `draft_response` |
 
 A `Tracked:` reply names the issue it filed, and a decline is a decline — say so. Resolving a thread is not a reply.
 
@@ -396,7 +396,7 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 **Backstop only** — inline threads handled per-pass in § 6.3 are already replied to and resolved. This covers PR-level comments, human-only threads, and anything per-pass handling missed. Skip any `source_id` already in `pr_comment_review.replied`.
 
-Reply bodies are § 6.3's table, which is where the `questions[]` § 5 routes here are answered — the Question row, the finding's own `draft_response`. A question is not a finding, so it takes no disposition and its answer is never a `Declined:`. Two clauses this step adds: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
+Review-body items, including `questions[]` and `already_fixed`, stay in § 6.3's head-bound disposition comment and never use this plain-reply path. Other reply bodies are § 6.3's table, which is where the `questions[]` § 5 routes here are answered — the Question row, the finding's own `draft_response`. Such a question is not a finding, so it takes no disposition and its answer is never a `Declined:`. Two clauses this step adds: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
 
 Write every reply body with the harness file-write tool to `tmp/pr-reply-[SOURCE_ID].md` and bind that path as `[BODY_FILE]`. Use `post-reply --body-file [BODY_FILE]` for threads and `post-comment --body-file [BODY_FILE]` for PR-level comments. Number lists `1.` `2.` `3.`, never `#N`.
 
@@ -408,28 +408,38 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 Run [the current-head Copilot wait](../references/copilot-wait.md) before the body check, any review request or any head notice in this step. Keep `[COPILOT_WAIT]` for the head routing below. Skip this wait when `pr_order` reads `open-first-returned`, as the step's skip rule directs.
 
-**Skip if** no thread this triage answered is Copilot's and the body check below, run now, exits `0`; any other exit runs this step. **Skip if** workflow state `pr_order` reads `open-first-returned`, with no notice and no request: on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, the lane's `Review:` line still reads pending, and [submit-pr.md](submit-pr.md) § 2 step 1 routes the head once its push lands. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+**Skip if** workflow state `pr_order` reads `open-first-returned`, with no notice and no request: on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, the lane's `Review:` line still reads pending, and [submit-pr.md](submit-pr.md) § 2 step 1 routes the head once its push lands. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-`off` ends this step per [Gate-mode routing](../references/gates.md#gate-mode-routing). A non-zero exit is no mode: report it and end this step. On `approval`, bind the head:
+A non-zero exit is no mode: report it and end this step. In both `off` and `approval`, bind the head before any approval-only exit:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
 
-A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
+A non-zero exit, which is reported, ends this step. If this head differs from `[COPILOT_WAIT]`'s head, restart the current-head wait. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state, .body] | @tsv'
 ```
 
-A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` runs the body check below, and its exit `0` ends this step: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
+**Body findings.** Copilot writes a finding on code the diff left unchanged only in its review body, under `Previously missed` or `Suppressed comments`, and no thread carries it. An `APPROVED` review can carry them too. After binding the head and reviews, before any approval-only exit or route selection, and again before a `copilot-approved-on-rerequest`, `copilot-declined-unchanged` or `copilot-fallback` notice, run the one reader of those bodies, so a body finding is answered before the lane waits on CI rather than at the merge gate after it:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
+```
+
+A `head=` other than `[HEAD_SHA]` restarts this § 7.2 from its current-head wait and head/reviews reads. On exit `1` with `suppressed-entry` lines, loop to § 2 with each entry as an item: `source_type: "review-body"`, `source_id: "[file:line]"`, and the finding's text from the review at `[HEAD_SHA]` in the reviews read above. This pass uses §§ 5–6, including Recurrence before the cap, the fix set, verification and cause records; § 6.3 posts its body replies and counts the pass once. After § 6.3 completes that pass, restart this § 7.2 from its current-head wait, head/reviews reads and route selection, including the body check again. Keep its handled body items for the skip decision and notices. Complete § 8 before returning to the caller with the current head and whether the pass pushed; discard every route selected before the pass. Other exit `1` rules use the reply rewrite in [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates). Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
+
+`off` ends this step only after the body check exits `0`, per [Gate-mode routing](../references/gates.md#gate-mode-routing). On `approval`, skip the remaining approval routing only if neither a thread nor a review-body item this triage handled is Copilot's and the body check exits `0`.
+
+A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step after the body check's exit `0`: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
 
 - **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below, first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per thread `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer` gives its `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [copilot-head-notices.md](../references/copilot-head-notices.md).
-- **Head moved**, by a push for any reviewer's thread. If `[COPILOT_WAIT]` names `[HEAD_SHA]` with a `run` other than `none`, that in-flight run counts as the request: record the head below, send no second request, and start the existing approval wait. Otherwise, unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded with no work observed gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
+- **Head moved**, by a push for any reviewer's thread or body finding. If `[COPILOT_WAIT]` names `[HEAD_SHA]` with a `run` other than `none`, that in-flight run counts as the request: record the head below, send no second request, and start the existing approval wait. Otherwise, unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded with no work observed gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
 
   Only the route that needs a new request runs this command:
 
@@ -447,25 +457,17 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` runs th
   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --on-timeout block --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
   ```
 
-  Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
+  Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, bind the head again; if it changed, restart this § 7.2 from its current-head wait. Otherwise read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
 
   | Answer | Copilot's review at `[HEAD_SHA]` | Then |
   |--------|----------------------------------|------|
   | `comments` | any | Update the baseline and loop to § 1 for the new thread as § 6.3 does; this section then routes the head again |
-  | `approved` | `APPROVED` | Run the body check below; on its exit `0`, notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
+  | `approved` | `APPROVED` | Run the body check above; on its exit `0`, notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
   | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head |
   | `copilot-error` | error answer | Route as [Copilot requests](../references/gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer approval |
   | `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
   | `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |
   | any other | any | No notice: the caller's own approval wait routes it |
-
-**Body findings.** Copilot writes a finding on code the diff left unchanged only in its review body, under `Previously missed` or `Suppressed comments`, and no thread carries it. An `APPROVED` review can carry them too. Before this step ends on an approved head, and before a `copilot-approved-on-rerequest`, `copilot-declined-unchanged` or `copilot-fallback` notice, run the one reader of those bodies, so a body finding is answered before the lane waits on CI rather than at the merge gate after it:
-
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
-```
-
-A `head=` other than `[HEAD_SHA]` ends this step: the new head takes its own route. On exit `1` with `suppressed-entry` lines, loop to § 2 with each entry as an item: `source_type: "review-body"`, `source_id: "[file:line]"`, and the finding's text from the review at `[HEAD_SHA]` in the reviews read above. This pass uses §§ 5–6, including Recurrence before the cap, the fix set, verification and cause records; § 6.3 posts its body replies and counts the pass once. Return here after that pass, bind the current head and run the body check again. Other exit `1` rules use the reply rewrite in [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates). Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
 
 **Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own approval wait decides the head.
 
