@@ -200,7 +200,9 @@
 # ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS and both HARNESS_CI_TRIVIAL_*
 # settings come from this process's environment, else from the [env] tables of
 # kendex.settings.toml and .kendex/settings.toml, the second winning, as the
-# base endpoint's commit holds them. HARNESS_CI_QUEUE_PATHS (the repository's
+# base endpoint's commit holds them. HARNESS_CI_STANDARD_PATHS (additional
+# narrow-class exclusions, blank-separated, unset or empty adds none),
+# HARNESS_CI_QUEUE_PATHS (the repository's
 # own queue globs, blank-separated, set empty where the shipped list is the
 # whole list) and HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) come
 # from those tables alone, never from the environment. The private env file
@@ -482,12 +484,12 @@ path_class_matches() { # PHASE CLASS
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
 # so the private env file its KENDEX_ENV_FILE names never reaches this script.
 # A key this process's environment carries keeps that value, as it does on the
-# ladder, save the queue list and selector: a caller's environment is its own
+# ladder, save the standard paths, queue list and selector: a caller's environment is its own
 # checkout's settings, which github.sh's router exports from the working
-# tree, so both are dropped from it and the base's alone decide. The load runs in a
+# tree, so these are dropped from it and the base's alone decide. The load runs in a
 # subshell and hands back these keys alone.
-unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR'
+unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS'
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
 # The bytes of PATH as the commit --base names holds it, written to OUT:
@@ -1197,6 +1199,13 @@ case "$inventory_change" in
 esac
 
 change_class_path_load "$NARROW_CONF" || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE"
+# Repository exclusions add to the shared list. The base alone declares
+# them so the change cannot select its own review class.
+base_settings || answer standard "$MEASURE_CAUSE"
+set_globs "${HARNESS_CI_STANDARD_PATHS:-}"
+if path_matches any; then
+  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured
+fi
 if path_class_matches narrow standard; then
   narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"
   # Package outputs outside the engine inventory can still be proved by
