@@ -125,7 +125,7 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )
@@ -638,7 +638,7 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
     skill(&project.join(".agents/skills"), "here", "in place bytes");
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n[skills.here]\nsource = \"in-place\"\n",
+        "schema = 7\n[skills.here]\nsource = \"in-place\"\n",
     )
     .unwrap();
     let project = project.canonicalize().unwrap();

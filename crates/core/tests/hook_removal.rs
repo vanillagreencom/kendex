@@ -40,7 +40,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -331,7 +331,7 @@ fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
         let f = fixture();
         let root = &f.project;
         fs::write(f.env.home.join("catalog/hooks/retained.sh"), format!("#!/bin/sh\n# ---\n# name: retained\n# event: {}\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n", retained_event.unwrap_or("Stop"))).unwrap();
-        fs::write(root.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"opencode\"]\n[hooks.guard]\nsource = \"cat\"\n[hooks.retained]\nsource = \"cat\"\n", source_path(&f.env.home.join("catalog")))).unwrap();
+        fs::write(root.join("kendex.toml"), format!("schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"opencode\"]\n[hooks.guard]\nsource = \"cat\"\n[hooks.retained]\nsource = \"cat\"\n", source_path(&f.env.home.join("catalog")))).unwrap();
         apply_now(&f);
         let config = root.join("opencode.json");
         let mut value: serde_json::Value =

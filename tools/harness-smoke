@@ -543,7 +543,7 @@ scratch_repo() { # DIR — a git repository with one commit and an empty project
     git -C "$1" config user.name harness-smoke
   setup "the scratch repository's first commit" \
     git -C "$1" commit -q --allow-empty -m 'scratch project for tools/harness-smoke'
-  printf 'schema = 6\n' >"$1/kendex.toml"
+  printf 'schema = 7\n' >"$1/kendex.toml"
 }
 install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex cannot install or verify
   PROJECT="$DIR/$1/project"

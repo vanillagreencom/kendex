@@ -42,7 +42,7 @@ fn declare(world: &World, hook_lines: &str) {
     fs::write(
         world.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n\n[[custom-hooks]]\n{hook_lines}"
+            "schema = 7\n\n[install]\nharnesses = [\"codex\"]\n\n[[custom-hooks]]\n{hook_lines}"
         ),
     )
     .unwrap();
@@ -81,7 +81,7 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
     // Removing the entry removes the registration, like any owned artifact.
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
+        "schema = 7\n\n[install]\nharnesses = [\"codex\"]\n",
     )
     .unwrap();
     let removal = plan_apply(
@@ -124,7 +124,7 @@ fn a_custom_hook_refusal_names_its_delivery_limit() {
     ] {
         let w = world();
         fs::create_dir_all(w.project.join(".agents")).unwrap();
-        fs::write(w.project.join("kendex.toml"), format!("schema = 6\n[install]\nharnesses = [\"{harness}\"]\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"{event}\"\ncommand = \"./scripts/guard.sh\"\nagents = \"{agents}\"\n")).unwrap();
+        fs::write(w.project.join("kendex.toml"), format!("schema = 7\n[install]\nharnesses = [\"{harness}\"]\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"{event}\"\ncommand = \"./scripts/guard.sh\"\nagents = \"{agents}\"\n")).unwrap();
         let report = audit(&w.env, &scope(&w)).unwrap();
         let notices: Vec<_> = report
             .warnings
@@ -171,7 +171,7 @@ fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
     fs::create_dir_all(w.project.join(".claude")).unwrap();
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/guard.sh\"\nagents = \"all\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/guard.sh\"\nagents = \"all\"\n",
     )
     .unwrap();
 

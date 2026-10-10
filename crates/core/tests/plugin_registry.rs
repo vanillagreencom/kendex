@@ -76,7 +76,7 @@ fn fixture(harnesses: &str, declarations: &str) -> Fixture {
         &project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.market]\n{}\n\n[sources.plain]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 7\n\n[sources.market]\n{}\n\n[sources.plain]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&market),
             source_path(&plain)
         ),

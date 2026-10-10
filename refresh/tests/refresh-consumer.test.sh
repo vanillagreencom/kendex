@@ -1945,7 +1945,7 @@ summary = "A fixture repository."
 codex = true
 copilot = true
 '
-printf 'schema = 6\n\n%s' "$bot_table" >"$repo/kendex.toml"
+printf 'schema = 7\n\n%s' "$bot_table" >"$repo/kendex.toml"
 cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 cp -R "$SKILL_DIR/../bot-instructions" "$TMP/bot-release"
 rm -rf -- "${TMP:?}/bot-release/tests"
@@ -2041,7 +2041,7 @@ done
 reset_default
 mkdir -p "$repo/.claude/agents"
 printf 'x\n' >"$repo/.claude/agents/a.md"
-printf 'schema = 6\n\n[install]\nharnesses = ["claude"]\n\n%s\n[bot-instructions.exclusions]\nderive_render = true\n' "$bot_table" >"$repo/kendex.toml"
+printf 'schema = 7\n\n[install]\nharnesses = ["claude"]\n\n%s\n[bot-instructions.exclusions]\nderive_render = true\n' "$bot_table" >"$repo/kendex.toml"
 (cd "$repo" && git add -A && .agents/skills/bot-instructions/scripts/bot-instructions render >/dev/null) || exit 1
 commit "$repo"
 git -C "$repo" push -q origin main
@@ -2097,7 +2097,7 @@ rm -f -- "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
 # and fails on the refusal.
 reset_default
 git -C "$repo" rm -q -r -- .github AGENTS.md
-printf 'schema = 6\n' >"$repo/kendex.toml"
+printf 'schema = 7\n' >"$repo/kendex.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
 unconfigured_case="  2) if grep -qx 'bot-instructions: unconfigured=.*' <<<\"\$render_output\"; then render_skip=unconfigured; fi ;;

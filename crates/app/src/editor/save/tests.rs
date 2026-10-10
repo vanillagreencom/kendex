@@ -452,7 +452,7 @@ fn scope_with_settings_skill() -> (tempfile::TempDir, Env, Scope) {
     std::fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
             source_path(&tmp.path().join("catalog"))
         ),
     )

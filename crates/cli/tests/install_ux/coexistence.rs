@@ -46,7 +46,7 @@ fn declare_script_hook(world: &World, event: &str, matcher: &str) {
     super::write(
         &world.at("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\
              method = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n",
             crate::test_util::source_path(&world.catalog)
         ),
@@ -214,7 +214,7 @@ fn declares_two_sources(world: &World, waiting_source: &str) {
     super::write(
         &world.at("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[sources.waiting]\n{waiting_source}\n\n\
+            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.waiting]\n{waiting_source}\n\n\
              [install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n\
              [skills.deploy]\nsource = \"cat\"\n\n[skills.wait]\nsource = \"waiting\"\n",
             crate::test_util::source_path(&world.catalog)

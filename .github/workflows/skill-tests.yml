@@ -1196,7 +1196,7 @@ jobs:
           fi
           pinned="$(sed -n 's/^VERIFY_DOCUMENT_VERSION=//p' skills/harness-ci/scripts/change-class)"
           throwaway="$(mktemp -d)"
-          printf 'schema = 6\n' >"$throwaway/kendex.toml"
+          printf 'schema = 7\n' >"$throwaway/kendex.toml"
           git -C "$throwaway" init -q
           # The prefix rebinds HOME before PATH is read, so the built
           # binary's directory is spelled from the runner's home first.

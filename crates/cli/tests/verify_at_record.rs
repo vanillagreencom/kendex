@@ -82,7 +82,7 @@ fn install_global(world: &World) -> Env {
     write(
         &env.global_manifest_file(),
         &format!(
-            "schema = 6\n[sources.cat]\nrepo = \"file://{}\"\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.second]\nsource = \"cat\"\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            "schema = 7\n[sources.cat]\nrepo = \"file://{}\"\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.second]\nsource = \"cat\"\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
             world.catalog.display(),
         ),
     );

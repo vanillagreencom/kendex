@@ -146,7 +146,7 @@ expect_red toml-schema \
   'a source catalog whose sibling install manifest is absent' check --repo "$repo"
 
 repo="$(bi_rendered_repo excl-noinstall)" || exit 1
-printf 'schema = 6\n' | bi_manifest "$repo"
+printf 'schema = 7\n' | bi_manifest "$repo"
 expect_red exclusion-consistency 'a resolved manifest that declares no install' \
   check --repo "$repo"
 
@@ -206,7 +206,7 @@ expect_green 'and --staged derives the same set' check --staged --repo "$repo"
 repo="$(bi_new_repo excl-copilot)"
 mkdir -p "$repo/.github/skills/x"
 printf 'x\n' > "$repo/.github/skills/x/SKILL.md"
-printf 'schema = 6\n\n[install]\nharnesses = ["copilot"]\n' | bi_manifest "$repo"
+printf 'schema = 7\n\n[install]\nharnesses = ["copilot"]\n' | bi_manifest "$repo"
 git -C "$repo" add -A >/dev/null 2>&1
 bi_must_adopt --repo "$repo" || exit 1
 bi_must render --repo "$repo" || exit 1

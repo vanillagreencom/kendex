@@ -26,7 +26,7 @@ fn parsed_guard_reports_each_command_time_over_caller_layouts() {
         ],
     );
     fixture.linked = caller;
-    fs::write(fixture.main.join("kendex.toml"), "schema = 6\n").expect("project manifest");
+    fs::write(fixture.main.join("kendex.toml"), "schema = 7\n").expect("project manifest");
     for (name, bare) in [("vendor", false), ("bare", true)] {
         let mut args = vec!["clone", "-q"];
         if bare {
@@ -37,7 +37,7 @@ fn parsed_guard_reports_each_command_time_over_caller_layouts() {
     }
     let plain = fixture.root.join("non-repository");
     fs::create_dir(&plain).expect("plain project");
-    fs::write(plain.join("kendex.toml"), "schema = 6\n").expect("plain manifest");
+    fs::write(plain.join("kendex.toml"), "schema = 7\n").expect("plain manifest");
     let layouts = [
         ("non-repository", plain, false),
         ("main", fixture.main.clone(), false),
@@ -71,7 +71,7 @@ fn parsed_guard_reports_each_command_time_over_caller_layouts() {
     }
     // The same writer can target its own project; a launch marker still
     // refuses that write until the explicit override is present.
-    fs::write(fixture.linked.join("kendex.toml"), "schema = 6\n").expect("own manifest");
+    fs::write(fixture.linked.join("kendex.toml"), "schema = 7\n").expect("own manifest");
     let env = Env::host_rooted(&fixture.root).with_cwd(&fixture.linked);
     let cli = crate::Cli::try_parse_from(["kendex", "refresh", "--scope", "project"])
         .expect("own writer");

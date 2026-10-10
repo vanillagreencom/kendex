@@ -70,7 +70,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&source)
         ),
     )
@@ -96,7 +96,7 @@ fn declare_globally(f: &Fixture, declarations: &str) {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&source)
         ),
     )

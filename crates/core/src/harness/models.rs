@@ -349,7 +349,7 @@ impl ModelResolution {
 /// Runtime evidence is distinct from a render-only projection.
 pub enum ResolutionContext<'a> {
     /// No entitlement claim.
-    Render(HarnessId),
+    Render(HarnessId, &'a BTreeMap<String, BTreeMap<String, String>>),
     /// Deprecated positional CLI answer. A preferred id is explicitly not access proof.
     SelectorHint(HarnessId),
     /// Bound account/host evidence supplied by the runtime owner.
@@ -412,7 +412,9 @@ pub fn resolve_model(
         diagnostics.push(diagnostic("old-id"));
     }
     match context {
-        ResolutionContext::Render(harness) => render(request, harness, diagnostics),
+        ResolutionContext::Render(harness, bindings) => {
+            render(request, harness, bindings, diagnostics)
+        }
         ResolutionContext::SelectorHint(harness) => {
             diagnostics.push(diagnostic("render-only"));
             if let ModelRequest::Class { class } = request
@@ -434,7 +436,7 @@ pub fn resolve_model(
                     diagnostics,
                 }
             } else {
-                render(request, harness, diagnostics)
+                render(request, harness, &BTreeMap::new(), diagnostics)
             }
         }
         ResolutionContext::Runtime(context) => {
@@ -459,12 +461,24 @@ pub fn resolve_model(
 fn render(
     request: &ModelRequest,
     harness: HarnessId,
+    bindings: &BTreeMap<String, BTreeMap<String, String>>,
     mut diagnostics: Vec<Diagnostic>,
 ) -> ModelResolution {
     match request {
         ModelRequest::Inherit => ModelResolution::Inherit,
         ModelRequest::Class { class } => {
-            // REVISIT(D021): static Codex/Copilot files inherit the managed root; Pi dispatch retains intent.
+            // REVISIT(D021): consumer bindings pin static Codex/Copilot classes; Pi dispatch retains intent.
+            if matches!(harness, HarnessId::Codex | HarnessId::Copilot)
+                && let Some(selector) = bindings
+                    .get(harness.name())
+                    .and_then(|classes| classes.get(class.row().name))
+            {
+                return ModelResolution::DeferredClass {
+                    class: *class,
+                    native_selector: Some(selector.clone()),
+                    diagnostics,
+                };
+            }
             let selector = match harness {
                 HarnessId::Claude => {
                     let Some(alias) = class.walk().find_map(|c| c.row().claude) else {
@@ -524,6 +538,7 @@ pub fn render_model(
     harness: HarnessId,
     model: &str,
     overrides: &BTreeMap<String, String>,
+    bindings: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> RenderModel {
     let request = match ModelRequest::parse(model) {
         Ok(request) => request,
@@ -536,7 +551,11 @@ pub fn render_model(
             };
         }
     };
-    let result = resolve_model(&request, ResolutionContext::Render(harness), overrides);
+    let result = resolve_model(
+        &request,
+        ResolutionContext::Render(harness, bindings),
+        overrides,
+    );
     let warning = result.warning(&request);
     let id = match result {
         ModelResolution::NativeAlias {

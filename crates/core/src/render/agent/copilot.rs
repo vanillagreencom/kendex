@@ -11,12 +11,12 @@ use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 /// ([custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration),
 /// matrix §2).
 ///
-/// A model is written only for an explicit id: the agent file's model
-/// outranks the launch's `--model`, so a tier or `inherit` leaves the key
-/// out and the session's model runs the agent (D008). Every agent carries
-/// `include-custom-instructions: true`, because a custom agent Copilot
-/// starts as a subagent reads no AGENTS.md or CLAUDE.md without it, and
-/// every kendex agent works under its repository's rules.
+/// Explicit ids and consumer-bound classes write their native model selector.
+/// The agent file's model outranks the launch's `--model`, so unbound classes
+/// and `inherit` leave the key out and use the session's model (D008).
+/// Every agent carries `include-custom-instructions: true`, because a
+/// custom agent Copilot starts as a subagent reads no AGENTS.md or CLAUDE.md
+/// without it. Every kendex agent works under its repository's rules.
 pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     let source = agent.source;
     let mut warnings = Vec::new();
@@ -30,7 +30,12 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     push(format!("description: {}", yaml_quoted(&source.description)));
     push("include-custom-instructions: true".to_owned());
     let model = agent.model_request();
-    let resolved = render_model(HarnessId::Copilot, model, &agent.model_classes);
+    let resolved = render_model(
+        HarnessId::Copilot,
+        model,
+        &agent.model_classes,
+        &agent.model_bindings,
+    );
     warnings.extend(resolved.warning.map(RenderWarning::new));
     if let Some(id) = &resolved.id {
         push(format!("model: {}", yaml_scalar(id)));
@@ -115,6 +120,7 @@ mod tests {
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Copilot,
             scope,

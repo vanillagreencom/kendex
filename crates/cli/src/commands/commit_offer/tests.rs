@@ -732,7 +732,7 @@ fn every_head_prints_the_count_of_what_the_commit_carries() {
     let tmp = tempfile::tempdir().expect("a fixture directory");
     let root = kendex_core::paths::canonical(tmp.path()).expect("the fixture resolves");
     fixture_git(&root, &["init", "--quiet", "-b", "main"]);
-    std::fs::write(root.join("kendex.toml"), "schema = 6\n").expect("the manifest is written");
+    std::fs::write(root.join("kendex.toml"), "schema = 7\n").expect("the manifest is written");
     fixture_git(&root, &["add", "-A"]);
     fixture_git(&root, &["commit", "--quiet", "-m", "one"]);
     let scope = kendex_core::model::Scope::Project { root: root.clone() };
@@ -747,7 +747,7 @@ fn every_head_prints_the_count_of_what_the_commit_carries() {
     std::fs::write(&render, "scout\n").expect("the render is written");
     std::fs::write(
         root.join("kendex.toml"),
-        "schema = 6\n[agents]\nscout = \"cat\"\n",
+        "schema = 7\n[agents]\nscout = \"cat\"\n",
     )
     .expect("the manifest is written");
     let carried = kendex_core::commit_offer::scan(&scope, &generated, &before)

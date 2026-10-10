@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn the_prose_fallback_skips_the_project_instructions() {
         let manifest: Manifest = toml::from_str(
-            "schema = 6\n[command-instructions]\nship = \"Keep the merge review.\"\n",
+            "schema = 7\n[command-instructions]\nship = \"Keep the merge review.\"\n",
         )
         .unwrap();
         let bytes = with_instructions(b"\n# Ship the branch\n\nSteps.\n", &manifest, "ship");
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn instructions_land_after_a_dot_terminated_frontmatter() {
         let manifest: Manifest = toml::from_str(
-            "schema = 6\n[command-instructions]\nship = \"Keep the merge review.\"\n",
+            "schema = 7\n[command-instructions]\nship = \"Keep the merge review.\"\n",
         )
         .unwrap();
         let bytes = with_instructions(

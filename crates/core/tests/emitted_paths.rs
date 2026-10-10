@@ -84,7 +84,7 @@ fn fixture(kind: ItemKind, harness: HarnessId, enabled: bool) -> Fixture {
     fs::write(
         manifest,
         format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n[{section}.helper]\nsource = \"cat\"\nenabled = {enabled}\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n[{section}.helper]\nsource = \"cat\"\nenabled = {enabled}\n",
             source_path(&catalog), harness.name(),
         ),
     )
@@ -317,7 +317,7 @@ fn registration_only(kind: ItemKind, harness: HarnessId) {
         ItemKind::Hook => {
             fs::write(
                 f.root.join("kendex.toml"),
-                format!("schema = 6\n[install]\nharnesses = [\"{}\"]\n[[custom-hooks]]\nname = \"helper\"\nevent = \"PreToolUse\"\ncommand = \"./scripts/helper.sh\"\nagents = \"all\"\nharnesses = [\"{}\"]\n", harness.name(), harness.name()),
+                format!("schema = 7\n[install]\nharnesses = [\"{}\"]\n[[custom-hooks]]\nname = \"helper\"\nevent = \"PreToolUse\"\ncommand = \"./scripts/helper.sh\"\nagents = \"all\"\nharnesses = [\"{}\"]\n", harness.name(), harness.name()),
             ).unwrap();
         }
         ItemKind::McpServer => {}
@@ -325,7 +325,7 @@ fn registration_only(kind: ItemKind, harness: HarnessId) {
             fs::write(
                 f.root.join("kendex.toml"),
                 format!(
-                    "schema = 6\n[plugins.helper]\nenabled = true\nharness = \"{}\"\n",
+                    "schema = 7\n[plugins.helper]\nenabled = true\nharness = \"{}\"\n",
                     harness.name()
                 ),
             )

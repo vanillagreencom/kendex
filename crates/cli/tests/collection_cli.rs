@@ -117,7 +117,7 @@ fn world() -> (tempfile::TempDir, PathBuf, PathBuf, String) {
     let commit = upstream(&home);
     let project = home.join("app");
     fs::create_dir_all(project.join(".claude")).unwrap();
-    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
     assert_eq!(
         kendex_core::discover::project_root_from(&project, &home).as_deref(),
         Some(project.as_path()),
@@ -148,7 +148,7 @@ fn a_member_no_tool_can_take_leaves_the_scope_unsubscribed() {
         match tool {
             false => {
                 assert!(text.contains("no tool is on this machine"), "{text}");
-                assert_eq!(manifest, "schema = 6\n", "the refused step subscribed");
+                assert_eq!(manifest, "schema = 7\n", "the refused step subscribed");
                 assert!(!project.join(".claude/skills").exists(), "{text}");
             }
             true => {

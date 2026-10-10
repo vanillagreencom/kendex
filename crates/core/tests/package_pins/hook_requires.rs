@@ -55,7 +55,7 @@ fn locked_apply_releases_disagreeing_recorded_revisions_but_keeps_written_pins()
         write_manifest(
             &w,
             &format!(
-                "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[{owner}]\nsource = \"cat\"\n{pin}\n[skills.judge]\nsource = \"cat\"\n\n[skills.solo]\nsource = \"cat\"\n\n[skills.followup]\nsource = \"cat\"\n"
+                "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[{owner}]\nsource = \"cat\"\n{pin}\n[skills.judge]\nsource = \"cat\"\n\n[skills.solo]\nsource = \"cat\"\n\n[skills.followup]\nsource = \"cat\"\n"
             ),
         );
         super::sync_and_apply(&w);
@@ -203,7 +203,7 @@ fn wrappers_pinning_two_revisions_of_their_judge_are_withheld() {
     write_manifest(
         &w,
         &format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.deliver]\nsource = \"cat\"\nrev = \"{first}\"\n\n[hooks.halt]\nsource = \"cat\"\nrev = \"{second}\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.deliver]\nsource = \"cat\"\nrev = \"{first}\"\n\n[hooks.halt]\nsource = \"cat\"\nrev = \"{second}\"\n"
         ),
     );
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
@@ -283,7 +283,7 @@ fn recorded_world(initial: &[&str], judge_requires: &str) -> (World, String) {
 #[allow(clippy::unwrap_used)]
 fn sync_hook_manifest(w: &World, hooks: &[&str], first: &str, halt_rev: &str) {
     let mut text = format!(
-        "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n"
+        "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n"
     );
     for name in hooks {
         let rev = if *name == "halt" { halt_rev } else { first };

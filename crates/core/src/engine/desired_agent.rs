@@ -47,7 +47,12 @@ fn harness_notices(
         HarnessId::Gemini => super::gemini::agent_notices(ctx, state),
         crate::model::HarnessId::Copilot => {
             let model = EffectiveAgent::requested_model(source_agent, overrides);
-            let resolved = crate::harness::models::render_model(harness, model, ctx.model_classes);
+            let resolved = crate::harness::models::render_model(
+                harness,
+                model,
+                ctx.model_classes,
+                ctx.model_bindings,
+            );
             super::copilot::agent_notices(ctx, state, resolved.id.as_deref());
         }
         _ => {}
@@ -137,6 +142,7 @@ pub(super) fn desired_agent(
         super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed)?;
     let mut hash_manifest = ctx.manifest.clone();
     hash_manifest.model_classes = ctx.model_classes.clone();
+    hash_manifest.model_bindings = ctx.model_bindings.clone();
     let mut placed = false;
     for harness in ctx.harnesses.clone() {
         let Some(native) = native_dir(ctx.env, ctx.scope, harness, ItemKind::Agent) else {
@@ -423,6 +429,7 @@ fn effective_agent<'a>(
     let permissions = EffectiveAgent::intent(source, &overrides);
     EffectiveAgent {
         model_classes: ctx.model_classes.clone(),
+        model_bindings: ctx.model_bindings.clone(),
         source,
         harness,
         scope: ctx.scope,

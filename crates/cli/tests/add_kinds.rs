@@ -52,7 +52,7 @@ fn project_with_catalog(home: &Path) -> std::path::PathBuf {
         &project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
             source_path(&catalog)
         ),
     );

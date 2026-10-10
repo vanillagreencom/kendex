@@ -41,7 +41,7 @@ fn fixture(harnesses: &str, git: bool) -> Fixture {
         // Settle project housekeeping before the shim fixture is written.
         fs::write(
             project.join("kendex.toml"),
-            "schema = 6\n[install]\nharnesses = []\n",
+            "schema = 7\n[install]\nharnesses = []\n",
         )
         .unwrap();
         run_git(&project, &["init", "-q", "-b", "main"]);
@@ -50,7 +50,7 @@ fn fixture(harnesses: &str, git: bool) -> Fixture {
     }
     fs::write(
         project.join("kendex.toml"),
-        format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
+        format!("schema = 7\n\n[install]\nharnesses = [{harnesses}]\n"),
     )
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
@@ -446,7 +446,7 @@ fn unparseable_gemini_settings_are_refused_not_rewritten() {
             commit(&f.project);
             fs::write(
                 f.project.join("kendex.toml"),
-                format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
+                format!("schema = 7\n\n[install]\nharnesses = [{harnesses}]\n"),
             )
             .unwrap();
         }
@@ -581,7 +581,7 @@ fn the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own() {
         let declare = |harnesses: &str| {
             fs::write(
                 f.project.join("kendex.toml"),
-                format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
+                format!("schema = 7\n\n[install]\nharnesses = [{harnesses}]\n"),
             )
             .unwrap();
         };
@@ -635,7 +635,7 @@ fn the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet() {
     assert!(shim_bytes(&settings).contains("AGENTS.md"));
     fs::write(
         f.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
+        "schema = 7\n\n[install]\nharnesses = [\"codex\"]\n",
     )
     .unwrap();
 
@@ -716,7 +716,7 @@ fn a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired() {
         }
         fs::write(
             f.project.join("kendex.toml"),
-            "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
+            "schema = 7\n\n[install]\nharnesses = [\"codex\"]\n",
         )
         .unwrap();
         let report = apply_now(&f);
@@ -898,7 +898,7 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
             fs::write(
                 f.project.join("kendex.toml"),
                 format!(
-                    "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\n{server}",
+                    "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\n{server}",
                     test_util::source_path(&catalog)
                 ),
             )
@@ -1021,7 +1021,7 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
             .iter()
             .any(|path| path == ".agents/skills/generated/helper.sh")
     );
-    fs::write(f.project.join("kendex.toml"), "schema = 6\n[install]\nharnesses = [\"codex\"]\n[skills.authored]\nsource = \"in-place\"\n").unwrap();
+    fs::write(f.project.join("kendex.toml"), "schema = 7\n[install]\nharnesses = [\"codex\"]\n[skills.authored]\nsource = \"in-place\"\n").unwrap();
     let report = apply_now(&f);
     assert!(
         report
@@ -1096,7 +1096,7 @@ fn refused_outputs_stay_out_of_inventory_and_later_ownership() {
     commit(&f.project);
     fs::write(
         &manifest,
-        "schema = 6\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 7\n[install]\nharnesses = [\"claude\"]\n",
     )
     .unwrap();
     fs::remove_file(&occupied).unwrap();

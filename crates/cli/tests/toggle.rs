@@ -298,7 +298,7 @@ fn cli_pi_extension_toggles_native_filters_and_verify_reads_them_back() {
         let path = manifest::manifest_path(&env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = false\n", source_path(&home.join("catalog"))
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = false\n", source_path(&home.join("catalog"))
         )).unwrap();
         if matches!(&scope, Scope::Project { .. }) {
             // Discovery accepts home as a project only when it carries a lock.
@@ -402,7 +402,7 @@ fn cli_saved_pi_config_selection_survives_enable_update_and_refused_disable() {
         let path = manifest::manifest_path(&env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n", source_path(&catalog)
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n", source_path(&catalog)
         )).unwrap();
         let lock_path = lock::lock_path(&env, &scope);
         if matches!(&scope, Scope::Project { .. }) {
@@ -485,7 +485,7 @@ fn cli_toggle_installed_server_skill_and_hook() {
         kendex_core::manifest::manifest_path(&env, &kendex_core::model::Scope::Global);
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     fs::write(manifest_path, format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"copilot\"]\nmethod = \"copy\"\n[mcp-servers.docs]\nsource = \"cat\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.audit]\nsource = \"cat\"\n", source_path(&source))).unwrap();
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"copilot\"]\nmethod = \"copy\"\n[mcp-servers.docs]\nsource = \"cat\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.audit]\nsource = \"cat\"\n", source_path(&source))).unwrap();
     // Enabling uses the same plan as the app, so it also settles a declared install.
     for (kind, name) in [
         ("mcp-server", "docs"),

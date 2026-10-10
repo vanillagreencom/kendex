@@ -55,7 +55,7 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
     );
     write(
         &project.join("catalog/pi-extensions/pi-widgets/package.json"),
@@ -238,7 +238,7 @@ fn global_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBu
     let manifest = kendex_core::env::Env::host_rooted(&home).global_manifest_file();
     write(
         &manifest,
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
     );
     write(
         &home.join("catalog/pi-extensions/pi-widgets/package.json"),
@@ -313,7 +313,7 @@ fn a_scope_declaring_no_pi_package_reads_no_extensions_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = home.join("dev/app");
-    write(&project.join("kendex.toml"), "schema = 6\n");
+    write(&project.join("kendex.toml"), "schema = 7\n");
     write(&project.join(".pi/extensions"), "not a directory\n");
 
     let check = kendex(&home, &project, &["check", "--scope", "project"]);
@@ -370,7 +370,7 @@ fn fixture_declared_at_both_scopes() -> (tempfile::TempDir, std::path::PathBuf, 
     write(
         &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
             test_util::source_path(&project.join("catalog"))
         ),
     );
@@ -503,7 +503,7 @@ fn a_copy_under_the_current_name_is_named_for_a_package_declared_under_an_earlie
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"pi-hooks\"]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"pi-hooks\"]\nsource = \"cat\"\n",
     );
     let manifest = |name: &str, version: &str| {
         format!(

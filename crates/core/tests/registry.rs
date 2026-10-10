@@ -107,7 +107,7 @@ fn a_directory_row_is_subscribed_by_identity_however_the_manifest_spells_it() {
     std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     std::fs::write(
         &manifest,
-        "schema = 6\n[sources.tools]\nrepo = \"https://github.com/Owner/Repo.git\"\n",
+        "schema = 7\n[sources.tools]\nrepo = \"https://github.com/Owner/Repo.git\"\n",
     )
     .unwrap();
     let fetch = Canned::new(vec![ok(

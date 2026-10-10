@@ -94,7 +94,7 @@ fn applied() -> World {
     fs::write(source.join("reference.md"), "step one\n").unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[skill-instructions]\nall = \"shared rule\"\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
+        "schema = 7\n\n[skill-instructions]\nall = \"shared rule\"\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
     )
     .unwrap();
     git(&project, &["init", "-q", "-b", "main"]);

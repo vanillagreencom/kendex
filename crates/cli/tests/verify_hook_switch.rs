@@ -44,7 +44,7 @@ fn a_disabled_hook_and_its_companions_verify_after_apply() {
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.guard]\nsource = \"cat\"\nenabled = false\n{declarations}",
+                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.guard]\nsource = \"cat\"\nenabled = false\n{declarations}",
                 source_path(&catalog),
             ),
         );

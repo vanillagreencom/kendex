@@ -141,7 +141,7 @@ fn refresh_waits_for_the_download_another_process_is_finishing() {
     let project = home.join("proj");
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
     )
     .unwrap();
     let env = kendex_core::env::Env::host_rooted(&home)
@@ -587,7 +587,7 @@ fn a_pending_positional_repository_never_fetches_a_personal_alias_twin() {
     fs::create_dir_all(personal.parent().unwrap()).unwrap();
     fs::write(
         &personal,
-        "schema = 6\n\n[sources.tools]\nrepo = \"other/tools\"\n",
+        "schema = 7\n\n[sources.tools]\nrepo = \"other/tools\"\n",
     )
     .unwrap();
 

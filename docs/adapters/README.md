@@ -31,15 +31,15 @@ An agent's `model` and `effort` reach each harness under that harness's own key 
 | Harness | Model shape | Effort key | Effort levels | Absent effort |
 |---|---|---|---|---|
 | Claude Code | classes project to native family aliases; bare `claude-*` id or literal `inherit` | `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the session's level |
-| Codex | bare id; classes and `inherit` omit the key for managed-session inheritance | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
+| Codex | bare id; bound classes use the consumer selector; unbound classes and `inherit` omit the key | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
 | OpenCode | `provider/model`; classes and `inherit` omit the key | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
 | Pi | canonical class, `provider/model` or `provider/family`, optionally `:level`; `inherit` omits the key | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
 | Gemini CLI | bare `gemini-*` id; classes and `inherit` omit the key | none | none | none |
-| GitHub Copilot | bare id from Copilot's own list; classes and `inherit` omit the key under [D008](../decisions/D008-copilot-agent-model.md) | `reasoningEffort`, never written | none | not yet measured |
+| GitHub Copilot | bare id from Copilot's own list; bound classes use the consumer selector; unbound classes and `inherit` omit the key under [D008](../decisions/D008-copilot-agent-model.md) | `reasoningEffort`, never written | none | not yet measured |
 | Cursor | none | none | none | none |
 | Antigravity | native `flash` or `pro`; classes and `inherit` omit the key | none | none | none |
 
-Class overrides do not turn a class render into an exact pin. Static native files do not resolve account availability. Pi retains the class for its child dispatcher. Codex and Copilot class files inherit the managed session. The class table, the resolver and each harness's runtime path are [D021](../decisions/D021-runtime-model-classes.md); a native loader that gains a documented runtime class or model callback is its revisit trigger.
+Runtime `model-classes.<class>` overrides do not pin static files. Consumer `[model-bindings.<harness>]` settings put a native model in Codex and Copilot class files. An unbound class keeps the existing render. Static native files do not resolve account availability. Pi retains the class for its child dispatcher. The class table, the resolver and each harness's runtime path are [D021](../decisions/D021-runtime-model-classes.md); a native loader that gains a documented runtime class or model callback is its revisit trigger.
 
 An input class alias requests a class, not an exact pin. `inherit` follows the session. Readback refuses a provider-qualified native field where the loader needs a bare selector. Pi and OpenCode require a provider on native model selectors. Both provider and model must be nonempty. The model part can contain `/`, as in `openrouter/anthropic/claude-sonnet-4`. Pi also accepts a `:level` from its effort vocabulary.
 

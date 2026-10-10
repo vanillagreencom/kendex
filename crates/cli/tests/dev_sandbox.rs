@@ -102,7 +102,7 @@ fn a_sandboxed_build_still_knows_the_real_home_is_not_a_project() {
     std::fs::write(project.join("catalog/skills/ancestor/SKILL.md"), skill).expect("catalog body");
     std::fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n[sources.catalog]\npath = \"catalog\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.ancestor]\nsource = \"catalog\"\n",
+        "schema = 7\n[sources.catalog]\npath = \"catalog\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.ancestor]\nsource = \"catalog\"\n",
     )
     .expect("ancestor manifest");
     // The marker that makes an ordinary home look like a project.

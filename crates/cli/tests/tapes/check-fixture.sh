@@ -15,7 +15,7 @@ skill commit-guards "keeps commits small"
 skill docs-writing "writes documentation"
 
 cat >"$project/kendex.toml" <<TOML
-schema = 6
+schema = 7
 
 [sources.cat]
 path = "$catalog"

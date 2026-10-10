@@ -89,7 +89,7 @@ fn moved_upstream() -> (Fixture, String) {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
     )
     .unwrap();
     let at = Fixture {
@@ -313,7 +313,7 @@ fn a_clean_refresh_with_folded_detail_closes_done() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.tidy]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.tidy]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )

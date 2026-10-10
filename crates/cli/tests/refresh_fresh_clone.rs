@@ -106,7 +106,7 @@ fn declared_consumer(home: &Path, package: &str) -> PathBuf {
     let origin = home.join("dev/app");
     write(
         &origin.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
     );
     write(
         &origin.join("catalog/skills/deploy/SKILL.md"),
@@ -509,7 +509,7 @@ fn an_lf_clone_removes_a_render_first_recorded_from_crlf() {
     let home = rooted(&tmp);
     write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
     let origin = home.join("source/app");
-    let declared = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
+    let declared = "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
     write(&origin.join("kendex.toml"), declared);
     write(
         &origin.join("catalog/skills/deploy/SKILL.md"),
@@ -570,7 +570,7 @@ fn a_crlf_checkout_keeps_its_own_uncommitted_render_as_kendexs() {
     let home = rooted(&tmp);
     write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
     let project = home.join("app");
-    let declared = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
+    let declared = "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
     write(&project.join("kendex.toml"), declared);
     let catalog = project.join("catalog/skills/deploy/SKILL.md");
     let body = |step: &str| {
@@ -696,7 +696,7 @@ fn declining_user_pi_keeps_the_completed_project_and_user_files() {
             let user_manifest = kendex_core::manifest::manifest_path(&env, &Scope::Global);
             write(
                 &user_manifest,
-                "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-user]\nsource = 'cat'\n",
+                "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-user]\nsource = 'cat'\n",
             );
             let catalog = home.join("catalog/pi-extensions/pi-user");
             write(
@@ -803,7 +803,7 @@ fn declining_project_changes_still_accepts_user_pi() {
         let status_before = git(&home, &project, &["status", "--porcelain"]);
         write(
             &kendex_core::manifest::manifest_path(&env, &Scope::Global),
-            "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-user]\nsource = 'cat'\n",
+            "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-user]\nsource = 'cat'\n",
         );
         let user_catalog = home.join("catalog/pi-extensions/pi-user");
         write(
@@ -949,7 +949,7 @@ fn process_packages(
     };
     write(
         &manifest::manifest_path(&env, scope),
-        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n[pi-extensions.pi-second]\nsource = 'cat'\n[pi-extensions.pi-copy]\nsource = 'cat'\n",
+        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n[pi-extensions.pi-second]\nsource = 'cat'\n[pi-extensions.pi-copy]\nsource = 'cat'\n",
     );
     let catalog = base.join("catalog/pi-extensions");
     for (name, package) in [
@@ -1140,7 +1140,7 @@ fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own(
     let origin = home.join("dev/app");
     write(
         &origin.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"../catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"../catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
     );
     let skill = "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n";
     write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");

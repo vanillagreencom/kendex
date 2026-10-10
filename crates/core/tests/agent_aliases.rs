@@ -75,7 +75,7 @@ fn fixture(consumer: &str) -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn lookup_reads_old_names_through_the_catalog_resolver() {
-    let f = fixture("schema = 6");
+    let f = fixture("schema = 7");
     let sealed = SealedSource::open(&f.source).unwrap();
     let config = source_config(&sealed, "cat").unwrap();
     for (old, new) in [("generalist", "maintainer"), ("engineer", "runtime")] {
@@ -263,7 +263,7 @@ fn assert_custom_hooks(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_taxonomy_without_an_arriving_skill_still_resolves_legacy_labels() {
-    let f = fixture("schema = 6");
+    let f = fixture("schema = 7");
     fs::write(
         f.project.join("kendex.settings.toml"),
         "[env]\nLINEAR_AGENT_LABELS = \"agent:generalist,agent:engineer\"\n",
@@ -295,7 +295,7 @@ fn two_settings_for_one_agent_are_refused_before_writes() {
             "[agent-additional-instructions]\ngeneralist = 'old'\nmaintainer = 'new'\n",
         ),
     ] {
-        let f = fixture(&format!("schema = 6\n{settings}"));
+        let f = fixture(&format!("schema = 7\n{settings}"));
         let before = fs::read(f.project.join("kendex.toml")).unwrap();
         let result = audit(&f.env, &f.scope);
         assert!(

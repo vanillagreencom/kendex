@@ -175,7 +175,7 @@ fn a_copy_left_behind_by_a_revision_bump_fails_the_plain_project_scope() {
     let next = git(&catalog, &["rev-parse", "HEAD"]).trim().to_owned();
     let manifest = |rev: &str| {
         format!(
-            "schema = 6\n[sources.cat]\nrepo = \"file://{}\"\nrev = \"{rev}\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\nrepo = \"file://{}\"\nrev = \"{rev}\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
             catalog.display()
         )
     };

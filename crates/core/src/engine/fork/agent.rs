@@ -76,6 +76,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     }
     let around = Around {
         model_classes: crate::manifest::model_class_overrides(env, scope, manifest)?,
+        model_bindings: crate::manifest::model_bindings(env, scope, manifest)?,
         skills: crate::engine::desired_agent::required_skills(
             env,
             scope,
@@ -265,6 +266,7 @@ fn crlf(body: &str) -> bool {
 #[derive(Clone)]
 struct Around<'a> {
     model_classes: std::collections::BTreeMap<String, String>,
+    model_bindings: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
     skills: Vec<crate::render::agent::RequiredSkill>,
     overrides: FrontmatterOverrides,
     launch: Option<String>,
@@ -328,6 +330,7 @@ fn render(
     let permissions = EffectiveAgent::intent(source, &around.overrides);
     let effective = EffectiveAgent {
         model_classes: around.model_classes.clone(),
+        model_bindings: around.model_bindings.clone(),
         source,
         harness,
         scope,

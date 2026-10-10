@@ -101,7 +101,7 @@ fn pi_reports_agree_and_the_printed_remedy_restores_packages() {
         fs::create_dir_all(&source).unwrap();
         fs::create_dir_all(manifest.parent().unwrap()).unwrap();
         fs::create_dir_all(project.join(".agents")).unwrap();
-        fs::write(manifest, "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n").unwrap();
+        fs::write(manifest, "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n").unwrap();
         fs::write(
             source.join("package.json"),
             r#"{"name":"pi-widgets","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
@@ -192,7 +192,7 @@ fn refresh_restores_a_missing_global_registration_through_a_linked_settings_file
     fs::create_dir_all(project.join(".agents")).unwrap();
     fs::write(
         manifest,
-        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
     )
     .unwrap();
     fs::write(
@@ -276,7 +276,7 @@ fn refresh_retries_an_unrecorded_package_after_a_bin_conflict_is_removed() {
     fs::create_dir_all(project.join(".agents")).unwrap();
     fs::write(
         manifest,
-        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
     )
     .unwrap();
     fs::write(
@@ -353,7 +353,7 @@ fn refresh_moves_the_block_when_the_package_setting_flips() {
     fs::create_dir_all(project.join(".agents")).unwrap();
     fs::write(
         manifest,
-        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
     )
     .unwrap();
     fs::write(

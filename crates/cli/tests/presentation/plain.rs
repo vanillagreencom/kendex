@@ -104,7 +104,7 @@ fn a_failure_after_the_write_still_records_and_reports_it() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = \
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = \
              [\"claude\"]\nmethod = \"copy\"\n\n[skills.armed]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),

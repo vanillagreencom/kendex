@@ -10,8 +10,8 @@ mod fold;
 mod validate;
 pub use file::{
     ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_file_name,
-    manifest_path, model_class_overrides, parse_text, project_manifest_path, read_for_mutation,
-    refuse_output_styles, seed,
+    manifest_path, model_bindings, model_class_overrides, parse_text, project_manifest_path,
+    read_for_mutation, refuse_output_styles, seed,
 };
 // Crate-only: the apply op is `save`'s one sanctioned caller — it checks
 // its precondition first. Anywhere else, a direct save is a whole-file
@@ -26,7 +26,7 @@ pub use validate::{Finding, joined, output_style_count, validate};
 /// follows makes it durable over the person's own bytes. A schema newer
 /// than this build refuses too; downgrades must never corrupt. Either way
 /// the file is left as written and the refusal names the way out.
-pub const MANIFEST_SCHEMA: u32 = 6;
+pub const MANIFEST_SCHEMA: u32 = 7;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
 /// The reserved source name for content adopted into this scope.
@@ -308,6 +308,9 @@ pub struct Manifest {
     /// Consumer class replacements. Project values replace personal values per key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub model_classes: BTreeMap<String, String>,
+    /// Consumer native class selectors, per harness. Catalog values are not policy.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_bindings: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceDecl>,
     #[serde(default, skip_serializing_if = "file::is_default")]

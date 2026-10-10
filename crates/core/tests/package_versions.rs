@@ -95,7 +95,7 @@ fn declare(w: &World, source_extra: &str, body: &str) {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
         ),
     )
     .unwrap();
@@ -399,7 +399,7 @@ fn a_forked_row_of_a_refused_kind_still_carries_the_refusal() {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[sources.here]\npath = \"cat\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[pi-extensions.pi-hooks]\nsource = \"here\"\n\n[forks.pi-extension.pi-hooks]\nsource = \"cat\"\nforked-at = \"2026-01-01\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[sources.here]\npath = \"cat\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[pi-extensions.pi-hooks]\nsource = \"here\"\n\n[forks.pi-extension.pi-hooks]\nsource = \"cat\"\nforked-at = \"2026-01-01\"\n"
         ),
     )
     .unwrap();

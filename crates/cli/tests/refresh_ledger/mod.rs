@@ -59,7 +59,7 @@ fn manifest(project: &Path, catalog: &Path, tools: &str, method: &str, declarati
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {tools}\nmethod = \"{method}\"\n\n{declarations}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {tools}\nmethod = \"{method}\"\n\n{declarations}",
             source_path(catalog)
         ),
     )

@@ -11,7 +11,7 @@ seed_skill() { # NAME [SUFFIX]
   git -C "$R" add "skills/$name/SKILL.md" ".agents/skills/$name/SKILL.md$suffix"
 }
 configure() { # HEADER KEY
-  printf '%s\n' 'schema = 6' 'is_source_catalog = true' >"$R/kendex.toml"
+  printf '%s\n' 'schema = 7' 'is_source_catalog = true' >"$R/kendex.toml"
   printf '%s\n' "$1" "$2 = \"Rule.\"" >"$R/kendex-local.toml"
   git -C "$R" add kendex.toml kendex-local.toml
 }

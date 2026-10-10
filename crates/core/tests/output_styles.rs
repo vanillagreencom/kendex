@@ -40,7 +40,7 @@ fn fixture(global: bool, harnesses: &[HarnessId]) -> Fixture {
     fs::create_dir_all(home.join(".pi/agent")).unwrap();
     let path = manifest::manifest_path(&env, &scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [{}]\nmethod = \"copy\"\n[output-styles.STE]\nsource = \"cat\"\n", source_path(&source), harnesses.iter().map(|h| format!("\"{}\"", h.name())).collect::<Vec<_>>().join(", "))).unwrap();
+    fs::write(path, format!("schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [{}]\nmethod = \"copy\"\n[output-styles.STE]\nsource = \"cat\"\n", source_path(&source), harnesses.iter().map(|h| format!("\"{}\"", h.name())).collect::<Vec<_>>().join(", "))).unwrap();
     Fixture {
         _temp: temp,
         env,

@@ -136,7 +136,7 @@ mod tests {
         fs::create_dir_all(manifest.parent().unwrap()).unwrap();
         fs::write(
             &manifest,
-            "schema = 6\n\
+            "schema = 7\n\
              [sources.https]\nrepo = \"https://github.com/Owner/Repo.git\"\n\
              [sources.ssh]\nrepo = \"git@github.com:owner/repo.git\"\n\
              [sources.elsewhere]\nrepo = \"git@gitlab.com:owner/repo.git\"\n\
@@ -174,7 +174,7 @@ mod tests {
         fs::write(
             &manifest,
             format!(
-                "schema = 6\n[sources.kendex]\nrepo = \"{}\"\n",
+                "schema = 7\n[sources.kendex]\nrepo = \"{}\"\n",
                 crate::manifest::DEFAULT_SOURCE_REPO
             ),
         )

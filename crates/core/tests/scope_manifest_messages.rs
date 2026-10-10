@@ -79,7 +79,7 @@ fn declare(w: &World, source_extra: &str, body: &str) {
         &w.project,
         w.file,
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n{source_extra}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{body}",
+            "schema = 7\n[sources.cat]\n{}\n{source_extra}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{body}",
             source_path(&w.source),
         ),
     );

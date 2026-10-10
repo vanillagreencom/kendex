@@ -139,7 +139,7 @@ mod tests {
             std::fs::write(
                 root.join("kendex.toml"),
                 format!(
-                    "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n",
+                    "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n",
                     crate::test_util::source_path(&catalog)
                 ),
             )

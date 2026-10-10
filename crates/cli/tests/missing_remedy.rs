@@ -25,12 +25,12 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
 
 fn declaration(name: &str) -> String {
     format!(
-        "schema = 6\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\n[sources.cat]\npath = \"catalog\"\n[skills.{name}]\nsource = \"cat\"\n"
+        "schema = 7\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\n[sources.cat]\npath = \"catalog\"\n[skills.{name}]\nsource = \"cat\"\n"
     )
 }
 
 fn cleanup_declaration(name: Option<&str>) -> String {
-    let mut text = "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n".to_owned();
+    let mut text = "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n".to_owned();
     if let Some(name) = name {
         text.push_str(&format!("[skills.{name}]\nsource = \"cat\"\n"));
     }
@@ -222,7 +222,7 @@ fn a_partial_harness_cleanup_previews_without_removing_the_wanted_install() {
     let manifest_path = manifest::manifest_path(&env, &scope);
     let declared = |harnesses: &str| {
         format!(
-            "schema = 6\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.shared]\nsource = \"cat\"\n"
+            "schema = 7\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.shared]\nsource = \"cat\"\n"
         )
     };
     fs::write(&manifest_path, declared("\"claude\", \"codex\"")).unwrap();

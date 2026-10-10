@@ -722,7 +722,7 @@ export const events = {
 /* Constants */
 export const LEGAL = {"version":2,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
 
-export const MANIFEST_SCHEMA = 6 as const;
+export const MANIFEST_SCHEMA = 7 as const;
 
 export const PACKAGE_CHECK_HARNESSES = ["claude","pi"] as const;
 
@@ -3091,6 +3091,8 @@ export type Manifest_Deserialize = {
 	schema: number,
 	/**  Consumer class replacements. Project values replace personal values per key. */
 	"model-classes"?: { [key in string]: string },
+	/**  Consumer native class selectors, per harness. Catalog values are not policy. */
+	"model-bindings"?: { [key in string]: { [key in string]: string } },
 	sources?: { [key in string]: SourceDecl_Deserialize },
 	install?: InstallDefaults_Deserialize,
 	agents?: { [key in string]: ItemDecl_Deserialize },
@@ -3156,6 +3158,8 @@ export type Manifest_Serialize = {
 	schema: number,
 	/**  Consumer class replacements. Project values replace personal values per key. */
 	"model-classes"?: { [key in string]: string },
+	/**  Consumer native class selectors, per harness. Catalog values are not policy. */
+	"model-bindings"?: { [key in string]: { [key in string]: string } },
 	sources?: { [key in string]: SourceDecl_Serialize },
 	install?: InstallDefaults_Serialize,
 	agents?: { [key in string]: ItemDecl_Serialize },

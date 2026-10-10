@@ -406,7 +406,7 @@ fn trusted_verification_refuses_code_in_the_checked_project() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_without_configuration_grants_no_positions() {
-    let fixture = fixture_with_arming("schema = 6\n[install]\nharnesses = [\"codex\"]\n", false);
+    let fixture = fixture_with_arming("schema = 7\n[install]\nharnesses = [\"codex\"]\n", false);
     let verified = bot_instructions::verify(
         &fixture.env,
         &fixture.scope,
@@ -423,7 +423,7 @@ fn trusted_verification_without_configuration_grants_no_positions() {
 fn trusted_verification_rejects_unusable_reports() {
     use std::os::unix::fs::PermissionsExt;
 
-    let fixture = fixture_with_arming("schema = 6\n", false);
+    let fixture = fixture_with_arming("schema = 7\n", false);
     let trusted = fixture.root.parent().unwrap().join("trusted");
     let launcher = trusted.join("scripts/bot-instructions");
     fs::create_dir_all(launcher.parent().unwrap()).unwrap();
@@ -761,7 +761,7 @@ fn a_render_once_where_the_package_is_not_installed_runs_nothing() {
 #[test]
 fn a_project_with_every_bot_surface_disabled_is_untouched() {
     let fixture = fixture(
-        "schema = 6\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = \"fixture\"\nsummary = \"A fixture with no review bot enabled.\"\n",
+        "schema = 7\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = \"fixture\"\nsummary = \"A fixture with no review bot enabled.\"\n",
     );
     let rendered = bot_instructions::render(&fixture.env, &fixture.scope)
         .expect("the disabled render is a no-op");
@@ -780,7 +780,7 @@ fn a_project_with_every_bot_surface_disabled_is_untouched() {
 #[test]
 fn an_invalid_manifest_names_the_input_and_the_render_repair() {
     let fixture = fixture(
-        "schema = 6\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
+        "schema = 7\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
     );
     let error = bot_instructions::render(&fixture.env, &fixture.scope)
         .expect_err("the incomplete bot manifest must refuse")
@@ -802,7 +802,7 @@ fn an_invalid_manifest_names_the_input_and_the_render_repair() {
 #[test]
 fn a_claude_only_copy_runs_and_names_its_installed_repair_command() {
     let fixture = fixture_at(
-        "schema = 6\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
+        "schema = 7\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
         true,
         HarnessId::Claude,
         ".claude/skills/bot-instructions",

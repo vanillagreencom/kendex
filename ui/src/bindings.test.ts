@@ -89,9 +89,9 @@ describe("a command whose transport answered", () => {
 
   it("retains optional bot settings through the manifest bridge", async () => {
     const rows: Manifest_Deserialize[] = [
-      { schema: 6 },
+      { schema: 7 },
       {
-        schema: 6,
+        schema: 7,
         "bot-instructions": {
           schema: 1,
           bots: { codex: true, qodo: false },

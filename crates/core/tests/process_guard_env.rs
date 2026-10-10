@@ -262,7 +262,7 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
         ],
     );
     for project in [&nested, &linked_project] {
-        std::fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+        std::fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
     }
     std::os::unix::fs::symlink(base.join("absent-metadata"), unavailable.join(".git")).unwrap();
     std::fs::create_dir(&safe).unwrap();

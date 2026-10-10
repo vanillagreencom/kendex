@@ -47,7 +47,7 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-const MANIFEST: &str = "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n";
+const MANIFEST: &str = "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n";
 const PACKAGE: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
 const INDEX: &str = "export const version = 1;\n";
 
@@ -225,7 +225,7 @@ fn verify_checks_a_plugin_only_scope_without_an_install_record() {
     fs::create_dir_all(project.join(".claude")).unwrap();
     write(
         &project.join("kendex.toml"),
-        "schema = 6\n\n[plugins.\"fmt@main\"]\nenabled = true\n",
+        "schema = 7\n\n[plugins.\"fmt@main\"]\nenabled = true\n",
     );
     assert!(!project.join(".kendex-lock.json").exists());
 

@@ -24,7 +24,7 @@ fn world() -> Fixture {
     )
     .expect("catalog skill");
     let manifest = format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
         test_util::source_path(&catalog)
     );
     for root in [&fixture.main, &fixture.linked] {

@@ -168,7 +168,7 @@ fn all_scopes_are_checked_for_consent_before_the_first_write() {
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         manifest,
-        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
     )
     .unwrap();
     let package = home.join("catalog/pi-extensions/pi-widgets");

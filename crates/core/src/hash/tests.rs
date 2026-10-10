@@ -426,7 +426,7 @@ fn a_plan_reuses_a_crlf_source_hash_across_harnesses() {
     let git = |args: &[&str]| crate::test_util::git(&catalog, args);
     git(&["init", "-q", "-b", "main"]);
     git(&["config", "core.autocrlf", "true"]);
-    std::fs::write(catalog.join("kendex.toml"), "schema = 6\n").unwrap();
+    std::fs::write(catalog.join("kendex.toml"), "schema = 7\n").unwrap();
     std::fs::write(
         catalog.join("skills/demo/SKILL.md"),
         "---\nname: demo\ndescription: fixture\n---\nDo the work.\n",
@@ -455,7 +455,7 @@ fn a_plan_reuses_a_crlf_source_hash_across_harnesses() {
     let scope = Scope::Project { root: project };
     for (harnesses, queries) in [("\"claude\"", 6), ("\"claude\",\"codex\",\"pi\"", 10)] {
         let manifest: Manifest = toml::from_str(&format!(
-            "schema = 6\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n[sources.fixture]\n{}\n[skills.demo]\nsource = \"fixture\"\n",
+            "schema = 7\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n[sources.fixture]\n{}\n[skills.demo]\nsource = \"fixture\"\n",
             crate::test_util::source_path(&catalog),
         ))
         .unwrap();
@@ -492,7 +492,7 @@ fn overlapping_catalog_roots_keep_distinct_skill_identities() {
         let project = root.join("project");
         std::fs::create_dir_all(inner.join(excluded)).unwrap();
         std::fs::create_dir_all(&project).unwrap();
-        std::fs::write(catalog.join("kendex.toml"), "schema = 6\n").unwrap();
+        std::fs::write(catalog.join("kendex.toml"), "schema = 7\n").unwrap();
         std::fs::write(
             inner.join("SKILL.md"),
             "---\nname: inner\ndescription: fixture\n---\nDo the work.\n",
@@ -500,7 +500,7 @@ fn overlapping_catalog_roots_keep_distinct_skill_identities() {
         .unwrap();
         std::fs::write(inner.join(excluded).join("output.txt"), "Build output.\n").unwrap();
         let manifest: Manifest = toml::from_str(&format!(
-            "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\
+            "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\
              [sources.parent]\n{}\n[sources.nested]\n{}\n\
              [skills.\"plugin/inner\"]\nsource = \"parent\"\n\
              [skills.inner]\nsource = \"nested\"\n",

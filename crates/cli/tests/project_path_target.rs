@@ -70,7 +70,7 @@ fn combined_apply_refreshes_global_instructions_and_keeps_project_refusals() {
             "Global tools.",
         );
         let declaration = format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\nmethod = \"copy\"\n[output-styles.STE]\nsource = \"cat\"\n[pi-extensions.global]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\nmethod = \"copy\"\n[output-styles.STE]\nsource = \"cat\"\n[pi-extensions.global]\nsource = \"cat\"\n",
             test_util::source_path(&source)
         );
         let global_manifest = manifest::manifest_path(&env, &Scope::Global);
@@ -126,7 +126,7 @@ fn combined_apply_refreshes_global_instructions_and_keeps_project_refusals() {
             "package-off" => write(&global_manifest, &format!("{declaration}enabled = false\n")),
             "project-invalid" => write(
                 &project_manifest,
-                "schema = 6\n[output-styles.a]\n[output-styles.b]\n",
+                "schema = 7\n[output-styles.a]\n[output-styles.b]\n",
             ),
             "style-update" | "project-conflict" => write(
                 &style,
@@ -320,7 +320,7 @@ fn kept_candidates() -> Vec<PathBuf> {
 /// finds nothing to install in.
 fn manifest_head(catalog: &Path) -> String {
     format!(
-        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
         catalog.display()
     )
 }

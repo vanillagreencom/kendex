@@ -78,7 +78,7 @@ fn world() -> (tempfile::TempDir, std::path::PathBuf) {
     write(
         &app.join("kendex.toml"),
         &format!(
-            "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n[skills.house-style]\nsource = \"local\"\n",
+            "schema = 7\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n[skills.house-style]\nsource = \"local\"\n",
             source_path(&catalog)
         ),
     );

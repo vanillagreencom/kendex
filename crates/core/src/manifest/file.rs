@@ -125,6 +125,29 @@ pub fn model_class_overrides(
     }
 }
 
+/// Project native bindings replace personal bindings per harness and class.
+pub fn model_bindings(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+) -> Result<std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>> {
+    let mut bindings = match scope {
+        Scope::Global => return Ok(manifest.model_bindings.clone()),
+        Scope::Project { .. } => {
+            load_current(&manifest_path(env, &Scope::Global))?
+                .unwrap_or_default()
+                .model_bindings
+        }
+    };
+    for (harness, classes) in &manifest.model_bindings {
+        bindings
+            .entry(harness.clone())
+            .or_default()
+            .extend(classes.clone());
+    }
+    Ok(bindings)
+}
+
 /// [`load`] for text the caller already read — the importer classifies the
 /// exact bytes its preconditions bind to.
 pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {

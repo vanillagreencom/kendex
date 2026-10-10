@@ -22,7 +22,7 @@ fn check_prints_the_lock_version_pair_on_stderr() {
         let home = rooted(&tmp);
         let project = home.join("project with spaces");
         fs::create_dir_all(project.join(".agents")).unwrap();
-        fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+        fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
         let path = project.join(".kendex-lock.json");
         fs::write(&path, &record).unwrap();
         for mode in ["plain", "pretty"] {

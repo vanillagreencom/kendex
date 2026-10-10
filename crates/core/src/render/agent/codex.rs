@@ -28,7 +28,12 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         escape(&source.description)
     ));
     let model = agent.model_request();
-    let resolved = render_model(HarnessId::Codex, model, &agent.model_classes);
+    let resolved = render_model(
+        HarnessId::Codex,
+        model,
+        &agent.model_classes,
+        &agent.model_bindings,
+    );
     warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
     // No model key means Codex's own default — its dialect for inherit.
     if let Some(id) = &resolved.id {
@@ -225,6 +230,7 @@ mod tests {
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Codex,
             scope,

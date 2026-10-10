@@ -101,7 +101,7 @@ fn declare_repo(w: &World, scope: &Scope, repo: &str, rev: &str) {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{repo}\"\nrev = \"{rev}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{repo}\"\nrev = \"{rev}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();
@@ -246,7 +246,7 @@ fn a_busy_cache_costs_only_its_own_source() {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"main\"\n\n[sources.plain]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.local-gh]\nsource = \"plain\"\n",
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"main\"\n\n[sources.plain]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.local-gh]\nsource = \"plain\"\n",
             source_path(&plain)
         ),
     )

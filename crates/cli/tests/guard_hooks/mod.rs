@@ -113,7 +113,7 @@ pub fn install_package(home: &Path, root: &Path, skills: &[&str]) {
     if !manifest.is_file() {
         std::fs::write(
             &manifest,
-            format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(&catalog)),
+            format!("schema = 7\n\n[sources.cat]\n{}\n", source_path(&catalog)),
         )
         .unwrap();
     }

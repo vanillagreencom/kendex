@@ -79,6 +79,7 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
         TooNew(i64),
     }
     let one_below = (MANIFEST_SCHEMA - 1).to_string();
+    let one_above = (MANIFEST_SCHEMA + 1).to_string();
     let rows: [(&str, Option<&str>, Refusal); 4] = [
         (
             "schema 1",
@@ -91,12 +92,25 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
             Refusal::Legacy(format!("schema {one_below} manifest")),
         ),
         ("no schema", None, Refusal::Legacy("no schema".to_owned())),
-        ("schema 99", Some("99"), Refusal::TooNew(99)),
+        (
+            "one above current with bindings",
+            Some(&one_above),
+            Refusal::TooNew(i64::from(MANIFEST_SCHEMA) + 1),
+        ),
     ];
     for (what, schema, refusal) in rows {
         let f = fixture(schema.unwrap_or("1"));
         if schema.is_none() {
             fs::write(&f.manifest_path, f.original.replace("schema = 1\n", "")).unwrap();
+        } else {
+            fs::write(
+                &f.manifest_path,
+                format!(
+                    "{}\n[model-bindings.codex]\nstandard = 'gpt-6.1-sol'\n",
+                    f.original
+                ),
+            )
+            .unwrap();
         }
         let before = fs::read_to_string(&f.manifest_path).unwrap();
 

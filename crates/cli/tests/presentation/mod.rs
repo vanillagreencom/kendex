@@ -173,7 +173,7 @@ fn blocked_project_at(home: &Path, project: &Path) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.commit-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.commit-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )
@@ -195,7 +195,7 @@ pub fn nothing_declared(args: &[&str]) -> Output {
     let home = &rooted(&tmp);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
-    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
     kendex(home, &project, "pretty", args)
 }
 

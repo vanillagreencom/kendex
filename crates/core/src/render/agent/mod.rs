@@ -71,6 +71,9 @@ pub struct EffectiveAgent<'a> {
     pub overrides: FrontmatterOverrides,
     /// Effective consumer class policy, never source-catalog defaults.
     pub model_classes: std::collections::BTreeMap<String, String>,
+    /// Effective consumer native class bindings, never source-catalog defaults.
+    pub model_bindings:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
     pub permissions: PermissionIntent,
     pub launch_instructions: Option<String>,
     pub additional_instructions: Option<String>,
@@ -500,6 +503,7 @@ mod tests {
             skills: vec![],
             overrides: FrontmatterOverrides::default(),
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: None,
             additional_instructions: merged_instructions(&table, "rust"),
@@ -531,6 +535,7 @@ mod tests {
             for harness in HarnessId::ALL {
                 let agent = EffectiveAgent {
                     model_classes: Default::default(),
+                    model_bindings: Default::default(),
                     source: &source,
                     harness,
                     scope: &scope,
@@ -575,6 +580,7 @@ mod tests {
         let spelled = |harness: HarnessId| -> String {
             let agent = EffectiveAgent {
                 model_classes: Default::default(),
+                model_bindings: Default::default(),
                 source: &source,
                 harness,
                 scope: &scope,
@@ -629,6 +635,7 @@ mod tests {
         let rendered = |harness: HarnessId| -> String {
             let agent = EffectiveAgent {
                 model_classes: Default::default(),
+                model_bindings: Default::default(),
                 source: &source,
                 harness,
                 scope: &scope,

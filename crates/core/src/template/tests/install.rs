@@ -293,7 +293,7 @@ fn output_style_intent_is_judged_before_template_writes() {
                 fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
                 fs::write(
                     &manifest_path,
-                    format!("schema = 6\n[output-styles.held]\nsource = \"local\"\nenabled = {enabled}\n"),
+                    format!("schema = 7\n[output-styles.held]\nsource = \"local\"\nenabled = {enabled}\n"),
                 ).unwrap();
             }
             let resolution = resolve(&project.env, &template).unwrap();
@@ -383,7 +383,7 @@ fn a_populated_destination_keeps_its_own_packages_and_refuses_a_clash() {
     skill(&local.join("skills"), "theirs", "their own bytes");
     fs::write(
         root.join("kendex.toml"),
-        "schema = 6\n[skills.theirs]\nsource = \"local\"\n",
+        "schema = 7\n[skills.theirs]\nsource = \"local\"\n",
     )
     .unwrap();
     // And one wearing a template member's name with different bytes.
@@ -431,7 +431,7 @@ fn a_destination_keeps_a_customization_it_already_set() {
     };
     fs::write(
         root.join("kendex.toml"),
-        "schema = 6\n[skill-instructions]\n\"gh\" = \"ours, not the template's\"\n",
+        "schema = 7\n[skill-instructions]\n\"gh\" = \"ours, not the template's\"\n",
     )
     .unwrap();
 

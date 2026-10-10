@@ -29,7 +29,12 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         push(format!("tags: {}", yaml_scalar(&source.tags.join(", "))));
     }
     let model = agent.model_request();
-    let resolved = render_model(HarnessId::Claude, model, &agent.model_classes);
+    let resolved = render_model(
+        HarnessId::Claude,
+        model,
+        &agent.model_classes,
+        &agent.model_bindings,
+    );
     warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
     // Claude spells inherit-the-session-model literally.
     push(format!(
@@ -175,6 +180,7 @@ mod tests {
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
             model_classes: Default::default(),
+            model_bindings: Default::default(),
             source,
             harness: HarnessId::Claude,
             scope,

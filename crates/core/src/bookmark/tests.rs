@@ -79,7 +79,7 @@ fn write_manifest(path: &Path, alias: &str, catalog: &Path) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         path,
-        format!("schema = 6\n[sources.{alias}]\n{}\n", source_path(catalog)),
+        format!("schema = 7\n[sources.{alias}]\n{}\n", source_path(catalog)),
     )
     .unwrap();
 }
@@ -107,7 +107,7 @@ fn set(repo: &str, name: &str) -> Bookmark {
 fn personal_without_default(env: &Env) {
     let path = crate::manifest::manifest_path(env, &Scope::Global);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, "schema = 6\n").unwrap();
+    fs::write(path, "schema = 7\n").unwrap();
 }
 
 /// A fake home with nothing on it, for the index cases that need no
@@ -368,7 +368,7 @@ fn one_relative_folder_declared_in_two_places_is_two_marketplaces() {
         let root = crate::paths::canonical(&root).unwrap();
         fs::write(
             crate::manifest::manifest_path(&machine.env, &Scope::Project { root: root.clone() }),
-            format!("schema = 6\n[sources.catalog]\npath = \"{spelled}\"\n"),
+            format!("schema = 7\n[sources.catalog]\npath = \"{spelled}\"\n"),
         )
         .unwrap();
         crate::settings::register_project(&machine.env, &root).unwrap();

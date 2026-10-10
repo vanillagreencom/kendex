@@ -192,7 +192,7 @@ env={'PATH':str(root/'bin')+':/usr/bin:/bin','HOME':str(root),'GH_TOKEN':'consum
      'GH_REPO':'acme/repo','KENDEX_ISSUES_TOKEN':'upstream','GITHUB_RUN_ID':'42',
      'GITHUB_STEP_SUMMARY':str(summary),'WORLD':str(world),'HISTORICAL_LOCK':str(root/'historical-lock.json'),
      'REAL_KENDEX':real_cli,'KENDEX_REAL_HOME':'1','KENDEX_BACKGROUND_REFRESH':'off'}
-(root/'kendex.toml').write_text('schema = 6\n')
+(root/'kendex.toml').write_text('schema = 7\n')
 def entry(name, kind, harness):
  return {'name':name,'kind':kind,'harness':harness,'source':'kendex',
          'sourceRepo':'vanillagreencom/kendex','sourceHash':'x','enabled':True}

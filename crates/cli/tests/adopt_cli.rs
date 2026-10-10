@@ -150,7 +150,7 @@ fn adoption_targets_scope_defaults_or_the_explicit_selection() {
         let content =
             "---\nname: deploy\ndescription: Deploy the project\n---\nKeep these authored bytes.\n";
         fs::write(&original, content).unwrap();
-        let setup = format!("schema = 6\n[install]\nharnesses = {enabled}\n");
+        let setup = format!("schema = 7\n[install]\nharnesses = {enabled}\n");
         let manifest_path = if global {
             env.global_manifest_file()
         } else {

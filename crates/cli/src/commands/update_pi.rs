@@ -794,7 +794,7 @@ mod tests {
             std::fs::create_dir_all(&source).unwrap();
             let path = manifest::manifest_path(&env, &scope);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-consent]\nsource = 'cat'\n").unwrap();
+            std::fs::write(path, "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-consent]\nsource = 'cat'\n").unwrap();
             std::fs::write(
                 source.join("package.json"),
                 r#"{"name":"pi-consent","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,

@@ -719,7 +719,7 @@ PROJ_SEALED="$TMP_ROOT/proj-sealed"
 mkdir -p "$PROJ_DECLARES" "$PROJ_CATALOG" "$PROJ_CATALOG_TIGHT" "$PROJ_BUNDLES" \
   "$PROJ_NESTED_FLAG" "$PROJ_CATALOG_BARE" "$PROJ_BARE" "$PROJ_SEALED"
 cat >"$PROJ_DECLARES/kendex.toml" <<'EOF'
-schema = 6
+schema = 7
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -767,7 +767,7 @@ source = "kendex"
 source = "kendex"
 EOF
 cat >"$PROJ_CATALOG/kendex-local.toml" <<'EOF'
-schema = 6
+schema = 7
 
 [skills.orch]
 source = "."
@@ -785,7 +785,7 @@ cp "$PROJ_CATALOG/kendex-local.toml" "$PROJ_CATALOG_TIGHT/kendex-local.toml"
 # The same published file with no sibling beside it.
 cp "$PROJ_CATALOG/kendex.toml" "$PROJ_CATALOG_BARE/kendex.toml"
 cat >"$PROJ_BUNDLES/kendex.toml" <<'EOF'
-schema = 6
+schema = 7
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -794,7 +794,7 @@ repo = "vanillagreencom/kendex"
 source = "kendex"
 EOF
 cat >"$PROJ_NESTED_FLAG/kendex.toml" <<'EOF'
-schema = 6
+schema = 7
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"

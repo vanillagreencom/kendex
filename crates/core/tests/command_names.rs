@@ -50,7 +50,7 @@ fn declare(f: &Fixture, declarations: &str) {
     put(
         &f.project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&f.source)
         ),
     );
