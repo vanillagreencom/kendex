@@ -1,1 +1,0 @@
-- Pi package updates install runtime dependencies from a shipped package lock. An invalid new dev dependency no longer stops a locked install.

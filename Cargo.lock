@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "kendex-app"
-version = "1.14.3"
+version = "1.14.4"
 dependencies = [
  "base64 0.22.1",
  "ico",
@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "kendex-cli"
-version = "1.14.3"
+version = "1.14.4"
 dependencies = [
  "clap",
  "cliclack",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "kendex-core"
-version = "1.14.3"
+version = "1.14.4"
 dependencies = [
  "base64 0.22.1",
  "dirs",

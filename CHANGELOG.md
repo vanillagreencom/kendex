@@ -6,6 +6,31 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.14.4] - 2026-10-10
+
+### Fixed
+
+- Pi package updates install runtime dependencies from a shipped package lock. An invalid new dev dependency no longer stops a locked install.
+- Linked worktrees now refuse cross-checkout project writes for guarded commands, including refresh, apply, and applying updates. The CLI answers the hook's capability question before startup writes so an independently updated hook can require this protection.
+
+### Packages
+
+#### block-worktree-refresh
+
+- Worktree advisories require one plain bare kendex call and its installed CLI project-write protection. Other plain project-writer matches retain baseline refusals, including PATH-changing compounds, prefixes and executable paths. Run the bare command from its project checkout. Non-plain text naming a standalone kendex word or a slash path ending in kendex, including quoted writers, titles, commit messages and heredoc data, passes silently in a linked or unknown checkout only after the installed CLI confirms its protection; otherwise the hook refuses with its update route. Other path and file-name occurrences, including lane paths and .kendex-lock.json, do not trigger that query. Known main checkouts and non-repositories pass without that query. This backstop covers accidental quoted and compound forms; the CLI guards actual writes, including deliberately hidden executable names. Plain global, read and preview commands pass. The hook never runs a proposed path.
+
+#### harness-ci
+
+- The CI template cancels superseded pull-request runs. The wiring guide adds native cache controls and the conditions for reusing complete lane proof.
+
+#### linear
+
+- Release trigger globs stored by Linear with Markdown escapes match release tags.
+
+#### orch
+
+- Reuse the watch's account roster for owed work on the same host. Resolve named launch lanes without listing account usage.
+
 ## [1.14.3] - 2026-10-09
 
 ### Packages
@@ -2399,7 +2424,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.3..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.4..HEAD
+[1.14.4]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.4
 [1.14.3]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.3
 [1.14.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.2
 [1.14.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.1
