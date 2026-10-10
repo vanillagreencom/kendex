@@ -399,10 +399,13 @@ lane_long_rounds() { # ITEM
   if ! counts="$(jq -r '
     ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0) + (.pr_comment_review.iterations // 0)) as $rounds
     | (.pr_comment_review.patched_causes // []) as $patches
-    | (reduce $patches[] as $patch ({seen: {}, repeated: []};
-        if .seen[$patch.cause] == null then .seen[$patch.cause] = [$patch.commit]
-        elif (.seen[$patch.cause] | index($patch.commit)) != null then .
-        else .seen[$patch.cause] += [$patch.commit] | .repeated += [$patch.commit] end)) as $history
+    | (reduce $patches[] as $patch ({seen: [], repeated: []};
+        ($patch.location // "" | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")) as $location
+        | if any(.seen[]; .commit != $patch.commit and
+            (.cause == $patch.cause or
+             ($location != "" and $location != "TBD" and $location != "general" and .location == $location)))
+          then .repeated += [$patch.commit] else . end
+        | .seen += [($patch + {location: $location})])) as $history
     | [$rounds, (if ($patches | length) == 0 then "-" else ($history.repeated | unique | length) end)] | @tsv
   ' <<<"$LANE_ITEM_STATE" 2>"$WORK_DIR/state.err")"; then
     ow_message lane-long-rounds-unread "item=$1" >&2

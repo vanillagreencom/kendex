@@ -415,8 +415,9 @@ The long pass's events, checked and reported in this order:
                              review_rounds adds the first internal panel,
                              re-review cycles and comment-review iterations.
                              repeated_class_rounds counts later distinct patch
-                             commits repeating a recorded cause, once per commit.
-                             With no recorded cause that count is `-`.
+                             commits repeating a recorded cause or location,
+                             once per commit. A recurrence answer keeps the count.
+                             With no patch entry that count is `-`.
                              Both counts are `-` for absent or unread state,
                              a file-less lane, or a parked lane whose stopped
                              disk is never read
