@@ -36,10 +36,11 @@ DEAD_PID="$(sh -c 'printf "%s" $$')"
 # "no-verdict" the bound's cut-off, or with EXIT "-" neither, its pid file
 # naming PID.
 add_run() { # WORKTREE NAME AGE EXIT PID [MODE]
-  local run="$1/tmp/dev-validate-$2"
+  local run="$1/tmp/dev-validate-$2" tree
+  tree="$(git -C "$1" rev-parse 'HEAD^{tree}')" || return
   mkdir -p "$run"
-  printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=%s\nhead=%s\n' "$(( NOW - $3 ))" "${6:-full}" \
-    "$(git -C "$1" rev-parse HEAD)" > "$run/start"
+  printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=%s\nhead=%s\ntree=%s\n' "$(( NOW - $3 ))" "${6:-full}" \
+    "$(git -C "$1" rev-parse HEAD)" "$tree" > "$run/start"
   printf '%s\n' "$5" > "$run/pid"
   [[ "$4" == - ]] \
     || printf 'started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:00:00Z\nseconds=0\n' > "$run/timing"
@@ -275,8 +276,8 @@ transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
-# A ci run passed at once and left an open pull request's review round to CI:
-# a pass beside it recovers the round.
+# A ci run records pending validation. A pass beside it accepts the local edits
+# and recovers the round while the published head still awaits required CI.
 new_fix_round fix-ci 782 5-9 none yes pr-review true
 add_run "$WT" 1 10 0 "$DEAD_PID" ci
 transcript "$TMP_ROOT/fix-ci.jsonl" claude-send 5-9 "$(fix_report "$HEAD_SHA" pass)"
