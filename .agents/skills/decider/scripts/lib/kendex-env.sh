@@ -40,10 +40,10 @@
 
 # Parent-process env snapshot (name/value pairs). Bash 3.2 (macOS system
 # bash) has no associative arrays, so the snapshot is a pair of parallel
-# indexed arrays scanned linearly. Populated only by kendex_load_project_env;
-# the guarded expansion below keeps standalone kendex_load_settings_file calls
-# working when the snapshot was never taken (empty-array expansion is an
-# unbound variable under Bash 3.2 with set -u).
+# indexed arrays for the value restore. A space-delimited name string avoids
+# scanning the arrays for each settings key; exported names contain no spaces.
+# Populated only by kendex_load_project_env; an absent name string keeps
+# standalone kendex_load_settings_file calls working under set -u.
 
 # Callers preserve positional values for this diagnostic catalog.
 kendex_env_message() {
@@ -98,11 +98,7 @@ kendex_env_message() {
 }
 
 kendex_parent_env_has() {
-  local name="$1" snapshot_name
-  for snapshot_name in ${_KENDEX_PARENT_ENV_NAMES[@]+"${_KENDEX_PARENT_ENV_NAMES[@]}"}; do
-    [[ "$snapshot_name" == "$name" ]] && return 0
-  done
-  return 1
+  [[ "${_KENDEX_PARENT_ENV_NAME_SET-}" == *" $1 "* ]]
 }
 
 # A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
@@ -329,10 +325,12 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   # without `local` makes the snapshot arrays global from inside this function.
   _KENDEX_PARENT_ENV_NAMES=()
   _KENDEX_PARENT_ENV_VALUES=()
+  _KENDEX_PARENT_ENV_NAME_SET=" "
   local _kendex_name
   while IFS= read -r _kendex_name; do
     _KENDEX_PARENT_ENV_NAMES+=("$_kendex_name")
     _KENDEX_PARENT_ENV_VALUES+=("${!_kendex_name-}")
+    _KENDEX_PARENT_ENV_NAME_SET+="$_kendex_name "
   done < <(compgen -e)
 
   # Load order (lowest to highest among project files): settings, then the
@@ -359,7 +357,7 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
     fi
   done
 
-  unset _KENDEX_PARENT_ENV_NAMES _KENDEX_PARENT_ENV_VALUES
+  unset _KENDEX_PARENT_ENV_NAMES _KENDEX_PARENT_ENV_VALUES _KENDEX_PARENT_ENV_NAME_SET
   if [[ -n "${2:-}" ]]; then
     printf -v "$2" '%s' "$_kendex_private_file"
   fi

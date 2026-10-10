@@ -114,6 +114,70 @@ set -e
 assert_eq "$s4_code" "0" "scenario 4: standalone settings load does not error without a snapshot"
 assert_eq "$s4_out" "fresh-val" "scenario 4: standalone settings load sets a fresh key"
 
+# The parent check must not repeat its exported-name walk for each settings key.
+# Keep the full load trace; FUNCNAME limits the bound to the parent check.
+TRACE_PROJ="$TMP_ROOT/trace-project"
+mkdir -p "$TRACE_PROJ/.kendex"
+printf '[env]\n' > "$TRACE_PROJ/kendex.settings.toml"
+for ((i = 1; i <= 100; i++)); do
+  printf 'KENDEX_TRACE_KEY_%s = "root-value"\n' "$i" >> "$TRACE_PROJ/kendex.settings.toml"
+done
+printf '[env]\nNESTED_PARENT = "nested-file"\nNESTED_FILE = "nested-value"\n' > "$TRACE_PROJ/.kendex/settings.toml"
+printf 'PRIVATE_PARENT=private-file\nPRIVATE_FILE=private-value\n' > "$TRACE_PROJ/.env.local"
+LINEAR_SCRIPTS="$(mutant_scripts linear-parent-check lib/kendex-env.sh)" || exit 1
+mutate_file "$LINEAR_SCRIPTS/lib/kendex-env.sh" \
+  '  [[ "${_KENDEX_PARENT_ENV_NAME_SET-}" == *" $1 "* ]]' \
+  '  local name="$1" snapshot_name
+  for snapshot_name in ${_KENDEX_PARENT_ENV_NAMES[@]+"${_KENDEX_PARENT_ENV_NAMES[@]}"}; do
+    [[ "$snapshot_name" == "$name" ]] && return 0
+  done
+  return 1'
+
+for variant in production base-control; do
+  trace_lib="$LIB"
+  [[ "$variant" != base-control ]] || trace_lib="$LINEAR_SCRIPTS/lib/kendex-env.sh"
+  parent_counts=()
+  full_counts=()
+  for extra_names in 100 400; do
+    trace="$TMP_ROOT/$variant-$extra_names.trace"
+    # A fresh environment prevents the first load's exports from entering the next snapshot.
+    trace_result=$(env -i PATH="$PATH" "$BASH" --noprofile --norc -c '
+      set -euo pipefail
+      source "$1"
+      export KENDEX_TRACE_KEY_1=parent-root KENDEX_TRACE_KEY_100_SUFFIX=prefix-only
+      export NESTED_PARENT=parent-nested PRIVATE_PARENT=parent-private
+      for ((i = 1; i <= $3; i++)); do export "KENDEX_EXTRA_$i=extra"; done
+      exec 9> "$4"
+      BASH_XTRACEFD=9
+      PS4="+"'\''${FUNCNAME[0]:-main}: '\''
+      # Bash 3.2 has no BASH_XTRACEFD; the same descriptor captures its stderr trace.
+      { set -x; kendex_load_project_env "$2"; set +x; } 2>&9
+      printf "%s|%s|%s|%s|%s|%s\n" "$KENDEX_TRACE_KEY_1" "$KENDEX_TRACE_KEY_100" \
+        "$NESTED_PARENT" "$NESTED_FILE" "$PRIVATE_PARENT" "$PRIVATE_FILE"
+    ' kendex-env-trace "$trace_lib" "$TRACE_PROJ" "$extra_names" "$trace")
+    assert_eq "$trace_result" "parent-root|root-value|parent-nested|nested-value|parent-private|private-value" \
+      "$variant: $extra_names extra exports preserve parent precedence and load unexported keys"
+    parent_count=$(awk '/^\++kendex_parent_env_has: / { count++ } END { print count+0 }' "$trace")
+    full_count=$(wc -l < "$trace")
+    assert_le 1 "$parent_count" "$variant: parent check appears in the trace"
+    parent_counts+=("$parent_count")
+    full_counts+=("$full_count")
+  done
+  parent_growth=$((parent_counts[1] - parent_counts[0]))
+  full_growth=$((full_counts[1] - full_counts[0]))
+  printf 'trace: variant=%s added-names=300 parent-lines=%s,%s parent-growth=%s full-lines=%s,%s full-growth=%s\n' \
+    "$variant" "${parent_counts[0]}" "${parent_counts[1]}" "$parent_growth" \
+    "${full_counts[0]}" "${full_counts[1]}" "$full_growth"
+  growth_status=pass
+  [[ "$parent_growth" -le "$((4 * 300))" ]] || growth_status=fail
+  expected_growth=pass
+  if [[ "$variant" == base-control ]]; then
+    expected_growth=fail
+    assert_le "$((100 * 300))" "$parent_growth" "control: the base name walk exceeds the growth bound"
+  fi
+  assert_eq "$growth_status" "$expected_growth" "$variant: parent-check growth bound"
+done
+
 # Scenario 5: only the [env] table loads. A top-level assignment and one
 # under another table belong to other tools; the trailing comment on a
 # loaded value is dropped, and an explicit empty value is a real assignment.
