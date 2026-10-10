@@ -82,6 +82,21 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 
 A description is never guessed: an empty one stays empty and is a check finding. Tags come from `tags = [...]` in `[marketplace]` or per item in frontmatter, never inferred from names. A marketplace page renders the package's own body, the `SKILL.md` for a skill and the one file for every other kind; a `README.md` beside a skill ships with it and is listed, not rendered.
 
+## Skill dependencies
+
+`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses. Agents have no optional dependency list. Skills cannot declare hook dependencies.
+
+```yaml
+dependencies:
+  required: [shared-skill]
+  optional: [extra-skill]
+  agents: [helper]
+```
+
+Refresh reads the dependency lists again. A removed skill's dependencies leave with `remove --sweep` when no other item needs them. An agent also added by name stays. Derived dependencies do not become explicit choices in the consumer manifest. A skill with no `agents` list keeps its existing behavior. Older kendex builds ignore that key.
+
+A required skill or agent the catalog does not offer produces a warning with its name and a remedy. The parent skill still installs.
+
 ## Agent models
 
 An agent requests a portable model class through its `model:` field. Consumer settings select models for that class at run time or in a native agent file. These settings belong in the personal or project manifest, not the catalog manifest. Project values replace personal values per class, and bindings replace them per harness and class.

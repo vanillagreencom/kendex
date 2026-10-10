@@ -1,0 +1,1 @@
+- Skills can declare `dependencies.agents` in `SKILL.md` to install and render required agents for each selected harness. Refresh updates this list, and removal with a sweep keeps agents also added by name.

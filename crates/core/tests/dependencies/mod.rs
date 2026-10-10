@@ -263,19 +263,26 @@ fn removing_the_last_dependent_offers_to_sweep_what_it_needed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_the_catalog_lacks_is_a_finding() {
-    let f = fixture("[skills.dev]\nsource = \"cat\"\n");
-    skill(&f.source, "dev", "dependencies:\n  required: [nowhere]\n");
+    for key in ["required", "agents"] {
+        let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+        skill(
+            &f.source,
+            "dev",
+            &format!("dependencies:\n  {key}: [nowhere]\n"),
+        );
 
-    let report = audit(&f.env, &f.scope).unwrap();
-    let warning = report
-        .warnings
-        .iter()
-        .find(|w| w.message.contains("nowhere"))
-        .expect("the missing dependency is reported");
-    assert_eq!(warning.name, "dev");
-    assert!(warning.remediation.as_ref().unwrap().contains("nowhere"));
-    apply::execute(&f.env, &report.plan).unwrap();
-    assert!(installed(&f, "dev"), "a missing dependency blocked a skill");
+        let report = audit(&f.env, &f.scope).unwrap();
+        let warning = report
+            .warnings
+            .iter()
+            .find(|w| w.message.contains("nowhere"))
+            .expect("the missing dependency is reported");
+        assert_eq!(warning.kind, ItemKind::Skill);
+        assert_eq!(warning.name, "dev");
+        assert!(warning.remediation.as_ref().unwrap().contains("nowhere"));
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert!(installed(&f, "dev"), "a missing dependency blocked a skill");
+    }
 }
 
 /// Two skills that need each other are a co-install their authors meant, so

@@ -24,12 +24,14 @@ pub(crate) struct Dependencies {
     pub(crate) required: Vec<String>,
     pub(crate) optional: Vec<String>,
     pub(crate) required_skills: Vec<String>,
+    pub(crate) required_agents: Vec<String>,
     pub(crate) requires_on: Option<Vec<String>>,
 }
 
 /// Each supported edge: the declaring kind and its dependency kind.
-const DEPENDENT_KINDS: [(ItemKind, ItemKind); 3] = [
+const DEPENDENT_KINDS: [(ItemKind, ItemKind); 4] = [
     (ItemKind::Skill, ItemKind::Skill),
+    (ItemKind::Skill, ItemKind::Agent),
     (ItemKind::Hook, ItemKind::Hook),
     (ItemKind::Hook, ItemKind::Skill),
 ];
@@ -56,6 +58,7 @@ pub(crate) fn declared_dependencies(
                     required: hook.requires,
                     optional: Vec::new(),
                     required_skills: hook.requires_skills,
+                    required_agents: Vec::new(),
                     requires_on: hook.requires_on,
                 })
                 .unwrap_or_default()
@@ -89,6 +92,7 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
         required: map.string_list("required").unwrap_or_default(),
         optional: map.string_list("optional").unwrap_or_default(),
         required_skills: Vec::new(),
+        required_agents: map.string_list("agents").unwrap_or_default(),
         requires_on: None,
     }
 }
@@ -937,7 +941,9 @@ fn wanted_by(
         if on.is_empty() {
             continue;
         }
-        let (required, optional) = if *dep_kind == kind {
+        let (required, optional) = if *dep_kind == ItemKind::Agent {
+            (declared.required_agents.as_slice(), [].as_slice())
+        } else if *dep_kind == kind {
             (declared.required.as_slice(), declared.optional.as_slice())
         } else {
             (declared.required_skills.as_slice(), [].as_slice())

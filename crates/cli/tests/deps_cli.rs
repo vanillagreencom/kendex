@@ -36,6 +36,127 @@ pub(super) fn skill(home: &Path, name: &str, dependencies: &str) {
 }
 
 #[allow(clippy::unwrap_used)]
+fn agent(home: &Path, name: &str) {
+    let dir = home.join("catalog/agents");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(format!("{name}.md")),
+        format!("---\nname: {name}\ndescription: the {name} agent\n---\nFollow the {name} instructions.\n"),
+    )
+    .unwrap();
+}
+
+fn agent_paths(name: &str) -> [String; 4] {
+    [
+        format!(".claude/agents/{name}.md"),
+        format!(".codex/agents/{name}.toml"),
+        format!(".github/agents/{name}.agent.md"),
+        format!(".pi/agents/{name}.md"),
+    ]
+}
+
+/// Required agents use each tool's agent render and stay derived until a
+/// person adds them by name. Refresh and sweep both read that distinction.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skills_required_agents_render_refresh_and_sweep() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    skill(&home, "team", "dependencies:\n  agents: [helper]\n");
+    for name in ["helper", "replacement"] {
+        agent(&home, name);
+    }
+    let catalog = home.join("catalog");
+    let run = |args: &[&str]| {
+        let output = kendex(&home, &project, args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let add = |kind: &str, name: &str| {
+        run(&[
+            "add",
+            catalog.to_str().unwrap(),
+            kind,
+            name,
+            "--harness",
+            "claude,codex,copilot,pi",
+            "-y",
+        ])
+    };
+    add("--skill", "team");
+    for path in agent_paths("helper") {
+        let rendered = fs::read_to_string(project.join(path)).unwrap();
+        assert!(rendered.contains("Follow the helper instructions."));
+    }
+    let read_manifest = || {
+        kendex_core::manifest::load_current(&project.join("kendex.toml"))
+            .unwrap()
+            .unwrap()
+    };
+    assert!(!read_manifest().agents.contains_key("helper"));
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    for harness in [
+        kendex_core::model::HarnessId::Claude,
+        kendex_core::model::HarnessId::Codex,
+        kendex_core::model::HarnessId::Copilot,
+        kendex_core::model::HarnessId::Pi,
+    ] {
+        let entry = lock
+            .entries
+            .values()
+            .find(|entry| {
+                entry.kind == kendex_core::model::ItemKind::Agent
+                    && entry.name == "helper"
+                    && entry.harness == harness
+            })
+            .unwrap();
+        assert!(entry.reasons.iter().any(|reason| matches!(reason,
+            kendex_core::lock::Reason::RequiredBy { by }
+                if by.kind == kendex_core::model::ItemKind::Skill && by.name == "team" && by.harness == harness
+        )));
+        assert!(
+            !entry
+                .reasons
+                .contains(&kendex_core::lock::Reason::Requested)
+        );
+    }
+
+    skill(&home, "team", "dependencies:\n  agents: [replacement]\n");
+    run(&["refresh", "--yes"]);
+    for path in agent_paths("helper") {
+        assert!(!project.join(path).exists());
+    }
+    for path in agent_paths("replacement") {
+        assert!(project.join(path).is_file());
+    }
+
+    add("--agent", "replacement");
+    assert!(read_manifest().agents.contains_key("replacement"));
+    skill(
+        &home,
+        "team",
+        "dependencies:\n  agents: [helper, replacement]\n",
+    );
+    run(&["refresh", "--yes"]);
+    for path in agent_paths("helper") {
+        assert!(project.join(path).is_file());
+    }
+
+    run(&["remove", "team", "--kind", "skill", "--sweep"]);
+    for path in agent_paths("helper") {
+        assert!(!project.join(path).exists());
+    }
+    for path in agent_paths("replacement") {
+        assert!(project.join(path).is_file());
+    }
+}
+
+#[allow(clippy::unwrap_used)]
 pub(super) fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
