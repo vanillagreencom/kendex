@@ -16,6 +16,7 @@ skills/reviewer/SKILL.md text eol=lf
 .github/workflows/request-copilot-review.yml text eol=lf
 .github/workflows/refresh-consumer.yml text eol=lf
 refresh/adopt-refresh.sh text eol=lf
+refresh/refresh-consumer.sh text eol=lf
 refresh/lib/caller.py text eol=lf
 
 # Binary assets, declared so git keeps them out of its textual diffs. That

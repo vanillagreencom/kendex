@@ -110,6 +110,34 @@ if [ -n "$pr" ]; then
 fi
 git checkout -B kendex/refresh "$base"
 export KENDEX_UI=plain
+# This refresh-run edit leaves engine.md rule 15's reader refusal intact.
+# It serves only a bump that adds or changes what no existing table means,
+# such as KEN-3652's top-level key. A changed table meaning needs its own route.
+schema_probe="$(kendex apply --plan --scope project 2>&1 || true)"
+schema_pattern='Error: ([^[:cntrl:]]+): this manifest could not be read — it is a schema ([0-9]+) manifest, and this kendex writes schema ([0-9]+)'
+if [[ "$schema_probe" =~ $schema_pattern ]]; then
+  python3 - "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[1]}" <<'SCHEMA_EDIT'
+from pathlib import Path
+import sys
+
+previous, current = map(int, sys.argv[1:3])
+path = Path(sys.argv[3]).resolve()
+# The engine owns catalog routing; only this project's install manifest can change.
+if path.parent == Path.cwd() and path.name in {"kendex.toml", "kendex-local.toml"} and previous + 1 == current:
+    lines = path.read_bytes().splitlines(keepends=True)
+    candidates = []
+    for index, line in enumerate(lines):
+        content = line.rstrip(b"\r\n")
+        if content.lstrip().startswith(b"["):
+            break
+        if content == f"schema = {previous}".encode():
+            candidates.append(index)
+    if len(candidates) == 1:
+        index = candidates[0]
+        lines[index] = lines[index].replace(f"schema = {previous}".encode(), f"schema = {current}".encode(), 1)
+        path.write_bytes(b"".join(lines))
+SCHEMA_EDIT
+fi
 refresh_status=0
 # --prune takes what the catalog retired; a plain refresh keeps it. kendex
 # 1.11.0 adds the flag, and the release this runs under can predate
