@@ -2144,18 +2144,20 @@ REAL_KENDEX_SH
   REAL_MANIFEST_SCHEMA="$(real_manifest_schema)"
   # The real refresh refuses the old schema unless the runner edits it first.
   # The same assertion judges each disposable runner control.
-  for row in previous older newer missing current step-control distance-control table-control; do
-    real_refresh_fixture "schema-$row"
+  for row in previous older newer missing current source-catalog step-control distance-control table-control manifest-control; do
+    manifest=kendex.toml
+    case "$row" in source-catalog | manifest-control) manifest=kendex-local.toml ;; esac
+    real_refresh_fixture "schema-$row" "$manifest"
     file_edit "$repo" .agents/skills/probe/SKILL.md 1 '^Hand edit\.$' '/^Hand edit\.$/d'
     printf 'New upstream content.\n' >>"$real_root/git/owner/catalog/skills/probe/SKILL.md"
     commit "$real_root/git/owner/catalog"
     committed="$REAL_MANIFEST_SCHEMA"
     case "$row" in
-      previous | step-control | table-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
+      previous | source-catalog | step-control | table-control | manifest-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
       older | distance-control) committed=$((REAL_MANIFEST_SCHEMA - 2)) ;;
       newer) committed=$((REAL_MANIFEST_SCHEMA + 1)) ;;
     esac
-    python3 - "$repo/kendex.toml" "$committed" "$row" "$bot_table" <<'SCHEMA_FIXTURE'
+    python3 - "$repo/$manifest" "$committed" "$row" "$bot_table" <<'SCHEMA_FIXTURE'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
@@ -2176,7 +2178,9 @@ if sys.argv[2] == "step-control":
     old = 'if [[ "$schema_probe" =~ $schema_pattern ]]; then'
     new = 'if false && [[ "$schema_probe" =~ $schema_pattern ]]; then'
 elif sys.argv[2] == "distance-control":
-    old, new = "if previous + 1 == current:", "if previous < current:"
+    old, new = "and previous + 1 == current:", "and previous < current:"
+elif sys.argv[2] == "manifest-control":
+    old, new = "path = Path(sys.argv[3]).resolve()", 'path = Path("kendex.toml").resolve()'
 else:
     old = '''    candidates = []
     for index, line in enumerate(lines):
@@ -2201,16 +2205,19 @@ path.write_text(changed)
 SCHEMA_CONTROL
     fi
     publish_real_fixture
-    git -C "$repo" show main:kendex.toml >"$real_root/schema-before"
+    git -C "$repo" show "main:$manifest" >"$real_root/schema-before"
+    if [ "$manifest" = kendex-local.toml ]; then
+      git -C "$repo" show main:kendex.toml >"$real_root/catalog-before"
+    fi
     run_real_refresh
     schema_passed=no
     case "$row" in
       older | newer | missing | distance-control)
         if real_refresh_stopped 'refresh-error=refresh value=' &&
-            cmp -s "$real_root/schema-before" "$repo/kendex.toml"; then schema_passed=yes; fi ;;
-      previous | current | step-control | table-control)
+            cmp -s "$real_root/schema-before" "$repo/$manifest"; then schema_passed=yes; fi ;;
+      previous | current | source-catalog | step-control | table-control | manifest-control)
         if [ "$RC" -eq 0 ] && [ -s "$TMP/state/creates" ]; then
-          git --git-dir="$real_root/remote" show refs/heads/kendex/refresh:kendex.toml >"$real_root/schema-after"
+          git --git-dir="$real_root/remote" show "refs/heads/kendex/refresh:$manifest" >"$real_root/schema-after"
           if python3 - "$real_root/schema-before" "$real_root/schema-after" "$committed" "$REAL_MANIFEST_SCHEMA" <<'SCHEMA_ASSERT'
 from pathlib import Path
 import sys
@@ -2219,9 +2226,13 @@ old, current = sys.argv[3:]
 assert after == before.replace(f"schema = {old}\n".encode(), f"schema = {current}\n".encode(), 1)
 SCHEMA_ASSERT
           then
-            paths="$(git --git-dir="$real_root/remote" diff --name-only main refs/heads/kendex/refresh -- kendex.toml)"
-            if { [ "$row" != current ] && [ "$paths" = kendex.toml ]; } ||
+            paths="$(git --git-dir="$real_root/remote" diff --name-only main refs/heads/kendex/refresh -- "$manifest")"
+            if { [ "$row" != current ] && [ "$paths" = "$manifest" ]; } ||
                 { [ "$row" = current ] && [ -z "$paths" ]; }; then schema_passed=yes; fi
+            if [ "$manifest" = kendex-local.toml ]; then
+              git --git-dir="$real_root/remote" show refs/heads/kendex/refresh:kendex.toml >"$real_root/catalog-after"
+              cmp -s "$real_root/catalog-before" "$real_root/catalog-after" || schema_passed=no
+            fi
           fi
         fi ;;
     esac
@@ -2231,13 +2242,19 @@ SCHEMA_ASSERT
         if real_refresh_stopped 'refresh-error=refresh value='; then
           ok 'control: no schema edit leaves the real refresh refused'
         else bad "$row schema control" "$OUT"; fi ;;
+      manifest-control:no)
+        if real_refresh_stopped 'refresh-error=refresh value=' &&
+            cmp -s "$real_root/schema-before" "$repo/$manifest" &&
+            cmp -s "$real_root/catalog-before" "$repo/kendex.toml"; then
+          ok 'control: a hard-coded manifest leaves the source-catalog refresh refused'
+        else bad "$row schema control" "$OUT"; fi ;;
       distance-control:no)
-        if ! cmp -s "$real_root/schema-before" "$repo/kendex.toml" &&
-            grep -qxF "schema = $REAL_MANIFEST_SCHEMA" "$repo/kendex.toml"; then
+        if ! cmp -s "$real_root/schema-before" "$repo/$manifest" &&
+            grep -qxF "schema = $REAL_MANIFEST_SCHEMA" "$repo/$manifest"; then
           ok 'control: a wider schema distance changes the refused manifest'
         else bad "$row schema control" "$OUT"; fi ;;
       table-control:no)
-        if python3 - "$real_root/schema-before" "$repo/kendex.toml" "$committed" "$REAL_MANIFEST_SCHEMA" <<'TABLE_CONTROL_ASSERT'
+        if python3 - "$real_root/schema-before" "$repo/$manifest" "$committed" "$REAL_MANIFEST_SCHEMA" <<'TABLE_CONTROL_ASSERT'
 from pathlib import Path
 import sys
 before, after = (Path(p).read_bytes() for p in sys.argv[1:3])

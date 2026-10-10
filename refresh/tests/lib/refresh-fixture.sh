@@ -355,7 +355,8 @@ ENGINE_SCHEMA
 }
 
 # Each row owns its local catalog, HOME, edit and install record.
-real_refresh_fixture() { # NAME
+real_refresh_fixture() { # NAME [INSTALL_MANIFEST]
+  local manifest="${2:-kendex.toml}"
   sandbox
   repo="$DIR"
   real_root="$TMP/real-$1"
@@ -368,7 +369,10 @@ real_refresh_fixture() { # NAME
   git -C "$real_root/git/owner/catalog" config user.email fixture@example.invalid
   git -C "$real_root/git/owner/catalog" add -A
   git -C "$real_root/git/owner/catalog" commit -qm fixture
-  printf 'schema = %s\n[sources.cat]\nrepo = "owner/catalog"\n[install]\nharnesses = ["claude"]\nmethod = "symlink"\n[skills.probe]\nsource = "cat"\n' "$REAL_MANIFEST_SCHEMA" >"$repo/kendex.toml"
+  if [ "$manifest" = kendex-local.toml ]; then
+    printf 'is_source_catalog = true\n' >"$repo/kendex.toml"
+  fi
+  printf 'schema = %s\n[sources.cat]\nrepo = "owner/catalog"\n[install]\nharnesses = ["claude"]\nmethod = "symlink"\n[skills.probe]\nsource = "cat"\n' "$REAL_MANIFEST_SCHEMA" >"$repo/$manifest"
   (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
