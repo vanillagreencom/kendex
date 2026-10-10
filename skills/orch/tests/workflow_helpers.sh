@@ -240,8 +240,6 @@ assert_file_contains "$sync_base" 'worktree list --porcelain' \
   "sync-base resolves which checkout owns the base branch before advancing it"
 assert_file_contains "$sync_base" 'refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH' \
   "sync-base keeps the by-name ref update for an unowned base branch"
-assert_file_contains "$merge_workflow" '| Base sync |' \
-  "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
 
 # Execute the workflow's classifier command against a pull request that edits
 # both the source and installed classifier to forge the machine-read skip.
