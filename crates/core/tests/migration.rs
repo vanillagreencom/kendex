@@ -64,13 +64,9 @@ fn fixture(schema: &str) -> Fixture {
 }
 
 /// A manifest this build cannot read is refused and left byte for byte
-/// where the person put it, one row per schema: a v0.1 manifest is not
-/// read, not converted and not written over, the refusal naming the
-/// schema it found; the schema this build writes is the schema it reads,
-/// so the same file one number back is refused for the same reason; a
-/// manifest naming no schema at all gets the same refusal, saying that
-/// nothing here can tell what shape the file is; and a newer schema is
-/// its own refusal, naming the format found.
+/// where the person put it, one row per schema. The complete refusal is
+/// part of this contract: consumer refresh reads the schema clause, and
+/// the advice must distinguish a one-line edit from a fresh declaration.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
@@ -82,16 +78,24 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
     let one_above = (MANIFEST_SCHEMA + 1).to_string();
     let rows: [(&str, Option<&str>, Refusal); 4] = [
         (
-            "schema 1",
-            Some("1"),
-            Refusal::Legacy("schema 1".to_owned()),
-        ),
-        (
             "one below current",
             Some(&one_below),
-            Refusal::Legacy(format!("schema {one_below} manifest")),
+            Refusal::Legacy(format!(
+                "it is a schema {one_below} manifest, and this kendex writes schema {MANIFEST_SCHEMA}; set `schema = {MANIFEST_SCHEMA}`; nothing else in the manifest changes"
+            )),
         ),
-        ("no schema", None, Refusal::Legacy("no schema".to_owned())),
+        (
+            "schema 1",
+            Some("1"),
+            Refusal::Legacy(format!(
+                "it is a schema 1 manifest, and this kendex writes schema {MANIFEST_SCHEMA}; move it aside and install fresh, declaring again from the file you moved"
+            )),
+        ),
+        (
+            "no schema",
+            None,
+            Refusal::Legacy("it names no schema, so nothing here can say what shape it is; move it aside and install fresh, declaring again from the file you moved".to_owned()),
+        ),
         (
             "one above current with bindings",
             Some(&one_above),
@@ -117,8 +121,17 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
         let error = audit(&f.env, &f.scope).unwrap_err();
 
         match (&refusal, &error) {
-            (Refusal::Legacy(clause), CoreError::LegacyManifest { message, .. }) => {
-                assert!(message.contains(clause), "{what}: {message}");
+            (Refusal::Legacy(expected), CoreError::LegacyManifest { path, message }) => {
+                assert_eq!(path, &f.manifest_path, "{what}");
+                assert_eq!(message, expected, "{what}");
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        "{}: this manifest could not be read — {expected}",
+                        f.manifest_path.display()
+                    ),
+                    "{what}"
+                );
             }
             (Refusal::TooNew(expected), CoreError::SchemaTooNew { found, .. }) => {
                 assert_eq!(found, expected, "{what}");

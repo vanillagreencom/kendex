@@ -20,12 +20,13 @@ pub(crate) use file::save;
 pub use validate::{Finding, joined, output_style_count, validate};
 
 /// Current manifest schema, and the only one that loads. Nothing converts
-/// an older file: each schema changed what a table means, so reading one
-/// under this build's
-/// rules answers wrongly rather than incompletely, and the write that
-/// follows makes it durable over the person's own bytes. A schema newer
-/// than this build refuses too; downgrades must never corrupt. Either way
-/// the file is left as written and the refusal names the way out.
+/// an older file. The advice to change only the schema one below current
+/// is valid only while this bump adds or changes no meaning of an existing
+/// table. A bump that breaks that contract must change the reader's advice.
+/// Older schemas can give wrong answers under this build's rules, and a
+/// later write would make them durable over the person's own bytes. A newer
+/// schema refuses too; downgrades must never corrupt. Either way the file
+/// is left as written and the refusal names the way out.
 pub const MANIFEST_SCHEMA: u32 = 7;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";

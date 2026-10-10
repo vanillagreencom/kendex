@@ -103,9 +103,7 @@ pub enum CoreError {
         findings: Vec<crate::manifest::Finding>,
     },
 
-    #[error(
-        "{path}: this manifest could not be read — {message}; move it aside and install fresh, declaring again from the file you moved"
-    )]
+    #[error("{path}: this manifest could not be read — {message}")]
     LegacyManifest { path: PathBuf, message: String },
 
     #[error(
