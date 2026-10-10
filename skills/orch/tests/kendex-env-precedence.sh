@@ -157,7 +157,8 @@ for variant in production base-control; do
     ' kendex-env-trace "$trace_lib" "$TRACE_PROJ" "$extra_names" "$trace")
     assert_eq "$trace_result" "parent-root|root-value|parent-nested|nested-value|parent-private|private-value" \
       "$variant: $extra_names extra exports preserve parent precedence and load unexported keys"
-    parent_count=$(awk '/^\++kendex_parent_env_has: / { count++ } END { print count+0 }' "$trace")
+    # macOS awk rejects kendex_bom_guard's backslash-escaped BOM bytes in a UTF-8 locale.
+    parent_count=$(LC_ALL=C awk '/^\++kendex_parent_env_has: / { count++ } END { print count+0 }' "$trace")
     full_count=$(wc -l < "$trace")
     assert_le 1 "$parent_count" "$variant: parent check appears in the trace"
     parent_counts+=("$parent_count")
