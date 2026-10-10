@@ -3,7 +3,6 @@
 # Removing either outbound call must change what the fake Slack API receives.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
-sk_tracker_fixture
 sk_fake_start
 ROOT="$(sk_tracker_root linear '' '')"
 sk_bind "$ROOT"

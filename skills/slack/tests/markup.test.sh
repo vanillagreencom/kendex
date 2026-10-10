@@ -6,7 +6,6 @@
 # HT from matching HTIO. The prefix row holds the resulting links instead.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
-sk_tracker_fixture
 ROOT="$(sk_tracker_root linear Team '')"
 GH="$(sk_tracker_root github '' org/repo)"
 NONE="$(sk_tracker_root none '' '')"

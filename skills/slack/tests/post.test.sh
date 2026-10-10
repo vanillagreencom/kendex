@@ -54,9 +54,9 @@ sk_run -- post --root "$ROOT" --text 'clean' --file "$SK_TMP/leak.md"
 assert_eq "$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")" "2=slack: secret-value=file=$SK_TMP/leak.md" "a file matching the pattern is refused by path"
 assert_eq "$(sk_state '.messages.C001 | length')=$(sk_state '.uploads | length')" "$BEFORE=1" "nothing matching is posted or uploaded"
 sk_run -- post --root "$ROOT" --text "$LONG"
-assert_eq "$RC=$(sed -n '/^slack: text-too-long=/p' <<<"$ERR")" "2=slack: text-too-long=text chars=12001 limit=12000" "a text past the markdown_text cap is refused with its length"
+assert_eq "$RC=$ERR1" "2=slack: text-too-long=text chars=12001 limit=12000" "a text past the markdown_text cap is refused with its length"
 sk_run -- post --root "$ROOT" --text "$LONG" --update "$TS"
-assert_eq "$RC=$(sed -n '/^slack: text-too-long=/p' <<<"$ERR")" "2=slack: text-too-long=text chars=12001 limit=12000" "an edit past the cap is refused the same way"
+assert_eq "$RC=$ERR1" "2=slack: text-too-long=text chars=12001 limit=12000" "an edit past the cap is refused the same way"
 assert_eq "$(sk_state '.messages.C001 | length')=$(sk_state ".messages.C001[] | select(.ts == \"$TS\") | .text")" \
   "$BEFORE=Lane 3 recovered." "nothing past the cap is posted or edited"
 sk_run -- post --root "$ROOT" --text "${LONG%x}" --channel C778
@@ -66,7 +66,7 @@ sk_run -- post --root "$ROOT" --text "$LONG" --file "$SK_TMP/report.md"
 assert_eq "$RC=${OUT%%=*}=$(sk_state '.uploads | length')" "0=slack: uploaded=$((UPLOADS + 1))" \
   "a text past the cap beside a file uploads as its comment, the cap being markdown_text's alone"
 sk_run -- post --root "$ROOT" --text 'x' --file "$SK_TMP/absent.md"
-assert_eq "$RC=$(sed -n '/^slack: file-unreadable=/p' <<<"$ERR")" "2=slack: file-unreadable=$SK_TMP/absent.md" "an unreadable file is refused by path"
+assert_eq "$RC=$ERR1" "2=slack: file-unreadable=$SK_TMP/absent.md" "an unreadable file is refused by path"
 sk_run -- post --root "$ROOT"
 assert_eq "$RC=${ERR1%%=*}" "2=slack: usage" "post without text or file is a usage refusal"
 sk_run -- post --root "$ROOT" --text x --file "$SK_TMP/report.md" --update "$TS"
@@ -95,7 +95,7 @@ sk_bin_reset
 
 sk_mutant length verbs.py 'markdown_checked\(body, "text"\)' 'markdown_checked("", "text")'
 sk_run -- post --root "$ROOT" --text "$LONG"
-assert_eq "$(sed -n '/^slack: slack-api-failed=/p' <<<"$ERR")" "slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long" \
+assert_eq "$ERR1" "slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long" \
   "control: the length check gone, a text past the cap reaches Slack, which refuses it"
 sk_bin_reset
 
