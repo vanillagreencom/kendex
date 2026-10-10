@@ -1,0 +1,1 @@
+- Jarvis setup distinguishes a plain folder from an app-managed home and prevents a persona paste that would load the text twice.
