@@ -1,0 +1,1 @@
+- Add Jarvis with a standing persona, task references for delegated decisions, result checks and user communication, and a guide to personal skills and memory.
