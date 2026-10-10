@@ -9,7 +9,7 @@
 # id, the attachment's confinement, the audience and deadline filters, the
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
 # the ask's deadline field, the box `events` stamps, the owner ask's required
-# recommendation, the cursor `events` refuses, the reply's delivery id, the
+# recommendation, the box `events --after` requires, the reply's delivery id, the
 # referenced mailbox's read lock, a draft's medium, fields and text hash, and
 # a reserved ask's field, its two conflicts, its --due exclusion and its
 # --default refusal.
@@ -407,7 +407,10 @@ resolve --item overseer --id $PEER_ASK --text $F|2=lane-mail: ask-unknown=$PEER_
 resolve --item overseer --id $NOTE_TO_OWNER --text $F|2=lane-mail: ask-unknown=$NOTE_TO_OWNER
 drain --item overseer --after 0 --to owner|2=lane-mail: option-unknown=--to
 inbox --item overseer --due|2=lane-mail: option-unknown=--due
-events --item overseer --after 0|2=lane-mail: events-no-cursor=--after
+events --item overseer --after 0|2=lane-mail: option-required=--box
+events --item overseer --box sideways|2=lane-mail: box-invalid=sideways
+events --item overseer --box to-lane --after sideways|2=lane-mail: after-invalid=sideways
+drain --item overseer --after 0 --box to-lane|2=lane-mail: option-unknown=--box
 pending --item overseer --after 3|2=lane-mail: option-unknown=--after
 ROWS
 lm notice --item overseer --to owner --file "$(text n 'Reply.')" --ref "$OWNER_NOTE"
@@ -1033,10 +1036,18 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'has("deadline")')" "0=false" \
 
 new_repo control_events_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-mutant events-cursor 'events) refuse events-no-cursor --after ;;' 'events) ;;'
+mutant events-box-required 'events) [ -n "$EVENT_BOX" ] || refuse option-required --box ;;' 'events) ;;'
 lm events --item overseer --after 0
 assert_eq "$RC=$(jq -r '.kind' <<<"$OUT")" "0=directive" \
   "control: without the events rule --after is taken and dropped"
+
+mutant events-box-verb '      [ "$VERB" = events ] || refuse option-unknown --box' '      : "$VERB"'
+lm drain --item overseer --after 0 --box to-lane
+assert_eq "$RC" 0 'control: without the verb rule drain takes and drops --box'
+
+mutant events-box-value 'case "$EVENT_BOX" in to-lane | to-overseer) ;; *) refuse box-invalid "$EVENT_BOX" ;; esac' 'case "$EVENT_BOX" in to-lane | to-overseer) ;; *) EVENT_BOX=to-lane ;; esac'
+lm events --item overseer --box sideways
+assert_eq "$RC" 0 'control: without the value rule an unknown box reaches a mailbox read'
 
 new_repo control_attach
 mkdir -p "$LANE/elsewhere"

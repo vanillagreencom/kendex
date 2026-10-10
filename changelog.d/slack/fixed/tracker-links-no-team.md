@@ -1,0 +1,1 @@
+- Link Linear issue ids in Slack posts and relayed notices when workspace keys are available, including roots with no configured team.

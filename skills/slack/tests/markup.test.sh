@@ -10,6 +10,7 @@ sk_tracker_fixture
 ROOT="$(sk_tracker_root linear Team '')"
 GH="$(sk_tracker_root github '' org/repo)"
 NONE="$(sk_tracker_root none '' '')"
+printf '1\n' > "$NONE/linear.exit"
 
 while IFS='|' read -r label input expected; do
   sk_markup "$ROOT" outbound "$input" markdown
@@ -48,12 +49,12 @@ LONG="$(python3 -c 'print("x " * 5980 + "KEN-1", end="")')"
 sk_markup "$ROOT" outbound "$LONG" markdown
 assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")=$(jq -r '.result[0] | endswith("<https://linear.app/workspace/issue/KEN-1|KEN-1>")' <<<"$OUT")" '0=text=true' 'expansion selects mrkdwn before rendering'
 sk_markup "$GH" outbound '#2 org/other#3 KEN-1 x#4' markdown
-assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=[#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3) KEN-1 x#4' 'GitHub local and qualified PRs use their own repositories'
+assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=[#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3) [KEN-1](https://linear.app/workspace/issue/KEN-1) x#4' 'GitHub PRs and workspace ids link without a team'
 sk_markup "$NONE" outbound 'KEN-1 #2' markdown
-assert_eq "$RC=$(jq -c '[.result[0],.notices]' <<<"$OUT")" '0=["KEN-1 #2",[]]' 'no tracker leaves text unchanged without notice'
+assert_eq "$RC=$(jq -c '[.result[0], (.notices | length), (.notices[0] | startswith("slack: tracker-links-unavailable="))]' <<<"$OUT")" '0=["KEN-1 #2",1,true]' 'failed workspace discovery leaves ids unchanged with a notice'
 # One process sees every root independently, even while a Linear cache is warm.
 sk_markup "$ROOT" roots "$ROOT" "$GH" "$NONE"
-assert_eq "$RC=$(jq -c '.result' <<<"$OUT")" '0=["[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 [org/other#3](https://github.com/org/other/pull/3)","KEN-1 [#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3)","KEN-1 #2 [org/other#3](https://github.com/org/other/pull/3)"]' 'one process selects each root tracker'
+assert_eq "$RC=$(jq -c '.result' <<<"$OUT")" '0=["[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 [org/other#3](https://github.com/org/other/pull/3)","[KEN-1](https://linear.app/workspace/issue/KEN-1) [#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3)","KEN-1 #2 [org/other#3](https://github.com/org/other/pull/3)"]' 'one process selects workspace keys independently for each root'
 : > "$ROOT/linear.calls"
 sk_markup "$ROOT" lifetime refresh
 assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,1,1,2,2' 'metadata reads once then refreshes at one day'
@@ -162,13 +163,9 @@ sk_mutant file-form markup.py 'mrkdwn = file_comment or' 'mrkdwn = False or'
 sk_markup "$ROOT" outbound 'KEN-1' file
 assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")" '0=markdown_text' 'control: without file representation rule a file comment takes Markdown'
 sk_bin_reset
-sk_mutant team markup.py 'if team:' 'if False:'
-sk_markup "$ROOT" outbound 'KEN-1' markdown
-assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=KEN-1' 'control: without team selection a Linear id stays bare'
-sk_bin_reset
 sk_mutant roots markup.py 'cached = self.cache.get\(root\)' 'cached = next(iter(self.cache.values()), None)'
-sk_markup "$ROOT" roots "$ROOT" "$GH"
-assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")" '0=[KEN-1](https://linear.app/workspace/issue/KEN-1) [#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3)' 'control: without per-root cache selection GitHub uses Linear metadata'
+sk_markup "$ROOT" roots "$ROOT" "$NONE"
+assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")" '0=[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 [org/other#3](https://github.com/org/other/pull/3)' 'control: without per-root cache selection a failed root uses another root workspace keys'
 sk_bin_reset
 sk_mutant linear-boundary markup.py 're.compile\(r"\\b\(\?:"' 're.compile(r"(?:"'
 sk_markup "$ROOT" outbound 'xKEN-1' markdown

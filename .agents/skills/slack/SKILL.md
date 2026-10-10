@@ -54,7 +54,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 ## Message standard
 
-- `markup.py` owns outbound tracker links and their representation. Each root's `LINEAR_TEAM`, read through `orch-env`, selects Linear ids. Linear keys and the workspace URL key come from the sibling Linear skill's `teams keys` action, cached per root for a day. A missing or failed read leaves Linear ids unlinked with one `tracker-links-unavailable` notice per root and process.
+- `markup.py` owns outbound tracker links and their representation. The sibling Linear skill's `teams keys` action reads workspace keys in each root and selects Linear ids. Linear keys and the workspace URL key are cached per root for a day. A missing or failed read leaves Linear ids unlinked with one `tracker-links-unavailable` notice per root and process.
 - Pull requests use `OWNER/REPO#N`, or `REPO#N` and `#N` in the sending repository. Commit hashes link only when Git finds one commit in that repository. An unresolved reference stays unchanged with one `reference-link-unavailable` stderr line per distinct reference in an outbound message.
 - The relay and `slack post` keep secret-pattern matches unexpanded for refusal. Other bare tracker ids link before the final secret check and Markdown cap. Existing links, Slack angle tokens, bare URLs, inline code and fenced code stay literal. Never put a tracker id in a code span.
 - `slack post` text without `--file`, and the relay's ask, notice and answer posts, go out as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks.

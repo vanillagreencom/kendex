@@ -383,9 +383,7 @@ sk_tracker_fixture() {
 sk_tracker_root() {
   local root
   root="$(sk_new_root "$1")" || return $?
-  if [ -n "$2" ]; then
-    printf '[env]\nLINEAR_TEAM = "%s"\n' "$2" > "$root/kendex.settings.toml"
-  fi
+  printf '[env]\nLINEAR_TEAM = "%s"\n' "$2" > "$root/kendex.settings.toml"
   printf '{"urlKey":"workspace","keys":["HT","HTIO","KEN"]}\n' > "$root/linear.json"
   if [ -n "$3" ]; then printf '{"nameWithOwner":"%s"}\n' "$3" > "$root/github.json"; fi
   printf '%s' "$root"

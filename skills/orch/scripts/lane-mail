@@ -169,15 +169,20 @@ Overseer side:
               ones the watch resolves. Either
               reads no cursor, since no directive is printed, so a cursor
               read that missed refuses neither
-  events --item ITEM
+  events --item ITEM [--box to-lane|to-overseer [--after N]]
               print every envelope of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
               `line` its logical line number and `count` that file's logical
               line count, including lines filtered as invalid JSON,
               and `mail_class` on to-lane records from the shared mailbox rule,
-              answered asks and their answers included. Moves no cursor and
-              marks nothing: a relay keeps its own record of what it carried,
-              keyed by envelope id, so --after is refused `events-no-cursor`
+              answered asks and their answers included. With --box, read
+              that file alone: print its header (below), then its envelopes
+              whose `line` is past --after N (0 when not given), in file
+              order. Logical numbers survive compaction, so a watcher keeps
+              each box's last `line` or `count` and passes it back as N.
+              Moves no cursor and marks nothing: a relay keeps its own record
+              of what it carried, keyed by envelope id, and needs neither
+              a line cursor nor an acknowledgement
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b
@@ -282,7 +287,9 @@ Peer side, one other repository's overseer mailbox per call:
               its `overseer` member (orch schemas/workflow-state.md). A local
               send, an answer included, refuses before appending where no
               overseer is recorded here: `lane-mail: overseer-absent=<root>`
-              names the owner's owner-note tool for a remote overseer. The
+              names `oversee register` in the session that should read that
+              checkout's mail. For an overseer on another host, send from
+              that host's checkout. The
               owner form, `send --item overseer`, requires the same record.
               An unreadable record refuses as `overseer-unreadable`. Where
               a recorded overseer names no pane or a `server_start` not epoch
@@ -325,7 +332,9 @@ Options:
                 it is outside the ownership gate: nothing here can establish
                 whose path it is
   --host        read and write through `lane-host`, not this disk
-  --after N     drain only: the read cursor, the count a previous drain printed
+  --after N     drain: the read cursor, the count a previous drain printed;
+                events with --box: print only envelopes past logical line N
+  --box B       events only: to-lane or to-overseer, the one file to read
   --peek        inbox only: read to-lane.cursor and leave it where it is,
                 unless it stands past the complete lines present
   --ack N       inbox only: the count a --peek printed, acknowledged once its
@@ -450,12 +459,12 @@ outside the alphabet, a lock, a write or a host that failed; 69
 `lane-host-busy`, lane-host's own status for a call it refused at its per-home
 cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
-option-conflict, missing-value, option-required, item-invalid, after-invalid,
+option-conflict, missing-value, option-required, item-invalid, after-invalid, box-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
 recommend-invalid, recommend-missing, recommend-required, draft-field,
 draft-medium, attach-outside,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
-overseer-only, events-no-cursor,
+overseer-only,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
@@ -560,7 +569,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
     draft-medium) text='A draft medium is slack-channel, slack-thread or email.' ;;
     recommend-required) text='An owner ask names what its deadline does by its form, --recommend, --reserved or --draft; the owner-channel ask help states each. The owner can still answer outside the choices, through send --re.' ;;
-    events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
+    box-invalid) text='--box takes to-lane or to-overseer, the one mailbox file events reads.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
     ask-unknown) text='No ask in the mailbox carries that id: an owner ask in the overseer mailbox, or in a lane'"'"'s, an ask that lane sent. An overseer send --re answers an owner ask and resolve closes one.' ;;
@@ -620,6 +629,7 @@ ROOT=""
 REPO=""
 HOST=0
 AFTER=""
+EVENT_BOX=""
 MSGID=""
 TIMEOUT=0
 INTERVAL=5
@@ -661,6 +671,7 @@ while [ "$#" -gt 0 ]; do
     --root) need_val "$@"; ROOT="$2"; shift 2 ;;
     --repo) need_val "$@"; REPO="$2"; shift 2 ;;
     --after) need_val "$@"; AFTER="$2"; shift 2 ;;
+    --box) need_val "$@"; EVENT_BOX="$2"; shift 2 ;;
     --id) need_val "$@"; MSGID="$2"; shift 2 ;;
     --re) need_val "$@"; MSGID="$2"; shift 2 ;;
     --timeout) need_val "$@"; TIMEOUT="$2"; shift 2 ;;
@@ -726,9 +737,8 @@ fi
 # verb of it; typed anywhere else they are refused rather than dropped, as
 # --options on a notice is, so no caller is told a field landed that never
 # did. --to is the one that reaches two verbs, and a value outside the two
-# audiences is a field nothing reads. --after is drain's cursor alone; on
-# `events` it takes a key of its own, since a relay reaching for a cursor
-# there keys by envelope id instead.
+# audiences is a field nothing reads. --after belongs to drain, and to events
+# with --box, since each mailbox file has its own logical line numbers.
 for given in $OPTS_GIVEN; do
   case "$given" in
     --to)
@@ -746,9 +756,12 @@ for given in $OPTS_GIVEN; do
     --after)
       case "$VERB" in
         drain) ;;
-        events) refuse events-no-cursor --after ;;
+        events) [ -n "$EVENT_BOX" ] || refuse option-required --box ;;
         *) refuse option-unknown --after ;;
       esac ;;
+    --box)
+      [ "$VERB" = events ] || refuse option-unknown --box
+      case "$EVENT_BOX" in to-lane | to-overseer) ;; *) refuse box-invalid "$EVENT_BOX" ;; esac ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
     --thread-ts | --parent)
@@ -1299,7 +1312,8 @@ lm_objects() { # FILE [BOX [AFTER]]
       else . end
     | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
-        + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end) end' <"$1"
+        + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end)
+      end' <"$1"
 }
 
 # The receipt's measured fields, read before the append so that nothing able
@@ -1412,9 +1426,9 @@ lm_overseer_state() { # full|data ROOT ARGS...
 }
 
 # oversee register and oversee launch write the checkout-local fleet record.
-# A missing record here is not a route to a remote overseer: owner-note owns
-# that delivery. Hosted mail already addresses its destination through the
-# provider; this shell cannot read that host's fleet state.
+# A missing record requires registration in the session that reads this
+# checkout's mail. Remote overseers send from their host's checkout because
+# this shell cannot read that host's fleet state.
 LM_OVERSEER_RECORD=""
 lm_require_overseer() { # full|data ROOT
   local scope="$1" root="$2" path
@@ -1428,7 +1442,7 @@ lm_require_overseer() { # full|data ROOT
       refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
   fi
   if [ "$LM_OVERSEER_RECORD" = null ]; then
-    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; use the owner-note tool for a remote overseer\n' "$root" >&2
+    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; run oversee register in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout\n' "$root" >&2
     exit 2
   fi
 }
@@ -2058,6 +2072,16 @@ case "$VERB" in
     ;;
 
   events)
+    if [ -n "$EVENT_BOX" ]; then
+      AFTER="${AFTER:-0}"
+      lm_after "$AFTER"
+      case "$EVENT_BOX" in to-lane) EVENT_FILE="$TO_LANE" ;; to-overseer) EVENT_FILE="$TO_OVERSEER" ;; esac
+      lm_fetch "$EVENT_FILE" "$WORK_DIR/events.raw"
+      lm_terminated "$WORK_DIR/events.raw" "$WORK_DIR/events.jsonl"
+      lm_header "$WORK_DIR/events.jsonl"
+      lm_objects "$WORK_DIR/events.jsonl" "$EVENT_BOX" "$AFTER" || refuse file-unreadable "$EVENT_FILE"
+      exit 0
+    fi
     lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
     lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
