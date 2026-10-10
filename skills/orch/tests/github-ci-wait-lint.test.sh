@@ -30,7 +30,7 @@ forbid "no doc routes ci-wait through github.sh" \
 
 # Register the required-only token first so the shared fenced-rule control
 # drops the mode flag and proves that the real merge caller cannot omit it.
-for workflow in workflows/submit-pr.md references/merge-attempt.md; do
+for workflow in workflows/ci-fix.md workflows/submit-pr.md references/merge-attempt.md; do
   rule_fenced "$workflow waits only for required CI" \
     "$SKILL_DIR/$workflow" "" '--required-only' '.agents/skills/orch/scripts/ci-wait'
 done
