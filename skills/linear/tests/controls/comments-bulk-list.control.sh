@@ -37,3 +37,16 @@ control_expect 'missing: names the identifier'
 control_replace scripts/lib/common.sh 1 \
     '                "Entity not found: "*)' \
     '                "Entity not found (control): "*)'
+
+control_expect 'safe comments: author email'
+control_replace scripts/lib/formatters.sh 1 \
+    '    user_email: (.user.email // ""),' \
+    '    user_email: "",'
+control_expect 'comment query: requests email'
+control_replace scripts/commands/comments.sh 1 \
+    '                        user { name email }' \
+    '                        user { name }'
+control_expect 'continued comment query: requests email'
+control_replace scripts/lib/pages.sh 1 \
+    "    issue:comments) printf '%s' 'id body createdAt updatedAt user { name email }' ;;" \
+    "    issue:comments) printf '%s' 'id body createdAt updatedAt user { name }' ;;"

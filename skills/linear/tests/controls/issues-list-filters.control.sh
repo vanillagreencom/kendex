@@ -11,3 +11,8 @@ control_expect '--project with --all-projects: exit status'
 control_replace scripts/lib/common.sh 1 \
     '    [ -n "$1" ] || return 0' \
     '    return 0'
+
+control_expect 'email assignee: filter'
+control_replace scripts/lib/common.sh 1 \
+    '                filter_parts+=("$(jq -cn --arg v "$2" '\''{assignee: {email: {eqIgnoreCase: $v}}}'\'')")' \
+    '                filter_parts+=("$(jq -cn --arg v "$2" '\''{assignee: {name: {eq: $v}}}'\'')")'

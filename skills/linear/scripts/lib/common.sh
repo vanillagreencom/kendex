@@ -594,6 +594,8 @@ parse_filter() {
             linear_require_option_value "$@" || return 1
             if [ "$2" = "me" ]; then
                 filter_parts+=('{"assignee": {"isMe": {"eq": true}}}')
+            elif [[ "$2" == *@* ]]; then
+                filter_parts+=("$(jq -cn --arg v "$2" '{assignee: {email: {eqIgnoreCase: $v}}}')")
             else
                 filter_parts+=("$(jq -cn --arg v "$2" '{assignee: {name: {eq: $v}}}')")
             fi

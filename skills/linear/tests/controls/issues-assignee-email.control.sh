@@ -40,3 +40,11 @@ control_expect "update-attach-miss: no file is uploaded"
 control_replace scripts/commands/issues.sh 2 \
     '    if [ -n "$assignee" ]; then' \
     '    if [ -n "$assignee" ] && [ ${#attach_paths[@]} -eq 0 ]; then'
+
+control_expect 'clear assignee: null in mutation'
+control_replace scripts/commands/issues.sh 1 \
+    "        input_parts+=('\"assigneeId\": null')" \
+    "        input_parts+=('\"assigneeId\": \"control-not-cleared\"')"
+# The mutation must leave the action runnable. A parser error cannot prove
+# that the null-payload assertion detects an uncleared assignee.
+"$BASH" -n "$CONTROL_ROOT/scripts/commands/issues.sh" || control_die 'clear-assignee mutation does not parse'

@@ -219,6 +219,9 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-relaunch.sh"
 # shellcheck source=lib/mailbox-append.sh
 source "$SCRIPT_DIR/lib/mailbox-append.sh"
+OWNER_TRACKER_ACTIVE=0
+OWNER_TRACKER_DELIVERED=0
+if owner_tracker_settings "$SCRIPT_DIR"; then OWNER_TRACKER_ACTIVE=1; fi
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
@@ -2020,12 +2023,62 @@ check_start_stall() {
   lane_row_commit "$rows"
 }
 
+read_owner_tracker_answers() {
+  OWNER_TRACKER_READ=disabled
+  [[ "$OWNER_TRACKER_ACTIVE" -eq 1 ]] || return 0
+  OWNER_TRACKER_READ=unread
+  local items asks issue ask comment id rc ids=()
+  if ! "$LANE_MAIL" pending --item overseer --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
+    echo 'KEN-3624-unread cause=asks' >&2; return 0
+  fi
+  if ! asks="$(jq -s 'any(.[]; .tracker_posted == true)' "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
+  fi
+  [[ "$asks" == true ]] || { OWNER_TRACKER_READ=read; return 0; }
+  if ! items="$("$TRACKER" issues list --assignee "$OWNER_TRACKER_EMAIL" --label "$OWNER_TRACKER_LABEL" --max --format=safe 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=issues' >&2; return 0
+  fi
+  if ! items="$(jq -r '.[].id' <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
+  fi
+  while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$items"
+  [[ ${#ids[@]} -gt 0 ]] || { OWNER_TRACKER_READ=read; return 0; }
+  if ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe >"$WORK_DIR/tracker-comments" 2>"$WORK_DIR/tracker.err"; then
+    echo 'KEN-3624-unread cause=comments' >&2; return 0
+  fi
+  if ! jq -cn --slurpfile comments "$WORK_DIR/tracker-comments" --arg email "$OWNER_TRACKER_EMAIL" \
+    --slurpfile asks "$WORK_DIR/tracker-asks" '
+      $asks[] | select(.tracker_posted == true) | . as $ask
+      | ($comments[0][$ask.issue] // []) as $rows
+      | ([$rows[] | select((.body | split("\n") | index("ask=" + $ask.id)) != null)]
+        | sort_by(.created_at) | first) as $posted
+      | select($posted != null)
+      | ($rows | sort_by(.created_at))[] | select((.user_email | ascii_downcase) == ($email | ascii_downcase)
+          and .created_at > $posted.created_at and .id != $posted.id)
+      | {ask: $ask.id, comment: .}' >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
+    echo 'KEN-3624-unread cause=comments-format' >&2; return 0
+  fi
+  while IFS= read -r comment; do
+    ask="$(jq -r '.ask' <<<"$comment")" || return 1
+    id="$(jq -r '.comment.id' <<<"$comment")" || return 1
+    jq -r '.comment.body' <<<"$comment" >"$WORK_DIR/tracker-answer" || return 1
+    rc=0
+    "$LANE_MAIL" send --item overseer --re "$ask" --delivery-id "linear:$id" \
+      --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
+    if [[ "$rc" -ne 0 && "$(head -n 1 "$WORK_DIR/tracker.err")" != lane-mail:\ delivery-repeated=* ]]; then
+      echo 'KEN-3624-unread cause=delivery' >&2; return 0
+    fi
+    [[ "$rc" -ne 0 ]] || OWNER_TRACKER_DELIVERED=1
+  done <"$WORK_DIR/tracker-answers"
+  OWNER_TRACKER_READ=read
+}
+
 # Close due owner asks through lane-mail's shared closure rule. Its default
 # supplies a recommendation only without an owner answer. The following peek
 # reports answers and closes separately. A resolved-already refusal means
 # another close won the mailbox lock; every other refusal fails this pass.
 resolve_due_owner_asks() {
-  local due id rc=0
+  local due id rc=0 route="${1:-all}"
   due="$("$LANE_MAIL" pending --item overseer --to owner --due 2>"$WORK_DIR/due.err")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     ow_message ask-due-unread "exit=$rc" >&2
@@ -2037,12 +2090,17 @@ resolve_due_owner_asks() {
     [[ -n "$id" ]] || continue
     rc=0
     "$LANE_MAIL" resolve --item overseer --id "$id" --default >/dev/null 2>"$WORK_DIR/resolve.err" || rc=$?
-    [[ "$rc" -ne 0 ]] || continue
+    if [[ "$rc" -eq 0 ]]; then
+      cat -- "$WORK_DIR/resolve.err" >&2
+      continue
+    fi
     [[ "$(head -n 1 "$WORK_DIR/resolve.err")" != "lane-mail: resolved-already="* ]] || continue
     ow_message ask-resolve-failed "id=$id" "exit=$rc" >&2
     cat -- "$WORK_DIR/resolve.err" >&2
     PASS_FAILED=1
-  done <<<"$(jq -r '.id // empty' <<<"$due")"
+  done <<<"$(jq -r --arg route "$route" 'select(
+    if $route == "chat" then .tracker_posted != true
+    elif $route == "tracker" then .tracker_posted == true else true end) | .id // empty' <<<"$due")"
 }
 
 # One lane-mail read for the mail pass, its output in MAIL_OUT. A read that
@@ -2168,7 +2226,8 @@ check_mail() { # [overseer]
     count=0
     prior=0
     if [[ "$item" == overseer ]]; then
-      resolve_due_owner_asks
+      if [[ "$OWNER_TRACKER_ACTIVE" -eq 1 ]]; then resolve_due_owner_asks chat
+      else resolve_due_owner_asks; fi
       if ! mail_read "$item" inbox "${args[@]}" --peek; then
         lane_failure_report "$item" "$state"
         mail_row_commit "$LANE_FAILURE_STATE"
@@ -4482,12 +4541,13 @@ heartbeat() {
 # sets for this process belongs there. The baselines it committed are what the
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
-LONG_RETURNS=(LONG_EVENT LONG_FAILED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
+LONG_RETURNS=(LONG_EVENT LONG_FAILED OWNER_TRACKER_DELIVERED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
   PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES)
 long_pass() {
   local i state_file
   PASS_EVENT=0
   PASS_FAILED=0
+  OWNER_TRACKER_DELIVERED=0
   for i in "${!REPOS[@]}"; do
     state_file="$(pw_state_file "${REPOS[$i]}")"
     PW_SEEN[$i]=""
@@ -4499,6 +4559,10 @@ long_pass() {
   # overseer exited or walled. A later live pass or the successor receives
   # that work.
   if check_overseer; then
+    read_owner_tracker_answers
+    # Read tracker replies before their deadline closes. An unread tracker
+    # cannot establish that the person left the recommendation unanswered.
+    [[ "$OWNER_TRACKER_READ" != read ]] || resolve_due_owner_asks tracker
     check_merged
     check_terminal_lanes
     observe_lanes
@@ -4704,6 +4768,14 @@ run_end() {
   succession_status
   [[ -z "$SUCCESSION" ]] || exit "$SUCCESSION"
   [[ -z "$LONG_PID" ]] || return 0
+  if [[ "$OWNER_TRACKER_DELIVERED" -eq 1 ]]; then
+    # The long pass wrote an answer after the earlier mail read. The parent
+    # drains it once through the existing mailbox cursor before any exit.
+    OWNER_TRACKER_DELIVERED=0
+    MAIL_OWED=0
+    PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
+    mail_turn overseer
+  fi
   if [[ "$PASS_EVENT" -eq 0 && "$PASS_FAILED" -eq 0 && "$LONG_PASSES" -ge "$MAX_LOOPS" && "$MAIL_OWED" -eq 1 ]]; then
     MAIL_OWED=0
     # A turn of its own: the turn's reading predates the long pass it follows.

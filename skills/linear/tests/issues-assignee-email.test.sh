@@ -144,3 +144,7 @@ update-email-partial|update|ana@example.com|refused|-
 update-name|update|Dana|$DANA_ID|-
 update-id|update|$OTHER_ID|$OTHER_ID|-
 ROWS
+
+run_issues clear update CC-760 --clear-assignee
+assert_eq 'clear assignee: succeeds' "$(cat "$TMP_ROOT/clear.rc")" 0
+assert_jq 'clear assignee: null in mutation' "$(inputs clear issueUpdate)" 'length == 1 and (.[0] | has("assigneeId") and .assigneeId == null)'

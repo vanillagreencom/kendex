@@ -5,7 +5,7 @@ A relay between an overseer's mailbox and one private Slack channel. Session own
 ## Features
 
 - Create or adopt one private channel per checkout and invite its owners by email.
-- Post an overseer's question to the channel with an @mention, and record every reply in its open thread as an answer.
+- Post an overseer's question to the channel and record every reply in its open thread as an answer. After confirmed tracker posting, an ask shows its first line and item link. Other asks include the complete question and an @mention.
 - Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age, with small parent context.
 - Read a requested thread as plain text with `slack thread`, without loading channel history.
 - Send a text reply only to its thread with `slack post --thread TS`.
@@ -32,7 +32,7 @@ kendex add vanillagreencom/kendex --skill slack
 - Owner text arrives as plain text. Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 - Owner files go to `tmp/slack/files/`, readable only by the checkout's user. The overseer receives the text and each saved path, or `file <id> not fetched: <why>`. A failed download never holds the message back.
 - Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes it, the relay swaps its mark for :white_check_mark:. Neither mark posts text. Refused marks retry next poll.
-- The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations, deadlines and drafts, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
+- The relay posts new owner-bound mailbox envelopes: confirmed tracker questions as one line with the item link, other questions with choices, recommendations, deadlines and drafts, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - Posts get an `inflight` record before sending. After a stop or lost response, they stay `unknown` in `listen --status`, never repeated. Explicit refusals retry after a token fix if needed.
 - Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. Later answers and referenced notices go to the channel. [Journal](schemas/journal.md) defines the records.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.

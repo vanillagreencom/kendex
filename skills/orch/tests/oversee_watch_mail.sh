@@ -1422,5 +1422,218 @@ assert_eq "$(grep -c '^oversee-watch: lane-host-busy ' "$STUB_DIR/lane-mail-busy
   "0=1" "control: without the busy branch lane-mail's busy exit is mail-read-failed" \
   "$STUB_DIR/lane-mail-busy-mutant.err"
 
+# Tracker replies share the mailbox replay guard.
+TRACKER_MAIL="$(mutant_scripts owner-tracker/orch lane-mail)/lane-mail"
+mkdir -p "$TMP_ROOT/owner-tracker/linear/scripts"
+TRACKER_STUB="$TMP_ROOT/owner-tracker/linear/scripts/linear.sh"
+cat >"$TRACKER_STUB" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+jq -cn --args '$ARGS.positional' -- "$@" >>"$TRACKER_CASE_DIR/calls"
+if [[ -f "$TRACKER_CASE_DIR/fail" ]]; then
+  failure="$(cat "$TRACKER_CASE_DIR/fail")"
+  case "$failure:$1:$2:${4:-}" in
+    assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*|read:issues:list:*) exit 1 ;;
+  esac
+fi
+case "$1:$2" in
+  issues:get) echo '{"labels":["skills","feature"],"url":"https://linear.app/test/issue/KEN-7"}' ;;
+  issues:update) echo '{}' ;;
+  issues:list) echo '[{"id":"KEN-7"}]' ;;
+  comments:create) cp -- "$5" "$TRACKER_CASE_DIR/posted"; echo '{}' ;;
+  comments:bulk-list) cat "$TRACKER_CASE_DIR/comments" ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$TRACKER_STUB"
+tracker_mail() {
+  (cd "$CASE_REPO_ROOT" && env ORCH_OWNER_EMAIL="$TRACKER_EMAIL" KENDEX_USER_EMAIL=owner@example.com \
+    LINEAR_TEAM="$TRACKER_TEAM" ORCH_OWNER_ASK_LABEL="$TRACKER_LABEL" TRACKER_CASE_DIR="$STUB_DIR" "$TRACKER_MAIL" "$@")
+}
+tracker_pass() { # WATCH
+  TRACKER_OUT="$(WATCH_BIN="$1" run_watch ORCH_OWNER_EMAIL="$TRACKER_EMAIL" KENDEX_USER_EMAIL=owner@example.com \
+    LINEAR_TEAM="$TRACKER_TEAM" ORCH_OWNER_ASK_LABEL="$TRACKER_LABEL" \
+    TRACKER_CASE_DIR="$STUB_DIR" OVERSEE_WATCH_TRACKER="$TRACKER_STUB" \
+    OVERSEE_WATCH_LANE_MAIL="$TRACKER_MAIL" -- --max-loops 1 2>"$STUB_DIR/tracker.err")"
+}
+tracker_answer_count() { # ASK
+  local box="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+  if [[ ! -f "$box" ]]; then printf '0\n'; return 0; fi
+  jq -s --arg id "$1" '[.[] | select(.kind == "answer" and .re == $id and .by != "default")] | length' "$box"
+}
+tracker_case() { # ROW WATCH
+  local row="$1" watch="$2" extra=(--issue KEN-7) author=owner@example.com time=2026-10-02T00:00:00.001Z
+  new_case "tracker-$row"
+  mail_reset overseer
+  : >"$STUB_DIR/calls"
+  TRACKER_LABEL=owner-gated
+  TRACKER_EMAIL=owner@example.com
+  TRACKER_TEAM=KEN
+  case "$row" in
+    no-item) extra=() ;;
+    disabled) TRACKER_LABEL="" ;;
+    failed-assign) printf 'assign\n' >"$STUB_DIR/fail" ;;
+    failed-labels-read) printf 'labels-read\n' >"$STUB_DIR/fail" ;;
+    failed-label) printf 'label\n' >"$STUB_DIR/fail" ;;
+    failed-comment) printf 'comment\n' >"$STUB_DIR/fail" ;;
+    fallback) TRACKER_EMAIL="" ;;
+    no-team) TRACKER_TEAM="" ;;
+    other-author) author=other@example.test ;;
+    old-comment) time=2026-09-30T00:00:00.000Z ;;
+  esac
+  printf 'Approve the action?\nMore detail.\n' >"$STUB_DIR/question"
+  local id
+  id="$(tracker_mail ask --item overseer --to owner --file "$STUB_DIR/question" \
+    --options approve,hold --recommend approve ${extra[@]+"${extra[@]}"} 2>"$STUB_DIR/write.err")"
+  id="${id#id=}"
+  TRACKER_ASK="$id"
+  if [[ "$row" == due || "$row" == failed-* ]]; then
+    jq -c '.deadline = "2000-01-01T00:00:00Z"' \
+      "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl" >"$STUB_DIR/due-ask"
+    mv -- "$STUB_DIR/due-ask" "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
+  fi
+  if [[ "$row" == enabled || "$row" == fallback ]]; then
+    assert_eq "$(jq -s '[.[] | select(.[1] == "update" or .[1] == "create")] | length' "$STUB_DIR/calls")" \
+      3 'tracker ask makes the assignment, label and comment writes'
+    assert_eq "$(jq -s -r '.[] | select(index("--assignee")) | .[4]' "$STUB_DIR/calls")" \
+      owner@example.com 'tracker ask assigns the configured person'
+    assert_eq "$(jq -s -r '.[] | select(index("--labels")) | .[4]' "$STUB_DIR/calls")" \
+      feature,owner-gated,skills 'tracker ask preserves the existing labels'
+    assert_contains "$(cat "$STUB_DIR/posted")" "ask=$id" 'tracker comment carries the machine-read ask marker'
+  fi
+  jq -n --arg id "$id" --arg email "$author" --arg time "$time" --arg row "$row" '{"KEN-7": ([
+    {id:"ask-comment", body:("ask=" + $id), user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"},
+    {id:"owner-comment", body:"OK", user_email:$email, created_at:$time}]
+    + (if $row == "large" then [range(0;512) | {id:("history-" + tostring), body:("Ordinary history " + ("x" * 1024)),
+        user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"}] else [] end))}' >"$STUB_DIR/comments"
+  if [[ "$row" == failed-* && "$row" != failed-read ]]; then
+    assert_contains "$(cat "$STUB_DIR/write.err")" "lane-mail: tracker-unwritten issue=KEN-7 cause=${row#failed-}" \
+      "$row names its failed operation"
+    local pending
+    pending="$(tracker_mail pending --item overseer --to owner)"
+    assert_eq "$(jq -r '.id + "|" + .issue + "|" + (.tracker_posted | tostring)' <<<"$pending")" \
+      "$id|KEN-7|false" "$row keeps the item binding and unconfirmed ask pending"
+    assert_eq "$(jq -r '(.text | contains("More detail.")) and .options == ["approve","hold"] and .recommend == "approve" and has("deadline")' <<<"$pending")" \
+      true "$row retains the whole question and decision fields"
+    rm -- "${STUB_DIR:?}/fail"
+    printf '{}\n' >"$STUB_DIR/comments"
+  elif [[ "$row" == enabled ]]; then
+    local events drained raw
+    raw="$(cat "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl")"
+    assert_eq "$(jq -s '[.[] | select(.kind == "ask")] | length == 1 and (.[0] | has("tracker_posted") | not)' <<<"$raw")" \
+      true 'confirmation does not rewrite the original ask'
+    events="$(tracker_mail events --item overseer)"
+    assert_eq "$(jq -s --arg id "$id" 'length == 1 and .[0].id == $id and .[0].tracker_posted == true and .[0].line == 1 and .[0].count == 2' <<<"$events")" \
+      true 'events folds the private result and preserves logical positions'
+    drained="$(tracker_mail drain --item overseer --after 0)"
+    assert_eq "$(jq -R -s --arg id "$id" 'split("\n") | map(fromjson? | objects) | length == 1 and .[0].id == $id and .[0].tracker_posted == true' <<<"$drained")" \
+      true 'drain folds posting evidence before cursor filtering'
+    assert_eq "$(tracker_mail drain --item overseer --after 1)" "count=2 first=$id" \
+      'the private confirmation never replays the old ask'
+  fi
+  local before after first second
+  [[ "$row" != failed-read ]] || printf 'read\n' >"$STUB_DIR/fail"
+  before="$(wc -l <"$STUB_DIR/calls" | tr -d ' ')"
+  tracker_pass "$watch"
+  if [[ "$watch" == "$REPO_ROOT/skills/orch/scripts/oversee-watch" && ( "$row" == enabled || "$row" == due ) ]]; then
+    assert_contains "$TRACKER_OUT" "EVENT owner-ask-resolved $id " 'tracker answer event appears within one long pass'
+  fi
+  first="$(tracker_answer_count "$id")"
+  # Replay must rely on the persistent delivery ID, past the mailbox's
+  # short duplicate window. Inject age rather than waiting for the clock.
+  if [[ -f "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" ]]; then
+    jq -c 'if .kind == "answer" then .at = "2000-01-01T00:00:00Z" else . end' \
+      "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" >"$STUB_DIR/aged-answers"
+    mv -- "$STUB_DIR/aged-answers" "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+  fi
+  tracker_pass "$watch"
+  second="$(tracker_answer_count "$id")"
+  second=$((second - first))
+  after="$(wc -l <"$STUB_DIR/calls" | tr -d ' ')"
+  TRACKER_FACTS="$first,$second"
+  if [[ "$row" == due ]]; then
+    assert_eq "$(jq -s '[.[] | select(.delivery_id == "linear:owner-comment")] | length' \
+      "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")" 1 'tracker reply wins before the deadline close'
+    assert_eq "$(tracker_mail pending --item overseer --to owner)" '' 'due tracker ask closes after the reply'
+  elif [[ "$row" == failed-read ]]; then
+    assert_contains "$(tracker_mail pending --item overseer --to owner)" "$id" 'unread tracker leaves its due ask pending'
+    assert_eq "$(grep -c '^KEN-3624-unread ' "$STUB_DIR/tracker.err" || :)" 1 'a failed tracker read reports once'
+  elif [[ "$row" == failed-* ]]; then
+    assert_eq "$(tracker_mail pending --item overseer --to owner)" '' "$row keeps the chat deadline closure"
+    assert_eq "$(jq -s '[.[] | select(.[1] == "list" or .[1] == "bulk-list")] | length' "$STUB_DIR/calls")" \
+      0 "$row reads no tracker answer route"
+    assert_eq "$(jq -s '[.[] | select(index("--clear-assignee"))] | length' "$STUB_DIR/calls")" \
+      1 "$row still cleans up the bound item"
+  fi
+  if [[ "$row" == no-item ]]; then
+    assert_eq "$before" 0 'no item makes no tracker write'
+  elif [[ "$row" == disabled || "$row" == no-team ]]; then
+    assert_eq "$before,$after" 0,0 "$row makes no tracker writes or reads"
+  fi
+}
+TRACKER_CASES='enabled|1,0
+fallback|1,0
+no-team|0,0
+other-author|0,0
+old-comment|0,0
+no-item|0,0
+disabled|0,0
+failed-assign|0,0
+failed-labels-read|0,0
+failed-label|0,0
+failed-comment|0,0
+due|1,0
+failed-read|0,0
+large|1,0'
+TRACKER_ROWS=0
+while IFS='|' read -r row want; do
+  tracker_case "$row" "$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  assert_eq "$TRACKER_FACTS" "$want" "$row delivers only the person's new comment, once"
+  TRACKER_ROWS=$((TRACKER_ROWS + 1))
+done <<<"$TRACKER_CASES"
+assert_eq "$TRACKER_ROWS" "$(awk 'END {print NR}' <<<"$TRACKER_CASES")" 'all tracker table rows completed'
+
+# Without the delivery ID the same comment becomes a second answer.
+TRACKER_MUTANT="$(mutant_scripts tracker-replay/orch oversee-watch)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-replay/github"
+mutate_file "$TRACKER_MUTANT" '--delivery-id "linear:$id"' ''
+tracker_case enabled "$TRACKER_MUTANT"
+assert_eq "$TRACKER_FACTS" 1,1 'control: dropping delivery ID fails the 1,0 replay assertion'
+
+for rule in author time; do
+  TRACKER_MUTANT="$(mutant_scripts "tracker-$rule/orch" oversee-watch)/oversee-watch"
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-$rule/github"
+  if [[ "$rule" == author ]]; then
+    mutate_file "$TRACKER_MUTANT" '(.user_email | ascii_downcase) == ($email | ascii_downcase)' 'true'
+    tracker_case other-author "$TRACKER_MUTANT"
+  else
+    mutate_file "$TRACKER_MUTANT" '.created_at > $posted.created_at' 'true'
+    tracker_case old-comment "$TRACKER_MUTANT"
+  fi
+  assert_eq "$TRACKER_FACTS" 1,0 "control: dropping $rule check fails its 0,0 assertion"
+done
+
+tracker_case enabled "$REPO_ROOT/skills/orch/scripts/oversee-watch"
+printf 'Approved action.\n' >"$STUB_DIR/ruling"
+tracker_mail resolve --item overseer --id "$TRACKER_ASK" --text "$STUB_DIR/ruling" >/dev/null
+assert_eq "$(jq -s '[.[] | select(index("--clear-assignee"))] | length' "$STUB_DIR/calls")" 1 \
+  'closure removes the person as assignee'
+assert_eq "$(jq -s -r '[.[] | select(index("--labels"))] | last | .[4] | split(",") | sort | join(",")' "$STUB_DIR/calls")" feature,skills \
+  'closure removes only the owner label'
+assert_contains "$(cat "$STUB_DIR/posted")" "ask=$TRACKER_ASK closed (text): Approved action." 'closure comment carries the ask marker and supplied ruling'
+assert_eq "$(tracker_mail pending --item overseer --to owner)" '' 'tracker close leaves no pending ask'
+RULING_MAIL="$(mutant_scripts tracker-ruling/orch lib/mailbox-append.sh)/lane-mail"
+ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-ruling/linear"
+mutate_file "${RULING_MAIL%/*}/lib/mailbox-append.sh" '+ $ruling' '+ ""'
+"$BASH" -n "${RULING_MAIL%/*}/lib/mailbox-append.sh"
+tracker_case enabled "$REPO_ROOT/skills/orch/scripts/oversee-watch"
+NORMAL_TRACKER_MAIL="$TRACKER_MAIL"
+TRACKER_MAIL="$RULING_MAIL"
+printf 'Approved action.\n' >"$STUB_DIR/ruling"
+tracker_mail resolve --item overseer --id "$TRACKER_ASK" --text "$STUB_DIR/ruling" >/dev/null
+TRACKER_MAIL="$NORMAL_TRACKER_MAIL"
+assert_not_contains "$(cat "$STUB_DIR/posted")" 'Approved action.' \
+  'control: dropping the ruling fails the supplied-ruling assertion'
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
