@@ -102,6 +102,9 @@ state_message() {
       printf 'workflow-state: json-invalid path=%s\n' "$tmp_file"
       printf '%s\n' "Error: invalid JSON"
       ;;
+    fleet-log-append)
+      printf 'workflow-state: fleet-log-append field=%s route=append-file\n' "$field"
+      ;;
     append-field)
       printf 'workflow-state: append-field command=%s\n' "append-file"
       printf '%s\n' "Error: append-file needs a field"
@@ -573,6 +576,9 @@ cmd_append() {
     local field="$2"
     local value="$3"
 
+    if [[ "$field" == fleet_log ]]; then
+        state_message fleet-log-append >&2; return 1
+    fi
     local state_file
     state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"

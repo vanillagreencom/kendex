@@ -9,8 +9,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "workflow-state-fleet-log: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "workflow-state-fleet-log: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "workflow-state-fleet-log: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # Outside any checkout, so no project settings file answers for a setting.
@@ -24,6 +26,37 @@ source "$TEST_DIR/lib/growth-state.sh"
 
 echo
 echo "--- workflow-state fleet-log ---"
+
+append_refused() {
+  local script="$1" value="$2" state="$3" rc=0 out
+  "$script" --state-dir "$state" init oversee >/dev/null
+  cp "$state/workflow-state-oversee.json" "$TMP_ROOT/before.json"
+  out="$("$script" --state-dir "$state" append oversee fleet_log "$value" 2>&1)" || rc=$?
+  [[ "$rc" -ne 0 && "$out" == 'workflow-state: fleet-log-append field=fleet_log route=append-file' ]] \
+    && cmp -s "$TMP_ROOT/before.json" "$state/workflow-state-oversee.json" \
+    && [[ ! -e "$state/workflow-state-oversee.json.lock" ]]
+}
+NO_APPEND_GUARD="$(mutant_scripts no-append-guard workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_APPEND_GUARD" 'if [[ "$field" == fleet_log ]]; then
+        state_message fleet-log-append' 'if false; then
+        state_message fleet-log-append'
+while IFS= read -r value; do
+  append_refused "$WS" "$value" "$TMP_ROOT/append-state" \
+    && pass "append refuses fleet_log before lock or write: $value" \
+    || fail "append refuses fleet_log before lock or write: $value"
+  if append_refused "$NO_APPEND_GUARD" "$value" "$TMP_ROOT/control-state"; then
+    fail "control: the refusal assertion catches today's unguarded append: $value"
+  else
+    pass "control: the refusal assertion catches today's unguarded append: $value"
+  fi
+done <<'VALUES'
+{"kind":"ruling","item":"X","text":"t"}
+text
+VALUES
+printf '%s\n' '{"kind":"ruling","item":"X","text":"t"}' > "$TMP_ROOT/row.json"
+"$WS" --state-dir "$TMP_ROOT/append-state" append-file oversee fleet_log "$TMP_ROOT/row.json"
+jq -e '.fleet_log[-1] | .kind == "ruling" and .item == "X" and .text == "t" and (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' "$TMP_ROOT/append-state/workflow-state-oversee.json" >/dev/null \
+  && pass "append-file stamps at on the refused record" || fail "append-file stamps at on the refused record"
 
 sd="$TMP_ROOT/state"
 "$WS" --state-dir "$sd" init oversee >/dev/null
