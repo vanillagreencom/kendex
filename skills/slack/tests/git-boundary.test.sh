@@ -8,6 +8,11 @@ set -euo pipefail
 assert_eq "$GIT_CEILING_DIRECTORIES" "${SK_TMP%/*}" "git discovery stops at the physical scratch parent"
 
 LANE="$(sk_new_root lane)"
+mkdir "$LANE/tmp/premise" || exit 1
+RC=0
+OUT="$(cd "$LANE/tmp/premise" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
+  git rev-parse --show-toplevel 2>&1)" || RC=$?
+assert_eq "$RC:$OUT" "0:$LANE" "premise: unbounded git discovery reaches the enclosing repository"
 
 # Reload edits its script copies. Keep real directories here because cp -R
 # would preserve a directory symlink and let those edits reach its target.
