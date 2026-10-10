@@ -173,7 +173,7 @@ LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-tools guards-tools-tail linear linear-controls worktree rest slack node pi-claude-bridge"
+SHARDS="review-gate orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-state orch-rest guards-scans guards-commit guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls worktree rest slack node pi-claude-bridge"
 # The shards the main-push matrix never runs on macOS, nothing in them running
 # under its Bash 3.2: node and pi-claude-bridge hold no bash, and
 # linear-controls runs the linear suites, which need Bash 4. They are its
@@ -381,7 +381,7 @@ want_package() { # PACKAGE
   case "$1" in
     skills/orch) want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-state orch-rest ;;
     skills/review-gate | refresh) want_shard review-gate ;;
-    skills/commit-guards) want_shard guards-commit guards-hooks ;;
+    skills/commit-guards) want_shard guards-commit guards-hooks guards-hooks-tail ;;
     skills/linear) want_shard linear linear-controls ;;
     skills/bot-instructions | skills/preflight) want_shard linear ;;
     skills/worktree) want_shard worktree ;;
@@ -392,7 +392,7 @@ want_package() { # PACKAGE
     # pi-hooks' suite runs real hooks by a path it builds from each hook's
     # name, and tools/tests/harness-smoke.test.sh reads every hooks/*.sh by
     # glob; no search for the path can find either.
-    hooks) want_shard guards-hooks guards-tools-tail node ;;
+    hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
   esac
@@ -441,10 +441,10 @@ select_shards() { # BUILD(true|false)
         skill="${skill#skills/}"
         reach_skill "${skill%%/*}"
         # tools/ and hooks/ suites read every skill's scripts, some by glob.
-        # hooks/ is named by its shard alone: the package's `node` is there
+        # hooks/ is named by its two shards: the package's `node` is there
         # for pi-hooks, which runs hooks by name.
         want_package tools
-        want_shard guards-hooks
+        want_shard guards-hooks guards-hooks-tail
         ;;
       refresh/*) want_package refresh ;;
       tools/*) want_package tools ;;
