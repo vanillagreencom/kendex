@@ -12,6 +12,10 @@ on:
 env:
   APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
 
+concurrency:
+  group: own-catalog-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # The default marketplace holds itself to the strictest reading: everyone
   # who installs from it inherits whatever its safety pass still finds.
@@ -53,6 +57,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: .github/workflows/own-catalog.yml
       - name: Install the freely installable harness CLIs
         # Every CLI tracks latest deliberately: this job exists to notice
         # when a harness stops reading what kendex wrote.
