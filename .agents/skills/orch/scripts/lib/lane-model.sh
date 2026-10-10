@@ -354,35 +354,29 @@ def credit_room($credit_floor):
   and .credits.spend_control_reached == false
   and (.credits.balance | type) == "number" and .credits.balance > $credit_floor;
 
-# with_lane_verdict($wall; $max; $credit_floor) over one record: the record
-# with `verdict`, the wall_verdict of $wall, which every judge of an account
-# reads, so the chooser, `pick --lane` and the listing know one rule. A walled
-# Codex account with credit_room is `room` on its credits, and its
-# binding_bucket becomes `credits`, which is how the chooser ranks it after
-# every account with plan room and how each display names it. The
-# forecast of its spent window no longer binds it, so the record drops it: no rate, no
-# projected_wall_minutes, and usage_rate_state `credits`, which no reader of a
-# measured rate takes for one. Applied after with_lane_projection, which
-# charges burn by the window bucket.
-def with_lane_verdict($wall; $max; $credit_floor):
-  ($wall | wall_verdict($max)) as $v
-  | if $v == "walled" and credit_room($credit_floor)
-    then . + {verdict: "room", binding_bucket: "credits", usage_rate_state: "credits",
-              usage_rate_pct_per_min: null, projected_wall_minutes: null}
-    else . + {verdict: $v} end;
-
-# Fleet lane launches and turn-end handoff reads share the seat reserve.
-# The overseer passes no seats when it judges its own account. Judge ordinary
-# window room before the reserve: a balance cannot turn a reserve-only refusal
-# into spending credits. Copilot and Pi spend pools, not these plan windows.
+# One owner chooses the spending kind from unchanged window usage and seat
+# policy before it emits a verdict or binding bucket. Available credits cannot
+# spend a reserve-only refusal or a fully reserved window seat. Pool accounts
+# spend no plan window; explicit cloud-credit mode is judged by with_lane_tier.
+# A credit choice drops the spent window forecast, which no longer binds it.
 def with_lane_seat_verdict($wall; $max; $credit_floor; $seats; $reserve):
   . + {_seat: (if .harness != "copilot" and .harness != "pi"
                   and ((._id // .config_dir) as $d | any($seats[]; . == $d)) then 1 else 0 end)}
-  | with_lane_verdict($wall; $max; $credit_floor)
-  | if ._seat == 1 and .binding_bucket != "credits" then
-      ($wall | wall_verdict([$max, 100 - $reserve] | min)) as $v
-      | .verdict = (if $v == "walled" then "seat-reserve" else $v end)
-    else . end;
+  | ($wall | wall_verdict($max)) as $ordinary
+  | (if ._seat == 1 then [$max, 100 - $reserve] | min else $max end) as $limit
+  | ($wall | wall_verdict($limit)) as $plan
+  | (if $ordinary == "walled" and credit_room($credit_floor) and (._seat == 0 or $reserve < 100) then "credits"
+     elif ._seat == 1 and $plan == "walled" then "seat-reserve"
+     else $plan end) as $kind
+  | if $kind == "credits"
+    then . + {verdict: "room", binding_bucket: "credits", usage_rate_state: "credits",
+              usage_rate_pct_per_min: null, projected_wall_minutes: null}
+    else . + {verdict: $kind} end;
+
+# The listing uses the same owner with ordinary account policy. Its public
+# record drops the private seat flag, as both pick forms do.
+def with_lane_verdict($wall; $max; $credit_floor):
+  with_lane_seat_verdict($wall; $max; $credit_floor; []; 0);
 
 # with_lane_tier($pool; $cloud_floor; $retire; $now) over one judged record
 # applies the expires-first rule, `lanes --help` § pick, whose one statement

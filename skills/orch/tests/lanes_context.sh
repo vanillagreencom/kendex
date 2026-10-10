@@ -452,13 +452,26 @@ mutate_file "$CREDIT_CTRL/lanes" 'with_lane_seat_verdict(.wall; $max; $credit_fl
 lanes_table "$(CTX_LANES="$CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: judged with no credit room the lane on credits is marked|ken-102|handoff_required=true"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg a "$H/.codex" '{account:$a}')" >/dev/null
-jq '.rate_limit.primary_window.used_percent=60' "$FIXTURE_DIR/.codex.json" > "$FIXTURE_DIR/.codex.next"
-mv -- "$FIXTURE_DIR/.codex.next" "$FIXTURE_DIR/.codex.json"
-lanes_table "$(ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
-  "an available credit balance cannot hide included allowance spent below the reserve|ken-102|binding_bucket=weekly headroom_pct=40 context_handoff_due=false handoff_required=true"
+FULL_SEAT_CTRL="$(mutant_scripts mutant-context-full-seat-credit lib/lane-model.sh)" || exit 1
+mutate_file "$FULL_SEAT_CTRL/lib/lane-model.sh" '(._seat == 0 or $reserve < 100)' 'true'
+while IFS='|' read -r label used reserve bucket room handoff; do
+  jq --argjson used "$used" '.rate_limit.primary_window.used_percent=$used' "$FIXTURE_DIR/.codex.json" > "$FIXTURE_DIR/.codex.next"
+  mv -- "$FIXTURE_DIR/.codex.next" "$FIXTURE_DIR/.codex.json"
+  lanes_table "$(ORCH_OVERSEER_SEAT_RESERVE_PCT="$reserve" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+    "$label|ken-102|binding_bucket=$bucket headroom_pct=$room context_handoff_due=false handoff_required=$handoff"
+  if [[ "$reserve" == 100 ]]; then
+    lanes_table "$(CTX_LANES="$FULL_SEAT_CTRL/lanes" ORCH_OVERSEER_SEAT_RESERVE_PCT=100 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+      "control: ignoring full reserve hides the excluded credit seat from context|ken-102|binding_bucket=credits headroom_pct=0 context_handoff_due=false handoff_required=false"
+  fi
+done <<'SEAT_CREDIT_READINGS'
+ordinary credits keep the spent seat available|100|50|credits|0|false
+a full reserve marks the spent seat despite its usable credits|100|100|weekly|0|true
+zero reserve keeps ordinary credits available|100|0|credits|0|false
+an available balance cannot hide included allowance below the reserve|60|50|weekly|40|true
+SEAT_CREDIT_READINGS
 SEAT_CREDIT_CTRL="$(mutant_scripts mutant-context-seat-credit lib/lane-model.sh)" || exit 1
-mutate_file "$SEAT_CREDIT_CTRL/lib/lane-model.sh" '  | with_lane_verdict($wall; $max; $credit_floor)' \
-  '  | with_lane_verdict($wall; (if ._seat == 1 then [$max, 100 - $reserve] | min else $max end); $credit_floor)'
+mutate_file "$SEAT_CREDIT_CTRL/lib/lane-model.sh" '($wall | wall_verdict($max)) as $ordinary' \
+  '(if ._seat == 1 then [$max, 100 - $reserve] | min else $max end) as $credit_limit | ($wall | wall_verdict($credit_limit)) as $ordinary'
 lanes_table "$(CTX_LANES="$SEAT_CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: a lowered credit threshold hides the seat reserve from context|ken-102|binding_bucket=credits headroom_pct=40 handoff_required=false"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
@@ -472,6 +485,9 @@ claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
   "a seat lane at the reserve is marked|ken-104|headroom_pct=50 handoff_required=true" \
   "the caller on the same account keeps the ordinary mark|overseer|caller=true headroom_pct=50 handoff_required=false"
+lanes_table "$(ORCH_OVERSEER_SEAT_RESERVE_PCT=100 ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
+  "a full reserve marks the window lane|ken-104|headroom_pct=50 handoff_required=true" \
+  "the full reserve keeps the caller judgment exempt|overseer|caller=true headroom_pct=50 handoff_required=false"
 SEAT_CTRL="$(mutant_scripts mutant-context-seat lib/lane-model.sh)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$SEAT_CTRL/lib/lane-model.sh" '[$max, 100 - $reserve] | min' '$max'
