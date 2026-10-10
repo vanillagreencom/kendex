@@ -1,5 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import { discoverAgents } from "../extensions/subagent/agents.js";
@@ -8,7 +9,7 @@ import { resetModelWarning, resolveAgentModel } from "../extensions/subagent/set
 import { cleanupTempRuntimes, installMockSpawn, modelRegistryFixture, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 import { importRuntimeCopy, writeProjectAgent } from "./browser-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
-import { setPaneExecCaptureForTests } from "../extensions/subagent/pane.js";
+import { execCapture, setPaneExecCaptureForTests } from "../extensions/subagent/pane.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { withExtensionTools } from "./extension-fixture.js";
 
@@ -83,15 +84,57 @@ test("the shared child preparation transports registry and child directory to co
   const model = await resolveAgentModel(agent, undefined, process.cwd(), registry, async (command, args, options) => {
     calls += 1;
     expect(command).toBe("kendex");
-    expect(args.slice(0, 5)).toEqual(["tier-model", "pi", "--model", "standard", "--runtime-context-json"]);
+    expect(args).toEqual(["tier-model", "pi", "--model", "standard", "--runtime-context-stdin", "--json"]);
     expect(options.cwd).toBe(process.cwd());
-    const context = JSON.parse(args[5]);
+    const context = JSON.parse(options.input!);
     expect(context.models.models).toEqual([{ provider: "custom", id: "chat", nativeSelector: "custom/chat", allowed: true, chat: true, isDefault: false }]);
     expect(context.capacity[0].context_window).toBe(123456);
     return capture();
   });
   expect(calls).toBe(1);
   expect(model).toBe("custom/chat");
+});
+
+const largeModels = Array.from({ length: 1000 }, (_, index) => ({ ...nativeModel, id: `chat-${index}` }));
+const largeRegistry = modelRegistryFixture(() => largeModels);
+
+async function largeRegistryTransport(runtime: typeof settings): Promise<string> {
+  let input = "";
+  expect(await runtime.resolveAgentModel(agent, undefined, process.cwd(), largeRegistry, async (command, args, options) => {
+    expect(command).toBe("kendex");
+    for (const arg of args) {
+      if (Buffer.byteLength(arg) > 131072) throw new Error("model context exceeds argv limit");
+    }
+    expect(args).toEqual(["tier-model", "pi", "--model", "standard", "--runtime-context-stdin", "--json"]);
+    input = options.input!;
+    expect(Buffer.byteLength(input)).toBeGreaterThan(131072);
+    const context = JSON.parse(input);
+    expect(context.models.models).toEqual(largeModels.map(model => ({ provider: model.provider, id: model.id, nativeSelector: `custom/${model.id}`, allowed: true, chat: true, isDefault: false })));
+    expect(context.capacity.map((entry: { selector: string; context_window: number }) => [entry.selector, entry.context_window]))
+      .toEqual(largeModels.map(model => [`custom/${model.id}`, model.contextWindow]));
+    return capture();
+  })).toBe("custom/chat");
+  return input;
+}
+
+test("large registries use stdin and the argv control exceeds the argument limit", async () => {
+  await largeRegistryTransport(settings);
+  const mutant = await importRuntimeCopy("settings.ts", '"--runtime-context-stdin", "--json"', '"--runtime-context-json", JSON.stringify(context), "--json"') as typeof settings;
+  await expect(largeRegistryTransport(mutant)).rejects.toThrow("model context exceeds argv limit");
+});
+
+test("default capture sends a large context to a real kendex process and closes stdin", async () => {
+  const input = await largeRegistryTransport(settings);
+  const cwd = tempRuntime();
+  writeFileSync(join(cwd, "kendex"), `#!${process.execPath}\nlet bytes = 0;
+process.stdin.on("data", data => { bytes += data.length; });
+process.stdin.on("end", () => process.stdout.write(JSON.stringify({
+  protocol: "model-resolution-v1", harness: "pi",
+  resolution: { tag: "selected", selection: { nativeSelector: "bytes/" + bytes }, diagnostics: [] }
+})));\n`, { mode: 0o755 });
+  const model = await resolveAgentModel(agent, undefined, cwd, largeRegistry, (command, args, options) =>
+    execCapture(command, args, { ...options, env: { PATH: cwd }, timeoutMs: 1000 }));
+  expect(model).toBe(`bytes/${Buffer.byteLength(input)}`);
 });
 
 test("exact Haiku frontmatter reaches core unchanged and its warning names the original pin", async () => {
@@ -114,7 +157,7 @@ test("exact Haiku frontmatter reaches core unchanged and its warning names the o
       calls += 1;
       expect(args[3]).toBe(requested);
       expect(options.cwd).toBe(cwd);
-      expect(JSON.parse(args[5]).models.models.map((model: { nativeSelector: string }) => model.nativeSelector))
+      expect(JSON.parse(options.input!).models.models.map((model: { nativeSelector: string }) => model.nativeSelector))
         .toEqual([requested, chosen]);
       // Rust's render/runtime regressions establish the policy. This peer
       // checks Pi's intent transport and consumption of that core decision.
@@ -134,8 +177,8 @@ for (const failed of [false, true]) {
   test(`native default retains the parent with unknown metadata, failed=${failed}`, async () => {
     const fallback = { ...selected, resolution: { tag: "harness-default", path: { tag: "native-default" }, diagnostics: [] } };
     const broken = failed ? modelRegistryFixture(() => { throw new Error("registry failed"); }) : undefined;
-    expect(await resolveAgentModel(agent, "custom/chat", process.cwd(), broken, async (_command, args) => {
-      expect(JSON.parse(args[5]).models.tag).toBe(failed ? "failed" : "unsupported");
+    expect(await resolveAgentModel(agent, "custom/chat", process.cwd(), broken, async (_command, _args, options) => {
+      expect(JSON.parse(options.input!).models.tag).toBe(failed ? "failed" : "unsupported");
       return { code: 0, stdout: JSON.stringify(fallback), stderr: "" };
     })).toBe("custom/chat");
   });
@@ -150,8 +193,8 @@ test("failed registry refresh is passed to core without stale model evidence", a
   ];
   for (const failed of failedRefreshes) {
     const live = { ...registry, ...failed, getAvailable: () => { throw new Error("stale registry must not be read"); } };
-    await resolveAgentModel(agent, "custom/chat", process.cwd(), live, async (_command, args) => {
-      const evidence = JSON.parse(args[5]).models;
+    await resolveAgentModel(agent, "custom/chat", process.cwd(), live, async (_command, _args, options) => {
+      const evidence = JSON.parse(options.input!).models;
       expect(evidence.tag).toBe("failed");
       expect(evidence.source).toBe("pi:modelRegistry.refresh");
       expect(evidence.cause).not.toContain("stale registry");
@@ -234,10 +277,10 @@ async function inheritContract(runtime: typeof settings): Promise<void> {
     for (const row of rows) {
       const cwd = tempRuntime();
       writeSettings(cwd, { subagentModelSource: row.source });
-      const resolved = await runtime.resolveAgentModel({ ...agent, model: row.model }, row.parent, cwd, registry, async (_command, args) => {
+      const resolved = await runtime.resolveAgentModel({ ...agent, model: row.model }, row.parent, cwd, registry, async (_command, args, options) => {
         try { expect(args[3]).toBe("inherit"); }
         catch (cause) { throw new Error("Pi inherited request assertion failed", { cause }); }
-        const context = JSON.parse(args[5]);
+        const context = JSON.parse(options.input!);
         expect(context.default).toEqual(row.parent === undefined ? { tag: "native-default" } : {
           tag: "observed-session-or-default", selector: row.parent, provider: null,
           id: null, account: "pi-session", host: "pi-process", source: "pi:parent-model",
@@ -268,9 +311,9 @@ test("OpenRouter registry, parent and exact pin retain the full provider model s
   const selector = `${model.provider}/${model.id}`;
   const live = modelRegistryFixture(() => [model]);
   for (const request of ["standard", "inherit", selector]) {
-    const resolved = await resolveAgentModel({ ...agent, model: request }, selector, process.cwd(), live, async (_command, args) => {
+    const resolved = await resolveAgentModel({ ...agent, model: request }, selector, process.cwd(), live, async (_command, args, options) => {
       expect(args[3]).toBe(request);
-      const context = JSON.parse(args[5]);
+      const context = JSON.parse(options.input!);
       expect(context.models.models).toEqual([{ provider: "openrouter", id: "anthropic/claude-sonnet-4", nativeSelector: selector, allowed: true, chat: true, isDefault: false }]);
       expect(context.default).toEqual({ tag: "observed-session-or-default", selector, provider: "openrouter", id: model.id, account: "pi-session", host: "pi-process", source: "pi:parent-model" });
       expect(context.capacity[0].selector).toBe(selector);

@@ -72,7 +72,7 @@ import {
 } from "./types.js";
 
 /** Command calls always have a deadline; dispatch cancellation propagates to nested probes. */
-export interface ExecCaptureOptions { cwd?: string; timeoutMs?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
+export interface ExecCaptureOptions { cwd?: string; timeoutMs?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; input?: string }
 type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?: unknown; interruption?: "timeout" | "aborted" };
 type ExecCaptureFn = (command: string, args: string[], options?: ExecCaptureOptions) => Promise<ExecCaptureResult>;
 let resolvedPiBridgeCommand: string | undefined;
@@ -82,7 +82,7 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 	if (signal?.aborted) return { code: 1, stdout: "", stderr: "Command aborted", error: signal.reason };
 	const timeoutMs = Math.max(1, options.timeoutMs ?? 10_000);
 	return new Promise((resolve) => {
-		const spawnOptions = { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"] };
+		const spawnOptions = { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"] as ["ignore" | "pipe", "pipe", "pipe"] };
 		// Keep the shell's fixed lookup separate from bridge arguments, which are data.
 		const proc = command === "tmux" ? spawner("tmux", args, spawnOptions)
 			: command === "ps" ? spawner("ps", args, spawnOptions)
@@ -98,6 +98,7 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 		}
 		let stdout = "";
 		let stderr = "";
+		let inputError: Error | undefined;
 		let failure: { cause: "timeout" | "aborted"; error: Error } | undefined;
 		let settled = false;
 		let escalation: ReturnType<typeof setTimeout> | undefined;
@@ -139,8 +140,10 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 		// Bridge and tmux output is diagnostic data, not an unbounded stream.
 		proc.stdout?.on("data", (data) => { stdout = (stdout + data.toString()).slice(-1024 * 1024); });
 		proc.stderr?.on("data", (data) => { stderr = (stderr + data.toString()).slice(-1024 * 1024); });
-		proc.on("close", (code) => finish(code ?? 1));
+		proc.on("close", (code) => finish(code ?? 1, inputError));
 		proc.on("error", (error) => finish(1, error));
+		proc.stdin?.on("error", (error) => { inputError = error; });
+		proc.stdin?.end(options.input);
 	});
 }
 

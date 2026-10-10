@@ -99,7 +99,7 @@ export function selectedModelForAgent(agent: AgentConfig, parentModel: string | 
 }
 
 export type AgentModelRegistry = Pick<ExtensionContext["modelRegistry"], "refresh" | "getError" | "getAvailable">;
-type ModelCapture = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ code: number; stdout: string; stderr: string; error?: unknown }>;
+type ModelCapture = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; input?: string }) => Promise<{ code: number; stdout: string; stderr: string; error?: unknown }>;
 let modelWarningEmitted = false;
 
 /** Release the session's warning receipt when the extension session ends. */
@@ -161,7 +161,7 @@ async function resolveAgentModelAttempt(
 		capacity: available.filter(model => Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0).map(model => ({
 			tag: "known", selector: `${model.provider}/${model.id}`, account, host,
 			source: "pi:modelRegistry.getAvailable", context_window: model.contextWindow })), rejected: [] };
-	const result = await capture("kendex", ["tier-model", "pi", "--model", request, "--runtime-context-json", JSON.stringify(context), "--json"], { cwd, env: { ...process.env } });
+	const result = await capture("kendex", ["tier-model", "pi", "--model", request, "--runtime-context-stdin", "--json"], { cwd, env: { ...process.env }, input: JSON.stringify(context) });
 	if (result.error instanceof Error && "code" in result.error && result.error.code === "ENOENT") {
 		if (!(await stat(cwd)).isDirectory()) throw new Error("model-resolution: invalid=child-directory");
 		if (request === "inherit") return parentModel;
