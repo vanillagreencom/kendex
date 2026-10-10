@@ -25,7 +25,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
    ```
 
-   A Verifying item stops development preparation here. Its live readings belong to the overseer. A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked child: name the live blockers.
+   A Verifying item stops development preparation here. Its live readings belong to the overseer. A container, a blocked item, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked item: name the live blockers.
 
 4. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 

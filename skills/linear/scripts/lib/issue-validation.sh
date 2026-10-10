@@ -113,52 +113,61 @@ build_completion_validation_result() {
 
 # --- Blocking-relation hierarchy guard (add-relation / block) ---
 #
-# Invariant: a blocking relation connects peers of one bundle — two issues
-# with the SAME direct parent, or two top-level issues. An issue never blocks
-# its own ancestor or descendant: the parent-child hierarchy already encodes
-# that dependency. Cross-subtree dependencies are expressed between the peers
-# that own the ordering.
-#
-# The rule reads one level: each issue's own direct parent identifier, empty
-# for a top-level issue.
+# A leaf's wait must not hold its unrelated siblings. The parent-child
+# hierarchy already encodes ancestor dependencies; adding a relation there
+# would make the hierarchy wait on itself. The owning rule is SKILL.md
+# § Blocked Label vs Issue Relations; no architecture decision is needed
+# for this local validation choice.
 
-# blocking_level_ok BLOCKER_PARENT BLOCKED_PARENT
-# The single acceptance predicate for the blocking-level rule; the rejection
-# message below states the same rule.
-blocking_level_ok() {
-	local p1="${1:-}" p2="${2:-}"
+# Read the same bounded ancestry in both mutation routes. The final parent
+# has no parent selection: blocking_level_facts refuses if that frontier is
+# reached, because Linear has not established where the chain ends.
+BLOCKING_PARENT_FIELDS='identifier parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier parent { identifier } } } } } } } } } }'
+BLOCKING_CHILD_FIELDS='children(first: 1, includeArchived: true) { nodes { id } pageInfo { hasNextPage } }'
 
-	if [[ -z "$p1" && -z "$p2" ]]; then
-		return 0 # both top-level
-	fi
-	if [[ -n "$p1" && "$p1" == "$p2" ]]; then
-		return 0 # siblings under the same parent
-	fi
-	return 1
+# Linear's relation queries produce these nodes. Missing fields are not proof
+# of a leaf or a complete ancestry; structural repair must not delete on them.
+blocking_level_facts() {
+	local facts
+	facts=$(jq -ce '
+		def chain:
+			if type != "object" or (.identifier | type) != "string" or .identifier == "" or (has("parent") | not)
+			then error("incomplete ancestry")
+			elif .parent == null then []
+			else [.parent.identifier] + (.parent | chain) end;
+		.blocker as $a | .blocked as $b
+		| ($a | chain) as $ancestors_a | ($b | chain) as $ancestors_b
+		| if ($b.children.nodes | type) != "array" or ($b.children.pageInfo.hasNextPage | type) != "boolean"
+		  then error("missing children") else
+		  {blocker: $a.identifier, blocked: $b.identifier,
+		   parent1: ($ancestors_a[0] // ""), parent2: ($ancestors_b[0] // ""),
+		   ancestors1: $ancestors_a, ancestors2: $ancestors_b,
+		   has_children: (($b.children.nodes | length) > 0 or $b.children.pageInfo.hasNextPage)} end
+	' <<<"$1" 2>/dev/null) || {
+		jq -cn '{error: "Hierarchy validation failed closed: Linear returned incomplete issue, child or ancestry facts."}' >&2
+		return 1
+	}
+	printf '%s' "$facts"
 }
 
-# blocking_level_violation_message BLOCKER BLOCKED BLOCKER_PARENT BLOCKED_PARENT
-# Compose the plain-text rejection message for a blocking-level violation.
-# Two outcomes: a parent/child pair gets its own explanation, because the
-# hierarchy already encodes that dependency and no replacement pair exists;
-# every other pair gets the rule it failed.
+# blocking_level_ok FACTS: the single acceptance predicate.
+blocking_level_ok() {
+	jq -e '
+		. as $f
+		| (($f.ancestors1 | index($f.blocked)) == null and ($f.ancestors2 | index($f.blocker)) == null)
+		  and (.parent1 == .parent2 or (.has_children | not))
+	' <<<"$1" >/dev/null
+}
+
+# blocking_level_violation_message FACTS: JSON rejection with its stable error category.
 blocking_level_violation_message() {
-	local blocker="$1" blocked="$2" p1="$3" p2="$4"
-
-	local ancestor="" descendant=""
-	if [[ -n "$p1" && "$p1" == "$blocked" ]]; then
-		ancestor="$blocked" descendant="$blocker"
-	elif [[ -n "$p2" && "$p2" == "$blocker" ]]; then
-		ancestor="$blocker" descendant="$blocked"
-	fi
-	if [[ -n "$ancestor" ]]; then
-		printf 'Hierarchy violation: %s is the parent of %s — an issue cannot carry a blocking relation against its own ancestor; the parent-child hierarchy already encodes that dependency. No relation is needed while %s stays under %s; use '"'"'%s --related %s'"'"' for traceability. A true sequencing gate belongs between sibling issues at the level that owns the ordering.' \
-			"$ancestor" "$descendant" "$descendant" "$ancestor" "$descendant" "$ancestor"
-		return 0
-	fi
-
-	printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). Express the dependency between the peers that own the ordering, or use '"'"'%s --related %s'"'"' for traceability.' \
-		"$blocker" "$blocked" "$blocker" "$blocked"
+	jq -c '
+		. as $f
+		| if ($f.ancestors1 | index($f.blocked)) != null or ($f.ancestors2 | index($f.blocker)) != null then
+		    {error: "Hierarchy violation: \(.blocker) and \(.blocked) form an ancestor/descendant pair. An issue cannot carry a blocking relation against its own ancestor; the hierarchy already encodes that dependency. Use --related for traceability."}
+		  else {error: "Blocking-level violation: \(.blocker) and \(.blocked) need the same direct parent, both must be top-level, or the blocked issue must be a leaf."}
+		  end
+	' <<<"$1"
 }
 
 # --- Reach guard (create-time filing bar) ---

@@ -54,7 +54,7 @@ For each candidate, determine what it **creates** (modules, types, APIs), what i
 
 An architecture dependency with no relation recorded belongs in `actions.add_relations[]` as `{"from", "rel": "blocks", "to", "reason"}`. Two signals: issue A creates something issue B consumes, and two issues modifying the same file where the lower-layer one must land first.
 
-Recommend the relation at the right level — cross-bundle dependencies on the parents, sibling sequencing between children of one parent, never between an ancestor and its own descendant. See [dependencies.md](../references/dependencies.md).
+Recommend each relation under linear SKILL.md § Blocked Label vs Issue Relations. See [dependencies.md](../references/dependencies.md) for structural repair.
 
 ### 4.4 Order and Prioritize
 

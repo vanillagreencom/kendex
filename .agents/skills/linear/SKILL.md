@@ -114,9 +114,9 @@ No match leaves the calling workflow's missing-file behavior unchanged. Multiple
 
 A blocker that is itself a Linear issue is a relation (`--blocked-by`); an external one (vendor, license) is the `blocked` label plus a comment.
 
-Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. The check reads each issue's own direct parent in one query.
+Blocking relations may connect issues with the same direct parent, two top-level issues, or a blocked leaf to an issue outside its ancestors. An ancestor/descendant pair is refused at any depth; use `--related` for traceability. The two issues need not share a project. One query reads child status and parent chains. An incomplete chain refuses.
 
-A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata**. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule"). `issues remove-relation` refuses such a relation before any write, with one `linear: refused=completed-blocker` line. Its `--peer-rule-violation` route, the project-management skill's tpm-audit structural repair, removes one only when the pair breaks the peer rule above.
+A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata**. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule"). `issues remove-relation` refuses such a relation before any write, with one `linear: refused=completed-blocker` line. Its `--peer-rule-violation` route, the project-management skill's tpm-audit structural repair, removes one only when the pair breaks the blocking-level rule above.
 
 Normalized issue lists, gets, bulk gets, bundles, recursive children, relation reads, and session status keep each blocking relation in `blocked_by` and list only nonterminal blockers in `blocked_by_open`.
 

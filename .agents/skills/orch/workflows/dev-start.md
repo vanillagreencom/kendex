@@ -16,15 +16,15 @@ Delegate implementation to specialist agent(s). Handles a single issue and a bun
 .agents/skills/orch/scripts/git-context issue-from-branch .
 ```
 
-Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
+Resolve `TRACKER` first. `github` skips the Linear-only launch preflight.
 
-**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle`:
+**Launch preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle`:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
 ```
 
-Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is equivalent to the `(one PR)` marker: skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
+Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked item stops with its live blockers named. Caller context `audit_bundle: true` selects the gate's audit bundle rule: permit that parent as a bundle and carry `Audit Bundle: yes` in the delegation. This opt-in does not bypass the blocker check.
 
 Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root "[DIR]"`. Inside a worktree `[DIR]` is `.`; from the main repo it is `worktree path [ISSUE_ID]` when that exists, and ask the user before creating one when it does not.
 
@@ -59,7 +59,15 @@ gh issue view [N] --json labels --jq '.labels[].name'
 
 Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before choosing a stored dev agent or starting a replacement. Persistence follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle).
 
-Before EVERY implementation delegation, including each group's delegation in bundled mode, stamp the round and apply the cleanup condition in [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Run each selected command as a separate tool call:
+Before EVERY implementation delegation, including managed entry at § 1 and each group's delegation in bundled mode, repeat the Linear launch preflight from current facts:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+```
+
+Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)), with its audit bundle rule when caller context has `audit_bundle: true`. Complete any further reads the gate requires. Stop on refusal before stamping or delegating. Use this read for the bundle's pending work and parent title. An earlier caller preflight does not replace this read. GitHub skips this Linear-only step.
+
+Then stamp the round and apply the cleanup condition in [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Run each selected command as a separate tool call:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]

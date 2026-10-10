@@ -179,7 +179,7 @@ A relation on a Done issue is a valid historical record. Flag it for removal onl
 
 ### 4.2 Scan Relation Violations
 
-Iterate every `blocks`/`blocked_by` on the input issues and their children. A relation is misplaced when it crosses bundles (`A.parent != B.parent`, both parented) or joins a child to a standalone issue.
+Iterate every `blocks`/`blocked_by` on the input issues and their children. A relation is misplaced only when linear SKILL.md § Blocked Label vs Issue Relations refuses it.
 
 **Preserve blocking relations by fixing the structure**, never by deleting them. For each violation: add the child relation to `remove_relations[]` with reason `"Violation: [TYPE] — [FROM] [REL] [TO]"`, which the apply step removes with `issues remove-relation --peer-rule-violation` (the one route past the completed-blocker refusal, linear SKILL.md § Blocked Label vs Issue Relations), add the lifted parent-level relation to `add_relations[]`, and add `related` between the original children. See [dependencies.md](../references/dependencies.md) for the level rule.
 

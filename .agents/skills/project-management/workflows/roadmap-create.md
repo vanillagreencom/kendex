@@ -100,7 +100,7 @@ Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate t
 | `identifier` | null — all proposed |
 | `title`, `action`, `target`, `reason` | Same fields on `organized_issues[i]` |
 | `project.recommended` | `project_placement.project_name`; `recommended_id` = `PROJECT_ID` from § 3.2 |
-| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. Relations are already lifted to parent level — preserve them. A reference to an entry § 2 omitted follows step 1 below |
+| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. Preserve each relation on the issue named in the plan under linear SKILL.md § Blocked Label vs Issue Relations. Keep valid leaf waits on their leaves. A reference to an entry § 2 omitted follows step 1 below |
 | `hierarchy` | Bundle children are `make_child` of their bundle parent per step 1 below. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
 | `supersedes` | Supersession entries in `cross_project_findings` — only those § 2 neither executed nor skipped |
 | `cross_project_findings.conflicts[]` | Each resolution is applied before conversion: a wait/sequence resolution becomes `blocked_by: ["[ISSUE_ID]"]` on the affected entry; a `Modify approach` text lands in that entry's `create_fields` and marks it `"reapprove": true`; `Skip this issue` omits it. A resolution with no representable effect halts naming the conflict |
