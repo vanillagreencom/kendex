@@ -269,15 +269,9 @@ PY_COMMON_ROOT
 # and its dependencies. Removing only the fallback must break the same check.
 source "$TEST_DIR/lib/growth-state.sh"
 common_mutant="$(mutant_scripts common-root-mutant git-context)"
-python3 - "$common_mutant/git-context" <<'PY_COMMON_MUTANT'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-old = r'''        if [[ "$git_context" == *$'\n'*$'\n'* ]]; then'''
-text = path.read_text()
-assert text.count(old) == 1
-path.write_text(text.replace(old, "        if false; then"))
-PY_COMMON_MUTANT
+mutate_file "$common_mutant/git-context" \
+  "        if [[ \"\$git_context\" == *\$'\\n'*\$'\\n'* ]]; then" \
+  '        if false; then'
 assert_eq "$(cmp -s "$common_mutant/git-context" "$GC" && echo same || echo differs)" "differs" \
   "control: the common-root mutant removes the newline fallback"
 bash -n "$common_mutant/git-context"
