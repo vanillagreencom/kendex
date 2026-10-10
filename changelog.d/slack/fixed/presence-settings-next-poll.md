@@ -1,1 +1,0 @@
-- A running Slack relay takes changed master hold settings on its next poll without a restart. A failed settings read keeps that root's posts held while other roots continue.

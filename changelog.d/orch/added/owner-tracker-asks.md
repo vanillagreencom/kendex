@@ -1,1 +1,0 @@
-- Owner asks can assign and label their Linear item. The watch reads the person's comment once, and closure clears the assignment and label. Reports link the items that wait on the person.

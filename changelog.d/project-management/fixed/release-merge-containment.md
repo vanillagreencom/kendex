@@ -1,1 +1,0 @@
-- Release verification requirements start at a release that contains the item's latest merge commit when the release uses its merge repository.
