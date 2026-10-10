@@ -53,6 +53,8 @@ default closes, is posted once more in its thread, naming the owner, on the
 first poll past its deadline while it stays open; the journal's `overdue`
 line keeps that post from ever repeating.
 
+Each root checks its presence pair at every poll through the settings reader
+when its settings files change. Other settings need slack setup or a restart.
 While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
 answers the overseer, and the relay holds mailbox posts except replies to
 messages the owner typed in the channel, which still post in their threads.
@@ -221,6 +223,7 @@ class RootRelay:
         self.path = path
         self.settings = settings
         self.presence = presence
+        self.presence_files = self.presence_stamp()
         self.api = api
         self.clock = clock
         self.mail = LaneMail(path)
@@ -245,6 +248,18 @@ class RootRelay:
         record = read_status(path) or {}
         self.compacted_day: str = str(record.get("compacted_day", ""))
 
+
+    def presence_stamp(self, names: Tuple[str, ...] = ()) -> tuple:
+        stamps = []
+        for name in names or ("kendex.settings.toml", ".kendex/settings.toml", self.presence.private_file):
+            try:
+                stat = (self.path / name).stat()
+                stamps.append((stat.st_mtime_ns, stat.st_size))
+            except FileNotFoundError:
+                stamps.append(None)
+            except OSError as err:
+                raise Refusal("setting-invalid", f"root={self.path} settings-file={name} ({err})") from err
+        return tuple(stamps)
 
     @property
     def channel(self) -> str:
@@ -301,6 +316,12 @@ class RootRelay:
                 print_refusal(err)
                 self.catch_up_at = self.clock() + err.retry_after
         self.mark_read()
+        stamp = self.presence_stamp()
+        if stamp != self.presence_files:
+            presence = load_presence(self.path)
+            changed_private = presence.private_file != self.presence.private_file
+            self.presence = presence
+            self.presence_files = stamp[:2] + self.presence_stamp((presence.private_file,)) if changed_private else stamp
         now = self.clock()
         touched = self.master_touched()
         if touched is not None and now - touched < self.presence.master_max_age:

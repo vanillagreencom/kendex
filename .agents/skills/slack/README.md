@@ -38,7 +38,7 @@ kendex add vanillagreencom/kendex --skill slack
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - A master session can hold a root's mailbox posts; replies to messages the owner typed in the channel still post in their threads. Owner messages still reach the overseer. [The master hold](#the-master-hold) defines the hold and resume.
 - The relay compacts its journal daily. Run `slack compact` only while the relay is stopped.
-- A package update restarts the relay in place once its files hold for two polls. A changed setting still needs `slack setup`.
+- A package update restarts the relay in place once its files hold for two polls. A changed setting other than the presence pair still needs `slack setup` or a restart.
 
 ## Slack app
 
@@ -90,7 +90,7 @@ The app must be a member of every channel it posts to. `setup` creates or adopts
 
 ## The master hold
 
-Each root reads the presence pair from its own settings and private env files, with caller exports taking precedence. An empty or absent `SLACK_MASTER_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold. `slack listen --status` shows `held-by=master` while held.
+Each root checks the presence pair at every poll from its own settings and private env files, with caller exports taking precedence. The settings reader runs when a file's modification time, size or existence changes. A presence setting added, changed or removed takes effect on the next poll after that file changes, with no restart. Other settings still need `slack setup` or a restart. An empty or absent `SLACK_MASTER_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold. `slack listen --status` shows `held-by=master` while held. A refused settings read fails that root's post step and keeps its hold; other roots continue.
 
 Replies to messages the owner typed in the channel still post in their threads while held.
 
