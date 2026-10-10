@@ -1,1 +1,0 @@
-- The Copilot review request job skips lanes-app consumer refresh pull requests without allocating a runner.

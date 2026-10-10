@@ -1,1 +1,0 @@
-- Skip the automatic Copilot request job on merge groups and draft pull requests before allocating a runner.

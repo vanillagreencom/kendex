@@ -1,1 +1,0 @@
-- A ceo question to the owner shows each option as a bold line with Gains, Costs and Odds bullets, so a phone reader of the Slack post can tell the options apart.

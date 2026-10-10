@@ -1,1 +1,0 @@
-- The iced agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.iced]` in the consumer manifest. This override wins over the source.

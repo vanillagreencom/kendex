@@ -1,1 +1,0 @@
-- A Claude cloud lane applies the repository formatter safe fixes to the files it changed before each commit.

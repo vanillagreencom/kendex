@@ -1,1 +1,0 @@
-- Document process-count evidence for performance QA without requiring latency measurements or an instrument-failure declaration.
