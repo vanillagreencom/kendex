@@ -709,8 +709,12 @@ FLEET_CARRIED=""
 FLEET_STATE=""
 fleet_merge() { # [quiet]
   local state rows dropped line item window host root harness running launched kept carried parked recorded merged tag
-  state="$(<"$STATE_FILE")" 2>/dev/null || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
-  FLEET_STATE="$state"
+  # Check the open before substitution expansion; keep that inode for the read.
+  if { state="$(< /dev/fd/3)"; } 2>/dev/null 3<"$STATE_FILE"; then
+    FLEET_STATE="$state"
+  else
+    die state-unreadable "" "option=--state" "path=$STATE_FILE"
+  fi
   merged="$(jq -r '(('"$LANE_ROWS_FILTER"') | "running\u001e\(.)"),
     (('"$PREPARE_ROWS_FILTER"') | "prepare\u001e\(.)"),
     (('"$PARKED_ROWS_FILTER"') | "parked\u001e\(.)"),
