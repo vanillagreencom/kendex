@@ -7,26 +7,26 @@ control_replace scripts/commands/issues.sh 1 \
 # 2. Judge Canceled open, so only a Done blocker is kept.
 control_expect "a Canceled blocker named by --blocks is refused: exit status"
 control_replace scripts/commands/issues.sh 1 \
-    '    blocker=$(jq -r "$ISSUE_RELATION_JQ"'"'"'.issueRelation | select(.type == "blocks" and (.issue | issue_is_open | not)) | "\(.issue.parent.identifier // "")/\(.relatedIssue.parent.identifier // "") blocker=\(.issue.identifier) state=\(.issue.state.name)"'"'"' <<<"$relation") || return 1' \
-    '    blocker=$(jq -r "$ISSUE_RELATION_JQ"'"'"'.issueRelation | select(.type == "blocks" and .issue.state.type == "completed") | "\(.issue.parent.identifier // "")/\(.relatedIssue.parent.identifier // "") blocker=\(.issue.identifier) state=\(.issue.state.name)"'"'"' <<<"$relation") || return 1'
+    '    blocker=$(jq -r "$ISSUE_RELATION_JQ"'"'"'.issueRelation | select(.type == "blocks" and (.issue | issue_is_open | not)) | "blocker=\(.issue.identifier) state=\(.issue.state.name)"'"'"' <<<"$relation") || return 1' \
+    '    blocker=$(jq -r "$ISSUE_RELATION_JQ"'"'"'.issueRelation | select(.type == "blocks" and .issue.state.type == "completed") | "blocker=\(.issue.identifier) state=\(.issue.state.name)"'"'"' <<<"$relation") || return 1'
 
 # 3. Take the structural-repair flag on its word, without the peer rule.
 control_expect "the structural repair is refused for a peer pair: exit status"
 control_replace scripts/commands/issues.sh 1 \
-    '    if [ "$2" = "true" ] && ! blocking_level_ok "${parents%/*}" "${parents#*/}"; then return 0; fi' \
+    '    if [ "$2" = "true" ] && ! blocking_level_ok "$facts"; then return 0; fi' \
     '    if [ "$2" = "true" ]; then return 0; fi'
 
 # 4. Close the structural-repair route.
 control_expect "the structural repair removes a Done blocker that crosses bundles: exit status"
 control_replace scripts/commands/issues.sh 1 \
-    '    if [ "$2" = "true" ] && ! blocking_level_ok "${parents%/*}" "${parents#*/}"; then return 0; fi' \
+    '    if [ "$2" = "true" ] && ! blocking_level_ok "$facts"; then return 0; fi' \
     '    if false; then return 0; fi'
 
 # 5. Remove a cross-bundle completed blocker without the flag.
 control_expect "a Done blocker that crosses bundles is refused without the structural-repair flag: exit status"
 control_replace scripts/commands/issues.sh 1 \
-    '    if [ "$2" = "true" ] && ! blocking_level_ok "${parents%/*}" "${parents#*/}"; then return 0; fi' \
-    '    if ! blocking_level_ok "${parents%/*}" "${parents#*/}"; then return 0; fi'
+    '    if [ "$2" = "true" ] && ! blocking_level_ok "$facts"; then return 0; fi' \
+    '    if ! blocking_level_ok "$facts"; then return 0; fi'
 
 # 6. Let a failed relation read through to the delete.
 control_expect "a failed relation read deletes nothing: deleted relation"

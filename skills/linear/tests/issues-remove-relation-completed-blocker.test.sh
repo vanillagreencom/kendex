@@ -3,9 +3,10 @@
 # Canceled: that relation is satisfied history, ../SKILL.md § Blocked Label vs Issue Relations
 # says, refused before any write with one keyed line. The one
 # removal route is --peer-rule-violation, tpm-audit's structural repair, which
-# passes only for a pair the peer rule refuses.
+# passes only for a pair the rule refuses. Inputs: scripts/commands/issues.sh,
+# scripts/lib/issue-validation.sh through the shipped linear.sh command.
 #
-# Fixture: CC-11 is top-level and blocked by every blocker below; CC-1 is a
+# Fixture: CC-11 is a top-level container; CC-12 is a top-level leaf. CC-1 is a
 # bundle parent.
 #   CC-10  Done, top-level         rel ...01
 #   CC-20  Canceled, top-level     rel ...02
@@ -14,6 +15,7 @@
 #   CC-50  related to CC-11        rel ...05
 #   CC-60  Done, top-level         rel ...06  (its relation read fails)
 #   CC-70  "Done | shipped", top-level  rel ...07
+#   CC-40  Done, child of CC-1 blocks leaf CC-12  rel ...08
 
 set -euo pipefail
 
@@ -36,10 +38,12 @@ jq -cj '
   def page($nodes): {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes};
   def node($id; $state; $type; $parent):
     {id: ("uuid-" + $id), identifier: $id, title: "t", state: {name: $state, type: $type},
-     parent: (if $parent then {identifier: $parent} else null end)};
+     parent: (if $parent then {identifier: $parent, parent: null} else null end),
+     children: {nodes: (if $id == "CC-11" then [{id:"child"}] else [] end), pageInfo: {hasNextPage:false}}};
   def issues: {
     "CC-10": node("CC-10"; "Done"; "completed"; null),
     "CC-11": node("CC-11"; "Todo"; "unstarted"; null),
+    "CC-12": node("CC-12"; "Todo"; "unstarted"; null),
     "CC-20": node("CC-20"; "Canceled"; "canceled"; null),
     "CC-30": node("CC-30"; "In Progress"; "started"; null),
     "CC-40": node("CC-40"; "Done"; "completed"; "CC-1"),
@@ -53,7 +57,8 @@ jq -cj '
     {id: "00000000-0000-4000-8000-000000000004", type: "blocks", from: "CC-40", to: "CC-11"},
     {id: "00000000-0000-4000-8000-000000000005", type: "related", from: "CC-11", to: "CC-50"},
     {id: "00000000-0000-4000-8000-000000000006", type: "blocks", from: "CC-60", to: "CC-11"},
-    {id: "00000000-0000-4000-8000-000000000007", type: "blocks", from: "CC-70", to: "CC-11"}];
+    {id: "00000000-0000-4000-8000-000000000007", type: "blocks", from: "CC-70", to: "CC-11"},
+    {id: "00000000-0000-4000-8000-000000000008", type: "blocks", from: "CC-40", to: "CC-12"}];
   def relation($r): {id: $r.id, type: $r.type, issue: issues[$r.from], relatedIssue: issues[$r.to]};
   .query as $q | (.variables // {}) as $v
   | if ($q | contains("issueRelationDelete")) then {data: {issueRelationDelete: {success: true}}}
@@ -84,6 +89,8 @@ a Done blocker that crosses bundles is refused without the structural-repair fla
 a Done blocker that crosses bundles is refused by relation UUID without the structural-repair flag|00000000-0000-4000-8000-000000000004|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
 the structural repair removes a Done blocker that crosses bundles|CC-11 --blocked-by CC-40 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|-
 the structural repair by relation UUID removes a Done blocker that crosses bundles|00000000-0000-4000-8000-000000000004 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|-
+the structural repair keeps a leaf cross-bundle wait|CC-12 --blocked-by CC-40 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
+the structural repair by relation UUID keeps a leaf cross-bundle wait|00000000-0000-4000-8000-000000000008 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
 a Done peer blocker whose status name holds PIPE is refused with the structural-repair flag|CC-11 --blocked-by CC-70 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-70 state=Done PIPE shipped SECTION
 a failed relation read deletes nothing|CC-11 --blocked-by CC-60|1|-|*
 the structural repair is refused for a peer pair|CC-11 --blocked-by CC-10 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION

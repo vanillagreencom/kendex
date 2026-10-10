@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# The add-relation blocking-level guard: a blocking relation connects peers of
-# one bundle (same direct parent, or both top-level). The guard reads one
-# level — each issue's own direct parent — in a single query.
+# The add-relation blocking-level guard reads complete ancestry and leaf
+# status in one query. Input: scripts/commands/issues.sh and
+# scripts/lib/issue-validation.sh through the shipped linear.sh command.
 #
 # Fixture hierarchy:
 #   CC-761 (root)
 #     ├── CC-763 ── CC-766, CC-768
-#     └── CC-764 ── CC-767
+#     └── CC-764 ── CC-767, CC-769 (container) ── CC-770
 #   CC-780 (root)
+#   CC-790 (incomplete parent chain)
+#   CC-791 (missing child status)
+#   CC-792 (container with only an archived child)
 #   CC-999 (no such issue; the fail-closed fixture)
 #   CC-870..CC-873 (top-level pairs spanning two projects, and a project
 #                   paired with none)
@@ -39,22 +42,23 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 # identifier -> uuid used by the resolve query; validate/mutation see uuids
 uuid_for() { printf 'uuid-%s' "${1#CC-}"; }
 
-# Issue node with the direct parent ValidateBlocking selects.
+# Linear returns explicit null at the end of each selected parent chain.
 issue_node() {
-  case "$1" in
-  uuid-761) printf '%s' '{"id":"uuid-761","identifier":"CC-761","parent":null}' ;;
-  uuid-763) printf '%s' '{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761"}}' ;;
-  uuid-764) printf '%s' '{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761"}}' ;;
-  uuid-766) printf '%s' '{"id":"uuid-766","identifier":"CC-766","parent":{"id":"uuid-763","identifier":"CC-763"}}' ;;
-  uuid-767) printf '%s' '{"id":"uuid-767","identifier":"CC-767","parent":{"id":"uuid-764","identifier":"CC-764"}}' ;;
-  uuid-768) printf '%s' '{"id":"uuid-768","identifier":"CC-768","parent":{"id":"uuid-763","identifier":"CC-763"}}' ;;
-  uuid-780) printf '%s' '{"id":"uuid-780","identifier":"CC-780","parent":null}' ;;
-  uuid-870) printf '{"id":"uuid-870","identifier":"CC-870","project":{"id":"%s","name":"Alpha"},"parent":null}' "${FIXTURE_PROJECT_A:?}" ;;
-  uuid-871) printf '{"id":"uuid-871","identifier":"CC-871","project":{"id":"%s","name":"Beta"},"parent":null}' "${FIXTURE_PROJECT_B:?}" ;;
-  uuid-872) printf '{"id":"uuid-872","identifier":"CC-872","project":{"id":"%s","name":"Alpha"},"parent":null}' "${FIXTURE_PROJECT_A:?}" ;;
-  uuid-873) printf '%s' '{"id":"uuid-873","identifier":"CC-873","project":null,"parent":null}' ;;
-  *) printf 'null' ;;
-  esac
+  jq -cn --arg id "$1" --arg pa "$FIXTURE_PROJECT_A" --arg pb "$FIXTURE_PROJECT_B" --arg query "$query" '
+    def parents: {"763":"761", "764":"761", "766":"763", "767":"764", "768":"763", "769":"764", "770":"769"};
+    def node($n): {id: ("uuid-" + $n), identifier: ("CC-" + $n),
+      parent: (if parents[$n] then node(parents[$n]) else null end),
+      children: {nodes: (if ["761","763","764","769"] | index($n) then [{id:"child"}] else [] end), pageInfo: {hasNextPage:false}}};
+    def frontier($n): {identifier:("CC-frontier-" + ($n | tostring))}
+      + if $n > 0 then {parent:frontier($n - 1)} else {} end;
+    ($id | ltrimstr("uuid-")) as $n
+    | if $n == "999" then null else node($n)
+      | if $n == "790" then .parent = frontier(9) else . end
+      | if $n == "791" then .children = null else . end
+      | if $n == "792" and ($query | contains("includeArchived: true")) then .children.nodes = [{id:"archived-child"}] else . end
+      | if ["870","872"] | index($n) then .project = {id:$pa, name:"Alpha"}
+        elif $n == "871" then .project = {id:$pb, name:"Beta"}
+        elif $n == "873" then .project = null else . end end'
 }
 
 case "$query" in
@@ -86,10 +90,10 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   payload_log="$TMP_ROOT/bash3-payloads.jsonl"
   : >"$payload_log"
   rc=0
-  output=$(PATH="$TMP_ROOT/bin:$PATH" \
+  output=$(env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
     CURL_PAYLOAD_LOG="$payload_log" \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
       issues add-relation CC-763 --blocks CC-764 2>&1) || rc=$?
   expected="Error: Linear CLI requires Bash 4.0 or newer; found Bash $BASH_VERSION. Install Bash 4+ and invoke linear.sh with that executable."
 
@@ -104,10 +108,11 @@ run_add_relation() {
   local payload_log="$1"
   shift
   : >"$payload_log"
-  PATH="$TMP_ROOT/bin:$PATH" \
+  env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+    FIXTURE_PROJECT_A="$FIXTURE_PROJECT_A" FIXTURE_PROJECT_B="$FIXTURE_PROJECT_B" \
     CURL_PAYLOAD_LOG="$payload_log" \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues add-relation "$@"
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues add-relation "$@"
 }
 
 # A rejection must not have created the relation.
@@ -140,7 +145,9 @@ accept() {
     jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 }
 
-# --- the rule's outcomes, read one level up ---
+# This suite consumes the CLI JSON error category: only the stable prefix
+# is compared, so human explanations may change.
+# --- the rule's outcomes ---
 
 # Peers of one bundle: the pair the parent one level up makes valid.
 accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
@@ -152,25 +159,42 @@ accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC
 for args in "CC-766 --blocks CC-763" "CC-763 --blocks CC-766" "CC-763 --blocked-by CC-766"; do
   # shellcheck disable=SC2086
   reject "parent pair ($args)" $args
-  assert "parent pair ($args): missing ancestor explanation" \
-    grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"
-  assert_not "parent pair ($args): the explanation must not prescribe a --blocks command" \
-    grep -q -- "--blocks" "$TMP_ROOT/err"
+  assert "parent pair ($args): ancestor category" \
+    jq -e '.error | startswith("Hierarchy violation:")' "$TMP_ROOT/err" >/dev/null
 done
 
-# Different parents: a child of a child, a cousin, and two different roots.
-for args in "CC-766 --blocks CC-761" "CC-766 --blocks CC-767" "CC-766 --blocks CC-780"; do
+# Ancestors are refused in either direction, including a grandparent.
+for args in "CC-766 --blocks CC-761" "CC-761 --blocks CC-766"; do
   # shellcheck disable=SC2086
-  reject "different parents ($args)" $args
-  assert "different parents ($args): the rejection states the rule" \
-    grep -q "must connect peers of one bundle (same direct parent, or both top-level)" "$TMP_ROOT/err"
+  reject "grandparent pair ($args)" $args
+  assert "grandparent pair ($args): ancestor category" \
+    jq -e '.error | startswith("Hierarchy violation:")' "$TMP_ROOT/err" >/dev/null
 done
+
+accept "cross-bundle leaf (CC-766 --blocks CC-767)" CC-766 --blocks CC-767
+accept "top-level leaf (CC-766 --blocks CC-780)" CC-766 --blocks CC-780
+accept "blocked-by cross-bundle leaf" CC-767 --blocked-by CC-766
+assert "blocking query reads child status and nested ancestry" \
+  jq -s -e '[.[] | select(.query | contains("ValidateBlocking")) | .query] | all(.[]; contains("children(first: 1,") and contains("pageInfo { hasNextPage }") and contains("parent { identifier parent {"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
+reject "cross-bundle container (CC-766 --blocks CC-769)" CC-766 --blocks CC-769
+assert "cross-bundle container: level category" jq -e '.error | startswith("Blocking-level violation:")' "$TMP_ROOT/err" >/dev/null
+reject "archived-child container" CC-766 --blocks CC-792
+assert "archived-child container: level category" jq -e '.error | startswith("Blocking-level violation:")' "$TMP_ROOT/err" >/dev/null
+
+for args in "CC-766 --blocks CC-790" "CC-790 --blocks CC-766"; do
+  # shellcheck disable=SC2086
+  reject "incomplete chain ($args)" $args
+  assert "incomplete chain ($args): facts category" jq -e '.error | startswith("Hierarchy validation failed closed:")' "$TMP_ROOT/err" >/dev/null
+done
+
+reject "missing child status" CC-766 --blocks CC-791
+assert "missing child status: facts category" jq -e '.error | startswith("Hierarchy validation failed closed:")' "$TMP_ROOT/err" >/dev/null
 
 # An issue the validation query does not return would otherwise read as
 # top-level and pass; it refuses instead.
 reject "issue missing at validation (CC-999)" CC-766 --blocks CC-999
-assert "issue missing at validation: missing fail-closed diagnostic" \
-  grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"
+assert "issue missing at validation: facts category" \
+  jq -e '.error | startswith("Hierarchy validation failed closed:")' "$TMP_ROOT/err" >/dev/null
 
 # --- a bundle peer pair may span projects ---
 # Control first: the cases below only exercise a project boundary if the

@@ -32,7 +32,7 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 
 1. `## Sub-Issues`, never `## Requirements`. No implementation detail lives here.
 2. All children share the parent's project. See [dependencies.md](../references/dependencies.md).
-3. Sequence dependent children with sibling child-blocks-child relations; cross-bundle dependencies go on the parents.
+3. Record dependencies under linear SKILL.md § Blocked Label vs Issue Relations.
 4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains. A `(one PR)` title marker outranks the label.
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
 6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping). Omit Acceptance Criteria when the children have none.

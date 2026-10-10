@@ -105,7 +105,7 @@ Record uncovered components in `architecture_gaps[]`: `include` when the gap blo
 
 2. **Bundles.** Group 2+ issues that share an agent with small estimates, share a work type (all tests, all config, all docs), or form one deliverable. Give each bundle a parent titled for the deliverable; append `(one PR)` only when the grouping reason was "would naturally be one PR/CI run". The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
 
-3. **Relation level.** Move `blocks`/`blocked_by` between bundled issues up to their bundle parents. Children carry no external blocking relations; only parents carry cross-bundle dependencies.
+3. **Relation level.** Keep each valid relation under linear SKILL.md § Blocked Label vs Issue Relations. Repair only a relation that rule refuses; see [dependencies.md](../references/dependencies.md).
 
 4. **Order.** Assign a layer (L0 foundation → L1 infrastructure → L2 features → L3 integration → L4 testing and polish) and compute `position = (layer x 100) + (enables_count x -10) + (estimate x 1)`. Lower is earlier.
 

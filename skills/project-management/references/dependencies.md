@@ -14,11 +14,11 @@ A `blocks`/`blocked-by` relation records a real dependency between two issues. R
 
 ### Level
 
-A parent with children is a **container**: cross-bundle dependencies go on the parents, and dependent children are sequenced by sibling child-blocks-child relations within one parent. A relation between an ancestor and its own descendant is never valid.
+Select each relation under linear SKILL.md § Blocked Label vs Issue Relations.
 
 When an audit finds a relation at the wrong level, **lift it, never delete it**: add the parent-level relation, remove the child-level one with `issues remove-relation --peer-rule-violation` (linear SKILL.md § Blocked Label vs Issue Relations), and add `related` between the original children.
 
-The Linear CLI rejects malformed relations at mutation time (peers of one bundle only, no ancestor/descendant edges).
+The Linear CLI enforces that rule at mutation time.
 
 ### Completed Blockers Are Satisfied History
 
