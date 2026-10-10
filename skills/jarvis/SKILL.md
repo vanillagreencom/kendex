@@ -16,7 +16,15 @@ tags: [assistant, productivity]
 
 ## Setup
 
-The persona loads on every turn only when its text is in the folder's `AGENTS.md`, which Claude Code, Codex, Copilot CLI and Pi read through their instruction-loading settings. Check that the harness loaded those instructions. When that file lacks the persona, offer once to add the text from [persona.md](persona.md), then add it only after the user agrees. kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`. Its size must not exceed 3,072 bytes; an app that reads it directly can reject a larger file.
+kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`.
+
+### Plain folder
+
+The persona loads on every turn only when its text is in the folder's `AGENTS.md`, which Claude Code, Codex, Copilot CLI and Pi read through their instruction-loading settings. Check that the harness loaded those instructions. When that file lacks the persona, offer once to add the text from [persona.md](persona.md), then add it only after the user agrees.
+
+### App-managed home
+
+The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.md` that routes to `persona.md` is the persona step here. Do not offer to paste the persona text into `AGENTS.md`. The text would load twice. `persona.md` must not exceed 3,072 bytes. An app that reads it directly can reject a larger file.
 
 ## Reading routes
 
