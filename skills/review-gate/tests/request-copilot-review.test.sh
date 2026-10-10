@@ -18,14 +18,21 @@ check_declarations() {
   events="$(triggers "$1")" || return 2
   condition="$(job_ifs "$1")" || return 2
   [ "$events" = $'merge_group\npull_request_target' ] &&
-    [ "$condition" = $'request\t'"github.event_name != 'merge_group' && !github.event.pull_request.draft" ]
+    [ "$condition" = $'request\t'"github.event_name != 'merge_group' && !github.event.pull_request.draft" ] &&
+    python3 - "$1" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text().replace('\r\n', '\n')
+job = dict(re.findall(r'^    (runs-on): (.+)$', text, re.M))
+assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
+PY
 }
 check_declarations "$WORKFLOW"
-for control in no-if no-draft no-merge-group; do
+for control in no-if no-draft no-merge-group hosted-runner; do
   case "$control" in
     no-if) needle='    if:'; replacement='    # if:' ;;
     no-draft) needle=' && !github.event.pull_request.draft'; replacement=$'\n    # && !github.event.pull_request.draft' ;;
     no-merge-group) needle='  merge_group:'; replacement='  # merge_group:' ;;
+    hosted-runner) needle="    runs-on: \${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"; replacement='    runs-on: ubuntu-latest' ;;
   esac
   plant "$WORKFLOW" "$needle" "$replacement" "$TMP_ROOT/$control.yml"
   status=0
