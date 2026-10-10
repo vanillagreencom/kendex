@@ -1,0 +1,1 @@
+- The fleet watch closes merged hosted lanes after two idle passes when their worktrees are gone, so finished lanes release their sandboxes.
