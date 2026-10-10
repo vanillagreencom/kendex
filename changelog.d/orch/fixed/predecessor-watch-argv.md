@@ -1,0 +1,1 @@
+- A successor launch starts the fleet watch when its stopped predecessor left a pre-1.0 or missing retained command, instead of failing with `watch-restart-failed step=argv`.

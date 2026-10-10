@@ -117,9 +117,12 @@ watch_pid_release() { # STATE
   rm -f -- "$WATCH_PID_FILE"
 }
 
+# The script and directory used when no retained command supplies them.
+watch_command_fresh() { WATCH_SCRIPT="$SCRIPT_DIR/oversee-watch" WATCH_CWD="$PWD"; }
+
 # The retained command as WATCH_SCRIPT, WATCH_CWD and WATCH_ARGV. The command
 # outlives the pid claim. The pre-1.0 argv form remains readable until the next
-# major release when its pid record still supplies the script and directory.
+# major release, using the fresh pair when its pid record lacks metadata.
 watch_argv_read() { # STATE
   local word line
   WATCH_ARGV=()
@@ -129,19 +132,22 @@ watch_argv_read() { # STATE
   word=""
   while IFS= read -r -d '' word; do WATCH_ARGV+=("$word"); word=""; done < "$WATCH_ARGV_FILE" || return 1
   [[ -z "$word" ]] || return 1
+  [[ ${#WATCH_ARGV[@]} -gt 0 ]] || return 1
   if [[ "${WATCH_ARGV[0]:-}" == watch-command-v1 ]]; then
     [[ ${#WATCH_ARGV[@]} -ge 3 ]] || return 1
     WATCH_SCRIPT="${WATCH_ARGV[1]}" WATCH_CWD="${WATCH_ARGV[2]}"
     WATCH_ARGV=("${WATCH_ARGV[@]:3}")
   else
     printf 'watch-pid: deprecated=argv replacement=watch-command-v1\n' >&2
-    [[ -f "$WATCH_PID_FILE" && -r "$WATCH_PID_FILE" ]] || return 1
-    while IFS= read -r line; do
-      case "$line" in
-        script=*) WATCH_SCRIPT="${line#script=}" ;;
-        cwd=*) WATCH_CWD="${line#cwd=}" ;;
-      esac
-    done < "$WATCH_PID_FILE" || return 1
+    if [[ -f "$WATCH_PID_FILE" && -r "$WATCH_PID_FILE" ]]; then
+      while IFS= read -r line; do
+        case "$line" in
+          script=*) WATCH_SCRIPT="${line#script=}" ;;
+          cwd=*) WATCH_CWD="${line#cwd=}" ;;
+        esac
+      done < "$WATCH_PID_FILE" || return 1
+    fi
+    [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]] || watch_command_fresh
   fi
   [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]]
 }

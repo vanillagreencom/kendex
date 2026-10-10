@@ -84,8 +84,9 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
         watch_start fresh "$state" "${@:2}"; return $?
       fi
       if ! watch_argv_read "$state" 2>"$DEP_ERR"; then
-        WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=argv)
-        return 1
+        watch_start fresh "$state" "${@:2}" || return $?
+        WATCH_HANDOVER_FIELDS+=("unread=$WATCH_ARGV_FILE")
+        return 0
       fi
       watch_start replay "$state" "${@:2}"; return $? ;;
     *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=claim); return 1 ;;
@@ -110,9 +111,9 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
   WATCH_HANDOVER_FIELDS=("pid=$old" "pane=$2" "log=$WATCH_ERR_FILE" "$JOB_UNIT_LINE")
 }
 
-# Replay the retained command for every successor, with the new pane's server,
-# account, handoff, harness and flags. Only an explicitly fresh launch creates
-# the workflow default; a missing claim alone cannot select that default.
+# Replay a readable retained command with the new pane's server, account,
+# handoff, harness and flags. A stopped watch with no readable command uses
+# the workflow default and reports the unread path.
 # Wait for its claim before reporting success: an accepted job whose command
 # exits during initialization has not left a watch running.
 watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
@@ -129,7 +130,8 @@ watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
         WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=since)
         return 1
       fi
-      cwd="$PWD" script="$SCRIPT_DIR/oversee-watch"
+      watch_command_fresh
+      cwd="$WATCH_CWD" script="$WATCH_SCRIPT"
       argv=(--repeat 60 --state "$state" --since "$since") ;;
     replay)
       name=watch-restart
