@@ -888,8 +888,6 @@ while IFS='~' read -r name lead mode setting rule; do
   case "$mode" in
     normal) ;;
     missing) rows=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing' ;;
-    spacing) rows=$'\n*Landed*\n- Nothing\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
-    long) rows+=$'\nMore detail.\nMore detail.\nMore detail.' ;;
     *) echo "oversee_report: fixture-mode=$mode" >&2; exit 1 ;;
   esac
   new_case "summary_$name"
@@ -909,8 +907,6 @@ while IFS='~' read -r name lead mode setting rule; do
       bare-id) old='if (bare) print "bare-id"'; new='if (0 && bare) print "bare-id"' ;;
       github-link) old='else if (github) print "github-link"'; new='else if (0 && github) print "github-link"' ;;
       waiting-on-you) old='else if (!waiting) print "waiting-on-you"'; new='else if (0 && !waiting) print "waiting-on-you"' ;;
-      label-spacing) old='else if (spacing) print "label-spacing"'; new='else if (0 && spacing) print "label-spacing"' ;;
-      line-cap) old='else if (NR > cap) print "line-cap"'; new='else if (0 && NR > cap) print "line-cap"' ;;
       *) echo "oversee_report: fixture-rule=$rule" >&2; exit 1 ;;
     esac
     mutate_file "$mutant" "$old" "$new"
@@ -925,21 +921,92 @@ markdown-id~[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.~nor
 github-link~See <https://github.com/owner/repo/pull/42|the change>.~normal~~github-link
 commit-link~See https://github.com/owner/repo/commit/abcdef.~normal~~github-link
 waiting-on-you~Work continues.~missing~~waiting-on-you
-label-spacing~Work continues.~spacing~~label-spacing
-line-cap~Work continues.~long~~line-cap
-custom-cap~Work continues.~normal~ORCH_REPORT_SUMMARY_LINES=12~line-cap
 first-failure~KEN-42: https://github.com/owner/repo/pull/42~missing~~bare-id
 ROWS
-new_case summary_at_cap
-fleet ''
-printf 'The fix shipped (<https://linear.app/vanillagreen/issue/KEN-42|KEN-42>).\n%s\nDetail.\nDetail.\n\n\n' "$OWNER_ROWS" > "$CASE/summary.txt"
-run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-assert_eq "$RC" "0" "mrkdwn links and a summary at the default cap write; trailing blanks do not count"
-new_case summary_custom_cap
-fleet ''
-printf 'Work continues.\n%s\nDetail.\nDetail.\nDetail.\n' "$OWNER_ROWS" > "$CASE/summary.txt"
-run ORCH_REPORT_SUMMARY_LINES=16 -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-assert_eq "$RC" "0" "a configured cap above the default allows its boundary"
+echo "=== write: layout is advisory after sending ==="
+# The overseer reads the machine notice. Each row proves the report exists
+# and one notice was sent. Controls restore the old refusals or remove the
+# advisory decision, reddening the same row's contract.
+while IFS='~' read -r name mode setting want; do
+  rows="$OWNER_ROWS"
+  case "$mode" in
+    normal) ;;
+    spacing) rows=$'\n*Landed*\n- Nothing\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
+    words20|words21|links20)
+      item=""
+      for ((n=0; n<18; n++)); do item+="word "; done
+      case "$mode" in
+        words20) item+="word word" ;;
+        words21) item+="word word word" ;;
+        links20) item+="<https://linear.app/vanillagreen/issue/KEN-42|KEN-42> <https://linear.app/vanillagreen/issue/KEN-43|KEN-43>" ;;
+      esac
+      rows=$'\n*Landed*\n- '"$item"$'\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
+    cap20|cap21)
+      extra=16
+      [[ "$mode" != cap21 ]] || extra=17
+      for ((n=0; n<extra; n++)); do rows+=$'\n- Detail'; done ;;
+    figures) rows=$'\nClaude headroom: available\nCount: available\n'"$rows" ;;
+    *) echo "oversee_report: fixture-mode=$mode" >&2; exit 1 ;;
+  esac
+  new_case "summary_$name"
+  fleet ''
+  printf 'Work continues.\n%s\n\n\n' "$rows" > "$CASE/summary.txt"
+  envs=()
+  [[ -z "$setting" ]] || envs+=("$setting")
+  run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  notices="$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")"
+  file="$CASE/progress-reports/${NAME%-succession.md}.md"
+  assert_eq "$RC|$notices|$(wc -l < "$CASE/mail.calls" | tr -d ' ')|$([[ -f "$file" && "$OUT" == "$(cat "$file")" ]] && echo written)" \
+    "0|$want|1|written" "summary $name writes and sends once with its sole advisory notice"
+  case "$name" in
+    label-spacing|line-cap|words|at-cap)
+      mutant="$(mutant_scripts "advisory-$name/orch" oversee-report)/oversee-report" || exit 1
+      ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/advisory-$name/github"
+      case "$name" in
+        label-spacing)
+          old='if (label ~ /^Waiting on you(:|[[:space:]]*$)/) waiting = 1'
+          new=$'if (label ~ /^(Landed|Running|Blocked|Waiting on you)(:|[[:space:]]*$)/ &&\n        (NR == 1 || previous ~ /[^[:space:]]/)) spacing = 1\n    previous = $0\n    '"$old"
+          mutate_file "$mutant" "$old" "$new"
+          old='else if (!waiting) print "waiting-on-you"'
+          new=$'else if (!waiting) print "waiting-on-you"\n    else if (spacing) print "label-spacing"' ;;
+        line-cap)
+          old='else if (!waiting) print "waiting-on-you"'
+          new=$'else if (!waiting) print "waiting-on-you"\n    else if (NR > cap) print "line-cap"' ;;
+        words) old='count > 20'; new='count > 21' ;;
+        at-cap) old='items++'; new='items = NR' ;;
+      esac
+      mutate_file "$mutant" "$old" "$new"
+      # Each mutant gets an unwritten report destination.
+      new_case "summary_${name}_mutant"
+      fleet ''
+      printf 'Work continues.\n%s\n\n\n' "$rows" > "$CASE/summary.txt"
+      REPORT_UNDER_TEST="$mutant" run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+      case "$name" in
+        label-spacing|line-cap)
+          assert_eq "$RC|$(first_err)" "2|oversee-report: summary-shape=$name" \
+            "control: restoring $name reddens the write-and-send row" ;;
+        words)
+          notices="$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")"
+          assert_eq "$RC|$notices" "0|" \
+            "control: changing $name reddens the advisory row" ;;
+        at-cap)
+          assert_eq "$RC" "0" "control: counting physical lines still sends"
+          assert_file_contains "$CASE/err" 'summary-shape-notice: item-lines=' \
+            "control: counting physical lines reddens the conforming row" ;;
+      esac ;;
+  esac
+done <<'ROWS'
+conforming~normal~~
+label-spacing~spacing~~
+words~words21~~summary-shape-notice: line=4 words=21
+word-boundary~words20~~
+two-links~links20~~
+line-cap~cap21~~summary-shape-notice: item-lines=21 cap=20
+at-cap~cap20~~
+custom-cap~normal~ORCH_REPORT_SUMMARY_LINES=3~summary-shape-notice: item-lines=4 cap=3
+figures~figures~ORCH_REPORT_SUMMARY_LINES=4~summary-shape-notice: item-lines=6 cap=4
+first-breach~words21~ORCH_REPORT_SUMMARY_LINES=3~summary-shape-notice: line=4 words=21
+ROWS
 for cap in '' 0 -1 text; do
   run "ORCH_REPORT_SUMMARY_LINES=$cap" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
   assert_eq "$RC|$(first_err)" "2|oversee-report: setting=ORCH_REPORT_SUMMARY_LINES:$cap" "an invalid summary cap refuses"

@@ -65,8 +65,6 @@ message() { # KEY VALUE [CAUSE]
           bare-id) echo "Link each KEN item or PR number in Slack mrkdwn; do not leave a bare identifier." ;;
           github-link) echo "Link the Linear item, not a GitHub pull request or commit. The item holds that detail." ;;
           waiting-on-you) echo "Include the Waiting on you label, even when its answer is Nothing." ;;
-          label-spacing) echo "Put a blank line before each owner-message label." ;;
-          line-cap) echo "Keep the summary within ORCH_REPORT_SUMMARY_LINES. Put detail in the report file." ;;
         esac ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
@@ -144,7 +142,11 @@ write    prints the rows and writes the same bytes to the path
          same text, under the notice id that line names.
          Before rendering or writing, write checks the summary in its posted
          mrkdwn form. It refuses as summary-shape with the first failing
-         rule: bare-id, github-link, waiting-on-you, label-spacing, line-cap.
+         rule: bare-id, github-link, waiting-on-you.
+         After sending, it prints at most one summary-shape-notice: line=N
+         words=W for the first item over 20 words, else item-lines=N cap=CAP
+         when the item count exceeds ORCH_REPORT_SUMMARY_LINES. Layout
+         never blocks a report or asks for a resend.
          Owner wording and the template live in
          references/communication-modes.md § Owner messages.
 
@@ -245,8 +247,9 @@ Settings, read through the kendex settings ladder:
   ORCH_REPORT_UPCOMING       Next rows, default 5
   ORCH_REPORT_COLUMNS        comma-separated column names, default
                              `issue,what it is,why it matters`
-  ORCH_REPORT_SUMMARY_LINES  positive line cap for write's summary, default 15;
-                             counts blank lines, excluding trailing blanks
+  ORCH_REPORT_SUMMARY_LINES  positive item-line cap for write's summary,
+                             default 20; excludes blank lines, labels and
+                             the opening line
   ORCH_CONNECTED_REPOS       blank-separated OWNER/REPO list, read through
                              orch-env in this checkout as oversee-watch reads
                              it: each entry, lowercased, is read after the
@@ -417,7 +420,7 @@ done
 
 # Check the owner comment before progress-report-path creates its directory.
 if [[ "$VERB" == write ]]; then
-SUMMARY_LINES="${ORCH_REPORT_SUMMARY_LINES-15}"
+SUMMARY_LINES="${ORCH_REPORT_SUMMARY_LINES-20}"
 [[ "$SUMMARY_LINES" =~ ^[1-9][0-9]*$ ]] || refuse setting "ORCH_REPORT_SUMMARY_LINES:$SUMMARY_LINES"
 [[ -f "$SUMMARY" && -r "$SUMMARY" ]] || refuse summary "$SUMMARY"
 if ! SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")"; then
@@ -425,7 +428,7 @@ if ! SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i
 fi
 [[ -n "$SUMMARY_TEXT" ]] || refuse summary "$SUMMARY"
 # The overseer supplies Slack's upload comment through --summary-file.
-# Slack cannot enforce the owner's format before that comment is posted.
+# Slack cannot enforce tracker links or the required owner-action section.
 if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
   {
     text = $0
@@ -437,20 +440,32 @@ if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     gsub(/\*/, "", label)
     sub(/^[[:space:]]+/, "", label)
     if (label ~ /^Waiting on you(:|[[:space:]]*$)/) waiting = 1
-    if (label ~ /^(Landed|Running|Blocked|Waiting on you)(:|[[:space:]]*$)/ &&
-        (NR == 1 || previous ~ /[^[:space:]]/)) spacing = 1
-    previous = $0
+    if (NR > 1 && NF && label !~ /^(Landed|Running|Blocked|Waiting on you):?[[:space:]]*$/) {
+      items++
+      words = $0
+      gsub(/<https?:\/\/[^<>|[:space:]]+\|/, "", words)
+      gsub(/>/, "", words)
+      sub(/^[[:space:]]*[-*][[:space:]]+/, "", words)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", words)
+      count = split(words, fields, /[[:space:]]+/)
+      if (count > 20 && !notice) notice = "line=" NR " words=" count
+    }
   }
   END {
     if (bare) print "bare-id"
     else if (github) print "github-link"
     else if (!waiting) print "waiting-on-you"
-    else if (spacing) print "label-spacing"
-    else if (NR > cap) print "line-cap"
+    else if (notice) print "summary-shape-notice: " notice
+    else if (items > cap) print "summary-shape-notice: item-lines=" items " cap=" cap
   }' <<<"$SUMMARY_TEXT")"; then
   refuse summary "$SUMMARY"
 fi
-[[ -z "$SHAPE_FAILURE" ]] || refuse summary-shape "$SHAPE_FAILURE"
+SUMMARY_NOTICE=""
+case "$SHAPE_FAILURE" in
+  summary-shape-notice:*) SUMMARY_NOTICE="$SHAPE_FAILURE" ;;
+  '') ;;
+  *) refuse summary-shape "$SHAPE_FAILURE" ;;
+esac
 fi
 
 # --- fleet state and the last report -----------------------------------------
@@ -987,3 +1002,4 @@ NOTICE_RECEIPT="$("$LANE_MAIL" notice --item overseer --to owner --attach "$TARG
   2>"$WORK_DIR/notice.err")" || refuse notice "$TARGET" "$(cat "$WORK_DIR/notice.err")"
 NOTICE_ID="${NOTICE_RECEIPT#* id=}"
 message report-written "$TARGET notice-id=${NOTICE_ID%% *}"
+[[ -z "$SUMMARY_NOTICE" ]] || printf '%s\n' "$SUMMARY_NOTICE" >&3

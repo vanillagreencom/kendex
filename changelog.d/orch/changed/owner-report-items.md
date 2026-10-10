@@ -1,0 +1,1 @@
+- Owner reports put each item and figure on its own line. The summary limit counts item lines and defaults to 20. Long items and excess item lines produce an advisory notice after sending the report.
