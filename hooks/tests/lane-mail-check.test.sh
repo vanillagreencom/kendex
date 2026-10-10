@@ -2577,11 +2577,15 @@ assert_eq "key=$(first_line | cut -d= -f1) command=$(grep -cxF -- "$ACK_READ" "$
 # The reader's acknowledgement clamp removed: a deliver run consumes the halt it showed.
 CLAMPLESS="$TMP_ROOT/clampless"
 mkdir -p "$CLAMPLESS"
-ln -s "$REPO_ROOT/skills/orch/scripts/lib" "$CLAMPLESS/lib"
-MUTANT_SOURCE="$LANE_MAIL" mutant no-clamp \
-  -e 's@^      \[ -z "\$HALT_AT" \] || \[ "\$ACK" -le "\$HALT_AT" \] || ACK="\$HALT_AT"$@      :@'
-mv "$MUTANT_PATH" "$CLAMPLESS/lane-mail"
-chmod +x "$CLAMPLESS/lane-mail"
+mkdir -p "$CLAMPLESS/lib"
+plant_siblings "$CLAMPLESS" lib
+for CLAMP_LIB in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
+  [ "${CLAMP_LIB##*/}" = lane-mail-store.py ] || ln -s "$CLAMP_LIB" "$CLAMPLESS/lib/"
+done
+ln -s "$LANE_MAIL" "$CLAMPLESS/lane-mail"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-mail-store.py" mutant no-clamp \
+  -e 's@\[\$bound, \$halt\] | min else \$bound@\$bound else \$bound@'
+mv "$MUTANT_PATH" "$CLAMPLESS/lib/lane-mail-store.py"
 new_lane control_clamp ken-32
 install_arms
 ln -s -f -n "$CLAMPLESS" "$LANE/.agents/skills/orch/scripts"

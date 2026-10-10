@@ -159,13 +159,17 @@ def overseer_mail_class:
   else "owner-note" end;'
 
 # The pre-1.3 resolve producer wrote an answer without a closes field.
+mailbox_legacy_notice() { # ID
+  printf 'lane-mail: legacy-close=%s\nLegacy closing answer retained; supported through kendex 1.4.\n' "$1" >&2
+}
+
 mailbox_warn_legacy() { # FILE
   local ids id
   ids="$(jq -r -R "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
     | select(mailbox_legacy_close) | .id' <"$1")" || return 2
   [ -n "$ids" ] || return 0
   while IFS= read -r id; do
-    printf 'lane-mail: legacy-close=%s\nLegacy closing answer retained; supported through kendex 1.4.\n' "$id" >&2
+    mailbox_legacy_notice "$id"
   done <<<"$ids"
 }
 

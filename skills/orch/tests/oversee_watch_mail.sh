@@ -1065,6 +1065,8 @@ chmod +x "$TMP_ROOT/bin/lane-mail-logging.sh" "$TMP_ROOT/bin/pr-watch-slow.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/virtual-clock.sh"
 CLOCK_BIN="$TMP_ROOT/clock-bin"; mkdir -p "$CLOCK_BIN"
 virtual_clock_install "$CLOCK_BIN" "$TMP_ROOT/clock"
+virtual_clock_bash_env "$TMP_ROOT/clock-bash-env"
+export BASH_ENV="$TMP_ROOT/clock-bash-env"
 cadence_run() { # [ENV...] -- ARGS...
   mail_reset KEN-70
   _virtual_clock_seed
@@ -1221,6 +1223,7 @@ assert_eq "$FAST_FACTS" "printed=5 late=0 drains=1" \
 FAST_MUTANT="$(mutant_scripts fast-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/fast-mutant/github"
 mutate_file "$FAST_MUTANT" '  wc -c 2>/dev/null < "$OVERSEER_BOX" || echo none' '  echo none'
+mutate_file "$FAST_MUTANT" 'size="$(exec wc -c 2>/dev/null < "$OVERSEER_BOX")"' 'size=none'
 new_case mail_overseer_fast_mutant
 fast_notes "$FAST_MUTANT" 1
 assert_eq "$FAST_FACTS" "printed=1 late=1 drains=2" "control: with the mailbox's size unread the note waits for the next mail pass" \
@@ -1733,6 +1736,11 @@ tracker_mail resolve --item overseer --id "$TRACKER_ASK" --text "$STUB_DIR/rulin
 TRACKER_MAIL="$NORMAL_TRACKER_MAIL"
 assert_not_contains "$(cat "$STUB_DIR/posted")" 'Approved action.' \
   'control: dropping the ruling fails the supplied-ruling assertion'
+
+# The mailbox process ceilings use the same instrument as the reader suite.
+PROCESS_RC=0
+"$BASH" "$REPO_ROOT/skills/orch/tests/lib/watch-process-cases.sh" || PROCESS_RC=$?
+assert_eq "$PROCESS_RC" 0 'idle ticks and complete lane mail passes meet their process ceilings'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

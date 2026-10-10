@@ -266,22 +266,24 @@ done
 
 # A first peek, then pending: the peek leaves a cursor beside the lock, so
 # pending reads a lane that has not read yet rather than a read that missed.
-# Where the count cannot land, an mv that always fails, the cursor it leaves
-# is empty. PEEK_PENDING is pending's exit status, the cursor's bytes in hex
+# Where the count cannot land, a directory without write permission leaves
+# the empty cursor alone. PEEK_PENDING is pending's exit status, the cursor's bytes in hex
 # and the directive pending lists.
-NO_MV_BIN="$TMP_ROOT/no-mv-bin"
-mkdir -p "$NO_MV_BIN"
-printf '#!/bin/sh\nexit 1\n' > "$NO_MV_BIN/mv"
-chmod +x "$NO_MV_BIN/mv"
-peek_pending() { # NAME [SHIM-BIN]
+peek_pending() { # NAME [UNWRITABLE]
   new_lane "$1"
   LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Unread.')"
-  PATH="${2:+$2:}$PATH" lm inbox --item KEN-1 --peek
+  if [ -n "${2:-}" ]; then
+    : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+    : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock"
+    chmod 0555 "$LANE/tmp/lane-mail/KEN-1"
+  fi
+  lm inbox --item KEN-1 --peek
+  [ -z "${2:-}" ] || chmod 0755 "$LANE/tmp/lane-mail/KEN-1"
   lm pending --item KEN-1 --root "$LANE"
   PEEK_PENDING="$RC=$(od -An -tx1 "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" 2>/dev/null | tr -d ' \n' || echo absent)"
   PEEK_PENDING+="=$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")"
 }
-for row in 'peek_pending||300a' "peek_pending_no_mv|$NO_MV_BIN|"; do
+for row in 'peek_pending||300a' 'peek_pending_unwritable|yes|'; do
   IFS='|' read -r NAME SHIM WANT <<<"$row"
   peek_pending "$NAME" "$SHIM"
   assert_eq "$PEEK_PENDING" "0=$WANT=Unread." "a first peek${SHIM:+ whose count cannot land}, then pending, lists the directive as unread"
@@ -933,7 +935,7 @@ for row in wait:success inbox:success wait:failure inbox:failure; do
   [ "$CLEANUP_RESULT" != failure ] || CLEANUP_EXPECT=2
   for variant in real control; do
     # Successful inbox cleanup already existed; only changed paths mutate.
-    [ "$row:$variant" != inbox:success:control ] || continue
+    [[ "$CLEANUP_VERB:$variant" != inbox:control ]] || continue
     CLEANUP_SCRIPT="$LANE_MAIL"
     if [ "$variant" = control ]; then
       CLEANUP_SCRIPT="$(mutant_scripts "mutants/cleanup-${row/:/-}" lane-mail)/lane-mail" || exit 1
@@ -1308,6 +1310,62 @@ mutant() {
   mutate_file "$dir/lane-mail" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
+# Mutate the shared locked reader beside the shipped shell and libraries.
+mutant_reader() {
+  local dir
+  dir="$(mutant_scripts "mutants/$1" lib/lane-mail-store.py)" || exit 1
+  mutate_file "$dir/lib/lane-mail-store.py" "$2" "$3"
+  LANE_MAIL_BIN="$dir/lane-mail"
+}
+
+# A real send --halt must survive an interrupted plain inbox. The first byte
+# is the barrier: the unread payload then exceeds the pipe's capacity. Keep
+# each killed early-advance control beside repeated unmodified cases.
+mutant_reader inbox-before-delivery '    if deliver == "1":' \
+  '    if deliver == "1":
+        if result["cursor"] is not None:
+            cursor_put(cursor, result["cursor"])'
+DELIVERY_MUTANT="$LANE_MAIL_BIN"
+DELIVERY_COUNT=yes
+[[ -n "${BASHPID:-}" ]] || DELIVERY_COUNT=no
+for delivery_mode in term pipe; do
+  DELIVERY_STABLE=0
+  DELIVERY_KILLED=0
+  for delivery_variant in stable-1 stable-2 stable-3 stable-4 stable-5 control \
+    stable-6 stable-7 stable-8 stable-9 stable-10; do
+    new_lane "delivery_${delivery_mode}_$delivery_variant"
+    DELIVERY_SCRIPT="$LANE_MAIL"
+    [ "$delivery_variant" != control ] || DELIVERY_SCRIPT="$DELIVERY_MUTANT"
+    DELIVERY_RC=0
+    python3 "$REPO_ROOT/skills/orch/tests/lib/mail-read-cases.py" "$DELIVERY_SCRIPT" \
+      "$LANE" "$BASH" "delivery-$delivery_mode" "$DELIVERY_COUNT" \
+      >"$TMP_ROOT/delivery.out" 2>"$TMP_ROOT/delivery.err" \
+      || DELIVERY_RC=$?
+    if [ "$delivery_variant" = control ]; then
+      DELIVERY_FAIL_BEFORE="$FAIL"
+      assert_eq "$DELIVERY_RC" 1 "$delivery_mode: advancing before delivery kills the interruption assertion" \
+        "$TMP_ROOT/delivery.err"
+      assert_file_contains "$TMP_ROOT/delivery.err" 'AssertionError: delivery-before-cursor' \
+        "$delivery_mode: the control fails at cursor advancement during delivery"
+      [ "$FAIL" -ne "$DELIVERY_FAIL_BEFORE" ] || DELIVERY_KILLED=1
+    else
+      assert_eq "$DELIVERY_RC" 0 "$delivery_mode $delivery_variant: interrupted delivery retains unread halt" \
+        "$TMP_ROOT/delivery.err"
+      DELIVERY_OUT="$(cat "$TMP_ROOT/delivery.out")"
+      assert_eq "${DELIVERY_OUT%% starts=*}" \
+        "delivery $delivery_mode: cursor=0 retry_halt=1 delivered_cursor=1 empty_retry=1" \
+        "$delivery_mode $delivery_variant: retry and successful delivery preserve cursor semantics"
+      [ "$DELIVERY_COUNT" = no ] || assert_le "${DELIVERY_OUT##* starts=}" 8 \
+        "$delivery_mode $delivery_variant: plain inbox includes normal root resolution within eight starts"
+      printf '%s\n' "$DELIVERY_OUT"
+      [ "$DELIVERY_RC" -ne 0 ] || DELIVERY_STABLE=$((DELIVERY_STABLE + 1))
+    fi
+  done
+  printf 'delivery evidence: mode=%s mutation=%s/1 stability=%s/10\n' \
+    "$delivery_mode" "$DELIVERY_KILLED" "$DELIVERY_STABLE"
+done
+unset LANE_MAIL_BIN
+
 # mutant_lib NAME OLD NEW — the same for lib/mailbox-append.sh, a rule
 # `scripts/lib` owns that a mutant of lane-mail itself cannot reach. MUTANT_LIB
 # is the library for a provider fixture, MUTANT_LIB_BIN the shipped lane-mail
@@ -1415,62 +1473,69 @@ new_lane control_partial
 LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'whole')"
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'q')" >/dev/null
 printf '{"id":"half","kind":"notice","at":"t","text":"trunc' >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
-mutant partial-consumed 'if [ "$complete" -eq 0 ]; then' 'if [ x = x ]; then'
+mutant_reader partial-consumed 'rows = [line + b"\n" for line in raw[:end].split(b"\n")[:-1]]' 'rows = raw.splitlines(keepends=True)'
 lm drain --item KEN-1 --root "$LANE" --after 0
 assert_eq "$(count_line)" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"
 
 new_lane control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'twice')"
-mutant inbox-cursor-frozen ' && mv -- "$WORK_DIR/cursor" "$CURSOR"' ' && rm -f -- "$WORK_DIR/cursor"'
+mutant_reader inbox-cursor-frozen 'os.replace(scratch, path)' 'pass'
 lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" "control: the frozen-cursor mutant still hands the line over once"
 lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
   "control: without the cursor advance a second inbox hands the same line over again"
 
-mutant ack-unclamped '[ "$ACK" -le "$COUNT" ] || ACK="$COUNT"' ':'
+mutant_reader ack-unclamped '([($in.ack // $in.lane.count), $in.lane.count] | min)' '($in.ack // $in.lane.count)'
 cursor_control over_ack
 assert_eq "$STEPS" "a2:lane-mail: ack-clamped=2 asked=2:0:2 r::" \
   "control: without the line-count clamp an --ack past the lines present hides the line that lands later"
 
-mutant ack-notice-early '[ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$ACK"' '[ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$COUNT"'
+mutant_reader ack-notice-early 'clamped: (if $in.ack != null and $in.ack > $in.lane.count then $ack else null end)' 'clamped: (if $in.ack != null and $in.ack > $in.lane.count then $in.lane.count else null end)'
 cursor_control halt_clamp
 assert_eq "$STEPS" "a5:lane-mail: ack-clamped=3 asked=5:0:1" \
   "control: a notice taking the line count names a count the halt clamp did not acknowledge"
 
-mutant ack-physical-halt 'line[FNR] > seen && $0 == "halt" { print line[FNR] - 1; exit }' 'FNR > seen && $0 == "halt" { print FNR - 1; exit }'
+mutant_reader ack-physical-halt '{line: $box.numbers[$i], envelope: .}' '{line: $box.numbers[$i], physical: ($i + 1), envelope: .}'
+mutate_file "${LANE_MAIL_BIN%/*}/lib/lane-mail-store.py" 'select(.line > $in.seen and .envelope.halt == true) | .line - 1] | first)' 'select(.physical > $in.seen and .envelope.halt == true) | .physical - 1] | first)'
 cursor_control compact_halt
 assert_eq "$STEPS" "r::1,2 x:0:compacted item=KEN-1 to-lane=2 to-overseer=0 p::count=4:2:3,4 a4::0:4 r::" \
   "control: physical halt positions let --ack consume a compacted unread halt"
 
-mutant peek-kept-high '[ "$PEEK" -eq 1 ] && [ "$SEEN" -gt "$COUNT" ] &&' 'false &&'
+mutant_reader peek-kept-high 'elif $in.peek then if $in.seen > $in.lane.count then $in.lane.count else null end' 'elif $in.peek then null'
+mutate_file "${LANE_MAIL_BIN%/*}/lib/lane-mail-store.py" 'lowered: (if ($in.peek or $in.ack != null) and $in.seen > $in.lane.count then $ack else null end)' 'lowered: null'
 cursor_control peek_lowers
 assert_eq "$STEPS" "p::count=1:2: p::count=2:2: r:: p::count=2:2:" \
   "control: without the peek's lowering a cursor past the lines present hides the line that lands later"
 
-mutant ack-kept-high 'if [ "$SEEN" -gt "$COUNT" ]; then' 'if false; then'
+mutant_reader ack-kept-high 'if $in.seen > $in.lane.count or $ack > $in.seen then $ack else null end' 'if $ack > $in.seen then $ack else null end'
+mutate_file "${LANE_MAIL_BIN%/*}/lib/lane-mail-store.py" 'lowered: (if ($in.peek or $in.ack != null) and $in.seen > $in.lane.count then $ack else null end)' 'lowered: null'
 cursor_control ack_lowers
 assert_eq "$STEPS" "a1::0:3 r::" \
   "control: without the --ack's lowering a cursor past the lines present hides the line that lands later"
 
-mutant ack-lowered-to-count 'lm_notice cursor-lowered "$ACK" "was=$SEEN"' 'ACK="$COUNT"; lm_notice cursor-lowered "$COUNT" "was=$SEEN"'
+mutant_reader ack-lowered-to-count 'lowered: (if ($in.peek or $in.ack != null) and $in.seen > $in.lane.count then $ack else null end)' 'lowered: (if ($in.peek or $in.ack != null) and $in.seen > $in.lane.count then $in.lane.count else null end)'
+mutate_file "${LANE_MAIL_BIN%/*}/lib/lane-mail-store.py" 'if $in.seen > $in.lane.count or $ack > $in.seen then $ack else null end' 'if $in.seen > $in.lane.count then $in.lane.count elif $ack > $in.seen then $ack else null end'
 cursor_control ack_lowers
 assert_eq "$STEPS" "a1:lane-mail: cursor-lowered=2 was=3:0:2 r::" \
   "control: an --ack lowering to the line count marks read a line that landed after the peek"
 
-mutant ack-notice-at-count '[ "$ASKED" -le "$COUNT" ] ||' '[ "$ASKED" -lt "$COUNT" ] ||'
+mutant_reader ack-notice-at-count 'clamped: (if $in.ack != null and $in.ack > $in.lane.count then $ack else null end)' 'clamped: (if $in.ack != null and $in.ack >= $in.lane.count then $ack else null end)'
 cursor_control plain_ack
 assert_eq "$STEPS" "p::count=1:0:1 a1:lane-mail: ack-clamped=1 asked=1:0:1" \
   "control: a notice at an --ack equal to the line count names a clamp that did not happen"
 
-mutant peek-lower-refuses 'lm_cursor_put "$COUNT" 2>/dev/null' 'lm_cursor_write "$COUNT" 2>/dev/null'
+mutant_reader peek-lower-refuses 'if peek != "1":
+                print(f"error\x1fwrite-failed\x1f{cursor}\x1f")
+                return
+            lowered = None' 'raise SystemExit(2)'
 unwritable_peek control_peek_unwritable_high 3
 assert_eq "$UNWRITABLE_PEEK" "2===3=" \
   "control: a peek whose lowering refuses where it cannot land exits 2, and the hooks refuse every tool call"
 LANE_MAIL_BIN=""
 
-mutant directives-alone 'foreach inputs as $raw (0; . + 1;' 'foreach (inputs | select(test("directive"))) as $raw (0; . + 1;'
+mutant_reader directives-alone 'elif $in.directives then [$lane[] | select(.line > $seen and .envelope.kind == "directive") | .envelope | tojson]' 'elif $in.directives then [$lane | map(select(.envelope.kind == "directive")) | to_entries[] | select(.key + 1 > $seen) | .value.envelope | tojson]'
 answered_lane control_pending_answer
 assert_eq "$PENDING_DIRECTIVE" "" "control: directive lines numbered alone drop an unread directive from pending"
 
@@ -1491,7 +1556,7 @@ new_lane control_inbox_answer
 LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'ready: KEN-1')"
 RE_NOTICE="$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl")"
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re "$RE_NOTICE" --file "$(text a 'GO.')"
-mutant inbox-drops-answer '  lm_objects "$1"' '  lm_objects "$1" | jq -c '\''select(.kind != "answer")'\'''
+mutant_reader inbox-drops-answer '+ [$lane[] | select(.line > $in.seen) | .envelope | tojson]' '+ [$lane[] | select(.line > $in.seen and .envelope.kind != "answer") | .envelope | tojson]'
 lm inbox --item KEN-1
 assert_eq "$RC=$OUT" "0=" \
   "control: excluding answers from inbox loses the answer to a notice"
@@ -1563,6 +1628,69 @@ ORCH_STATE_DIR="$TMP_ROOT/retention-state" ORCH_ARCHIVE_ROOT="$TMP_ROOT/retentio
 assert_eq "$RC" 2 'compaction refuses an archive inside the configured state folder'
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$before" \
   'a refused compaction archive keeps the expired message bytes'
+
+# C-locale Bash tracing can carry raw bytes beside its ASCII PID records.
+RAW_COUNT_DIR="$TMP_ROOT/raw-trace-count"
+mkdir -p "$RAW_COUNT_DIR"
+printf '+count:123: comparison \357\\273\n+count:124: exec git\n' >"$RAW_COUNT_DIR/trace"
+printf 'w 124 git\n' >"$RAW_COUNT_DIR/external"
+cp "$REPO_ROOT/skills/orch/tests/lib/process-count.py" "$TMP_ROOT/strict-process-count.py"
+mutate_file "$TMP_ROOT/strict-process-count.py" 'errors="surrogateescape"' 'errors="strict"'
+for half in before after; do
+  for repeat in 1 2 3 4 5; do
+    assert_eq "$(python3 "$REPO_ROOT/skills/orch/tests/lib/process-count.py" count "$RAW_COUNT_DIR")" 2 \
+      "$half control: raw trace bytes preserve both counted starts ($repeat)"
+  done
+  if [[ "$half" == before ]]; then
+    raw_rc=0
+    python3 "$TMP_ROOT/strict-process-count.py" count "$RAW_COUNT_DIR" >"$RAW_COUNT_DIR/out" 2>"$RAW_COUNT_DIR/err" || raw_rc=$?
+    assert_eq "$raw_rc" 1 'control: strict trace decoding rejects the raw-byte workload'
+    raw_type=0
+    [[ "$(cat "$RAW_COUNT_DIR/err")" != *UnicodeDecodeError* ]] || raw_type=1
+    assert_eq "$raw_type" 1 'control: the raw-byte failure is the decoder exception'
+  fi
+done
+
+# One instrument counts the Bash processes and PATH commands for these verbs.
+# The fixture outputs were captured from the base before production edits.
+source "$REPO_ROOT/skills/orch/tests/lib/process-count.sh"
+READ_COUNT=yes
+[[ -n "${BASHPID:-}" ]] || READ_COUNT=no
+python3 "$REPO_ROOT/skills/orch/tests/lib/mail-read-cases.py" "$LANE_MAIL" \
+  "$TMP_ROOT/read-cases" "$BASH" "$READ_COUNT" >"$TMP_ROOT/read-results"
+while IFS= read -r row; do
+  IFS= read -r result
+  IFS= read -r processes
+  assert_eq "$result" 'stdout=1 exit=1 key=1' "$row preserves the base output, exit and keyed refusal"
+  READ_LIMIT="${row##* limit=}"
+  if [[ "$READ_LIMIT" == 8 ]]; then
+    [[ "$READ_COUNT" == no ]] || assert_le "$processes" 8 "$row starts at most eight processes"
+  else
+    [[ "$READ_COUNT" == no ]] || assert_le "$processes" "$READ_LIMIT" "$row stays within the accepted owner lookup count"
+  fi
+  printf 'read evidence: %s processes=%s %s\n' "$row" "$processes" "$result"
+done <"$TMP_ROOT/read-results"
+
+# A private orch copy must still call the shipped worktree owner for default
+# root rows. Without that sibling it would silently use the checkout fallback.
+# The same rows reject restoring the per-file read path.
+READ_MUTANT="$(mutant_scripts read-cost/orch lane-mail)/lane-mail"
+ln -s "$REPO_ROOT/skills/worktree" "${READ_MUTANT%/scripts/lane-mail}/../worktree"
+mutate_file "$READ_MUTANT" '  READ_BOX="$BOX"' '  WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")"; date -u +%s >/dev/null; jq -n null >/dev/null; jq -n null >/dev/null; READ_BOX="$BOX"'
+python3 "$REPO_ROOT/skills/orch/tests/lib/mail-read-cases.py" "$READ_MUTANT" \
+  "$TMP_ROOT/read-control" "$BASH" "$READ_COUNT" >"$TMP_ROOT/read-control-results"
+while IFS= read -r row; do
+  IFS= read -r result
+  IFS= read -r processes
+  assert_eq "$result" 'stdout=1 exit=1 key=1' "control: $row keeps output while adding per-file cost"
+  READ_LIMIT="${row##* limit=}"
+  if [[ "$READ_LIMIT" == 8 ]]; then
+    [[ "$READ_COUNT" == no ]] || assert_le 9 "$processes" "control: $row rejects the old per-file cost"
+  else
+    [[ "$READ_COUNT" == no ]] || assert_le "$((READ_LIMIT + 1))" "$processes" "control: $row rejects startup work above the accepted count"
+  fi
+  printf 'read control: %s processes=%s\n' "$row" "$processes"
+done <"$TMP_ROOT/read-control-results"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

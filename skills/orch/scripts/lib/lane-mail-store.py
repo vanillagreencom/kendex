@@ -1,7 +1,8 @@
 """Numbered mailbox snapshots and retention plans for lane-mail's locked files.
 
-The shell owns the inode locks. This helper reads and rewrites only inherited
-file descriptors. A numbering record maps retained physical rows to their
+The shell owns the inode locks. Mailbox reads and rewrites use inherited file
+descriptors. Cursor replacement runs under the caller's cursor lock.
+A numbering record maps retained physical rows to their
 original logical lines; subsequent appends continue after the logical count.
 """
 
@@ -10,6 +11,157 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+import tempfile
+
+
+# The shared class and timestamp definitions come from mailbox-append.sh.
+READ_JQ = r'''
+def objects($box):
+  [$box.raw[] | (fromjson? // empty) | objects] as $all
+  | [$all[] | select(.kind == "tracker-posted")] as $posted
+  | [range(0; $box.raw | length) as $i
+      | ($box.raw[$i] | (fromjson? // empty) | objects)
+      | select(.kind != "tracker-posted")
+      | if .kind == "ask" and .to == "owner" and .issue != null then
+          . as $ask | .tracker_posted = any($posted[]; .re == $ask.id and .issue == $ask.issue)
+        else . end
+      | {line: $box.numbers[$i], envelope: .}];
+. as $in | objects(.lane) as $lane | objects(.over) as $over
+| [$lane[].envelope | select(.kind == "answer") | .re // empty] as $answered
+| [$lane[].envelope | select(overseer_mail_class == "close") | .re] as $closed
+| (if $in.after == "" then 0 else ($in.after | tonumber) end) as $after
+| (if $in.seen > $in.lane.count and $in.lane.count > 0 then $in.lane.count else $in.seen end) as $seen
+| (if $in.verb == "inbox" then
+    ([$lane[] | select(.line > $in.seen and .envelope.halt == true) | .line - 1] | first) as $halt
+    | ([($in.ack // $in.lane.count), $in.lane.count] | min) as $bound
+    | (if $halt != null and $in.ack != null then [$bound, $halt] | min else $bound end) as $ack
+    | {output: (if $in.ack != null then [] else
+          (if $in.peek then ["count=\($in.lane.count) first=\($in.lane.first)"] else [] end)
+          + [$lane[] | select(.line > $in.seen) | .envelope | tojson] end),
+       cursor: (if $in.ack != null then
+          if $in.seen > $in.lane.count or $ack > $in.seen then $ack else null end
+        elif $in.peek then if $in.seen > $in.lane.count then $in.lane.count else null end
+        elif $in.seen != $in.lane.count then $in.lane.count else null end),
+       lowered: (if ($in.peek or $in.ack != null) and $in.seen > $in.lane.count then $ack else null end),
+       clamped: (if $in.ack != null and $in.ack > $in.lane.count then $ack else null end)}
+  else
+    {output: ((if $in.verb == "drain" then ["count=\($in.over.count) first=\($in.over.first)"] else [] end)
+      + [$over[] | select($in.after == "" or .line > $after) | .envelope | . as $envelope
+        | select($in.verb == "drain" or .kind == "ask")
+        | select(.kind != "ask" or
+          ((if .to == "owner" then $closed else $answered end) | index($envelope.id) | not))
+        | select($in.to == "" or .to == $in.to)
+        | select($in.due == false or (.reserved != true and
+          ((.deadline // "" | at_epoch) as $d | $d != null and $d <= now))) | tojson]
+      + (if $in.receipts then
+          ["receipts cursor=\($in.receipt) count=\($in.lane.count) first=\($in.lane.first)"]
+          + [$lane[] | .envelope as $e | select($e.kind == "directive")
+              | select(($e.id | type) == "string" and ($e.id | test("^[A-Za-z0-9._-]+$")))
+              | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"]
+        elif $in.directives then [$lane[] | select(.line > $seen and .envelope.kind == "directive") | .envelope | tojson]
+        else [] end)), cursor: null, lowered: null, clamped: null}
+  end)
+| . + {legacy: (if $in.item == "overseer" then
+    if $in.verb == "inbox" then
+      [$lane[] | select(.line > $in.seen) | .envelope | select(mailbox_legacy_close) | .id]
+    else
+      ([$lane[].envelope | select(mailbox_legacy_close) | .id] as $legacy | $legacy + $legacy)
+      + [$over[].envelope | select(mailbox_legacy_close) | .id]
+    end else [] end)}
+'''
+
+
+def read_snapshot(fd, path):
+    try:
+        rows, numbers, record, _ = read_box(fd, path)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        error.mailbox_path = path
+        raise
+    return {"raw": [row.decode(errors="replace").rstrip("\n") for row in rows],
+            "numbers": numbers, "count": len(rows) + record["dropped"], "first": record["first"]}
+
+
+def cursor_put(path, count):
+    """Replace the cursor while the caller retains its separate lock inode."""
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        scratch = Path(stream.name)
+        try:
+            stream.write(f"{count}\n")
+            stream.close()
+            os.replace(scratch, path)
+        finally:
+            scratch.unlink(missing_ok=True)
+
+
+def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver):
+    """Read both inherited locked mailboxes and classify them with one jq."""
+    cursor = box / "to-lane.cursor"
+    directives = verb == "pending" and not to and due == "0"
+    reads_cursor = verb == "inbox" or directives or receipts == "1"
+    absent = not cursor.exists()
+    value = (cursor.read_bytes().split(b"\n", 1)[0].decode(errors="replace")
+             if reads_cursor and not absent else "")
+    if value and (not value.isascii() or not value.isdecimal()):
+        print(f"error\x1fcursor-invalid\x1f{cursor}\x1f")
+        return
+    seen = int(value or "0")
+    if verb == "inbox" and not value:
+        try:
+            cursor_put(cursor, 0)
+        except OSError:
+            if peek != "1":
+                print(f"error\x1fwrite-failed\x1f{cursor}\x1f")
+                return
+            try:
+                cursor.touch(exist_ok=True)
+            except OSError:
+                pass
+    lane = read_snapshot(9, box / "to-lane.jsonl")
+    over = (read_snapshot(8, box / "to-overseer.jsonl") if verb != "inbox" else
+            {"raw": [], "numbers": [], "count": 0, "first": ""})
+    receipt = str(lane["count"]) if seen > lane["count"] else value or "0"
+    if seen > 0 and lane["count"] == 0 or absent and (box / "to-lane.cursor.lock").exists():
+        receipt = "missed"
+    if verb == "pending" and directives and receipt == "missed":
+        print(f"error\x1fmail-read-failed\x1f{item}\x1fcursor=missed")
+        return
+    data = {"lane": lane, "over": over, "item": item, "verb": verb, "after": after,
+            "receipts": receipts == "1", "to": to, "due": due == "1", "peek": peek == "1",
+            "ack": int(ack) if ack else None, "seen": seen, "receipt": receipt, "directives": directives}
+    result = subprocess.run(["jq", "-c", jq_defs + READ_JQ], input=json.dumps(data).encode(),
+                            capture_output=True, check=True,
+                            env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ})
+    result = json.loads(result.stdout)
+    lowered = result["lowered"]
+    if deliver == "1":
+        # The caller's stdout bypasses its control-result capture. A failed or
+        # interrupted flush leaves these lines unread under the same locks.
+        try:
+            with os.fdopen(os.dup(6), "w", encoding="utf-8") as output:
+                for line in result["output"]:
+                    output.write(line + "\n")
+                output.flush()
+        except OSError as error:
+            print("error\x1fwrite-failed\x1f/dev/stdout\x1f")
+            print(error)
+            return
+    if verb == "inbox":
+        try:
+            if result["cursor"] is not None:
+                cursor_put(cursor, result["cursor"])
+        except OSError:
+            if peek != "1":
+                print(f"error\x1fwrite-failed\x1f{cursor}\x1f")
+                return
+            lowered = None
+    print("ok\x1f" + "\x1f".join(str(n) if n is not None else "" for n in
+          (lowered, seen, result["clamped"], ack)))
+    for id_ in result["legacy"]:
+        print(f"legacy\x1f{id_}")
+    print("output")
+    if deliver != "1":
+        for line in result["output"]:
+            print(line)
 
 
 def envelope(raw):
@@ -148,6 +300,16 @@ def main():
     op = sys.argv[1]
     if op == "snapshot":
         snapshot(int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+    elif op == "read":
+        try:
+            read_mail(Path(sys.argv[2]), *sys.argv[3:])
+        except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+            path = getattr(error, "mailbox_path", getattr(error, "filename", None)) or sys.argv[2]
+            print(f"error\x1ffile-unreadable\x1f{path}\x1f")
+            if isinstance(error, subprocess.CalledProcessError):
+                print(error.stderr.decode(errors="replace"), end="")
+            else:
+                print(error)
     elif op == "plan":
         plan(Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6])
     elif op == "rewrite":

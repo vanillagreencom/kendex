@@ -795,7 +795,8 @@ if [ -n "$THREAD_TS$PARENT" ]; then
     ' -- "$PARENT" 2>/dev/null)" || refuse file-unreadable "$PARENT"
 fi
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+case "$SCRIPT_DIR" in /*) ;; *) SCRIPT_DIR="$PWD/$SCRIPT_DIR" ;; esac
 # shellcheck source=lib/file-lock.sh
 . "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/mailbox-append.sh
@@ -810,25 +811,26 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # Nested subshells keep each mutex's lifetime separate on hosts without flock.
 # A reader can hold the cursor lock while taking a mailbox snapshot.
 lm_locked() ( # FD PATH COMMAND...
-  local fd="$1" path="$2"
+  local fd="$1" path="$2" open_err="${WORK_DIR:-/dev}/open.err" locked_err="${WORK_DIR:-/dev}/locked.err"
+  [ -n "${WORK_DIR:-}" ] || { open_err=/dev/null; locked_err=/dev/null; }
   shift 2
   ORCH_LOCK_MUTEX_DIR=""
   if [ "$VERB" = compact ] && [ "$fd" -ne 7 ]; then
-    eval "exec $fd<>\"\$path\"" 2>"$WORK_DIR/open.err" ||
-      refuse write-failed "$path" "$(cat -- "$WORK_DIR/open.err")"
+    eval "exec $fd<>\"\$path\"" 2>"$open_err" ||
+      refuse write-failed "$path" "$(<"$open_err")"
   else
-    eval "exec $fd<\"\$path\"" 2>"$WORK_DIR/open.err" ||
-      refuse file-unreadable "$path" "$(cat -- "$WORK_DIR/open.err")"
+    eval "exec $fd<\"\$path\"" 2>"$open_err" ||
+      refuse file-unreadable "$path" "$(<"$open_err")"
   fi
-  orch_take_lock "$fd" "$path" 30 2>"$WORK_DIR/locked.err" ||
-    refuse lock-failed "$path" "$(cat -- "$WORK_DIR/locked.err")"
+  orch_take_lock "$fd" "$path" 30 2>"$locked_err" ||
+    refuse lock-failed "$path" "$(<"$locked_err")"
   trap orch_release_lock EXIT
   "$@"
 )
 
 # Missing mail files have no rows to rewrite. Do not create a cursor lock on
 # an unread mailbox: pending treats that lock without a cursor as a missed read.
-lm_existing_lock() ( # FD PATH COMMAND...
+lm_existing_lock() { # FD PATH COMMAND...
   local fd="$1" path="$2"
   shift 2
   if [ -f "$path" ]; then
@@ -837,7 +839,28 @@ lm_existing_lock() ( # FD PATH COMMAND...
     eval "exec $fd</dev/null" || refuse file-unreadable /dev/null
     "$@"
   fi
-)
+}
+
+# flock locks belong to the inherited descriptors, so one read scope can hold
+# the pair. The directory-mutex fallback retains its separate cleanup scopes.
+lm_read_pair() { # OVERSEER_FILE LANE_FILE COMMAND...
+  local over="$1" lane="$2" fd path
+  shift 2
+  if ! command -v flock >/dev/null 2>&1; then
+    lm_existing_lock 8 "$over" lm_existing_lock 9 "$lane" "$@"
+    return
+  fi
+  for fd in 8 9; do
+    path="$over"; [ "$fd" -ne 9 ] || path="$lane"
+    if [ -f "$path" ]; then
+      eval "exec $fd<\"\$path\"" 2>/dev/null || refuse file-unreadable "$path"
+      orch_take_lock "$fd" "$path" 30 || refuse lock-failed "$path"
+    else
+      eval "exec $fd</dev/null" || refuse file-unreadable /dev/null
+    fi
+  done
+  "$@"
+}
 
 lm_store() {
   command -v python3 >/dev/null 2>&1 || refuse command-missing python3
@@ -856,10 +879,15 @@ case "$TMP_ROOT" in
   /*) ;;
   *) TMP_ROOT="./$TMP_ROOT" ;;
 esac
-WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")" || refuse write-failed "$TMP_ROOT"
+WORK_DIR=""
+FAST_READ=0
+case "$HOST:$VERB" in *:drain | *:pending | 0:inbox) FAST_READ=1 ;; esac
+if [ "$FAST_READ" -eq 0 ] || [ "$HOST" -eq 1 ]; then
+  WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")" || refuse write-failed "$TMP_ROOT"
+fi
 # orch_take_lock's mutex arm arms its own EXIT trap, so every caller below
 # re-arms this one after it returns; both halves run either way.
-lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }
+lm_cleanup() { orch_release_lock; [ -z "$WORK_DIR" ] || rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
 # The cause readings a stalled cloud lane's close carries into the fleet log,
@@ -962,7 +990,11 @@ fi
 # The caller's own repository: the main checkout behind this shell, whatever
 # worktree it sits in. It names the sender, places a peer named as a bare name,
 # and decides which lanes are this overseer's to write.
-OWN_ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || OWN_ROOT=""
+OWN_ROOT=""
+case "$VERB" in
+  ask | notice | send | resolve | peer | compact)
+    OWN_ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || OWN_ROOT="" ;;
+esac
 # A peer verb writes the caller's own record and places a bare --repo name
 # beside the caller's checkout. With no own root there is nowhere correct for
 # either, so it is refused here: before a name is composed, before the peer
@@ -1060,10 +1092,9 @@ if [ -z "$ROOT" ]; then
     *:send | *:drain | *:pending | *:events | *:compact)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
-        ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
-        # `worktree path` composes the path an item's worktree would live
-        # at whether or not one is there, so the directory decides: an item
-        # with no worktree is a lane running in the checkout itself.
+        ROOT="$(exec "$WORKTREE" path --checkout-fallback "$ITEM" 2>/dev/null)" || ROOT=""
+        # The path owner also returns the caller checkout when the selected
+        # item directory is absent. Keep that fallback in the same lookup.
         [ -n "$ROOT" ] && [ -d "$ROOT" ] || ROOT=""
       fi
       ;;
@@ -1204,6 +1235,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
       "$TO_LANE" | "$TO_OVERSEER")
         lm_fetch "$1.numbering" "$2.numbering"
         [ "$LM_FETCH_ABSENT" -eq 0 ] || rm -f -- "$2.numbering"
+        if [ "${LM_RAW_FETCH:-0}" -eq 1 ]; then LM_FETCH_ABSENT=0; return 0; fi
         (exec 8<"$2"; lm_store snapshot 8 "$2" "$2") ;;
     esac
     LM_FETCH_ABSENT=0
@@ -1454,28 +1486,6 @@ lm_notice() { # KEY VALUE FIELD [CAUSE]
   lm_message "$1" "$2" >&2
   REFUSE_EXTRA=""
   [ -z "${4:-}" ] || printf '%s\n' "$4" >&2
-}
-
-# Every directive in a terminated to-lane.jsonl, one `{line, envelope}` object
-# per line. Numbered over every complete line, parsing or not, as the cursor
-# counts them, so a line number and the cursor are one scale: the one answer
-# to which directives a reader has passed.
-lm_directives() { # FILE
-  jq -c -R -n --slurpfile numbers "$1.index" 'foreach inputs as $raw (0; . + 1;
-    $numbers[. - 1] as $line
-    | ($raw | try fromjson catch null)
-    | select(type == "object" and .kind == "directive")
-    | {line: $line, envelope: .})' <"$1" || refuse file-unreadable "$TO_LANE"
-}
-
-# The ids of asks to-lane.jsonl already answers, one per line, into DEST. It
-# leaves the terminated to-lane.jsonl at WORK_DIR/lane.jsonl, which pending and
-# drain --receipts read after it rather than fetching the file twice.
-lm_answered() { # DEST
-  lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
-  lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-  lm_objects "$WORK_DIR/lane.jsonl" |
-    jq -r 'select(.kind == "answer") | .re // empty' >"$1"
 }
 
 # Runs in a command substitution: a refusal exits that subshell after writing
@@ -1857,6 +1867,80 @@ lm_compact_locked() {
   fi
   jq -r --arg item "$ITEM" '"compacted item=\($item) to-lane=\(.["to-lane"]) to-overseer=\(.["to-overseer"])"' <<<"$counts"
 }
+
+# The locks keep the existing cursor-before-outbound-before-inbound order.
+# One helper consumes the pair while both inode locks are still held. It also
+# replaces an inbox cursor under the cursor lock, without a second shell read.
+if [ "$FAST_READ" -eq 1 ]; then
+  command -v python3 >/dev/null 2>&1 || refuse command-missing python3
+  case "$VERB" in
+    drain) lm_after "$AFTER" ;;
+    inbox)
+      case "${ACK:+k}$PEEK" in 0 | k0 | 1) ;; *) refuse option-conflict '--peek,--ack' ;; esac
+      [ -z "$ACK" ] || lm_after "$ACK"
+      [ -d "$BOX" ] || mkdir -p -- "$BOX" || refuse write-failed "$BOX"
+      : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
+      exec 7>>"$CURSOR.lock"
+      orch_take_lock 7 "$CURSOR.lock" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$CURSOR.lock"; }
+      trap lm_cleanup EXIT ;;
+  esac
+  # These functions are defined below for the other verbs. The fast path does
+  # not use their scratch files or per-file filters.
+  READ_BOX="$BOX"
+  READ_DELIVER=0
+  if [ "$VERB:$PEEK:$ACK" = inbox:0: ]; then
+    # Keep plain delivery outside READ_OUT so the locked helper can flush the
+    # caller's output before it advances the cursor.
+    exec 6>&1
+    READ_DELIVER=1
+  fi
+  READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ" "$READ_DELIVER")
+  if [ "$HOST" -eq 1 ]; then
+    # read-many already fetched the host's files once. Copy its raw pair and
+    # numbering into this helper's world, without starting a snapshot per file.
+    LM_RAW_FETCH=1
+    lm_fetch "$TO_LANE" "$WORK_DIR/to-lane.jsonl"
+    lm_fetch "$TO_OVERSEER" "$WORK_DIR/to-overseer.jsonl"
+    if [ "$RECEIPTS" -eq 1 ] || { [ "$VERB" = pending ] && [ -z "$TO" ] && [ "$DUE" -eq 0 ]; }; then
+      lm_fetch "$CURSOR" "$WORK_DIR/to-lane.cursor"
+      if [ "$LM_FETCH_ABSENT" -eq 1 ]; then
+        rm -f -- "$WORK_DIR/to-lane.cursor"
+        lm_fetch "$CURSOR.lock" "$WORK_DIR/to-lane.cursor.lock"
+        [ "$LM_FETCH_ABSENT" -eq 0 ] || rm -f -- "$WORK_DIR/to-lane.cursor.lock"
+      fi
+    fi
+    READ_BOX="$WORK_DIR"
+    READ_OUT="$(exec 8<"$WORK_DIR/to-overseer.jsonl" 9<"$WORK_DIR/to-lane.jsonl"; \
+      python3 "$SCRIPT_DIR/lib/lane-mail-store.py" read "$READ_BOX" "${READ_ARGS[@]}")" || exit "$?"
+  else
+    READ_OVER_LOCK="$TO_OVERSEER"
+    [ "$VERB" != inbox ] || READ_OVER_LOCK=/dev/null
+    READ_OUT="$(lm_read_pair "$READ_OVER_LOCK" "$TO_LANE" \
+      python3 "$SCRIPT_DIR/lib/lane-mail-store.py" read "$READ_BOX" "${READ_ARGS[@]}")" || exit "$?"
+  fi
+  READ_HEADER="${READ_OUT%%$'\n'*}"
+  if [[ "$READ_OUT" == *$'\n'* ]]; then READ_OUT="${READ_OUT#*$'\n'}"; else READ_OUT=""; fi
+  IFS=$'\x1f' read -r READ_STATUS READ_KEY READ_VALUE READ_EXTRA READ_ASKED <<<"$READ_HEADER"
+  if [ "$READ_STATUS" = error ]; then
+    if [ "$HOST" -eq 1 ] && [[ "$READ_VALUE" == "$READ_BOX"/* ]]; then
+      READ_VALUE="$BOX${READ_VALUE#"$READ_BOX"}"
+    fi
+    REFUSE_EXTRA="$READ_EXTRA"
+    refuse "$READ_KEY" "$READ_VALUE" "$READ_OUT"
+  fi
+  [ -z "$READ_EXTRA" ] || lm_notice ack-clamped "$READ_EXTRA" "asked=$READ_ASKED"
+  [ -z "$READ_KEY" ] || lm_notice cursor-lowered "$READ_KEY" "was=$READ_VALUE"
+  while [ "${READ_OUT%%$'\n'*}" != output ]; do
+    READ_HEADER="${READ_OUT%%$'\n'*}"
+    READ_OUT="${READ_OUT#*$'\n'}"
+    mailbox_legacy_notice "${READ_HEADER#*$'\x1f'}"
+  done
+  READ_OUT="${READ_OUT#output}"
+  READ_OUT="${READ_OUT#$'\n'}"
+  [ -z "$READ_OUT" ] || printf '%s\n' "$READ_OUT"
+  exit 0
+fi
+
 
 case "$VERB" in
   compact)
@@ -2308,89 +2392,5 @@ case "$VERB" in
     done
     ;;
 
-  drain | pending)
-    [ "$VERB" != drain ] || lm_after "$AFTER"
-    lm_answered "$WORK_DIR/answered"
-    ANSWERED="$(cat -- "$WORK_DIR/answered")"
-    # And what was sent the other way: from the to-lane.jsonl lm_answered
-    # left, each directive against the cursor that says how far the reader
-    # got. pending lists the ones not passed; drain --receipts lists them all
-    # beside the cursor, clamped to the lines listed, so a directive appended
-    # and read between the file read and the cursor read is not taken as read
-    # before it was listed. Judged before anything is printed, so a pending
-    # read that missed prints nothing but its refusal. The cursor is read
-    # only where a directive would be printed: a pending kept to --to or
-    # --due prints asks alone, so no cursor reaches its output and none
-    # is judged.
-    LISTS_DIRECTIVES=0
-    if [ "$VERB" = pending ] && [ -z "$TO" ] && [ "$DUE" -eq 0 ]; then LISTS_DIRECTIVES=1; fi
-    [ "$RECEIPTS" -eq 0 ] || LISTS_DIRECTIVES=1
-    if [ "$LISTS_DIRECTIVES" -eq 1 ]; then
-      lm_cursor_read
-      lm_directives "$WORK_DIR/lane.jsonl" >"$WORK_DIR/directives"
-      COUNT="$(lm_count "$WORK_DIR/lane.jsonl")" || refuse file-unreadable "$TO_LANE"
-      # The cursor counts lines of an append-only file, so one above 0 over a
-      # listing of no line is a listing that missed. Over one that has lines
-      # it is a directive appended and read after the listing, clamped to it.
-      if [ "$SEEN" -gt 0 ] && [ "$COUNT" -eq 0 ]; then
-        SEEN=missed
-      else
-        [ "$SEEN" -le "$COUNT" ] || SEEN="$COUNT"
-      fi
-      # A cursor that is not there is one of two things, told apart here once:
-      # a lane that has never read, whose inbox has made neither the cursor
-      # nor its lock, or a read of it that missed, beside the lock every read
-      # the lane has made left behind. Every inbox, a peek included, leaves
-      # the cursor beside the lock; a first inbox creates the lock a moment
-      # before it writes the cursor, so a read inside that moment is judged
-      # missed as well: the watch moves nothing on it and pending refuses it.
-      if [ "$CURSOR_ABSENT" -eq 1 ]; then
-        lm_fetch "$CURSOR.lock" "$WORK_DIR/cursor.lock.read"
-        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed
-      fi
-      # pending has no receipts line to carry `missed`: listed, a read that
-      # missed shows directives the lane read as unread and, over a listing
-      # that missed, answered asks as owed, so it is refused instead.
-      if [ "$VERB" = pending ] && [ "$SEEN" = missed ]; then
-        REFUSE_EXTRA=cursor=missed
-        refuse mail-read-failed "$ITEM"
-      fi
-    fi
-    lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
-    lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
-    if [ "$VERB" = drain ]; then
-      lm_header "$WORK_DIR/over.jsonl"
-    fi
-    # An answered ask is not news again; `pending` is what is still owed a
-    # reply. --to keeps one audience's asks and --due the ones past their
-    # deadline by this clock, the one deadline judge the watch resolves its
-    # owner asks by; a reserved ask is never due, since no default closes it.
-    NOW_EPOCH="$(date -u +%s)" || refuse write-failed "$BOX"
-    lm_objects "$WORK_DIR/lane.jsonl" | jq -r "$MAILBOX_CLASS_JQ"'select(overseer_mail_class == "close") | .re' >"$WORK_DIR/closed" ||
-      refuse file-unreadable "$TO_LANE"
-    CLOSED="$(cat -- "$WORK_DIR/closed")" || refuse file-unreadable "$WORK_DIR/closed"
-    lm_objects "$WORK_DIR/over.jsonl" "" "${AFTER:-}" | jq -c --arg answered "$ANSWERED" --arg closed "$CLOSED" --arg verb "$VERB" \
-      --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$MAILBOX_TIME_JQ"'
-      ($answered | split("\n")) as $done
-      | ($closed | split("\n")) as $closed
-      | . as $envelope
-      | select($verb == "drain" or $envelope.kind == "ask")
-      | select($envelope.kind != "ask" or
-          ((if $envelope.to == "owner" then $closed else $done end) | index($envelope.id) | not))
-      | select($to == "" or $envelope.to == $to)
-      | select($due == 0 or ($envelope.reserved != true
-          and (($envelope.deadline // "" | at_epoch) as $d | $d != null and $d <= $now)))'
-    if [ "$VERB" = pending ] && [ "$LISTS_DIRECTIVES" -eq 1 ]; then
-      jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
-        refuse file-unreadable "$TO_LANE"
-    elif [ "$RECEIPTS" -eq 1 ]; then
-      HEADER="$(lm_header "$WORK_DIR/lane.jsonl")"
-      printf 'receipts cursor=%s %s\n' "$SEEN" "$HEADER"
-      jq -r "$MAILBOX_TIME_JQ"'
-        .envelope as $e
-        | select(($e.id | type) == "string" and ($e.id | test("^[A-Za-z0-9._-]+$")))
-        | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"' <"$WORK_DIR/directives" ||
-        refuse file-unreadable "$TO_LANE"
-    fi
-    ;;
+
 esac

@@ -147,8 +147,9 @@ class Compaction(unittest.TestCase):
 
     def test_stable_cursor(self):
         self.stable_values(SCRIPTS)
-        mutant = self.mutant("missing-parser", "lane-mail", '"$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ"',
-                             '"$MAILBOX_CLASS_JQ"')
+        plan_call = 'lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" '
+        mutant = self.mutant("missing-parser", "lane-mail", plan_call + '"$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ"',
+                             plan_call + '"$MAILBOX_CLASS_JQ"')
         with self.assertRaises(AssertionError):
             self.stable_values(mutant)
         mutant = self.mutant("physical", "lib/lane-mail-store.py", "numbers = record[\"lines\"] + list(range(",

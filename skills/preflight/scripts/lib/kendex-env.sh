@@ -107,7 +107,9 @@ kendex_parent_env_has() {
 # whole, same discipline as the header rule. Read via stdin so the path is
 # never an operand.
 kendex_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
-  if [[ "$(head -c 3 < "$1" 2>/dev/null)" == $'\xEF\xBB\xBF' ]]; then
+  local _kendex_prefix="" LC_ALL=C
+  if IFS= read -r -n 3 -d '' _kendex_prefix < "$1" 2>/dev/null &&
+     [[ "$_kendex_prefix" == $'\xEF\xBB\xBF' ]]; then
     kendex_env_message byte-order-mark "$@" >&2
     return 1
   fi
@@ -246,8 +248,8 @@ kendex_load_settings_file() {
 # reads a file anywhere at all when `config` points out of it. The file
 # may not exist yet, so the deepest existing ancestor is what is resolved
 # and the rest is spelling, which kendex_private_env_file has already
-# judged. `cd -P` + `pwd -P` is the resolution every supported bash has;
-# readlink -f and realpath are not.
+# judged. `cd -P` gives Bash its physical PWD on every supported Bash;
+# readlink -f and realpath are not portable.
 #
 # The file ITSELF being a link is left alone on purpose, and this is the
 # line between the two. A directory link is the configured NAME reaching
@@ -259,10 +261,14 @@ kendex_load_settings_file() {
 # stopping nobody who can already write inside the project root.
 kendex_inside_project() { # PROJECT_ROOT RELATIVE_FILE — 0 = the file's directory is inside; 1 + ::error otherwise
   local _kendex_root="$1" _kendex_file="$2" _kendex_top _kendex_path _kendex_dir _kendex_at
-  _kendex_top=$(cd -P -- "$_kendex_root" 2>/dev/null && pwd -P) || {
+  local _kendex_cwd="$PWD"
+  if cd -P -- "$_kendex_root" >/dev/null 2>&1; then
+    _kendex_top="$PWD"
+    cd -- "$_kendex_cwd" >/dev/null || return 1
+  else
     kendex_env_message private-env-unresolved "$_kendex_root" >&2
     return 1
-  }
+  fi
   _kendex_path="$_kendex_root/$_kendex_file"
   # Climb only past components that are ABSENT. One that exists as
   # something other than a directory blocks the path: no file can be
@@ -278,10 +284,13 @@ kendex_inside_project() { # PROJECT_ROOT RELATIVE_FILE — 0 = the file's direct
     kendex_env_message private-env-blocked "$_kendex_file" >&2
     return 1
   fi
-  _kendex_at=$(cd -P -- "$_kendex_dir" 2>/dev/null && pwd -P) || {
+  if cd -P -- "$_kendex_dir" >/dev/null 2>&1; then
+    _kendex_at="$PWD"
+    cd -- "$_kendex_cwd" >/dev/null || return 1
+  else
     kendex_env_message private-env-unresolved "$_kendex_dir" >&2
     return 1
-  }
+  fi
   if [[ "$_kendex_at" != "$_kendex_top" && "$_kendex_at" != "$_kendex_top"/* ]]; then
     kendex_env_message private-env-outside "$_kendex_file" >&2
     return 1
@@ -315,6 +324,17 @@ kendex_project_env_supports() { # CAPABILITY
 kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional output is the selected project-relative path
   local project_root="$1"
   [[ -n "$project_root" ]] || return 0
+  local _kendex_empty_private
+  if [[ ! -f "$project_root/kendex.settings.toml" && ! -f "$project_root/.kendex/settings.toml" ]]; then
+    kendex_source_usable "$project_root/kendex.settings.toml" || return 1
+    kendex_source_usable "$project_root/.kendex/settings.toml" || return 1
+    kendex_private_env_file _kendex_empty_private "$project_root" || return 1
+    kendex_source_usable "$project_root/$_kendex_empty_private" || return 1
+    if [[ ! -f "$project_root/$_kendex_empty_private" ]]; then
+      [[ -z "${2:-}" ]] || printf -v "$2" '%s' "$_kendex_empty_private"
+      return 0
+    fi
+  fi
 
   # Snapshot parent-process variables (name -> value) so project files cannot
   # clobber caller-provided values (documented precedence: parent process wins

@@ -811,13 +811,16 @@ print_path_exists_help() {
   worktree_message help path
   cat <<'EOF'
 Usage: worktree path <ID>
+       worktree path --checkout-fallback <ID>
        worktree exists <ID>
        worktree merged <ID>
 
 path prints the worktree path derived for an issue ID (the configured base
 dir, falling back to the worktree registered for the issue branch). exists
 prints "true" when a directory exists at that path, "false" otherwise; both
-print to stdout and exit 0.
+print to stdout and exit 0. With --checkout-fallback, path returns the caller's
+checkout when the selected item path is not a directory. lane-mail uses this
+form for a lane that runs in its checkout without an item worktree.
 
 merged asks whether the issue tree's work already landed, the question a
 rebase cannot answer for itself: a squash merge rewrites the branch into a

@@ -309,22 +309,54 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # rewritten blob, so a pass mutates a local and commits once. `lane-exited` and
 # `lane-idle` hold a needed first pass in a row, not a global: a pass that
 # found any event exits the process.
+LANE_ROW=""
 lane_row_get() {
-  awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
+  local row prefix="$1"$'\t'"$3"$'\t' value
+  LANE_ROW=""
+  while IFS= read -r row; do
+    [[ "$row" == "$prefix"* ]] || continue
+    value="${row#"$prefix"}"
+    [[ "$value" != *$'\t'* ]] || continue
+    LANE_ROW+="$value"$'\n'
+  done <<<"$2"
+  LANE_ROW="${LANE_ROW%$'\n'}"
+  [[ -z "$LANE_ROW" ]] || printf '%s\n' "$LANE_ROW"
+  return 0
 }
 
 lane_row_clear() {
-  awk -F'\t' -v kind="$1" -v lane="$3" 'NF && !($1 == kind && NF == 3 && $2 == lane)' <<<"$2"
+  local row prefix="$1"$'\t'"$3"$'\t' value
+  LANE_ROW=""
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    value="${row#"$prefix"}"
+    [[ "$row" != "$prefix"* || "$value" == *$'\t'* ]] || continue
+    LANE_ROW+="$row"$'\n'
+  done <<<"$2"
+  LANE_ROW="${LANE_ROW%$'\n'}"
+  [[ -z "$LANE_ROW" ]] || printf '%s\n' "$LANE_ROW"
+  return 0
 }
 
 # In place, so a pass that sets a row to the value it already holds leaves
-# the blob as it was and commits nothing. The value crosses in the
-# environment, as lane_row_prune's list does: awk would read escapes in a -v.
+# the blob as it was and commits nothing. The value stays literal, including
+# backslashes in a path or message id.
 lane_row_set() {
-  ow_value="$4" awk -F'\t' -v kind="$1" -v lane="$3" '
-    NF && $1 == kind && NF == 3 && $2 == lane { if (!set) print kind "\t" lane "\t" ENVIRON["ow_value"]; set = 1; next }
-    NF { print }
-    END { if (!set) print kind "\t" lane "\t" ENVIRON["ow_value"] }' <<<"$2"
+  local row prefix="$1"$'\t'"$3"$'\t' value set=0
+  LANE_ROW=""
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    value="${row#"$prefix"}"
+    if [[ "$row" == "$prefix"* && "$value" != *$'\t'* ]]; then
+      [[ "$set" -ne 0 ]] || LANE_ROW+="$prefix$4"$'\n'
+      set=1
+    else
+      LANE_ROW+="$row"$'\n'
+    fi
+  done <<<"$2"
+  [[ "$set" -ne 0 ]] || LANE_ROW+="$prefix$4"$'\n'
+  LANE_ROW="${LANE_ROW%$'\n'}"
+  printf '%s\n' "$LANE_ROW"
 }
 
 # The same two-phase flush triage uses, on the same file: nothing is written
@@ -676,14 +708,31 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window host root harness running launched kept carried parked recorded
-  state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
-  FLEET_STATE="$state"
-  rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
-  PREPARE_ROWS="$(jq -r "$PREPARE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$PREPARE_ROWS" "option=--state" "path=$STATE_FILE"
-  parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
-  recorded="$(jq -r '(.lanes // [])[] | objects | .item | strings' <<<"$state" 2>&1)" \
-    || die state-invalid "$recorded" "option=--state" "path=$STATE_FILE"
+  local state rows dropped line item window host root harness running launched kept carried parked recorded merged tag
+  # Check the open before substitution expansion; keep that inode for the read.
+  if { state="$(< /dev/fd/3)"; } 2>/dev/null 3<"$STATE_FILE"; then
+    FLEET_STATE="$state"
+  else
+    die state-unreadable "" "option=--state" "path=$STATE_FILE"
+  fi
+  merged="$(jq -r '(('"$LANE_ROWS_FILTER"') | "running\u001e\(.)"),
+    (('"$PREPARE_ROWS_FILTER"') | "prepare\u001e\(.)"),
+    (('"$PARKED_ROWS_FILTER"') | "parked\u001e\(.)"),
+    ((.lanes // [])[] | objects | .item | strings | "recorded\u001e\(.)")' <<<"$state" 2>&1)" \
+    || die state-invalid "$merged" "option=--state" "path=$STATE_FILE"
+  rows=""; PREPARE_ROWS=""; parked=""; recorded=""
+  while IFS= read -r line; do
+    tag="${line%%$'\x1e'*}"
+    line="${line#*$'\x1e'}"
+    case "$tag" in
+      running) rows+="$line"$'\n' ;;
+      prepare) PREPARE_ROWS+="$line"$'\n' ;;
+      parked) parked+="$line"$'\n' ;;
+      recorded) recorded+="$line"$'\n' ;;
+    esac
+  done <<<"$merged"
+  rows="${rows%$'\n'}"; PREPARE_ROWS="${PREPARE_ROWS%$'\n'}"
+  parked="${parked%$'\n'}"; recorded="${recorded%$'\n'}"
   RECORDED_ITEMS=()
   while IFS= read -r item; do [[ -z "$item" ]] || RECORDED_ITEMS+=("$item"); done <<<"$recorded"
   PARKED_ITEMS=()
@@ -2157,7 +2206,12 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
     mail_host_read_dir "$HOSTED_HOST" || die mail-read-failed "" "host=$HOSTED_HOST" "read=snapshot"
     host_env=("ORCH_LANE_HOST=$HOSTED_HOST" "LANE_HOST_READ_DIR=$MAIL_HOST_READ_DIR")
   fi
-  MAIL_OUT="$(env ${host_env[@]+"${host_env[@]}"} "$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?
+  if [[ ${#host_env[@]} -eq 0 ]]; then
+    "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?
+  else
+    env "${host_env[@]}" "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?
+  fi
+  MAIL_OUT="$(<"$WORK_DIR/mail.out")"
   [[ "$rc" -ne 0 ]] || return 0
   [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { lane_failure_set lane-host-busy "" "item=$item"; return 1; }
   lane_failure_set mail-read-failed "$(cat "$WORK_DIR/mail.err")" "item=$item" "exit=$rc"
@@ -2211,7 +2265,8 @@ check_mail() { # [overseer]
         state="$MAIL_SEEN"
         continue
       fi
-      state="$(lane_row_set clone-root "$state" "$item" "$HOSTED_CLONE")"
+      lane_row_set clone-root "$state" "$item" "$HOSTED_CLONE" >/dev/null
+      state="$LANE_ROW"
       # With the worktree removed, the lane's closing notice lands in the
       # clone's mailbox: another file, so another cursor.
       if [[ "$HOSTED_GONE" -eq 1 ]]; then
@@ -2225,7 +2280,7 @@ check_mail() { # [overseer]
         ow_message "$LANE_FAILURE_REASON" ${LANE_FAILURE_FIELDS[@]+"${LANE_FAILURE_FIELDS[@]}"} >&2
         continue
       fi
-      [[ -z "$LOCAL_CLONE" ]] || state="$(lane_row_set clone-root "$state" "$item" "$LOCAL_CLONE")"
+      [[ -z "$LOCAL_CLONE" ]] || { lane_row_set clone-root "$state" "$item" "$LOCAL_CLONE" >/dev/null; state="$LANE_ROW"; }
       if [[ "$LOCAL_GONE" -eq 1 ]]; then
         root="$LOCAL_CLONE"; cursor="$item@clone"
       fi
@@ -2248,11 +2303,13 @@ check_mail() { # [overseer]
       [[ "${MAIL_OUT%%$'\n'*}" =~ ^count=([0-9]+)\ first= ]] \
         || die mail-read-invalid "" "item=$item" "value=count"
       count="${BASH_REMATCH[1]}"
-      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"
+      envelopes="${MAIL_OUT#*$'\n'}"
+      [[ "$MAIL_OUT" == *$'\n'* ]] || envelopes=""
     else
-      if ! stored="$(lane_row_get lane-mail "$state" "$cursor")"; then
+      if ! lane_row_get lane-mail "$state" "$cursor" >/dev/null; then
         die state-read-failed "" "item=$item" "row=lane-mail"
       fi
+      stored="$LANE_ROW"
       # `<count> <first>`: the lines drained, and the id the mailbox opened with
       # when they were, empty where it opened with none.
       read -r prior seen <<<"$stored"
@@ -2286,8 +2343,13 @@ check_mail() { # [overseer]
       done
       # The drain's envelopes, then its receipts section: the lane's
       # to-lane.cursor and the directives it holds.
-      envelopes="$(awk 'NR == 1 { next } /^receipts / { exit } { print }' <<<"$MAIL_OUT")"
-      receipts="$(awk 'found { print } /^receipts / { found = 1; print }' <<<"$MAIL_OUT")"
+      envelopes=""; receipts=""
+      while IFS= read -r line; do
+        [[ "$line" != "$header" ]] || continue
+        if [[ "$line" == receipts\ * || -n "$receipts" ]]; then receipts+="$line"$'\n'
+        else envelopes+="$line"$'\n'; fi
+      done <<<"$MAIL_OUT"
+      envelopes="${envelopes%$'\n'}"; receipts="${receipts%$'\n'}"
       header="${receipts%%$'\n'*}"
       [[ "$header" =~ ^receipts\ cursor=([0-9]+|missed)\ count=[0-9]+\ first=([A-Za-z0-9._-]*)$ ]] \
         || die mail-read-invalid "" "item=$item" "value=${header:-<empty>}"
@@ -2302,9 +2364,10 @@ check_mail() { # [overseer]
       # starts both counts over. A cursor lane-mail found `missed` holds the
       # item, one lower than the one reported its directive lines: a lane
       # relaunched onto an empty mailbox reads 0 there until a directive lands.
-      if ! stored="$(lane_row_get directive "$state" "$cursor")"; then
+      if ! lane_row_get directive "$state" "$cursor" >/dev/null; then
         die state-read-failed "" "item=$item" "row=directive"
       fi
+      stored="$LANE_ROW"
       read -r read_at unread_at seen <<<"$stored"
       unread_passes=0
       if [[ "$unread_at" == *:* ]]; then
@@ -2323,15 +2386,18 @@ check_mail() { # [overseer]
     # The drain drops answered asks by the to-lane.jsonl it read, so one that
     # missed would report an answered ask as a fresh question.
     if [[ "$hold" == item ]]; then
-      state="$(lane_row_clear lane-failed "$state" "$item")"
+      lane_row_clear lane-failed "$state" "$item" >/dev/null
+      state="$LANE_ROW"
       mail_row_commit "$state"
       continue
     fi
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
-      if ! fields="$(jq -r "$MAILBOX_CLASS_JQ"' [.id // "", .kind // "", ((.options // []) | join(", ")), .from // "", .re // "", .by // "", overseer_mail_class] | @tsv' <<<"$line")"; then
+      if ! fields="$(jq -r "$MAILBOX_CLASS_JQ"' ([.id // "", .kind // "", ((.options // []) | join(", ")), .from // "", .re // "", .by // "", overseer_mail_class] | @tsv), (.text // "")' <<<"$line")"; then
         die mail-read-invalid "" "item=$item" "value=envelope"
       fi
+      text=""; [[ "$fields" != *$'\n'* ]] || text="${fields#*$'\n'}"
+      fields="${fields%%$'\n'*}"
       id="${fields%%$'\t'*}"
       rest="${fields#*$'\t'}"
       kind="${rest%%$'\t'*}"
@@ -2368,13 +2434,12 @@ check_mail() { # [overseer]
         # other kind is a line to show rather than a line to drop silently.
         *) echo "EVENT lane-notice $item $id" ;;
       esac
-      if ! text="$(jq -r '.text // ""' <<<"$line")"; then
-        die mail-read-invalid "" "item=$item" "value=text"
-      fi
       # Every payload line is indented two spaces, so a message line spelling
       # `EVENT ...` never reads as a record: only the watch's own lines start
       # at the first column.
-      [[ -z "$text" ]] || sed 's/^/  /' <<<"$text"
+      if [[ -n "$text" ]]; then
+        while IFS= read -r line; do printf '  %s\n' "$line"; done <<<"$text"
+      fi
       # An ask's choices are the other half of the question; without this line
       # the overseer is asked to pick from a list it was never shown.
       [[ -z "$options" ]] || printf '  options: %s\n' "$options"
@@ -2382,7 +2447,8 @@ check_mail() { # [overseer]
     done <<<"$envelopes"
     if [[ "$item" == overseer ]]; then
       if mail_read "$item" inbox "${args[@]}" --ack "$count"; then
-        state="$(lane_row_clear lane-failed "$state" "$item")"
+        lane_row_clear lane-failed "$state" "$item" >/dev/null
+        state="$LANE_ROW"
       else
         lane_failure_report "$item" "$state"
         state="$LANE_FAILURE_STATE"
@@ -2395,7 +2461,7 @@ check_mail() { # [overseer]
     # pruned, as pane-keyed rows are: an item out of --item for one run would
     # otherwise drain from zero and report every message that lane ever sent.
     [[ "$replaced" -eq 0 && "$count" -lt "$prior" ]] \
-      || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
+      || { lane_row_set lane-mail "$state" "$cursor" "$count $first" >/dev/null; state="$LANE_ROW"; }
     if [[ "$hold" == none ]]; then
       # A directive reported unread and still unread is reported again every
       # MARK_REPEAT full mail passes, the rhythm start-stalled keeps on long
@@ -2406,6 +2472,7 @@ check_mail() { # [overseer]
       (( unread_passes < MARK_REPEAT )) || repeat=1
       standing=0
       reported=0
+      rest=""; [[ "$receipts" != *$'\n'* ]] || rest="${receipts#*$'\n'}"
       while read -r line id at; do
         [[ -n "$line" ]] || continue
         if [[ "$line" -le "$lane_read" ]]; then
@@ -2421,14 +2488,16 @@ check_mail() { # [overseer]
         elif [[ "$line" -le "$unread_at" ]]; then
           standing=1
         fi
-      done <<<"$(tail -n +2 <<<"$receipts")"
+      done <<<"$rest"
       (( standing == 1 && reported == 0 )) || unread_passes=0
-      state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at:$unread_passes ${to_first:-$seen}")"
+      lane_row_set directive "$state" "$cursor" "$lane_read $unread_at:$unread_passes ${to_first:-$seen}" >/dev/null
+      state="$LANE_ROW"
     fi
     # Committed here, per item and after its lines are out: a later mailbox
     # can fail without discarding this read, and a row left uncommitted would
     # re-report this item's messages on the re-run that follows.
-    state="$(lane_row_clear lane-failed "$state" "$item")"
+    lane_row_clear lane-failed "$state" "$item" >/dev/null
+    state="$LANE_ROW"
     mail_row_commit "$state"
   done
 }
@@ -4708,8 +4777,10 @@ tick_sleep() { # SECS
 # second of landing. With no mail interval the mail pass runs once a turn: a
 # long pass in flight is waited for, and with none the turn waits for the next
 # one to come due.
+WATCH_EPOCH="$(date -u +%s)" || die time-failed "" "clock=UTC"
+WATCH_SECONDS="$SECONDS"
 tick_wait() {
-  local now next
+  local now next size
   while :; do
     if [[ -n "$LONG_PID" && "$MAIL_INTERVAL" -eq 0 ]]; then
       long_collect wait
@@ -4719,7 +4790,7 @@ tick_wait() {
       long_collect
       [[ -n "$LONG_PID" ]] || return 0
     fi
-    now="$(date -u +%s)" || die time-failed "" "clock=UTC"
+    now=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))
     next="$MAIL_DUE"
     [[ "$MAIL_INTERVAL" -gt 0 ]] || next="$LONG_DUE"
     [[ -n "$LONG_PID" || "$LONG_DUE" -ge "$next" ]] || next="$LONG_DUE"
@@ -4729,7 +4800,11 @@ tick_wait() {
       return 0
     fi
     tick_sleep 1
-    [[ "$(overseer_box_size)" == "$BOX_SEEN" ]] || return 0
+    if size="$(exec wc -c 2>/dev/null < "$OVERSEER_BOX")"; then
+      [[ "$size" == "$BOX_SEEN" ]] || return 0
+    else
+      [[ "$BOX_SEEN" == none ]] || return 0
+    fi
   done
 }
 

@@ -610,20 +610,26 @@ assert_eq "$ACK_STOP" "ack=found pass=gone printed=1 again=1" \
   "a stop between the print and the ack reports the note, and the next reader reports it again" "$TMP_ROOT/e-ack_stop"
 
 # The same stop on a lane's notice, whose mail row is committed only once its
-# lines are out: a `sed` shim holds the payload's indent, the one call of that
-# shape, after the event line is printed and is killed with its pass. The next
-# run reports the notice again.
-lane_stop_case() { # NAME
-  local pass held
+# lines are out. A fixture printf function holds the payload's indent after
+# the event line is printed and is killed with its pass. The next run reports
+# the notice again.
+lane_stop_case() { # NAME [WATCH_BIN]
+  local pass held watch="${2:-$WATCH_SRC}"
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
   mkdir -p -- "$CASE_REPO_ROOT/tmp/lane-mail/KEN-7" "$STUB_DIR/bin"
   (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" notice --item KEN-7 \
     --file "$TMP_ROOT/note.txt" >/dev/null)
-  printf '#!/usr/bin/env bash\n[[ "$*" != "s/^/  /" ]] || exec "%s" 30\nexec "%s" "$@"\n' \
-    "$REAL_SLEEP" "$(command -v sed)" > "$STUB_DIR/bin/sed"
-  chmod +x "$STUB_DIR/bin/sed"
-  ( run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --item KEN-7 \
+  cat > "$STUB_DIR/notice-before-commit" <<'EOF'
+printf() {
+  if [[ "${BASH_SOURCE[1]:-}" == */oversee-watch && "${1:-}" == '  %s\n' ]]; then
+    "$LANE_STOP_SLEEP" 30
+  fi
+  builtin printf "$@"
+}
+EOF
+  ( WATCH_BIN="$watch" run_watch BASH_ENV="$STUB_DIR/notice-before-commit" LANE_STOP_SLEEP="$REAL_SLEEP" \
+      -- --max-loops 1 --item KEN-7 \
       >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
   LIVE_PIDS+=" $!"
   held=""
@@ -637,13 +643,18 @@ lane_stop_case() { # NAME
   kill -TERM "$held" "$pass" 2>/dev/null || true
   gone_within "$pass"
   LANE_STOP="held=${held:+found} pass=$STATES printed=$(grep -c '^EVENT lane-notice KEN-7 ' "$TMP_ROOT/o-$1" || true)"
-  LANE_STOP+=" again=$(run_watch -- --max-loops 1 --item KEN-7 2>/dev/null |
+  LANE_STOP+=" again=$(WATCH_BIN="$watch" run_watch -- --max-loops 1 --item KEN-7 2>/dev/null |
     grep -c '^EVENT lane-notice KEN-7 ' || true)"
 }
 lane_stop_case lane_stop
 assert_eq "$LANE_STOP" "held=found pass=gone printed=1 again=1" \
   "a stop between a lane notice's print and its row commit reports it, and the next run reports it again" \
   "$TMP_ROOT/e-lane_stop"
+mutant notice_early_commit oversee-watch '        *) echo "EVENT lane-notice $item $id" ;;' \
+  '        *) lane_row_set lane-mail "$state" "$cursor" "$count $first" >/dev/null; state="$LANE_ROW"; mail_row_commit "$state"; echo "EVENT lane-notice $item $id" ;;'
+lane_stop_case lane_stop_early_commit "$MUTANT"
+assert_eq "$LANE_STOP" "held=found pass=gone printed=1 again=0" \
+  "control: committing a notice before its payload loses the interrupted replay" "$TMP_ROOT/e-lane_stop_early_commit"
 
 # --- taking over a watch ------------------------------------------------------
 # A stand-in for a watch another start left running: it records itself as the

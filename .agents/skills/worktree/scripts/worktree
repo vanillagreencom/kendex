@@ -49,10 +49,18 @@ source "$MESSAGE_DIR/lib/help.sh"
 canonical_existing_dir() {
   local path="$1"
   [[ -d "$path" ]] || return 1
-  (cd "$path" && pwd -P)
+  local _canonical_cwd="$PWD" _canonical_result=""
+  cd -P -- "$path" >/dev/null || return 1
+  _canonical_result="$PWD"
+  cd -- "$_canonical_cwd" >/dev/null || return 1
+  if [[ -n "${2:-}" ]]; then
+    printf -v "$2" '%s' "$_canonical_result"
+  else
+    printf '%s\n' "$_canonical_result"
+  fi
 }
 
-# Canonical (physical) path equality: both sides resolve through pwd -P, so a
+# Canonical (physical) path equality: both sides resolve through cd -P, so a
 # path reached via a compatibility symlink and its physical form compare
 # equal. False when either side is not an existing directory.
 same_canonical_dir() {
@@ -67,7 +75,7 @@ same_canonical_dir() {
 # bare assignment's nonzero status escapes before the test below can run, so
 # the refusal never printed. The failure branch re-runs the lookup for the
 # stderr the first call discarded, so the message carries git's cause.
-if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJECT_ROOT" ]]; then
+if ! PROJECT_CONTEXT="$(exec git rev-parse --show-toplevel --git-common-dir 2>/dev/null)" || [[ -z "$PROJECT_CONTEXT" ]]; then
   GIT_LOOKUP_DIAG=""
   if ! GIT_LOOKUP_DIAG="$(git rev-parse --show-toplevel 2>&1 >/dev/null)"; then
     # Normalize a multi-line fatal to one line; "fatal: " is noise under a line
@@ -83,16 +91,32 @@ if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJ
   } >&2
   exit 1
 fi
-CALLER_ROOT="$(canonical_existing_dir "$PROJECT_ROOT")"
-
-# If inside a worktree, resolve to the main repo root
-_git_common_dir=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)
-if [[ "$_git_common_dir" != ".git" && -n "$_git_common_dir" ]]; then
-  PROJECT_ROOT="$(cd "$PROJECT_ROOT" && cd "$(dirname "$_git_common_dir")" && pwd)"
+PROJECT_ROOT="${PROJECT_CONTEXT%%$'\n'*}"
+_git_common_dir="${PROJECT_CONTEXT#*$'\n'}"
+# Git separates these fields with a newline. A path with that byte needs the
+# individual reads so it keeps its spelling instead of becoming two fields.
+if [[ "$PROJECT_CONTEXT" == *$'\n'*$'\n'* ]]; then
+  PROJECT_ROOT="$(exec git rev-parse --show-toplevel 2>/dev/null)" || {
+    worktree_message repo-unavailable "$PWD" "Error: could not resolve a git repository from: $PWD" >&2
+    exit 1
+  }
+  _git_common_dir="$(exec git rev-parse --git-common-dir 2>/dev/null)" || {
+    worktree_message common-dir-unavailable "$PROJECT_ROOT" "Error: Could not resolve the repository common Git directory" >&2
+    exit 1
+  }
 fi
-# Physical form so registry, base-dir, and guard comparisons all share one
-# canonical anchor even when the script is invoked through a symlinked path.
-PROJECT_ROOT="$(canonical_existing_dir "$PROJECT_ROOT")"
+canonical_existing_dir "$PROJECT_ROOT" CALLER_ROOT
+case "$_git_common_dir" in /*) ;; *) _git_common_dir="$PWD/$_git_common_dir" ;; esac
+if ! canonical_existing_dir "$_git_common_dir" PROJECT_COMMON_GIT_DIR; then
+  worktree_message common-dir-unavailable "$PROJECT_ROOT" "Error: Could not resolve the repository common Git directory" >&2
+  exit 1
+fi
+# The common directory anchors every linked checkout at the same physical root.
+if [[ "$PROJECT_COMMON_GIT_DIR" == "$CALLER_ROOT/.git" ]]; then
+  PROJECT_ROOT="$CALLER_ROOT"
+else
+  canonical_existing_dir "${PROJECT_COMMON_GIT_DIR%/*}" PROJECT_ROOT
+fi
 
 git_common_dir_path() {
   local checkout="$1" common_dir=""
@@ -104,14 +128,8 @@ git_common_dir_path() {
   fi
 }
 
-PROJECT_COMMON_GIT_DIR="$(git_common_dir_path "$PROJECT_ROOT")"
-if [[ -z "$PROJECT_COMMON_GIT_DIR" ]]; then
-  worktree_message common-dir-unavailable "$PROJECT_ROOT" "Error: Could not resolve the repository common Git directory" >&2
-  exit 1
-fi
-
 # Load project config and secrets; among project files, `.env.local` wins.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+canonical_existing_dir "$MESSAGE_DIR" SCRIPT_DIR
 # shellcheck source=lib/kendex-env.sh
 # A rebase replaces a symlinked harness dir with a REAL directory holding only
 # the tracked subset, so the untracked skills under it — including this script's
@@ -135,7 +153,8 @@ fi
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 # The caller's own exports, before any project file adds to them: see
 # committed_settings_keys.
-CALLER_ENV_NAMES="$(compgen -e)"
+CALLER_ENV_NAMES=""
+case "${1:-}" in path|exists) ;; *) CALLER_ENV_NAMES="$(compgen -e)" ;; esac
 kendex_load_project_env "$PROJECT_ROOT"
 
 # Worktree link setup, health and repair.
@@ -143,7 +162,7 @@ kendex_load_project_env "$PROJECT_ROOT"
 source "$SCRIPT_DIR/lib/links.sh"
 
 GITHUB_AUTH_LIB="$SCRIPT_DIR/../../github/scripts/lib/gh-auth.sh"
-if [[ -f "$GITHUB_AUTH_LIB" ]]; then
+if [[ "${1:-}" != path && "${1:-}" != exists && -f "$GITHUB_AUTH_LIB" ]]; then
   # shellcheck source=../../github/scripts/lib/gh-auth.sh
   source "$GITHUB_AUTH_LIB"
 fi
@@ -151,7 +170,7 @@ fi
 # together or not at all, as the skill installs them.
 GITHUB_REPO_LIB="$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 GITHUB_SETTINGS_LIB="$SCRIPT_DIR/../../github/scripts/lib/repo-settings.sh"
-if [[ -f "$GITHUB_REPO_LIB" && -f "$GITHUB_SETTINGS_LIB" ]]; then
+if [[ "${1:-}" != path && "${1:-}" != exists && -f "$GITHUB_REPO_LIB" && -f "$GITHUB_SETTINGS_LIB" ]]; then
   # shellcheck source=../../github/scripts/lib/gh-repo.sh
   source "$GITHUB_REPO_LIB"
   # shellcheck source=../../github/scripts/lib/repo-settings.sh
@@ -1017,47 +1036,36 @@ mkdir_inside_worktree() {
 # per-user inotify budget. A shared sibling like ../trees would collide across
 # repos (two repos' issue-1 would resolve to the same path), so the repo name
 # disambiguates.
-checkout_worktrees_dir() {
-  printf '%s/.worktrees/%s\n' "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+checkout_worktrees_dir() { # [OUT_VAR]
+  local _checkout_trees="${PROJECT_ROOT%/*}/.worktrees/${PROJECT_ROOT##*/}"
+  if [[ -n "${1:-}" ]]; then printf -v "$1" '%s' "$_checkout_trees"; else printf '%s\n' "$_checkout_trees"; fi
 }
 
-resolve_worktree_base_dir() {
-  local raw="${WORKTREE_BASE_DIR:-}"
-  local path
+resolve_worktree_base_dir() { # [OUT_VAR]
+  local raw="${WORKTREE_BASE_DIR:-}" path parent name physical
   if [[ -z "$raw" ]]; then
-    path="$(checkout_worktrees_dir)"
+    checkout_worktrees_dir path
   else
     if [[ "$raw" == "~" ]]; then
       raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}"
     elif [[ "$raw" == "~/"* ]]; then
-      # ${raw:2}, not ${raw#~/}: an unquoted ~ in a strip pattern is itself
-      # tilde-expanded to $HOME, so the prefix would never match.
       raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}/${raw:2}"
     fi
-
-    raw="$(strip_trailing_slashes "$raw")"
-
-    if [[ "$raw" == /* ]]; then
-      path="$raw"
-    else
-      path="$PROJECT_ROOT/$raw"
+    strip_trailing_slashes "$raw" raw
+    if [[ "$raw" == /* ]]; then path="$raw"; else path="$PROJECT_ROOT/$raw"; fi
+  fi
+  if [[ "$path" != / ]]; then
+    parent="${path%/*}"; name="${path##*/}"
+    if [[ -d "$parent" ]]; then
+      canonical_existing_dir "$parent" physical
+      path="$physical/$name"
     fi
   fi
-
-  [[ "$path" == "/" ]] && { printf '/\n'; return; }
-
-  local parent name
-  parent="$(dirname "$path")"
-  name="$(basename "$path")"
-  if [[ -d "$parent" ]]; then
-    printf '%s/%s\n' "$(cd "$parent" && pwd -P)" "$name"
-  else
-    printf '%s\n' "$path"
-  fi
+  if [[ -n "${1:-}" ]]; then printf -v "$1" '%s' "$path"; else printf '%s\n' "$path"; fi
 }
 
 # Layout: project/main (repo) + configured parent dir (worktrees)
-TREES_DIR="$(resolve_worktree_base_dir)"
+resolve_worktree_base_dir TREES_DIR
 
 # The branch new work starts from and merged work is proven against:
 # WORKTREE_DEFAULT_BRANCH when set, else the repository's default branch on
@@ -1168,9 +1176,12 @@ fetch_origin() {
   fetch_ownership_remote origin
 }
 
-worktree_path() {
+worktree_path() { # ISSUE [OUT_VAR]
+  local _worktree_issue="" _worktree_result=""
   validate_issue_id "$1" || return 1
-  echo "$TREES_DIR/$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+  issue_branch_name "$1" _worktree_issue
+  _worktree_result="$TREES_DIR/$_worktree_issue"
+  if [[ -n "${2:-}" ]]; then printf -v "$2" '%s' "$_worktree_result"; else printf '%s\n' "$_worktree_result"; fi
 }
 
 # The path a NEW worktree takes, by the kind of host it is created on. A local
@@ -1186,25 +1197,37 @@ worktree_path() {
 # lanes. Every reader finds a hosted tree through worktree_path_for_issue,
 # never through this spelling.
 worktree_new_path() { # HOST_KIND ISSUE
-  local name="${WORKTREE_HOSTED_NAME:-lane}"
+  local name="${WORKTREE_HOSTED_NAME:-lane}" _new_base="" _new_path=""
   case "$1" in
-    local) worktree_path "$2" ;;
+    local) worktree_path "$2" "${3:-}"; return ;;
     hosted)
       if ! is_path_segment "$name"; then
         worktree_message hosted-name-invalid "$name" "Error: WORKTREE_HOSTED_NAME must be one path segment of letters, numbers, '.', '_' or '-', starting with a letter or number and without '..'." >&2
         return 1
       fi
-      printf '%s/%s\n' "$(checkout_worktrees_dir)" "$name"
+      checkout_worktrees_dir _new_base
+      _new_path="$_new_base/$name"
       ;;
     *)
       worktree_message host-kind-invalid "$1" "Error: internal: a new worktree path was asked for host kind '$1'; only local and hosted exist." >&2
       return 1
       ;;
   esac
+  if [[ -n "${3:-}" ]]; then printf -v "$3" '%s' "$_new_path"; else printf '%s\n' "$_new_path"; fi
 }
 
-issue_branch_name() {
-  echo "$1" | tr '[:upper:]' '[:lower:]'
+issue_branch_name() { # ISSUE [OUT_VAR]
+  local _issue_lower="" _issue_char="" _issue_prefix="" _issue_index
+  local _issue_upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ _issue_alphabet=abcdefghijklmnopqrstuvwxyz
+  for ((_issue_index=0; _issue_index<${#1}; _issue_index++)); do
+    _issue_char="${1:_issue_index:1}"
+    _issue_prefix="${_issue_upper%%"$_issue_char"*}"
+    if [[ "$_issue_prefix" != "$_issue_upper" ]]; then
+      _issue_char="${_issue_alphabet:${#_issue_prefix}:1}"
+    fi
+    _issue_lower="$_issue_lower$_issue_char"
+  done
+  if [[ -n "${2:-}" ]]; then printf -v "$2" '%s' "$_issue_lower"; else printf '%s\n' "$_issue_lower"; fi
 }
 
 # The issue a worktree was created for, in lower case, recorded in the tree's
@@ -1503,7 +1526,7 @@ registered_worktree_path() {
       printf '%s\n' "$registered_real"
       return 0
     fi
-  done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+  done < <(exec git -C "$PROJECT_ROOT" worktree list --porcelain -z)
   return 1
 }
 
@@ -1536,7 +1559,7 @@ require_non_main_project_worktree() {
 }
 
 worktree_for_branch() {
-  local branch="$1" line="" current_path=""
+  local branch="$1" line="" current_path="" _branch_path=""
   while IFS= read -r -d '' line; do
     case "$line" in
       worktree\ *) current_path="${line#worktree }" ;;
@@ -1547,13 +1570,14 @@ worktree_for_branch() {
           # Report the physical path when it resolves; git may have recorded
           # a lexical (symlinked) spelling. A stale registration whose
           # directory is gone is reported as recorded.
-          canonical_existing_dir "$current_path" 2>/dev/null || printf '%s\n' "$current_path"
+          canonical_existing_dir "$current_path" _branch_path 2>/dev/null || _branch_path="$current_path"
+          if [[ -n "${2:-}" ]]; then printf -v "$2" '%s' "$_branch_path"; else printf '%s\n' "$_branch_path"; fi
           return 0
         fi
         ;;
       '') current_path="" ;;
     esac
-  done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+  done < <(exec git -C "$PROJECT_ROOT" worktree list --porcelain -z)
   return 1
 }
 
@@ -1563,27 +1587,33 @@ worktree_for_branch() {
 # WORKTREE_BASE_DIR keep working unmoved (no auto-migration), then to the
 # hosted lane path when the tree there records the issue, which finds a hosted
 # tree whose HEAD a paused restack detached. The main checkout is never a
-# fallback target.
+# fallback target unless the caller requests checkout-fallback.
 worktree_path_for_issue() {
-  local issue="$1" configured="" registered="" hosted=""
+  local issue="$1" configured="" registered="" hosted="" branch=""
   validate_issue_id "$issue" || return 1
-  configured="$(worktree_path "$issue")"
+  worktree_path "$issue" configured
   if [[ -e "$configured" || -L "$configured" ]]; then
+    if [[ "${2:-}" == checkout-fallback && ! -d "$configured" ]]; then configured="$CALLER_ROOT"; fi
     printf '%s\n' "$configured"
     return 0
   fi
-  registered="$(worktree_for_branch "$(issue_branch_name "$issue")" 2>/dev/null || true)"
-  if [[ -n "$registered" ]] && ! same_canonical_dir "$registered" "$PROJECT_ROOT"; then
+  issue_branch_name "$issue" branch
+  worktree_for_branch "$branch" registered 2>/dev/null || registered=""
+  if [[ -n "$registered" && "$registered" != "$PROJECT_ROOT" ]]; then
+    if [[ "${2:-}" == checkout-fallback && ! -d "$registered" ]]; then registered="$CALLER_ROOT"; fi
     printf '%s\n' "$registered"
     return 0
   fi
   # An invalid WORKTREE_HOSTED_NAME names no path a hosted create could have
   # made, so it leaves nothing to find here.
-  hosted="$(worktree_new_path hosted 2>/dev/null)" || hosted=""
+  worktree_new_path hosted "" hosted 2>/dev/null || hosted=""
   if [[ -n "$hosted" && -d "$hosted" ]] && is_registered_project_worktree "$hosted" &&
      [[ "$(recorded_worktree_issue "$hosted" || true)" == "$(issue_branch_name "$issue")" ]]; then
     printf '%s\n' "$hosted"
     return 0
+  fi
+  if [[ "${2:-}" == checkout-fallback && ! -d "$configured" ]]; then
+    configured="$CALLER_ROOT"
   fi
   printf '%s\n' "$configured"
 }
@@ -3589,7 +3619,9 @@ case "${1:-}" in
     ;;
 
   path)
-    if [[ "${2:-}" == --hosted && $# -eq 2 ]]; then
+    if [[ "${2:-}" == --checkout-fallback ]]; then
+      worktree_path_for_issue "${3:?Error: path requires an issue ID}" checkout-fallback
+    elif [[ "${2:-}" == --hosted && $# -eq 2 ]]; then
       worktree_new_path hosted
     else
       worktree_path_for_issue "${2:?Error: path requires an issue ID}"

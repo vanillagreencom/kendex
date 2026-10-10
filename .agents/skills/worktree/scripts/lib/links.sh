@@ -10,12 +10,16 @@
 # provisioned private copies. The git-hook auto-repair installer stays in the
 # worktree script, beside the hook text it writes.
 
-strip_trailing_slashes() {
-  local path="$1"
-  while [[ "$path" != "/" && "$path" == */ ]]; do
-    path="${path%/}"
+strip_trailing_slashes() { # PATH [OUT_VAR]
+  local _trailing_path="$1"
+  while [[ "$_trailing_path" != "/" && "$_trailing_path" == */ ]]; do
+    _trailing_path="${_trailing_path%/}"
   done
-  printf '%s\n' "$path"
+  if [[ -n "${2:-}" ]]; then
+    printf -v "$2" '%s' "$_trailing_path"
+  else
+    printf '%s\n' "$_trailing_path"
+  fi
 }
 
 normalize_worktree_config_path() {

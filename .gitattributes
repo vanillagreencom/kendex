@@ -40,3 +40,4 @@ skills/orch/tests/fixtures/ci-wait/runs-request-only-active.json text eol=lf
 tools/release-previous-tag text eol=lf
 skills/harness-ci/templates/ci.yml text eol=lf
 .agents/skills/harness-ci/templates/ci.yml text eol=lf
+skills/orch/tests/fixtures/mail-read-base.json text eol=lf
