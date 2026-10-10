@@ -428,3 +428,4 @@ WORKTREE_CLI = ""
 # `slack listen --status` shows held-by=master; owner messages still reach the
 # overseer. skills/slack/README.md says what posts on resume. Empty: no hold.
 SLACK_MASTER_FILE = "~/.fleet/master-live"
+SLACK_MASTER_MAX_AGE = "1800"
