@@ -62,7 +62,7 @@ assert_eq "$RC" "0" "a restart with suppressed replies succeeds"
 assert_eq "$(sk_state "[.messages.${CH}[] | select(.user == \"UBOT\" and (.text == \"voice reply.\" or .text == \"terminal reply.\"))] | length")" "0" "suppressed replies stay absent across relay starts"
 
 # The copied relay keeps the classifier but bypasses its posting decision.
-sk_mutant reply-medium relay.py 'if not ref or slack_reply or owner_ask else "skip"' 'if True or not ref or slack_reply or owner_ask else "skip"'
+sk_mutant reply-medium relay.py 'if not ref or owner_ask else "skip"' 'if True or not ref or owner_ask else "skip"'
 sk_lm "$ROOT" notice --item overseer --to owner --ref "$VOICE" --file "$(sk_text control 'Control reply.')" >/dev/null
 sk_poll "$ROOT"
 assert_eq "$RC" "0" "the mutant reaches notice posting"

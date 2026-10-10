@@ -54,8 +54,9 @@ first poll past its deadline while it stays open; the journal's `overdue`
 line keeps that post from ever repeating.
 
 While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
-answers the overseer, and the relay posts no envelope from the mailbox;
-reading the channel and replying there go on. When the file goes stale or
+answers the overseer, and the relay holds mailbox posts except replies to
+messages the owner typed in the channel, which still post in their threads.
+Reading the channel goes on. When the file goes stale or
 absent the relay resumes. The master's watch writes its last mailbox read
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices on lines at or below that count and journals their ids; later
@@ -305,6 +306,7 @@ class RootRelay:
         if touched is not None and now - touched < self.presence.master_max_age:
             if not self.state.held:
                 self.journal.append(t="hold", at=format_at(touched))
+            self.post_events([routed for routed in self.routes(self.mail.events()) if routed[1] == "reply"])
         else:
             events = self.mail.events()
             if self.state.held:
@@ -616,7 +618,7 @@ class RootRelay:
             )
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
-        """Each envelope not yet carried and what it takes: `ask`, `notice`,
+        """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
         `answer`, `resolution`, `seen` for a notice the master read on resume,
         `overdue` for a carried reserved ask open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record."""
@@ -669,7 +671,7 @@ class RootRelay:
                     r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", str(reference.get("delivery_id", ""))
                 )
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                route = "notice" if not ref or slack_reply or owner_ask else "skip"
+                route = "reply" if slack_reply else "notice" if not ref or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:
@@ -689,7 +691,7 @@ class RootRelay:
                     landed.append(str(envelope["id"]))
             elif route == "overdue":
                 self.post_overdue(envelope)
-            elif route == "notice":
+            elif route in ("notice", "reply"):
                 self.post_notice(envelope)
             elif route == "answer":
                 self.post_answer(envelope, ask)

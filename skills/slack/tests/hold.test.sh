@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # `slack listen` under SLACK_MASTER_FILE: while the file is fresh a notice
-# and an ask are held, no envelope is posted, an owner message still lands,
+# and an ask are held, an owner message still lands and its reply posts once
+# in that message's thread,
 # the hold is journaled once and `--status` shows held-by=master. Once the
 # file is stale the resume posts the open ask, the answer to an ask the
 # channel shows open and notices past the master's seen line count. Its
@@ -59,7 +60,18 @@ assert_eq "$RC=$(count "$CH" 'Held notice.')=$(count "$CH" 'Held and open?')=$(c
   "0=0=0=0=0" "a fresh master file holds the notice, the ask, the answer and the pending notice"
 assert_eq "$(jq -r 'select(.kind == "directive") | .delivery_id' "$(sk_box "$ROOT")/to-lane.jsonl")" "$CH:$TS1" \
   "an owner message in the channel still lands while held"
+DIRECTIVE="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$DIRECTIVE" --file "$(sk_text reply 'Reply while held.')" >/dev/null
+REPLY="$(last_id "$ROOT")"
+notice "$ROOT" unrelated 'Unrelated while held.'
 sk_poll "$ROOT" "$HOLD"
+assert_eq "$RC=$(count "$CH" 'Reply while held.')=$(sk_state ".messages.${CH}[] | select(.text | contains(\"Reply while held.\")) | .thread_ts")" \
+  "0=1=$TS1" "a reply to the delivered directive posts once in the owner's thread while held"
+assert_eq "$(count "$CH" 'Unrelated while held.')" "0" "an unrelated notice in the same poll stays held"
+assert_eq "$(jq -r --arg id "$REPLY" 'select(.t == "out" and .id == $id and .state == "resolved") | .thread' "$(sk_journal "$ROOT")")" \
+  "$TS1" "the reply's out line carries its posted thread"
+sk_poll "$ROOT" "$HOLD"
+assert_eq "$(count "$CH" 'Reply while held.')" "1" "a held poll after restart does not repeat the reply"
 assert_eq "$(holds "$ROOT")" "hold " "the hold is journaled once"
 row "$ROOT"
 assert_has "$LINE" " held-by=master" "the status row shows the hold"
@@ -77,6 +89,7 @@ assert_has "$(sk_state ".messages.${CH}[] | select(.thread_ts == \"$ASK0_TS\") |
   "an ask the channel shows open gets its held answer, so its thread closes"
 assert_eq "$(holds "$ROOT")=$(jq -r 'select(.t == "resume") | .asks | join(",")' "$(sk_journal "$ROOT")")" "hold resume =$ASK1" \
   "the resume is journaled with the ask it posted"
+assert_eq "$(count "$CH" 'Reply while held.')" "1" "the resume does not post the held reply again"
 row "$ROOT"
 assert_lacks "$LINE" "held-by=" "the status row drops the hold"
 notice "$ROOT" n2 'After the resume.'
@@ -361,6 +374,31 @@ assert_eq "$RC" "2" "an unreadable root setting refuses startup instead of disab
 assert_has "$ERR1" "slack: setting-invalid=root=$R settings-reader=" "the root settings failure names its root and reader"
 
 # --- controls, one mutant per rule --------------------------------------------------
+# The same held reply and unrelated-notice assertions must fail when the
+# held branch drops replies or posts every route.
+while read -r name replacement; do
+  R="$(sk_new_root "reply-control-$name")"
+  sk_bind "$R"
+  sk_poll "$R"
+  fresh
+  CHANNEL="$(sk_channel "$R")"
+  TS="$(sk_inject "$CHANNEL" U001 "Still heard in $name.")"
+  sk_poll "$R" "$HOLD"
+  DIRECTIVE="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$R")/to-lane.jsonl")"
+  sk_lm "$R" notice --item overseer --to owner --ref "$DIRECTIVE" --file "$(sk_text "$name-reply" "Reply in $name.")" >/dev/null
+  notice "$R" "$name-unrelated" "Unrelated in $name."
+  sk_mutant "$name" relay.py 'self\.post_events\(\[routed for routed in self\.routes\(self\.mail\.events\(\)\) if routed\[1\] == "reply"\]\)' "$replacement"
+  sk_poll "$R" "$HOLD"
+  case "$name" in
+    no-held-reply) sk_assert_red "$RC=$(count "$CHANNEL" "Reply in $name.")=$(sk_state ".messages.${CHANNEL}[] | select(.text | contains(\"Reply in $name.\")) | .thread_ts")" "0=1=$TS" "control: dropping held replies fails the reply row" ;;
+    all-held-routes) sk_assert_red "$(count "$CHANNEL" "Unrelated in $name.")" "0" "control: posting every held route fails the unrelated-notice row" ;;
+  esac
+  sk_bin_reset
+done <<'ROWS'
+no-held-reply if False: \g<0>
+all-held-routes self.post_events([routed for routed in self.routes(self.mail.events()) if True or routed[1] == "reply"])
+ROWS
+
 # held ROOT — a bound root with a notice written under a fresh file and polled.
 
 held() {
