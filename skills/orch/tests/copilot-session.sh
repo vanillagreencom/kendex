@@ -37,7 +37,7 @@ status() {
 # statusline NAME [SCRIPTS] < JSON — run the command under ACCOUNT; OUT, ERR, RC.
 statusline() {
   local rc=0
-  OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" COPILOT_HOME="$ACCOUNT" \
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" COPILOT_HOME="$ACCOUNT" \
     "${2:-$SCRIPTS_DIR}/copilot-statusline" 2>"$TMP_ROOT/$1.err")" || rc=$?
   RC="$rc"
   ERR="$(cat "$TMP_ROOT/$1.err")"

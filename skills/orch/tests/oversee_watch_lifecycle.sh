@@ -344,7 +344,7 @@ while IFS='|' read -r reader want_rc; do
     mutant) reader=$probe_mutant ;;
   esac
   rc=0
-  env -i "PATH=$TMP_ROOT/probe-bin:$PATH" bash -euo pipefail -c '
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "PATH=$TMP_ROOT/probe-bin:$PATH" bash -euo pipefail -c '
     source "$1"
     source "$2"
     rc=0

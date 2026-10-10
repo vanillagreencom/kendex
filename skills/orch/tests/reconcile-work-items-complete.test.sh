@@ -106,7 +106,7 @@ SH
 chmod +x "$TMP_ROOT/bin/date"
 
 complete() { # ID MET
-  (cd "$R" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+  (cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" \
     "$BASH" "$R/.agents/skills/linear/scripts/linear.sh" issues complete "$@")
 }
@@ -154,7 +154,7 @@ jq --arg d '## Done when
 
 OUT=""
 RC=0
-OUT="$(cd "$R" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
+OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
   REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || RC=$?
 assert_eq "$RC" 1 "the sweep reports a finding"
 assert_not_contains "$OUT" "issue=T-1" "a fully met completion leaves no done-unchecked finding"
@@ -181,7 +181,7 @@ for control in overdue empty stale fields branch release; do
     branch) mutate_file "$MUTANT_RW" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'(.errors | length) == 0'"; expected='verifying-invalid issue=T-8' ;;
   esac
   CONTROL_RC=0
-  CONTROL_OUT="$(cd "$R" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
+  CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
     REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" RECONCILE_STALE_HOURS=0 "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
   assert_eq "$CONTROL_RC" 1 "control: $control reaches findings"
   if [[ "$control" == stale || "$control" == release ]]; then

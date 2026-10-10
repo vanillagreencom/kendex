@@ -207,7 +207,7 @@ world() {
 read_proof() {
   RC=0
   rm -f "$WORLD/pr-read"
-  (cd -- "$READ_REPO"; env -i PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r) > "$WORLD/out" 2> "$WORLD/err" || RC=$?
+  (cd -- "$READ_REPO"; env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r) > "$WORLD/out" 2> "$WORLD/err" || RC=$?
   OUT="$(cat "$WORLD/out")"
   ERR="$(sed -n '/^refresh-ci-proof: cause=/p' "$WORLD/err")"
 }

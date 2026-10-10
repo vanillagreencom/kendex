@@ -319,7 +319,7 @@ if [ -n "\${VIRTUAL_CLOCK:-}" ]; then
 fi
 lh=""
 [ -z "\${LANE_HOST_ACCOUNTS:-}" ] || lh="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host LANE_HOST_STUB_ACCOUNTS=\$LANE_HOST_ACCOUNTS LANE_HOST_STUB_LOG=$TMP_ROOT/host.log"
-cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i HOME="$H" PATH="\${PATH_PREFIX:+\$PATH_PREFIX:}\$clock_path$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
+cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="\${PATH_PREFIX:+\$PATH_PREFIX:}\$clock_path$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \$clock \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
@@ -359,7 +359,7 @@ stage_usage_pair() {
   local row="$1" current="$2" prior="$3" gap="$4" state="$TMP_ROOT/state-$1" f now
   rm -rf -- "${state:?}"
   claude_usage "$current" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-  (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" LANES_HOME="$H" \
+  (cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$BIN:$PATH" LANES_HOME="$H" \
     FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     "$SRC_DIR/lanes" list --harness claude --json --no-cache >/dev/null)

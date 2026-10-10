@@ -28,11 +28,11 @@ load_pattern() {
 # The two readers, each printing sensitive, clean or error.
 grep_verdict() { # PATTERN FILE
   local rc=0
-  env -i PATH="$PATH" LC_ALL=C grep -aiE -e "$1" -- "$2" >/dev/null 2>&1 || rc=$?
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" LC_ALL=C grep -aiE -e "$1" -- "$2" >/dev/null 2>&1 || rc=$?
   case "$rc" in 0) echo sensitive ;; 1) echo clean ;; *) echo error ;; esac
 }
 python_verdict() { # PATTERN FILE
-  env -i PATH="$PATH" python3 -B -c '
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" python3 -B -c '
 import re, sys
 data = open(sys.argv[2], "rb").read()
 print("sensitive" if re.compile(sys.argv[1].encode(), re.I | re.M).search(data) else "clean")

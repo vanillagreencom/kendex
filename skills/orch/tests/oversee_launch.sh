@@ -150,7 +150,7 @@ run_oversee() {
   shift
   rm -f "${TMP_ROOT:?}"/argv.*
   RC=0
-  OUT="$(cd "${RUN_DIR:-$TMP_ROOT/work}" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
+  OUT="$(cd "${RUN_DIR:-$TMP_ROOT/work}" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 \
     ${pref[@]+"${pref[@]}"} ORCH_TMUX_SESSION=fleet \

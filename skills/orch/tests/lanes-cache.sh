@@ -70,7 +70,7 @@ cache_run() { # STATE POLICY COMMAND...
   local -a policy
   read -ra policy <<<"$2"
   shift 2
-  (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" \
+  (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" \
     REAL_JQ="$REAL_JQ" CREDENTIAL_LOG="$TMP_ROOT/credentials" CACHE_READ_LOG="$TMP_ROOT/cache-reads" \
     REAL_RM="$REAL_RM" CACHE_RM_FAIL="${CACHE_RM_FAIL:-0}" \
     REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" \

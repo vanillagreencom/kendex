@@ -179,7 +179,7 @@ contract() {
     response="$(jq -c '.response' <<<"$line")" || return 1
     class="$(jq -r '.response.request.class' <<<"$line")" || return 1
     rc=0
-    answer="$(cd -- "$TMP_ROOT" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" \
+    answer="$(cd -- "$TMP_ROOT" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" \
       kendex tier-model claude --model "$class" --json --runtime-context-json "$context" 2>"$TMP_ROOT/core.err")" || rc=$?
     if [[ $rc -ne 0 ]]; then
       printf '%s core-exit=%s\n' "$name" "$rc"
@@ -210,7 +210,7 @@ core_probe() {
     printf 'skip no kendex on PATH\n'
     return
   fi
-  probe="$(cd -- "$TMP_ROOT" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" \
+  probe="$(cd -- "$TMP_ROOT" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" \
     kendex tier-model claude --model standard --json --runtime-context-json "$NO_LIST" 2>"$TMP_ROOT/probe.err")" || rc=$?
   if [[ $rc -ne 0 ]]; then
     IFS= read -r line <"$TMP_ROOT/probe.err" || true

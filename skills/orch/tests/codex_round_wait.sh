@@ -135,7 +135,7 @@ while IFS='|' read -r name kind caller dependency poll_source lands elapsed verd
       "$SKILL_DIR/scripts/workflow-state" --state-dir "$case_dir/tmp" init issue-3409 --worktree "$case_dir" --branch fixture >/dev/null ;;
     *) echo "codex_round_wait: kind=$kind" >&2; exit 1 ;;
   esac
-  env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" ROUND_CASE="$case_dir" ROUND_LANDS="$lands" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" ROUND_CASE="$case_dir" ROUND_LANDS="$lands" \
     ORCH_STATE_DIR="$case_dir/tmp" ROUND_COMMAND="$command_source" ROUND_ARTIFACT="$artifact" ROUND_RESULT="$result_filter" \
     ROUND_SOURCE="$TMP_ROOT" REAL_SLEEP="$REAL_SLEEP" REAL_DATE="$REAL_DATE" \
     ROUND_POLL_PATH="$TMP_ROOT/$dependency-bin" ROUND_POLL_SOURCE="$poll_source" \

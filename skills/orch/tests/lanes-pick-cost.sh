@@ -66,7 +66,7 @@ run_lanes() { # HOMES RETIRE PROVIDER VERB FORMAT
   done
   : > "$TMP_ROOT/counter"
   RC=0
-  (cd "$TMP_ROOT/home" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+  (cd "$TMP_ROOT/home" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     COST_COUNTER="$TMP_ROOT/counter" COST_REAL_DATE="$REAL_DATE" LANES_HOME="$TMP_ROOT/home" \
     ORCH_LANE_RETIRE="$retire" ORCH_LANE_EXCLUDE='blocked' ORCH_LANE_ALIASES=' aclaude = work , bclaude = blocked ' \
     ORCH_LANE_CLOUD_REPOS=' work = Owner/Repo , dclaude = Other/Repo ' \
@@ -146,7 +146,7 @@ assert_eq "$RC" 0 'provider policy fixture picks with the baseline exit'
 EXPECTED='{"alias":"work","harness":"claude","config_dir":"ROOT/home/.aclaude","retire_date":"2099-01-01","measured_through":"host","status":"ok","refreshable":false,"plan":null,"session_5h_pct":10,"weekly_pct":20,"model_pct":null,"model_label":null,"model_buckets":[],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":80,"binding_bucket":"weekly","binding_resets_at":null,"usage_age_s":null,"resets":{"session":null,"weekly":null,"model":null,"monthly":null},"detail":null,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":0.1488095238095238,"binding_projected_headroom_pct":80,"session_projected_headroom_pct":90,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":80,"projected_window":{"bucket":"weekly","pct":20,"resets_at":null},"selection_score":80,"effective_headroom_pct":80,"qualifying_count":2}'
 assert_eq "${OUT//$TMP_ROOT/ROOT}" "$EXPECTED" 'provider policy fixture keeps the baseline JSON' "$TMP_ROOT/err"
 rc=0
-err="$(cd "$TMP_ROOT/home" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_RETIRE='cclaude=2000-01-01' \
+err="$(cd "$TMP_ROOT/home" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_RETIRE='cclaude=2000-01-01' \
   OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/check-state" "$LANES" check "$TMP_ROOT/home/.cclaude" 2>&1)" || rc=$?
 assert_eq "$rc" 4 'fleet named-lane gate keeps retirement exit'
 assert_eq "${err%%$'\n'*}" "lanes: lane-retired dir=$TMP_ROOT/home/.cclaude date=2000-01-01" 'fleet named-lane gate keeps machine-readable retirement line'

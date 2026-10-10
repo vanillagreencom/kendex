@@ -58,7 +58,7 @@ SDK
 
 observe() { # MODE
   : > "$TMP_ROOT/sdk.log"
-  OUTPUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" COPILOT_HOME=fixture-account MODE="$1" FAKE_LOG="$TMP_ROOT/sdk.log" node "$HELPER" fixture-account fixture-host)"
+  OUTPUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" COPILOT_HOME=fixture-account MODE="$1" FAKE_LOG="$TMP_ROOT/sdk.log" node "$HELPER" fixture-account fixture-host)"
   jq -e 'type == "object" and (.models | type) == "object"' <<<"$OUTPUT" >/dev/null || return 1
 }
 observe complete

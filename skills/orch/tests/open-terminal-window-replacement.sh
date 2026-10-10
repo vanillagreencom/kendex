@@ -24,7 +24,7 @@ cleanup() {
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
-tm() { env -i HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" "$REAL_TMUX" -S "$SOCK" "$@"; }
+tm() { env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" "$REAL_TMUX" -S "$SOCK" "$@"; }
 
 # Copies resolve their project configuration in this isolated repository.
 LIVE="$(mutant_scripts repo open-terminal)/open-terminal"
@@ -118,7 +118,7 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
       LANE_HOST_STUB_WAIT_GATE="$RUN/gate")
   fi
   RC=0
-  OUT="$(cd -- "$TMP_ROOT/repo" && env -i HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" \
+  OUT="$(cd -- "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" \
     TMUX="$ADDR" ORCH_TMUX_SESSION=fleet ORCH_LANE_HOST=local ORCH_OVERSEER_LANES=1000 \
     WORKTREE_CLI="$BIN/worktree" OT_WT_LOG="$RUN/worktree.log" OT_WT_FIXED="$RUN/tree" \
     REPLACEMENT_FAIL="$failure" ${host_env[@]+"${host_env[@]}"} \
@@ -131,7 +131,7 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
   # assume the shell has executed the paste when open-terminal returns.
   STATE=""
   for i in $(seq 50); do
-    STATE="$(env -i HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" TMUX="$ADDR" \
+    STATE="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" TMUX="$ADDR" \
       "$SCRIPTS_DIR/lanes" state "fleet:$TITLE")"
     [[ "$host" != local || "$RC" != 0 || "$STATE" == working || "$mode" != --relaunch || "$tracker" == github ]] && break
     sleep 0.1

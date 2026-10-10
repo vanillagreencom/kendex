@@ -30,7 +30,7 @@ if [[ "${1:-}" == --case ]]; then
   printf '#!%s\nif [[ "${1:-}" == kill-window && -f %q ]]; then exit 1; fi\nexec %q -S %q "$@"\n' \
     "$BASH" "$ROOT/close-fails" "$REAL_TMUX" "$ROOT/s" > "$ROOT/real-bin/tmux"
   chmod +x "$ROOT/real-bin/tmux"
-  tm() { env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
+  tm() { env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
   trap 'tm kill-server 2>/dev/null || true' EXIT
   trap 'exit 143' TERM
   tm -f /dev/null new-session -d -s fixture -x 200 -y 50
@@ -63,7 +63,7 @@ if [[ "${1:-}" == --case ]]; then
     local harness_args=(--harness "$HARNESS")
     if [[ "$MODE" == auto-* ]]; then harness_args=(); lane="auto:$HARNESS"; fi
     RC=0
-    env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" ORCH_TMUX_SESSION=fixture \
+    env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" ORCH_TMUX_SESSION=fixture \
       LINEAR_TEAM= ORCH_LANE_HOST=local WORKTREE_CLI="$ROOT/bin/worktree" LANES_CLI="$ROOT/bin/lanes" \
       OT_WT_LOG="$ROOT/worktree.log" OT_WT_FIXED="$ROOT/worktree-$item" ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SETTLE_MS=1 \
       ORCH_OVERSEER_LANES=1 OVERSEE_WATCH_STATE_DIR="$ROOT/claims" \
@@ -130,7 +130,7 @@ run_case() { # NAME SCRIPT MODE EXPECT [HARNESS]
   local name="$1" script="$2" mode="$3" want="$4" harness="${5:-claude}" rc=0 actual=missing
   RUN="$TMP_ROOT/$name"
   mkdir -p "$RUN"
-  env -i PATH="$PATH" HOME="$TMP_ROOT" timeout 20 "$BASH" "$TEST_DIR/open-terminal-lane-account.sh" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" timeout 20 "$BASH" "$TEST_DIR/open-terminal-lane-account.sh" \
     --case "$RUN" "$script" "$mode" "$harness" > "$RUN/log" 2>&1 || rc=$?
   for log in first-launch launch next-launch; do
     [[ ! -f "$RUN/$log.log" ]] || cat "$RUN/$log.log" >> "$RUN/log"

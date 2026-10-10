@@ -48,7 +48,7 @@ while IFS='|' read -r name layer expected; do
     args=("PATH=$PATH" "HOME=$project/home")
     [[ "$layer" == home ]] || args+=("FLEET_DIR=$project/fleet")
     [[ "$layer" != environment ]] || args+=("ORCH_ARCHIVE_ROOT=$project/environment archive")
-    got="$(cd -- "$project" && env -i "${args[@]}" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS")"
+    got="$(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "${args[@]}" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS")"
     assert_eq "${got%/*}" "$project/$expected/repo/oversee" "$name: archive folder"
     assert_eq "$(tar -xOzf "$got" "${project#/}/input")" 'archive bytes' "$name: archive keeps input bytes"
     modes="$(python3 -c 'import pathlib, sys; p = pathlib.Path(sys.argv[1]); print(oct(p.parent.stat().st_mode & 0o777), oct(p.stat().st_mode & 0o777))' "$got")"
@@ -69,7 +69,7 @@ MUTANT="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-root lib/state-archive
 mutate_file "$MUTANT/lib/state-archive.sh" 'ARCHIVE_DIR="$root/${repo_root##*/}/oversee"' \
     'ARCHIVE_DIR="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"'
 project="$TMP_ROOT/settings/repo"
-got="$(cd -- "$project" && env -i PATH="$PATH" HOME="$project/home" FLEET_DIR="$project/fleet" \
+got="$(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$project/home" FLEET_DIR="$project/fleet" \
     "$BASH" "$TMP_ROOT/write.sh" "$MUTANT")"
 [[ "${got%/*}" != "$project/settings archive/repo/oversee" ]] \
     && pass 'control: ignoring the root fails the configured-folder assertion' \
@@ -85,7 +85,7 @@ printf '%s\n' "$PWD/refused archive"
 exit 1
 STUB
 rc=0
-(cd -- "$project" && env -i PATH="$PATH" HOME="$project/home" "$BASH" "$TMP_ROOT/write.sh" "$REFUSED") \
+(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$project/home" "$BASH" "$TMP_ROOT/write.sh" "$REFUSED") \
     > "$TMP_ROOT/refused.out" 2> "$TMP_ROOT/refused.err" || rc=$?
 assert_eq "$rc" 1 'a failed setting read refuses the archive'
 [[ ! -e "$project/refused archive" && ! -s "$TMP_ROOT/refused.out" ]] \
@@ -97,7 +97,7 @@ mutate_file "$CONTROL/lib/state-archive.sh" \
     'root="$("$SCRIPT_DIR/orch-env" ORCH_ARCHIVE_ROOT "")" || return 1' \
     'root="$("$SCRIPT_DIR/orch-env" ORCH_ARCHIVE_ROOT "")" || true'
 rc=0
-(cd -- "$project" && env -i PATH="$PATH" HOME="$project/home" "$BASH" "$TMP_ROOT/write.sh" "$CONTROL") \
+(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$project/home" "$BASH" "$TMP_ROOT/write.sh" "$CONTROL") \
     > "$TMP_ROOT/control.out" 2> "$TMP_ROOT/control.err" || rc=$?
 assert_eq "$rc" 0 'control: ignoring the failed read breaks the refusal assertion'
 [[ -s "$TMP_ROOT/control.out" ]] && pass 'control: the failed read now creates an archive' \
@@ -113,7 +113,7 @@ printf 'default archive bytes\n' > "$project/input"
 while IFS='|' read -r name fleet expected; do
     args=("PATH=$CONTROL_ROOT/no-python-bin" "HOME=$project/home" "ORCH_ARCHIVE_ROOT=")
     [[ "$fleet" == unset ]] || args+=("FLEET_DIR=$fleet")
-    got="$(cd -- "$project" && env -i "${args[@]}" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS")"
+    got="$(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "${args[@]}" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS")"
     assert_eq "${got%/*}" "$project/$expected/repo/oversee" "$name: default works without Python outside Git"
     assert_eq "$(tar -xOzf "$got" "${project#/}/input")" 'default archive bytes' "$name: default archive keeps input"
 done <<ROWS
@@ -125,13 +125,13 @@ mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts default-python lib/state-archi
 mutate_file "$mutant/lib/state-archive.sh" "printf '%s\\n' \"\$root\"" \
     'python3 -c '\''import sys; print(sys.argv[1])'\'' "$root"'
 rc=0
-(cd -- "$project" && env -i PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" ORCH_ARCHIVE_ROOT= \
+(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" ORCH_ARCHIVE_ROOT= \
     "$BASH" "$TMP_ROOT/write.sh" "$mutant") > "$TMP_ROOT/default-control.out" 2> "$TMP_ROOT/default-control.err" || rc=$?
 assert_eq "$rc" 1 'control: default Python dependency breaks the default archive assertion'
 [[ ! -s "$TMP_ROOT/default-control.out" ]] && pass 'control: default Python dependency writes no archive' \
     || fail 'control: default Python dependency writes no archive'
 rc=0
-(cd -- "$project" && env -i PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" \
+(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" \
     ORCH_ARCHIVE_ROOT="$CONTROL_ROOT/configured-archives" "$BASH" "$TMP_ROOT/write.sh" "$SCRIPTS") \
     > "$TMP_ROOT/python.out" 2> "$TMP_ROOT/python.err" || rc=$?
 assert_eq "$rc" 1 'configured roots refuse missing Python'
@@ -139,7 +139,7 @@ assert_contains "$(cat "$TMP_ROOT/python.err")" 'dependency-missing command=pyth
 mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-python-check lib/state-archive.sh)" || exit 1
 mutate_file "$mutant/lib/state-archive.sh" 'command -v python3 >/dev/null 2>&1 ||' 'true ||'
 rc=0
-(cd -- "$project" && env -i PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" \
+(cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$CONTROL_ROOT/no-python-bin" HOME="$project/home" \
     ORCH_ARCHIVE_ROOT="$CONTROL_ROOT/configured-archives" "$BASH" "$TMP_ROOT/write.sh" "$mutant") \
     > "$TMP_ROOT/python-control.out" 2> "$TMP_ROOT/python-control.err" || rc=$?
 before="$FAIL"
@@ -165,7 +165,7 @@ ln -s "$lane" "$TMP_ROOT/lane-link"
 
 root_refusal() { # SCRIPTS ROOT LABEL
     local rc=0
-    (cd -- "$project" && env -i PATH="${ARCHIVE_TEST_PATH:-$PATH}" ARCHIVE_REAL_GIT="$(command -v git)" ARCHIVE_GIT_FAILURE="${ARCHIVE_GIT_FAILURE:-listing}" HOME="$project/home" ORCH_ARCHIVE_ROOT="$2" \
+    (cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="${ARCHIVE_TEST_PATH:-$PATH}" ARCHIVE_REAL_GIT="$(command -v git)" ARCHIVE_GIT_FAILURE="${ARCHIVE_GIT_FAILURE:-listing}" HOME="$project/home" ORCH_ARCHIVE_ROOT="$2" \
         ARCHIVE_TEST_REPO="${ARCHIVE_TEST_REPO:-$project}" ARCHIVE_TEST_REMOVED="$removed" \
         "$BASH" "$TMP_ROOT/write.sh" "$1") > "$TMP_ROOT/root.out" 2> "$TMP_ROOT/root.err" || rc=$?
     assert_eq "$rc" 1 "$3: refuses an archive that cannot survive removal"

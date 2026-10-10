@@ -44,9 +44,9 @@ chmod +x "$BIN/lanes"
 source "$SCRIPTS_DIR/lib/lane-launch.sh"
 printf '%s\n' "$LAUNCH_UNATTENDED_TEXT" > "$TMP_ROOT/brief"
 PREF='pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:high'
-assert_eq "$(cd -- "$REPO" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" scripts/orch-env ORCH_LANE_PREFERENCE '')" '' 'orch-env leaves the lane preference unset'
+assert_eq "$(cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" scripts/orch-env ORCH_LANE_PREFERENCE '')" '' 'orch-env leaves the lane preference unset'
 printf '[env]\nORCH_LANE_PREFERENCE = "%s"\n' "$PREF" > "$REPO/kendex.settings.toml"
-assert_eq "$(cd -- "$REPO" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" scripts/orch-env ORCH_LANE_PREFERENCE '')" "$PREF" 'orch-env reads the program preference from settings'
+assert_eq "$(cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" scripts/orch-env ORCH_LANE_PREFERENCE '')" "$PREF" 'orch-env reads the program preference from settings'
 OT="$REPO/scripts/open-terminal"
 
 # Each observation uses fresh state, an explicit child environment and a GUI
@@ -63,7 +63,7 @@ observe() { # PREFERENCE WALL MODE TEXT
   : > "$RUN/picks"
   if [[ "$mode" == cmd ]]; then args=(--cmd "$text" --brief-file "$TMP_ROOT/brief")
   elif [[ -n "$text" ]]; then args=(--launch-flags "$text"); fi
-  (cd -- "$REPO" && env -i PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
+  (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
     ORCH_LANE_PREFERENCE="$preference" ORCH_OVERSEER_LANES=3 ORCH_TMUX_SESSION= \
     OVERSEE_WATCH_STATE_DIR="$RUN/claims" WORKTREE_CLI="$BIN/worktree" LANES_CLI="$BIN/lanes" \
     PI_CODING_AGENT_DIR="$TMP_ROOT/pi" CODEX_TEST_HOME="$TMP_ROOT/codex" \
@@ -252,7 +252,7 @@ for surface in batch wait; do
       printf 1 > "$RUN/panes"
     fi
     rc=0
-    (cd -- "$REPO" && env -i PATH="$WAIT_BIN:$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
+    (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$WAIT_BIN:$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
       ORCH_LANE_PREFERENCE='claude:fable:high,claude:opus:medium' ORCH_OVERSEER_LANES="$cap" ORCH_TMUX_SESSION=stub \
       ORCH_LANE_DIRS="$TMP_ROOT/home/.claude" ORCH_LANE_BURN_PCT_PER_HOUR=50 ORCH_LANES_USAGE_TTL=0 \
       ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/usage" OVERSEE_WATCH_STATE_DIR="$RUN/claims" \
@@ -323,7 +323,7 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$RUN/remote/srv/lane/.git"
   ot_fleet_state "$REPO/scripts/workflow-state" "$RUN/state" "$REPO" || exit 1
   [[ "$row" == no-brief ]] || brief_args=(--brief-file "$TMP_ROOT/brief")
-  (cd -- "$REPO" && env -i PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" LANES_HOME="$TMP_ROOT/home" \
+  (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" LANES_HOME="$TMP_ROOT/home" \
     ORCH_LANE_HOST="$REPO/daytona" ORCH_LANE_PREFERENCE="$pref" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 \
     ORCH_LANE_CLOUD_REPOS="$repos" ORCH_LANE_DIRS="$TMP_ROOT/home/.$cloud_account:$TMP_ROOT/home/.codex" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/cloud-usage" ORCH_LANES_USAGE_TTL=0 \

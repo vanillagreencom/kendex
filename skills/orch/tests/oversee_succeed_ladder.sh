@@ -163,7 +163,7 @@ run_succeed() {
     *) fixture_succession_handoff "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" ;;
   esac
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
+  OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" \
     "$lane" ORCH_LANES_FETCH_CMD="${LANES_FETCHER:-$FETCHER}" \
     ORCH_LANE_EXCLUDE="${LANE_EXCLUDE:-}" ORCH_LANE_RETIRE="${LANE_RETIRE:-}" \

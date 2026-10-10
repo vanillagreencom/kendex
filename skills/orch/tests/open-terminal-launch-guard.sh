@@ -112,7 +112,7 @@ run() {
   : > "$term_log"
   : > "$tmux_log"
   set +e
-  env -i HOME="$TMP_ROOT" PATH="$BIN:$PATH" ORCH_LANE_HOST=local \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$BIN:$PATH" ORCH_LANE_HOST=local \
     LINEAR_TEAM="${OT_LINEAR_TEAM:-}" TEAM_READ="${OT_TEAM_READ:-ok}" GH_REPO="${OT_GH_REPO:-}" \
     ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
     OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \

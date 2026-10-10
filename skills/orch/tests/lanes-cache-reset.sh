@@ -32,7 +32,7 @@ BASE=1790812800
 cache_run() { # SCRIPT NOW COMMAND...
   local script="$1" instant="$2"
   shift 2
-  (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" REAL_DATE="$REAL_DATE" FAKE_NOW="$instant" \
+  (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" REAL_DATE="$REAL_DATE" FAKE_NOW="$instant" \
     LANES_HOME="$H" ORCH_LANE_DIRS="$DIRS" \
     FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FETCH_LOG="$H/fetch.log" \
     OVERSEE_WATCH_STATE_DIR="$H/store" ORCH_STATE_DIR="$H/state" \
