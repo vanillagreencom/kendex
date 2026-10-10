@@ -179,6 +179,7 @@ sk_run_private() { # ROOT ARGS...
   shift
   RC=0
   OUT="$(cd "$root" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C SLACK_API_URL="$SK_URL" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     "$SK_BIN" "$@" 2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
   ERR1="$(sed -n '1p' "$SK_TMP/err")"

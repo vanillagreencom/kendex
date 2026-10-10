@@ -474,6 +474,7 @@ ROWS
 R="$(sk_new_root presence-count)"; S="$(sk_new_root presence-count-peer)"
 sk_bind "$R"; sk_bind "$S"
 OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
   python3 - "${SK_BIN%/*}/lib" "$R" "$S" <<'PY'
 import collections, pathlib, sys
 sys.path.insert(0, sys.argv[1])
