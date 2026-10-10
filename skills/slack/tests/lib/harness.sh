@@ -33,6 +33,9 @@ ERR1=""
 set -e
 SK_TMP="$(mktemp -d)"
 SK_TMP="$(cd "$SK_TMP" && pwd -P)"
+# Lane TMPDIR can sit inside a checkout. Keep fixture discovery below its
+# physical parent so a plain launch directory reads its own settings.
+export GIT_CEILING_DIRECTORIES="${SK_TMP%/*}"
 set +e
 mkdir -p "$SK_TMP/home"
 sk_cleanup() {
@@ -205,6 +208,7 @@ sk_journal() { printf '%s/tmp/slack/journal.jsonl' "$1"; } # ROOT
 # print the diagnostics and fail unless each position warning appears once.
 sk_legacy_warnings() {
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     python3 - "${SK_BIN%/*}/lib" "$1" "$2" <<'PY'
 import contextlib, io, sys
 from pathlib import Path
@@ -231,6 +235,7 @@ sk_run() {
   [ $# -eq 0 ] || shift
   RC=0
   OUT="$(cd "${SK_RUN_FROM:-$SK_TMP/home}" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" KENDEX_USER_HANDLE="$HANDLE" \
     SLACK_POLL_SECONDS=1 ${vars[@]+"${vars[@]}"} "$SK_BIN" "$@" 2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
@@ -259,6 +264,7 @@ sk_relay_start() {
   [ "${SK_RELAY_POLL:-}" != none ] || poll=()
   rm -f -- "${root:?}/tmp/slack/status.json"
   ( cd "${SK_RUN_FROM:-$SK_TMP/home}" && exec env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
     ${poll[@]+"${poll[@]}"} ${1+"$@"} "$SK_BIN" listen "${roots[@]}" >"$SK_TMP/relay.out" 2>"$SK_TMP/relay.err" ) &
   SK_BG_PIDS="$!"
@@ -272,6 +278,7 @@ sk_event() {
   sk_ctl /_test/state | jq --arg c "$2" --arg ts "$3" '.messages[$c][] | select(.ts == $ts)' >"$SK_TMP/event.json" || exit 1
   RC=0
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
     python3 - "$1" "$SK_TMP/event.json" "$(dirname "$SK_BIN")/lib" <<'PY' || RC=$?
 import json, pathlib, sys, time
@@ -288,6 +295,7 @@ PY
 sk_recovery() {
   RC=0
   OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
     SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
     python3 "$SK_ROOT/skills/slack/tests/lib/recovery_probe.py" "${SK_BIN%/*}/lib" "$2" "$1" "${3:-}" \
@@ -392,6 +400,7 @@ sk_tracker_root() {
 sk_markup() {
   RC=0
   OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
     PYTHONPATH="${SK_BIN%/*}/lib" python3 "$SK_ROOT/skills/slack/tests/lib/markup_probe.py" "$@" \
     2>"$SK_TMP/err")" || RC=$?
