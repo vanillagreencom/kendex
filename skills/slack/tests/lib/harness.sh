@@ -31,8 +31,10 @@ ERR=""
 ERR1=""
 
 set -e
-SK_TMP="$(mktemp -d)"
-SK_TMP="$(cd "$SK_TMP" && pwd -P)"
+# Native macOS mktemp uses its system temp root without an explicit template.
+SK_TMP="$(mktemp -d -- "${TMPDIR:-/tmp}/slack.XXXXXX")" || { printf 'slack-tests: scratch=mktemp-failed\n' >&2; exit 1; }
+[ -d "$SK_TMP" ] && [ ! -L "$SK_TMP" ] || { printf 'slack-tests: scratch=not-a-directory value=[%s]\n' "$SK_TMP" >&2; exit 1; }
+SK_TMP="$(cd -- "$SK_TMP" && pwd -P)" || { printf 'slack-tests: scratch=resolve-failed\n' >&2; exit 1; }
 # Lane TMPDIR can sit inside a checkout. Keep fixture discovery below its
 # physical parent so a plain launch directory reads its own settings.
 export GIT_CEILING_DIRECTORIES="${SK_TMP%/*}"
