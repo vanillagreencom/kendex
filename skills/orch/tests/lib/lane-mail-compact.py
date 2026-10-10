@@ -1,5 +1,6 @@
 """Drive the production lane-mail and prune commands in isolated repositories."""
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -140,6 +141,39 @@ class Compaction(unittest.TestCase):
                              '    : archived "$ARCHIVE"')
         with self.assertRaises(AssertionError):
             self.stable_values(mutant)
+
+    def tracker_confirmation(self, scripts):
+        repo, box = self.world()
+        self.rows(box, "to-overseer", [
+            {"id": "expired", "kind": "notice", "at": OLD},
+            {"id": "tracker-ask", "kind": "ask", "to": "owner", "issue": "KEN-7", "at": OLD},
+            {"id": "tracker-success", "kind": "tracker-posted", "re": "tracker-ask", "issue": "KEN-7", "at": OLD},
+            {"id": "fresh", "kind": "notice", "at": FRESH}])
+        before = [json.loads(row) for row in self.run_cli(repo, "events", scripts=scripts).stdout.splitlines()]
+        self.assertEqual([row["id"] for row in before], ["expired", "tracker-ask", "fresh"])
+        self.assertTrue(before[1]["tracker_posted"])
+        self.assertEqual((before[1]["line"], before[1]["count"]), (2, 4))
+        self.run_cli(repo, "compact", scripts=scripts)
+        retained = [json.loads(row) for row in (box / "to-overseer.jsonl").read_text().splitlines()]
+        self.assertIn("tracker-success", [row["id"] for row in retained])
+        after = [json.loads(row) for row in self.run_cli(repo, "events", scripts=scripts).stdout.splitlines()]
+        self.assertEqual(after, before[1:])
+        pending = [json.loads(row) for row in self.run_cli(repo, "pending", "--to", "owner", scripts=scripts).stdout.splitlines()]
+        self.assertEqual([row["id"] for row in pending], ["tracker-ask"])
+        self.assertTrue(pending[0]["tracker_posted"])
+        drained = self.run_cli(repo, "drain", "--after", "1", scripts=scripts).stdout.splitlines()
+        self.assertEqual(drained[0], "count=4 first=expired")
+        self.assertTrue(json.loads(drained[1])["tracker_posted"])
+        drained = self.run_cli(repo, "drain", "--after", "2", scripts=scripts).stdout.splitlines()
+        self.assertEqual([json.loads(row)["id"] for row in drained[1:]], ["fresh"])
+
+    def test_tracker_confirmation(self):
+        self.tracker_confirmation(SCRIPTS)
+        mutant = self.mutant("lost-tracker-relation", "lib/lane-mail-store.py",
+                             '("id", "re", "ref")', '("id", "ref")')
+        ast.parse((mutant / "lib/lane-mail-store.py").read_text())
+        with self.assertRaises(AssertionError):
+            self.tracker_confirmation(mutant)
 
     def test_empty_numbered_mailbox(self):
         repo, box = self.world()

@@ -117,6 +117,9 @@ class LaneMail:
                     invalid = True
                 if invalid:
                     continue
+                if "tracker_posted" in envelope and type(envelope["tracker_posted"]) is not bool:
+                    self.bad_field(envelope.get("id"), "tracker_posted")
+                    continue
                 # events filters invalid JSON rows, so its output index cannot
                 # replace a physical line number supplied by lane-mail.
                 for field in ("line", "count"):

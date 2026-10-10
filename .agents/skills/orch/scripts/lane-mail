@@ -368,7 +368,9 @@ re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
 draft (a draft ask only: recipient, medium, text and text_hash),
-reserved (true on a reserved ask only),
+reserved (true on a reserved ask only), issue (a configured item ask),
+tracker_posted (a boolean projected by mailbox reads after the complete tracker
+question is confirmed),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close). kind is ask, notice, answer, resolution or directive;
 at is UTC; id is <epoch>-<pid>-<random>. from
@@ -378,6 +380,11 @@ verb writes the item, a send into the overseer's own mailbox and a `resolve
 --default` included, writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
+A private tracker-posted record confirms an immutable ask by its re and issue.
+Reads fold it into that ask before cursor filtering and never emit it as an
+ordinary event. Line counts include it. Without confirmation, an item ask
+keeps the full chat presentation and chat deadline route. Closure still uses
+its issue to clean up partial tracker writes.
 Reads of legacy closing answers warn `lane-mail: legacy-close=<id>` on stderr.
 The old format remains readable through kendex 1.4.
 
@@ -1271,15 +1278,26 @@ lm_header() { # FILE
 # The parsing JSON objects among FILE's lines. A terminated line that does not
 # parse is dropped here and counted above. Events name BOX to carry logical
 # line numbers before that filtering, aligned with the master's seen count.
-lm_objects() { # FILE [BOX]
+lm_objects() { # FILE [BOX [AFTER]]
   local count=0 numbers=/dev/null
   [ "$ITEM" != overseer ] || mailbox_warn_legacy "$1" || return 2
-  if [ -n "${2:-}" ]; then
+  if [ -n "${2:-}${3:-}" ]; then
     count="$(lm_count "$1")" || return 1
     numbers="$1.index"
   fi
-  jq -c -R --arg box "${2:-}" --argjson count "$count" --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ"'input_line_number as $physical
-    | (fromjson? // empty) | select(type == "object")
+  # Posting is confirmed after the immutable ask. Fold that evidence before
+  # cursor selection, while keeping the ask's original logical position.
+  jq -c -R -n --arg box "${2:-}" --arg after "${3:-}" --argjson count "$count" \
+    --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ"'
+    [inputs | input_line_number as $physical | (fromjson? // empty) | objects
+      | {physical: $physical, envelope: .}] as $rows
+    | [$rows[].envelope | select(.kind == "tracker-posted")] as $posted
+    | $rows[] | .physical as $physical | .envelope
+    | select(.kind != "tracker-posted")
+    | if .kind == "ask" and .to == "owner" and .issue != null then
+        . as $ask | .tracker_posted = any($posted[]; .re == $ask.id and .issue == $ask.issue)
+      else . end
+    | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end) end' <"$1"
 }
@@ -1919,6 +1937,11 @@ case "$VERB" in
     fi
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
       owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR"
+      if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then
+        POSTED_LINE="$(jq -c '{id: (.id + "-tracker"), kind: "tracker-posted", at, from,
+          re: .id, issue, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
+        lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
+      fi
     fi
     if [ "$VERB" = ask ]; then
       printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
@@ -2313,9 +2336,6 @@ case "$VERB" in
     lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
     if [ "$VERB" = drain ]; then
       lm_header "$WORK_DIR/over.jsonl"
-      lm_after_file "$WORK_DIR/over.jsonl" "$AFTER" "$WORK_DIR/new"
-    else
-      cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
     fi
     # An answered ask is not news again; `pending` is what is still owed a
     # reply. --to keeps one audience's asks and --due the ones past their
@@ -2325,7 +2345,7 @@ case "$VERB" in
     lm_objects "$WORK_DIR/lane.jsonl" | jq -r "$MAILBOX_CLASS_JQ"'select(overseer_mail_class == "close") | .re' >"$WORK_DIR/closed" ||
       refuse file-unreadable "$TO_LANE"
     CLOSED="$(cat -- "$WORK_DIR/closed")" || refuse file-unreadable "$WORK_DIR/closed"
-    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg closed "$CLOSED" --arg verb "$VERB" \
+    lm_objects "$WORK_DIR/over.jsonl" "" "${AFTER:-}" | jq -c --arg answered "$ANSWERED" --arg closed "$CLOSED" --arg verb "$VERB" \
       --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$MAILBOX_TIME_JQ"'
       ($answered | split("\n")) as $done
       | ($closed | split("\n")) as $closed

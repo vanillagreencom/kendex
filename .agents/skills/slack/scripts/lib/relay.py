@@ -778,7 +778,7 @@ class RootRelay:
     def ask_pieces(self, envelope: Dict, header: str) -> List[Union[str, Verbatim]]:
         """The whole question under `header`: its text, any draft, and its
         options, recommendation and deadline, a blank line between each."""
-        if envelope.get("issue"):
+        if envelope.get("tracker_posted") is True:
             # Outbound markup resolves the issue identifier to its tracker link.
             question = envelope.get("text", "").split("\n", 1)[0]
             return [f"{question} {envelope['issue']}"]

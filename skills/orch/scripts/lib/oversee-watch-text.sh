@@ -571,9 +571,9 @@ The long pass's events, checked and reported in this order:
                              Repeat the same check after that fix merges.
                              A merged item never returns to In Progress.
                              No deadline moves. An owner-only box goes once
-                             to the master, naming item, box, check, Where and
-                             deadline. The master sends one list a day and
-                             repeats open lines until a reading is recorded.
+                             to the owner as an ask on the same item, naming
+                             box, check, Where and deadline. The overseer
+                             records the person's reading and closes the ask.
   verifying <item> box=<N> trigger=<JSON> status=<due|overdue|blocked|waiting> deadline=<UTC|+Nh> reading=<JSON> where=<JSON> why=<JSON>
                              every open post-merge box on every long pass,
                              before active/queued lane filtering. Due means

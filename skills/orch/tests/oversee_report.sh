@@ -1166,8 +1166,8 @@ new_case tracker_owner_asks
 report -60
 fleet '' ''
 printf '%s\n' \
-  '{"id":"tracker-1","kind":"ask","to":"owner","issue":"KEN-7","text":"First tracker ask"}' \
-  '{"id":"tracker-2","kind":"ask","to":"owner","issue":"KEN-8","text":"Second tracker ask"}' \
+  '{"id":"tracker-1","kind":"ask","to":"owner","issue":"KEN-7","tracker_posted":true,"text":"First tracker ask"}' \
+  '{"id":"tracker-2","kind":"ask","to":"owner","issue":"KEN-8","tracker_posted":true,"text":"Second tracker ask"}' \
   '{"id":"chat-1","kind":"ask","to":"owner","text":"Chat ask"}' >"$CASE/pending-overseer.jsonl"
 for item in KEN-7 KEN-8; do
   jq -n --arg url "https://linear.app/test/issue/$item" '{url:$url}' >"$CASE/linear-$item.json"
@@ -1183,6 +1183,27 @@ mutate_file "$TRACKER_REPORT_MUTANT" '[[ "$tracker_count" -gt 0 ]]' '[[ "$tracke
 REPORT_UNDER_TEST="$TRACKER_REPORT_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" '0|- Question for you: Chat ask' \
   'control: dropping the tracker row fails the report grouping assertion'
+
+# An unconfirmed item may have rejected every tracker write. The report
+# keeps its native chat line without reading that unavailable item's link.
+new_case tracker_owner_fallback
+report -60
+fleet '' ''
+printf '%s\n' '{"id":"failed-1","kind":"ask","to":"owner","issue":"KEN-404","tracker_posted":false,"text":"Approve fallback?\nFull detail.","options":["approve","hold"],"recommend":"approve","deadline":"2026-09-26T03:00:00Z"}' \
+  >"$CASE/pending-overseer.jsonl"
+run -- render --state "$CASE/state.json" --repo owner/repo
+FALLBACK_WANT='- Question for you: Approve fallback? Full detail. (recommended approve; defaults to it after 2026-09-26T03:00:00Z)'
+assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "0|$FALLBACK_WANT" \
+  'an unconfirmed item keeps the complete chat report line without a tracker read'
+TRACKER_REPORT_MUTANT="$(mutant_scripts tracker-fallback/orch oversee-report)/oversee-report"
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/tracker-fallback/github"
+mutate_file "$TRACKER_REPORT_MUTANT" '[.[] | select(.tracker_posted == true)]' '[.[] | select(.issue != null)]'
+mutate_file "$TRACKER_REPORT_MUTANT" 'select(.tracker_posted == true) | .issue' 'select(.issue != null) | .issue'
+mutate_file "$TRACKER_REPORT_MUTANT" 'select(.tracker_posted != true)' 'select(.issue == null)'
+"$BASH" -n "$TRACKER_REPORT_MUTANT"
+REPORT_UNDER_TEST="$TRACKER_REPORT_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" '2|oversee-report: owner-asks=overseer' \
+  'control: issue presence fails the unconfirmed chat report assertion'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

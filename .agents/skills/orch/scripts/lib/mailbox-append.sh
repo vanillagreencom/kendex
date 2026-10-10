@@ -196,6 +196,7 @@ owner_tracker_labels() { # TRACKER ISSUE ADD|REMOVE
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   local tracker="$1" envelope="$2" work="$3" issue labels
+  OWNER_TRACKER_POSTED=0
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
   "$tracker" issues update "$issue" --assignee "$OWNER_TRACKER_EMAIL" >"$work/tracker.out" 2>"$work/tracker.err" || {
     owner_tracker_unwritten "$issue" assign; return 0;
@@ -213,8 +214,10 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
     ("ask=" + .id),
     "Reply with one comment: ok, yes or done to approve; anything else is a change request."' \
     <<<"$envelope" >"$work/tracker-comment" || return 1
-  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" ||
-    owner_tracker_unwritten "$issue" comment
+  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
+    owner_tracker_unwritten "$issue" comment; return 0;
+  }
+  OWNER_TRACKER_POSTED=1
 }
 
 owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY

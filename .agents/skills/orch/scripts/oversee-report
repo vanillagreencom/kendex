@@ -923,15 +923,15 @@ render() {
     refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
   fi
   local tracker_count tracker_links="" tracker_issue tracker_url
-  tracker_count="$(jq -s '[.[] | select(.issue != null)] | length' <<<"$list")" || refuse owner-asks overseer
+  tracker_count="$(jq -s '[.[] | select(.tracker_posted == true)] | length' <<<"$list")" || refuse owner-asks overseer
   while IFS= read -r tracker_issue; do
     [[ -n "$tracker_issue" ]] || continue
     tracker_url="$("$TRACKER" issues get "$tracker_issue" --format=safe 2>"$WORK_DIR/tracker.err")" ||
       refuse owner-asks overseer "$(cat "$WORK_DIR/tracker.err")"
     tracker_url="$(jq -r '.url' <<<"$tracker_url")" || refuse owner-asks overseer
     tracker_links+="${tracker_links:+, }[$tracker_issue]($tracker_url)"
-  done <<<"$(jq -r '.issue // empty' <<<"$list")"
-  if ! list="$(jq -r -R --argjson now "$NOW" --argjson answered "$OWNER_ANSWERED" 'fromjson? | objects | select(.issue == null)
+  done <<<"$(jq -r 'select(.tracker_posted == true) | .issue' <<<"$list")"
+  if ! list="$(jq -r -R --argjson now "$NOW" --argjson answered "$OWNER_ANSWERED" 'fromjson? | objects | select(.tracker_posted != true)
     | "- Question for you: \(.text // "" | gsub("\n"; " "))"
       + (if .reserved == true and (.id | IN($answered[])) then " (reserved, answered, awaiting close)"
         elif .reserved == true

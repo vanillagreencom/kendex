@@ -100,24 +100,56 @@ sk_bin_reset
 
 # The tracker carries the detail. Slack posts the first question line and
 # the issue identifier, which outbound markup expands into its link.
-tracker_ask() {
-  local root
+tracker_ask() { # NAME FAILURE
+  local root scripts phase="${2:-}" deadline
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
-  ASK="$(sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$1" 'Approve action?
-Details on the item.')" --options approve,hold --recommend approve)"
+  scripts="$root/.agents/skills/orch/scripts"
+  rm -- "${scripts:?}"
+  cp -R "${SK_LANE_MAIL%/*}" "$scripts"
+  mkdir -p "$root/.agents/skills/linear/scripts"
+  cat >"$root/.agents/skills/linear/scripts/linear.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${TRACKER_FAILURE:-}:$1:$2:${4:-}" in
+  assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
+esac
+case "$1:$2" in
+  issues:get) echo '{"labels":["skills"]}' ;;
+  issues:update|comments:create) echo '{}' ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$root/.agents/skills/linear/scripts/linear.sh"
+  ASK="$(cd "$root" && env ORCH_OWNER_EMAIL=owner@example.com ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=KEN \
+    TRACKER_FAILURE="$phase" "$scripts/lane-mail" ask --item overseer --to owner \
+    --issue KEN-1 --file "$(sk_text "$1" 'Approve action?
+Details on the item.')" --options approve,hold --recommend approve --wait 60)"
   ASK="${ASK#id=}"
-  sk_event_filter "$root" 'if .kind == "ask" then .issue = "KEN-1" else . end'
+  deadline="$(jq -r 'select(.kind == "ask") | .deadline | fromdateiso8601' "$(sk_box "$root")/to-overseer.jsonl")"
   sk_poll "$root"
   TRACKER_POST="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
+  # Slack's API post must carry the supplied question, choices and the date
+  # token for the ask's deadline, rather than a guessed wall-clock value.
+  FALLBACK_FACTS="$(jq -cn --arg text "$TRACKER_POST" --arg deadline "$deadline" \
+    '$text | contains("Details on the item.") and contains("approve, hold") and contains($deadline)')"
 }
 tracker_ask tracker-line
 assert_eq "$TRACKER_POST" 'Approve action? [KEN-1](https://linear.app/workspace/issue/KEN-1)' \
   'tracker ask posts the first question line and issue link'
-sk_mutant tracker-line relay.py 'if envelope.get\("issue"\):' 'if False:'
+sk_mutant tracker-line relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if False:'
 tracker_ask tracker-line-control
 sk_assert_red "$TRACKER_POST" 'Approve action? [KEN-1](https://linear.app/workspace/issue/KEN-1)' \
   'control: posting the whole ask fails the tracker line assertion'
+sk_bin_reset
+for failure in assign labels-read label comment; do
+  tracker_ask "tracker-fallback-$failure" "$failure"
+  assert_eq "$FALLBACK_FACTS" true "$failure keeps the question, options and deadline in the Slack API post"
+done
+sk_mutant tracker-confirmation relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if envelope.get("issue"):'
+tracker_ask tracker-fallback-control comment
+sk_assert_red "$FALLBACK_FACTS" true \
+  'control: issue presence fails the full chat fallback assertion'
 sk_bin_reset
 
 echo "=== slack reserved ask ==="
