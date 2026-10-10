@@ -184,6 +184,47 @@ fn runtime_transports_return_confirmed_selection_and_clean_stdout() {
         );
     }
 }
+
+#[test]
+fn gateway_runtime_json_selects_the_session_vendor_class() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let mut evidence = context();
+    evidence["providers"] = json!(["vercel-ai-gateway"]);
+    evidence["currentProvider"] = json!("vercel-ai-gateway");
+    evidence["models"]["models"] = json!([
+        {"provider":"vercel-ai-gateway","id":"anthropic/claude-opus-4.5","allowed":true,"chat":true},
+        {"provider":"vercel-ai-gateway","id":"openai/gpt-6.1-sol","allowed":true,"chat":true}
+    ]);
+    evidence["default"] = json!({"tag":"observed-session-or-default","selector":"vercel-ai-gateway/anthropic/claude-opus-4.5","provider":"vercel-ai-gateway","id":"anthropic/claude-opus-4.5","account":"fixture","host":"host","source":"fixture:parent"});
+    evidence["capacity"] = json!([
+        {"tag":"known","selector":"vercel-ai-gateway/anthropic/claude-opus-4.5","account":"fixture","host":"host","source":"fixture:capacity","context_window":1000},
+        {"tag":"known","selector":"vercel-ai-gateway/openai/gpt-6.1-sol","account":"fixture","host":"host","source":"fixture:capacity","context_window":1000}
+    ]);
+    let payload = evidence.to_string();
+    let output = invoke(
+        &home,
+        &[
+            "tier-model",
+            "pi",
+            "--model",
+            "standard",
+            "--runtime-context-json",
+            &payload,
+            "--json",
+        ],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["resolution"]["tag"], "selected");
+    assert_eq!(
+        response["resolution"]["selection"]["nativeSelector"],
+        "vercel-ai-gateway/anthropic/claude-opus-4.5"
+    );
+    assert_eq!(response["resolution"]["diagnostics"], json!([]));
+    assert!(output.stderr.is_empty());
+}
 #[test]
 fn native_root_observation_returns_core_comparison_and_list_failure() {
     let tmp = tempfile::tempdir().unwrap();

@@ -212,6 +212,141 @@ fn confirmed_singletons_stay_in_provider_and_fast_claude_falls_back() {
         Some("claude-sonnet-5")
     );
 }
+
+#[test]
+fn gateway_classes_follow_the_observed_vendor_before_release_order() {
+    // Pi's registry supplies vendor-prefixed ids under one gateway provider.
+    let ids = [
+        "anthropic/claude-opus-4.5",
+        "anthropic/claude-sonnet-4.5",
+        "openai/gpt-6.1-sol",
+        "openai/gpt-6.1-luna",
+        "zai/glm-5.3",
+    ];
+    for (parent, standard, light) in [
+        (
+            Some(ids[0]),
+            "anthropic/claude-opus-4.5",
+            "anthropic/claude-sonnet-4.5",
+        ),
+        (Some(ids[2]), "openai/gpt-6.1-sol", "openai/gpt-6.1-luna"),
+        (None, "openai/gpt-6.1-sol", "openai/gpt-6.1-luna"),
+    ] {
+        let mut context = context("vercel-ai-gateway", &ids);
+        if let Some(id) = parent {
+            context.default = HarnessModelPath::ObservedSessionOrDefault {
+                selector: format!("vercel-ai-gateway/{id}"),
+                provider: Some("vercel-ai-gateway".into()),
+                id: Some(id.into()),
+                account: context.account.clone(),
+                host: context.host.clone(),
+                source: "fixture:parent".into(),
+            };
+        }
+        for (class, expected, effective) in [
+            ("standard", standard, ModelClass::Standard),
+            ("light", light, ModelClass::Light),
+        ] {
+            let result = resolve(class, &context);
+            assert!(result.diagnostics().is_empty(), "{parent:?} {class}");
+            let selection = selected(result);
+            assert_eq!(
+                selection.native_selector,
+                format!("vercel-ai-gateway/{expected}")
+            );
+            assert_eq!(selection.effective_class, Some(effective));
+        }
+        let policy = BTreeMap::from([("standard".into(), "vercel-ai-gateway/zai/glm-5.3".into())]);
+        let request = ModelRequest::parse("standard").unwrap();
+        let result = resolve_model(&request, ResolutionContext::Runtime(&context), &policy);
+        assert_eq!(
+            selected(result).native_selector,
+            "vercel-ai-gateway/zai/glm-5.3"
+        );
+    }
+}
+
+#[test]
+fn bridge_classes_use_newest_claude_release_and_aliases_stay_anthropic_only() {
+    let bridge = context(
+        "pi-claude",
+        &["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5"],
+    );
+    for (class, expected) in [
+        ("standard", "pi-claude/claude-opus-5-5"),
+        ("top", "pi-claude/claude-fable-5-1"),
+    ] {
+        assert_eq!(selected(resolve(class, &bridge)).native_selector, expected);
+    }
+    for provider in [
+        "anthropic",
+        "pi-claude",
+        "vercel-ai-gateway",
+        "github-copilot",
+    ] {
+        assert!(family::matches(provider, "gpt-6.1-terra", ModelClass::Fast.row()).is_some());
+        for (class, alias) in [(ModelClass::Standard, "opus"), (ModelClass::Top, "fable")] {
+            assert_eq!(
+                family::matches(provider, alias, class.row()).is_some(),
+                provider == "anthropic"
+            );
+        }
+    }
+}
+
+#[test]
+fn gateway_unclassified_model_and_haiku_keep_the_existing_fallbacks() {
+    for (ids, class, expected, effective, diagnostic) in [
+        (
+            vec!["zai/glm-5.3"],
+            "standard",
+            "zai/glm-5.3",
+            None,
+            "unclassified-model",
+        ),
+        (
+            vec!["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5"],
+            "fast",
+            "anthropic/claude-sonnet-4.5",
+            Some(ModelClass::Light),
+            "fallback",
+        ),
+        (
+            vec!["openai/gpt-6-sol"],
+            "standard",
+            "openai/gpt-6-sol",
+            Some(ModelClass::Standard),
+            "family-version-unavailable",
+        ),
+    ] {
+        let mut context = context("vercel-ai-gateway", &ids);
+        context.default = HarnessModelPath::ObservedSessionOrDefault {
+            selector: format!("vercel-ai-gateway/{}", ids[0]),
+            provider: Some("vercel-ai-gateway".into()),
+            id: Some(ids[0].into()),
+            account: context.account.clone(),
+            host: context.host.clone(),
+            source: "fixture:parent".into(),
+        };
+        let request = ModelRequest::parse(class).unwrap();
+        let result = resolve(class, &context);
+        assert_eq!(
+            result
+                .diagnostics()
+                .iter()
+                .map(|d| d.code.as_str())
+                .collect::<Vec<_>>(),
+            [diagnostic]
+        );
+        assert_eq!(result.warning(&request).unwrap().lines().count(), 1);
+        let selection = selected(result);
+        assert_eq!(
+            selection.native_selector,
+            format!("vercel-ai-gateway/{expected}")
+        );
+        assert_eq!(selection.effective_class, effective);
+    }
+}
 #[test]
 fn newest_family_numeric_snapshot_and_suffix_rules() {
     for (ids, expected) in [
