@@ -1027,7 +1027,9 @@ finished_hosted_case() { # NAME STATE KEEP MERGED CLOSE_RC [WATCH]
     --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 > "$STUB_DIR/prime.out" 2> "$STUB_DIR/prime.err"
   [[ "$keep" != gone ]] || rm -rf -- "${STUB_DIR:?}/remote/srv/lane/issue-1"
   if [[ "$state" == codex ]]; then
-    cp "$CODEX_PANES/codex-idle-after-turn.txt" "$STUB_DIR/pane-gh-1.txt"
+    # open-terminal's submitted kickoff turn stays visible after Codex returns.
+    printf '%s\n' '› Implement the issue' '• Delegated round to /root/runtime.' \
+      '• Completed /root/runtime' '› Ask Codex to do anything' > "$STUB_DIR/pane-gh-1.txt"
     printf 'codex\n' > "$STUB_DIR/cmd-gh-1.txt"
   else
     printf '⏺ Done: the PR is merged.\n❯ \n' > "$STUB_DIR/pane-gh-1.txt"
@@ -1072,6 +1074,13 @@ assert_eq "$FINISHED_FACTS" "$FINISHED_NONE" "control: removing the idle call lo
 finished_hosted_case control_exited exited gone yes 0 "$MUTANT"
 assert_eq "$FINISHED_FACTS" "$FINISHED_OK" \
   "control: removing the idle call preserves exited close" "$STUB_DIR/run2.err"
+
+mutant hosted_codex_debounce oversee-watch \
+  '    if [[ "$prior" == "$screen_key" ]] || { [[ -z "$HOSTED_ROOT" ]] && grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }; then' \
+  '    if [[ "$prior" == "$screen_key" ]] || { { : [[ -z "$HOSTED_ROOT" ]]; true; } && grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }; then'
+finished_hosted_case control_hosted_codex codex gone yes 0 "$MUTANT"
+assert_eq "$FINISHED_FACTS" 'calls=1 1 1 rc=0 0 0 closed=1 kept=1 refused=0 failed=0' \
+  "control: bypassing the hosted restriction closes a submitted Codex turn on its first idle pass" "$STUB_DIR/run1.err"
 
 mutant merged_guard oversee-watch \
   '  if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \' \
