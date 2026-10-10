@@ -482,10 +482,8 @@ host_launch_judge || exit 1
 BRIEF_TEXT=""
 if [[ -n "$BRIEF_FILE" ]]; then
   [[ "$CMD_TEMPLATE" == *"{brief}"* || "$HOST_LAUNCH" == cloud-session ]] || { ot_message brief-unreferenced "option=--brief-file" >&2; exit 1; }
-  BRIEF_TEXT="$(cat -- "$BRIEF_FILE" 2>/dev/null)" || { ot_message brief-file-unreadable "path=$BRIEF_FILE" >&2; exit 1; }
-  # A brief of whitespace alone starts a harness with nothing to do, which the
-  # launch reports as a lane opened while it holds its seat idle.
-  [[ "$BRIEF_TEXT" == *[![:space:]]* ]] || { ot_message brief-file-empty "path=$BRIEF_FILE" >&2; exit 1; }
+  lane_brief_read "$BRIEF_FILE" || { ot_message "$LANE_BRIEF_REASON" "path=$BRIEF_FILE" >&2; exit 1; }
+  BRIEF_TEXT="$LANE_BRIEF_TEXT"
 elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
   ot_message brief-file-missing "option=--cmd" >&2
   exit 1

@@ -892,6 +892,28 @@ lane_single_quote() { # VALUE
   printf "'%s'" "${1//\'/$escaped}"
 }
 
+# Both launchers read a caller-written brief once and drop trailing newlines.
+# Each caller owns its diagnostic prefix and any launch-specific restrictions.
+LANE_BRIEF_TEXT="" LANE_BRIEF_REASON="" LANE_BRIEF_NUL=0
+lane_brief_read() { # PATH
+  local captured text nul part
+  LANE_BRIEF_TEXT="" LANE_BRIEF_REASON="" LANE_BRIEF_NUL=0
+  # Bash drops NUL in command substitutions. Keep its presence separately so
+  # the inline launcher can refuse it while the saved-file launcher keeps its
+  # existing text result. cat's status still identifies an unreadable file.
+  captured="$(cat -- "$1" 2>/dev/null | {
+    text="" nul=0 part=""
+    while IFS= read -r -d '' part; do
+      text+="$part"
+      nul=1
+    done
+    printf '%s:%s' "$nul" "$text$part"
+  })" || { LANE_BRIEF_REASON=brief-file-unreadable; return 1; }
+  LANE_BRIEF_NUL="${captured%%:*}" LANE_BRIEF_TEXT="${captured#*:}"
+  # Whitespace alone opens an idle harness with no task.
+  [[ "$LANE_BRIEF_TEXT" == *[![:space:]]* ]] || { LANE_BRIEF_REASON=brief-file-empty; return 1; }
+}
+
 # The trust record a harness reads BEFORE it reads the arguments it was
 # launched with. Codex reads `[projects."<dir>"] trust_level = "trusted"` in
 # the config.toml its CODEX_HOME names; Claude reads

@@ -2295,6 +2295,154 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-la
 assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
   "a codex caller entry carrying the update setting keeps it exactly once"
 
+CALLER_BRIEF_FILE="$TMP_ROOT/caller-brief.md"
+BRIEFCTL="$(mutant_scripts briefctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$BRIEFCTL/lib/overseer-launch.sh" \
+  '  (( ! brief_given )) || brief="$caller_brief"' '  : brief="$caller_brief"'
+BRIEFARGCTL="$(mutant_scripts briefargctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$BRIEFARGCTL/lib/overseer-launch.sh" \
+  '  if (( brief_given )); then' '  if false; then'
+# A caller can write a Markdown task list or quote an option name as its task.
+while IFS= read -r brief_text; do
+  printf '%s\n\n' "$brief_text" > "$CALLER_BRIEF_FILE"
+# Each expected command states the prompt independently of the builder.
+while IFS='|' read -r harness expected; do
+  for script in "$SUCCEED" "$BRIEFCTL/oversee-succeed" "$BRIEFARGCTL/oversee-succeed"; do
+    flags=()
+    case "$harness" in
+      claude) new_caller "$UNDER_MARK"; row_lane="CLAUDE_CONFIG_DIR=$H/.claude"; flags=(-- --verbose) ;;
+      codex) new_caller "$CODEX_SCREEN" 'Context 48% left'; row_lane="CODEX_HOME=$H/.codex" ;;
+      copilot) new_caller "$UNDER_MARK"; record_account "$CALLER_PANE" "$H/.1copilot"; row_lane="CLAUDE_CONFIG_DIR=$H/.claude"; flags=(-- --allow-all) ;;
+    esac
+    CALLER_LANE="$row_lane" SUCCEED_BIN="$script" run_succeed "brief-$harness" '' \
+      --print-launch-line --harness "$harness" --brief-file "$CALLER_BRIEF_FILE" ${flags[@]+"${flags[@]}"}
+    assertion_rc=0
+    (
+      FAIL=0
+      assert_eq "$RC|$OUT|$(overseers)|$(caller_open)" "0|$expected|0|yes" \
+        "$harness caller brief replaces the default prompt and launches nothing"
+      [[ "$FAIL" -eq 0 ]]
+    ) > "$TMP_ROOT/brief-assertion.out" 2>&1 || assertion_rc=$?
+    want_rc=0
+    [[ "$script" == "$SUCCEED" ]] || want_rc=1
+    assert_eq "$assertion_rc" "$want_rc" "$harness prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/brief-assertion.out"
+  done
+done <<ROWS
+claude|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose -- '$brief_text'
+codex|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- '$brief_text'
+copilot|$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all --interactive='$brief_text'
+ROWS
+done <<'BRIEFS'
+Run the caller workflow.
+- Summarize these points
+--help
+= Summarize these points
+BRIEFS
+
+printf 'Run the caller workflow.\n\n' > "$CALLER_BRIEF_FILE"
+new_caller "$UNDER_MARK"
+run_succeed entrybrief '' --print-launch-line --entry codex:gpt-6-astra:high --brief-file "$CALLER_BRIEF_FILE" -- --dangerously-skip-permissions --verbose
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- 'Run the caller workflow.'" \
+  "a named codex entry carries the caller brief from a claude caller"
+
+BRIEFMODECTL="$(mutant_scripts briefmodectl oversee-succeed)" || exit 1
+mutate_file "$BRIEFMODECTL/oversee-succeed" \
+  '  [[ "$MODE" == print && "$HANDOFF_GIVEN" -eq 0 ]]' '  [[ "$HANDOFF_GIVEN" -eq 0 ]]'
+BRIEFHANDOFFCTL="$(mutant_scripts briefhandoffctl oversee-succeed)" || exit 1
+mutate_file "$BRIEFHANDOFFCTL/oversee-succeed" \
+  '  [[ "$MODE" == print && "$HANDOFF_GIVEN" -eq 0 ]]' '  [[ "$MODE" == print ]]'
+while IFS='|' read -r script args mode handoff; do
+  new_caller "$UNDER_MARK"
+  # shellcheck disable=SC2086 # The table contains whole option words.
+  SUCCEED_BIN="$script" run_succeed briefmode '' $args --brief-file "$CALLER_BRIEF_FILE"
+  assertion_rc=0
+  (
+    FAIL=0
+    assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+      "1|oversee-succeed: mode-conflict mode=$mode brief-file=$CALLER_BRIEF_FILE handoff=$handoff" \
+      "the caller brief refuses mode $mode and handoff=$handoff"
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$TMP_ROOT/brief-assertion.out" 2>&1 || assertion_rc=$?
+  want_rc=0
+  [[ "$script" == "$SUCCEED" ]] || want_rc=1
+  assert_eq "$assertion_rc" "$want_rc" "mode conflict assertion rejects a removed brief restriction" "$TMP_ROOT/brief-assertion.out"
+done <<ROWS
+$SUCCEED|--check-marks|check|0
+$BRIEFMODECTL/oversee-succeed|--check-marks|check|0
+$SUCCEED|--print-launch-line --handoff tmp/other.md|print|1
+$BRIEFHANDOFFCTL/oversee-succeed|--print-launch-line --handoff tmp/other.md|print|1
+ROWS
+
+# This shell executes the printed command and a stub saves its final argument.
+REPLAY_BIN="$TMP_ROOT/replay-bin"
+mkdir -p "$REPLAY_BIN"
+cat > "$REPLAY_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s' "${!#}" > "$BRIEF_RECEIVED"
+STUB
+chmod +x "$REPLAY_BIN/claude"
+cat > "$CALLER_BRIEF_FILE" <<'TEXT'
+Read the caller's brief: keep "$HOME" and `whoami` as written.
+TEXT
+QUOTE_BRIEFCTL="$(mutant_scripts quotebriefctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$QUOTE_BRIEFCTL/lib/overseer-launch.sh" \
+  '  cmd+="$brief_flag$brief_join$(lane_single_quote "$brief")"' '  cmd+="$brief_flag$brief_join'\''$brief'\''"'
+for script in "$SUCCEED" "$QUOTE_BRIEFCTL/oversee-succeed"; do
+  new_caller "$UNDER_MARK"
+  SUCCEED_BIN="$script" run_succeed briefquote '' --print-launch-line --brief-file "$CALLER_BRIEF_FILE"
+  assert_eq "$RC" 0 "quote fixture prints a command" "$OUT"
+  : > "$TMP_ROOT/brief.received"
+  replay_rc=0
+  env -i HOME="$H" PATH="$REPLAY_BIN:$PATH" BRIEF_RECEIVED="$TMP_ROOT/brief.received" \
+    "$BASH" -c "$OUT" > "$TMP_ROOT/brief-replay.out" 2>&1 || replay_rc=$?
+  assertion_rc=0
+  (
+    FAIL=0
+    assert_eq "$replay_rc|$(cat "$TMP_ROOT/brief.received")" "0|$(cat "$CALLER_BRIEF_FILE")" \
+      "the shell hands the harness the file's exact brief"
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$TMP_ROOT/brief-assertion.out" 2>&1 || assertion_rc=$?
+  want_rc=0
+  [[ "$script" == "$SUCCEED" ]] || want_rc=1
+  assert_eq "$assertion_rc" "$want_rc" "the brief replay assertion rejects bare single quotes" "$TMP_ROOT/brief-assertion.out"
+done
+
+CONTROL_BRIEFCTL="$(mutant_scripts controlbriefctl oversee-succeed)" || exit 1
+mutate_file "$CONTROL_BRIEFCTL/oversee-succeed" \
+  '  [[ "$LANE_BRIEF_NUL" -eq 0 && "$LANE_BRIEF_TEXT" != *[[:cntrl:]]* ]] || die brief-file-control "path=$BRIEF_FILE"' \
+  '  : || die brief-file-control "path=$BRIEF_FILE"'
+# The reader removes trailing newlines, but controls inside text are unsafe
+# when a pane receives the command as keystrokes.
+while IFS='|' read -r name content key script; do
+  file="$TMP_ROOT/refusal-$name.md"
+  [[ "$name" == absent ]] || printf '%b' "$content" > "$file"
+  new_caller "$UNDER_MARK"
+  RC=0
+  (SUCCEED_BIN="${script:-$SUCCEED}" exec_succeed "briefrefusal-$name" '' --print-launch-line --brief-file "$file") \
+    > "$TMP_ROOT/brief.stdout" 2> "$TMP_ROOT/brief.stderr" || RC=$?
+  assertion_rc=0
+  (
+    FAIL=0
+    assert_eq "$RC|$(cat "$TMP_ROOT/brief.stdout")|$(sed -n 1p "$TMP_ROOT/brief.stderr")" \
+      "1||oversee-succeed: $key path=$file" "brief file $name refuses with no stdout"
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$TMP_ROOT/brief-assertion.out" 2>&1 || assertion_rc=$?
+  want_rc=0
+  [[ -z "$script" ]] || want_rc=1
+  assert_eq "$assertion_rc" "$want_rc" "brief refusal assertion: $name" "$TMP_ROOT/brief-assertion.out"
+done <<ROWS
+absent||brief-file-unreadable|
+whitespace|  \t\n|brief-file-empty|
+newline|Read first.\nRead second.|brief-file-control|
+tab|Read\tthis.|brief-file-control|
+carriage|Read\rthis.|brief-file-control|
+delete|Read\177this.|brief-file-control|
+nul|Read\000this.|brief-file-control|
+control|Read first.\nRead second.|brief-file-control|$CONTROL_BRIEFCTL/oversee-succeed
+nulcontrol|Read\000this.|brief-file-control|$CONTROL_BRIEFCTL/oversee-succeed
+ROWS
+
 # A codex caller is judged on the window its own rollout names, like any other.
 # The account mark still reads a figure here, and the account it reads is the
 # codex default: this session names no account variable, and the harness its
@@ -2403,6 +2551,11 @@ assert_eq "$RC|$(idle_log | cut -d' ' -f1-4)" \
 # refuses before tmux is asked anything.
 : > "$TMP_ROOT/empty-line"
 for row in \
+  "--brief-file $CALLER_BRIEF_FILE|mode-conflict mode=succeed brief-file=$CALLER_BRIEF_FILE handoff=0|a caller brief beside live succession" \
+  "--walled-pane %9 --brief-file $CALLER_BRIEF_FILE|mode-conflict mode=walled brief-file=$CALLER_BRIEF_FILE handoff=0|a caller brief beside a walled pane" \
+  "--check-marks --brief-file $CALLER_BRIEF_FILE|mode-conflict mode=check brief-file=$CALLER_BRIEF_FILE handoff=0|a caller brief beside a mark check" \
+  "--dead-pane %9 --line-file $TMP_ROOT/line-file --brief-file $CALLER_BRIEF_FILE|mode-conflict mode=dead brief-file=$CALLER_BRIEF_FILE handoff=0|a caller brief beside a dead pane" \
+  "--print-launch-line --handoff tmp/other.md --brief-file $CALLER_BRIEF_FILE|mode-conflict mode=print brief-file=$CALLER_BRIEF_FILE handoff=1|a caller brief beside a handoff path" \
   "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1 walled-pane=none|permission flags beside a recorded line" \
   "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0 walled-pane=none|a print asked of a dead pane" \
   "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0 walled-pane=none|a mark judged on a dead pane" \

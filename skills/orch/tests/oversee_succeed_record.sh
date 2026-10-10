@@ -473,17 +473,46 @@ assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer -
 # so the line carries no lane variable. The pane opens in the work directory,
 # where no pi project settings stand.
 PI_BRIEF="'/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'"
-pi_print_row() { # [SUCCEED_BIN] [MODEL]
+pi_print_row() { # [SUCCEED_BIN] [MODEL] [BRIEF_FILE]
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   state none
   SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line --harness pi \
+    ${3:+--brief-file "$3"} \
     -- --model "${2:-openai/gpt-5}" --thinking high
 }
 pi_print_row
 assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high $PI_BRIEF" \
   "--print-launch-line --harness pi prints the pi line, bare on a provider no lane measures" "$TMP_ROOT/err"
+PI_BRIEF_FILE="$TMP_ROOT/pi-brief.md"
+PIBRIEFCTL="$(mutant_scripts pibriefctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PIBRIEFCTL/lib/overseer-launch.sh" \
+  '  (( ! brief_given )) || brief="$caller_brief"' '  : brief="$caller_brief"'
+PIBRIEFARGCTL="$(mutant_scripts pibriefargctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PIBRIEFARGCTL/lib/overseer-launch.sh" \
+  '  if (( brief_given )); then' '  if false; then'
+while IFS= read -r brief_text; do
+  printf '%s\n' "$brief_text" > "$PI_BRIEF_FILE"
+for script in "$SUCCEED" "$PIBRIEFCTL/oversee-succeed" "$PIBRIEFARGCTL/oversee-succeed"; do
+  pi_print_row "$script" openai/gpt-5 "$PI_BRIEF_FILE"
+  assertion_rc=0
+  (
+    FAIL=0
+    assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high -- '$brief_text'" \
+      "pi takes the caller brief in place of its skill command" "$TMP_ROOT/err"
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$TMP_ROOT/pi-brief-assertion.out" 2>&1 || assertion_rc=$?
+  want_rc=0
+  [[ "$script" == "$SUCCEED" ]] || want_rc=1
+  assert_eq "$assertion_rc" "$want_rc" "pi prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/pi-brief-assertion.out"
+done
+done <<'BRIEFS'
+Run the caller workflow.
+- Summarize these points
+--help
+= Summarize these points
+BRIEFS
 # A github-copilot model spends the Copilot pool, whose account is the Pi root
 # the line opens under PI_CODING_AGENT_DIR (lib/lane-launch.sh §
 # lane_env_prefix), here the home's own.
