@@ -89,7 +89,7 @@ Usage: oversee-report due    --state PATH --repo OWNER/REPO [--repo ...]
 
 The overseer's status report, in the rows
 references/communication-modes.md § Status report gives: Landed, Escapes,
-Running, Validation, Use 1, Next, Waiting on you.
+Running, Validation, Rounds, Use 1, Next, Waiting on you.
 
 --state is the oversee workflow-state file the watch reads. The report is
 the owner progress report record schemas/workflow-state.md § Recording policy
@@ -194,6 +194,10 @@ Rows:
                   Restacks that skipped their re-test, its restack_skips,
                   follow as `; restack re-test skipped N time(s)`, never
                   counted as runs.
+  Rounds          one line per running lane: review_rounds, fix_receipts,
+                  validation_runs, restacks, repeated_class_rounds.
+                  Unavailable counts read unread. Definitions are in
+                  references/oversee-events.md, lane-long.
   Use 1           the fleet log's use1 rows stamped since the last report,
                   counted by outcome: `Use 1: approved-on-rerequest=N
                   fallback=N declined-unchanged=N`, then `unrecognized=N`
@@ -735,7 +739,7 @@ table() {
   done <<<"$rows"
 }
 
-# running_lanes — reads each running lane once for two rows. BLOCKERS gets one
+# running_lanes: reads each running lane once for its rows. BLOCKERS gets one
 # line per thing the lane waits on: an ask the overseer has not answered, a
 # post-PR stop its state records, and red checks on its open pull request.
 # Each line names the item and what it waits on, so it reads apart from a
@@ -743,10 +747,12 @@ table() {
 # recorded validation runs took, in total and per dev round or restack.
 BLOCKERS=""
 VALIDATION=""
+ROUNDS=""
 running_lanes() {
   local lanes item host root args asks mail rc line failing="" repo list stop minutes channel
   BLOCKERS=""
   VALIDATION=""
+  ROUNDS=""
   for repo in "${REPOS[@]}"; do
     # github.sh picks its own token, and puts GH_BOT_TOKEN, inherited or from
     # the project's env files, ahead of the keyring and of GITHUB_TOKEN.
@@ -806,6 +812,9 @@ running_lanes() {
       4) refuse lane-host-busy "$item" "$(cat "$WORK_DIR/state.err")" ;;
       *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
     esac
+    lane_state_rounds "$LANE_ITEM_STATE" "$WORK_DIR/state.err" \
+      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+    ROUNDS+="- $item: review_rounds=$LANE_REVIEW_ROUNDS fix_receipts=$LANE_FIX_RECEIPTS validation_runs=$LANE_VALIDATION_RUNS restacks=$LANE_RESTACKS repeated_class_rounds=$LANE_REPEATED_CLASS_ROUNDS"$'\n'
     if [[ -n "$LANE_ITEM_STATE" ]]; then
       if ! stop="$(jq -r --arg item "$item" '.post_pr_stop // empty
         | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$LANE_ITEM_STATE")"; then
@@ -833,6 +842,7 @@ running_lanes() {
   done <<<"$lanes"
   BLOCKERS="${BLOCKERS%$'\n'}"
   VALIDATION="${VALIDATION%$'\n'}"
+  ROUNDS="${ROUNDS%$'\n'}"
 }
 
 # escapes_row — the Escapes line under Landed: the escapes lib/escapes.sh
@@ -905,6 +915,13 @@ render() {
     echo "Validation: none"
   else
     printf 'Validation:\n%s\n' "$VALIDATION"
+  fi
+  echo
+
+  if [[ -z "$ROUNDS" ]]; then
+    echo "Rounds: none"
+  else
+    printf 'Rounds:\n%s\n' "$ROUNDS"
   fi
   echo
 
