@@ -166,7 +166,7 @@ For the master and every overseer, a conversation stays in the medium where it t
 2. Say what happened and what it means for the work. Name no generation number, pane id, token count, seat name, mailbox id or internal rule name unless the owner must act on it.
 3. Write a time in the owner's time zone with am or pm (`9:29 pm`), never as a `Z` stamp.
 4. Write each pull request, commit, issue and tracker item as a Markdown link labelled with its short name: `[REPO#N](https://github.com/OWNER/REPO/pull/N)`, `[SHORT_SHA](https://github.com/OWNER/REPO/commit/SHORT_SHA)`, `[KEY-N](TRACKER_ISSUE_URL)`; beside a file, the mrkdwn form below. The Slack relay links bare tracker ids as a backstop, including Linear ids. Never put a tracker id in a code span: code stays literal and reaches the owner unlinked.
-5. Every written owner message starts with what changed for the owner. Follow it with four labels and short bullets: **Landed**, **Running**, **Blocked**, **Waiting on you**. Each work item carries one link to its owning tracker issue URL: a Linear issue URL for a Linear item, or the GitHub issue URL for an `issue-N` item. Never use a pull request or commit link. The tracker issue links to its pull request. Say the outcome for the owner or the fleet, not the issue title. Group small changes into one bullet. End with **Waiting on you**, with `Nothing` when empty. Keep the whole message within about 15 lines; put detail in the report file. Send one post per report, never a thread of fragments. Send one notice per fact: a reply owed to two owner notes uses one `--ref` and names the other note in its text. The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack as the report file's comment only. The chat and the report file keep [§ Status report](#status-report) and carry no summary. The Routing table controls what also appears in the chat.
+5. Every written owner message starts with what changed for the owner. Follow the [summary shape](#summary-shape) below. Each work item links to its owning tracker issue URL: a Linear issue URL for a Linear item, or the GitHub issue URL for an `issue-N` item. Never use a pull request or commit link. The tracker issue links to its pull request. Say the outcome for the owner or the fleet, not the issue title. End with **Waiting on you**, with `Nothing` when empty. Put detail in the report file. Send one post per report, never a thread of fragments. Send one notice per fact: a reply owed to two owner notes uses one `--ref` and names the other note in its text. The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack as the report file's comment only. The chat and the report file keep [§ Status report](#status-report) and carry no summary. The Routing table controls what also appears in the chat.
 6. **Waiting on you** there names each ask `lane-mail pending --item overseer --to owner` shows by its question, so the owner finds its thread in the channel, and what its deadline does, at a time in the owner's time zone. It is never empty while an ask is open.
 7. An ask sent during the owner's night gets no reply before morning. An ask's recorded recommendation is the safe choice. Its deadline (`--wait`) falls after the owner's morning unless the ask can stand on that option.
 8. State a cost as its figure and its source, never as "a cost": "$0.106 per compute-hour, about $19 a month, Neon pricing page". Estimate added CI time against the 50,000 private-repository minutes a month the plan includes.
@@ -185,12 +185,23 @@ Markup for a text posted alone, standard Markdown:
 
 A text sent beside a file, the comment of `slack post --file` or the `report-due` notice's summary, renders as Slack's mrkdwn markup, not standard Markdown. Write bold there as `*Label*`, a link as `<URL|LABEL>`, and a list as plain lines; the other markup rules hold.
 
+### Summary shape
+
+- Put one item per line, at most 20 words. A line may carry two links.
+- Put a blank line before each label. Each label stands alone: **Landed**, **Running**, **Blocked**, **Waiting on you**.
+- Put each figure, such as account headroom or a count, on its own line. Put rule 10's headroom lines in their own group under the opening line.
+- Use at most `ORCH_REPORT_SUMMARY_LINES` item lines, default 20. Blank lines, labels and the opening line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
+- Use no table in an owner message.
+
 ### Owner summary template
 
-Use this mrkdwn template for the report file's comment. For a post without a file, use the standard Markdown markup above. `scripts/oversee-report write` checks the mechanical summary rules before it renders or writes; its `--help` names the refusals and the configurable line cap.
+Use this mrkdwn template for the report file's comment. For a post without a file, use the standard Markdown markup above. `scripts/oversee-report write` keeps tracker links and the Waiting on you section as refusals. Word and item counts produce one advisory notice after the send; its `--help` defines the notice.
 
 ```text
 [WHAT CHANGED FOR THE OWNER]
+
+[ACCOUNT HEADROOM FIGURE]
+[COUNT FIGURE]
 
 *Landed*
 - [OUTCOME] (<https://linear.app/vanillagreen/issue/KEY-N|KEY-N>)
