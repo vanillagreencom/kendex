@@ -1,0 +1,1 @@
+- Keep the mailbox check working on macOS when the identity read returns an empty state path.

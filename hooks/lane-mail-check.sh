@@ -2381,7 +2381,9 @@ overseer_identify() {
   IDENT=${IDENT#*"$TAB"}
   RECORDED_HARNESS=${IDENT%%"$TAB"*}
   IDENT=${IDENT#*"$TAB"}
-  printf -v FLEET_STATE '%b' "${IDENT%%"$TAB"*}"
+  # Bash 3.2 can unset an empty %b target, which prevents the path fallback.
+  FLEET_STATE=${IDENT%%"$TAB"*}
+  [ -z "$FLEET_STATE" ] || printf -v FLEET_STATE '%b' "$FLEET_STATE"
   OVERSEER_HOME=${IDENT#*"$TAB"}
   case "$RECORD_BINDING" in
     bound | unstarted) ;;
