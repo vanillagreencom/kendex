@@ -107,10 +107,7 @@ EOF
 chmod +x "$BIN/gh" "$BIN/lanes" "$BIN/worktree"
 
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/lane-host-ssh" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/workflow-state" \
-  "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
-cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
+mutant_scripts repo >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0
@@ -758,19 +755,17 @@ assert_eq "rc=$RC refused=$(grep -cxF 'open-terminal: kind-unbuilt kind=codex-cl
   "rc=1 refused=1 made=no" "a kind declaring launch=cloud-task refuses as kind-unbuilt" "$TMP_ROOT/err"
 
 echo "=== controls ==="
-# mutant_root NAME — a copy of the suite's scripts laid out as the suite's
-# copy is, its root in MUTANT_ROOT.
+# mutant_root NAME FILE — all siblings with one private file, its root in MUTANT_ROOT.
 mutant_root() {
   MUTANT_ROOT="$TMP_ROOT/$1"
-  mkdir -p "$MUTANT_ROOT/scripts"
-  cp -R "$REPO/scripts/." "$MUTANT_ROOT/scripts/"
+  mutant_scripts "$1" "$2" >/dev/null || exit 1
   orch_fixture_shared_libs "$MUTANT_ROOT"
   git -C "$MUTANT_ROOT" init -q
 }
 # mutant NAME OLD NEW — such a copy with one rule of open-terminal removed,
 # its path in MUTANT.
 mutant() {
-  mutant_root "$1"
+  mutant_root "$1" open-terminal
   mutate_file "$MUTANT_ROOT/scripts/open-terminal" "$2" "$3"
   MUTANT="$MUTANT_ROOT/scripts/open-terminal"
 }
@@ -864,7 +859,7 @@ for i in "${!ARG_EDITS[@]}"; do
 done
 # The shared argument writer owns alias mapping. Keep the model-id control at
 # that owner after the cloud caller stopped writing model arguments itself.
-mutant_root model-id
+mutant_root model-id lib/lane-launch.sh
 # shellcheck disable=SC2016
 mutate_file "$MUTANT_ROOT/scripts/lib/lane-launch.sh" 'if [[ "$1" == claude ]]; then lane_adapter_claude_model_id' 'if [[ "$1" == claude ]] && false; then lane_adapter_claude_model_id'
 run_ot SCRIPT="$MUTANT_ROOT/scripts/open-terminal" -- "${CLOUD[@]}" CC-1
@@ -1032,7 +1027,7 @@ assert_eq "$(described) $(branch_named CC-1 cc-1)" "cloud=other ref=0 named=no u
 # Every {branch} gone from the words, in a copy of the lib: the description
 # row, which builds its want from the same words, still passes, and the
 # prompt row fails.
-mutant_root branch-words
+mutant_root branch-words lib/lane-launch.sh
 perl -0777 -pi -e 's/\{branch\}//g or die "branch-words: matches=0\n"' -- "$MUTANT_ROOT/scripts/lib/lane-launch.sh"
 run_ot SCRIPT="$MUTANT_ROOT/scripts/open-terminal" -- "${CLOUD[@]}" CC-1
 assert_eq "$(branch_named CC-1 cc-1)" "named=no unfilled=0" \

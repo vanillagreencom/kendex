@@ -622,11 +622,9 @@ echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 # screen as the item's window. The script resolves its libs beside itself, so
 # the copy is a whole fixture tree rather than one file.
 WAKE_REPO="$TMP_ROOT/wake-repo"
-mkdir -p "$WAKE_REPO/scripts/lib" "$TMP_ROOT/wt/CC-1"
-cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$WAKE_REPO/scripts/"
-cp -R "$SCRIPTS_DIR/lib/." "$WAKE_REPO/scripts/lib/"
+mutant_scripts wake-repo >/dev/null || exit 1
+mkdir -p "$TMP_ROOT/wt/CC-1"
 orch_fixture_shared_libs "$WAKE_REPO"
-chmod +x "$WAKE_REPO/scripts/open-terminal"
 git -C "$WAKE_REPO" init -q
 cat > "$TMP_ROOT/bin/worktree-stub" <<EOF
 #!/usr/bin/env bash

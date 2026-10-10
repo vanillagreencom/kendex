@@ -16,6 +16,8 @@
 # composed command a GUI launch hands to `bash -lc`.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 # An inherited or configured lane host would turn these local launches into
 # hosted ones; the caller environment outranks project settings.
 export ORCH_LANE_HOST=local
@@ -71,12 +73,8 @@ EOF
 chmod +x "$STUB"
 
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SCRIPTS_DIR/open-terminal" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
-cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
+mutant_scripts repo lib/lane-launch.sh >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 
