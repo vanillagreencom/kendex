@@ -225,8 +225,10 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               checks_unread when no probe read the rollup (--no-check-probe,
               or every probe errored). Status
               "timeout"; wait again on the same head — nothing failed.
-  not_queued  no poll ever observed the PR queued or armed, and the arming
-              grace expired. The merge was never armed; nothing will fire.
+  not_queued  at least one poll read the PR successfully, no poll observed
+              it queued or armed, and the arming grace or poll bound expired.
+              The merge was never armed; nothing will fire. A deadline with
+              no successful PR read is the pr-view-failed error.
 
 Progress signal (VST-249): across polls the script tracks the entry tuple
 (mergeQueueEntry.state, position, headCommit.oid) and the completed
@@ -1352,6 +1354,12 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   set_next_poll_gap
   sleep_within_budget "$poll_gap"
 done
+
+# Without a successful PR read, the deadline cannot establish queue membership.
+if [[ -z "$last_pr_state" ]]; then
+  emit_error pr-view-failed
+  exit 1
+fi
 
 # Deadline reached. The confirmation count is the whole rule and the deadline
 # is not an exception to it: a candidate that never reached the count is one

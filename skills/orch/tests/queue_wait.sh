@@ -359,6 +359,7 @@ stage() {
     name="${item#*=}"
     case "$prefix:$name" in
       *:fail502) write_fixture "$prefix" "$n" '' 1 "HTTP 502: Bad Gateway" ;;
+      state:rate_limited) write_fixture state "$n" '' 1 "API rate limit already exceeded for installation ID 161253865" ;;
       state:open) write_fixture state "$n" "$pr_open" ;;
       state:merged) write_fixture state "$n" "$pr_merged" ;;
       state:closed) write_fixture state "$n" "$pr_closed" ;;
@@ -536,6 +537,7 @@ table "$QW" \
   'membership lost after being queued is an ejection|state:last=open,queue:1=in,queue:last=out|||rc=1 verdict=ejected status=complete was_queued=true was_in_merge_queue=true cause=merge_group_failed' \
   'a one-poll blip out and back is not an ejection|state:last=open,queue:1=in,queue:2=out,queue:last=in|1 1 4 --json --no-check-probe||rc=1 verdict=queued' \
   'never queued is not_queued, not ejected|state:last=open,queue:last=out||QUEUE_WAIT_ARM_GRACE=2|rc=1 verdict=not_queued status=timeout was_queued=false cause=never_armed' \
+  'a readable never-armed PR at the deadline is not_queued|state:last=open,queue:last=out|1 1 3 --json --no-check-probe||rc=1 verdict=not_queued status=timeout was_queued=false cause=never_armed' \
   'armed then cleared is disarmed|state:last=open,queue:1=armed,queue:last=out|||rc=1 verdict=disarmed was_queued=true was_in_merge_queue=false cause=auto_merge_cleared' \
   'still queued at the deadline is a timeout, never a silent success|open_queued|1 1 3 --json --no-check-probe||rc=1 status=timeout verdict=queued in_merge_queue=true merge_queue_state=QUEUED' \
   'closed without merging|state:last=closed,queue:last=in|1 1 10 --json --no-check-probe||rc=1 verdict=closed' \
@@ -548,13 +550,36 @@ table "$QW" \
 echo "=== an unreadable queue answer is an error, never not_queued ==="
 # ../workflows/merge-pr.md § 5 hands the error to an operator, so each shape names itself:
 # an unreadable body, the GraphQL message GitHub sent, the auth ladder.
+PR_READ_ERROR_EXPECT='rc=1 status=error verdict=unknown error_line=queue-wait:+pr-view-failed+pr=1+repo=owner/repo pr_state='
 table "$QW" \
+  "every PR read hits the transient quota error until the deadline|state:last=rate_limited|1 1 3 --json --no-check-probe||$PR_READ_ERROR_EXPECT" \
   'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-unreadable+pr=1+repo=owner/repo+polls=3' \
   'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-unreadable+pr=1+repo=owner/repo+polls=3' \
   'a GraphQL errors array surfaces its message|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-rejected+pr=1+detail=isInMergeQueue' \
   'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error_line=queue-wait:+auth-unavailable+command=gh' \
   'a bound-killed status retries the env token once, then polls|state:last=merged,queue:last=in||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_TIMEOUTS=1,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0|rc=0 verdict=merged polls=1 auth_checks=2 auth_timeouts=1' \
   'two bound-killed statuses refuse the env token without another retry|open_queued||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_TIMEOUTS=2,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0|rc=3 status=error polls=0 auth_checks=2 auth_timeouts=2'
+
+# Remove only the deadline read guard: the same quota world must expose the
+# unsupported never_armed verdict and fail the PR-read error row.
+CONTROL_SCRIPTS="$(mutant_scripts no-pr-read-guard/orch queue-wait)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/no-pr-read-guard/github"
+mutate_file "$CONTROL_SCRIPTS/queue-wait" \
+  $'if [[ -z "$last_pr_state" ]]; then\n  emit_error pr-view-failed\n  exit 1\nfi\n' ''
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$TMP_ROOT/no-pr-read-guard/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+stage 'state:last=rate_limited'
+run_wait '' 1 1 3 --json --no-check-probe
+assert_eq "$(observe 'rc=1 status=timeout verdict=not_queued cause=never_armed pr_state=')" \
+  'rc=1 status=timeout verdict=not_queued cause=never_armed pr_state=' 'control reaches the unsupported never-armed deadline verdict' "$ERR"
+set +e
+( FAIL=0; assert_eq "$(observe "$PR_READ_ERROR_EXPECT")" "$PR_READ_ERROR_EXPECT" \
+  'deadline PR-read guard removed'; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/no-pr-read-guard/assertion.log"
+CONTROL_RC=$?
+set -e
+assert_eq "$CONTROL_RC" 1 'the quota row rejects the deadline-guard-removed control'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
 # The same once-then-success row must fail when the retry is disabled in the
 # real helper. Keep the helper's matched text in the disposable copy.

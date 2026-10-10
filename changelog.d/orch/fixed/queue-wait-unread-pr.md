@@ -1,0 +1,1 @@
+- Queue waits report `pr-view-failed` when the budget expires without a successful pull request read. A transient GitHub failure no longer reports the pull request as never armed.
