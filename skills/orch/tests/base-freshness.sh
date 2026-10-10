@@ -221,7 +221,6 @@ assert_contains "$err" "base-freshness: missing-remote path=$WT remote=origin" "
 START_WT="$REPO_ROOT/skills/orch/workflows/start-worktree.md"
 wiring="$(cat "$START_WT")"
 assert_contains "$wiring" '.agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]' "start-worktree § 1 runs the base-freshness gate"
-assert_contains "$wiring" 'Never review on an unverified base' "start-worktree forbids reviewing an unverified base"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

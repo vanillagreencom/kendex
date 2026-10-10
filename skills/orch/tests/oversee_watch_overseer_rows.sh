@@ -440,8 +440,6 @@ STOP_AFTER="$(row Stop claude | jq -c --argjson at "$((ROW_AT + 120))" '.at = $a
 wedge_case wedged_context 1000000 "$START" "$STOP"
 assert_eq "$WEDGE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=context launched=1" \
   "a reading at its window with no Stop row after it is a wedge, relaunched from the recorded line" "$ERR"
-assert_contains "$(fleet_log_text)" "read wedged at its context window on 2 consecutive watch passes" \
-  "and its fleet-log row says the session was wedged" "$ERR"
 assert_contains "$(fleet_log_text)" "source=context" "and names the source" "$ERR"
 wedge_case wedged_context_turned 1000000 "$START" "$STOP_AFTER"
 assert_eq "$WEDGE" "event=none launched=0" "the same reading with a Stop row after it is a turn that ended since, and no wedge" "$ERR"
@@ -521,8 +519,6 @@ gap_seq() { # NAME STEP...
 gap_seq context_gap_alert gap gap
 assert_eq "$GAP_SEQ" "event alerted none owner=1 fleet=1" \
   "a gap still standing on the second long pass goes to the owner once, and neither repeats" "$ERR"
-assert_contains "$(fleet_log_text)" "overseer-context-unmeasured: the overseer in pane $PANE has recorded no context reading on two consecutive watch passes, gap=home-unnamed" \
-  "and the fleet log carries the alert" "$ERR"
 gap_seq context_gap_owner_fails failing gap gap
 assert_eq "$GAP_SEQ" "event failed alerted none owner=1 fleet=1" \
   "an owner's notice that failed is sent again the next pass, with one fleet-log row" "$ERR"

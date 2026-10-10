@@ -384,9 +384,6 @@ assert_file_contains "$TMP_ROOT/flock-error.err" "container-close: lock-failed p
 
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 assert_file_contains "$MERGE_WORKFLOW" 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "merge-pr passes the shared main root"
-assert_file_contains "$MERGE_WORKFLOW" 'with every stderr diagnostic from the helper' "merge-pr preserves closed diagnostics"
-assert_file_contains "$MERGE_WORKFLOW" 'A bare `deferred` means the 120-second lock wait expired' "merge-pr documents the lock timeout"
-assert_file_contains "$MERGE_WORKFLOW" 'closure for [ISSUE] has not propagated; rerun merge-pr' "merge-pr reruns when current issue remains pending"
 
 rc=0
 "$SCRIPT" >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?

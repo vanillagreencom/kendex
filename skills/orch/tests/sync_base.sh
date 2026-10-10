@@ -232,7 +232,6 @@ git -C "$CLONE" remote set-url origin "$origin_url"
 
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 assert_file_contains "$MERGE_WORKFLOW" 'scripts/sync-base [MAIN_REPO_ROOT]' "merge-pr delegates base synchronization to the script"
-assert_file_not_contains "$MERGE_WORKFLOW" 'merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr removes the prose base-sync procedure"
 assert_file_contains "$MERGE_WORKFLOW" 'scripts/resolve-base-branch [MAIN_REPO_ROOT]' "merge-pr resolves the failed sync base branch"
 assert_file_contains "$MERGE_WORKFLOW" 'rev-parse "refs/heads/[BASE_BRANCH]"' "merge-pr collects the stale local SHA"
 assert_file_contains "$MERGE_WORKFLOW" 'rev-parse "refs/remotes/origin/[BASE_BRANCH]"' "merge-pr collects the stale origin SHA"

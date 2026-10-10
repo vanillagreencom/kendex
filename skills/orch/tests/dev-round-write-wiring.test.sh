@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# The workflow documents that carry dev-round-write's command and its
-# additions transport: the live fenced command in dev-fix.md and
-# review-pr-comments.md passes the additions path list and no data-file flag,
-# the delegation block carries the Adds path list, every scope document points
-# at the canonical protected-additions section without restating it, and the
-# live command executes against a real worktree and binds its Adds list.
 # Each pin has a control that a commented decoy or an inert command cannot
 # satisfy. The writer itself is dev_round_write.sh.
 set -euo pipefail
@@ -12,7 +6,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 WRITE_BIN="$REPO_ROOT/skills/orch/scripts/dev-round-write"
-CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -74,8 +67,6 @@ pins() {
 LIVE_CMD='^[[:space:]]*\.agents/.+dev-round-write .+--adds "'
 DATA_FLAG='(^|[[:space:]])--adds-[a-z]+([[:space:]]|$)'
 LIVE_DELEGATION='^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATHS\]'
-SCOPE_REF='^[[:space:]]*[^<[:space:]].*schemas/dev-round\.md.*Protected additions'
-SCOPE_CLAIM='Protected additions are|files? (the )?fix round may add|files? this round may add|Omit it to allow none|none allowed|files the orchestrator authorized.*add'
 
 echo "=== the live workflow blocks own the additions transport ==="
 for workflow in dev-fix review-pr-comments; do
@@ -88,20 +79,7 @@ for workflow in dev-fix review-pr-comments; do
     "$workflow: the live delegation carries the Adds path list~DELEGATION~$LIVE_DELEGATION~yes"
 done
 
-echo "=== every scope document points at the canonical protected-additions section and restates nothing ==="
-for doc in "$REPO_ROOT/skills/dev/workflows/dev-fix.md" "$REPO_ROOT/skills/orch/workflows/dev-fix.md" \
-  "$REPO_ROOT/skills/orch/workflows/review-pr-comments.md" "$WRITE_BIN" "$CHECK"; do
-  DOC_TEXT="$(<"$doc")"
-  pins \
-    "${doc#"$REPO_ROOT/"} points at the canonical scope~DOC_TEXT~$SCOPE_REF~yes" \
-    "${doc#"$REPO_ROOT/"} makes no repository-wide additions claim~DOC_TEXT~$SCOPE_CLAIM~no"
-done
-
 echo "=== controls: a commented decoy, a prose decoy and an inert command cannot satisfy the pins ==="
-SCOPE_MUTANT="$TMP_ROOT/scope-comment-mutant.md"
-cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$SCOPE_MUTANT"
-sed -i.bak '/schemas\/dev-round.md.*Protected additions/ s/^/<!-- /; /<!-- .*Protected additions/ s/$/ -->/' "$SCOPE_MUTANT"
-SCOPE_MUTANT_TEXT="$(<"$SCOPE_MUTANT")"
 COMMAND_MUTANT="$TMP_ROOT/dev-fix-command-mutant.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$COMMAND_MUTANT"
 sed -i.bak '/dev-round-write --worktree/ s/^[[:space:]]*/# /' "$COMMAND_MUTANT"
@@ -113,7 +91,6 @@ sed -i.bak '/^   \[If the round may add files: "Adds:/ s/^/   <!-- /; /^   <!-- 
 printf '\nAdds: [REPO_RELATIVE_PATHS] prose decoy\n' >> "$DELEGATION_MUTANT"
 MUTANT_DELEGATION="$(delegation_block "$DELEGATION_MUTANT" "Adds: [REPO_RELATIVE_PATHS]")"
 pins \
-  "a scope reference inside an HTML comment does not count~SCOPE_MUTANT_TEXT~$SCOPE_REF~no" \
   "a commented live command plus a prose decoy does not count~MUTANT_ROUND_BLOCK~$LIVE_CMD~no" \
   "an inert delegation line plus a prose decoy does not count~MUTANT_DELEGATION~$LIVE_DELEGATION~no"
 

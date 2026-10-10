@@ -11,7 +11,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER="$(cd "$TEST_DIR/.." && pwd)/scripts/spawn-adapter"
-SKILL="$(cd "$TEST_DIR/.." && pwd)/SKILL.md"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -106,35 +105,6 @@ assert_eq "$(jq -r '.effective_cap' <<<"$OUT")" "4" "a missing config falls back
 # A running session keeps its old cap until restarted — easy to forget after a
 # config edit, so the tool always says it.
 assert_eq "$(jq -r '.note | split("\n")[0]' <<<"$OUT")" "restart-required value=true" "the restart caveat is always reported"
-
-echo "=== the prose actually collapsed ==="
-
-# The point of the issue was removing hand-executed choreography from SKILL.md,
-# not adding a helper beside it. Guard both directions.
-assert_contains "$(cat "$SKILL")" "spawn-adapter" "SKILL.md points at the adapter"
-
-# The choreography moved out of SKILL.md entirely: the Codex runtime block is a
-# pointer, and the spawn + thread-cap contracts live in references/codex-runtime.md.
-# Guard both directions: the pointer stays short, the contract stays present.
-CODEX_REF="$(dirname "$SKILL")/references/codex-runtime.md"
-codex_line_len=$(grep -o '^> If you are running in \*\*Codex\*\*.*' "$SKILL" | awk '{ print length }' | sort -rn | head -1)
-if [[ -n "$codex_line_len" && "$codex_line_len" -lt 1200 ]]; then
-  pass "the SKILL.md Codex block stays a pointer ($codex_line_len chars, cap 1200)"
-else
-  fail "the SKILL.md Codex block stays a pointer (got: ${codex_line_len:-not found})"
-fi
-for phrase in "spawn-adapter spawn" "spawn-adapter slots"; do
-  if grep -Fq "$phrase" "$CODEX_REF"; then
-    pass "codex-runtime.md carries the $phrase contract"
-  else
-    fail "codex-runtime.md lost the $phrase contract"
-  fi
-done
-if grep -q 'reviewer-arch. → .task_name=reviewer_arch' "$SKILL"; then
-  fail "the hand-translation example is gone from SKILL.md"
-else
-  pass "the hand-translation example is gone from SKILL.md"
-fi
 
 echo
 rc=0

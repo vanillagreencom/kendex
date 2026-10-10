@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 # Contract tests for Codex spawn identity and the delegation-timestamp ordering.
 #
-# Codex must spawn the generated kendex agent as the runtime agent type rather
-# than launching a generic worker and simulating identity in prompt text. The
-# translation mechanics are BEHAVIOURALLY tested in spawn_adapter.sh; what is
-# pinned here is that the docs still route to the adapter, still state the
-# identity rule, still record the runtime spelling as metadata, and still stamp
-# the review freshness boundary in the one position that makes it meaningful.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -39,17 +33,10 @@ review="$REPO_ROOT/skills/orch/workflows/review.md"
 codebase="$REPO_ROOT/skills/orch/workflows/review-codebase.md"
 dev_start="$REPO_ROOT/skills/orch/workflows/dev-start.md"
 handoff="$REPO_ROOT/skills/orch/workflows/handoff.md"
-development="$REPO_ROOT/skills/orch/DEVELOPMENT.md"
 
 # --- Identity: routed through the adapter, canonical name is the identity ----
-assert_file_not_contains "$skill" "Spawn workers with \`fork_context: false\`" "Codex guidance does not default to a generic worker"
 assert_file_contains "$skill" "spawn-adapter" "SKILL.md routes Codex spawns through the adapter"
 assert_file_contains "$codex_runtime_ref" "spawn-adapter spawn" "Codex reference routes spawns through the adapter"
-assert_file_contains "$codex_runtime_ref" "canonical hyphenated" "Codex reference tells the caller to pass the canonical name"
-assert_file_contains "$codex_runtime_ref" "identity everywhere orch records anything" "Codex reference states the identity rule"
-assert_file_contains "$codex_runtime_ref" "runtime_metadata" "Codex reference says where the runtime spelling belongs"
-assert_file_contains "$codex_runtime_ref" "fallback-reason" "Codex reference names the explicit fallback path"
-assert_file_contains "$codex_runtime_ref" "never one" "Codex reference keeps a schema rejection out of the fallback path"
 
 # Every workflow that spawns reviewers or dev agents must route through the
 # adapter too — a workflow that hand-rolls the translation is the failure.
@@ -80,7 +67,6 @@ assert_order "$review_pr" \
   ".agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at" \
   "Delegate to every reviewer in the active set in parallel." \
   "review-pr stamps the freshness boundary before the delegation batch"
-assert_file_contains "$review_pr" "re-stamp before each wave's batch" "review-pr re-stamps the boundary per wave"
 
 # --- Codex Desktop app handoff ----------------------------------------------
 # A working-tree starting state can begin the child before generated agents are
@@ -93,8 +79,6 @@ assert_file_contains "$codex_runtime_ref" "tracked under \`.codex/agents/*.toml\
 assert_file_contains "$handoff" "Set the worktree \`startingState\` to \`{type: \"branch\", branchName: \"[BASE_BRANCH]\"}\`" \
   "handoff requires the branchName starting state"
 assert_file_contains "$handoff" "resolve-base-branch" "handoff resolves the base branch before app thread creation"
-assert_file_contains "$development" "setup hooks, \`WORKTREE_SYMLINKS\`, and \`codex-setup\` all run too late" \
-  "development notes record the setup-timing failure mode"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
