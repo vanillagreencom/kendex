@@ -159,12 +159,13 @@
 #         at sample time (at least one) as the divisor; model rates use one
 #         because claims omit models. So an
 #         account whose room the lanes already on it will spend is dropped the
-#         way a walled one is. It never returns an OVERSEER SEAT, an account
-#         `.overseer.account` of a fleet state names: this checkout's fleet
+#         way a walled one is. An OVERSEER SEAT is returned last, only while
+#         its projected room exceeds ORCH_OVERSEER_SEAT_RESERVE_PCT (default 50).
+#         A seat is an account `.overseer.account` names in this checkout's fleet
 #         state, and every fleet state a live claim in the store names, which
 #         is each fleet sharing OVERSEE_WATCH_STATE_DIR that runs a lane; a
 #         fleet state that cannot be read refuses the pick with exit 1.
-#         --for-overseer keeps the seats, for a pick that seats an overseer.
+#         --for-overseer judges seats as ordinary accounts, with no reserve.
 #         --json prints that lane's whole record, which carries headroom_pct,
 #         binding_bucket (session, weekly, model, monthly or credits), the matching
 #         binding_resets_at, claims, burn_pct_per_lane_hour,
@@ -191,11 +192,11 @@
 #         be one whose reading has room and whose live lanes project past the
 #         bound: `lanes list --json` shows its `claims` and
 #         `projected_headroom_pct`, and it comes back as those lanes end, not
-#         at a reset. And `seats=N` counts the overseer seats omitted before
-#         window-account judgement, each named on a `lanes: pick-seat-omitted`
-#         line. Copilot and Pi pool picks keep seats and charge their claims
-#         at the monthly burn; they read no fleet state for seats. A window
-#         fleet with only seats needs another account. Under --json that exit
+#         at a reset. And `seats=N` counts accounts judged `seat-reserve`,
+#         each named on a `lanes: pick-seat-omitted lane=DIR projected-headroom=N
+#         reserve=N` line. They return when their projected room exceeds the
+#         reserve. Copilot and Pi pool picks keep seats and charge their claims
+#         at the monthly burn; they read no fleet state for seats. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
 #         "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}]}` on stdout,
 #         the same counts, so a caller
@@ -253,9 +254,12 @@
 #         close, an overseer's own mark. --projected judges the projected wall
 #         the chooser judges instead, for a launcher about to add a lane, so a
 #         lane a person names is refused on the rule the chooser drops it on.
-#         It omits no overseer seat for any harness: the account named is judged.
+#         A seat is judged against the reserve too: a running lane hands off
+#         at its first turn end at or below it, so it can overrun by one turn.
+#         --for-overseer exempts the overseer's own mark from the reserve.
 #         Exit 0 has room and prints the env prefix, or the lane's record under
-#         --json; 3 is a wall at or above --max-pct no credit room lifts; 5 is a lane nothing
+#         --json; 3 is a wall at or above --max-pct no credit room lifts, or
+#         `verdict=seat-reserve` at or below the seat reserve; 5 is a lane nothing
 #         measured for this launch, whether no window names --model or the
 #         account's usage could not be read at all, and under --json its record
 #         is printed too, whose `status` says which, or a Pi model whose
@@ -305,8 +309,10 @@
 #         a claimed window no running lane record places, is `unreadable`. HANDOFF is
 #         `required` when lib/lane-context.sh's shared context rule requires
 #         handoff, the judge the hook uses, or at a HEADROOM at or
-#         below ORCH_HANDOFF_HEADROOM_PCT (default 3), never on an account
-#         room on its credits (see pick), whose HEADROOM is its balance.
+#         below ORCH_HANDOFF_HEADROOM_PCT (default 3), or on a seat at or below
+#         ORCH_OVERSEER_SEAT_RESERVE_PCT. The caller's own row uses the ordinary
+#         mark. An account room on its credits (see pick) is never marked by
+#         headroom; its HEADROOM is its balance.
 #         --json carries `binding_bucket`, `credits` and `binding_resets_at`;
 #         the last is when the binding window resets, a credits row's spent
 #         plan window, in whole-second UTC with a Z, so a headroom
@@ -432,9 +438,9 @@
 #   --exclude-lane DIR  pick: omit this config dir before the chooser judges
 #                    the remaining accounts. Used when the caller needs a
 #                    different account rather than capacity on its own.
-#   --for-overseer   pick: keep the overseer seats among the candidates. For a
-#                    pick that seats an overseer; refused with --lane, which
-#                    judges one named account and omits nothing.
+#   --for-overseer   pick, with or without --lane: judge seats as ordinary
+#                    accounts, with no reserve or last rank, for an overseer's
+#                    launch or its own mark.
 #   --projected      pick --lane: judge the projected wall rather than the
 #                    reading, for a launch about to add a lane to the account.
 #                    Refused without --lane, since the chooser always judges it.
@@ -523,6 +529,14 @@
 #                      walls that model, and never compared with
 #                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
 #                      measured, when it is not an integer 0-100.
+#   ORCH_OVERSEER_SEAT_RESERVE_PCT  Room kept in each plan window for the
+#                      overseer (default 50, provisional). A seat is admitted
+#                      only above this reserve, ranked last. Running lanes on
+#                      it hand off at or below it. 100 admits no seat and marks
+#                      every lane on one; 0 uses --max-pct alone, still last.
+#                      Keep it above ORCH_OVERSEER_HEADROOM_PCT. Credits do not
+#                      spend plan windows. Refused before any measurement when
+#                      it is not an integer 0-100.
 #   ORCH_LANE_BURN_PCT_PER_HOUR  Percentage points of the 5-hour session window
 #                      one live lane is expected to spend in an hour: the
 #                      burn `pick` charges a live claim wherever it charges
@@ -972,6 +986,7 @@ message() {
       printf '%s\n' "the host-wide usage refresh lock file could not be opened, so this run measured without it and the usage endpoint may see two refreshes of the same accounts; check the usage cache directory, or set OVERSEE_WATCH_STATE_DIR"
       ;;
     invalid-handoff-headroom) printf 'lanes: invalid-handoff-headroom value=%s\nORCH_HANDOFF_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
+    invalid-overseer-seat-reserve) printf 'lanes: invalid-overseer-seat-reserve value=%s\nORCH_OVERSEER_SEAT_RESERVE_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-burn) printf 'lanes: invalid-lane-burn value=%s\nORCH_LANE_BURN_PCT_PER_HOUR must be an integer 0-100\n' "$1" ;;
     invalid-lane-codex-credit-floor) printf 'lanes: invalid-lane-codex-credit-floor value=%s\nORCH_LANE_CODEX_CREDIT_FLOOR must be an integer 0 or more\n' "$1" ;;
@@ -1001,8 +1016,8 @@ message() {
       printf '%s\n' "the fleet state naming an overseer's account could not be read at that step; refusing to pick rather than hand a lane the seat an overseer runs on (fix the fleet state, or pass --for-overseer for an overseer's own pick)"
       ;;
     pick-seat-omitted)
-      printf 'lanes: pick-seat-omitted lane=%s\n' "$1"
-      printf '%s\n' "a fleet runs its overseer on that account, so no lane is launched there"
+      printf 'lanes: pick-seat-omitted lane=%s projected-headroom=%s reserve=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "the account does not have room above the overseer's reserve"
       ;;
     time-failed)
       printf 'lanes: time-failed clock=%s\n' "UTC"
@@ -2392,8 +2407,9 @@ emit_lane() {
 	# launches in flight" must not read as "there are none".
 	local claims="null"
 	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(account_claims "$dir")"
+	lane_canon "$dir" || return 1
 	jq -nc \
-		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
+		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" --arg id "$LANE_CANON" \
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" --arg retire "$LANE_RETIRE_DATE" \
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
@@ -2409,6 +2425,7 @@ emit_lane() {
 		    alias: $alias,
 		    harness: $harness,
 		    config_dir: $dir,
+		    _id: $id,
 		    retire_date: (if $retire == "" then null else $retire end),
 		    measured_through: $through,
 		    status: $st,
@@ -2501,7 +2518,7 @@ account_claims() { # DIR
 }
 
 # EXCLUDE is the config dirs, one a line, that `pick` omits before the chooser
-# judges the rest: --exclude-lane and the overseer seats. An omitted dir is
+# judges the rest: --exclude-lane. An omitted dir is
 # never measured. HOSTED is a JSON array of host rows that STAND IN for this
 # machine's reading of the same config dir, which `pick` passes and `list` does
 # not: a launch on a hosted fleet runs under the provider's copy, so the chooser
@@ -3022,17 +3039,14 @@ render_table() {
 # The threshold is never traded away for a claim count — a lane whose
 # projection is at or above --max-pct is out before this ordering runs.
 #
-# The chooser never returns an OVERSEER SEAT, an account a fleet state records
-# as its overseer's (`.overseer.account`): a lane launched there spends the
-# window the overseer needs to watch and succeed, and the overseer then names
-# lanes by hand to keep off it. The seats are overseer_seats' answer and are
-# omitted before anything is measured. --for-overseer keeps them, for the
-# overseer's own picks (lib/overseer-launch.sh), which seat an overseer.
+# The overseer needs plan room to watch and succeed. Seats are measured with
+# every other account, but lane-model judges them against the reserve and
+# ranks them last. The same judge marks running lanes at the reserve, so
+# admission stopping does not leave those lanes spending the overseer's room.
+# --for-overseer exempts the overseer's own launch and mark.
 #
-# So exit 3 has two causes a reset does not answer, and the refusal names
-# both: a lane counted walled on its projection comes back as its live lanes
-# end, and `seats=` counts the accounts omitted as seats, each named on its
-# own line, which no wait returns to the candidates.
+# A walled projection can reopen as live lanes end. `seats=` names reserve
+# refusals, which reopen when projected room rises above the reserve.
 #
 # With --model the threshold reads the bucket that walls THAT model
 # (lib/lane-model.sh) instead of the binding bucket: an account whose weekly
@@ -3108,7 +3122,7 @@ copilot_pool_records_fix() { # RECORDS
 }
 
 cmd_pick_lane() {
-	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9"
+	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9" for_overseer="${10}"
 	local target found="" d record="" wall bucket verdict hosted projected credits refusal cause retry
 	# A malformed override refuses this form as it refuses the chooser, before a
 	# provider row could stand in for an entry nobody can parse.
@@ -3133,6 +3147,10 @@ cmd_pick_lane() {
 			return 6
 		fi
 		message pick-lane-claims >&2
+	fi
+	SEATS=""
+	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
+		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	lane_canon "$dir" || return 1; target="$LANE_CANON"
 	# Both sides through the one normaliser, so a dir given with a trailing
@@ -3173,9 +3191,9 @@ cmd_pick_lane() {
 	# every lane on a busy account to hand off with room left. --projected is
 	# the launch question, the chooser's own wall.
 	lane_tier_inputs "[$record]" || return 1
-	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
+	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
-	record="$(jq -c "$LANE_MODEL_JQ"' del(.verdict) | lane_public' <<<"$record")" || return 1
+	record="$(jq -c "$LANE_MODEL_JQ"' if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public' <<<"$record")" || return 1
 	if [[ "$verdict" == walled || "$verdict" == unmeasured ]]; then
 		refusal="$(jq -r 'if .refusal == null then empty else [.refusal.cause, (.refusal.retry_at // "none")] | @tsv end' <<<"$record")" || return 1
 		if [[ -n "$refusal" ]]; then
@@ -3198,6 +3216,12 @@ cmd_pick_lane() {
 			# one lane_pick_harness named for the launch.
 			lane_env_prefix "$harness" "$found" "$model"
 			return
+			;;
+		seat-reserve)
+			projected="$(jq -r --argjson p "$projected_verdict" 'if $p then .projected_headroom_pct else 100 - .wall end' <<<"$record")" || return 1
+			message pick-seat-omitted "$dir" "$projected" "$SEAT_RESERVE" >&2
+			[[ "$as_json" != true ]] || printf '%s\n' "$record"
+			return 3
 			;;
 		walled)
 			# Under --projected the window whose projected room decided, which
@@ -3267,7 +3291,7 @@ cmd_pick_lane() {
 # A seat stays while its fleet state records it, whether or not that overseer
 # still runs: no liveness judgement of a recorded overseer exists as a callable
 # owner (`oversee launch` inlines its own), so a stopped fleet's seat stays
-# omitted until an overseer launch or register rewrites the record.
+# protected until an overseer launch or register rewrites the record.
 #
 # The seats land in SEATS; a failure leaves SEATS_STEP and SEATS_STATE naming
 # the step and the state it could not read, for the caller's refusal.
@@ -3290,24 +3314,9 @@ overseer_seats() {
 	done < <(printf '%s\n%s\n' "$fleets" "$claimed" | sort -u)
 }
 
-# The seats that name a candidate of HARNESS, one a line: a config dir
-# discovery reaches or a row HOSTED holds. What `seats=` counts and the
-# refusal names, so a codex overseer's account is not reported as omitted from
-# a claude pick.
-omitted_seats() { # HARNESS HOSTED
-	local d id
-	{ lane_dirs "$1"; jq -r '.[]._id' <<<"$2"; } | while IFS= read -r d; do
-		[[ -n "$d" ]] || continue
-		lane_canon "$d" || return 1; id="$LANE_CANON"
-		case $'\n'"$SEATS" in
-			*$'\n'"$id"$'\n'*) printf '%s\n' "$id" ;;
-		esac
-	done | sort -u
-}
-
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8" credit_floor="$9"
-	local lanes hosted judged chosen walled unmeasured resets omitted="" seats=0 seat refusals refusal_lines cause retry
+	local lanes hosted judged chosen walled unmeasured resets omitted="" seats=0 seat room refusals refusal_lines cause retry
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
 	# harness=pi row for or the override names. The override is refused here
 	# when nobody can parse it, before anything is read; its Copilot CLI
@@ -3341,9 +3350,9 @@ cmd_pick() {
 		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
-	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted" "$model")"
+	lanes="$(collect_lanes "$harness" "$exclude" "$hosted" "$model")"
 	lane_tier_inputs "$lanes" || return 1
-	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" "$TIER_POOL" "$CLOUD_CREDIT_FLOOR" "$TIER_RETIRE" "$TIER_CLOUD_REPO" <<<"$lanes")" || return 1
+	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" "$TIER_POOL" "$CLOUD_CREDIT_FLOOR" "$TIER_RETIRE" "$TIER_CLOUD_REPO" "$SEATS" "$SEAT_RESERVE" <<<"$lanes")" || return 1
 	while read -r dir; do message cloud-credit-unread "$dir" >&2; done < <(jq -r '.cloud_credit_unread[]' <<<"$judged")
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
@@ -3354,8 +3363,8 @@ cmd_pick() {
 		done <<<"$refusal_lines"
 		walled="$(jq -r '.walled // 0' <<<"$judged" 2>/dev/null || true)"
 		unmeasured="$(jq -r '.unmeasured // 0' <<<"$judged" 2>/dev/null || true)"
-		[[ -z "$SEATS" ]] || omitted="$(omitted_seats "$harness" "$hosted")" || die pick-overseer-seats omitted oversee
-		[[ -z "$omitted" ]] || seats="$(grep -c . <<<"$omitted")"
+		omitted="$(jq -r '.seats[] | [.config_dir, (.projected_headroom_pct // "none")] | @tsv' <<<"$judged")" || return 1
+		seats="$(jq -r '.seats | length' <<<"$judged")" || return 1
 		# A Pi pick where no candidate carries a pool reading and none is walled
 		# is the unstated refusal, each unread provider row named on its fix=
 		# line: a pool nobody read is never one to wait out.
@@ -3371,13 +3380,13 @@ cmd_pick() {
 			# allowance is spent, the other was never read, and
 			# the table underneath shows an unmeasured lane as ok with headroom.
 			# Every candidate unmeasured gets the named form's own wording.
-			if [[ "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
+			if [[ "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 && "$seats" -eq 0 ]]; then
 				message no-candidate-unmeasured "$harness" "${model:-none}" "$unmeasured"
 			else
 				message no-candidate "$harness" "$max_pct" "${model:-none}" "${walled:-0}" "${unmeasured:-0}" "$seats"
 			fi
-			while IFS= read -r seat; do
-				[[ -z "$seat" ]] || message pick-seat-omitted "$seat"
+			while IFS=$'\t' read -r seat room; do
+				[[ -z "$seat" ]] || message pick-seat-omitted "$seat" "$room" "$SEAT_RESERVE"
 			done <<<"$omitted"
 			while IFS= read -r dir; do
 				[[ -z "$dir" ]] || message cloud-repo-unset "$dir" "${TIER_REPO:-none}"
@@ -3391,7 +3400,7 @@ cmd_pick() {
 		# "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}]}` is the object, T the judgement's own
 		# earliest walled reset or null; nothing else is printed on this path, so a
 		# caller reading `.walled` gets the count or a jq error, never a lane
-		# record it would mistake for a pick. `seats` is grep's count or 0.
+		# record it would mistake for a pick. `seats` is the judgement's reserve refusal count.
 		#
 		# The first two are proven digits before jq is handed them: the reads above
 		# swallow a failure into an empty string, and --argjson on one is jq
@@ -3523,6 +3532,9 @@ parse_argv() {
 		pct_valid "$MAX_PCT" || die invalid-lane-max-pct "$MAX_PCT"
 		MAX_PCT=$((10#$MAX_PCT))
 	fi
+	SEAT_RESERVE="${ORCH_OVERSEER_SEAT_RESERVE_PCT:-50}"
+	pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"
+	SEAT_RESERVE=$((10#$SEAT_RESERVE))
 	# The expected burn of one live lane where its account measured no rate,
 	# read here for the reason MAX_PCT is and refused on the same terms: a
 	# figure nobody can read must not become one of this script's own.
@@ -3817,8 +3829,7 @@ case "$SUB" in
 		fi
 		if [[ -n "$LANE_ARG" ]]; then
 			[[ -z "$EXCLUDE_LANE" ]] || die unknown-option --exclude-lane
-			[[ "$FOR_OVERSEER" != true ]] || die unknown-option --for-overseer
-			cmd_pick_lane "$LANE_ARG" "$PICK_HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR" "$BURN_PCT" "$PROJECTED" "$CREDIT_FLOOR"
+			cmd_pick_lane "$LANE_ARG" "$PICK_HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR" "$BURN_PCT" "$PROJECTED" "$CREDIT_FLOOR" "$FOR_OVERSEER"
 		else
 			[[ "$PROJECTED" != true ]] || die unknown-option --projected
 			cmd_pick "$PICK_HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR" "$EXCLUDE_LANE" "$FOR_OVERSEER" "$BURN_PCT" "$CREDIT_FLOOR"
@@ -3978,9 +3989,16 @@ case "$SUB" in
 			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
 			usage_i=$((usage_i + 1))
 		done
+		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 		# The handoff mark is the verdict a lane's own hook asks `pick --lane` for.
 		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson max "$((100 - 10#$HANDOFF_HEADROOM_PCT))" \
-			--argjson credit_floor "$CREDIT_FLOOR" "$LANE_MODEL_JQ"'($u|map(with_lane_verdict(.wall; $max; $credit_floor))) as $u|$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|.+{headroom_pct:($l.headroom_pct//null),binding_bucket:($l.binding_bucket//null),binding_resets_at:($l.binding_resets_at//null),credits:($l.credits//null),handoff_required:($l.verdict=="walled" or $x.context_handoff_due==true)}))')"
+			--argjson credit_floor "$CREDIT_FLOOR" --arg seats "$SEATS" --argjson reserve "$SEAT_RESERVE" "$LANE_MODEL_JQ"'
+          ($seats | split("\n") | map(select(. != ""))) as $seats
+          | $c | map(. as $x | ((($u | map(select(.config_dir == $x.config_dir)) | first) // {})
+            | with_lane_seat_verdict(.wall; $max; $credit_floor; (if $x.caller == true then [] else $seats end); $reserve)) as $l
+            | . + {headroom_pct: ($l.headroom_pct // null), binding_bucket: ($l.binding_bucket // null),
+                   binding_resets_at: ($l.binding_resets_at // null), credits: ($l.credits // null),
+                   handoff_required: ($l.verdict == "walled" or $l.verdict == "seat-reserve" or $x.context_handoff_due == true)})')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;

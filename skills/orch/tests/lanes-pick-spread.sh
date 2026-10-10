@@ -3,18 +3,19 @@
 # charges each live claim on an account its expected burn, so an account whose
 # room the lanes already on it will spend is dropped as a walled one is, by the
 # chooser and by the named form alike; selection charges that projected room;
-# and a window-account chooser never returns an overseer seat, an
-# account a fleet state records as its overseer's. The network layer is the
+# and a window-account chooser returns an overseer seat last, above its
+# reserve, while running lanes hand off at that reserve. The network layer is the
 # fetch stub lib/lanes-fixture.sh writes, so every row runs offline.
 #
 # One table per case, one asserted row per shape. Every run gets its own claim
 # store and fleet state directory, staged from the row alone.
 set -uo pipefail
+export MSYS=winsymlinks:nativestrict
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME, and every threshold a
 # row asserts is the script's default or the row's own setting.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
-unset ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_HOST ORCH_STATE_DIR
+unset ORCH_OVERSEER_SEAT_RESERVE_PCT ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_HOST ORCH_STATE_DIR
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
 
@@ -189,7 +190,7 @@ table() {
       STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
       TMUX_PANES_FILE="$RUN/panes" PATH="$BIN:$OT_BIN:$PATH" OT_WT_LOG="$RUN/worktree.log" \
       OT_CAPTURE="$RUN/ghostty" WORKTREE_CLI="$OT_BIN/worktree" TERMINAL=ghostty TMUX= ORCH_LANE_HOST=local ORCH_LANE_PREFERENCE= \
-      ORCH_LANE_DIRS= ORCH_LANE_ALIASES= ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL= ORCH_LANE_BURN_PCT_PER_HOUR= ORCH_LANE_MAX_PCT= \
+      ORCH_LANE_DIRS= ORCH_LANE_ALIASES= ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL= ORCH_LANE_BURN_PCT_PER_HOUR= ORCH_LANE_MAX_PCT= ORCH_OVERSEER_SEAT_RESERVE_PCT= \
       ${env_args[@]+"${env_args[@]}"} "${command[@]}" 2>"$RUN/err")
     RC=$?
     got=""
@@ -200,6 +201,7 @@ table() {
         out) value="$OUT" ;;
         launched) value="$(awk '$1 == "open-terminal:" && $2 == "terminal-opened" { print "yes" }' <<<"$OUT")"; value="${value:-no}" ;;
         sample_claims) value="$(jq -r --arg dir "$H/.1codex" 'select(.config_dir == $dir) | .sample_claims' "$STORE"/usage/*.json)" || exit 1 ;;
+        measurements) value="$(if [[ -f "$RUN/fetch.log" ]]; then wc -l < "$RUN/fetch.log"; else printf 0; fi)"; value="${value//[[:space:]]/}" ;;
         fetched) value="$(cat "$RUN/fetch.log")" || exit 1 ;;
         headroom_hundredths) value="$(jq -r '.projected_headroom_pct * 100 | round' <<<"$OUT")" ;;
         record.*) value="$(jq -r ".lanes[0].${name#record.}" "$FLEET/workflow-state-oversee.json" 2>/dev/null || echo UNREADABLE)" ;;
@@ -476,30 +478,85 @@ claude_usage 30 10 5 Opus > "$FIXTURE_DIR/.bclaude.json"
 # Control: ordered on the reading once the claims tie, the seat the lanes on it
 # are spending fastest is returned.
 CTRL="$(mutant_scripts mutant-rank-wall lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall])' 'sort_by([.wall])'
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._seat, ._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall])' 'sort_by([.wall])'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: ranked on the reading, the tie goes to the seat burning fastest|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:1;claim:b:1|a:20:15|$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=50"
 
-echo "=== a window-account chooser never returns an overseer seat ==="
-# a has the most room and no claim, so only the seat rule keeps it out.
+echo "=== seats are returned last above the reserve ==="
+ln -s "$H/.aclaude" "$H/.seatclaude"
+[[ -L "$H/.seatclaude" ]] || { echo "fixture: seat-link=not-a-symlink" >&2; exit 1; }
+cp "$FIXTURE_DIR/.aclaude.json" "$FIXTURE_DIR/.seatclaude.json"
 table \
-  "the seat this checkout's fleet records for its overseer is never returned|$ALL_DIRS|own:a||$PICK|rc=0 config_dir=$H/.bclaude" \
-  "a peer fleet's overseer seat is omitted while the remaining accounts compete on projected room|$ALL_DIRS|peer:a;claim:b:1:peer||$PICK|rc=0 config_dir=$H/.bclaude" \
-  "--for-overseer keeps the seat, for a pick that seats an overseer|$ALL_DIRS|own:a||$PICK --for-overseer|rc=0 config_dir=$H/.aclaude" \
+  "a seat reached through a symlink keeps its last rank|ORCH_LANE_DIRS=$H/.seatclaude:$H/.bclaude|own:a||$PICK|rc=0 config_dir=$H/.bclaude" \
+  "an own seat with more room loses to a non-seat with room|$ALL_DIRS|own:a||$PICK|rc=0 config_dir=$H/.bclaude" \
+  "a peer seat with more room loses to a non-seat with room|$ALL_DIRS|peer:a;claim:b:1:peer||$PICK|rc=0 config_dir=$H/.bclaude" \
+  "the own seat alone above the reserve is returned|ORCH_LANE_DIRS=$H/.aclaude|own:a||$PICK|rc=0 config_dir=$H/.aclaude" \
+  "the peer seat alone above the reserve is returned|ORCH_LANE_DIRS=$H/.aclaude|peer:a;claim:b:1:peer||$PICK|rc=0 config_dir=$H/.aclaude" \
+  "--for-overseer judges the seat without the reserve or last rank|$ALL_DIRS|own:a||$PICK --for-overseer|rc=0 config_dir=$H/.aclaude" \
   "a claim naming a fleet state that is gone holds no seat|$ALL_DIRS|claim:b:1:gone||$PICK|rc=0 config_dir=$H/.aclaude" \
-  "a fleet state that cannot be read refuses the pick, naming the step and the state|$ALL_DIRS|own:broken||$PICK|rc=1 seatrefusal=named" \
-  "an overseer seat that is the only account leaves nothing to pick, and the refusal counts and names it|ORCH_LANE_DIRS=$H/.aclaude|own:a||$PICK|rc=3 walled=0 unmeasured=0 seats=1 key=no-candidate,harness=claude,max-pct=95,model=none,walled=0,unmeasured=0,seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude" \
-  "a pick with room names no seat|$ALL_DIRS|own:a||$PICK|rc=0 keyed.pick-seat-omitted=none" \
-  "the named form judges the account it is given, seat or not|$ALL_DIRS|own:a||pick --lane $H/.aclaude --harness claude --json|rc=0 config_dir=$H/.aclaude" \
-  "--for-overseer is refused beside --lane, which omits nothing|$ALL_DIRS|||pick --lane $H/.aclaude --harness claude --for-overseer|rc=1 key=unknown-option,arg1=--for-overseer"
+  "a fleet state that cannot be read refuses the pick|$ALL_DIRS|own:broken||$PICK|rc=1 seatrefusal=named" \
+  "reserve 100 refuses a seat despite full room|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|own:a||$PICK|rc=3 walled=0 seats=1" \
+  "a malformed reserve refuses before measurement|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=half|own:a||$PICK|rc=1 key=invalid-overseer-seat-reserve,value=half measurements=0" \
+  "a pick with room names no reserve refusal|$ALL_DIRS|own:a||$PICK|rc=0 keyed.pick-seat-omitted=none" \
+  "the named form on a non-seat keeps the lane threshold|$ALL_DIRS|own:a||pick --lane $H/.bclaude --harness claude --json|rc=0 config_dir=$H/.bclaude"
 
-# Control: a chooser that omits no seat hands the overseer's account out.
-CTRL="$(mutant_scripts mutant-no-seats lanes)" || exit 1
-# shellcheck disable=SC2016  # the script's own text, never expanded here.
-mutate_file "$CTRL/lanes" '"$exclude"$'"'"'\n'"'"'"$SEATS"' '"$exclude"'
+CTRL="$(mutant_scripts mutant-reserve-parse lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"' 'if false; then pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"; fi; SEAT_RESERVE=50'
 LANES_UNDER_TEST="$CTRL/lanes" table \
-  "control: with no seat omitted, the overseer's account is returned|$ALL_DIRS|own:a||$PICK|rc=0 config_dir=$H/.aclaude" \
-  "control: with no seat omitted, the peer overseer's account is returned|$ALL_DIRS|peer:a;claim:b:1:peer||$PICK|rc=0 config_dir=$H/.aclaude"
+  "control: ignoring the malformed reserve measures and admits the seat|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=half|own:a||$PICK|rc=0 measurements=1"
+
+# Both windows and the live claim's projection share the judge's one bound.
+for row in "50:10:50:" "51:10:49:" "10:50:50:" "45:10:50:claim:a:1"; do
+  IFS=: read -r session weekly room claims <<<"$row"
+  claude_usage "$session" "$weekly" 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+  table "session=$session weekly=$weekly claims=$claims refuses at the reserve|ORCH_LANE_DIRS=$H/.aclaude|own:a${claims:+;$claims}||$PICK|rc=3 walled=0 seats=1 walled_resets_at=null keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=$room,reserve=50" \
+    "named launch session=$session weekly=$weekly claims=$claims uses the projection|ORCH_LANE_DIRS=$H/.aclaude|own:a${claims:+;$claims}||pick --lane $H/.aclaude --harness claude --projected --json|rc=3 verdict=seat-reserve projected_headroom_pct=$room"
+done
+claude_usage 0 0 0 Opus > "$FIXTURE_DIR/.aclaude.json"
+table "reserve 100 refuses even a full seat|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|own:a||$PICK|rc=3 seats=1"
+claude_usage 50 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+B_USAGE="$(cat "$FIXTURE_DIR/.bclaude.json")"
+printf '%s\n' '{}' > "$FIXTURE_DIR/.bclaude.json"
+table "a reserve refusal beside an unread account reports both counts|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|own:a||$PICK|rc=3 walled=0 unmeasured=1 seats=1 key=no-candidate,harness=claude,max-pct=95,model=none,walled=0,unmeasured=1,seats=1"
+printf '%s\n' "$B_USAGE" > "$FIXTURE_DIR/.bclaude.json"
+table "reserve 0 leaves the lane limit alone|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|own:a||$PICK|rc=0 config_dir=$H/.aclaude"
+
+# The hook's running-lane call judges the reading, not its own claim's charge.
+for used in 49 50 51; do
+  claude_usage "$used" 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+  expected='rc=0'
+  [[ "$used" -lt 50 ]] || expected='rc=3 verdict=seat-reserve'
+  table \
+    "running seat lane at $used used|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|$expected" \
+    "overseer at $used used keeps its own mark|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --for-overseer --min-headroom-pct 5 --json|rc=0" \
+    "non-seat at $used used keeps its lane mark|ORCH_LANE_DIRS=$H/.aclaude|claim:a:1||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=0"
+done
+CTRL="$(mutant_scripts mutant-seat-bound lib/lane-model.sh)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lib/lane-model.sh" '[$max, 100 - $reserve] | min' '$max'
+claude_usage 50 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: no seat bound returns the at-reserve seat|ORCH_LANE_DIRS=$H/.aclaude|own:a||$PICK|rc=0 config_dir=$H/.aclaude" \
+  "control: no seat bound leaves its running lane unmarked|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=0" \
+  "control: no seat bound admits the named projection at the reserve|ORCH_LANE_DIRS=$H/.aclaude|own:a||pick --lane $H/.aclaude --harness claude --projected --json|rc=0"
+CTRL="$(mutant_scripts mutant-overseer-reserve lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'credit_floor="$9" for_overseer="${10}"' 'credit_floor="$9" for_overseer=false'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: ignoring --for-overseer marks the overseer on its reserve|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --for-overseer --min-headroom-pct 5 --json|rc=3 verdict=seat-reserve"
+claude_usage 20 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+CTRL="$(mutant_scripts mutant-seat-canonical lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" '--arg id "$LANE_CANON"' '--arg id "$dir"'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: raw config spelling loses the seat rank through a symlink|ORCH_LANE_DIRS=$H/.seatclaude:$H/.bclaude|own:a||$PICK|rc=0 config_dir=$H/.seatclaude"
+CTRL="$(mutant_scripts mutant-seat-rank lib/lane-model.sh)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._seat, ._tier,' 'sort_by([._tier,'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: without last rank the own seat beats a non-seat with room|$ALL_DIRS|own:a||$PICK|rc=0 config_dir=$H/.aclaude" \
+  "control: without last rank the peer seat beats a non-seat with room|$ALL_DIRS|peer:a;claim:b:1:peer||$PICK|rc=0 config_dir=$H/.aclaude"
 
 echo "=== pool picks keep overseer seats and charge monthly claims ==="
 mkdir -p "$H/.acopilot/session-state" "$H/.api"
@@ -515,9 +572,18 @@ ACCOUNT_HARNESS=pi table \
   "a Pi pool pick reads no fleet seat state|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:broken||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 effective_headroom_pct=90"
 CTRL="$(mutant_scripts mutant-pool-seats lanes)" || exit 1
 # shellcheck disable=SC2016
-mutate_file "$CTRL/lanes" '"$for_overseer" != true && "$harness" != copilot && "$harness" != pi' '"$for_overseer" != true && "$harness" != pi'
+mutate_file "$CTRL/lanes" '"$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
+		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
+	fi
+	# After the claim load:' '"$for_overseer" != true && "$harness" != pi ]]; then
+		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
+	fi
+	# After the claim load:'
+rm -- "$CTRL/lib/lane-model.sh" || exit 1
+cp -p -- "$TEST_DIR/../scripts/lib/lane-model.sh" "$CTRL/lib/lane-model.sh" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" 'if .harness != "copilot" and .harness != "pi"' 'if true'
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=copilot table \
-  "control: restoring Copilot seat omission drops the only pool account|$CP_ENV=10/100|own:a||pick --harness copilot --json|rc=3 walled=0 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.acopilot"
+  "control: a reserve on Copilot wrongly refuses the pool seat|$CP_ENV=10/100;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|own:a||pick --harness copilot --json|rc=3 walled=0 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.acopilot,projected-headroom=90,reserve=100"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

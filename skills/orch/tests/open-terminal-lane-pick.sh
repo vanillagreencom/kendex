@@ -602,7 +602,7 @@ table \
 # The old ordering reverses the batch: its first pick ignores the sooner
 # reset and takes eclaude's greater unweighted room instead.
 pi_control ctl-batch-claims-first lib/lane-model.sh \
-  'sort_by([._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall])' \
+  'sort_by([._seat, ._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall])' \
   'sort_by([.claims, (.projected_headroom_pct | neg), .wall])' \
   "$SPREAD_ENV;$CHOICE_CMD" --harness claude --lane auto KEN-4 KEN-5
 assert_eq "$(observe "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude")" \

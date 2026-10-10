@@ -13,7 +13,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
 unset ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_CODEX_CREDIT_FLOOR ORCH_LANE_CLOUD_CREDIT_FLOOR ORCH_LANE_CLOUD_REPOS
-unset ORCH_LANE_HOST ORCH_STATE_DIR
+unset ORCH_LANE_HOST ORCH_STATE_DIR ORCH_OVERSEER_SEAT_RESERVE_PCT
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
 
@@ -70,7 +70,7 @@ for spec in codex:100:62300:true:false:false 1codex:40:0:false:false:false 2code
   3codex:100:5000:true:false:false 4codex:100:4999:true:false:false 5codex:100:90000:false:false:false \
   6codex:100:90000:true:true:false 7codex:100:lots:true:false:false 8codex:30:0:false:false:false \
   scodex:100:90000:true:false:true ncodex:100:90000:true:false:absent ucodex:100:absent:true:false:false \
-  hcodex:95:62300:true:false:false pcodex:94:0:false:false:false:4102444800; do
+  hcodex:95:62300:true:false:false pcodex:94:0:false:false:false:4102444800 seatcodex:60:62300:true:false:false; do
   IFS=':' read -r name week balance has over spend reset <<<"$spec"
   make_codex_lane "$H/.$name"
   codex_body "$week" "$balance" "$has" "$over" "$spend" "$reset" > "$FIXTURE_DIR/.$name.json"
@@ -102,6 +102,8 @@ for spec in "aclaude|10|" "gclaude|10|1:250:2099-09-01T00_00_00Z" "bclaude|100|2
   make_lane "$H" "$name" 3600
   cloud_body "$week" "$credit" > "$FIXTURE_DIR/.$name.json"
 done
+make_lane "$H" seatclaude 3600
+cloud_body 60 "241:250:2099-06-01T00_00_00Z" > "$FIXTURE_DIR/.seatclaude.json"
 jq 'del(.iguana_necktie.remaining_dollars)' "$FIXTURE_DIR/.mclaude.json" > "$FIXTURE_DIR/.mclaude.next"
 mv -- "$FIXTURE_DIR/.mclaude.next" "$FIXTURE_DIR/.mclaude.json"
 dirs() { local d out=""; for d in "$@"; do out="$out:$H/.$d"; done; printf 'ORCH_LANE_DIRS=%s' "${out#:}"; }
@@ -189,6 +191,48 @@ table \
   "the listing record carries the credits bucket and the room verdict|$(dirs codex 3codex)|list --harness codex --json|rc=0 [0].alias=codex [0].verdict=room [0].binding_bucket=credits [0].credits.balance=62300 [0].headroom_pct=0 [1].alias=3codex [1].verdict=walled [1].binding_bucket=weekly" \
   "the listing gives the chooser's verdict and prints the balance as the account's room|$(dirs codex 1codex)|list --harness codex|rc=0 cr.codex=62.3k_cr cr.1codex=none"
 
+echo "=== a credit balance cannot spend an overseer seat reserve ==="
+# These are the usage endpoint's existing plan and credit fields. The balance
+# is available while the included weekly allowance is still being spent.
+SEAT_FLEET="$TMP_ROOT/seat-fleet"
+SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$SEAT_FLEET" init oversee >/dev/null
+"$SCRIPTS_DIR/workflow-state" --state-dir "$SEAT_FLEET" set oversee overseer "$(jq -nc --arg a "$H/.seatcodex" '{account:$a}')" >/dev/null
+SEAT_ENV="$(dirs seatcodex);ORCH_STATE_DIR=$SEAT_FLEET"
+SPENT_SEAT_FLEET="$TMP_ROOT/spent-seat-fleet"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$SPENT_SEAT_FLEET" init oversee >/dev/null
+"$SCRIPTS_DIR/workflow-state" --state-dir "$SPENT_SEAT_FLEET" set oversee overseer "$(jq -nc --arg a "$H/.codex" '{account:$a}')" >/dev/null
+SPENT_SEAT_ENV="$(dirs codex);ORCH_STATE_DIR=$SPENT_SEAT_FLEET"
+table \
+  "a balance cannot admit a seat still spending included allowance|$SEAT_ENV|$PICK|rc=3 seats=1 walled=0" \
+  "the named turn-end check keeps the reserve on the included window|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --min-headroom-pct 3 --json|rc=3 verdict=seat-reserve binding_bucket=weekly headroom_pct=40" \
+  "named projected admission keeps the same reserve|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --projected --json|rc=3 verdict=seat-reserve binding_bucket=weekly projected_headroom_pct=40" \
+  "the overseer chooser keeps its ordinary plan judgment|$SEAT_ENV|$PICK --for-overseer|rc=0 binding_bucket=weekly headroom_pct=40" \
+  "the overseer named check keeps its ordinary plan judgment|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --for-overseer --min-headroom-pct 5 --json|rc=0 binding_bucket=weekly headroom_pct=40" \
+  "a seat already judged on ordinary Codex credits stays available|$SPENT_SEAT_ENV|$PICK|rc=0 binding_bucket=credits" \
+  "its named check keeps the ordinary credit rule|$SPENT_SEAT_ENV|pick --lane $H/.codex --harness codex --min-headroom-pct 3 --json|rc=0 binding_bucket=credits" \
+  "a full reserve excludes a spent window seat despite its usable credits|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK|rc=3 seats=1 walled=0" \
+  "the full reserve marks its running lane on the unchanged window bucket|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --min-headroom-pct 3 --json|rc=3 verdict=seat-reserve binding_bucket=weekly headroom_pct=0" \
+  "the full reserve also refuses its named projected launch|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --projected --json|rc=3 verdict=seat-reserve binding_bucket=weekly projected_headroom_pct=0" \
+  "the full reserve keeps the overseer chooser exempt|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK --for-overseer|rc=0 binding_bucket=credits" \
+  "the full reserve keeps the overseer named check exempt|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --for-overseer --min-headroom-pct 5 --json|rc=0 binding_bucket=credits" \
+  "zero reserve keeps ordinary plan room|$SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|$PICK|rc=0 binding_bucket=weekly headroom_pct=40" \
+  "zero reserve keeps ordinary spent-credit room|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|$PICK|rc=0 binding_bucket=credits" \
+  "a full reserve never changes a non-seat credit judgment|$(dirs codex);ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK|rc=0 binding_bucket=credits"
+RESERVE_CREDIT_CTRL="$(mutant_scripts mutant-seat-credit-threshold lib/lane-model.sh)" || exit 1
+mutate_file "$RESERVE_CREDIT_CTRL/lib/lane-model.sh" '($wall | wall_verdict($max)) as $ordinary' \
+  '(if ._seat == 1 then [$max, 100 - $reserve] | min else $max end) as $credit_limit | ($wall | wall_verdict($credit_limit)) as $ordinary'
+LANES_UNDER_TEST="$RESERVE_CREDIT_CTRL/lanes" table \
+  "control: a lowered credit threshold admits included allowance below the reserve|$SEAT_ENV|$PICK|rc=0 binding_bucket=credits headroom_pct=40" \
+  "control: that threshold also accepts the running seat|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --min-headroom-pct 3 --json|rc=0 binding_bucket=credits headroom_pct=40" \
+  "control: that threshold also accepts named projected admission|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --projected --json|rc=0 binding_bucket=credits projected_headroom_pct=40"
+FULL_RESERVE_CTRL="$(mutant_scripts mutant-full-seat-credit lib/lane-model.sh)" || exit 1
+mutate_file "$FULL_RESERVE_CTRL/lib/lane-model.sh" '(._seat == 0 or $reserve < 100)' 'true'
+LANES_UNDER_TEST="$FULL_RESERVE_CTRL/lanes" table \
+  "control: ignoring full reserve admits the excluded credit-backed seat|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK|rc=0 binding_bucket=credits" \
+  "control: ignoring full reserve lets its running lane continue|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --min-headroom-pct 3 --json|rc=0 binding_bucket=credits" \
+  "control: ignoring full reserve accepts its named projected launch|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --projected --json|rc=0 binding_bucket=credits"
+
 echo "=== an account on its credits carries no plan-window wall forecast ==="
 # Two readings a quarter-hour apart, at 99 and then 100 percent of the weekly
 # window, measure a rate whose wall is now. oversee-succeed reads
@@ -254,11 +298,18 @@ table \
   "a named local account needs no cloud repository entry|$(dirs aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=0 config_dir=$H/.aclaude" \
   "an entry nobody can read refuses the pick|$CLOUD;$(dirs bclaude);ORCH_LANE_CLOUD_REPOS=bclaude=owner|$CPICK|rc=1 line.invalid-cloud-repos=entry=bclaude=owner"
 
+"$SCRIPTS_DIR/workflow-state" --state-dir "$SEAT_FLEET" set oversee overseer "$(jq -nc --arg a "$H/.seatclaude" '{account:$a}')" >/dev/null
+table \
+  "a cloud session spends credit instead of the seat plan window|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET|$CPICK|rc=0 config_dir=$H/.seatclaude headroom_pct=40" \
+  "its named projected check keeps the cloud credit exemption|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET|pick --lane $H/.seatclaude --harness claude --projected --json|rc=0 headroom_pct=40" \
+  "explicit cloud credits stay exempt from a full plan reserve|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$CPICK|rc=0 config_dir=$H/.seatclaude headroom_pct=40" \
+  "the full reserve keeps the named cloud-credit projection exempt|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.seatclaude --harness claude --projected --json|rc=0 headroom_pct=40"
+
 echo "=== controls ==="
 # Without the tier the score alone orders the pair, and the credit-backed
 # account's is the higher.
 CTRL="$(mutant_scripts mutant-credit-rank lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,'
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._seat, ._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: without the tier the credit-backed account is picked over plan room|$(dirs hcodex pcodex)|$PICK|rc=0 config_dir=$H/.hcodex binding_bucket=credits"
 
@@ -346,7 +397,7 @@ cloud_control() {
   mutate_file "$CTRL/$2" "$3" "$4"
   LANES_UNDER_TEST="$CTRL/lanes" table "$5"
 }
-cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,' \
+cloud_control mutant-tier-key lib/lane-model.sh 'sort_by([._seat, ._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,' \
   "control: without the tier key plan room outranks the credit|$CLOUD;$(dirs gclaude bclaude);$(repos gclaude bclaude)|$CPICK|rc=0 config_dir=$H/.gclaude"
 # shellcheck disable=SC2016  # Keep the tier call as a jq comment in the mutant.
 cloud_control mutant-named-cloud-tier lib/lane-model.sh '      | with_lane_tier($pool; $cloud_floor; $retire; $now)' '      # | with_lane_tier($pool; $cloud_floor; $retire; $now)' \

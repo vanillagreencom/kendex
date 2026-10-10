@@ -8,7 +8,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 - `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps through the repository's declared refresh owner.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
 - `oversee launch` opens a fleet's first overseer and `oversee register` records one opened by hand. `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires, or once it has ended or walled.
-- `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with, and picks on projected room weighted by time to reset, never an overseer's; the watch reports an account that hit its usage limit and when the limit resets.
+- `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with. It picks on projected room weighted by time to reset. It returns overseer seats last under their window reserve rule. The watch reports account usage limits and their resets.
 - `lane-host` runs lanes on another machine through a provider script, with the same mailbox and watch; `lane-host-ssh` is the included provider for SSH hosts. What runs where, which credential each part spends and how mail and handoff move on a hosted fleet: [docs/hosted-oversight.html](docs/hosted-oversight.html).
 - `oversee-report` writes the overseer's status reports; `oversee-cycle` times each merge against its class target.
 - `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another, and workflow state and handoff files let a lane or overseer continue where it stopped.
@@ -92,6 +92,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Review-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](references/gates.md) | |
 | `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account, Codex credits exempt; bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
+| `ORCH_OVERSEER_SEAT_RESERVE_PCT` | Plan room kept for the overseer. Seats return last above it; lanes on seats hand off at it. Keep above `ORCH_OVERSEER_HEADROOM_PCT`; 100 admits no seat, 0 uses the lane limit alone | `50` |
 | `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable, after plan room, since credits never reset. Provisional; lane-day arithmetic: [guide](kendex.settings.toml.example) | `5000` |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the shared CI change classification | empty |
