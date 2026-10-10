@@ -60,7 +60,7 @@ fn an_executable_kind_in_the_local_source_installs_by_name() {
         fs::create_dir_all(project.join(".claude")).unwrap();
         fs::write(
             project.join("kendex.toml"),
-            "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
+            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
         )
         .unwrap();
         let scope = Scope::Project {

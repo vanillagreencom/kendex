@@ -75,7 +75,7 @@ fn installed(global: bool) -> (tempfile::TempDir, Installed) {
     .unwrap();
     fs::write(
         &manifest_path,
-        "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n",
+        "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n",
     )
     .unwrap();
     let applied = kendex(&home, &project, &["apply", "--scope", scope_name, "--yes"]);
@@ -220,7 +220,7 @@ fn commit(dir: &Path, message: &str) {
     );
 }
 
-const MANIFEST: &str = "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n";
+const MANIFEST: &str = "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n";
 
 /// Where a checkout stands once `Arrange` has run in a repository on the
 /// default branch.

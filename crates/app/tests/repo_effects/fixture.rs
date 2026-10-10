@@ -149,7 +149,7 @@ pub fn fixture() -> Fixture {
     git(&project, &["commit", "--quiet", "-m", "start"]);
     fs::write(
         project.join("kendex.toml"),
-        format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(&catalog)),
+        format!("schema = 7\n\n[sources.cat]\n{}\n", source_path(&catalog)),
     )
     .unwrap();
     Fixture {

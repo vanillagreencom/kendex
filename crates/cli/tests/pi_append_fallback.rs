@@ -77,7 +77,7 @@ impl World {
         write(
             &self.project.join("kendex.toml"),
             &format!(
-                "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n{entry}",
+                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n{entry}",
                 source_path(&self.catalog)
             ),
         );
@@ -135,7 +135,7 @@ fn world(declares: &Declares, own: Own) -> World {
     write(
         &env.global_manifest_file(),
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.global-tools]\nsource = \"cat\"\n[output-styles.Global]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.global-tools]\nsource = \"cat\"\n[output-styles.Global]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     );

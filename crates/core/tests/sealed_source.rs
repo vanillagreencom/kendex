@@ -42,7 +42,7 @@ fn a_symlinked_catalog_cannot_leak_host_files_into_artifacts() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.evil]\nsource = \"cat\"\n\n[skills.good]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.evil]\nsource = \"cat\"\n\n[skills.good]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )

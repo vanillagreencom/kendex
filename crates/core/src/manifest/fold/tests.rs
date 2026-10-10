@@ -32,7 +32,7 @@ fn folding(current: &str, change: impl FnOnce(&mut Manifest)) -> String {
 /// skills the write never named.
 #[test]
 fn a_gained_table_lands_after_the_tables_already_there() {
-    let current = "schema = 6\n\n[skills.aa]\nsource = \"cat\"\n\n[skills.bb]\nsource = \"cat\"\n\n[skills.cc]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n";
+    let current = "schema = 7\n\n[skills.aa]\nsource = \"cat\"\n\n[skills.bb]\nsource = \"cat\"\n\n[skills.cc]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n";
     assert_eq!(
         folding(current, |manifest| {
             manifest.sources.insert(
@@ -60,7 +60,7 @@ fn a_gained_table_lands_after_the_tables_already_there() {
 /// with its own writing, so a rewrite shows up as more than a re-indent.
 #[test]
 fn an_unrelated_write_leaves_a_hand_written_list_alone() {
-    let current = "schema = 6\n\n# both of the hooks we run\ncustom-hooks = [\n  { event = \"Stop\", command = \"./done.sh\", enabled = true },   # after every run\n  { event = \"PreToolUse\", command = \"./guard.sh\" },\n]\n\n[install]\nmethod = \"symlink\"\n";
+    let current = "schema = 7\n\n# both of the hooks we run\ncustom-hooks = [\n  { event = \"Stop\", command = \"./done.sh\", enabled = true },   # after every run\n  { event = \"PreToolUse\", command = \"./guard.sh\" },\n]\n\n[install]\nmethod = \"symlink\"\n";
     assert_eq!(
         folding(current, |manifest| {
             manifest.install.method = Method::Copy;
@@ -74,14 +74,14 @@ fn an_unrelated_write_leaves_a_hand_written_list_alone() {
 /// the run moves with the brace instead of being stranded before the comma.
 #[test]
 fn a_gained_key_leaves_the_closing_brace_where_it_was() {
-    let current = "schema = 6\nsources.cat = { path = \"x\" }\n";
+    let current = "schema = 7\nsources.cat = { path = \"x\" }\n";
     assert_eq!(
         folding(current, |manifest| {
             if let Some(source) = manifest.sources.get_mut("cat") {
                 source.rev = Some("main".to_owned());
             }
         }),
-        "schema = 6\nsources.cat = { path = \"x\", rev = \"main\" }\n"
+        "schema = 7\nsources.cat = { path = \"x\", rev = \"main\" }\n"
     );
 }
 
@@ -96,12 +96,12 @@ fn a_gained_key_leaves_the_closing_brace_where_it_was() {
 /// and come back under `# the guard`.
 #[test]
 fn a_surviving_entry_keeps_what_was_written_about_it() {
-    let current = "schema = 6\n\n# the guard\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n";
+    let current = "schema = 7\n\n# the guard\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n";
     assert_eq!(
         folding(current, |manifest| {
             manifest.custom_hooks.remove(0);
         }),
-        "schema = 6\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n"
+        "schema = 7\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n"
     );
 }
 
@@ -113,12 +113,12 @@ fn a_surviving_entry_keeps_what_was_written_about_it() {
 /// file renders in the order they stood in before.
 #[test]
 fn a_re_sorted_list_renders_in_its_new_order() {
-    let current = "schema = 6\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
+    let current = "schema = 7\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
     assert_eq!(
         folding(current, |manifest| {
             manifest.custom_hooks.swap(0, 1);
         }),
-        "schema = 6\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n"
+        "schema = 7\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n"
     );
 }
 
@@ -127,7 +127,7 @@ fn a_re_sorted_list_renders_in_its_new_order() {
 /// header is emitted over a key the person wrote as a value.
 #[test]
 fn an_inline_list_gains_its_entry_inline() {
-    let current = "schema = 6\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }]\n";
+    let current = "schema = 7\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }]\n";
     let written = folding(current, |manifest| {
         manifest.custom_hooks.push(CustomHook {
             name: None,
@@ -144,7 +144,7 @@ fn an_inline_list_gains_its_entry_inline() {
     assert!(!written.contains("[[custom-hooks"), "{written}");
     assert_eq!(
         written,
-        "schema = 6\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }, { event = \"PreToolUse\", command = \"./guard.sh\" }]\n"
+        "schema = 7\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }, { event = \"PreToolUse\", command = \"./guard.sh\" }]\n"
     );
 }
 
@@ -158,11 +158,11 @@ fn an_inline_list_gains_its_entry_inline() {
 /// gained, which lands under the tables already there.
 #[test]
 fn a_write_edits_the_keys_it_names_and_leaves_the_document_alone() {
-    let current = "# my setup\nschema  =  6\n\n# where it comes from\nsources.cat = { path = 'x', enabled = true }\n\n[install]\nharnesses = [\"claude\"]\nmethod   =   \"copy\"   # for now\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\nenabled = false\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n";
-    let desired = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.fmt]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
+    let current = "# my setup\nschema  =  7\n\n# where it comes from\nsources.cat = { path = 'x', enabled = true }\n\n[install]\nharnesses = [\"claude\"]\nmethod   =   \"copy\"   # for now\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\nenabled = false\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n";
+    let desired = "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.fmt]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
     assert_eq!(
         fold(current, desired),
-        "# my setup\nschema  =  6\n\n# where it comes from\nsources.cat = { path = 'x', enabled = true }\n\n[install]\nharnesses = [\"claude\"]\nmethod   =   \"symlink\"   # for now\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\n\n[skills.fmt]\nsource = \"cat\"\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n"
+        "# my setup\nschema  =  7\n\n# where it comes from\nsources.cat = { path = 'x', enabled = true }\n\n[install]\nharnesses = [\"claude\"]\nmethod   =   \"symlink\"   # for now\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\n\n[skills.fmt]\nsource = \"cat\"\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n"
     );
 }
 
@@ -170,8 +170,8 @@ fn a_write_edits_the_keys_it_names_and_leaves_the_document_alone() {
 /// which is what lets `save` skip the write entirely.
 #[test]
 fn a_document_that_already_agrees_is_returned_unchanged() {
-    let current = "# my setup\nschema  =  6\n\n# where it comes from\n[sources.cat]\npath = 'x'   # local\nenabled = true\n\n[install]\nharnesses = [\n  \"claude\",\n]\n\n[skills.gh]\nsource = \"cat\"\n";
-    let desired = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.gh]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n";
+    let current = "# my setup\nschema  =  7\n\n# where it comes from\n[sources.cat]\npath = 'x'   # local\nenabled = true\n\n[install]\nharnesses = [\n  \"claude\",\n]\n\n[skills.gh]\nsource = \"cat\"\n";
+    let desired = "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.gh]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n";
     assert_eq!(fold(current, desired), current);
 }
 
@@ -179,8 +179,8 @@ fn a_document_that_already_agrees_is_returned_unchanged() {
 /// bottom is not a key any write names.
 #[test]
 fn the_files_own_terminator_survives() {
-    let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\n\n";
-    let desired = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\n";
+    let current = "schema = 7\n\n[skills.gh]\nsource = \"cat\"\n\n";
+    let desired = "schema = 7\n\n[skills.gh]\nsource = \"cat\"\n";
     assert_eq!(fold(current, desired), current);
 }
 
@@ -188,7 +188,7 @@ fn the_files_own_terminator_survives() {
 /// file kendex could not read.
 #[test]
 fn an_unparsable_document_is_refused() {
-    assert!(super::folded("schema = ", "schema = 6\n", "schema = 6\n").is_err());
+    assert!(super::folded("schema = ", "schema = 7\n", "schema = 7\n").is_err());
 }
 
 /// The tools an agent is denied, as somebody annotates them: a comment after
@@ -213,7 +213,7 @@ fn denied(manifest: &mut Manifest) -> &mut Vec<String> {
 
 /// Two hooks, each with its own comment and its own `note` — a key the model
 /// does not carry.
-const NOTED: &str = "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"b note\"\n";
+const NOTED: &str = "schema = 7\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"b note\"\n";
 
 /// The ordinary hook write: one entry's command edited, nothing removed. An
 /// edited entry matches no `held` entry, so it can only keep its slot through
@@ -267,13 +267,13 @@ fn an_entry_in_another_declarations_slot_carries_none_of_its_keys() {
             manifest.custom_hooks.remove(0);
             manifest.custom_hooks[0].command = "./finish.sh".to_owned();
         }),
-        "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finish.sh\"\n"
+        "schema = 7\n\n# about A\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finish.sh\"\n"
     );
 }
 
 /// `deny-tools` as a bare list, so a case can state the whole span.
 fn deny(list: &str) -> String {
-    format!("schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = {list}\n")
+    format!("schema = 7\n\n[agent-frontmatter.claude.orch]\ndeny-tools = {list}\n")
 }
 
 /// One row per edit of a value list: the list as written, the edit made
@@ -400,19 +400,19 @@ fn removing_the_last_entry_leaves_no_separator_behind() {
     // whichever key is last, so an entry that loses that key must hand the
     // run back to the brace. Here `matcher` is written last and is what
     // the strip takes.
-    let inline = "schema = 6\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }, { event = \"B\", command = \"d\" }]\n";
+    let inline = "schema = 7\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }, { event = \"B\", command = \"d\" }]\n";
     assert_eq!(
         folding(inline, |manifest| {
             manifest.custom_hooks.pop();
         }),
-        "schema = 6\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }]\n"
+        "schema = 7\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }]\n"
     );
     assert_eq!(
         folding(inline, |manifest| {
             manifest.custom_hooks.remove(0);
             manifest.custom_hooks[0].command = "z".to_owned();
         }),
-        "schema = 6\ncustom-hooks = [{ event = \"B\", command = \"z\" }]\n"
+        "schema = 7\ncustom-hooks = [{ event = \"B\", command = \"z\" }]\n"
     );
 }
 
@@ -437,7 +437,7 @@ fn a_list_that_ends_without_a_comma_comes_back_whole() {
 
 /// Three hooks, each under its own comment, the first and last carrying a
 /// `note` the model does not hold.
-const THREE: &str = "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n\n# about C\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\nnote = \"c note\"\n";
+const THREE: &str = "schema = 7\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n\n# about C\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\nnote = \"c note\"\n";
 
 /// Whether an entry keeps the keys in its slot is asked per entry, not of the
 /// list. What decides it is whether the slot was FORCED: the entries `held`
@@ -471,7 +471,7 @@ fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
             manifest.custom_hooks.remove(0);
             manifest.custom_hooks.push(ping());
         }),
-        "schema = 6\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"b note\"\n\n# about A\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
+        "schema = 7\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"b note\"\n\n# about A\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
     );
     // Longer, and nothing removed: two entries nothing recognized compete for
     // the one free slot, so neither of them is standing in its own.
@@ -480,7 +480,7 @@ fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
             manifest.custom_hooks[1].command = "./z.sh".to_owned();
             manifest.custom_hooks.push(ping());
         }),
-        "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./z.sh\"\n\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
+        "schema = 7\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./z.sh\"\n\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
     );
     // Same length, nothing in or out, and the keys still go: two changes side
     // by side leave each other unplaceable — either could have come from
@@ -505,6 +505,6 @@ fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
             manifest.custom_hooks.pop();
             manifest.custom_hooks[0].command = "./g2.sh".to_owned();
         }),
-        "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./g2.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n"
+        "schema = 7\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./g2.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n"
     );
 }

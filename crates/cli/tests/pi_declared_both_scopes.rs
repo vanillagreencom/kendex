@@ -49,7 +49,7 @@ fn write(path: &Path, text: &str) {
 
 /// A global manifest with an unterminated table header: it will not parse,
 /// so no read of it can answer whether a package is declared twice.
-const BROKEN_GLOBAL: &str = "schema = 6\n[pi-extensions\n";
+const BROKEN_GLOBAL: &str = "schema = 7\n[pi-extensions\n";
 
 /// The whole of what a could-not-check line says when an unreadable global
 /// manifest leaves the duplicate check unrun: the file at fault and the
@@ -59,7 +59,7 @@ const SKIPPED_CHECK: &str = "pi declared at both scopes: global manifest: ";
 /// A manifest declaring one Pi extension from a catalog beside it.
 fn manifest(name: &str) -> String {
     format!(
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n"
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n"
     )
 }
 
@@ -402,7 +402,7 @@ fn a_scope_the_duplicate_check_never_reaches_is_clean_under_an_unreadable_global
     let rows = [
         (
             "a project manifest declaring no Pi extension",
-            Some("schema = 6\n\n[sources.cat]\npath = \"catalog\"\n"),
+            Some("schema = 7\n\n[sources.cat]\npath = \"catalog\"\n"),
         ),
         ("a directory with no kendex.toml", None),
     ];

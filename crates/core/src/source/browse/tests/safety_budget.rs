@@ -42,7 +42,7 @@ fn a_finding_in_the_tail_reaches_the_preview_and_the_plan() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n"
+            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();

@@ -54,7 +54,7 @@ fn declared_with(home: &Path, body: &str, extra: &str) -> std::path::PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n{extra}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n{extra}",
             source_path(&catalog)
         ),
     )
@@ -78,7 +78,7 @@ fn declared_agent(home: &Path, body: &str) -> std::path::PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[agents.scout]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[agents.scout]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )
@@ -263,7 +263,7 @@ fn kendexs_own_repository(home: &Path) -> (std::path::PathBuf, std::path::PathBu
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.review-gate]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\nrepo = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.review-gate]\nsource = \"cat\"\n",
             kendex_core::manifest::DEFAULT_SOURCE_REPO
         ),
     )

@@ -76,7 +76,7 @@ fn declare(env: &Env, scope: &Scope) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
 }
@@ -128,7 +128,7 @@ fn record_a_missing_agent(env: &Env, scope: &Scope) {
 fn declare_unreadably(env: &Env, scope: &Scope) {
     let path = kendex_core::manifest::manifest_path(env, scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "<<<<<<< HEAD\nschema = 6\n=======\nschema = 6\n").unwrap();
+    fs::write(&path, "<<<<<<< HEAD\nschema = 7\n=======\nschema = 7\n").unwrap();
 }
 
 /// The three answers, over the one question every remedy in a report is

@@ -410,7 +410,7 @@ fn a_copy_a_retired_set_keeps_is_no_skip_of_a_live_set() {
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[bundles.old]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.live]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[bundles.old]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.live]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
                 test_util::source_path(&catalog)
             ),
         );

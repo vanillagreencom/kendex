@@ -9,7 +9,7 @@ The bot schema is closed within this table. Unknown keys, unknown child tables a
 ## Shape
 
 ```toml
-schema = 6
+schema = 7
 
 [bot-instructions]
 schema = 1

@@ -41,7 +41,7 @@ fn declare_tools(w: &World, harnesses: &str, skills: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {harnesses}\nmethod = \"copy\"\n\n{skills}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {harnesses}\nmethod = \"copy\"\n\n{skills}",
             source_path(&w.home.join("catalog"))
         ),
     )
@@ -83,7 +83,7 @@ fn one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it() {
         fs::write(
             w.home.join("app/kendex.toml"),
             format!(
-                "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n{skills}",
+                "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n{skills}",
                 source_path(&w.home.join("catalog"))
             ),
         )
@@ -232,7 +232,7 @@ fn an_item_rolled_back_after_its_take_over_still_refuses_the_sweep() {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{BOTH_SKILLS}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{BOTH_SKILLS}",
             source_path(&w.home.join("catalog"))
         ),
     )

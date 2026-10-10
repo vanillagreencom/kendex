@@ -15,7 +15,7 @@ import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
 
 vi.mock("@/bindings", () => ({
-  MANIFEST_SCHEMA: 6,
+  MANIFEST_SCHEMA: 7,
   commands: {
     getManifest: vi.fn(),
     getScopeSettings: vi.fn(),

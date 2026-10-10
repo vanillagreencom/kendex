@@ -72,7 +72,7 @@ pub(super) fn seeded() -> Project {
     fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 6\n\
+            "schema = 7\n\
              [sources.cat]\n{}\n\
              [skills.gh]\nsource = \"cat\"\n\
              [skills.house-style]\nsource = \"local\"\n\

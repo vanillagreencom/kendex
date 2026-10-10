@@ -62,7 +62,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
     )
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
@@ -180,7 +180,7 @@ fn a_record_that_lost_its_gemini_shim_fails_verify_until_apply() {
     let project = project(&tmp);
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"gemini\"]\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\", \"gemini\"]\n",
     )
     .unwrap();
     let output = kendex(&home, &project, &["apply", "--yes"]);
@@ -236,7 +236,7 @@ fn a_record_carrying_a_retired_gemini_shim_fails_verify_until_apply() {
         let declare = |harnesses: &str| {
             fs::write(
                 project.join("kendex.toml"),
-                format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
+                format!("schema = 7\n\n[install]\nharnesses = [{harnesses}]\n"),
             )
             .unwrap();
         };

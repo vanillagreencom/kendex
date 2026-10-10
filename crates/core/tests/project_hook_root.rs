@@ -145,7 +145,7 @@ fn fixture(tmp: tempfile::TempDir, project: PathBuf) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[hooks.audit]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[hooks.audit]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )

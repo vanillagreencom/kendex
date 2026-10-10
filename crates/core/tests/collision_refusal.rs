@@ -48,7 +48,7 @@ fn a_declared_name_cannot_be_rebound_before_apply() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.first]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"first\"\n",
+            "schema = 7\n\n[sources.first]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"first\"\n",
             source_path(&first)
         ),
     )

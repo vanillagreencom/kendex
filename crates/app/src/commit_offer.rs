@@ -1380,11 +1380,11 @@ mod tests {
             std::fs::create_dir_all(&home).expect("the fixture home is made");
             std::fs::create_dir_all(&project).expect("the project is made");
             bot_fixture_git(&project, &home, &["init", "--quiet", "-b", "main"]);
-            std::fs::write(project.join("kendex.toml"), "schema = 6\n").expect("written");
+            std::fs::write(project.join("kendex.toml"), "schema = 7\n").expect("written");
             bot_fixture_git(&project, &home, &["add", "-A"]);
             bot_fixture_git(&project, &home, &["commit", "--quiet", "-m", "one"]);
             if edited {
-                std::fs::write(project.join("kendex.toml"), "# mine\nschema = 6\n")
+                std::fs::write(project.join("kendex.toml"), "# mine\nschema = 7\n")
                     .expect("the person edits the manifest");
             }
             let scope = Scope::Project {
@@ -1584,7 +1584,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         std::fs::create_dir_all(root.join(".agents/skills/bot-instructions/scripts")).unwrap();
-        std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+        std::fs::write(root.join("kendex.toml"), "schema = 7\n").unwrap();
         std::fs::write(root.join(".gitignore"), "/.kendex-lock.json\n").unwrap();
         std::fs::write(
             root.join(".agents/skills/bot-instructions/SKILL.md"),
@@ -2098,7 +2098,7 @@ mod tests {
         crate::audit::apply_scope(&env, &scope, false).expect("the render succeeds");
         std::fs::write(
             root.join("kendex.toml"),
-            "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n",
+            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
         )
         .expect("the manifest is edited");
 

@@ -39,7 +39,7 @@ fn world() -> World {
     fs::write(source.join(".venv/state"), b"local working state\0\xff").unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
     )
     .unwrap();
     World {
@@ -68,7 +68,7 @@ fn set_manifest(world: &World, harnesses: &str, enabled: bool) {
     fs::write(
         world.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\nenabled = {enabled}\n"
+            "schema = 7\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\nenabled = {enabled}\n"
         ),
     )
     .unwrap();
@@ -250,14 +250,14 @@ fn check_reports_a_missing_link_for_a_new_target_harness() {
     let world = world();
     fs::write(
         world.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
     )
     .unwrap();
     let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     fs::write(
         world.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
     )
     .unwrap();
 
@@ -338,7 +338,7 @@ fn an_in_place_command_still_renders_its_codex_skill_tree() {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[commands.ship]\nsource = \"in-place\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[commands.ship]\nsource = \"in-place\"\n",
     )
     .unwrap();
     let env = Env::fake(&home, FakeOs::Linux);

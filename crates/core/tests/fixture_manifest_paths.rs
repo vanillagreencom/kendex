@@ -12,7 +12,7 @@ use test_util::{rooted, source_path};
 
 #[allow(clippy::unwrap_used)]
 fn round_trip(path: &Path) -> String {
-    let manifest = format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(path));
+    let manifest = format!("schema = 7\n\n[sources.cat]\n{}\n", source_path(path));
     let parsed: toml::Table = toml::from_str(&manifest)
         .unwrap_or_else(|e| panic!("{} did not parse: {e}\n{manifest}", path.display()));
     parsed["sources"]["cat"]["path"]

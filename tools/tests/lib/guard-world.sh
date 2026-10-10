@@ -45,7 +45,7 @@ printf '[]\n' >"$R/.kendex-generated.json"
 git -C "$R" config core.hooksPath "$TMP/nohooks"
 printf '# fixture\n' >"$R/AGENTS.md"
 cat >"$R/kendex.toml" <<'TOML'
-schema = 6
+schema = 7
 [bot-instructions]
 schema = 1
 [bot-instructions.repo]

@@ -35,7 +35,7 @@ fn add_installs_the_style_and_verify_fails_on_a_hand_edit() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"pi\"]\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"pi\"]\n",
             source_path(&catalog)
         ),
     )
@@ -112,7 +112,7 @@ fn installed_style_reaches_shared_package_commands() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n[sources.cat]\nrepo = {repo:?}\n[install]\nharnesses = [\"claude\"]\n"
+            "schema = 7\n[sources.cat]\nrepo = {repo:?}\n[install]\nharnesses = [\"claude\"]\n"
         ),
     )
     .unwrap();
@@ -253,7 +253,7 @@ fn an_edited_style_is_kept_and_ends_no_run() {
         fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 6\n[sources.cat]\nrepo = {repo:?}\n[install]\nharnesses = [\"{harness}\"]\n"
+                "schema = 7\n[sources.cat]\nrepo = {repo:?}\n[install]\nharnesses = [\"{harness}\"]\n"
             ),
         )
         .unwrap();

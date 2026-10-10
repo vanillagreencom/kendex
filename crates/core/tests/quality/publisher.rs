@@ -121,7 +121,7 @@ fn project_for(w: &World, dir: &str, repo: &str, harness: &str) -> Scope {
     fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{repo}\"\n\n[install]\nharnesses = [\"{harness}\"]\nmethod = \"copy\"\n\n[skills.{PACKAGE}]\nsource = \"cat\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{repo}\"\n\n[install]\nharnesses = [\"{harness}\"]\nmethod = \"copy\"\n\n[skills.{PACKAGE}]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();

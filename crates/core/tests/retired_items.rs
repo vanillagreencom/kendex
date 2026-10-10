@@ -156,7 +156,7 @@ fn installed_as(kind: ItemKind, name: &str, wanted: Wanted) -> Fixture {
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n\n{declaration}\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n\n{declaration}\nsource = \"cat\"\n",
             source_path(&f.source),
         ),
     )

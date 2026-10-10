@@ -368,7 +368,7 @@ fn check(case: &Case) {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = {}\nmethod = \"copy\"\n{}",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = {}\nmethod = \"copy\"\n{}",
             source_path(&catalog),
             case.tools,
             case.declares

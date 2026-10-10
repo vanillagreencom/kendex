@@ -46,7 +46,7 @@ fn fixture() -> Fixture {
     put(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.ship]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.ship]\nsource = \"cat\"\n",
             source.display()
         ),
     );
@@ -169,7 +169,7 @@ fn a_recorded_path_that_now_lands_outside_takes_nothing_with_it() {
 
     put(
         &f.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
     );
     let refused = kendex_core::engine::plan_apply(
         &f.env,
@@ -236,7 +236,7 @@ fn a_global_harness_directory_kept_in_a_dotfiles_repo_is_written_through() {
     put(
         &f.env.global_manifest_file(),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.ship]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.ship]\nsource = \"cat\"\n",
             f.home.join("catalog").display()
         ),
     );
@@ -356,7 +356,7 @@ fn an_op_joining_a_plan_after_the_project_was_swapped_is_refused() {
                 description: "save the record at {}".into(),
                 op: Op::WriteFile {
                     path,
-                    bytes: b"schema = 6\n".to_vec(),
+                    bytes: b"schema = 7\n".to_vec(),
                     pre: apply::Pre::Absent,
                 },
             },
@@ -413,7 +413,7 @@ fn a_name_that_reads_like_a_slot_is_drawn_as_itself() {
     put(
         &f.project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.\"{{}}\"]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.\"{{}}\"]\nsource = \"cat\"\n",
             f.home.join("catalog").display()
         ),
     );

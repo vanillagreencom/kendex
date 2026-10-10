@@ -56,7 +56,7 @@ fn a_name_a_shell_would_split_is_never_printed_as_an_argument() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.\"{name}\"]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.\"{name}\"]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )

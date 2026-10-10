@@ -1,1 +1,1 @@
-- Bind agent model classes to native models on Codex and Copilot with `[model-bindings.<harness>]` in `kendex.toml`.
+- Bind agent model classes to native models on Codex and Copilot with `[model-bindings.<harness>]` in `kendex.toml`. This requires manifest format 7: upgrade kendex to a release that reads format 7, then set `schema = 7` in each personal and project manifest. Older readers refuse the newer format without changing the file; kendex does not convert formats.

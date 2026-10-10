@@ -139,7 +139,7 @@ fn a_bare_name_offered_twice_refuses_printing_qualified_forms_and_repos() {
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.a]\nrepo = \"owner1/tools\"\n\n[sources.b]\nrepo = \"owner2/kit\"\n\n[sources.c]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            "schema = 7\n\n[sources.a]\nrepo = \"owner1/tools\"\n\n[sources.b]\nrepo = \"owner2/kit\"\n\n[sources.c]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
             source_path(&c)
         ),
     );

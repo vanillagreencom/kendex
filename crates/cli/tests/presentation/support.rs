@@ -10,7 +10,7 @@ fn run(args: &[&str], extra: &[(&str, &str)]) -> (bool, String, String) {
     let home = rooted(&tmp);
     let project = home.join("project");
     fs::create_dir_all(project.join(".claude")).unwrap();
-    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(&project)

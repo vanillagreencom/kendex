@@ -167,7 +167,7 @@ fn declare(w: &World, body: &str) {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
         ),
     )
     .unwrap();
@@ -405,7 +405,7 @@ fn updates_survives_a_source_that_cannot_resolve() {
     let path = manifest::manifest_path(&w.env, &w.scope);
     fs::write(
         &path,
-        "schema = 6\n\n[sources.cat]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
     )
     .unwrap();
     let rows = kendex_core::package::updates::updates(&w.env, &w.scope);
@@ -509,7 +509,7 @@ fn agent_world(harnesses: &str, agent: &str, catalog: &str, project: &str) -> Wo
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n{project}"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n{project}"
         ),
     )
     .unwrap();

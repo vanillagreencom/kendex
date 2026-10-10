@@ -50,7 +50,7 @@ fn installed(harness: &str, declared: &str, ignore: &str) -> (tempfile::TempDir,
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"{harness}\"]\nmethod = \"copy\"\n[agents.planner]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"{harness}\"]\nmethod = \"copy\"\n[agents.planner]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     );

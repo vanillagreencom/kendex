@@ -742,7 +742,7 @@ fn collection_and_template_writers_hold_a_moved_sibling_catalog() {
             );
             write(
                 &donor.join("kendex.toml"),
-                "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.template-item]\nsource = \"local\"\n[skill-instructions]\ntemplate-item = \"Carried instruction.\"\n",
+                "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.template-item]\nsource = \"local\"\n[skill-instructions]\ntemplate-item = \"Carried instruction.\"\n",
             );
             for args in [
                 vec!["apply", "--scope", "project", "-y", "--leave"],

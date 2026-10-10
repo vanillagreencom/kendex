@@ -454,7 +454,7 @@ fn a_new_tool_dependency_keeps_installed_shared_bytes() {
         commit(&w.upstream, "one");
         let manifest = |declaration: &str| {
             format!(
-                "schema = 6\n[sources.cat]\nrepo = \"{}\"\n[install]\nharnesses = [\"{}\"]\nmethod = \"symlink\"\n{declaration}",
+                "schema = 7\n[sources.cat]\nrepo = \"{}\"\n[install]\nharnesses = [\"{}\"]\nmethod = \"symlink\"\n{declaration}",
                 super::REPO,
                 installed.name()
             )
@@ -596,7 +596,7 @@ fn an_add_refuses_a_different_package_at_a_retained_position() {
         super::write_manifest(
             &w,
             &format!(
-                "schema = 6\n[sources.commands-cat]\npath = {commands:?}\n[sources.skills-cat]\npath = {skills:?}\n[install]\nharnesses = [\"codex\"]\n[commands.shared]\nsource = \"commands-cat\"\n"
+                "schema = 7\n[sources.commands-cat]\npath = {commands:?}\n[sources.skills-cat]\npath = {skills:?}\n[install]\nharnesses = [\"codex\"]\n[commands.shared]\nsource = \"commands-cat\"\n"
             ),
         );
         let installed = kendex_core::engine::audit(&w.env, &w.scope).unwrap();
@@ -830,7 +830,7 @@ fn an_add_reads_an_explicitly_redeclared_source() {
         super::write_manifest(
             &w,
             &format!(
-                "schema = 6\n[sources.cat]\nrepo = \"{repo}\"\n{source_rev}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n[skills.a]\nsource = \"cat\"\n",
+                "schema = 7\n[sources.cat]\nrepo = \"{repo}\"\n{source_rev}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n[skills.a]\nsource = \"cat\"\n",
             ),
         );
         fetch_mirrors(&w);

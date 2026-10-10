@@ -78,7 +78,7 @@ pub fn manifest_with(f: &Fixture, sources: &[(&str, &Path)], declarations: &str)
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n{subscriptions}[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}"
+            "schema = 7\n\n{subscriptions}[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}"
         ),
     );
 }

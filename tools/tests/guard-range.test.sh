@@ -349,7 +349,7 @@ printf '%s\n' '---' 'name: demo' '---' '# Skill' >"$R/skills/demo/SKILL.md"
   cat "$R/skills/demo/SKILL.md"
   printf '%s\n' '<!-- kendex:project-instructions:start -->' '<!-- kendex:project-instructions:end -->'
 } >"$R/.agents/skills/demo/SKILL.md"
-printf '%s\n' 'schema = 6' 'is_source_catalog = true' >"$R/kendex.toml"
+printf '%s\n' 'schema = 7' 'is_source_catalog = true' >"$R/kendex.toml"
 printf '%s\n' '[skill-instructions]' 'demo = "Rule."' >"$R/kendex-local.toml"
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: a configured skill instruction"

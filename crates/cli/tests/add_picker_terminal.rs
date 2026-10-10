@@ -116,7 +116,7 @@ fn the_tools_and_the_delivery_are_picked_by_their_keys() {
         );
         let project = home.join("dev/app");
         let manifest = format!(
-            "schema = 6\n\n[sources.cat]\n{}\n{}",
+            "schema = 7\n\n[sources.cat]\n{}\n{}",
             source_path(&catalog),
             run.install
         );

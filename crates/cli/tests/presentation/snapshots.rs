@@ -410,9 +410,9 @@ fn a_scope_that_could_not_be_checked_is_named_on_one_line() {
         ("schema = 99\n", 0, 2),
         // Refused as the parser's diagram: the source line, the caret under
         // it, and what the parser wanted, each on a line of its own.
-        ("schema = 6\nthis is not toml [[[\n", 0, 6),
+        ("schema = 7\nthis is not toml [[[\n", 0, 6),
         // Refused a finding at a time.
-        ("schema = 6\nstray-one = 1\nstray-two = 2\n", 2, 4),
+        ("schema = 7\nstray-one = 1\nstray-two = 2\n", 2, 4),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = &rooted(&tmp);
@@ -489,7 +489,7 @@ fn the_parsers_caret_lands_under_the_line_it_points_at() {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\nthis is not toml [[[\n",
+        "schema = 7\nthis is not toml [[[\n",
     )
     .unwrap();
 
@@ -542,7 +542,7 @@ fn a_manifest_cannot_write_a_line_of_the_diagram_itself() {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 6\n0 checked, 0 OK, 0 failed \u{1b}[31m [[[\n",
+        "schema = 7\n0 checked, 0 OK, 0 failed \u{1b}[31m [[[\n",
     )
     .unwrap();
 
@@ -708,7 +708,7 @@ fn crowded_project(home: &Path, count: usize) -> PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{declared}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{declared}",
             source_path(&catalog)
         ),
     )

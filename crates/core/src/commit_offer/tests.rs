@@ -1962,7 +1962,7 @@ fn an_action_that_wrote_nothing_here_has_nothing_to_offer_about_it() {
 /// renders, under a label that says they are the write's work.
 #[test]
 fn an_action_that_changed_only_a_file_it_leaves_out_has_nothing_to_offer() {
-    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 6\n")]);
+    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 7\n")]);
     let generated = repo.generated(&[OWNED[0]], &[]);
     repo.write(OWNED[0], "an earlier render\n");
     repo.write("kendex.toml", "# an earlier save\n");
@@ -2128,7 +2128,7 @@ fn the_manifest_is_a_file_kendex_writes_into_and_never_one_it_owns() {
                     false => "# a note the person wrote\n",
                 },
             ),
-            ("kendex-local.toml", "schema = 6\n"),
+            ("kendex-local.toml", "schema = 7\n"),
         ]);
         let generated = repo.generated(&[OWNED[0]], &[]);
         let before = repo.before(&generated, &[declared]);
@@ -2139,7 +2139,7 @@ fn the_manifest_is_a_file_kendex_writes_into_and_never_one_it_owns() {
                 false => "# the person edited their note\n",
             },
         );
-        repo.write("kendex-local.toml", "schema = 6\n[skills]\ngh = \"kit\"\n");
+        repo.write("kendex-local.toml", "schema = 7\n[skills]\ngh = \"kit\"\n");
         repo.write(OWNED[0], "one, written by kendex\n");
 
         let scan = repo.scan_since(&generated, &before).unwrap();
@@ -2268,7 +2268,7 @@ fn what_a_commit_carries_beside_the_renders_is_one_answer_every_reader_takes() {
             "a manifest the action wrote back to what the last commit holds",
             "kendex.toml",
             Some("# the key taken out by hand\n"),
-            Some("schema = 6\n"),
+            Some("schema = 7\n"),
             Fate::Clean,
         ),
         row(
@@ -2338,11 +2338,11 @@ fn what_a_commit_carries_beside_the_renders_is_one_answer_every_reader_takes() {
             (
                 "kendex.toml",
                 match row.catalog {
-                    true => "is_source_catalog = true\nschema = 6\n",
-                    false => "schema = 6\n",
+                    true => "is_source_catalog = true\nschema = 7\n",
+                    false => "schema = 7\n",
                 },
             ),
-            ("kendex-local.toml", "schema = 6\n"),
+            ("kendex-local.toml", "schema = 7\n"),
             (SETTINGS, "{}\n"),
             (".gitignore", "tmp/\n"),
         ]);

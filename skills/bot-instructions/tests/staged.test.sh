@@ -193,7 +193,7 @@ expect_red drift 'and an edit to it is read there, since no index carries it' \
 repo="$(bi_vendored_repo staged-catalog)" || exit 1
 SPEC="$repo/$BI_VENDORED_SPEC"
 mv "$repo/kendex.toml" "$repo/kendex-local.toml"
-printf 'schema = 6\nis_source_catalog = true\nbot-instructions = "catalog metadata"\n' > "$repo/kendex.toml"
+printf 'schema = 7\nis_source_catalog = true\nbot-instructions = "catalog metadata"\n' > "$repo/kendex.toml"
 bi_must render --repo "$repo" --spec "$SPEC" || exit 1
 bi_commit "$repo"
 expect_green 'source catalog bot settings come from the local manifest' \
@@ -202,7 +202,7 @@ pair 'source catalog local bot settings' \
   'printf "\n[[bot-instructions.exclusions.path]]\nglob = \"src/main.rs\"\nreason = \"generated entry point\"\n" >> "$repo/kendex-local.toml"'
 
 # Selection itself comes from the index, not the worktree's routing flag.
-printf 'schema = 6\nis_source_catalog = false\nbot-instructions = "catalog metadata"\n' > "$repo/kendex.toml"
+printf 'schema = 7\nis_source_catalog = false\nbot-instructions = "catalog metadata"\n' > "$repo/kendex.toml"
 expect_green 'an unstaged catalog routing change does not select the root bot table' \
   check --staged --repo "$repo" --spec "$SPEC"
 expect_red toml-schema 'the worktree routing change selects its invalid root bot table' \

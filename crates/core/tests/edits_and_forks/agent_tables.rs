@@ -330,7 +330,7 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.reviewer]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"reviewer\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.reviewer]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"reviewer\"\n"
         ),
     )
     .unwrap();

@@ -16,7 +16,7 @@ fn fixture() -> (tempfile::TempDir, Env, Scope) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -131,7 +131,7 @@ fn an_absent_manifest_lists_what_its_first_write_would_seed() {
             )],
         ),
         (project, None, vec![]),
-        (Scope::Global, Some("schema = 6\n"), vec![]),
+        (Scope::Global, Some("schema = 7\n"), vec![]),
     ] {
         if let Some(text) = written {
             fs::write(&global_manifest, text).unwrap();

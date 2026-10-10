@@ -65,7 +65,7 @@ fn declare_hook(world: &World, event: &str) {
     fs::write(
         world.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n[hooks.guard]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )
@@ -185,7 +185,7 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
     let payload = b"export default function hooks(pi) {}\n";
     fs::write(source.join("index.js"), payload).unwrap();
     let declaration = format!(
-        "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\n\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\n\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n",
         source_path(&catalog)
     );
     let key = entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
@@ -270,7 +270,7 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
         // through their existing owner, not generic rendered-file cleanup.
         fs::write(
             &manifest_path,
-            "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n",
+            "schema = 7\n\n[install]\nharnesses = [\"pi\"]\n",
         )
         .unwrap();
         let removal = plan_apply(
@@ -350,7 +350,7 @@ fn an_unrelated_add_keeps_pending_pi_switches_unchanged() {
         let manifest_path = manifest::manifest_path(&w.env, &scope);
         fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
         let declaration = format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = {enabled}\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = {enabled}\n",
             source_path(&catalog)
         );
         fs::write(&manifest_path, &declaration).unwrap();
@@ -414,7 +414,7 @@ fn a_first_project_style_add_keeps_global_pi_instructions() {
     let path = manifest::manifest_path(&w.env, &Scope::Global);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
         source_path(&catalog)
     )).unwrap();
     let root = pi_ext::scope_root(&w.env, &Scope::Global).unwrap();
@@ -431,7 +431,7 @@ fn a_first_project_style_add_keeps_global_pi_instructions() {
     fs::write(
         manifest::manifest_path(&w.env, &scope),
         format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n",
             source_path(&catalog)
         ),
     )
@@ -483,7 +483,7 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
         let path = manifest::manifest_path(&w.env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
         )).unwrap();
         let root = pi_ext::scope_root(&w.env, &scope).unwrap();
         let dest = pi_ext::install(&w.env, &root, &source, true).unwrap().dest;
@@ -590,7 +590,7 @@ fn a_declaration_switch_pi_already_made_moves_only_its_block() {
         let (catalog, source) = widgets_catalog(&w);
         let scope = scope(&w);
         fs::write(manifest::manifest_path(&w.env, &scope), format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = {declared}\n", source_path(&catalog)
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = {declared}\n", source_path(&catalog)
         )).unwrap();
         let root = pi_ext::scope_root(&w.env, &scope).unwrap();
         let dest = pi_ext::install(&w.env, &root, &source, declared)
@@ -667,7 +667,7 @@ fn a_toggle_over_an_unreadable_append_system_refuses_and_writes_nothing() {
     let scope = scope(&w);
     let manifest_path = manifest::manifest_path(&w.env, &scope);
     fs::write(&manifest_path, format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
     )).unwrap();
     let root = pi_ext::scope_root(&w.env, &scope).unwrap();
     pi_ext::install(&w.env, &root, &source, true).unwrap();
@@ -709,7 +709,7 @@ fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
         let scope = scope(&w);
         let manifest_path = manifest::manifest_path(&w.env, &scope);
         fs::write(&manifest_path, format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
         )).unwrap();
         let root = pi_ext::scope_root(&w.env, &scope).unwrap();
         let dest = pi_ext::install(&w.env, &root, &source, true).unwrap().dest;
@@ -729,7 +729,7 @@ fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
         fs::write(
             &manifest_path,
             format!(
-                "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n",
+                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n",
                 source_path(&catalog)
             ),
         )
@@ -790,7 +790,7 @@ fn a_style_and_a_package_block_audit_clean_across_repeated_applies() {
     .unwrap();
     let scope = scope(&w);
     fs::write(manifest::manifest_path(&w.env, &scope), format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[output-styles.STE]\nsource = \"cat\"\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[output-styles.STE]\nsource = \"cat\"\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
     )).unwrap();
     let style = engine::audit(&w.env, &scope).unwrap();
     apply::execute(&w.env, &style.plan).unwrap();
@@ -845,7 +845,7 @@ fn saved_pi_config_selection_refuses_native_disable_and_disabled_update() {
         let path = manifest::manifest_path(&w.env, &scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n", source_path(&catalog)
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n", source_path(&catalog)
         )).unwrap();
         let root = pi_ext::scope_root(&w.env, &scope).unwrap();
         pi_ext::install(&w.env, &root, &source, true).unwrap();
@@ -1134,7 +1134,7 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
     register_carrier(&w.project.join(".pi"));
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n[[custom-hooks]]\nname = \"e2e-guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo ken-941-fired >&2; exit 2\"\nagents = \"all\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"pi\"]\n\n[[custom-hooks]]\nname = \"e2e-guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo ken-941-fired >&2; exit 2\"\nagents = \"all\"\n",
     )
     .unwrap();
 
@@ -1208,7 +1208,7 @@ fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
     fs::write(
         w.project.join("kendex.toml"),
         concat!(
-            "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n",
+            "schema = 7\n\n[install]\nharnesses = [\"pi\"]\n\n",
             "[[custom-hooks]]\nname = \"e2e-post\"\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo ken-1189-post >&2; exit 2\"\nagents = \"all\"\n\n",
             "[[custom-hooks]]\nname = \"e2e-stop\"\nevent = \"Stop\"\ncommand = \"echo ken-1189-stop >&2; exit 2\"\nagents = \"all\"\n\n",
             "[[custom-hooks]]\nname = \"e2e-session\"\nevent = \"SessionStart\"\ncommand = \"echo ken-1189-session; exit 0\"\nagents = \"all\"\n\n",

@@ -60,7 +60,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -271,7 +271,7 @@ fn invariant_4_holds_across_the_path_and_remote_namespaces() {
         fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 6\n\n[sources.cat]\npath = \"{declared}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+                "schema = 7\n\n[sources.cat]\npath = \"{declared}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
             ),
         )
         .unwrap();

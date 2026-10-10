@@ -97,7 +97,7 @@ fn fixture_for(harness: Harness) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n",
             source_path(&source),
             harness.declared()
         ),

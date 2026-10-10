@@ -452,7 +452,7 @@ pub(super) fn global_world() -> super::World {
     write_at(
         kendex_core::manifest::manifest_path(&env, &scope),
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
             super::source_path(&catalog)
         ),
     );

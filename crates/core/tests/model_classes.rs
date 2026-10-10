@@ -150,7 +150,7 @@ fn binding_validation_names_each_rejected_location() {
     ] {
         let error = manifest::parse_text(
             std::path::Path::new("kendex.toml"),
-            &format!("schema = 6\n{text}\n"),
+            &format!("schema = 7\n{text}\n"),
         )
         .unwrap_err();
         let kendex_core::error::CoreError::ManifestInvalid { findings, .. } = error else {
@@ -170,7 +170,7 @@ fn bindings_merge_round_trip_and_hash_only_their_harness() {
     let env = Env::fake(&home, FakeOs::Linux);
     let path = manifest::manifest_path(&env, &Scope::Global);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "schema = 6\n[model-bindings.codex]\nstandard = 'gpt-6-sol'\nlight = 'gpt-6.1-luna'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n").unwrap();
+    fs::write(&path, "schema = 7\n[model-bindings.codex]\nstandard = 'gpt-6-sol'\nlight = 'gpt-6.1-luna'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n").unwrap();
     let project_root = home.join("project");
     let catalog = home.join("catalog");
     fs::create_dir_all(&project_root).unwrap();
@@ -183,7 +183,7 @@ fn bindings_merge_round_trip_and_hash_only_their_harness() {
     .unwrap();
     let manifest::ManifestFile::Current(mut project) = manifest::parse_text(
         std::path::Path::new("kendex.toml"),
-        &format!("schema = 6\nmodel-bindings.codex.standard = 'gpt-6.1-sol'\n[sources.cat]\n{}\n[install]\nharnesses = ['codex', 'copilot']\nmethod = 'copy'\n[agents.worker]\nsource = 'cat'\n", source_path(&catalog)),
+        &format!("schema = 7\nmodel-bindings.codex.standard = 'gpt-6.1-sol'\n[sources.cat]\n{}\n[install]\nharnesses = ['codex', 'copilot']\nmethod = 'copy'\n[agents.worker]\nsource = 'cat'\n", source_path(&catalog)),
     )
     .unwrap() else {
         panic!("current manifest")
@@ -328,7 +328,7 @@ fn plan_readback_refuses_provider_qualified_codex_binding() {
         "---\nname: worker\ndescription: Work\nmodel: standard\n---\nBody.\n",
     )
     .unwrap();
-    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = ['codex']\n[agents.worker]\nsource = 'cat'\n[model-bindings.codex]\nstandard = 'openai/gpt-6.1-sol'\n", source_path(&catalog))).unwrap();
+    fs::write(project.join("kendex.toml"), format!("schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['codex']\n[agents.worker]\nsource = 'cat'\n[model-bindings.codex]\nstandard = 'openai/gpt-6.1-sol'\n", source_path(&catalog))).unwrap();
     let report = kendex_core::engine::audit(
         &env,
         &Scope::Project {
@@ -342,7 +342,7 @@ fn plan_readback_refuses_provider_qualified_codex_binding() {
     assert!(!project.join(".codex/agents/worker.toml").exists());
     fs::create_dir_all(project.join(".github")).unwrap();
     fs::write(project.join(".github/allowed_models.txt"), "gpt-6.1-sol\n").unwrap();
-    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = ['copilot']\n[agents.worker]\nsource = 'cat'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n", source_path(&catalog))).unwrap();
+    fs::write(project.join("kendex.toml"), format!("schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['copilot']\n[agents.worker]\nsource = 'cat'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n", source_path(&catalog))).unwrap();
     let report = kendex_core::engine::audit(&env, &Scope::Project { root: project }).unwrap();
     // Copilot report consumers read the stable first line, not the explanation.
     assert!(report.warnings.iter().any(|row| row.message.lines().next() == Some("kendex-model-disallowed: harness=copilot agent=worker requested=claude-opus-4.6 allowed=gpt-6.1-sol")));
@@ -350,7 +350,7 @@ fn plan_readback_refuses_provider_qualified_codex_binding() {
 
 #[test]
 fn manifest_round_trip_validation_and_policy_hash() {
-    let text = "schema = 6\nmodel-classes.fast = \"custom/fast-v2\"\n";
+    let text = "schema = 7\nmodel-classes.fast = \"custom/fast-v2\"\n";
     let parsed = manifest::parse_text(std::path::Path::new("kendex.toml"), text).unwrap();
     let manifest::ManifestFile::Current(parsed) = parsed else {
         panic!("current manifest");
@@ -376,7 +376,7 @@ fn manifest_round_trip_validation_and_policy_hash() {
         ("fast", ""),
         ("fast", "anthropic/claude-haiku-4-5"),
     ] {
-        let text = format!("schema = 6\nmodel-classes.{key} = {value:?}\n");
+        let text = format!("schema = 7\nmodel-classes.{key} = {value:?}\n");
         assert!(
             manifest::parse_text(std::path::Path::new("kendex.toml"), &text).is_err(),
             "{text}"
@@ -390,7 +390,7 @@ fn project_policy_replaces_personal_per_key_without_catalog_input() {
     let env = Env::fake(&home, FakeOs::Linux);
     let personal_path = manifest::manifest_path(&env, &Scope::Global);
     fs::create_dir_all(personal_path.parent().unwrap()).unwrap();
-    fs::write(&personal_path, "schema = 6\nmodel-classes.fast = \"custom/personal\"\nmodel-classes.light = \"custom/light\"\n").unwrap();
+    fs::write(&personal_path, "schema = 7\nmodel-classes.fast = \"custom/personal\"\nmodel-classes.light = \"custom/light\"\n").unwrap();
     let project = Manifest {
         model_classes: BTreeMap::from([("fast".into(), "custom/project".into())]),
         ..Manifest::default()
@@ -559,7 +559,7 @@ fn declared_intent_uses_source_and_overrides_not_projected_alias() {
     )
     .unwrap();
     let consumer = format!(
-        "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
         source_path(&catalog)
     );
     fs::write(project.join("kendex.toml"), &consumer).unwrap();
@@ -638,7 +638,7 @@ fn declared_intent_keeps_installed_git_source_and_bundle_revision() {
         root: git_project.clone(),
     };
     let manifest_path = git_project.join("kendex.toml");
-    fs::write(&manifest_path, "schema = 6\n[sources.cat]\nrepo = \"owner/catalog\"\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agents.updated]\nsource = \"cat\"\n[bundles.kit]\nsource = \"cat\"\n").unwrap();
+    fs::write(&manifest_path, "schema = 7\n[sources.cat]\nrepo = \"owner/catalog\"\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agents.updated]\nsource = \"cat\"\n[bundles.kit]\nsource = \"cat\"\n").unwrap();
     let declared = manifest::load_current(&manifest_path).unwrap().unwrap();
     kendex_core::remote::sync_sources(&git_env, &declared).unwrap();
     let report = kendex_core::engine::audit(&git_env, &git_scope).unwrap();
@@ -735,7 +735,7 @@ fn plugin_qualified_declared_names_and_read_failures_stay_distinct() {
         "---\nname: worker\ndescription: Work\nmodel: fast\n---\nBody.\n",
     )
     .unwrap();
-    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[bundles.pack]\nsource = \"cat\"\n", source_path(&catalog))).unwrap();
+    fs::write(project.join("kendex.toml"), format!("schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[bundles.pack]\nsource = \"cat\"\n", source_path(&catalog))).unwrap();
     let scope = Scope::Project {
         root: project.clone(),
     };

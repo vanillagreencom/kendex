@@ -29,7 +29,7 @@ fn absorbing_catalog_settings_names_the_declaring_file() {
         .unwrap();
         std::fs::write(
             root.join(file),
-            "schema = 6\n[install]\nharnesses = [\"claude\"]\n[agents.rev]\nsource = \"local\"\n",
+            "schema = 7\n[install]\nharnesses = [\"claude\"]\n[agents.rev]\nsource = \"local\"\n",
         )
         .unwrap();
         let report = crate::engine::audit(&env, &scope).unwrap();

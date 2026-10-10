@@ -132,7 +132,7 @@ fn declare(f: &Fixture, tools: &str, extra: &str) {
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{tools}]\nmethod = \"copy\"\n\n{DECLARED}\n{extra}",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{tools}]\nmethod = \"copy\"\n\n{DECLARED}\n{extra}",
             source_path(&f.source)
         ),
     )

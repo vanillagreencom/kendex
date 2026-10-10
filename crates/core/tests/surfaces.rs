@@ -34,7 +34,7 @@ fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -98,7 +98,7 @@ fn a_large_skill_is_one_tree_every_surface_links_to() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -150,7 +150,7 @@ fn a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\", \"antigravity\", \"opencode\", \"gemini\", \"copilot\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\", \"antigravity\", \"opencode\", \"gemini\", \"copilot\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -211,7 +211,7 @@ fn verify_reads_a_global_skill_from_the_shared_tree() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -248,7 +248,7 @@ fn a_global_copy_for_codex_writes_the_directory_only_codex_reads() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )

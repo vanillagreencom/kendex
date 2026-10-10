@@ -240,7 +240,7 @@ fn a_removal_on_another_tool_leaves_the_tree_a_kept_copy_links() {
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[bundles.extra]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[bundles.extra]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
             crate::test_util::source_path(&f.source)
         ),
     );

@@ -405,11 +405,11 @@ path = "catalog"
 EOF
 expect_green 'unrelated manifest tables do not enter the bot schema' check --repo "$repo"
 mv "$repo/kendex.toml" "$repo/kendex-local.toml"
-printf 'schema = 6\nis_source_catalog = true\nbot-instructions = false\n' > "$repo/kendex.toml"
+printf 'schema = 7\nis_source_catalog = true\nbot-instructions = false\n' > "$repo/kendex.toml"
 expect_green 'source catalog selection also applies with no derived exclusions or install' \
   check --repo "$repo"
 # The refusal names the selected file and the table, not only the validator.
-printf 'schema = 6\nbot-instructions = "text"\n' > "$repo/kendex-local.toml"
+printf 'schema = 7\nbot-instructions = "text"\n' > "$repo/kendex-local.toml"
 expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
   'a bot configuration scalar is refused as a table error naming the selected file' \
   check --repo "$repo"
@@ -417,7 +417,7 @@ expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a tabl
 # here, and the record says so. refresh-consumer.sh in review-gate reads this
 # line to leave such a consumer unrendered. Without the refusal the run falls
 # through to the schema, which is the control.
-printf 'schema = 6\n' > "$repo/kendex-local.toml"
+printf 'schema = 7\n' > "$repo/kendex-local.toml"
 unconfigured_raise='            raise Unconfigured(config_path)
 '
 for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_raise" '')"; do

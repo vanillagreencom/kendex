@@ -123,7 +123,7 @@ fn hook_pin_remedies_name_the_scope_manifest() {
             write(
                 &project.join(file),
                 &format!(
-                    "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[hooks.guard]\nsource = \"cat\"\nharnesses = {pin}\n",
+                    "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[hooks.guard]\nsource = \"cat\"\nharnesses = {pin}\n",
                     source_path(&source)
                 ),
             );
@@ -497,7 +497,7 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n{bundle}{companion}{inner}{peer}[hooks.{HOOK}]\nsource = \"cat\"\n{pin}{switch}",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n{bundle}{companion}{inner}{peer}[hooks.{HOOK}]\nsource = \"cat\"\n{pin}{switch}",
             source_path(catalog),
         ),
     );
@@ -587,7 +587,7 @@ fn a_custom_hook_list_is_judged_as_a_hook_pin_is() {
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 6\n[install]\nharnesses = {install}\nmethod = \"copy\"\n\n[[custom-hooks]]\nname = \"{HOOK}\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"{agents}\"\n{list}{switch}"
+                "schema = 7\n[install]\nharnesses = {install}\nmethod = \"copy\"\n\n[[custom-hooks]]\nname = \"{HOOK}\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"{agents}\"\n{list}{switch}"
             ),
         );
         fs::create_dir_all(project.join(".claude")).unwrap();

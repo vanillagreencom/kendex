@@ -2117,7 +2117,7 @@ SECOND
   # A source declared by URL resolves to a commit, which is what the lock
   # records and what a refresh moves forward.
   cat >"$consumer/kendex.toml" <<TOML
-schema = 6
+schema = 7
 
 [sources.cat]
 repo = "file://$catalog"
@@ -2440,7 +2440,7 @@ TOML
   bot_consumer="$render_home/dev/bot-app"
   mkdir -p "$bot_consumer"
   cat >"$bot_consumer/kendex.toml" <<TOML
-schema = 6
+schema = 7
 
 [sources.cat]
 repo = "file://$catalog"

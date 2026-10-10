@@ -52,7 +52,7 @@ pub(super) fn fixture() -> (tempfile::TempDir, Env, Scope) {
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("kendex.toml"),
-        format!("schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\n"),
+        format!("schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n"),
     )
     .unwrap();
     crate::remote::sync(&env, REPO, None).unwrap();

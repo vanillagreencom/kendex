@@ -83,12 +83,18 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
     let kendex = "[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n";
     let schema = ("schema", "missing or unsupported schema version");
     let rows: Vec<(String, Vec<(&str, &str)>)> = vec![
-        (format!("schema = 6\n{kendex}"), vec![]),
+        (format!("schema = 7\n{kendex}"), vec![]),
         (format!("schema = 5\n{kendex}"), vec![schema]),
-        (format!("schema = 7\n{kendex}"), vec![schema]),
+        (
+            format!(
+                "schema = {}\n{kendex}",
+                crate::manifest::MANIFEST_SCHEMA + 1
+            ),
+            vec![schema],
+        ),
         (kendex.to_owned(), vec![schema]),
         (
-            "schema = 6\n[agent-frontmatter.gemini.rust]\neffort = \"high\"\nmodel = \"inherit\"\n[agent-frontmatter.claude.rust]\neffort = \"high\"\n[agent-frontmatter.cursor.rust]\ncolor = \"red\"\n[agent-frontmatter.antigravity.rust]\neffort = \"high\"\nmodel = \"opus\"\n".to_owned(),
+            "schema = 7\n[agent-frontmatter.gemini.rust]\neffort = \"high\"\nmodel = \"inherit\"\n[agent-frontmatter.claude.rust]\neffort = \"high\"\n[agent-frontmatter.cursor.rust]\ncolor = \"red\"\n[agent-frontmatter.antigravity.rust]\neffort = \"high\"\nmodel = \"opus\"\n".to_owned(),
             vec![
                 ("agent-frontmatter.antigravity.rust.effort", "antigravity renders no `effort`, so this override changes nothing"),
                 ("agent-frontmatter.cursor.rust.color", "cursor renders no `color`, so this override changes nothing"),
@@ -96,15 +102,15 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
             ],
         ),
         (
-            "schema = 6\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[skills.github]\nsource = \"kendex\"\n[agents.local-one]\nsource = \"local\"\n[hooks.guard]\nsource = \"kendex\"\n[mcp-servers.gh]\nsource = \"kendex\"\n[plugins.\"fmt@main\"]\nenabled = false\nharness = \"copilot\"\n".to_owned(),
+            "schema = 7\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[skills.github]\nsource = \"kendex\"\n[agents.local-one]\nsource = \"local\"\n[hooks.guard]\nsource = \"kendex\"\n[mcp-servers.gh]\nsource = \"kendex\"\n[plugins.\"fmt@main\"]\nenabled = false\nharness = \"copilot\"\n".to_owned(),
             vec![],
         ),
         (
-            "schema = 6\n[sources.market]\nrepo = \"owner/market\"\n[skills.\"tools/eda\"]\nsource = \"market\"\n[agents.\"tools/reviewer\"]\nsource = \"market\"\n[commands.\"tools/report\"]\nsource = \"market\"\n[pi-extensions.\"@scope/pkg\"]\nsource = \"market\"\n".to_owned(),
+            "schema = 7\n[sources.market]\nrepo = \"owner/market\"\n[skills.\"tools/eda\"]\nsource = \"market\"\n[agents.\"tools/reviewer\"]\nsource = \"market\"\n[commands.\"tools/report\"]\nsource = \"market\"\n[pi-extensions.\"@scope/pkg\"]\nsource = \"market\"\n".to_owned(),
             vec![],
         ),
         (
-            "schema = 6\n[sources.market]\nrepo = \"owner/market\"\n[hooks.\"tools/guard\"]\nsource = \"market\"\n[mcp-servers.\"tools/gh\"]\nsource = \"market\"\n[pi-extensions.\"tools/ext\"]\nsource = \"market\"\n".to_owned(),
+            "schema = 7\n[sources.market]\nrepo = \"owner/market\"\n[hooks.\"tools/guard\"]\nsource = \"market\"\n[mcp-servers.\"tools/gh\"]\nsource = \"market\"\n[pi-extensions.\"tools/ext\"]\nsource = \"market\"\n".to_owned(),
             vec![
                 ("hooks.tools/guard", "`tools/guard` holds `/`, which no filename may"),
                 ("mcp-servers.tools/gh", "`tools/gh` holds `/`, which no filename may"),
@@ -112,7 +118,7 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
             ],
         ),
         (
-            "schema = 6\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[hooks.clean]\nsource = \"kendex\"\nenv = { KENDEX_SKILL_LOAD_RULES = \"crates/ui/**/*.rs=iced-rs\" }\n[hooks.guard]\nsource = \"kendex\"\nenv = { \"9BAD\" = \"x\", COUNT = 3 }\n[hooks.flat]\nsource = \"kendex\"\nenv = \"RULES=x\"\n[skills.github]\nsource = \"kendex\"\nenv = { RULES = \"x\" }\n".to_owned(),
+            "schema = 7\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[hooks.clean]\nsource = \"kendex\"\nenv = { KENDEX_SKILL_LOAD_RULES = \"crates/ui/**/*.rs=iced-rs\" }\n[hooks.guard]\nsource = \"kendex\"\nenv = { \"9BAD\" = \"x\", COUNT = 3 }\n[hooks.flat]\nsource = \"kendex\"\nenv = \"RULES=x\"\n[skills.github]\nsource = \"kendex\"\nenv = { RULES = \"x\" }\n".to_owned(),
             vec![
                 ("skills.github", "env configures a hook's registration and is read nowhere else"),
                 ("hooks.flat", "env must be a table of strings"),
@@ -121,11 +127,11 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
             ],
         ),
         (
-            "schema = 6\n[sources.pinned]\nrepo = \"owner/repo\"\nrev = \"v1.2.0\"\n".to_owned(),
+            "schema = 7\n[sources.pinned]\nrepo = \"owner/repo\"\nrev = \"v1.2.0\"\n".to_owned(),
             vec![],
         ),
         (
-            "schema = 6\n[sources.local-path]\npath = \"../catalog\"\nrev = \"v1.2.0\"\n[sources.typo]\nrepo = \"owner/repo\"\nrevision = \"v1\"\n[sources.wrong-type]\nrepo = \"owner/repo\"\nrev = 12\n".to_owned(),
+            "schema = 7\n[sources.local-path]\npath = \"../catalog\"\nrev = \"v1.2.0\"\n[sources.typo]\nrepo = \"owner/repo\"\nrevision = \"v1\"\n[sources.wrong-type]\nrepo = \"owner/repo\"\nrev = 12\n".to_owned(),
             vec![
                 ("sources.local-path", "only a repo has revisions"),
                 ("sources.typo", "unknown key 'revision'"),
@@ -133,11 +139,11 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
             ],
         ),
         (
-            "schema = 6\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n[[custom-hooks]]\nevent = \"PreToolUSe\"\ncommand = \"./guard.sh\"\n".to_owned(),
+            "schema = 7\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n[[custom-hooks]]\nevent = \"PreToolUSe\"\ncommand = \"./guard.sh\"\n".to_owned(),
             vec![("custom-hooks[1].event", "no harness fires 'PreToolUSe'")],
         ),
         (
-            "schema = 6\n[hooks.guard]\nsource = \"local\"\n[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\ncommand = \"./a.sh\"\n[[custom-hooks]]\nname = \"Bad Name\"\nevent = \"Stop\"\ncommand = \"./b.sh\"\ntimeout = 0\nharnesses = [\"claude\", \"emacs\"]\ntypo-key = 1\n[[custom-hooks]]\nname = \"twice\"\nevent = \"Stop\"\ncommand = \"./c.sh\"\n[[custom-hooks]]\nname = \"twice\"\nevent = \"Stop\"\ncommand = \"./d.sh\"\n".to_owned(),
+            "schema = 7\n[hooks.guard]\nsource = \"local\"\n[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\ncommand = \"./a.sh\"\n[[custom-hooks]]\nname = \"Bad Name\"\nevent = \"Stop\"\ncommand = \"./b.sh\"\ntimeout = 0\nharnesses = [\"claude\", \"emacs\"]\ntypo-key = 1\n[[custom-hooks]]\nname = \"twice\"\nevent = \"Stop\"\ncommand = \"./c.sh\"\n[[custom-hooks]]\nname = \"twice\"\nevent = \"Stop\"\ncommand = \"./d.sh\"\n".to_owned(),
             vec![
                 ("custom-hooks[0].name", "'guard' is already an installed hook"),
                 ("custom-hooks[1]", "unknown key 'typo-key'"),
@@ -148,11 +154,11 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
             ],
         ),
         (
-            "schema = 6\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\ntimeout = 30\nharnesses = [\"claude\"]\nagents = \"all\"\n".to_owned(),
+            "schema = 7\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\ntimeout = 30\nharnesses = [\"claude\"]\nagents = \"all\"\n".to_owned(),
             vec![],
         ),
         (
-            "schema = 6\n[sources.market]\nrepo = \"owner/market\"\n[skills.deploy]\nsource = \"market\"\n[safety-overrides.\"skill:deploy:claude\"]\nreview-hash = \"abc\"\n[safety-reviews.\"skill:deploy:claude\"]\nreview-hash = \"abc\"\n".to_owned(),
+            "schema = 7\n[sources.market]\nrepo = \"owner/market\"\n[skills.deploy]\nsource = \"market\"\n[safety-overrides.\"skill:deploy:claude\"]\nreview-hash = \"abc\"\n[safety-reviews.\"skill:deploy:claude\"]\nreview-hash = \"abc\"\n".to_owned(),
             vec![
                 ("safety-overrides", "unknown table or key"),
                 ("safety-reviews", "unknown table or key"),

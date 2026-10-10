@@ -83,7 +83,7 @@ fn fixture() -> tempfile::TempDir {
     let project = tmp.path().join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
     );
     let package = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"2.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
     write(
@@ -141,7 +141,7 @@ fn refresh_settles_a_line_ending_edit_in_an_untracked_local_source() {
     let project = root.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
     );
     let source = project.join("catalog/pi-extensions/pi-widgets");
     write(
@@ -236,7 +236,7 @@ fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
         let project = root.join("dev/app");
         write(
             &project.join("kendex.toml"),
-            "schema = 6\n[sources.cat]\npath = \"catalog\"\n[pi-extensions.bad]\nsource = \"cat\"\n[pi-extensions.good]\nsource = \"cat\"\n",
+            "schema = 7\n[sources.cat]\npath = \"catalog\"\n[pi-extensions.bad]\nsource = \"cat\"\n[pi-extensions.good]\nsource = \"cat\"\n",
         );
         write(
             &project.join("catalog/pi-extensions/good/package.json"),
@@ -427,7 +427,7 @@ mod npm_registry {
             let source = project.join("catalog/pi-extensions/pi-widgets");
             write(
                 &project.join("kendex.toml"),
-                "schema = 6\n[sources.cat]\npath = \"catalog\"\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                "schema = 7\n[sources.cat]\npath = \"catalog\"\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
             );
             let mut manifest = json!({
                 "name": "pi-widgets", "version": "1.0.0",
@@ -701,7 +701,7 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nrev = \"{pinned}\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nrev = \"{pinned}\"\n"
         ),
     );
     fs::create_dir_all(project.join(".pi")).unwrap();
@@ -916,7 +916,7 @@ fn orphan_cleanup_takes_the_pi_package_its_registration_and_its_record_together(
             .status
             .success()
     );
-    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
     // Refresh keeps and reports orphaned Pi packages without refusing
     // the scope over them.
     let refresh = kendex(
@@ -1044,7 +1044,7 @@ fn a_package_in_the_unregistered_current_project_blocks_the_global_install() {
     write(
         &env.global_manifest_file(),
         &format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
             test_util::source_path(&project.join("catalog"))
         ),
     );
@@ -1081,7 +1081,7 @@ fn a_package_at_the_other_scope_blocks_the_declared_name_under_either_spelling()
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"{declared}\"]\nsource = \"cat\"\n"
+                "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"{declared}\"]\nsource = \"cat\"\n"
             ),
         );
         write(
@@ -1141,7 +1141,7 @@ fn a_settle_is_blocked_by_an_earlier_named_copy_and_runs_over_the_declared_one()
         let project = root.join("dev/app");
         write(
             &project.join("kendex.toml"),
-            "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
         );
         write(
             &project.join("catalog/pi-extensions/pi-hooks/package.json"),
@@ -1234,7 +1234,7 @@ fn unreadable_manifests_fail_after_the_other_scope_updates() {
             write(
                 &env.global_manifest_file(),
                 &format!(
-                    "schema = 6\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                    "schema = 7\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
                     test_util::source_path(&project.join("catalog"))
                 ),
             );
@@ -1280,7 +1280,7 @@ fn a_scoped_name_resolves_a_short_directory_by_package_name() {
     let project = tmp.path().join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+        "schema = 7\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
     );
     write(
         &project.join("catalog/pi-extensions/pi-hooks/package.json"),

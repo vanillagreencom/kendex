@@ -75,7 +75,7 @@ fn world() -> (tempfile::TempDir, std::path::PathBuf) {
     write(
         &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
         &format!(
-            "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{}\n[sources.other]\n{}\n",
+            "schema = 7\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{}\n[sources.other]\n{}\n",
             source_path(&catalog),
             source_path(&other)
         ),
@@ -87,7 +87,7 @@ fn world() -> (tempfile::TempDir, std::path::PathBuf) {
     fs::create_dir_all(home.join("fresh/.claude")).unwrap();
     write(
         &home.join("fresh/kendex.toml"),
-        "schema = 6\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 7\n[install]\nharnesses = [\"claude\"]\n",
     );
     (tmp, home)
 }
@@ -463,7 +463,7 @@ fn a_folder_saved_in_a_project_installs_only_through_that_projects_subscription(
     fs::create_dir_all(app.join(".claude")).unwrap();
     write(
         &app.join("kendex.toml"),
-        "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.catalog]\npath = \"catalog\"\n",
+        "schema = 7\n[install]\nharnesses = [\"claude\"]\n[sources.catalog]\npath = \"catalog\"\n",
     );
     let registered = kendex(&home, &home, &["project", "add", app.to_str().unwrap()]);
     assert!(registered.status.success(), "{}", said(&registered));
@@ -532,7 +532,7 @@ fn a_personal_folder_installs_into_a_project_from_the_folder_it_names() {
     let fresh = home.join("fresh");
     write(
         &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
-        "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.mine]\npath = \"catalog\"\n",
+        "schema = 7\n[install]\nharnesses = [\"claude\"]\n[sources.mine]\npath = \"catalog\"\n",
     );
     skill(&fresh.join("catalog/skills"), "gh", "project bytes");
     write(

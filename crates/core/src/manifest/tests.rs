@@ -46,7 +46,10 @@ fn bot_instructions_survive_manifest_and_app_round_trips() {
 #[test]
 fn round_trips_the_binding_skeleton() {
     let text = r#"
-schema = 6
+schema = 7
+
+[model-bindings.codex]
+standard = "gpt-6.1-sol"
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -86,6 +89,8 @@ github = "prefer gh cli"
     let ManifestFile::Current(manifest) = load(&path).unwrap() else {
         panic!("expected current manifest");
     };
+    assert_eq!(manifest.schema, 7);
+    assert_eq!(manifest.model_bindings["codex"]["standard"], "gpt-6.1-sol");
     assert_eq!(
         manifest.sources["kendex"].repo.as_deref(),
         Some("vanillagreencom/kendex")

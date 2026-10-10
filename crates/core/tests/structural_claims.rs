@@ -66,7 +66,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.env.global_manifest_file(),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&w.home.join("catA"))
         ),
     )
@@ -74,7 +74,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&w.home.join("catB"))
         ),
     )
@@ -123,7 +123,7 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
     fs::write(
         &manifest_path,
         format!(
-            "# mine\nschema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"",
+            "# mine\nschema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"",
             source_path(&w.home.join("cat"))
         ),
     )
@@ -167,7 +167,7 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
     };
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
 
@@ -217,7 +217,7 @@ fn add_writes_nothing_before_validation_and_confirmation() {
     let w = world();
     write_catalog(&w.home.join("cat"), "Body.");
     let manifest_text = format!(
-        "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
         source_path(&w.home.join("cat"))
     );
     fs::write(w.project.join("kendex.toml"), &manifest_text).unwrap();

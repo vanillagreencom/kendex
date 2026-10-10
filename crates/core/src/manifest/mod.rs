@@ -26,7 +26,7 @@ pub use validate::{Finding, joined, output_style_count, validate};
 /// follows makes it durable over the person's own bytes. A schema newer
 /// than this build refuses too; downgrades must never corrupt. Either way
 /// the file is left as written and the refusal names the way out.
-pub const MANIFEST_SCHEMA: u32 = 6;
+pub const MANIFEST_SCHEMA: u32 = 7;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
 /// The reserved source name for content adopted into this scope.

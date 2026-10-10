@@ -83,7 +83,7 @@ fn cat(scope: &Scope) -> Catalog {
 }
 
 fn sources_decl(catalog: &Path) -> String {
-    format!("schema = 6\n[sources.cat]\n{}\n", source_path(catalog))
+    format!("schema = 7\n[sources.cat]\n{}\n", source_path(catalog))
 }
 
 #[test]

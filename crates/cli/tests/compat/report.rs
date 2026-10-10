@@ -135,7 +135,7 @@ fn report_routes_from_the_manifest_when_the_lock_is_unreadable() {
     let proj = home.join("proj");
     fs::write(
         proj.join("kendex.toml"),
-        "schema = 6\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[skills.gh]\nsource = \"kendex\"\n\n[pi-extensions.\"@vanillagreen/pi-nested-agents-md\"]\nsource = \"kendex\"\n",
+        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[skills.gh]\nsource = \"kendex\"\n\n[pi-extensions.\"@vanillagreen/pi-nested-agents-md\"]\nsource = \"kendex\"\n",
     )
     .unwrap();
     fs::write(proj.join(".kendex-lock.json"), r#"{"version":5}"#).unwrap();

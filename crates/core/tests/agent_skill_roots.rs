@@ -40,7 +40,7 @@ fn installed(home: &Path, method: &str, vars: &[(&str, String)]) -> (Env, String
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"{method}\"\n\n[skills.gh]\nsource = \"cat\"\n\n[agents.rust]\nsource = \"cat\"\n\n[agent-skills]\nrust = [\"gh\"]\n",
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"{method}\"\n\n[skills.gh]\nsource = \"cat\"\n\n[agents.rust]\nsource = \"cat\"\n\n[agent-skills]\nrust = [\"gh\"]\n",
             source_path(&source)
         ),
     )

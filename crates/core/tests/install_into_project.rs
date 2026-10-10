@@ -226,7 +226,7 @@ fn a_personal_relative_folder_is_carried_into_a_project_as_its_home_directory() 
     fs::create_dir_all(personal.parent().unwrap()).unwrap();
     fs::write(
         &personal,
-        "schema = 6\n[sources.mine]\npath = \"catalog\"\n",
+        "schema = 7\n[sources.mine]\npath = \"catalog\"\n",
     )
     .unwrap();
     let project = home.join("app");

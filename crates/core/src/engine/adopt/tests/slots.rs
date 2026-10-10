@@ -197,7 +197,7 @@ fn a_plain_skill_over_an_occupied_or_unreadable_slot_refuses() {
                 "the namespaced one",
             );
             let root = crate::source::local_source_root(env, &Scope::Global);
-            fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+            fs::write(root.join("kendex.toml"), "schema = 7\n").unwrap();
             let stored = root.join("skills/data-science");
             for n in 0..4_096 {
                 fs::create_dir(stored.join(format!("filler-{n:04}"))).unwrap();
@@ -364,7 +364,7 @@ fn a_plain_skill_over_an_occupied_or_unreadable_slot_refuses() {
                 use std::os::unix::fs::PermissionsExt;
                 let stored = store_local_skill(env, "data-science/eda", "the namespaced one");
                 let root = crate::source::local_source_root(env, &Scope::Global);
-                fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+                fs::write(root.join("kendex.toml"), "schema = 7\n").unwrap();
                 let kind_dir = root.join("skills");
                 fs::set_permissions(&kind_dir, fs::Permissions::from_mode(0o311)).unwrap();
                 let refusal = match fs::read_dir(&kind_dir).is_err() {

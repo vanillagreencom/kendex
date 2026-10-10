@@ -101,7 +101,7 @@ fn install(w: &World) -> String {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();
@@ -375,7 +375,7 @@ fn install_hook(w: &World) -> PathBuf {
 /// `source`.
 fn hook_manifest(source: &str) -> String {
     format!(
-        "schema = 6\n\n[sources.cat]\n{source}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[hooks.guard]\nsource = \"cat\"\n"
+        "schema = 7\n\n[sources.cat]\n{source}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[hooks.guard]\nsource = \"cat\"\n"
     )
 }
 
