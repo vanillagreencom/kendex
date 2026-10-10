@@ -97,6 +97,9 @@
 # A successful push with a pending restack map records the newest finished
 # validation run for its pre-push head through dev-validate-run --record,
 # once per run directory. A skipped re-test has no run for that head.
+# The worktree-private pending timing record keeps that run's identity after
+# SHA reconciliation deletes the map. A failed publication leaves it for a
+# successful retry of the same head; a completed timing write clears it.
 # Failed pushes and failed restack batteries record no restack validation stage.
 # --record-restack-validation records a finished post-push run for the current
 # head through the same writer. It pushes nothing and consumes no restack map.
@@ -381,8 +384,9 @@ fi
 
 # The push owns both pre-push and post-push restack timing. A supplied run
 # binds the post-push route; automatic selection binds the pre-push head.
-record_restack_validation() {
-	local dir record candidate latest='' latest_dir='' start=-1 candidate_start dirs=()
+select_restack_validation() {
+	local dir record candidate start=-1 candidate_start dirs=()
+	latest='' latest_dir=''
 	[[ "$state_present" == true && -n "$restack_validation_head" ]] || return 0
 	if [[ -n "$record_run_dir" ]]; then
 		dirs=("$record_run_dir")
@@ -405,6 +409,11 @@ record_restack_validation() {
 		[[ -z "$record_run_dir" ]]
 		return
 	fi
+}
+
+record_restack_validation() {
+	select_restack_validation || return 1
+	[[ -n "$latest" ]] || return 0
 	"$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update "$issue" --arg dir "$latest_dir" --argjson run "$latest" '
 		if any(.stages[]?; .run_dir == $dir) then . else
 			.stages = ((.stages // []) + [{kind: "validate", reason: "restack", round_id: null, run_dir: $dir,
@@ -438,6 +447,24 @@ if ! restack_map_file="$(git -C "$worktree_abs" rev-parse --git-path kendex-reba
 	fail restack-map-path "worktree=$worktree_abs"
 fi
 [[ "$restack_map_file" == /* ]] || restack_map_file="$worktree_abs/$restack_map_file"
+pending_validation_file="${restack_map_file%/*}/kendex-restack-validation"
+pending_validation_tmp=''
+push_out=''
+trap 'rm -f -- "$pending_validation_tmp" "$push_out"' EXIT
+
+# The map is a SHA repair receipt, not a publication receipt. Keep timing in
+# its own private record before clearing a reconciled pre-push map, so a
+# transport failure cannot erase the run a later successful push must record.
+save_pending_validation() {
+	restack_validation_head="$(git -C "$worktree_abs" rev-parse HEAD)" || return 1
+	select_restack_validation || return 1
+	[[ -n "$latest" ]] || return 0
+	pending_validation_tmp="$(mktemp "$pending_validation_file.XXXXXX")" || return 1
+	jq -cn --arg issue "$issue" --arg head "$restack_validation_head" --arg dir "$latest_dir" \
+		'{issue:$issue, head:$head, run_dir:$dir}' >"$pending_validation_tmp" || return 1
+	mv -f -- "$pending_validation_tmp" "$pending_validation_file" || return 1
+	pending_validation_tmp=''
+}
 
 restack_summary_key=restack-reconcile
 restack_pushed=false
@@ -478,6 +505,9 @@ consume_rebase_map_file() {
 		|| consume_fail restack-map-nostate "issue=$issue" "state=$state_file" "file=$restack_map_file"
 	rebase_map_each_hop reconcile_restack_hop \
 		|| consume_fail "${REBASE_MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$REBASE_MAP_HOPS"
+	if [[ "$restack_pushed" == false ]]; then
+		save_pending_validation || message stage-unrecorded "issue=$issue" >&2
+	fi
 	rm -f -- "$restack_map_file" || consume_fail restack-map-clear "file=$restack_map_file"
 }
 
@@ -490,9 +520,16 @@ if [[ "$push_restacked" == true ]]; then
 	restack_validation_head="$(git -C "$worktree_abs" rev-parse HEAD)" \
 		|| fail not-worktree "path=$worktree_abs"
 fi
+if [[ -e "$pending_validation_file" ]]; then
+	current_head="$(git -C "$worktree_abs" rev-parse HEAD)" || fail not-worktree "path=$worktree_abs"
+	if pending_run_dir="$(jq -er --arg issue "$issue" --arg head "$current_head" \
+		'select(.issue == $issue and .head == $head) | .run_dir' "$pending_validation_file" 2>/dev/null)"; then
+		restack_validation_head="$current_head"
+		record_run_dir="$pending_run_dir"
+	fi
+fi
 
 push_out="$(mktemp)" || fail temp-file command=mktemp
-trap 'rm -f "$push_out"' EXIT
 
 # Push stderr streams through live; stdout is captured and replayed below,
 # where the reason it is captured rather than passed through is written down.
@@ -521,7 +558,11 @@ cat "$push_out" || true
 restack_pushed=true
 consume_rebase_map_file sha-reconcile
 
-if [[ "$push_rc" == 0 && "$push_restacked" == true ]]; then
-	record_restack_validation || message stage-unrecorded "issue=$issue" >&2
+if [[ "$push_rc" == 0 && -n "$restack_validation_head" ]]; then
+	if record_restack_validation; then
+		rm -f -- "$pending_validation_file" || message stage-unrecorded "issue=$issue" >&2
+	else
+		message stage-unrecorded "issue=$issue" >&2
+	fi
 fi
 exit "$push_rc"
