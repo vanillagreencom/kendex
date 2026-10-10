@@ -183,7 +183,7 @@ LINUX_ONLY_SHARDS="node pi-claude-bridge linear-controls"
 # The shards a merge group may run on macOS; every other macOS-capable shard
 # runs on main pushes only. skill-tests.yml's skill-suites-macos-queue job
 # falls back to this list, in this order, on an unclassified group.
-QUEUE_MACOS_SHARDS="orch-terminal orch-oversee-succeed guards-tools"
+QUEUE_MACOS_SHARDS="orch-terminal orch-oversee-succeed guards-tools slack"
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
