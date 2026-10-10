@@ -38,8 +38,11 @@ assert_eq() {
 # effects); the rows never touch it.
 
 ROOT="$TMP_ROOT/porcelain"
+REAL_GIT="$(command -v git)"
 mkdir -p "$ROOT/main"
 git -C "$ROOT/main" init -q -b main
+git -C "$ROOT/main" config gc.auto 0
+git -C "$ROOT/main" config maintenance.auto false
 git -C "$ROOT/main" config user.email test@example.com
 git -C "$ROOT/main" config user.name Test
 git -C "$ROOT/main" config commit.gpgsign false
@@ -51,25 +54,33 @@ git -C "$ROOT/main" commit -q -m base
 mkdir -p "$ROOT/real/ghost"
 ln -s "$ROOT/real" "$ROOT/link"
 
-# Sources the script to get worktree_for_branch, overrides git to emit the
-# row's NUL-delimited listing for `worktree list --porcelain -z` (every other
-# git call is the real one), and prints the function's exit status and output.
+# An executable in PATH intercepts the listing even when its caller uses
+# exec. Other Git commands retain the real executable captured before it.
+mkdir -p "$TMP_ROOT/bin"
+cat >"$TMP_ROOT/bin/git" <<'GIT_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+[[ "${args[0]:-}" != -C ]] || args=("${args[@]:2}")
+if [[ "${#args[@]}" -eq 4 && "${args[0]}" == worktree &&
+      "${args[1]}" == list && "${args[2]}" == --porcelain && "${args[3]}" == -z ]]; then
+  # shellcheck disable=SC2059
+  printf "$PORCELAIN_FMT"
+else
+  exec "$REAL_GIT" "$@"
+fi
+GIT_STUB
+chmod +x "$TMP_ROOT/bin/git"
+
+# Sources the script to get worktree_for_branch, supplies the row's listing,
+# and prints the function's exit status and output.
 run() {
   local porcelain_fmt="$1" branch="$2"
   (
     cd "$ROOT/main"
     # shellcheck source=../scripts/worktree
     source "$WORKTREE_SCRIPT" path probe >/dev/null
-    PORCELAIN_FMT="$porcelain_fmt"
-    git() {
-      case "$*" in
-        *"worktree list --porcelain -z"*)
-          # shellcheck disable=SC2059
-          printf "$PORCELAIN_FMT"
-          ;;
-        *) command git "$@" ;;
-      esac
-    }
+    export PORCELAIN_FMT="$porcelain_fmt" REAL_GIT PATH="$TMP_ROOT/bin:$PATH"
     set +e
     out="$(worktree_for_branch "$branch")"
     rc=$?
