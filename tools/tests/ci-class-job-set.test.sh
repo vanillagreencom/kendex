@@ -41,8 +41,8 @@ VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
 # build input runs `rest`, `review-gate` and `orch-rest` for real kendex
 # rows, and a tools/ path its suites' two shards and the scans.
-BUILD_ROW="$(measured both false true true '["review-gate","orch-rest","rest"]' '[]')"
-TOOL_ROW="$(measured both false true false '["guards-scans","guards-tools","guards-tools-tail"]' '["guards-tools"]')"
+BUILD_ROW="$(measured both false true true '["review-gate","orch-rest","rest"]' '["review-gate","orch-rest","rest"]')"
+TOOL_ROW="$(measured both false true false '["guards-scans","guards-tools","guards-tools-tail"]' '["guards-scans","guards-tools","guards-tools-tail"]')"
 # Where a shard runs, and where none does. A shard runs on both runners
 # unless the diff is prose alone.
 SHARD_CODE="$(lanes both false true false)"
@@ -536,8 +536,7 @@ PRICE_SHARDS='["guards-scans","guards-hooks","guards-tools","guards-tools-tail",
 # every lane but the verify job; and less what a pull request run of the
 # skill's prose ran: the same shards' Linux legs, and every lane but the
 # platform lanes and the verify job.
-# Every row but the Pi package's keeps guards-tools in queue_macos_shards.
-PRICE_QUEUE='["guards-tools"]'
+PRICE_QUEUE="$(macos_shards "$PRICE_SHARDS")"
 PRICE_GROUP="$(measured both false true false "$PRICE_SHARDS" "$PRICE_QUEUE")"
 PRICE_NONE="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
 PRICE_PLATFORM="shell_shards=true shell_os=$MACOS ui=false bot_instructions=true cargo_linux=false cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
@@ -611,9 +610,9 @@ macos_patch=true
 $(SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
 patch_expected="$(measured linux false true false "$PRICE_SHARDS" '[]')"
 patch_expected="${patch_expected/cargo_macos=true/cargo_macos=false}"
-check "PR selector records its actual macOS lanes and queue shards" 'macos_selected=true
+check "PR selector records its actual macOS lanes and queue shards" "macos_selected=true
 cargo_macos_selected=true
-macos_shards=["guards-tools"]' "$(SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
+macos_shards=$PRICE_QUEUE" "$(SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
 for field in macos_selected cargo_macos_selected macos_shards; do
   needle='macos_selected=%s\ncargo_macos_selected=%s\nmacos_shards=[%s]'
   replacement="${needle/$field=/omitted_field=}"
@@ -628,11 +627,43 @@ check "accepted macOS record waives covered portability" "$patch_expected" \
   "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$patch_record" selection micro false "$PRICE")"
 check "no macOS record retains portability despite matching tree proof" "$PRICE_GROUP" \
   "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_PROOF="$patch_record" selection micro false "$PRICE")"
-check "different Ubuntu shards still reuse the covered macOS shard" "$patch_expected" \
+check "missing macOS shell shard retains its legs beside covered cargo" "${PRICE_GROUP/cargo_macos=true/cargo_macos=false}" \
   "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$(record pull_request micro false skills/preflight/scripts/preflight | tr ',' '\n')
 patch_id=p1
 macos_patch=true
 $(SELECT_IN="$SEL_WORLD" macos_record micro false skills/preflight/scripts/preflight)" selection micro false "$PRICE")"
+
+# The PR record includes every macOS leg, but never the selected node leg.
+# Removing one selected macOS shard must retain portability for the group.
+wide_paths="$(printf '%s\n' "$PRICE" "$PI")"
+wide_shards="$(jq -c '. + ["node"]' <<<"$PRICE_SHARDS")"
+wide_covered="$(measured linux false true false "$wide_shards" '[]')"
+wide_covered="${wide_covered/cargo_macos=true/cargo_macos=false}"
+wide_uncovered="$(measured both false true false "$wide_shards" "$PRICE_QUEUE")"
+wide_uncovered="${wide_uncovered/cargo_macos=true/cargo_macos=false}"
+missing_record="$(printf '%s\n' "$patch_record" | sed '/^macos_shards=/d')
+macos_shards=$(jq -c 'map(select(. != "rest"))' <<<"$PRICE_QUEUE")"
+for coverage in full missing; do
+  rec="$patch_record" expected="$wide_covered"
+  [ "$coverage" != missing ] || { rec="$missing_record"; expected="$wide_uncovered"; }
+  check "$coverage wider patch coverage with a selected Linux-only shard" "$expected" \
+    "$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$rec" selection micro false "$wide_paths")"
+done
+while IFS='@' read -r needle replacement coverage; do
+  [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+  rec="$patch_record" expected="$wide_covered"
+  [ "$coverage" != missing ] || { rec="$missing_record"; expected="$wide_uncovered"; }
+  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$rec" selection micro false "$wide_paths")"
+  case "$got" in
+    exit=*) bad "must-fail: wider coverage control broke the selector ($got)" ;;
+    *) [ "$got" != "$expected" ] && ok "must-fail: wider $coverage coverage rule" || bad "must-fail: wider $coverage coverage rule" ;;
+  esac
+done <<'ROWS'
+    case "$now_shards" in *"\"$shard\""*) ;; *) continue ;; esac@    case " orch-terminal orch-oversee-succeed guards-tools " in *" $shard "*) ;; *) continue ;; esac; case "$now_shards" in *"\"$shard\""*) ;; *) continue ;; esac@missing
+      case " $LINUX_ONLY_SHARDS " in *" $shard "*) continue ;; esac@      :@full
+ROWS
 
 # sed can print the complete coverage field before it reports a read failure.
 # Each field must retain portability on that status, even with usable text.
@@ -674,7 +705,7 @@ check "the PR actually selected no macOS shell shard" 'macos_shards=[]' \
   "$(printf '%s\n' "$prior_record" | grep '^macos_shards=')"
 printf 'read ui/src/proof-fixture.ts\n' >"$ADVANCED_WORLD/tools/tests/base-reader.test.sh"
 git -C "$ADVANCED_WORLD" add tools/tests/base-reader.test.sh
-advanced_expected="$(measured both true true false '["guards-tools","guards-tools-tail"]' '["guards-tools"]')"
+advanced_expected="$(measured both true true false '["guards-tools","guards-tools-tail"]' '["guards-tools","guards-tools-tail"]')"
 advanced_expected="${advanced_expected/cargo_macos=true/cargo_macos=false}"
 check "new base reader retains its untested macOS shard" "$advanced_expected" \
   "$(SELECT_IN="$ADVANCED_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$prior_record" selection micro false "$advanced_path")"
@@ -708,38 +739,47 @@ ROWS
 # --- 1c. The queue's macOS legs ---------------------------------------------
 # queue_macos_shards per row; the lane-source row above holds it over a
 # proof that stood every runner down.
-# EVENT|WORLD (tree or fixture)|CLASS|PATHS (blank-separated)|QUEUE
+# WORLD (tree or fixture)|CLASS|PATHS (blank-separated)|MACOS
 queue_table() {
   cat <<ROWS
-merge_group|tree|micro|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|[]
-pull_request|tree|micro|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|[]
-merge_group|tree|micro|skills/orch/scripts/open-terminal|$QUEUE_ALL
-pull_request|tree|micro|skills/orch/scripts/open-terminal|$QUEUE_ALL
-merge_group|tree|standard|skills/orch/SKILL.md|$QUEUE_ALL
-merge_group|tree|render|.agents/skills/orch/SKILL.md|[]
-merge_group|fixture|micro|skills/price-handling/scripts/x|["guards-tools"]
-merge_group|fixture|micro|$PI|[]
-merge_group|fixture|micro|.claude/hooks/lane-mail-check|[]
+tree|micro|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|false
+tree|micro|skills/orch/scripts/open-terminal|true
+tree|standard|skills/orch/SKILL.md|true
+tree|render|.agents/skills/orch/SKILL.md|false
+fixture|micro|skills/price-handling/scripts/x|true
+fixture|micro|$PI|false
+fixture|micro|.claude/hooks/lane-mail-check|true
+fixture|micro|$PRICE $PI|true
 ROWS
 }
-queue_of() { # EVENT WORLD CLASS PATHS [COPY] — the queue_macos_shards value, or the refusal key
-  local world="$ROOT" got
+queue_selection() { # EVENT WORLD CLASS PATHS [COPY]
+  local world="$ROOT"
   [ "$2" = tree ] || world="$SEL_WORLD"
-  got="$(SELECT_IN="$world" SELECT_WITH="${5:-$JOB_SET}" SELECT_EVENT="$1" selection "$3" false "$(printf '%s\n' $4)")"
+  SELECT_IN="$world" SELECT_WITH="${5:-$JOB_SET}" SELECT_EVENT="$1" \
+    selection "$3" false "$(printf '%s\n' $4)"
+}
+queue_of() { # EVENT WORLD CLASS PATHS [COPY] — the queue_macos_shards value, or the refusal key
+  local got
+  got="$(queue_selection "$@")"
   case "$got" in
     exit=*) printf '%s' "$got" ;;
     *) field queue_macos_shards <<<"$got" ;;
   esac
 }
 queue_rows=0
-while IFS='|' read -r event world class paths expected; do
-  queue_rows=$((queue_rows + 1))
-  check "queue legs: $class on $event over '$paths'" "$expected" "$(queue_of "$event" "$world" "$class" "$paths")"
+while IFS='|' read -r world class paths macos; do
+  for event in pull_request merge_group; do
+    queue_rows=$((queue_rows + 1))
+    got="$(queue_selection "$event" "$world" "$class" "$paths")"
+    expected='[]'
+    [ "$macos" = false ] || expected="$(macos_shards "$(field shards <<<"$got")")"
+    check "queue legs: $class on $event over '$paths'" "$expected" "$(field queue_macos_shards <<<"$got")"
+  done
 done < <(queue_table)
 [ "$queue_rows" -ge 9 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
-# EDIT@PATHS@WRONG: a copy with that rule removed answers the row over PATHS,
-# with WRONG; a refusal is a broken copy, never a reddened row.
-while IFS='@' read -r edit paths wrong; do
+# EDIT@PATHS: a copy with that rule removed must fail the row over PATHS.
+# A refusal is a broken copy, never a reddened row.
+while IFS='@' read -r edit paths; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   chmod +x "$TMP/rule/tools/ci-job-set"
   changed="$(diff "$JOB_SET" "$TMP/rule/tools/ci-job-set" | grep -c '^>' || :)"
@@ -747,17 +787,24 @@ while IFS='@' read -r edit paths wrong; do
     bad "control: the edit changed $changed lines of a ci-job-set copy, not one: $edit"
     continue
   fi
-  line="$(queue_table | grep -m1 -F -- "|$paths|")" || { echo "no queue row over $paths" >&2; exit 1; }
-  IFS='|' read -r event world class _ _ <<<"$line"
-  got="$(queue_of "$event" "$world" "$class" "$paths" "$TMP/rule/tools/ci-job-set")"
-  case "$got" in
-    exit=*) bad "control: $edit broke the ci-job-set copy over $paths ($got)" ;;
-    *) check "control: $edit answers the queue row over $paths" "$wrong" "$got" ;;
-  esac
+  line="$(queue_table | grep -F -- "|$paths|")" || { echo "no queue row over $paths" >&2; exit 1; }
+  IFS='|' read -r world class _ macos <<<"$line"
+  for event in pull_request merge_group; do
+    base="$(queue_selection "$event" "$world" "$class" "$paths")"
+    expected='[]'
+    [ "$macos" = false ] || expected="$(macos_shards "$(field shards <<<"$base")")"
+    got="$(queue_of "$event" "$world" "$class" "$paths" "$TMP/rule/tools/ci-job-set")"
+    case "$got" in
+      exit=*) bad "control: $edit broke the ci-job-set copy over $paths ($got)" ;;
+      *) [ "$got" != "$expected" ] && ok "control: $edit fails the queue row on $event over $paths" ||
+        bad "control: $edit leaves the queue row green on $event over $paths" ;;
+    esac
+  done
 done <<'CONTROLS'
-s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md@["orch-terminal","orch-oversee-succeed","guards-tools"]
-/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*) \(.*\) ;; esac$/    \1/@skills/price-handling/scripts/x@["orch-terminal","orch-oversee-succeed","guards-tools"]
-/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "$now_shards" in *"\\"$shard"*)/@.claude/hooks/lane-mail-check@["guards-tools"]
+s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md
+/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*) \(.*\) ;; esac$/    \1/@skills/price-handling/scripts/x
+/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "\$now_shards" in *"\\"\$shard"*)/@.claude/hooks/lane-mail-check
+s/^    case " \$LINUX_ONLY_SHARDS " in \*" \$shard "\*) continue ;; esac$/    :/@skills/price-handling/scripts/x pi-extensions/pi-demo/src/x.ts
 CONTROLS
 
 # --- 1d. The queue route ---------------------------------------------------
@@ -784,24 +831,29 @@ route_commit() { # MESSAGE
 route_base="$(route_commit base)"
 grep -v '^HARNESS_CI_QUEUE_SELECTOR = ' "$ROOT/kendex.settings.toml" >"$route_world/kendex.settings.toml"
 route_unwired="$(route_commit unwired)"
-route_queue() { # BASE PATH -- the queue-only line for one appended line under PATH on BASE
+route_queue() { # BASE PATH EVENT -- the queue-only line for one appended line under PATH on BASE
   git -C "$route_world" checkout -q --detach "$1"
   printf 'route row\n' >>"$route_world/$2"
   route_commit "row $2" >/dev/null
-  "$ROOT/skills/harness-ci/scripts/change-class" --repo "$route_world" --event pull_request \
+  "$ROOT/skills/harness-ci/scripts/change-class" --repo "$route_world" --event "$3" \
     --base "$1" --head HEAD 2>&1 >/dev/null | sed -n 's/^queue-only: //p'
 }
-check "a change selecting the queue's macOS shards takes the queue" \
-  "queue_only=true cause=queue-selection selector=tools/ci-job-set output=queue_macos_shards value=$QUEUE_ALL" \
-  "$(route_queue "$route_base" skills/orch/scripts/open-terminal)"
-# The UI path is assembled here: a suite naming a path whole is a reader of
-# it, and the selection would run this suite's shard for it.
-check "a change selecting no queue macOS shard answers as before" \
-  "queue_only=false cause=no-queue-path" \
-  "$(route_queue "$route_base" "ui/src/App.$(printf tsx)")"
-check "control: settings naming no selector let the queue path take the admin route" \
-  "queue_only=false cause=no-queue-path" \
-  "$(route_queue "$route_unwired" skills/orch/scripts/open-terminal)"
+for event in pull_request merge_group; do
+  for path in skills/orch/scripts/open-terminal skills/linear/scripts/linear.sh; do
+    selected="$(SELECT_EVENT="$event" selection micro false "$path")"
+    expected="$(macos_shards "$(field shards <<<"$selected")")"
+    check "a change selecting macOS shards takes the queue on $event over $path" \
+      "queue_only=true cause=queue-selection selector=tools/ci-job-set output=queue_macos_shards value=$expected" \
+      "$(route_queue "$route_base" "$path" "$event")"
+  done
+  # The UI path is assembled: spelling it whole would make this suite a reader.
+  check "a change selecting no queue macOS shard answers as before on $event" \
+    "queue_only=false cause=no-queue-path" \
+    "$(route_queue "$route_base" "ui/src/App.$(printf tsx)" "$event")"
+  check "control: settings naming no selector permit the admin route on $event" \
+    "queue_only=false cause=no-queue-path" \
+    "$(route_queue "$route_unwired" skills/orch/scripts/open-terminal "$event")"
+done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
