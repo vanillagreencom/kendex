@@ -307,18 +307,70 @@ UNKNOWN_RESULT="$(
 assert_eq "$UNKNOWN_RESULT" '1|watch-restart-failed|step=claim' \
   "an unknown claim refuses before either fresh launch or replay"
 
-for DESCRIPTOR_CASE in live released; do
+ARGV_BOUNDARY="$(mutant_scripts argv-boundary)" || exit 1
+ARGV_CONTROL="$(mutant_scripts argv-control lib/watch-handover.sh)" || exit 1
+UNREAD_CONTROL="$(mutant_scripts unread-control lib/watch-handover.sh)" || exit 1
+LEGACY_CONTROL="$(mutant_scripts legacy-control lib/watch-pid.sh)" || exit 1
+mutate_file "$ARGV_CONTROL/lib/watch-handover.sh" \
+  '        watch_start fresh "$state" "${@:2}" || return $?' \
+  '        WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=argv); return 1'
+mutate_file "$UNREAD_CONTROL/lib/watch-handover.sh" \
+  '        WATCH_HANDOVER_FIELDS+=("unread=$WATCH_ARGV_FILE")' '        :'
+mutate_file "$LEGACY_CONTROL/lib/watch-pid.sh" \
+  '    [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]] || watch_command_fresh' \
+  '    [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]] || return 1'
+rm -- "$LEGACY_CONTROL/lib/watch-handover.sh"
+cp -p -- "$ARGV_CONTROL/lib/watch-handover.sh" "$LEGACY_CONTROL/lib/watch-handover.sh"
+for ARGV_BIN in "$ARGV_BOUNDARY" "$ARGV_CONTROL" "$UNREAD_CONTROL" "$LEGACY_CONTROL"; do
+  rm -- "$ARGV_BIN/oversee-watch"
+  cp -p -- "$FIXTURE_WATCH" "$ARGV_BIN/oversee-watch"
+done
+for DESCRIPTOR_CASE in live released malformed legacy released-control unread-control legacy-control; do
   new_predecessor
-  [[ "$DESCRIPTOR_CASE" != released ]] || watch_stop "$OLD" "$FLEET_STATE"
-  rm -- "$WATCH_ARGV_FILE"
-  succeed
-  assert_eq "$RC|$(recorded pane)" "1|$PRED" \
-    "$DESCRIPTOR_CASE: an unreadable required command refuses instead of constructing the default"
-  watch_stop "$OLD" "$FLEET_STATE" || true
+  [[ "$DESCRIPTOR_CASE" == live ]] || watch_stop "$OLD" "$FLEET_STATE"
+  DESCRIPTOR_BIN="$ARGV_BOUNDARY/oversee"
+  case "$DESCRIPTOR_CASE" in
+    released-control) DESCRIPTOR_BIN="$ARGV_CONTROL/oversee" ;;
+    unread-control) DESCRIPTOR_BIN="$UNREAD_CONTROL/oversee" ;;
+    legacy-control) DESCRIPTOR_BIN="$LEGACY_CONTROL/oversee" ;;
+  esac
+  if [[ "$DESCRIPTOR_CASE" == legacy* ]]; then
+    printf '%s\0' --repeat 9 --state "$FLEET_STATE" --repo legacy/repo > "$WATCH_ARGV_FILE"
+  elif [[ "$DESCRIPTOR_CASE" == malformed ]]; then
+    printf 'unterminated' > "$WATCH_ARGV_FILE"
+  else
+    rm -- "$WATCH_ARGV_FILE"
+  fi
+  printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
+  succeed "$DESCRIPTOR_BIN"
+  if [[ "$DESCRIPTOR_CASE" == live || "$DESCRIPTOR_CASE" == released-control || "$DESCRIPTOR_CASE" == legacy-control ]]; then
+    assert_eq "$RC|$(recorded pane)|$(grep -c '^oversee: watch-restart-failed step=argv' <<<"$OUT")" "1|$PRED|1" \
+      "$DESCRIPTOR_CASE: refusal keeps the predecessor before close"
+    [[ "$DESCRIPTOR_CASE" != live ]] || watch_pid_live "$FLEET_STATE"
+  else
+    watch_pid_live "$FLEET_STATE"
+    assert_eq "$RC|$WATCH_ORIGIN|$WATCH_PANE|$(grep -c '^oversee: watch-started ' <<<"$OUT")|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")" \
+      "0|succession|$SUCC|1|1" "$DESCRIPTOR_CASE: the successor owns the started watch"
+    UNREAD_COUNT="$(grep -cF "unread=$WATCH_ARGV_FILE" <<<"$OUT" || true)"
+    if [[ "$DESCRIPTOR_CASE" == legacy || "$DESCRIPTOR_CASE" == unread-control ]]; then
+      assert_eq "$UNREAD_COUNT" 0 "$DESCRIPTOR_CASE: the unread assertion detects an omitted field"
+    else
+      assert_eq "$UNREAD_COUNT" 1 "$DESCRIPTOR_CASE: the default selection names its unread command"
+    fi
+    if [[ "$DESCRIPTOR_CASE" == legacy ]]; then
+      watch_argv_read "$FLEET_STATE"
+      assert_eq "$(printf '%s\n' "${WATCH_ARGV[@]}" | sed -n '/^--repo$/{n;p;}')" legacy/repo \
+        "the released pre-1.0 command retains its repository selection"
+    fi
+    watch_stop "$WATCH_PID" "$FLEET_STATE"
+  fi
+  assert_eq "$(grep -c '^EVENT fixture retained$' "$WATCH_LOG_FILE")" 1 \
+    "$DESCRIPTOR_CASE: succession retains the log cursor's lines"
+  [[ "$DESCRIPTOR_CASE" != live ]] || watch_stop "$OLD" "$FLEET_STATE"
 done
 
 # Older installed watches wrote argv alone and kept metadata in the claim.
-# Read that form while the metadata exists; absence is not a fresh launch.
+# Keep its arguments after the claim releases its script and directory.
 LEGACY_STATE="$TMP_ROOT/work/tmp/legacy-state.json"
 watch_pid_write "$LEGACY_STATE" old hand "$FIXTURE_WATCH" --repo legacy/repo --repeat 9
 python3 - "$WATCH_ARGV_FILE" <<'PY'
@@ -333,9 +385,12 @@ assert_eq "$WATCH_SCRIPT|$WATCH_CWD|${WATCH_ARGV[*]}" \
 assert_eq "$(grep -c '^watch-pid: deprecated=argv replacement=watch-command-v1$' "$TMP_ROOT/legacy.err")" 1 \
   "the retired command form names its replacement once per read"
 watch_pid_release "$LEGACY_STATE"
+SCRIPT_DIR="$SRC_DIR"
 LEGACY_RC=0
 watch_argv_read "$LEGACY_STATE" 2>"$TMP_ROOT/legacy.err" || LEGACY_RC=$?
-assert_eq "$LEGACY_RC" 1 "a retired descriptor with lost metadata cannot become a successful command read"
+assert_eq "$LEGACY_RC|$WATCH_SCRIPT|$WATCH_CWD|${WATCH_ARGV[*]}" \
+  "0|$SRC_DIR/oversee-watch|$PWD|--repo legacy/repo --repeat 9" \
+  "a released retired descriptor uses the fresh pair and keeps its arguments"
 
 # A first launch and a succession each start a missing repeat watch.
 tm kill-window -a -t "$KEEP_WINDOW"

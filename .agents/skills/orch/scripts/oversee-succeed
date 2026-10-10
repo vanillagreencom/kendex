@@ -543,7 +543,7 @@ message() { # KEY FIELD=VALUE...
     close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
     watch-handover) text='The fleet watch serving the caller pane is restarted from the successor pane once this window closes, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
     watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output stays beside the fleet state for the successor to read.' ;;
-    watch-started) text='The repeat fleet watch runs outside the successor session. Read the log field to receive its events.' ;;
+    watch-started) text='The repeat fleet watch runs outside the successor session. Read the log field to receive its events. unread= names a retained command that could not be read; the watch runs the default selection. Restart a hand-selected watch by hand.' ;;
     watch-restart-failed) text='The fleet watch could not be started or restarted from the successor pane. Before the caller closes, this failure refuses the succession. A later helper failure is recorded in the watch error log.' ;;
   esac
   # One printf, so one write: the restarted watch appends its own keyed lines

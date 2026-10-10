@@ -234,7 +234,7 @@ message() { # KEY FIELD=VALUE...
     overseer-lane-unknown) text='The account check returned an outcome this script does not know; the session was closed rather than trusted.' ;;
     overseer-launched) text='The overseer is running and recorded.' ;;
     watch-handover) text='The fleet watch serving the predecessor pane is restarted from the successor pane once the predecessor is stopped, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
-    watch-started) text='The repeat fleet watch runs outside the overseer session. Read the log field to receive its events.' ;;
+    watch-started) text='The repeat fleet watch runs outside the overseer session. Read the log field to receive its events. unread= names a retained command that could not be read; the watch runs the default selection. Restart a hand-selected watch by hand.' ;;
     watch-restart-failed) text='The fleet watch could not be started or handed to the new pane. The launch failed. The step and runner fields name the cause.' ;;
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
