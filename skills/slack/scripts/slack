@@ -42,8 +42,6 @@ if ! _slack_caller_env="$(python3 -c 'import json, os; print(json.dumps(dict(os.
 fi
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
 source "$orch/scripts/lib/kendex-env.sh"
-tracker_team="${LINEAR_TEAM-}"
-tracker_team_set="${LINEAR_TEAM+set}"
 project="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
 # The private env file is sourced as shell, so its plain `KEY=value` lines
 # are shell variables; the relay reads os.environ, so they reach it only
@@ -53,13 +51,6 @@ if ! kendex_load_project_env "$project"; then
   refuse "settings-unreadable=$project" "a settings file of this checkout could not be loaded; the lines above say which"
 fi
 set +a
-# Tracker discovery loads each root's settings through orch-env. Keep only a
-# caller's explicit team, not a team the launch checkout injected globally.
-if [ "$tracker_team_set" = set ]; then
-  export LINEAR_TEAM="$tracker_team"
-else
-  unset LINEAR_TEAM
-fi
 
 export PYTHONDONTWRITEBYTECODE=1
 SLACK_ORCH_DIR="$orch"

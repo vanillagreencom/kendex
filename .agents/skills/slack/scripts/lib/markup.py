@@ -109,30 +109,28 @@ class TrackerMetadata:
         return REFERENCES, url
 
     def get(self, root: Path) -> Optional[Tracker]:
-        """Resolve through orch-env in this root, never the relay's checkout."""
+        """Read workspace keys in this root, never the relay's checkout."""
         now = self.clock()
         cached = self.cache.get(root)
         if cached is not None and now - cached[0] < METADATA_SECONDS:
             return cached[1]
         tracker = None
         try:
-            team = self._read(root, [str(Path(os.environ["SLACK_ORCH_DIR"]) / "scripts/orch-env"), "LINEAR_TEAM", ""])
-            if team:
-                script = Path(os.environ["SLACK_LINEAR_DIR"]) / "scripts/linear.sh"
-                data = json.loads(self._read(root, [str(script), "teams", "keys"]))
-                slug, keys = data["urlKey"], data["keys"]
-                # Linear's read action produces a workspace slug and a key array.
-                if not isinstance(slug, str) or re.fullmatch(r"[a-zA-Z0-9_-]+", slug) is None:
-                    raise ValueError("teams keys urlKey=invalid")
-                if not isinstance(keys, list) or not keys or any(
-                    not isinstance(key, str) or re.fullmatch(r"[A-Z][A-Z0-9]*", key) is None for key in keys
-                ):
-                    raise ValueError("teams keys keys=invalid")
-                pattern = re.compile(r"\b(?:" + "|".join(re.escape(key) for key in sorted(keys, key=len, reverse=True)) + r")-[0-9]+\b")
-                tracker = (pattern, lambda identifier: f"https://linear.app/{slug}/issue/{identifier}")
+            script = Path(os.environ["SLACK_LINEAR_DIR"]) / "scripts/linear.sh"
+            data = json.loads(self._read(root, [str(script), "teams", "keys"]))
+            slug, keys = data["urlKey"], data["keys"]
+            # Linear's read action produces a workspace slug and a key array.
+            if not isinstance(slug, str) or re.fullmatch(r"[a-zA-Z0-9_-]+", slug) is None:
+                raise ValueError("teams keys urlKey=invalid")
+            if not isinstance(keys, list) or not keys or any(
+                not isinstance(key, str) or re.fullmatch(r"[A-Z][A-Z0-9]*", key) is None for key in keys
+            ):
+                raise ValueError("teams keys keys=invalid")
+            pattern = re.compile(r"\b(?:" + "|".join(re.escape(key) for key in sorted(keys, key=len, reverse=True)) + r")-[0-9]+\b")
+            tracker = (pattern, lambda identifier: f"https://linear.app/{slug}/issue/{identifier}")
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as err:
             if root not in self.warned:
-                notice("tracker-links-unavailable", f"{root} cause={err}")
+                notice("tracker-links-unavailable", f"{root} cause={err}", file=sys.stderr)
                 self.warned.add(root)
         self.cache[root] = (now, tracker)
         return tracker

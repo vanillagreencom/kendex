@@ -162,11 +162,12 @@ while IFS='|' read -r verb args; do
   fi
   error="$(first_err)"
   route=missing
-  case "$error" in *owner-note*) route=owner-note ;; esac
+  case "$error" in *'oversee register'*) route=register ;; esac
+  case "$error" in *owner-note*) route=consumer-tool ;; esac
   appended=absent
   [ ! -e "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" ] || appended=present
   assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) $(sourced) route=$route mailbox=$appended" \
-    "2  lane-mail: overseer-absent=$PEER lines=1 $env_result route=owner-note mailbox=absent" \
+    "2  lane-mail: overseer-absent=$PEER lines=1 $env_result route=register mailbox=absent" \
     "a missing record refuses without appending: $verb $args" "$TMP_ROOT/err"
 done <<EOF
 send|
@@ -311,6 +312,14 @@ mutant() {
   mutate_file "$dir/lane-mail" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
+
+mutant consumer-route 'run oversee register in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout' 'use the owner-note tool for a remote overseer'
+record none
+send 'Route control.'
+route=missing
+case "$(first_err)" in *'oversee register'*) route=register ;; esac
+case "$(first_err)" in *owner-note*) route=consumer-tool ;; esac
+assert_eq "$route" consumer-tool 'control: the former refusal does not name the portable registration route'
 
 mutant no-judgement '      [ -n "$MSGID" ] || lm_peer_reader' '      [ -n "$MSGID" ] || :'
 record '{"window":"@1"}'

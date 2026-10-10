@@ -1,0 +1,1 @@
+- Direct missing-overseer mail refusals to `oversee register` and the remote host's checkout.

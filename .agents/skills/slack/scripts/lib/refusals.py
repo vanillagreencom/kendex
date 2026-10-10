@@ -8,6 +8,7 @@ lines. A caller parses the first line and never the rest.
 from __future__ import annotations
 
 import sys
+from typing import Optional, TextIO
 
 NAME = "slack"
 
@@ -224,6 +225,6 @@ def print_refusal(err: Refusal) -> None:
     print("\n".join(lines), file=sys.stderr, flush=True)
 
 
-def notice(key: str, value: str) -> None:
-    """A keyed line on stdout for a condition that stops nothing."""
-    print(keyed(key, value), flush=True)
+def notice(key: str, value: str, *, file: Optional[TextIO] = None) -> None:
+    """A keyed line for a condition that stops nothing; stdout by default."""
+    print(keyed(key, value), file=file, flush=True)

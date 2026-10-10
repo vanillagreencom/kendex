@@ -15,7 +15,6 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
-sk_tracker_fixture
 sk_fake_start
 echo "=== slack draft ask ==="
 

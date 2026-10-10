@@ -108,6 +108,7 @@ class Compaction(unittest.TestCase):
         self.run_cli(repo, "send", "--directive", "--file", str(text), scripts=scripts)
         events = [json.loads(row) for row in self.run_cli(repo, "events", scripts=scripts).stdout.splitlines()]
         self.assertEqual((events[-1]["line"], events[-1]["count"]), (5, 5))
+        self.filtered_events(repo, box, events, scripts)
         archives = list((self.home / "fleet/archive" / repo.name / "oversee").glob("*.tgz"))
         self.assertEqual(len(archives), 1)
         self.assertEqual(Path(pointers[0]), archives[0])
@@ -115,6 +116,23 @@ class Compaction(unittest.TestCase):
             archived = b"".join(archive.extractfile(member).read() for member in archive.getmembers() if member.isfile())
         self.assertIn(b'"expired"', archived)
         self.assertNotIn(b'"open"', archived)
+
+    def filtered_events(self, repo, box, events, scripts):
+        for after, expected_lines in ((None, [3, 4, 5]), ("3", [4, 5]), ("03", [4, 5]), ("5", [])):
+            args = [] if after is None else ["--after", after]
+            output = self.run_cli(repo, "events", "--box", "to-lane", *args, scripts=scripts).stdout.splitlines()
+            self.assertEqual(output[0], "count=5 first=closed-answer")
+            selected = [json.loads(row) for row in output[1:]]
+            self.assertEqual([row["line"] for row in selected], expected_lines)
+            self.assertEqual(selected, [row for row in events if row["box"] == "to-lane"
+                                        and row["line"] in expected_lines])
+            self.assertTrue(all(row["count"] == 5 and row["mail_class"] == "owner-note"
+                                for row in selected))
+            self.assertEqual((box / "to-lane.cursor").read_text(), "3\n")
+        output = self.run_cli(repo, "events", "--box", "to-overseer", scripts=scripts).stdout.splitlines()
+        self.assertEqual(output[0], "count=4 first=closed")
+        self.assertEqual([json.loads(row) for row in output[1:]],
+                         [row for row in events if row["box"] == "to-overseer"])
 
     def mutant(self, name, relative, old, new):
         scripts = self.home / name / "scripts"
@@ -174,6 +192,19 @@ class Compaction(unittest.TestCase):
         ast.parse((mutant / "lib/lane-mail-store.py").read_text())
         with self.assertRaises(AssertionError):
             self.tracker_confirmation(mutant)
+
+    def test_events_after_compaction(self):
+        for name, replacement in (("physical-filter", "$physical > ($after | tonumber)"),
+                                  ("missing-filter", "true")):
+            repo, box = self.fixture()
+            self.run_cli(repo, "compact")
+            text = repo / "message.txt"
+            text.write_text("another directive\n")
+            self.run_cli(repo, "send", "--directive", "--file", str(text))
+            events = [json.loads(row) for row in self.run_cli(repo, "events").stdout.splitlines()]
+            mutant = self.mutant(name, "lane-mail", "$numbers[$physical - 1] > ($after | tonumber)", replacement)
+            with self.assertRaises(AssertionError):
+                self.filtered_events(repo, box, events, mutant)
 
     def test_empty_numbered_mailbox(self):
         repo, box = self.world()

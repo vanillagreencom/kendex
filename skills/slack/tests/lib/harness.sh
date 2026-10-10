@@ -11,8 +11,6 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export PYTHONDONTWRITEBYTECODE=1
 
 SK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)"
-SK_SLACK="$SK_ROOT/skills/slack/scripts/slack"
-SK_BIN="$SK_SLACK"
 SK_RUN_FROM=""
 SK_FAKE="$SK_ROOT/skills/slack/tests/lib/fake_slack.py"
 SK_LANE_MAIL="$SK_ROOT/skills/orch/scripts/lane-mail"
@@ -126,6 +124,9 @@ sk_new_root() {
   ln -sfn "$SK_ROOT/skills/orch/scripts" "$root/.agents/skills/orch/scripts"
   mkdir -p "$root/tmp"
   printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
+  # Ordinary Slack cases have a working tracker that matches none of their ids.
+  # Tracker-link cases replace these keys or plant their own read failure.
+  printf '{"urlKey":"workspace","keys":["FIXTURE"]}\n' > "$root/linear.json"
   printf '%s' "$root"
 }
 sk_box() { printf '%s/tmp/lane-mail/overseer' "$1"; }     # ROOT
@@ -288,7 +289,7 @@ sk_recovery() {
   RC=0
   OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
-    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
     python3 "$SK_ROOT/skills/slack/tests/lib/recovery_probe.py" "${SK_BIN%/*}/lib" "$2" "$1" "${3:-}" \
     2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
@@ -338,9 +339,7 @@ sk_copy() {
   cp -R "$SK_ROOT/skills/slack/scripts" "$dir/skills/slack/scripts"
   cp -R "$SK_ROOT/skills/slack/systemd" "$dir/skills/slack/systemd"
   ln -sfn "$SK_ROOT/skills/orch" "$dir/skills/orch"
-  if [ -n "${SK_LINEAR_STUB:-}" ]; then
-    ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
-  fi
+  ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
   SK_BIN="$dir/skills/slack/scripts/slack"
 }
 
@@ -383,9 +382,7 @@ sk_tracker_fixture() {
 sk_tracker_root() {
   local root
   root="$(sk_new_root "$1")" || return $?
-  if [ -n "$2" ]; then
-    printf '[env]\nLINEAR_TEAM = "%s"\n' "$2" > "$root/kendex.settings.toml"
-  fi
+  printf '[env]\nLINEAR_TEAM = "%s"\n' "$2" > "$root/kendex.settings.toml"
   printf '{"urlKey":"workspace","keys":["HT","HTIO","KEN"]}\n' > "$root/linear.json"
   if [ -n "$3" ]; then printf '{"nameWithOwner":"%s"}\n' "$3" > "$root/github.json"; fi
   printf '%s' "$root"
@@ -465,3 +462,5 @@ sk_path_without() {
   done
   printf '%s' "$dir"
 }
+
+sk_tracker_fixture || exit 1
