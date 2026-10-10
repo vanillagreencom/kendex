@@ -1155,6 +1155,22 @@ close_hosted_lane() { # ITEM [--if-terminal]
   esac
 }
 
+close_finished_hosted_lane() { # LANE ROW KEY; updates check_lanes' asking_state and close_failed
+  hosted_lane_item "$1"
+  # A worktree still standing belongs to a lane inside merge close-out,
+  # or one the overseer resumes. Only its removed worktree admits close.
+  if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
+     && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then
+    # Commit before the irreversible close so a stopped pass cannot repeat it.
+    lane_row_commit "$asking_state"
+    if ! close_hosted_lane "$LANE_ITEM"; then
+      asking_state="$(lane_row_set "$2" "$asking_state" "$1" "$3")"
+      close_failed=1
+    fi
+    [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$asking_state"; exit 143; }
+  fi
+}
+
 # Stopped and parked records have no pane or mailbox to watch. Read the close
 # verb's terminal judge, including a retained PR wait and Done-when boxes, on every
 # fleet pass, and keep only provider refusals:
@@ -3742,23 +3758,7 @@ check_lanes() {
       report_tail "$below"
       PASS_EVENT=1
       asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
-      # A worktree still standing is a lane stopped inside ../workflows/merge-pr.md § 5,
-      # which the overseer resumes; its sandbox closes on the exit after that.
-      hosted_lane_item "$lane"
-      if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
-         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then
-        # Committed before the close, which cannot be undone: a run that stops
-        # after a close must not close this lane a second time.
-        lane_row_commit "$asking_state"
-        if ! close_hosted_lane "$LANE_ITEM"; then
-          # Left unreported, so the next run reports this exit and retries.
-          asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
-          close_failed=1
-        fi
-        # Stopped during the close: what it settled is committed, and the
-        # pass ends here, since the watch that stopped it runs the next one.
-        [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$asking_state"; exit 143; }
-      fi
+      close_finished_hosted_lane "$lane" lane-exited "$pane_key"
     else
       asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
     fi
@@ -3905,9 +3905,9 @@ check_lanes() {
     PASS_EVENT=1
   done
   # The harness is up at its input prompt with nothing in flight. Codex is
-  # reported on the first pass after a submitted turn: an agent return cannot
+  # reported on the first pass after a submitted turn in a local lane: an agent return cannot
   # start its next turn, and that return changes the screen while the lane
-  # remains parked. Other idle screens take two consecutive passes, because the screen
+  # remains parked. Hosted lanes and other idle screens take two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same; the first is
   # a `lane-idle` row, as for lane-exited above. The second pass reports it and
   # marks the row, so a lane left at the same screen is reported once, however
@@ -3965,7 +3965,8 @@ check_lanes() {
       die state-read-failed "" "lane=$lane" "row=lane-idle"
     fi
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
-    if [[ "$prior" == "$screen_key" ]] || { grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }; then
+    hosted_lane_item "$lane"
+    if [[ "$prior" == "$screen_key" ]] || { [[ -z "$HOSTED_ROOT" ]] && grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
       # The lane's closing report, which decides whether it is free for
       # another launch. Below the last turn is the round that just ended,
@@ -3975,6 +3976,7 @@ check_lanes() {
       echo "EVENT idle-after-return $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
       bounded_tail "$below"
       PASS_EVENT=1
+      close_finished_hosted_lane "$lane" lane-idle "$screen_key"
     else
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key")"
     fi

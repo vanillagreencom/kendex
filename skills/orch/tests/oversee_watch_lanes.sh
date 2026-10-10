@@ -533,7 +533,7 @@ WATCH_BIN="$REPO_ROOT/skills/orch/scripts/oversee-watch" lane_table \
 IDLE_SCRIPTS="$(mutant_scripts idle-debounce/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/idle-debounce/github"
 mutate_file "$IDLE_SCRIPTS/oversee-watch" \
-  '[[ "$prior" == "$screen_key" ]] || { grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }' \
+  '[[ "$prior" == "$screen_key" ]] || { [[ -z "$HOSTED_ROOT" ]] && grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }' \
   '[[ "$prior" == "$screen_key" ]]'
 WATCH_BIN="$IDLE_SCRIPTS/oversee-watch" lane_table \
   "control: the old debounce misses the first long pass with a live round|new|codex_delegated|codex_live_round|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false" \

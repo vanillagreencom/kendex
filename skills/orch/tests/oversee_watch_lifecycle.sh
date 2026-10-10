@@ -1009,5 +1009,80 @@ else
   printf '  skip  the job-unit rows need setsid and pgrep\n'
 fi
 
+# The merge pass learns the clone while close-out still owns its worktree.
+# The following passes exercise the finished prompt through the real watch.
+finished_hosted_case() { # NAME STATE KEEP MERGED CLOSE_RC [WATCH]
+  local name="$1" state="$2" keep="$3" merged="$4" close_rc="$5" run rc
+  local target="${6:-$WATCH_SRC}" host_env counts=() outcomes=()
+  new_case "$name"
+  mkdir -p "$STUB_DIR/remote/srv/clone/tmp" "$STUB_DIR/remote/srv/lane/issue-1"
+  printf 'gitdir: /srv/clone/.git/worktrees/issue-1\n' > "$STUB_DIR/remote/srv/lane/issue-1/.git"
+  printf '{}\n' > "$STUB_DIR/remote/srv/clone/tmp/workflow-state-issue-1.json"
+  if [[ "$merged" == yes ]]; then
+    printf '[{"number":1,"headRefName":"issue-1","mergedAt":"2026-09-14T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  fi
+  host_env=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log"
+    LANE_HOST_STUB_DIR="$STUB_DIR/remote" LANE_HOST_STUB_CLOSE_STATUS="$close_rc")
+  WATCH_BIN="$target" run_watch "${host_env[@]}" -- --max-loops 1 \
+    --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 > "$STUB_DIR/prime.out" 2> "$STUB_DIR/prime.err"
+  [[ "$keep" != gone ]] || rm -rf -- "${STUB_DIR:?}/remote/srv/lane/issue-1"
+  if [[ "$state" == codex ]]; then
+    cp "$CODEX_PANES/codex-idle-after-turn.txt" "$STUB_DIR/pane-gh-1.txt"
+    printf 'codex\n' > "$STUB_DIR/cmd-gh-1.txt"
+  else
+    printf '⏺ Done: the PR is merged.\n❯ \n' > "$STUB_DIR/pane-gh-1.txt"
+  fi
+  if [[ "$state" == exited ]]; then
+    printf 'bash\n' > "$STUB_DIR/cmd-gh-1.txt"
+    host_env+=(LANE_HOST_STUB_HARNESS_STATE=exited)
+  fi
+  for run in 1 2 3; do
+    rc=0
+    WATCH_BIN="$target" run_watch "${host_env[@]}" -- --max-loops 1 \
+      --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 \
+      > "$STUB_DIR/run$run.out" 2> "$STUB_DIR/run$run.err" || rc=$?
+    outcomes+=("$rc")
+    counts+=("$(awk 'END {print NR+0}' "$STUB_DIR/lane-close.args" 2>/dev/null || echo 0)")
+  done
+  FINISHED_FACTS="calls=${counts[*]} rc=${outcomes[*]}"
+  FINISHED_FACTS+=" closed=$(awk '/^EVENT lane-closed issue-1$/ {n++} END {print n+0}' "$STUB_DIR"/run*.out)"
+  FINISHED_FACTS+=" kept=$(awk '/^EVENT lane-closed issue-1$/ {getline; if (/^kept=/) n++} END {print n+0}' "$STUB_DIR"/run*.out)"
+  FINISHED_FACTS+=" refused=$(awk '/^EVENT lane-close-refused issue-1$/ {n++} END {print n+0}' "$STUB_DIR"/run*.out)"
+  FINISHED_FACTS+=" failed=$(awk '/^oversee-watch: lane-close-failed item=issue-1 exit=/ {n++} END {print n+0}' "$STUB_DIR"/run*.err)"
+}
+FINISHED_OK='calls=0 1 1 rc=0 0 0 closed=1 kept=1 refused=0 failed=0'
+FINISHED_NONE='calls=0 0 0 rc=0 0 0 closed=0 kept=0 refused=0 failed=0'
+for row in \
+  "idle|idle|gone|yes|0|$FINISHED_OK" \
+  "codex|codex|gone|yes|0|$FINISHED_OK" \
+  "worktree|idle|keep|yes|0|$FINISHED_NONE" \
+  "unmerged|idle|gone|no|0|$FINISHED_NONE" \
+  'refused|idle|gone|yes|3|calls=0 1 1 rc=0 0 0 closed=0 kept=0 refused=1 failed=0' \
+  'retry|idle|gone|yes|1|calls=0 1 2 rc=0 2 2 closed=0 kept=0 refused=0 failed=2' \
+  "exited|exited|gone|yes|0|$FINISHED_OK"; do
+  IFS='|' read -r name state keep merged close_rc expected <<<"$row"
+  finished_hosted_case "finished_$name" "$state" "$keep" "$merged" "$close_rc"
+  assert_eq "$FINISHED_FACTS" "$expected" "finished hosted $name: close and retry contract" "$STUB_DIR/run2.err"
+done
+
+mutant idle_close oversee-watch '      close_finished_hosted_lane "$lane" lane-idle "$screen_key"' \
+  '      : close_finished_hosted_lane "$lane" lane-idle "$screen_key"'
+finished_hosted_case control_idle idle gone yes 0 "$MUTANT"
+assert_eq "$FINISHED_FACTS" "$FINISHED_NONE" "control: removing the idle call loses the hosted close" "$STUB_DIR/run2.err"
+finished_hosted_case control_exited exited gone yes 0 "$MUTANT"
+assert_eq "$FINISHED_FACTS" "$FINISHED_OK" \
+  "control: removing the idle call preserves exited close" "$STUB_DIR/run2.err"
+
+mutant merged_guard oversee-watch \
+  '  if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \' \
+  '  if [[ -n "$HOSTED_ROOT" ]] \'
+finished_hosted_case control_unmerged idle gone no 0 "$MUTANT"
+assert_eq "$FINISHED_FACTS" "$FINISHED_OK" "control: removing the merge guard closes an unmerged idle lane" "$STUB_DIR/run2.err"
+mutant worktree_guard oversee-watch \
+  '     && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then' \
+  '     && { : grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; true; }; then'
+finished_hosted_case control_worktree idle keep yes 0 "$MUTANT"
+assert_eq "$FINISHED_FACTS" "$FINISHED_OK" "control: removing the worktree guard closes a lane inside close-out" "$STUB_DIR/run2.err"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
