@@ -14,7 +14,8 @@ permissions:
 
 jobs:
   request:
-    if: github.event_name != 'merge_group' && !github.event.pull_request.draft
+    # REVISIT(D023): Require Copilot again if render proof admits consumer product changes.
+    if: github.event_name != 'merge_group' && !github.event.pull_request.draft && !(github.event.pull_request.head.ref == 'kendex/refresh' && github.event.pull_request.user.login == 'vanillagreen-fleet-lanes[bot]' && github.event.pull_request.user.type == 'Bot')
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
@@ -25,13 +26,6 @@ jobs:
           script: |
             try {
               const pr = context.payload.pull_request;
-              // REVISIT(D023): Require Copilot again if render proof admits consumer product changes.
-              if (pr.head.ref === 'kendex/refresh' &&
-                  pr.user.login === 'vanillagreen-fleet-lanes[bot]' &&
-                  pr.user.type === 'Bot') {
-                core.info('copilot-request: skipped=consumer-refresh');
-                return;
-              }
               await github.rest.pulls.requestReviewers({
                 ...context.repo,
                 pull_number: pr.number,

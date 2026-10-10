@@ -10,6 +10,7 @@ TMP_ROOT="$(mktemp -d)" || { echo 'request-copilot-review: scratch=mktemp-failed
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'request-copilot-review: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 . "$TEST_DIR/../../harness-ci/tests/lib/workflow.sh"
+EXPECTED_IF="github.event_name != 'merge_group' && !github.event.pull_request.draft && !(github.event.pull_request.head.ref == 'kendex/refresh' && github.event.pull_request.user.login == 'vanillagreen-fleet-lanes[bot]' && github.event.pull_request.user.type == 'Bot')"
 
 # GitHub Actions evaluates these declarations before allocating a runner.
 # This check proves their source shape; GitHub owns their execution.
@@ -18,21 +19,35 @@ check_declarations() {
   events="$(triggers "$1")" || return 2
   condition="$(job_ifs "$1")" || return 2
   [ "$events" = $'merge_group\npull_request_target' ] &&
-    [ "$condition" = $'request\t'"github.event_name != 'merge_group' && !github.event.pull_request.draft" ] &&
+    [ "$condition" = $'request\t'"$EXPECTED_IF" ] &&
     python3 - "$1" <<'PY'
 import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text().replace('\r\n', '\n')
 job = dict(re.findall(r'^    (runs-on): (.+)$', text, re.M))
 assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
+assert 'kendex/refresh' not in text.split('          script: |\n')[1]
 PY
 }
 check_declarations "$WORKFLOW"
-for control in no-if no-draft no-merge-group hosted-runner; do
+for control in no-if no-draft no-merge-group hosted-runner no-head no-author no-type script-refresh-branch; do
   case "$control" in
     no-if) needle='    if:'; replacement='    # if:' ;;
     no-draft) needle=' && !github.event.pull_request.draft'; replacement=$'\n    # && !github.event.pull_request.draft' ;;
     no-merge-group) needle='  merge_group:'; replacement='  # merge_group:' ;;
     hosted-runner) needle="    runs-on: \${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"; replacement='    runs-on: ubuntu-latest' ;;
+    no-head|no-author|no-type)
+      case "$control" in
+        no-head) clause="github.event.pull_request.head.ref == 'kendex/refresh' && " ;;
+        no-author) clause="github.event.pull_request.user.login == 'vanillagreen-fleet-lanes[bot]' && " ;;
+        no-type) clause=" && github.event.pull_request.user.type == 'Bot'" ;;
+      esac
+      needle="    if: $EXPECTED_IF"
+      replacement="    if: ${EXPECTED_IF/"$clause"/}"$'\n'"    # if: $EXPECTED_IF"
+      ;;
+    script-refresh-branch)
+      needle='              const pr = context.payload.pull_request;'
+      replacement="$needle"$'\n'"              if (pr.head.ref === 'kendex/refresh') return;"
+      ;;
   esac
   plant "$WORKFLOW" "$needle" "$replacement" "$TMP_ROOT/$control.yml"
   status=0
@@ -59,12 +74,7 @@ const original = fs.readFileSync(process.argv[2], 'utf8');
 async function check(source) {
   const run = new AsyncFunction('context', 'github', 'core', source);
   const cases = [
-    ['lanes refresh', 'pull_request_target', 'kendex/refresh', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 0, 0],
     ['lanes product', 'pull_request_target', 'feature', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 1, 0],
-    ['human refresh branch', 'pull_request_target', 'kendex/refresh', 'owner', 'User', null, 1, 0],
-    ['another app refresh', 'pull_request_target', 'kendex/refresh', 'another-app[bot]', 'Bot', null, 1, 0],
-    ['non-app identity', 'pull_request_target', 'kendex/refresh', 'vanillagreen-fleet-lanes[bot]', 'User', null, 1, 0],
-    ['similar branch', 'pull_request_target', 'kendex/refresh-extra', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 1, 0],
     ['fork pull request', 'pull_request_target', 'feature', 'contributor', 'User', null, 1, 0],
     ['request permission failure', 'pull_request_target', 'feature', 'owner', 'User', 403, 1, 1],
     ['request refused', 'pull_request_target', 'feature', 'owner', 'User', 422, 1, 1],
@@ -89,9 +99,6 @@ async function check(source) {
   await check(original);
   // Each control changes executed behavior while retaining its matched text.
   const controls = [
-    ["pr.head.ref === 'kendex/refresh'", 'true'],
-    ["pr.user.login === 'vanillagreen-fleet-lanes[bot]'", 'true'],
-    ["pr.user.type === 'Bot'", 'true'],
     ['await github.rest.pulls.requestReviewers({', 'await Promise.resolve({'],
     ['core.warning(', 'core.info('],
   ];
