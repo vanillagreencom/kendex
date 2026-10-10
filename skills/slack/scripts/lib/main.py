@@ -94,9 +94,8 @@ SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
 SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600) are read per root
 from that root's files, with the original caller exports taking precedence.
 A relative file path starts at its root; ~ expands to the home directory.
-While its file is younger than its age bound, listen holds only that root's
-mailbox posts and --status shows held-by=master. A root naming no file has
-no hold. README.md says what posts on resume.
+While its file is younger than its age bound, --status shows held-by=master.
+A root naming no file has no hold. README.md defines the master hold and resume.
 
 Non-fatal diagnostics on stderr:
   reference-link-unavailable=REFERENCE root=ROOT cause=CAUSE

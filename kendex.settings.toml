@@ -424,8 +424,7 @@ KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
 WORKTREE_CLI = ""
 
 # A file a master session touches while it answers the overseer. While it is
-# younger than SLACK_MASTER_MAX_AGE the relay holds its mailbox posts and
-# `slack listen --status` shows held-by=master; owner messages still reach the
-# overseer. skills/slack/README.md says what posts on resume. Empty: no hold.
+# younger than SLACK_MASTER_MAX_AGE, `slack listen --status` shows held-by=master.
+# skills/slack/README.md defines the master hold and resume. Empty: no hold.
 SLACK_MASTER_FILE = "~/.fleet/master-live"
 SLACK_MASTER_MAX_AGE = "1800"
