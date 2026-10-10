@@ -275,6 +275,38 @@ mutate_file "$MUTANT_SCRIPTS/worktree-push" $'\texit 0\nfi\n\n# Every rewrite' $
 live "$RESTACK_DOC" "$POST_RECORD" "$WT" "$BASE" "$POST_RUN_DIR" "$MUTANT_SCRIPTS" > "$TMP_ROOT/control-publication.out" || fixture_failed control-publication
 assert_eq "$(cat "$WT/tmp/network-pushes")" $'push\npush' 'control: dropping the recording-only exit fails the no-second-publication assertion'
 
+# The restack's real mode read and CI command use the same required-context
+# owner. This branch changes shell source so the classifier covers it.
+CI_WT="$(make_worktree ci-restack)" || fixture_failed ci-worktree
+printf '#!/bin/sh\nprintf changed\\n\n' > "$CI_WT/check.sh"
+git -C "$CI_WT" add check.sh
+git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m source
+printf 'ORCH_PR_ORDER = "push-first"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$CI_WT/kendex.settings.toml"
+mkdir -p "$TMP_ROOT/ci-bin"
+cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$2" in
+  'repos/{owner}/{repo}/rules/branches/main') printf 'CI\n' ;;
+  'repos/{owner}/{repo}/branches/main') : ;;
+  *) exit 9 ;;
+esac
+SH
+chmod +x "$TMP_ROOT/ci-bin/gh"
+CI_COMMAND='dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH]'
+CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed ci-resolve
+assert_eq "$CI_RESOLVED" validate-mode=ci 'push-first restack resolves to pending CI'
+CI_OUT="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main -)" || fixture_failed ci-start
+CI_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$CI_OUT")"
+CI_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$CI_WT" main "$CI_DIR")" || fixture_failed ci-record
+assert_contains "$CI_RECORD" 'validate-mode=ci selection=unreported verdict=pending' 'restack records pending proof, not a local pass'
+assert_contains "$CI_RECORD" "head=$(git -C "$CI_WT" rev-parse HEAD)" 'restack CI record binds the restacked head'
+assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
+MUTANT_SCRIPTS="$(mutant_scripts ci-restack-mode dev-validate-run)" || fixture_failed ci-mutant
+mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '"$pr_order" == push-first && "$validate_mode" == range' 'false && "$validate_mode" == range'
+CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main - "$MUTANT_SCRIPTS")" || fixture_failed ci-control
+assert_eq "$CI_RESOLVED" validate-mode=range 'control: dropping automatic CI breaks the push-first restack mode'
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

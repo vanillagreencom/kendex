@@ -29,7 +29,22 @@ case "$1 $2" in
   'repo view') echo consumer/repo ;;
   'pr view')
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
-    echo '{"baseRefName":"feature/base","reviewDecision":"REVIEW_REQUIRED"}'
+    if [[ "$*" == *'--json state,isDraft,headRefOid'* ]]; then
+      [[ "${HEAD_READ_FAIL:-false}" != true ]] || exit 1
+      draft=false
+      [[ ! -f "$DRAFT_FILE" ]] || draft="$(cat "$DRAFT_FILE")"
+      head=current-head
+      [[ ! -f "$HEAD_FILE" ]] || head="$(cat "$HEAD_FILE")"
+      jq -cn --argjson draft "$draft" --arg head "$head" '{state:"OPEN",isDraft:$draft,headRefOid:$head}'
+    else
+      echo '{"baseRefName":"feature/base","reviewDecision":"REVIEW_REQUIRED"}'
+    fi
+    ;;
+  'pr ready')
+    printf 'ready\n' >> "$TRANSITION_LOG"
+    [[ "${READY_EXIT:-0}" == 0 ]] || exit "$READY_EXIT"
+    printf 'false\n' > "$DRAFT_FILE"
+    [[ "${MOVE_READY_HEAD:-false}" != true ]] || printf 'new-head\n' > "$HEAD_FILE"
     ;;
   'api repos/consumer/repo/rules/branches/feature%2Fbase')
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
@@ -41,6 +56,7 @@ case "$1 $2" in
     ;;
   'pr edit')
     printf '%s\n' "$PWD|$*" >> "$REQUEST_LOG"
+    printf 'request head=%s draft=%s\n' "$(cat "$HEAD_FILE" 2>/dev/null || echo current-head)" "$(cat "$DRAFT_FILE" 2>/dev/null || echo false)" >> "$TRANSITION_LOG"
     [[ "$REQUEST_EXIT" == 0 ]] || exit "$REQUEST_EXIT"
     echo 'https://github.com/consumer/repo/pull/42'
     ;;
@@ -54,6 +70,9 @@ ERR="$TMP_ROOT/err"
 REQUEST_LOG="$TMP_ROOT/requests"
 QUERY_LOG="$TMP_ROOT/queries"
 EXECUTION_LOG="$TMP_ROOT/executions"
+DRAFT_FILE="$TMP_ROOT/draft"
+HEAD_FILE="$TMP_ROOT/head"
+TRANSITION_LOG="$TMP_ROOT/transitions"
 
 # write_settings FILE GATE COPILOT [REFRESH]: COPILOT empty leaves
 # PR_COPILOT_REQUESTS unset; REFRESH is extra [env] lines, ';'-separated.
@@ -72,13 +91,15 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
   : > "$REQUEST_LOG"
   : > "$QUERY_LOG"
   : > "$EXECUTION_LOG"
+  : > "$TRANSITION_LOG"
   RC=0
   (cd -- "$TMP_ROOT/catalog" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     GH_TOKEN=github_pat_fixture GH_REPO=catalog/repo GITHUB_REPOSITORY=catalog/repo \
     REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review REVIEW_GATE_SETTINGS_FILE=/dev/null \
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
+    DRAFT_FILE="$DRAFT_FILE" HEAD_FILE="$HEAD_FILE" TRANSITION_LOG="$TRANSITION_LOG" \
     REQUEST_EXIT="$request_exit" PULL_JSON="$PULL_JSON" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
-    bash "$script" 42 "$@" > "$OUT" 2> "$ERR") || RC=$?
+    "$BASH" "$script" 42 "$@" > "$OUT" 2> "$ERR") || RC=$?
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
 }
 
@@ -122,6 +143,83 @@ for action in --request-review --resolve-mode; do
     assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$QUERY_LOG")|$(cat "$EXECUTION_LOG")" '2||0||' "$action refuses unavailable context [$context] before native reads" "$ERR"
   done
 done
+# submit-pr produces --mark-ready only after internal review passes. The
+# real request owner holds the draft until that command and confirms its head.
+write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' ''
+write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
+# The publication command supplies these arguments; run its real owner.
+ready_doc_args() { # DOC
+  local line field
+  READY_ARGS=()
+  line="$(awk '/^[[:space:]]*\*\*Push-first ready head/ {ready=1} ready && /^[[:space:]]*env .*approval-wait \[PR_NUMBER\] --request-review/ {print; exit}' "$1")"
+  [[ -n "$line" ]] || return 1
+  line="$(sed 's/^.*approval-wait \[PR_NUMBER\] //' <<<"$line")"
+  for field in $line; do
+    [[ "$field" != '[REVIEW_BASE_CHECKOUT]' ]] || field="$BASE"
+    READY_ARGS+=("$field")
+  done
+}
+READY_ARGS=()
+ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
+for row in \
+  'draft held|true|no|0|false|false|0|fallback cause=draft|0|none' \
+  'ready transition|true|yes|0|false|false|0|approval|1|ready,request head=current-head draft=false' \
+  'already ready|false|yes|0|false|false|0|approval ready=unchanged head=current-head|0|none' \
+  'ready failed|true|yes|8|false|false|2||0|ready' \
+  'ready head changed|true|yes|0|true|false|2||0|ready' \
+  'head unreadable|true|yes|0|false|true|2||0|none'; do
+  IFS='|' read -r label draft mark ready_exit moved unread want_rc want_out requests transitions <<<"$row"
+  printf '%s\n' "$draft" > "$DRAFT_FILE"
+  printf 'current-head\n' > "$HEAD_FILE"
+  args=(--request-review --base-checkout "$BASE")
+  [[ "$mark" == no ]] || args=("${READY_ARGS[@]}")
+  RUN_ENV=("READY_EXIT=$ready_exit" "MOVE_READY_HEAD=$moved" "HEAD_READ_FAIL=$unread")
+  run_action "$RUN" 0 "${args[@]}"
+  actual="$(paste -sd, "$TRANSITION_LOG")"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS|${actual:-none}" "$want_rc|$want_out|$requests|$transitions" "$label" "$ERR"
+done
+RUN_ENV=()
+# Removing the producer's ready flag makes the same publication command fail
+# to produce the ready request. This control exercises the script, not prose.
+cp "$REPO_ROOT/skills/orch/workflows/submit-pr.md" "$TMP_ROOT/submit-mutant.md"
+mutate_file "$TMP_ROOT/submit-mutant.md" '--request-review --mark-ready --base-checkout' '--request-review --base-checkout'
+ready_doc_args "$TMP_ROOT/submit-mutant.md" || exit 1
+printf 'true\n' > "$DRAFT_FILE"
+printf 'current-head\n' > "$HEAD_FILE"
+run_action "$RUN" 0 "${READY_ARGS[@]}"
+assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|fallback cause=draft|0' \
+  'control: removing the publication flag breaks its ready request'
+ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
+# A second call on the same now-ready head sends no duplicate request.
+printf 'true\n' > "$DRAFT_FILE"
+printf 'current-head\n' > "$HEAD_FILE"
+run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
+first_requests="$REQUESTS"
+run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$first_requests $REQUESTS $(cat "$TRANSITION_LOG")" '1 0 ' 'one request across repeated ready transitions' "$ERR"
+ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
+# Controls retain the matched behavior text, so each guard's reachable defect
+# changes its own observation rather than merely removing an assertion.
+scripts="$(mutant_scripts draft-request approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" 'if [[ "$request_draft" == true ]]; then' 'if false; then'
+printf 'true\n' > "$DRAFT_FILE"
+run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+assert_eq "$REQUESTS" 1 'control: a draft bypass breaks the no-draft-request row' "$ERR"
+scripts="$(mutant_scripts ready-head approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" '&& "$request_head" == "$ready_head"' '&& true'
+printf 'true\n' > "$DRAFT_FILE"
+RUN_ENV=(MOVE_READY_HEAD=true)
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$REQUESTS" 1 'control: ignoring the moved head breaks the head-confirmation row' "$ERR"
+RUN_ENV=()
+scripts="$(mutant_scripts ready-duplicate approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" 'if [[ "$request_draft" == false ]]; then' 'if false; then'
+printf 'false\n' > "$DRAFT_FILE"
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$REQUESTS" 1 'control: ignoring the existing ready flag breaks request deduplication' "$ERR"
+rm -f -- "${DRAFT_FILE:?}" "${HEAD_FILE:?}"
+
 # Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests~action (default --request-review)
 for row in \
   'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \

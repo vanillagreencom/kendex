@@ -29,7 +29,7 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
 # reads the process environment first: a developer's own range command would
 # otherwise decide the round-trip rows.
-unset DEV_VALIDATE_RANGE_CMD
+unset DEV_VALIDATE_RANGE_CMD ORCH_PR_ORDER
 VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 VRUN_RANGE="$(validate_run_dir "$TMP_ROOT/validate-run-range" range)"
 VRUN_BAD="$(validate_run_dir "$TMP_ROOT/validate-run-bad" class)"
@@ -87,6 +87,7 @@ VRUN_FIX_9="$(round_run_dir "$TMP_ROOT/validate-run-fix-9" "$FW" issue-776 9-9)"
 VRUN_FIX_14="$(round_run_dir "$TMP_ROOT/validate-run-fix-14" "$FW" issue-776 14-15)"
 VRUN_FIX_RANGE="$(round_run_dir "$TMP_ROOT/validate-run-fix-range" "$FW" issue-776 17-17 range)"
 VRUN_FIX_CI="$(round_run_dir "$TMP_ROOT/validate-run-fix-ci" "$FW" issue-776 41-41 ci)"
+printf 'tree=%s\n' "$(git -C "$FW" rev-parse HEAD^{tree})" >> "$VRUN_FIX_CI/start"
 VRUN_FIX_CLASS="$(round_run_dir "$TMP_ROOT/validate-run-fix-class" "$FW" issue-776 43-43)"
 printf 'class-base=%s\n' "$FIX_HEAD" >> "$VRUN_FIX_CLASS/start"
 printf '## Completion Summary\n- did the thing\n' > "$TMP_ROOT/summary.md"
@@ -203,6 +204,28 @@ table \
   "double-dash prose is accepted as --item REASONING|--worktree %FW --kind fix --issue issue-776 --round-id 14-15 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_14 --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
+
+# The runner's snapshot may precede the workflow commit. A CI receipt binds
+# that existing snapshot to committed contents, not just an ancestor HEAD.
+CW="$(new_repo ci-contents)"
+init_growth_state "$STATE" "$CW" issue-3231 pending 100
+mkdir -p "$CW/.cache/tracker-fixture"
+printf '[{"identifier":"issue-3231","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' > "$CW/.cache/tracker-fixture/issues.json"
+printf '.cache/\n' >> "$(git -C "$CW" rev-parse --path-format=absolute --git-path info/exclude)"
+growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$CW" --issue issue-3231 --round-id pending \
+  --item 1 'committed edits' 'current branch publication' >/dev/null
+CRUN="$(round_run_dir "$TMP_ROOT/ci-contents-run" "$CW" issue-3231 pending ci)"
+printf 'tree=%s\n' "$(git -C "$CW" rev-parse HEAD^{tree})" >> "$CRUN/start"
+printf 'later edit\n' > "$CW/later.txt"
+git -C "$CW" add later.txt
+git -C "$CW" commit -q -m later
+CHEAD="$(git -C "$CW" rev-parse HEAD)"
+table "pending CI cannot name changed contents|--worktree $CW --kind fix --issue issue-3231 --round-id pending --branch b --commit $CHEAD --validate pass --validate-run-dir $CRUN --item 1 Applied done|rc=2 written=no stderr~dev-return-write:+ci-contents-mismatch=true"
+WRITE_LIVE="$WRITE"
+WRITE="$(mutant_scripts ci-contents-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$WRITE" '[[ -n "$run_tree" && "$run_tree" == "$commit_tree" ]]' 'true'
+table "control: dropping the snapshot comparison accepts stale pending contents|--worktree $CW --kind fix --issue issue-3231 --round-id pending --branch b --commit $CHEAD --validate pass --validate-run-dir $CRUN --item 1 Applied done|rc=0 .validate_mode=ci"
+WRITE="$WRITE_LIVE"
 
 echo "=== reported lanes reach the receipt ==="
 VRUN_LANES="$(validate_run_dir "$TMP_ROOT/validate-run-lanes" full)"

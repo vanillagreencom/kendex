@@ -1,147 +1,66 @@
 #!/usr/bin/env bash
-# Tests for scripts/pr-order, the one reader of when a lane opens its pull
-# request: ../workflows/start-worktree.md § 2.1 runs it after the implement
-# round and parses its `pr-order=` field. A public repository's lane keeps review-first,
-# pushing only after the agent review; a private repository's lane opens the
-# pull request at once. Which repository is read is lib/gh-repo.sh's ladder,
-# held by gh-repo-resolve.test.sh; these rows assert the visibility read, and
-# that the ladder runs in the worktree pr-order is given, not the caller's
-# directory.
+# scripts/pr-order decides publication order through the consumer settings.
+# Inputs: scripts/pr-order, scripts/orch-env and the shared settings loader.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)" || { echo "pr_order: scratch=mktemp-failed" >&2; exit 1; }
-[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pr_order: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
-TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "pr_order: scratch=resolve-failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-
-# shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-# shellcheck source=lib/shared-skill-libs.sh
 source "$TEST_DIR/lib/shared-skill-libs.sh"
-
+source "$TEST_DIR/lib/growth-state.sh"
+TMP_ROOT="$(mktemp -d)" || exit 1
+[[ -d "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || exit 1
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 LIVE="$SKILL_DIR/scripts/pr-order"
-
-# `gh repo view OWNER/NAME --json visibility` stand-in. STUB_VISIBILITY is
-# its answer; STUB_VIEW_FAIL makes the read fail. The call it saw is logged,
-# so a row can prove the repository GH_REPO names is the one read. Like gh,
-# `repo view --json nameWithOwner` answers for the working directory:
-# acme/widget in the fixture checkout, another repository anywhere else.
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/checkout" "$TMP_ROOT/elsewhere"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 printf '%s\n' "$*" >> "$STUB_LOG"
-if [[ "$*" == "repo view --json nameWithOwner -q .nameWithOwner" ]]; then
-  if [[ "$PWD" == "$STUB_CHECKOUT" ]]; then echo acme/widget; else echo acme/elsewhere; fi
-  exit 0
-fi
-if [[ "${1:-}" == repo && "${2:-}" == view && "${4:-}" == --json && "${5:-}" == visibility ]]; then
-  [[ -z "${STUB_VIEW_FAIL:-}" ]] || exit 1
-  printf '%s\n' "${STUB_VISIBILITY:-}"
-  exit 0
-fi
-exit 1
+printf '%s\n' "$STUB_VISIBILITY"
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
-
-# run SCRIPT ENV... — run SCRIPT against the fixture checkout with ENV (each
-# an `env` argument), from RUN_CWD when it is set. Sets OUT, RC and the
-# stub's call log.
-run() {
-  local script="$1"
-  shift
-  ERR="$TMP_ROOT/stderr"
-  STUB_LOG="$TMP_ROOT/gh-calls"
-  : > "$STUB_LOG"
+run() { # SCRIPT VALUE VISIBILITY
+  : > "$TMP_ROOT/gh-calls"
+  rm -f "${TMP_ROOT:?}/checkout/kendex.settings.toml"
+  [[ "$2" == unset ]] || printf '[env]\nORCH_PR_ORDER = "%s"\n' "$2" > "$TMP_ROOT/checkout/kendex.settings.toml"
   set +e
-  OUT="$(cd -- "${RUN_CWD:-$PWD}" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u GH_REPO -u GITHUB_REPOSITORY -u STUB_VISIBILITY -u STUB_VIEW_FAIL \
-    STUB_LOG="$STUB_LOG" STUB_CHECKOUT="$TMP_ROOT/checkout" "$@" "$script" "$TMP_ROOT/checkout" 2>"$ERR")"
+  OUT="$(cd "$TMP_ROOT/elsewhere" && env -u ORCH_PR_ORDER -u KENDEX_ENV_FILE \
+    PATH="$TMP_ROOT/bin:$PATH" STUB_LOG="$TMP_ROOT/gh-calls" STUB_VISIBILITY="$3" \
+    "$1" "$TMP_ROOT/checkout" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
 }
-
-# The field one `key=value` token of LINE carries, `none` where LINE has none.
-field() { # LINE KEY
-  local token
-  for token in $1; do
-    [[ "$token" == "$2="* ]] && { printf '%s' "${token#*=}"; return 0; }
-  done
-  printf 'none'
-}
-
-echo "=== GitHub's visibility decides the order ==="
-# label|visibility the stub answers|rc|pr-order|visibility field
-while IFS='|' read -r label answer want_rc want_order want_visibility; do
-  [[ -n "$label" ]] || continue
-  run "$LIVE" GH_REPO=acme/widget STUB_VISIBILITY="$answer"
-  assert_eq "rc=$RC order=$(field "$OUT" pr-order) visibility=$(field "$OUT" visibility)" \
-    "rc=$want_rc order=$want_order visibility=$want_visibility" "$label" "$ERR"
-done <<'ROWS'
-a private repository's lane opens the pull request after the implement round|PRIVATE|0|open-first|private
-a public repository's lane pushes only after the agent review|PUBLIC|0|review-first|public
-an internal repository keeps the review-first order|INTERNAL|0|review-first|internal
+for visibility in PUBLIC PRIVATE; do
+  while IFS='|' read -r value want_rc want_order; do
+    run "$LIVE" "$value" "$visibility"
+    assert_eq "$RC ${OUT:-empty}" "$want_rc $want_order" "setting=$value visibility=$visibility"
+    assert_eq "$(cat "$TMP_ROOT/gh-calls")" "" "order needs no visibility read"
+    if [[ "$want_rc" == 2 ]]; then
+      assert_eq "$(sed -n 's/^pr-order-error: cause=\([^ ]*\).*/\1/p' "$TMP_ROOT/err")" setting-unknown "unknown order refuses"
+    fi
+  done <<'ROWS'
+unset|0|pr-order=review-first
+review-first|0|pr-order=review-first
+open-first|0|pr-order=open-first
+push-first|0|pr-order=push-first
+unknown|2|empty
 ROWS
-
-run "$LIVE" GH_REPO=acme/widget STUB_VISIBILITY=PRIVATE
-assert_eq "$(field "$OUT" repo) $(cat "$TMP_ROOT/gh-calls")" \
-  "acme/widget repo view acme/widget --json visibility --jq .visibility" \
-  "the repository the resolver names is the one whose visibility is read" "$ERR"
-
-# ../workflows/start-worktree.md § 2.1 runs pr-order with GH_REPO unset, from the lane's
-# own directory, which need not be the worktree it names.
-RUN_CWD="$TMP_ROOT/elsewhere" run "$LIVE" STUB_VISIBILITY=PRIVATE
-assert_eq "$(field "$OUT" repo) $(tail -n 1 "$TMP_ROOT/gh-calls")" \
-  "acme/widget repo view acme/widget --json visibility --jq .visibility" \
-  "with GH_REPO unset, the worktree's repository is read from another directory" "$ERR"
-
-echo "=== an unread visibility prints no order ==="
-# label|env|cause
-while IFS='|' read -r label env cause; do
-  [[ -n "$label" ]] || continue
-  # shellcheck disable=SC2086 # the table stores env arguments as words
-  run "$LIVE" GH_REPO=acme/widget $env
-  assert_eq "rc=$RC out=${OUT:-empty} cause=$(field "$(head -n 1 "$ERR")" cause)" \
-    "rc=2 out=empty cause=$cause" "$label" "$ERR"
-done <<'ROWS'
-a failed visibility read|STUB_VIEW_FAIL=1|visibility-unreadable
-an empty visibility answer|STUB_VISIBILITY=|visibility-unknown
-a visibility word GitHub does not issue|STUB_VISIBILITY=SECRET|visibility-unknown
-a repository that is not owner/name|GH_REPO=widget|repo-unresolved
-ROWS
-
-echo "=== must-fail control ==="
-# A mutant that lets a public repository open early must redden the public
-# row: the row reads the order, not the visibility it echoes.
-MUTANT_ROOT="$TMP_ROOT/orch"
-mkdir -p "$MUTANT_ROOT/scripts"
-cp -R "$SKILL_DIR/scripts/lib" "$MUTANT_ROOT/scripts/lib"
-orch_fixture_shared_libs "$MUTANT_ROOT"
-MUTANT="$MUTANT_ROOT/scripts/pr-order"
-sed 's/^  private) order=open-first ;;$/  private|public) order=open-first ;;/' "$LIVE" > "$MUTANT"
-chmod +x "$MUTANT"
-if cmp -s "$LIVE" "$MUTANT"; then
-  fail "control: the mutant differs from the live script"
-else
-  pass "control: the mutant differs from the live script"
-fi
-run "$MUTANT" GH_REPO=acme/widget STUB_VISIBILITY=PUBLIC
-assert_eq "$(field "$OUT" pr-order)" "open-first" \
-  "control: a mutant opening public repositories early is what the public row refuses" "$ERR"
-
-# A mutant that resolves the repository in the caller's directory must
-# redden the other-directory row: it reads acme/elsewhere.
-sed '/^cd -- "\$worktree"$/d' "$LIVE" > "$MUTANT"
-if cmp -s "$LIVE" "$MUTANT"; then
-  fail "control: the no-cd mutant differs from the live script"
-else
-  pass "control: the no-cd mutant differs from the live script"
-fi
-RUN_CWD="$TMP_ROOT/elsewhere" run "$MUTANT" STUB_VISIBILITY=PRIVATE
-assert_eq "$(field "$OUT" repo)" "acme/elsewhere" \
-  "control: a mutant reading the caller's directory is what the other-directory row refuses" "$ERR"
-
+done
+# Restore the old visibility decision in a disposable copy. Each affected
+# row above detects the changed order, even when its setting differs.
+MUTANT_SCRIPTS="$(mutant_scripts visibility-order pr-order)" || exit 1
+MUTANT="$MUTANT_SCRIPTS/pr-order"
+mutate_file "$MUTANT" "printf 'pr-order=%s\\n' \"\$order\"" $'visibility="$(gh repo view --json visibility --jq .visibility)"\ncase "$visibility" in PRIVATE) order=open-first ;; *) order=review-first ;; esac\nprintf \'pr-order=%s\\n\' "$order"'
+run "$MUTANT" push-first PUBLIC
+assert_eq "$OUT" pr-order=review-first "control: visibility mutation breaks public push-first"
+run "$MUTANT" unset PRIVATE
+assert_eq "$OUT" pr-order=open-first "control: visibility mutation breaks private default"
+MUTANT_SCRIPTS="$(mutant_scripts caller-order pr-order)" || exit 1
+MUTANT="$MUTANT_SCRIPTS/pr-order"
+mutate_file "$MUTANT" 'cd -- "$worktree"' ':'
+run "$MUTANT" push-first PUBLIC
+assert_eq "$OUT" pr-order=review-first "control: removing the worktree change loses its setting"
 printf 'pass: %d fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

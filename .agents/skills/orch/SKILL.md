@@ -60,7 +60,7 @@ Load `github` and `worktree` before anything else; a Linear work item also needs
 
 ## The Cycle
 
-Get the issue → dev implements → review → dev fixes blockers → re-review → push PR → review gate → shepherd to merge. Private repo: PR before review, workflows/start-worktree.md § 2.1.
+Get the issue → dev implements → review and fixes → publish → required CI and review gate → merge. `pr-order --help` owns publication order.
 
 - **Bounded loops.** A fix round addresses blockers only, and the same pass declines or tracks every `fix` suggestion ([workflows/review-pr.md](workflows/review-pr.md) § 4); re-review narrows to the fix diff, the domains it touched, and the class of every defect it fixed ([reviewer/SKILL.md](../reviewer/SKILL.md) § Re-Review Rounds); two consecutive rounds with no new blocker end the review, except at `REVIEW_MAX_CYCLES` 0, where the one fix round ends it with no re-review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with a one-line reason, not fixed, not filed.
@@ -131,6 +131,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `ci-wait` | Block until CI completes on a PR |
 | `copilot-wait` | Wait for Copilot work |
 | `queue-wait` | Blocking merge-queue / auto-merge waiter and verdict producer |
+| `pr-order` | Resolve publication order: `pr-order --help` |
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags` |

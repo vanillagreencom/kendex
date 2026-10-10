@@ -1,6 +1,6 @@
 # Start Session Workflow (Worktree)
 
-The full session from inside a worktree: implement → review → submit → finalize. On a private repository the pull request opens between implement and review (§ 2.1).
+The full session from inside a worktree: implement → review → submit → finalize. The consumer's publication order decides when the pull request opens (§ 2.1).
 
 | Command | Flow |
 |---------|------|
@@ -87,7 +87,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
 ### 2.1 Open Early
 
-Read when this repository opens its pull request, from GitHub's visibility of it (`pr-order --help`):
+Read the consumer's publication order through `pr-order --help`:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-order [WORKTREE_PATH]
@@ -99,9 +99,10 @@ Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order [ORDER]
 ```
 
-Both rows end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
+All orders end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
 
-- `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once: the early order is a trial the owner holds to private repositories, so a visibility the lane cannot read keeps the order every repository ran before it.
+- `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once.
+- `push-first` → the same early submit and existence check as `open-first` below. Submit creates a draft and leaves auto-merge unarmed. Its `ci` record accepts completed local edits with required CI pending. Keep the draft through internal fix rounds. The passing review and submit own the ready transition and combined fix push.
 - `open-first` → `⤵ workflows/submit-pr.md § 1-2` with context `worktree`, `lifecycle: "managed"`, `issue_id`. It pushes the commit § 2 validated and opens a pull request, not a draft, so Copilot reviews it while the review step runs; the `open-first` recorded above keeps its § 2 step 5 from arming it. Then confirm the pull request exists:
 
   ```bash

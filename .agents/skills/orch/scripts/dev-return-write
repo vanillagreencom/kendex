@@ -211,6 +211,7 @@ die() {
       validate-record-value) printf 'The value does not match the grammar --help gives for the field.\n' ;;
       validate-record-lanes) printf 'lanes is required beside selection all, subset or battery and refused beside unreported, as the validation command output contract pairs them.\n' ;;
       validate-record-time) printf 'The run cannot end before it started.\n' ;;
+      ci-contents-mismatch) printf 'The pending CI run names different contents than the committed local edits.\n' ;;
       validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
       round-record-unreadable) printf 'A fix receipt names a run only against its round record, and this one carries no base_sha of 40 hex or no delegated_at epoch.\n' ;;
       run-headless) printf 'The run records no starting HEAD, so it cannot be bound to a round; start a new run.\n' ;;
@@ -255,14 +256,17 @@ the notes they require. The note never relaxes --validate, which records the
 final run's verdict.
 --validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
 validate_mode is the mode dev-validate-run --record reports for it, full,
-range or ci, and a --validate pass needs a run that passed, no-verdict a run the
+range or ci. A --validate pass needs a local run that passed or a ci run whose
+record is pending. A ci receipt accepts local edits and awaits required CI
+on the published head. Its existing start tree must match the committed tree.
+A no-verdict needs a run the
 timeout ended and a --validate-note naming the scoped suites that passed; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it,
 or --validate-record below; a FAILING round with no run omits both and
 records validate_mode null. validate_class_base is the base --record reports:
 the round base or, for scoped full execution, the branch merge base.
-Submit reuses only a full pass without one or with selection
-battery. validate_time is
+Submit reuses only a local full pass without one or with selection
+battery. A current-head ci receipt defers required validation to PR CI. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD
 that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
@@ -381,6 +385,7 @@ validate_seconds=""
 validate_started_at=""
 validate_ended_at=""
 run_head=""
+run_tree=""
 run_start=""
 run_orphaned=""
 baseline_lines=null
@@ -555,6 +560,7 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
       selection=*) validate_selection="${field#*=}" ;;
       verdict=*) run_verdict="${field#*=}" ;;
       head=*) run_head="${field#*=}" ;;
+      tree=*) run_tree="${field#*=}" ;;
       start=*) run_start="${field#*=}" ;;
       validate-base-orphaned=*) run_orphaned="${field#*=}" ;;
       class-base=*) validate_class_base="${field#*=}" ;;
@@ -570,8 +576,17 @@ elif [[ "$validate_record_given" == "true" ]]; then
 elif [[ "$validate" != FAILING:* ]]; then
   die required options=--validate-run-dir,--validate-record "validate=$validate"
 fi
-[[ -z "$run_ref" || "$validate" == FAILING:* || "$validate" == "$run_verdict" ]] \
+[[ -z "$run_ref" || "$validate" == FAILING:* || "$validate" == "$run_verdict" \
+  || ( "$validate_mode" == ci && "$run_verdict" == pending && "$validate" == pass ) ]] \
   || die validate-disagrees "validate=$validate" "run=$run_verdict"
+# The runner owns the snapshot. A deferred run can describe a pre-commit HEAD,
+# but the receipt's commit must contain exactly those pending contents.
+if [[ "$validate_mode" == ci && "$validate" == pass ]]; then
+  commit_tree="$(git -C "$worktree" rev-parse --verify "$commit^{tree}" 2>/dev/null)" \
+    || die ci-contents-mismatch "commit=$commit"
+  [[ -n "$run_tree" && "$run_tree" == "$commit_tree" ]] \
+    || die ci-contents-mismatch "commit=$commit" "run-tree=${run_tree:-none}"
+fi
 # An empty or whitespace-only note is worse than none: it looks like a recorded
 # caveat while carrying nothing. Reject it rather than storing "".
 if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then

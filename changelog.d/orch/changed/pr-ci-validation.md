@@ -1,0 +1,1 @@
+- **Breaking:** Publication order now uses `ORCH_PR_ORDER`, with `review-first` as the default. Set `open-first` to keep early publication, or opt into `push-first` to validate covered rounds through required pull-request CI. Push-first keeps interim heads draft until internal review passes and requests Copilot when the head becomes ready.

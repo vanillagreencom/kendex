@@ -1,4 +1,6 @@
 [env]
+# Publication order, resolved by pr-order: review-first, open-first or push-first.
+ORCH_PR_ORDER = "review-first"
 
 # How a pull request is reviewed, merged and handed on, and how much of
 # that runs without asking you.

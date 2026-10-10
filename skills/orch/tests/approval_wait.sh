@@ -344,6 +344,10 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if [[ "$*" == *"--json state,isDraft,headRefOid"* ]]; then
+        printf '%s\n' '{"state":"OPEN","isDraft":false,"headRefOid":"headsha1"}'
+        exit 0
+      fi
       # Head-only confirm query (`--json headRefOid -q .headRefOid`), distinct
       # from the poll snapshots: return the raw sha. STUB_CONFIRM_HEAD overrides
       # it to simulate a push in the last-poll -> emit window; default matches

@@ -127,8 +127,8 @@ File mode: validates one explicit JSON file (round_id checked only when --round-
 is supplied). Its repository is the parent of the file's directory when that
 directory is named tmp and the parent is a git work tree, as dev-return-write
 lays it out; the commit object gate runs against it, and with no such
-repository the artifact refuses. It is a test/parity affordance — round-trip checks and known-path
-artifacts — with no production caller; the orch workflows always use round mode.
+repository the artifact refuses. Submit § 1.1 uses file mode for an already accepted receipt's validation reuse.
+Round acceptance still uses round mode and its delegated-item gates.
 There is one identity model (round id); the mtime freshness gate and the old
 legacy positional mode are gone (kendex#776).
 
@@ -154,7 +154,8 @@ skills/orch/schemas/dev-round.md § Protected additions.
 A kind fix receipt checked against its round record also carries the mode a
 fix round runs: the mode `dev-validate-run --resolve-mode` reports for WT,
 range, or full where the project sets no DEV_VALIDATE_RANGE_CMD, or ci, a run
-the pull request CI validates, on a round whose record carries pr_open=true
+whose local edits are complete with required CI pending, on a round whose record
+carries pr_open=true or pr-order resolves push-first
 (dev-round-write --pr-open). Any other recorded mode is
 reason=mode_mismatch; a null mode, a failing round that started no run, is
 not judged. A resolution that cannot be read exits 2.
@@ -163,7 +164,7 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
                       "commit_unverifiable"|"comparison_failed"|"classifier_failed"|
                       "unapproved_additions"|"additions_unattributable"|
-                      "mode_mismatch"|
+                      "mode_mismatch"|"ci_head_mismatch"|
                       "incomplete",
               warning: "commit_unreachable"|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
@@ -234,8 +235,11 @@ reason meanings when ok=false:
   mode_mismatch
               a fix receipt records a validation mode other than the one its
               round runs, such as the implement round's full run named where
-              the round runs range. Submit reuses only a full pass, so the
-              receipt would stand in for a battery this round never ran.
+              the round runs range. Submit reuses a local full pass or a current-head
+              ci receipt whose required PR CI remains pending.
+  ci_head_mismatch
+              a deferred CI receipt names an earlier commit than current HEAD.
+              Submit and round acceptance both refuse it; required CI is pending.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: [].
@@ -725,7 +729,13 @@ validate_artifact() {
     # cannot tell whether a review round has pull request CI.
     local mode_ok=false
     case "$recorded_mode" in
-      ci) if jq -e '.pr_open == true' "$round_record" >/dev/null 2>&1; then mode_ok=true; fi ;;
+      ci)
+        if jq -e '.pr_open == true' "$round_record" >/dev/null 2>&1; then
+          mode_ok=true
+        elif order_line="$("$SCRIPT_DIR/pr-order" "$repo")" && [[ "$order_line" == pr-order=push-first ]]; then
+          mode_ok=true
+        fi
+        ;;
       "$round_mode") mode_ok=true ;;
     esac
     if [[ "$mode_ok" == false ]]; then
@@ -752,6 +762,13 @@ validate_artifact() {
     if [[ "$(git -C "$repo" cat-file -t "$commit" 2>/dev/null)" != "commit" ]]; then
       message commit-missing >&2
       emit false "$file" "commit_unresolvable"
+      return 1
+    fi
+    # A deferred CI receipt authorizes publication of only its current commit.
+    # Both round acceptance and submit's --file reuse use this one reader.
+    if jq -e '.validate_mode == "ci"' "$file" >/dev/null 2>&1 \
+      && [[ "$commit" != "$(git -C "$repo" rev-parse HEAD)" ]]; then
+      emit false "$file" "ci_head_mismatch"
       return 1
     fi
     if ! git -C "$repo" merge-base --is-ancestor "$commit" HEAD >/dev/null 2>&1; then

@@ -90,7 +90,7 @@ run_script() { # SCRIPT ARG...
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_FINDING_PREFIX \
-    -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+    -u ORCH_PR_ORDER -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -466,7 +466,7 @@ ORPHAN_ROWS=(
   "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1||$rebased_b1"
 )
 # One field of a --record line, empty where the line carries none.
-record_field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
+record_field() { awk -v key="$1=" '{for (i=1; i<=NF; i++) if (index($i,key)==1) {print substr($i,length(key)+1); exit}}' <<<"$2"; }
 for row in "${ORPHAN_ROWS[@]}"; do
   IFS='|' read -r label base want_range want_base want_orphaned want_class_base <<<"$row"
   run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
@@ -676,7 +676,7 @@ assert_eq "$RC" "2" "and exits 2"
 # selectors straight off the log.
 LAYOUT="$TMP_ROOT/layout"
 mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts"
-cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$SCRIPTS_DIR/pr-view-json" "$LAYOUT/orch/scripts/"
+cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$SCRIPTS_DIR/pr-view-json" "$SCRIPTS_DIR/pr-order" "$LAYOUT/orch/scripts/"
 cp -R "$SCRIPTS_DIR/lib/." "$LAYOUT/orch/scripts/lib/"
 # Exercise the installed PR lookup chain; only its external gh calls are stubs.
 mkdir -p "$LAYOUT/github"
@@ -1039,7 +1039,7 @@ assert_eq "$RC $(sed -n 2p <<<"$OUT" | sed 's/ at=[^ ]* / at=T /')" \
   "a ci run passes, and its done line names the run directory and the log" "$ERR"
 run_script "$CI_SCRIPT" --record --run-dir "$ci_dir"
 assert_eq "$(sed -E 's/started-at=[^ ]+ ended-at=[^ ]+$/started-at=T ended-at=T/' <<<"$OUT")" \
-  "validate-mode=ci selection=unreported verdict=pass head=$ci_head start=$(start_of "$ci_dir") seconds=0 started-at=T ended-at=T" \
+  "validate-mode=ci selection=unreported verdict=pending head=$ci_head start=$(start_of "$ci_dir") tree=$(git -C "$proj_ci" rev-parse HEAD^{tree}) seconds=0 started-at=T ended-at=T" \
   "its record names the ci mode, a pass, the HEAD it started at and no wall time" "$ERR"
 # Under --attached a ci run still prints its started line first, then the done
 # line, since no child runs to print it before.
@@ -1071,10 +1071,8 @@ ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$rules"$'
   'a context the base does not require runs the range command'
 ci_control 'every rule type read' 'select(.type == "required_status_checks") | ' '' \
   'a context only a rule of another type names runs the range command'
-ci_control 'a failed ruleset read kept' $'    rules=""\n    unread=true\n' $'    unread=true\n' \
+ci_control 'an unread API treated as coverage' '[[ "$unread" == false ]] && ' '' \
   'a ruleset read that fails runs the range command'
-ci_control 'a failed classic read kept' $'    classic=""\n    unread=true\n' $'    unread=true\n' \
-  'a classic read that fails runs the range command'
 ci_control 'a missing protection read as empty' 'error("protection unreadable")' 'empty' \
   'a branch payload with no protection runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|context-unrequired'
@@ -1112,6 +1110,70 @@ ci_control 'the measured marker unread' '[[ "$CHANGE_CLASS_MEASURED" == true ]]'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
 }
+# Push-first uses the resolved base before any PR exists. Each row runs the
+# production runner against real commits; the command's output proves local
+# fallback, and the record proves which exact head remains pending.
+PUSH_ROWS=(
+  'implement before PR|push-first|pr-no-pr|standard|CI|full|none|ci||pending'
+  'implement default order|review-first|pr-no-pr|standard|CI|full|all|full|pr-not-open|pass'
+  'unrequired base|push-first|unrequired|standard|CI|full|none|full|context-unrequired|pass'
+  'uncovered class|push-first|rules|render|CI|full|none|full|class-uncovered|pass'
+  'unread rules|push-first|rules-fail|standard|CI|full|none|full|rules-unread|pass'
+  'unset context|push-first|rules|standard||full|none|full|setting-empty|pass'
+  'internal fix before publication|push-first|pr-no-pr|standard|CI|ci|none|ci||pending'
+  'Copilot fix before publication|push-first|rules|standard|CI|ci|none|ci||pending'
+  'range subset on open PR|push-first|rules|standard|CI|range|subset|ci||pending'
+  'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
+)
+push_rows() { # SCRIPT [LABEL]
+  local row label order world class context request selector want_mode fallback verdict proj args dir head n=0
+  for row in "${PUSH_ROWS[@]}"; do
+    IFS='|' read -r label order world class context request selector want_mode fallback verdict <<<"$row"
+    [[ -z "${2:-}" || "$label" == "$2" ]] || continue
+    n=$((n + 1))
+    proj="$(ci_proj "push-${label// /-}-${1##*/}-${3:-live}" "$context")"
+    printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$proj/kendex.settings.toml"
+    [[ "$selector" == none ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+    git -C "$proj" add kendex.settings.toml
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m policy
+    head="$(git -C "$proj" rev-parse HEAD)"
+    ci_world "$world"
+    # A pre-PR branch still has required base CI under push-first.
+    [[ "$order" != push-first || "$world" != pr-no-pr ]] || STUB_RULES=CI
+    args=(--worktree "$proj" --poll 1 --validate-mode "$request")
+    [[ "$request" == full ]] || args+=(--base HEAD)
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true run_script "$1" "${args[@]}"
+    dir="$(run_dir_of "$OUT")"
+    run_script "$1" --record --run-dir "$dir"
+    if [[ -z "${2:-}" ]]; then
+      assert_eq "$RC $(record_field validate-mode "$OUT") $(record_field ci-fallback "$OUT") $(record_field verdict "$OUT") $(record_field head "$OUT")" \
+        "0 $want_mode $fallback $verdict $head" "$label" "$ERR"
+      if [[ "$want_mode" == ci ]]; then
+        assert_eq "$([[ -f "$dir/log" && -f "$dir/cmd" && ! -s "$dir/cmd" ]] && echo no-command || echo wrong-run)" no-command "$label starts no validation command"
+        run_script "$1" --last-pass --worktree "$proj"
+        assert_eq "$RC $OUT" '1 last-pass=none' "$label provides no passing validation run" "$ERR"
+      fi
+    else
+      printf '%s|%s|%s\n' "$(record_field validate-mode "$OUT")" "$(record_field ci-fallback "$OUT")" "$(record_field verdict "$OUT")"
+    fi
+  done
+}
+push_rows "$CI_SCRIPT"
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" '|| record_verdict=pending' '|| true'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement before PR' pending-record)" 'ci||pass' \
+  'control: a pending CI record cannot report a passing validation'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'grep -Fxq -- "$context" <<<"$rules"$'"'"'\n'"'"'"$classic"' true
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'unrequired base')" 'ci||pending' \
+  'control: dropping the base requirement breaks the unrequired-base fallback'
+# A resolver mutation forbidding the no-PR path must turn the implement row local.
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'if [[ "$pr_order" == push-first ]]; then' 'if false; then'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement before PR' pr-state)" 'full|pr-not-open|pass' \
+  'control: using PR state again breaks implement-before-PR CI'
+rm -f -- "${CI_SCRIPT:?}.mutant"
+
 # The rules read names the base branch: a read of another branch's rules is
 # one the stub fails, so the micro row runs range.
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
@@ -1257,12 +1319,12 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 }
 # shellcheck disable=SC2016 # private production mutations
 {
-ci_extension_control 'if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' 'if true; then' \
+ci_extension_control $'    validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if true; then'  \
   'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
 ci_extension_control $'          class_base="$base_sha"\n          classify "$class_base"' $'          class_base="$base_sha"\n          classify ""' \
   'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'
-ci_extension_control 'selection=all|selection=subset) validate_mode=ci;' \
-  'selection=all) validate_mode=ci;' \
+ci_extension_control $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
+  $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all) validate_mode=ci; class_base="" ;;' \
   'guarded crate fix' 'range|selection-unread|crates/orders/src/lib.rs|orders:risk|yes'
 ci_extension_control '&& preview_selection; then' '&& { preview_selection || selection=selection=all; }; then' \
   'failed selector' 'ci||tests/widget.sh|none|yes'
