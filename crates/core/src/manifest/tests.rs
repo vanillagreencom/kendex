@@ -3,6 +3,128 @@ use crate::error::CoreError;
 use crate::model::ItemKind;
 
 #[test]
+fn save_migrates_hand_edited_text_before_folding_the_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let path = root.join("kendex.toml");
+    // The earlier writer emits LF structure and changed strings alongside
+    // retained CRLF strings from a Git checkout. Editors can mix structure too.
+    let strings = [
+        ("basic", r#""line one\r\nline two\\path""#),
+        ("literal", "'line one\\nline two'"),
+        ("multiline basic", "\"\"\"\nline one\nline two café\n\"\"\""),
+        ("multiline literal", "'''\nline one\nline two café\n'''"),
+        ("basic continuation", "\"\"\"line one\\\n  line two\n\"\"\""),
+    ];
+    for (form, value) in strings {
+        for (schema, newline, string_newline, mixed_structure) in [
+            (6, "\n", "\n", false),
+            (7, "\n", "\n", false),
+            (6, "\r\n", "\r\n", false),
+            (7, "\r\n", "\r\n", false),
+            (6, "\n", "\r\n", false),
+            (7, "\n", "\r\n", false),
+            (6, "\r\n", "\n", false),
+            (7, "\r\n", "\n", false),
+            (6, "\n", "\r\n", true),
+            (7, "\n", "\r\n", true),
+        ] {
+            for final_newline in [false, true] {
+                let value = value.replace('\n', string_newline);
+                let original = format!(
+                    "# my setup\nschema = {schema}   # pinned\n\n[sources.cat]\nrepo = 'owner/catalog'   # source\n\n[skills.gh]\nsource = 'cat'\nnote = __VALUE__\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = 'Stop'\ncommand = __VALUE__\ndescription = __VALUE__\n\n[hooks.guard]\nsource = 'cat'\n\n[hooks.guard.env]\nMESSAGE = __VALUE__\n\n[agent-launch-instructions]\nall = __VALUE__\n\n[agent-additional-instructions]\nall = __VALUE__\n\n[skill-instructions]\nall = __VALUE__\n\n[command-instructions]\nall = __VALUE__\n\n[bot-instructions]\nvalue = __VALUE__\nlist = [__VALUE__]\ninline = {{ text = __VALUE__ }}\n\n[[bot-instructions.entries]]\ntext = __VALUE__"
+                );
+                let mut original = if final_newline {
+                    format!("{original}\n")
+                } else {
+                    original
+                }
+                .replace('\n', newline)
+                .replace("__VALUE__", &value);
+                if mixed_structure {
+                    original = original
+                        .replace("# pinned\n", "# pinned\r\n")
+                        .replace("# source\n", "# source\r\n");
+                }
+                std::fs::write(&path, &original).unwrap();
+                let mut manifest = load_current(&path).unwrap().unwrap();
+                let mut expected = original
+                    .replacen("schema = 6", "schema = 7", 1)
+                    .replace("enabled = true", "enabled = false");
+                if !final_newline {
+                    expected.push_str(newline);
+                }
+                if schema == 6 {
+                    assert_eq!(
+                        manifest.migrated_text.as_deref(),
+                        Some(original.replacen("schema = 6", "schema = 7", 1).as_str()),
+                        "{form} migration"
+                    );
+                }
+                manifest.skills.get_mut("gh").unwrap().enabled = false;
+                save(&path, &manifest).unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    expected,
+                    "{form}, schema {schema}, final terminator {final_newline}"
+                );
+                let reloaded = load_current(&path).unwrap().unwrap();
+                assert!(!reloaded.skills["gh"].enabled);
+                assert_eq!(reloaded.skill_instructions, manifest.skill_instructions);
+                assert_eq!(reloaded.command_instructions, manifest.command_instructions);
+                assert_eq!(
+                    reloaded.agent_launch_instructions,
+                    manifest.agent_launch_instructions
+                );
+                assert_eq!(
+                    reloaded.agent_additional_instructions,
+                    manifest.agent_additional_instructions
+                );
+                save(&path, &reloaded).unwrap();
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+                edit_command_instructions(&path, &reloaded, &expected, newline, &value);
+                let on_wire = serde_json::to_value(&manifest).unwrap();
+                assert!(on_wire.get("migration-notes").is_none());
+                assert!(on_wire.get("migrated-text").is_none());
+            }
+        }
+    }
+}
+
+// The editor can introduce LF instruction text into a CRLF file.
+// Generated separators must not change its value.
+fn edit_command_instructions(
+    path: &std::path::Path,
+    previous: &Manifest,
+    expected: &str,
+    newline: &str,
+    value: &str,
+) {
+    let mut edited = previous.clone();
+    let instruction = "changed first\nchanged second\n";
+    edited
+        .command_instructions
+        .insert("all".into(), instruction.into());
+    save(path, &edited).unwrap();
+    let written = std::fs::read_to_string(path).unwrap();
+    let parsed = toml_edit::Document::parse(written.as_str()).unwrap();
+    let span = parsed["command-instructions"]["all"].span().unwrap();
+    let old_body = format!("[command-instructions]{newline}all = {value}");
+    assert_eq!(expected.matches(&old_body).count(), 1);
+    let changed = expected.replacen(
+        &old_body,
+        &format!("[command-instructions]{newline}all = {}", &written[span]),
+        1,
+    );
+    assert_eq!(written, changed, "only the requested instruction changes");
+    let after = load_current(path).unwrap().unwrap();
+    assert_eq!(after.command_instructions["all"], instruction);
+    assert_eq!(after.skill_instructions, previous.skill_instructions);
+    save(path, &after).unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), written);
+}
+
+#[test]
 fn catalog_alias_uses_the_native_catalog_basename() {
     // Add and subscription requests carry native local paths or remote references.
     let sep = std::path::MAIN_SEPARATOR;

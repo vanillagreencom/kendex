@@ -7,6 +7,7 @@ use crate::model::HarnessId;
 
 mod file;
 mod fold;
+mod migrate;
 mod validate;
 pub use file::{
     ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_file_name,
@@ -19,14 +20,10 @@ pub use file::{
 pub(crate) use file::save;
 pub use validate::{Finding, joined, output_style_count, validate};
 
-/// Current manifest schema, and the only one that loads. Nothing converts
-/// an older file. The advice to change only the schema one below current
-/// is valid only while this bump adds or changes no meaning of an existing
-/// table. A bump that breaks that contract must change the reader's advice.
-/// Older schemas can give wrong answers under this build's rules, and a
-/// later write would make them durable over the person's own bytes. A newer
-/// schema refuses too; downgrades must never corrupt. Either way the file
-/// is left as written and the refusal names the way out.
+/// Current manifest schema. Each bump supplies a step in `migrate` so an
+/// older supported file reads in the current form and its next write keeps
+/// the person's comments. A file without a complete rewrite chain refuses
+/// before interpretation or mutation; a newer file never downgrades.
 pub const MANIFEST_SCHEMA: u32 = 7;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
@@ -306,6 +303,12 @@ pub struct BotInstructions(pub toml::Table);
 #[serde(rename_all = "kebab-case")]
 pub struct Manifest {
     pub schema: u32,
+    /// Read-time accounts for the existing apply-note presenters.
+    #[serde(skip)]
+    pub migration_notes: Vec<String>,
+    /// The rewrite's exact text lets `save` fold edits into the current form.
+    #[serde(skip)]
+    pub migrated_text: Option<String>,
     /// Consumer class replacements. Project values replace personal values per key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub model_classes: BTreeMap<String, String>,

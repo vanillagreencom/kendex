@@ -2,7 +2,7 @@ use crate::apply::{Plan, PlannedOp};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
-use crate::manifest::{self, Manifest, ManifestFile};
+use crate::manifest::{self, Manifest};
 use crate::model::{ItemKind, Scope};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -373,7 +373,7 @@ fn report(
         refused: state.refused,
         drift,
         plan: Plan::landed(scope.clone(), ops)?,
-        notes: [state.notes, scope_notes].concat(),
+        notes: [state.notes, scope_notes, manifest.migration_notes.clone()].concat(),
         warnings: state.warnings,
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
@@ -794,12 +794,10 @@ pub fn audit(env: &Env, scope: &Scope) -> Result<EngineReport> {
 
 /// Plan what disk needs to match declaration, from the manifest as it sits
 /// on disk. This is the loader the audit view AND the confirmed apply both
-/// use: a mutation-normalized copy already looks current, so planning from
-/// one would slip a file past the floor that the audit and every other
-/// read refuse.
+/// use. Supported migrations remain in memory until this plan executes.
 pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<EngineReport> {
     let scope = &scope.canonical();
-    let manifest_file = manifest::load(&manifest::manifest_path(env, scope))?;
+    let (manifest_file, base) = manifest::read_for_mutation(&manifest::manifest_path(env, scope))?;
     // Absent reads as an empty lock — a fresh scope — so a first-ever
     // install still plans through the normal path.
     let lock = match crate::lock::load_file(&lock_path(env, scope))? {
@@ -809,8 +807,14 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
             ..Lock::default()
         },
     };
-    if let ManifestFile::Current(manifest) = &manifest_file {
-        return plan_scope(env, scope, manifest, &lock, options);
+    if let Some(manifest) = &manifest_file {
+        let mut options = options.clone();
+        options.manifest_base.get_or_insert(base.clone());
+        let mut report = plan_scope(env, scope, manifest, &lock, &options)?;
+        if !manifest.migration_notes.is_empty() && !persists_manifest(&report.plan.ops) {
+            ops::insert_manifest_save(env, scope, &mut report.plan, manifest.clone(), Some(&base))?;
+        }
+        return Ok(report);
     }
 
     // Nothing is declared here: the scope reads as observation-only rather

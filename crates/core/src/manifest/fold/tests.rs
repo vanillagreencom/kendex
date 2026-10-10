@@ -179,9 +179,14 @@ fn a_document_that_already_agrees_is_returned_unchanged() {
 /// bottom is not a key any write names.
 #[test]
 fn the_files_own_terminator_survives() {
-    let current = "schema = 7\n\n[skills.gh]\nsource = \"cat\"\n\n";
-    let desired = "schema = 7\n\n[skills.gh]\nsource = \"cat\"\n";
-    assert_eq!(fold(current, desired), current);
+    for newline in ["\n", "\r\n"] {
+        for ending in ["", "\n", "\n\n"] {
+            let current = format!("schema = 7\n\n[skills.gh]\nsource = \"cat\"{ending}")
+                .replace('\n', newline);
+            let desired = "schema = 7\n\n[skills.gh]\nsource = \"cat\"\n";
+            assert_eq!(fold(&current, desired), current);
+        }
+    }
 }
 
 /// A document that does not parse is refused, so a write never replaces a

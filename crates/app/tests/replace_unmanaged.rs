@@ -143,21 +143,19 @@ fn the_page_is_told_which_kinds_can_be_kept() {
     );
 }
 
-/// The take-over is an apply like any other, so it reads the manifest the
-/// way every other apply does — and refuses an older schema rather than
-/// planning against a file this build cannot read. Planned from a copy
-/// normalized in memory, an older schema would look current and be written
-/// back over the person's bytes.
+/// A schema below the first migration step cannot be read. The take-over
+/// must refuse it before it changes the manifest or any installed skill.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_older_schema_refuses_the_take_over_and_writes_nothing() {
+fn an_unsupported_schema_refuses_the_take_over_and_writes_nothing() {
     let f = fixture();
     let path = f.project.join("kendex.toml");
-    let older = fs::read_to_string(&path).unwrap().replace(
-        "schema = 7",
-        &format!("schema = {}", kendex_core::manifest::MANIFEST_SCHEMA - 1),
-    );
+    let older = fs::read_to_string(&path)
+        .unwrap()
+        .replace("schema = 7", "schema = 5");
     fs::write(&path, &older).unwrap();
+    let deploy = body(&f, "deploy");
+    let lint = body(&f, "lint");
 
     let Err(_) = replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into()) else {
         panic!("a manifest this build cannot read must refuse the take-over");
@@ -167,10 +165,8 @@ fn an_older_schema_refuses_the_take_over_and_writes_nothing() {
         older,
         "a refused take-over rewrites nothing"
     );
-    assert!(
-        !body(&f, "deploy").contains("Upstream."),
-        "and takes nothing over"
-    );
+    assert_eq!(body(&f, "deploy"), deploy);
+    assert_eq!(body(&f, "lint"), lint);
 }
 
 /// The state the app has to answer for the hand-made sharing layout: the

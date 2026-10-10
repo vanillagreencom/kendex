@@ -304,6 +304,32 @@ fn adding_a_skill_edits_kendex_toml_in_place() {
     );
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
+    let k = kept();
+    let older = k
+        .original
+        .replacen("schema = 7", "schema = 6   # pinned", 1);
+    fs::write(&k.manifest, &older).unwrap();
+    let report = kendex_core::engine::ops::add(
+        &k.env,
+        &k.scope,
+        &kendex_core::engine::ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["fmt".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&k.env, &report.plan).unwrap();
+    let expected = declaring(
+        &older.replacen("schema = 6", "schema = 7", 1),
+        "[skills.fmt]\nsource = \"cat\"\n",
+    );
+    assert_eq!(fs::read_to_string(&k.manifest).unwrap(), expected);
+}
+
 /// `fork` rebinds the declaration it names and records the provenance.
 /// The value it rewrites keeps the comment that sat beside it.
 #[test]

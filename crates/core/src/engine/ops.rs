@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::apply::{Op, PlannedOp, Pre};
+use crate::apply::{Op, PlannedOp};
 
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
@@ -497,17 +497,18 @@ pub(crate) fn ensure_manifest_persisted(
     if already {
         return Ok(());
     }
-    insert_manifest_save(env, scope, &mut report.plan, manifest.clone())
+    insert_manifest_save(env, scope, &mut report.plan, manifest.clone(), None)
 }
 
-/// Insert the "persist the manifest" write a plan is missing, bound to the
-/// bytes the file holds now. It leads the plan: every later op was planned
-/// against the manifest this write makes durable.
+/// Insert the missing manifest write, bound to the caller's read when it
+/// supplies a base, otherwise to the file now. It leads the plan: later
+/// ops were planned against the manifest this write makes durable.
 pub(crate) fn insert_manifest_save(
     env: &Env,
     scope: &Scope,
     plan: &mut crate::apply::Plan,
     manifest: Manifest,
+    base: Option<&crate::base::Base>,
 ) -> Result<()> {
     let path = crate::manifest::manifest_path(env, scope);
     let file = path
@@ -519,7 +520,7 @@ pub(crate) fn insert_manifest_save(
         PlannedOp {
             description: format!("Save {file}").into(),
             op: Op::WriteManifest {
-                pre: Pre::observed(&path)?,
+                pre: super::scope_writes::manifest_pre(base, &path)?,
                 path,
                 manifest: Box::new(manifest),
             },

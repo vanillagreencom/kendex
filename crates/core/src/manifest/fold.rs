@@ -45,11 +45,131 @@
 //! could have come from, and it keeps everything. [`own_slot`] is that
 //! question, and names the pairs of shapes it cannot tell apart.
 
-use toml_edit::{DocumentMut, Item, TableLike, Value};
+use std::ops::Range;
+
+use similar::{Algorithm, DiffTag, capture_diff_slices};
+use toml_edit::visit::Visit;
+use toml_edit::{Document, DocumentMut, Formatted, Item, TableLike, Value};
 
 use writing::{List, entries};
 
 mod writing;
+
+pub(super) enum Serialization {
+    Migration,
+    Mutation,
+}
+
+/// The TOML parser owns string boundaries. Their complete representations
+/// remain opaque to newline handling, including strings inside containers.
+#[derive(Default)]
+struct Strings(Vec<Range<usize>>);
+
+impl<'doc> Visit<'doc> for Strings {
+    fn visit_string(&mut self, value: &'doc Formatted<String>) {
+        self.0.extend(value.span());
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum Token<'a> {
+    Character(char),
+    String(&'a str),
+}
+
+struct Spelling<'a> {
+    tokens: Vec<Token<'a>>,
+    raw: Vec<&'a str>,
+}
+
+impl<'a> Spelling<'a> {
+    fn of(text: &'a str, table: &toml_edit::Table) -> Self {
+        let mut strings = Strings::default();
+        strings.visit_table(table);
+        strings.0.sort_by_key(|span| span.start);
+        let mut spelling = Self {
+            tokens: Vec::new(),
+            raw: Vec::new(),
+        };
+        let mut at = 0;
+        for span in strings.0 {
+            spelling.structural(&text[at..span.start]);
+            let raw = &text[span.clone()];
+            spelling.tokens.push(Token::String(raw));
+            spelling.raw.push(raw);
+            at = span.end;
+        }
+        spelling.structural(&text[at..]);
+        spelling
+    }
+
+    fn structural(&mut self, text: &'a str) {
+        let mut chars = text.char_indices().peekable();
+        while let Some((at, character)) = chars.next() {
+            let (character, end) =
+                if character == '\r' && chars.peek().is_some_and(|(_, next)| *next == '\n') {
+                    chars.next();
+                    ('\n', at + 2)
+                } else {
+                    (character, at + character.len_utf8())
+                };
+            self.tokens.push(Token::Character(character));
+            self.raw.push(&text[at..end]);
+        }
+    }
+}
+
+/// toml_edit retains value representations but normalizes structural CRLF.
+/// Align its encoded structure with the original to retain each existing
+/// newline. Only new structural separators take the file's first separator.
+pub(super) fn serialized(
+    document: &DocumentMut,
+    current: &str,
+    kind: Serialization,
+) -> std::result::Result<String, toml_edit::TomlError> {
+    let original = Document::parse(current)?;
+    let mut rendered = document.to_string();
+    if rendered == original.clone().into_mut().to_string() {
+        return Ok(current.to_owned());
+    }
+    // A schema-only rewrite retains EOF. An ordinary mutation supplies the
+    // missing terminator, while the no-change return above settles both.
+    if matches!(kind, Serialization::Migration)
+        && !current.ends_with('\n')
+        && rendered.ends_with('\n')
+    {
+        rendered.pop();
+    }
+    let rewritten = Document::parse(rendered.as_str())?;
+    let old = Spelling::of(current, original.as_table());
+    let new = Spelling::of(&rendered, rewritten.as_table());
+    let newline = old
+        .tokens
+        .iter()
+        .zip(&old.raw)
+        .find_map(|(token, raw)| matches!(token, Token::Character('\n')).then_some(*raw))
+        .unwrap_or("\n");
+    let mut text = String::with_capacity(rendered.len());
+    for op in capture_diff_slices(Algorithm::Myers, &old.tokens, &new.tokens) {
+        match op.tag() {
+            DiffTag::Equal => {
+                for raw in &old.raw[op.old_range()] {
+                    text.push_str(raw);
+                }
+            }
+            DiffTag::Insert | DiffTag::Replace => {
+                for at in op.new_range() {
+                    text.push_str(match new.tokens[at] {
+                        Token::Character('\n') => newline,
+                        Token::Character(_) | Token::String(_) => new.raw[at],
+                    });
+                }
+            }
+            DiffTag::Delete => {}
+        }
+    }
+    Ok(text)
+}
 
 /// The text a write should leave behind: the document that is already
 /// there, with the keys this write names edited into it.
@@ -74,7 +194,7 @@ pub(super) fn folded(
         Some(held.as_table()),
         target.as_table(),
     );
-    Ok(document.to_string())
+    serialized(&document, current, Serialization::Mutation)
 }
 
 /// Walk two tables together. Keys are compared by name, so a table spelled

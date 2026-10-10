@@ -17,10 +17,9 @@ pub enum ScopeErrorKind {
     /// unsupported schema. Nothing converts either, and the way out is the
     /// same — move it aside and apply again.
     LockCorrupt,
-    /// The manifest parses under an unsupported schema, and nothing
-    /// converts it. Kept apart from a damaged lock because the file is
-    /// intact and the person's own — moving it aside loses what they wrote
-    /// in it.
+    /// No migration step recognises this manifest's schema. The file is
+    /// intact and the person's own, unlike a damaged lock; moving it aside
+    /// loses what they wrote in it.
     ManifestOutdated,
     /// The manifest or lock was written by a newer kendex than this one.
     SchemaTooNew,
@@ -153,12 +152,28 @@ pub(crate) fn settle_report(
         &undone,
         kendex_core::bot_instructions::render(env, scope).map_err(|error| error.to_string()),
     )?;
-    let mut settled = view(env, scope);
+    let mut settled = view_after_apply(env, scope, report);
     if let Some(skipped) = rendered.skipped() {
         settled.notes.push(skipped.line());
     }
     settled.undone = undone;
     Ok(settled)
+}
+
+pub(crate) fn view_after_apply(
+    env: &Env,
+    scope: &Scope,
+    report: &engine::EngineReport,
+) -> AuditView {
+    let mut settled = view(env, scope);
+    // The new audit reads the persisted schema, so it has no account of the
+    // migration just completed. Keep that account from the applied write.
+    for planned in &report.plan.ops {
+        if let apply::Op::WriteManifest { manifest, .. } = &planned.op {
+            settled.notes.extend(manifest.migration_notes.clone());
+        }
+    }
+    settled
 }
 
 #[tauri::command(async)]
