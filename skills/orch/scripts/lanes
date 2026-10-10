@@ -279,6 +279,10 @@
 #         judged. Under --projected it is exit 6 instead, keyed
 #         `pick-lane-claims-refused`, before anything is measured: that verdict
 #         charges the claims, and none counted is not none in flight.
+#         Unread overseer seats print `pick-overseer-seats-unread` and judge
+#         the wall reading alone, with no seat reserve. Under --projected
+#         they instead refuse with exit 8, keyed `pick-overseer-seats`, before
+#         the lane is measured.
 #         A cloud-credit refusal on 3 or 5 carries `refusal`, whose cause and
 #         retry_at decide the refusal instead of any plan fields. Other records
 #         printed on 3 under --json carry `wall` and `binding_bucket`,
@@ -1015,6 +1019,10 @@ message() {
     pick-overseer-seats)
       printf 'lanes: pick-overseer-seats step=%s state=%s\n' "$1" "$2"
       printf '%s\n' "the fleet state naming an overseer's account could not be read at that step; refusing to pick rather than hand a lane the seat an overseer runs on (fix the fleet state, or pass --for-overseer for an overseer's own pick)"
+      ;;
+    pick-overseer-seats-unread)
+      printf 'lanes: pick-overseer-seats-unread step=%s state=%s\n' "$1" "$2"
+      printf '%s\n' "the overseer seats could not be read; the lane was judged on its wall reading alone, with no seat reserve"
       ;;
     pick-seat-omitted)
       printf 'lanes: pick-seat-omitted lane=%s projected-headroom=%s reserve=%s\n' "$1" "$2" "$3"
@@ -3084,11 +3092,14 @@ render_table() {
 #
 # Exit 0 room, 3 walled, 5 nothing measured this lane for this launch, 4 the
 # directory is no configured lane of this harness, 6 the claim store could not
-# be read, 7 the cloud session account has no repository entry, 1 the judge
+# be read under --projected, 7 the cloud session account has no repository entry,
+# 8 the overseer seats could not be read under --projected, 1 the judge
 # itself failed: a measurement, a wall, a verdict, or a
 # --max-pct this parser refused. Each refusal has its own status because a
 # launcher dispatches on the status and would otherwise name the wrong
 # dependency to an operator.
+# Without --projected, unread seats print pick-overseer-seats-unread and the
+# wall reading alone decides, with no seat reserve.
 #
 # 4 is not a refusal a launcher inherits: a directory outside the discovery
 # glob, or outside ORCH_LANE_DIRS where that is set, and not reported with a
@@ -3162,7 +3173,14 @@ cmd_pick_lane() {
 	pick_host_rows "$harness"
 	SEATS=""
 	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
-		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
+		if ! overseer_seats; then
+			if [[ "$projected_verdict" == true ]]; then
+				message pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE" >&2
+				return 8
+			fi
+			message pick-overseer-seats-unread "$SEATS_STEP" "$SEATS_STATE" >&2
+			SEATS=""
+		fi
 	fi
 	lane_canon "$dir" || return 1; target="$LANE_CANON"
 	# Both sides through the one normaliser, so a dir given with a trailing

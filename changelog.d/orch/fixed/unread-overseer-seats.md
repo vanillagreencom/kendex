@@ -1,0 +1,1 @@
+- Running lanes keep their account handoff checks when a fleet state cannot be read. The check reports the unread overseer seats and uses the account's wall reading. Projected launch checks refuse with exit 8.

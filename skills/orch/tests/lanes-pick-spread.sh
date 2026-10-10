@@ -155,7 +155,8 @@ stage_rate() {
 # `env` arguments, stage a stage SPEC, rate `LANE:CURRENT:PRIOR[:CLAIMS[:ELAPSED[:AGE[:BUCKET]]]]` or empty.
 # expect is `name=value` tokens: rc, seatrefusal (`named` where the first keyed
 # line is the pick-overseer-seats refusal naming the seat step and this run's
-# own fleet state, else that line), keyed.KEY (the first keyed stderr line
+# own fleet state, else that line), seatnotice (the unread-seat keyed lines,
+# `named` for exactly one naming this run's seat step and state), keyed.KEY (the first keyed stderr line
 # carrying KEY, in the form key takes, or none), key (the first keyed stderr line as
 # `key,field=value,...`), out (stdout whole), record.PATH (that path of the
 # fleet state's first lane record), score_hundredths (its pick's
@@ -213,6 +214,11 @@ table() {
         seatrefusal)
           value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$RUN/err")"
           [[ "$value" != "pick-overseer-seats,step=seat,state=$FLEET/workflow-state-oversee.json" ]] || value=named
+          ;;
+        seatnotice)
+          value="$(awk '$1 == "lanes:" && $2 == "pick-overseer-seats-unread" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print }' "$RUN/err")"
+          [[ "$value" != "pick-overseer-seats-unread,step=seat,state=$FLEET/workflow-state-oversee.json" ]] || value=named
+          value="${value:-none}"
           ;;
         keyed.*)
           value="$(awk -v k="${name#keyed.}" '$1 == "lanes:" && $2 == k { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$RUN/err")"
@@ -467,6 +473,28 @@ CTRL="$(mutant_scripts mutant-store-notice lanes)" || exit 1
 mutate_file "$CTRL/lanes" 'return 6' ':'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: without the refusal the unread store reaches the judge|ORCH_LANE_DIRS=$H/.aclaude|store:file||pick --lane $H/.aclaude --harness claude --projected --json|rc=5"
+
+echo "=== unread overseer seats are a notice for the reading and a refusal for the projection ==="
+SEAT_UNREAD_READING="a named lane with unread seats answers the wall and names the failed seat read|$ALL_DIRS|own:broken||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=0 config_dir=$H/.aclaude wall=20 seatnotice=named"
+SEAT_UNREAD_PROJECTED="a projected named lane refuses unread seats before measurement|$ALL_DIRS|own:broken||pick --lane $H/.aclaude --harness claude --projected --json|rc=8 out= seatrefusal=named measurements=0"
+table "$SEAT_UNREAD_READING" "$SEAT_UNREAD_PROJECTED" \
+  "a named lane at its mark still hands off with unread seats|$ALL_DIRS|own:broken|a:97:97|pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=3 wall=97 seatnotice=named" \
+  "the overseer mark does not read broken seat state|$ALL_DIRS|own:broken||pick --lane $H/.aclaude --harness claude --for-overseer --min-headroom-pct 3 --json|rc=0 wall=20 seatnotice=none keyed.pick-overseer-seats=none"
+
+CTRL="$(mutant_scripts mutant-seat-notice-fatal lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'message pick-overseer-seats-unread "$SEATS_STEP" "$SEATS_STATE" >&2' 'die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"'
+rc=0
+( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$SEAT_UNREAD_READING"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/seat-notice-control.log" || rc=$?
+RUN_SEQ=$((RUN_SEQ + 1))
+assert_eq "$rc" 1 'making unread seats fatal fails the same wall-reading row'
+
+CTRL="$(mutant_scripts mutant-seat-projected-allowed lanes)" || exit 1
+mutate_file "$CTRL/lanes" 'return 8' ':'
+rc=0
+( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$SEAT_UNREAD_PROJECTED"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/seat-projected-control.log" || rc=$?
+RUN_SEQ=$((RUN_SEQ + 1))
+assert_eq "$rc" 1 'dropping exit 8 fails the same projected-refusal row'
 
 echo "=== selection charges projected room, not the reading ==="
 # a and b carry one claim each. a reads more room, 80 to b's 70, but its
