@@ -372,12 +372,17 @@ def with_lane_verdict($wall; $max; $credit_floor):
     else . + {verdict: $v} end;
 
 # Fleet lane launches and turn-end handoff reads share the seat reserve.
-# The overseer passes no seats when it judges its own account. Credits retain
-# the credit room rule because they spend no included plan window.
+# The overseer passes no seats when it judges its own account. Judge ordinary
+# window room before the reserve: a balance cannot turn a reserve-only refusal
+# into spending credits. Copilot and Pi spend pools, not these plan windows.
 def with_lane_seat_verdict($wall; $max; $credit_floor; $seats; $reserve):
-  . + {_seat: (if ((._id // .config_dir) as $d | any($seats[]; . == $d)) then 1 else 0 end)}
-  | with_lane_verdict($wall; (if ._seat == 1 then [$max, 100 - $reserve] | min else $max end); $credit_floor)
-  | if ._seat == 1 and .verdict == "walled" then .verdict = "seat-reserve" else . end;
+  . + {_seat: (if .harness != "copilot" and .harness != "pi"
+                  and ((._id // .config_dir) as $d | any($seats[]; . == $d)) then 1 else 0 end)}
+  | with_lane_verdict($wall; $max; $credit_floor)
+  | if ._seat == 1 and .binding_bucket != "credits" then
+      ($wall | wall_verdict([$max, 100 - $reserve] | min)) as $v
+      | .verdict = (if $v == "walled" then "seat-reserve" else $v end)
+    else . end;
 
 # with_lane_tier($pool; $cloud_floor; $retire; $now) over one judged record
 # applies the expires-first rule, `lanes --help` § pick, whose one statement

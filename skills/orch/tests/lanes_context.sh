@@ -156,7 +156,7 @@ run_ctx() { # [args...]
     LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" ORCH_STATE_DIR="${CTX_FLEET:-$FLEET}" \
     ORCH_LANES_FETCH_CMD="$FETCHER" \
     HOSTED_DIR="$HOSTED_DIR" HOST_DOWN="${CTX_HOST_DOWN:-}" TMUX_LOG="$TMUX_LOG" \
-    ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" \
+    ORCH_LANE_DIRS="${CTX_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_LANE_COPILOT_POOL="${CTX_POOL:-}" \
     TMUX_PANES_FILE="$PANES" \
     TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
     TMUX_STUB_WINDOW_NAME="${CTX_WINDOW_NAME:-}" CLAUDE_CONFIG_DIR="${CTX_CONFIG_DIR:-}" \
@@ -353,6 +353,39 @@ mutate_file "$HARNESS_ROWS_CTRL/lanes" '!= "" and (.harness // "") == "copilot")
 assert_eq "$(CTX_LANES="$HARNESS_ROWS_CTRL/lanes" CTX_FLEET="$COP_FLEET" run_ctx --json | jq -c '[.[].lane]')" '["ken-108","ken-109"]' \
   "control: without the harness rule a dead Claude Code lane's record is a row again"
 
+echo "=== pool seat context agrees with the named account check ==="
+# open-terminal writes the account into a Copilot fleet record. Both pool
+# harnesses use this judge; context's local inventory measures Copilot only.
+COP_FILE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" path oversee)"
+COP_RECORDS="$(jq -c '.lanes' "$COP_FILE")"
+POOL_CTRL="$(mutant_scripts mutant-context-pool-seat lib/lane-model.sh)" || exit 1
+mutate_file "$POOL_CTRL/lib/lane-model.sh" 'if .harness != "copilot" and .harness != "pi"' 'if true'
+mkdir -p "$H/.acopilot/session-state"
+printf '%s\n' '{}' > "$H/.acopilot/config.json"
+for pool_harness in copilot pi; do
+  if [[ "$pool_harness" == copilot ]]; then pool_account="$H/.acopilot"; else pool_account="$H/.api"; fi
+  mkdir -p "$pool_account"
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee lanes "$(jq -nc --arg root "$TMP_ROOT/lanes/ken-108" --arg a "$pool_account" --arg h "$pool_harness" '[
+    {item:"KEN-108",window:"fleet:ken-108",harness:$h,account:$a,host:null,mail_root:$root,status:"running"}]')" >/dev/null
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee overseer "$(jq -nc --arg a "$pool_account" '{account:$a}')" >/dev/null
+  record_reading "$COP_BOX" "$pool_harness" 50000 220320 github-copilot/gpt-5
+  POOL_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$pool_account"
+  NAMED_POOL="$(CTX_FLEET="$COP_FLEET" CTX_DIRS="$POOL_DIRS" CTX_POOL="$pool_account=60/100" CTX_COMMAND=pick run_ctx --lane "$pool_account" --harness "$pool_harness" --model github-copilot/gpt-5 --min-headroom-pct 3 --json)"
+  assert_eq "$(jq -c '{headroom_pct,binding_bucket}' <<<"$NAMED_POOL")" '{"headroom_pct":40,"binding_bucket":"monthly"}' "$pool_harness named seat check keeps pool room"
+  POOL_VERDICT="$(source "$SCRIPTS_DIR/lib/lane-model.sh"; jq -r --arg a "$pool_account" "$LANE_MODEL_JQ"'with_lane_binding("";0) | with_lane_seat_verdict(.wall;97;5000;[$a];50) | .verdict' <<<"$NAMED_POOL")"
+  assert_eq "$POOL_VERDICT" room "$pool_harness pool reading stays room in the shared seat judge"
+  POOL_MUTANT_VERDICT="$(source "$POOL_CTRL/lib/lane-model.sh"; jq -r --arg a "$pool_account" "$LANE_MODEL_JQ"'with_lane_binding("";0) | with_lane_seat_verdict(.wall;97;5000;[$a];50) | .verdict' <<<"$NAMED_POOL")"
+  assert_eq "$POOL_MUTANT_VERDICT" seat-reserve "control: a window reserve incorrectly refuses the $pool_harness pool reading"
+  if [[ "$pool_harness" == copilot ]]; then
+    lanes_table "$(CTX_FLEET="$COP_FLEET" CTX_DIRS="$POOL_DIRS" CTX_POOL="$pool_account=60/100" run_ctx --json)" \
+      "Copilot context agrees with its named check|ken-108|headroom_pct=40 binding_bucket=monthly context_handoff_due=false handoff_required=false"
+    lanes_table "$(CTX_LANES="$POOL_CTRL/lanes" CTX_FLEET="$COP_FLEET" CTX_DIRS="$POOL_DIRS" CTX_POOL="$pool_account=60/100" run_ctx --json)" \
+      "control: a window reserve incorrectly marks the Copilot pool|ken-108|context_handoff_due=false handoff_required=true"
+  fi
+done
+"$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee lanes "$COP_RECORDS" >/dev/null
+"$SCRIPTS_DIR/workflow-state" --state-dir "$COP_FLEET" set oversee overseer '{}' >/dev/null
+
 echo "=== the recorded provider decides both the read and its probe ==="
 # ambient|record|down|expected. A missing record and an unreachable host both
 # return 2 from cat. Only a probe of that same recorded provider separates them.
@@ -418,6 +451,17 @@ CREDIT_CTRL="$(mutant_scripts mutant-context-credits lanes)" || exit 1
 mutate_file "$CREDIT_CTRL/lanes" 'with_lane_seat_verdict(.wall; $max; $credit_floor;' 'with_lane_seat_verdict(.wall; $max; 1e18;'
 lanes_table "$(CTX_LANES="$CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: judged with no credit room the lane on credits is marked|ken-102|handoff_required=true"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg a "$H/.codex" '{account:$a}')" >/dev/null
+jq '.rate_limit.primary_window.used_percent=60' "$FIXTURE_DIR/.codex.json" > "$FIXTURE_DIR/.codex.next"
+mv -- "$FIXTURE_DIR/.codex.next" "$FIXTURE_DIR/.codex.json"
+lanes_table "$(ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "an available credit balance cannot hide included allowance spent below the reserve|ken-102|binding_bucket=weekly headroom_pct=40 context_handoff_due=false handoff_required=true"
+SEAT_CREDIT_CTRL="$(mutant_scripts mutant-context-seat-credit lib/lane-model.sh)" || exit 1
+mutate_file "$SEAT_CREDIT_CTRL/lib/lane-model.sh" '  | with_lane_verdict($wall; $max; $credit_floor)' \
+  '  | with_lane_verdict($wall; (if ._seat == 1 then [$max, 100 - $reserve] | min else $max end); $credit_floor)'
+lanes_table "$(CTX_LANES="$SEAT_CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "control: a lowered credit threshold hides the seat reserve from context|ken-102|binding_bucket=credits headroom_pct=40 handoff_required=false"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
 printf '%s\n' "$CODEX_PLAN" > "$FIXTURE_DIR/.codex.json"
 ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
 
