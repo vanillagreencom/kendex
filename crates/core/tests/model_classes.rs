@@ -171,9 +171,19 @@ fn bindings_merge_round_trip_and_hash_only_their_harness() {
     let path = manifest::manifest_path(&env, &Scope::Global);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "schema = 6\n[model-bindings.codex]\nstandard = 'gpt-6-sol'\nlight = 'gpt-6.1-luna'\n[model-bindings.copilot]\nstandard = 'claude-opus-4.6'\n").unwrap();
+    let project_root = home.join("project");
+    let catalog = home.join("catalog");
+    fs::create_dir_all(&project_root).unwrap();
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("agents/worker.md"),
+        "---\nname: worker\ndescription: Work\nmodel: standard\n---\nBody.\n",
+    )
+    .unwrap();
     let manifest::ManifestFile::Current(mut project) = manifest::parse_text(
         std::path::Path::new("kendex.toml"),
-        "schema = 6\nmodel-bindings.codex.standard = 'gpt-6.1-sol'\n",
+        &format!("schema = 6\nmodel-bindings.codex.standard = 'gpt-6.1-sol'\n[sources.cat]\n{}\n[install]\nharnesses = ['codex', 'copilot']\nmethod = 'copy'\n[agents.worker]\nsource = 'cat'\n", source_path(&catalog)),
     )
     .unwrap() else {
         panic!("current manifest")
@@ -206,6 +216,7 @@ fn bindings_merge_round_trip_and_hash_only_their_harness() {
             kendex_core::hash::relevant_sections(&project, ItemKind::Agent, "worker", harness);
         assert_eq!(old != new, harness == HarnessId::Codex, "{harness:?}");
     }
+    assert_binding_hashes_after_apply(&env, &project_root, (*project).clone()).unwrap();
     fs::write(&path, "not a manifest").unwrap();
     assert!(
         manifest::model_bindings(
@@ -217,6 +228,89 @@ fn bindings_merge_round_trip_and_hash_only_their_harness() {
         )
         .is_err()
     );
+}
+
+fn assert_binding_hashes_after_apply(
+    env: &Env,
+    root: &std::path::Path,
+    mut project: Manifest,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = root.join("kendex.toml");
+    let personal_path = manifest::manifest_path(env, &Scope::Global);
+    let mut personal = manifest::load_current(&personal_path)?.ok_or("missing personal fixture")?;
+    fs::write(&project_path, toml::to_string(&project)?)?;
+    let mut before = installed_binding_records(env, root)?;
+    // A nonrequested class still changes customization identity, without changing bytes.
+    for (personal_edit, harness, class, selector, changes_bytes) in [
+        (false, HarnessId::Codex, "light", "gpt-6.1-luna-v2", false),
+        (false, HarnessId::Codex, "standard", "gpt-6.1-sol", true),
+        (true, HarnessId::Copilot, "light", "claude-haiku-4.5", false),
+        (
+            true,
+            HarnessId::Copilot,
+            "standard",
+            "claude-opus-4.5",
+            true,
+        ),
+    ] {
+        let (policy, path) = if personal_edit {
+            (&mut personal, &personal_path)
+        } else {
+            (&mut project, &project_path)
+        };
+        policy
+            .model_bindings
+            .entry(harness.name().into())
+            .or_default()
+            .insert(class.into(), selector.into());
+        fs::write(path, toml::to_string(policy)?)?;
+        let after = installed_binding_records(env, root)?;
+        for installed in [HarnessId::Codex, HarnessId::Copilot] {
+            let (old_hash, old_bytes) = &before[&installed];
+            let (new_hash, new_bytes) = &after[&installed];
+            assert_eq!(
+                old_hash != new_hash,
+                installed == harness,
+                "personal={personal_edit} {harness:?}/{class}: {installed:?} recorded hash"
+            );
+            assert_eq!(
+                old_bytes != new_bytes,
+                installed == harness && changes_bytes,
+                "personal={personal_edit} {harness:?}/{class}: {installed:?} bytes"
+            );
+        }
+        before = after;
+    }
+    Ok(())
+}
+
+type BindingRecords = BTreeMap<HarnessId, (String, Vec<u8>)>;
+
+fn installed_binding_records(
+    env: &Env,
+    root: &std::path::Path,
+) -> Result<BindingRecords, Box<dyn std::error::Error>> {
+    let scope = Scope::Project { root: root.into() };
+    let report = kendex_core::engine::audit(env, &scope)?;
+    assert!(report.refused.is_empty(), "{:?}", report.refused);
+    kendex_core::apply::execute(env, &report.plan)?;
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &scope))?;
+    [
+        (HarnessId::Codex, ".codex/agents/worker.toml"),
+        (HarnessId::Copilot, ".github/agents/worker.agent.md"),
+    ]
+    .map(|(harness, path)| {
+        let key = kendex_core::lock::entry_key(ItemKind::Agent, "worker", harness);
+        Ok((
+            harness,
+            (
+                lock.entries[&key].source_hash.clone(),
+                fs::read(root.join(path))?,
+            ),
+        ))
+    })
+    .into_iter()
+    .collect()
 }
 
 #[test]
