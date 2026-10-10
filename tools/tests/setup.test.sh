@@ -17,8 +17,12 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(cd "$TEST_DIR/.." && pwd)"
 REPO="$(cd "$TOOLS/.." && pwd)"
 REQUIRED_PATHS="$(sed -n 's/^COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# TMPDIR can be inside a checkout; keep the no-repository row outside it.
+TMP="$(mktemp -d)" || { echo "setup.test: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "setup.test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "setup.test: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
+export GIT_CEILING_DIRECTORIES="$TMP"
 
 PASS=0
 FAIL=0
