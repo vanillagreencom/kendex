@@ -100,6 +100,12 @@ case "$*" in
     printf '%s\n' "$((reads + 1))" >"$TEST_STATE/head-reads"
     printf '%s\n' "$head" >"$TEST_STATE/shown-head"
     printf '%s\n' "$head" ;;
+  'pr view 1 --repo acme/test --json mergeStateStatus --jq .mergeStateStatus')
+    case "${TEST_ARM_MODE:-armed}" in
+      clean | clean-open) printf 'CLEAN\n' ;;
+      merge-state-read) exit 87 ;;
+      *) printf 'BLOCKED\n' ;;
+    esac ;;
   'pr merge '*)
     case " $* " in
       *' --auto '*)
@@ -112,7 +118,8 @@ case "$*" in
         : >"$TEST_STATE/arm-attempted"
         arm_state=OPEN queued=false armed=false
         case "${TEST_ARM_MODE:-armed}" in
-          refused) printf 'GraphQL: arm refused\n' >&2; exit 73 ;;
+          refused | blocked | merge-state-read) printf 'GraphQL: arm refused\n' >&2; exit 73 ;;
+          clean | clean-open) printf 'GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)\n' >&2; exit 1 ;;
           armed) : >"$TEST_STATE/armed"; armed=true ;;
           queued) : >"$TEST_STATE/queued"; queued=true ;;
           merged) : >"$TEST_STATE/merged"; arm_state=MERGED ;;
@@ -125,7 +132,14 @@ case "$*" in
       *' --disable-auto '*)
         [ "${TEST_DISARM_MODE:-pass}" != refused ] || { printf 'GraphQL: disarm refused\n' >&2; exit 1; }
         rm -f -- "$TEST_STATE/armed" ;;
-      *) exit 2 ;;
+      *)
+        head="$(shown_head)"
+        case " $* " in *" --match-head-commit $head "*) ;; *) exit 1 ;; esac
+        arm_state=MERGED
+        if [ "${TEST_ARM_MODE:-armed}" = clean-open ]; then arm_state=OPEN
+        else : >"$TEST_STATE/merged"; fi
+        jq -cn --arg state "$arm_state" --arg head "$head" \
+          '{data:{repository:{ref:{target:{oid:$head}},pullRequest:{state:$state,isInMergeQueue:false,autoMergeRequest:null}}}}' >"$TEST_STATE/arm-state.json" ;;
     esac ;;
   'pr close '*) : ;;
   *) exec "$TEST_GH_SHIM" "$@" ;;
@@ -415,6 +429,10 @@ for row in \
   'head-read|failed|armed|pass|1|read-failed|0|direct' \
   'empty-head|empty|armed|pass|1|read-failed|0|' \
   'refused|matched|refused|pass|73|refused|1|ignore-refusal' \
+  'clean|matched|clean|pass|0|merged|1|old-helper' \
+  'blocked|matched|blocked|pass|73|refused|1|merge-any-refusal' \
+  'merge-state-read|matched|merge-state-read|pass|73|refused|1|merge-any-refusal' \
+  'clean-open|matched|clean-open|pass|1|active|1|' \
   'exit-zero-unarmed|matched|unarmed|pass|1|active|1|direct' \
   'queued|matched|queued|pass|0|queued|1|' \
   'merged|matched|merged|pass|0|merged|1|' \
@@ -439,6 +457,25 @@ changed = s.replace(old, '    : # ' + old.strip())
 assert changed != s
 p.write_text(changed)
 PAUSE_CONTROL
+    elif [ "$mutation" = old-helper ] || [ "$mutation" = merge-any-refusal ]; then
+      python3 - "$arm_helper" "$mutation" <<'CLEAN_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+if sys.argv[2] == 'old-helper':
+    start = s.index('      if gh pr merge ')
+    end = s.index('      return "$arm_status"', start) + len('      return "$arm_status"')
+    old = s[start:end]
+    new = '      gh pr merge "$number" --repo "$repository" --auto "--$method" --match-head-commit "$revision"\n      return $?'
+else:
+    old = 'if merge_state="$(gh pr view "$number" --repo "$repository" --json mergeStateStatus --jq .mergeStateStatus)" &&\n          [ "$merge_state" = CLEAN ]; then'
+    new = old.split(' &&')[0][3:] + ' || :\n      if :; then'
+assert s.count(old) == 1
+changed = s.replace(old, new)
+assert changed != s
+p.write_text(changed)
+CLEAN_CONTROL
     elif [ "$mutation" != none ]; then
       python3 - "$runner" "$mutation" <<'ARM_CONTROL'
 from pathlib import Path
@@ -463,8 +500,33 @@ ARM_CONTROL
     git -C "$repo" push -q origin main
     : >"$TMP/state/calls"
     run_refresh "arm-$name-$mutation" pass render
+    arm_matches=false
+    if refresh_arm_matches "$expected" "$outcome" "$reads"; then arm_matches=true; fi
+    case "$name" in
+      clean | clean-open | blocked | merge-state-read)
+        head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+        direct_merges="$(awk '/^pr merge / && !/ --auto / && !/ --disable-auto/ { count++ } END { print count+0 }' "$TMP/state/calls")"
+        expected_direct=0
+        case "$name" in clean | clean-open) expected_direct=1 ;; esac
+        if [ "$direct_merges" -ne "$expected_direct" ] ||
+            [ "$(awk '$0 == "pr view 1 --repo acme/test --json mergeStateStatus --jq .mergeStateStatus" { count++ } END { print count+0 }' "$TMP/state/calls")" -ne 1 ]; then
+          arm_matches=false
+        elif [ "$expected_direct" -eq 1 ] &&
+            ! grep -qxF "pr merge 1 --repo acme/test --squash --match-head-commit $head" "$TMP/state/calls"; then
+          arm_matches=false
+        fi ;;
+    esac
     if [ "$mutation" = none ]; then
-      if refresh_arm_matches "$expected" "$outcome" "$reads"; then ok "$name arm outcome"; else bad "$name arm outcome" "$OUT"; fi
+      if [ "$arm_matches" = true ]; then ok "$name arm outcome"; else bad "$name arm outcome" "$OUT"; fi
+    elif [ "$mutation" = old-helper ]; then
+      if [ "$RC" -eq 1 ] && [ "$arm_matches" = false ] &&
+          grep -qxF "refresh-error=arm pr=1 pushed=$head head=$head value=1" <<<"$OUT"; then
+        ok 'control: the old helper fails clean with refresh-error=arm'
+      else bad "$name old helper control" "$OUT"; fi
+    elif [ "$mutation" = merge-any-refusal ]; then
+      if [ "$RC" -eq 0 ] && [ "$direct_merges" -eq 1 ] && [ "$arm_matches" = false ]; then
+        ok "control: $name direct merge after any refusal turns the arm assertion red"
+      else bad "$name clean-state control" "$OUT"; fi
     elif [ "$mutation" = no-pauses ]; then
       if [ "$RC" -eq "$expected" ] && [ "$(cat "$TMP/state/head-reads")" -eq "$reads" ] &&
           ! grep -q '^sleep ' "$TMP/state/calls" &&

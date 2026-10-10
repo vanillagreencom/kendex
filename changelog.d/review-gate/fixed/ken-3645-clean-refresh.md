@@ -1,0 +1,1 @@
+- Consumer refresh merges a clean pull request on its pushed head when GitHub refuses the auto-merge request.
