@@ -1,0 +1,1 @@
+- Accept measured process counts in performance QA without a false instrument-failure declaration.
