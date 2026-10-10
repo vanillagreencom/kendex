@@ -595,9 +595,9 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
   OL_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
 }
 
-# ol_command_line HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG... — the whole
+# ol_command_line [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...: the whole
 # command the session runs, into OL_CMD: the harness, FLAG... each quoted,
-# and the brief naming HANDOFF; OL_LANE_VAR is the account variable the
+# and the brief supplied by --brief or naming HANDOFF; OL_LANE_VAR is the account variable the
 # harness reads, OL_LAUNCH_HOME the home the launch runs under and OL_FORM
 # the form the lane reaches the harness by (lib/lane-launch.sh). OL_IDENTITY
 # is the launch identity the command carries (ol_identity), the model and
@@ -607,9 +607,9 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # restated beside it. An identity jq could not build is left empty, which the
 # record writers refuse as their own step rather than record as unknown.
 #
-# The brief crosses the pane's shell inside single quotes, so it holds only
-# shell-inert characters, and HANDOFF is held to the same alphabet by every
-# caller. One plain sentence on claude and codex, the contract each of them
+# lane_single_quote preserves the brief through the pane's shell. HANDOFF is
+# held to a shell-inert alphabet by every caller. One plain sentence on
+# claude and codex, the contract each of them
 # already reads as its opening prompt; pi opens on its skill command, as
 # open-terminal's pi lane brief does. The account variable is
 # lib/lane-launch.sh § lane_env_prefix's for the harness and the model FLAG...
@@ -633,7 +633,12 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # The brief is a positional prompt on claude and codex; copilot takes it as
 # the value of `-i`, which starts the interactive session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
-ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
+ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
+  local brief_given=0 caller_brief=""
+  if [[ "${1:-}" == --brief ]]; then
+    caller_brief="$2" brief_given=1
+    shift 2
+  fi
   local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" model
   shift 4
   brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff"
@@ -643,13 +648,14 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
     pi) cmd="pi" brief="/skill:orch oversee after reading the overseer handoff at $handoff" ;;
     *) cmd="codex" ;;
   esac
+  (( ! brief_given )) || brief="$caller_brief"
   model="$(launch_choice_launch_model "$harness" "$*")"
   OL_LANE_VAR="$(lane_env_prefix "$harness" - "$model")"
   OL_LANE_VAR="${OL_LANE_VAR%%=*}"
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
   done
-  cmd+="$brief_flag '$brief'"
+  cmd+="$brief_flag $(lane_single_quote "$brief")"
   if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
     OL_REASON=launch-trust-missing
     OL_TRUST_REASON="$LANE_TRUST_REASON"

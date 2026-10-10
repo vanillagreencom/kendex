@@ -1,0 +1,1 @@
+- `oversee-succeed --print-launch-line --brief-file PATH` puts a caller's one-line brief in the launch command for Claude, Codex, Copilot, or Pi, including a named `--entry`.

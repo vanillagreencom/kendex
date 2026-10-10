@@ -6,7 +6,7 @@
 # Usage:
 #   oversee-succeed [--harness H] [--context TOKENS:WINDOW] [--handoff PATH] [--wait-secs N]
 #                   [-- HARNESS_FLAGS...]
-#   oversee-succeed --print-launch-line [--entry ENTRY] [--harness H] [--handoff PATH]
+#   oversee-succeed --print-launch-line [--entry ENTRY] [--harness H] [--handoff PATH | --brief-file PATH]
 #                   [-- HARNESS_FLAGS...]
 #   oversee-succeed --check-marks [--harness H] [--context TOKENS:WINDOW]
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
@@ -377,6 +377,10 @@
 #                    no other option but --context, --handoff and --wait-secs
 #                    included
 #   --print-launch-line [--entry harness:model:effort]
+#                    --brief-file PATH replaces the whole successor brief.
+#                    It takes one line with no control characters. Claude and
+#                    codex take it as the positional prompt, copilot as -i,
+#                    and pi in place of its /skill:orch oversee command.
 #                    With --entry, walk that one preference entry through the
 #                    live account pick, flag translation and folder trust.
 #                    No caller fallback runs. A lane must clear
@@ -484,7 +488,10 @@ message() { # KEY FIELD=VALUE...
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
-    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --entry is taken only by --print-launch-line. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option but --context, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone.' ;;
+    brief-file-unreadable) text='--brief-file must name a readable file.' ;;
+    brief-file-empty) text='--brief-file must contain a task, not only whitespace.' ;;
+    brief-file-control) text='--brief-file takes one line with no control characters. Trailing newlines are removed.' ;;
+    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --entry and --brief-file are taken only by --print-launch-line; --brief-file also conflicts with --handoff. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option but --context, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     record-unread) text='The fleet state could not be read, so this session'\''s launch record was not consulted: its harness, account and model are read off its pane and its environment, as for a session nothing has recorded.' ;;
     record-unwritten) text='The session record in the fleet state could not be written for the successor, or put back after an abandoned launch, so the record does not name the session that is running. The step field says which; the succession itself stands.' ;;
@@ -706,6 +713,9 @@ LINE_FILE=""
 PRINT_LINE=0
 ENTRY_ARG=""
 ENTRY_GIVEN=0
+BRIEF_FILE=""
+BRIEF_GIVEN=0
+BRIEF_OPTION=()
 CHECK_MARKS=0
 # Whether the caller SUPPLIED the two options that carry a default, so check
 # mode can refuse them: a value it parsed and then ignored is a setting the
@@ -717,12 +727,13 @@ CONTEXT_GIVEN=0
 HARNESS_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry)
+    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry|--brief-file)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --context) CONTEXT_ARG="$2"; CONTEXT_GIVEN=1 ;;
         --harness) HARNESS_ARG="$2" ;;
         --entry) ENTRY_ARG="$2"; ENTRY_GIVEN=1 ;;
+        --brief-file) BRIEF_FILE="$2"; BRIEF_GIVEN=1 ;;
         --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
         --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
         --dead-pane) DEAD_PANE="$2" ;;
@@ -779,6 +790,14 @@ else
   [[ -z "$LINE_FILE" ]] || die mode-conflict "line-file=$LINE_FILE" "dead-pane=none"
 fi
 (( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"
+if (( BRIEF_GIVEN )); then
+  [[ "$MODE" == print && "$HANDOFF_GIVEN" -eq 0 ]] \
+    || die mode-conflict "mode=$MODE" "brief-file=$BRIEF_FILE" "handoff=$HANDOFF_GIVEN"
+  lane_brief_read "$BRIEF_FILE" || die "$LANE_BRIEF_REASON" "path=$BRIEF_FILE"
+  # A pane types this inline brief as keystrokes; controls can run it early.
+  [[ "$LANE_BRIEF_NUL" -eq 0 && "$LANE_BRIEF_TEXT" != *[[:cntrl:]]* ]] || die brief-file-control "path=$BRIEF_FILE"
+  BRIEF_OPTION=(--brief "$LANE_BRIEF_TEXT")
+fi
 # The two modes that judge a mark, matched by name at every site below rather
 # than re-conjoined there: `succeed` acts on the judgement and `check` reports
 # it, and every read they rest on is the same read.
@@ -1460,7 +1479,7 @@ else
   # directory, and every other entry takes a pick the judge refuses to hand
   # back empty. A pi successor on any other provider has none, and
   # ol_command_line launches it bare.
-  ol_command_line "$harness" "$HANDOFF" "$lane_dir" "$CALLER_PATH" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"} \
+  ol_command_line ${BRIEF_OPTION[@]+"${BRIEF_OPTION[@]}"} "$harness" "$HANDOFF" "$lane_dir" "$CALLER_PATH" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"} \
     || die launch-trust-missing "lane=$lane_dir" "dir=$CALLER_PATH" "reason=$OL_TRUST_REASON"
   cmd="$OL_CMD"
   lane_var="$OL_LANE_VAR"

@@ -260,12 +260,12 @@ control_row() {
 # refusal's condition replaced, in a git repository of its own. Run in this
 # shell, not a substitution, so mutate_file's two assertions are counted.
 mutant() {
-  local scripts
-  scripts="$(mutant_scripts "$1" open-terminal)" || exit 1
+  local scripts file="${4:-open-terminal}"
+  scripts="$(mutant_scripts "$1" "$file")" || exit 1
   MUTANT_OT="$scripts/open-terminal"
   git -C "$TMP_ROOT/$1" init -q
   orch_fixture_shared_libs "$TMP_ROOT/$1"
-  mutate_file "$MUTANT_OT" "$2" "$3"
+  mutate_file "$scripts/$file" "$2" "$3"
 }
 
 echo "=== a failed local brief snapshot opens no terminal ==="
@@ -336,7 +336,8 @@ control_row "control: without its refusal the placeholder with no file launches"
 
 refusal_row "a brief file path that is not a readable file is refused, naming the path" \
   "$OT" brief-file-unreadable "path=$TMP_ROOT/absent.md" --cmd "$CMD" --brief-file "$TMP_ROOT/absent.md"
-mutant brief-unreadable '2>/dev/null)" || { ot_message brief-file-unreadable' '2>/dev/null)" || BRIEF_TEXT=x || { ot_message brief-file-unreadable'
+mutant brief-unreadable '})" || { LANE_BRIEF_REASON=brief-file-unreadable; return 1; }' \
+  '})" || captured=0:x || { LANE_BRIEF_REASON=brief-file-unreadable; return 1; }' lib/lane-launch.sh
 control_row "control: without its refusal the unreadable brief file launches" \
   "$MUTANT_OT" \
   --cmd "$CMD" --brief-file "$TMP_ROOT/absent.md"
@@ -349,7 +350,8 @@ for content in "" $'\n\n' $'  \t \n'; do
   refusal_row "a brief file holding $(printf '%q' "$content") is refused as empty, naming the path" \
     "$OT" brief-file-empty "path=$EMPTY_BRIEF" --cmd "$CMD" --brief-file "$EMPTY_BRIEF"
 done
-mutant brief-empty '[[ "$BRIEF_TEXT" == *[![:space:]]* ]] || { ot_message brief-file-empty' 'true || { ot_message brief-file-empty'
+mutant brief-empty '[[ "$LANE_BRIEF_TEXT" == *[![:space:]]* ]] || { LANE_BRIEF_REASON=brief-file-empty' \
+  'true || { LANE_BRIEF_REASON=brief-file-empty' lib/lane-launch.sh
 control_row "control: without its refusal the whitespace-only brief file launches" \
   "$MUTANT_OT" \
   --cmd "$CMD" --brief-file "$EMPTY_BRIEF"
