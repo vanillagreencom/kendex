@@ -89,8 +89,8 @@ Every item requires all of these; one missing field rejects the whole artifact.
 | `question` | Yes | The question being asked |
 | `draft_response` | Yes | Suggested response to post |
 | `source` | Yes | Comment author |
-| `source_id` | Yes | Thread or comment ID for reply routing |
-| `source_type` | Yes | `inline` or `pr-level` |
+| `source_id` | Yes | Thread or comment ID for reply routing; `file:line` for `review-body` |
+| `source_type` | Yes | `inline`, `pr-level` or `review-body` |
 
 ## qa_metadata
 
