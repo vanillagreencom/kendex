@@ -452,6 +452,41 @@ MS_INSIDE="$variant"
 plant_variant common-dir-check 'owned_git=$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null) || owned_git="."' 'owned_git="."'
 MS_TOP_ONLY="$variant"
 
+plant_variant ignored-platform-failure '  platform=$(uname -s) || refuse cleanup-unavailable path "$ROOT" "platform probe failed; workspace kept"' '  platform=$(uname -s) || platform=unknown'
+MS_PLATFORM_UNCHECKED="$variant"
+PLATFORM_BIN="$TMP/platform-probe"
+mkdir -p "$PLATFORM_BIN"
+cat > "$PLATFORM_BIN/uname" <<'CASE'
+#!/bin/sh
+exit 42
+CASE
+chmod +x "$PLATFORM_BIN/uname"
+echo "=== failed platform probe table ==="
+platform_rows=0
+while IFS=$'\t' read -r name script expected; do
+  case "$script" in fixed) script="$MS" ;; control) script="$MS_PLATFORM_UNCHECKED" ;; esac
+  probe_log="$TMP/platform-workspace"
+  rc=0
+  out=$(PATH="$PLATFORM_BIN:$PATH" "$script" --worktree "$REPO" --sha "$SHA_BASE" \
+    --test true --build "pwd -P > \"$probe_log\"; false" --mutate true 2>&1) || rc=$?
+  probe_dir=$(cat "$probe_log") || probe_dir=""
+  probe_root=${probe_dir%/mutant}
+  retained=no
+  [ ! -d "$probe_root" ] || retained=yes
+  assert_row "failed platform probe" "$name" \
+    "rc=$rc;retained=$retained;refusal=$(output_has 'error=cleanup-unavailable path=')" "$expected"
+  # The fixture launches no detached process; its command exited and was reaped.
+  case "$probe_root" in
+    "$RUNTIME_TMP"/mutation-stability.*) rm -rf -- "$probe_root" ;;
+    *) fail "platform probe fixture" "unexpected workspace path: $probe_root" ;;
+  esac
+  platform_rows=$((platform_rows + 1))
+done <<'ROWS'
+failed probe retains scratch	fixed	rc=2;retained=yes;refusal=yes
+control: ignored probe fails scratch-retention assertion	control	rc=2;retained=no;refusal=no
+ROWS
+assert_table_executed "failed platform probe" "$platform_rows"
+
 if [ -d /proc/self ] && command -v setsid >/dev/null && command -v python3 >/dev/null; then
   plant_variant detached-cleanup '  cleanup_workspace' '  :'
   MS_GROUP_ONLY="$variant"

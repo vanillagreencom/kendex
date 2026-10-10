@@ -204,7 +204,8 @@ cleanup_active() {
 # pidfd, then read cwd through it: an exited original cannot validate a pidfd
 # for a replacement. Signals and exit checks use only the validated pidfd.
 cleanup_workspace() {
-  [ "$(uname -s)" = Linux ] || return 0
+  platform=$(uname -s) || refuse cleanup-unavailable path "$ROOT" "platform probe failed; workspace kept"
+  [ "$platform" = Linux ] || return 0
   [ -d /proc/self ] && command -v python3 >/dev/null || refuse cleanup-unavailable path "$ROOT" "Linux proc and Python pidfd support are required; workspace kept"
   cleanup_status=0
   python3 - "$ROOT" 2>"$ROOT/cleanup.log" <<'PY' || cleanup_status=$?
