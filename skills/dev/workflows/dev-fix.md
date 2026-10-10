@@ -54,6 +54,8 @@ Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository
 
 ## 3. Validate And Commit
 
+The round must pass [orch's base-freshness gate](../../orch/workflows/dev-fix.md#2-delegate) before it is stamped. If that gate is incomplete, return to the orchestrator before validation.
+
 Read `[ROUND_BASE]` from the `base_sha` of `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json` before entering [dev-implement.md § 5. Validate](./dev-implement.md#5-validate).
 
 Follow that section from the worktree root, with two changes. Its `DEV_VALIDATE_CMD` item validates this round's changes only: start it as `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --validate-mode [MODE] --base [BASE_SHA]`. Read `[MODE]` from the `pr_open` rule in orch's `schemas/dev-round.md`. Use `[ROUND_BASE]` as `[BASE_SHA]`, and poll it the same way. The runner decides whether CI covers the change and whether local validation must run. A project whose policy forbids `dev-validate-run` takes that section's foreground route instead, with the record's line `validate-mode=range` where the project sets `DEV_VALIDATE_RANGE_CMD` and `validate-mode=full` where it does not, the mode `dev-artifact-check` holds the round to. Use the Visual QA rule below.
