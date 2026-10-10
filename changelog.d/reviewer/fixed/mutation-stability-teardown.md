@@ -1,1 +1,1 @@
-- Mutation checks stop detached Linux processes with stable process handles before they remove the scratch workspace. They keep the workspace if safe cleanup is unavailable.
+- **Breaking:** Linux mutation checks now require process-handle support. Upgrade your environment as described in [reviewer Setup](../../../skills/reviewer/README.md#setup). Mutation checks stop detached Linux processes before they remove the scratch workspace. They report cleanup failure and keep the workspace if safe cleanup is unavailable.
