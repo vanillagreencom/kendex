@@ -173,7 +173,12 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
                     message: e.to_string(),
                 })?;
         if let Some(accounts) = super::migrate::migrate(&mut document) {
-            let rewritten = super::fold::serialized(&document, text);
+            let rewritten =
+                super::fold::serialized(&document, text, super::fold::Serialization::Migration)
+                    .map_err(|e| CoreError::TomlParse {
+                        path: path.to_path_buf(),
+                        message: e.to_string(),
+                    })?;
             table =
                 toml::from_str(&rewritten).map_err(|e: toml::de::Error| CoreError::TomlParse {
                     path: path.to_path_buf(),

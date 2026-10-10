@@ -126,7 +126,16 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
-    for (global, crlf) in [(false, false), (false, true), (true, false), (true, true)] {
+    for (global, crlf, mixed) in [
+        (false, false, false),
+        (false, true, false),
+        (true, false, false),
+        (true, true, false),
+        (false, false, true),
+        (false, true, true),
+        (true, false, true),
+        (true, true, true),
+    ] {
         let mut f = fixture("6   # pinned");
         if global {
             f.scope = Scope::Global;
@@ -146,6 +155,13 @@ fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
             let checked_out = fs::read_to_string(&f.manifest_path).unwrap();
             assert_eq!(checked_out, f.original.replace('\n', "\r\n"));
             f.original = checked_out;
+        }
+        if mixed {
+            // The earlier writer retained Git CRLF strings but generated LF
+            // command strings and structural text. An editor can omit EOF.
+            f.original.push_str(
+                "\n[skill-instructions]\nall = '''\r\nkept first\r\nkept second\r\n'''\n\n[command-instructions]\nall = \"\"\"\nnew first\nnew second\n\"\"\"",
+            );
         }
         let expected = f.original.replacen("schema = 6", "schema = 7", 1);
         fs::write(&f.manifest_path, &expected).unwrap();
@@ -192,6 +208,11 @@ fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
         assert_eq!(committed(&migrated.plan.ops), committed(&current.plan.ops));
         apply::execute(&f.env, &migrated.plan).unwrap();
         assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), expected);
+        let reloaded = kendex_core::manifest::load_current(&f.manifest_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.skill_instructions, loaded.skill_instructions);
+        assert_eq!(reloaded.command_instructions, loaded.command_instructions);
         assert!(
             load_lock(&f.scope_lock())
                 .unwrap()
