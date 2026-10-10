@@ -15,7 +15,7 @@ permissions:
 jobs:
   request:
     if: github.event_name != 'merge_group' && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       # pull_request_target supplies the base repository's token for forks.
