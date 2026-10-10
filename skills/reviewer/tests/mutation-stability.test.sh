@@ -115,13 +115,16 @@ resolve_sha() {
 export MUTATION_STABILITY_SETTLE=0
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ms-test.XXXXXX") || exit 2
-trap 'rm -rf "$TMP"' EXIT
+TMP=$(cd -- "$TMP" && pwd -P) || exit 2
+trap '[ -e "$TMP/keep-process-scratch" ] || rm -rf "$TMP"' EXIT
 RUNTIME_TMP="$TMP/runtime"
 mkdir -p "$RUNTIME_TMP"
 export TMPDIR="$RUNTIME_TMP"
 REPO="$TMP/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
+git -C "$REPO" config gc.auto 0
+git -C "$REPO" config maintenance.auto false
 printf 'add() { echo $(( $1 + $2 )); }\n' > "$REPO/lib.sh"
 cat > "$REPO/check.sh" <<'CASE'
 . ./lib.sh
@@ -449,24 +452,134 @@ MS_INSIDE="$variant"
 plant_variant common-dir-check 'owned_git=$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null) || owned_git="."' 'owned_git="."'
 MS_TOP_ONLY="$variant"
 
-if [ -d /proc/self ] && command -v setsid >/dev/null; then
+if [ -d /proc/self ] && command -v setsid >/dev/null && command -v python3 >/dev/null; then
   plant_variant detached-cleanup '  cleanup_workspace' '  :'
   MS_GROUP_ONLY="$variant"
-  for script in "$MS" "$MS_GROUP_ONLY"; do
-    export DETACHED_PID_FILE="$TMP/detached.pid"
-    rc=0
-    out=$("$script" --worktree "$REPO" --sha "$SHA_BASE" --build true --mutate false --stability 1 \
-      --test 'setsid sleep 1000 >/dev/null 2>&1 & echo $! > "$DETACHED_PID_FILE"; exit 0' 2>&1) || rc=$?
-    child=$(cat "$DETACHED_PID_FILE")
-    child_stopped=no
-    if stopped "$child"; then child_stopped=yes; fi
-    if [ "$script" = "$MS" ]; then
-      assert_case "detached child stops and is reported" "rc=$rc;stopped=$child_stopped;notice=$(output_has "notice=workspace-process-ended pid=$child")" "rc=2;stopped=yes;notice=yes"
+  plant_variant numeric-signal '                signal.pidfd_send_signal(pidfd, signal.SIGTERM)' '                os.kill(int(entry), signal.SIGTERM)'
+  MS_NUMERIC="$variant"
+  mkdir -p "$TMP/no-numeric" "$TMP/no-pidfd"
+  cat > "$TMP/no-numeric/sitecustomize.py" <<'PY'
+import sys
+
+def require_process_handle(event, args):
+    if event == "os.kill":
+        raise RuntimeError("numeric process signaling is unsafe")
+
+sys.addaudithook(require_process_handle)
+PY
+  cat > "$TMP/no-pidfd/sitecustomize.py" <<'PY'
+import os
+if hasattr(os, "pidfd_open"):
+    del os.pidfd_open
+PY
+  # A subreaper adopts this fixture's orphan, so the test can keep its pidfd
+  # and reap the negative control before the suite removes any scratch.
+  cat > "$TMP/detached-check.py" <<'PY'
+import ctypes
+import os
+from pathlib import Path
+import select
+import signal
+import subprocess
+import sys
+import time
+
+script, repo, sha, scratch, mode = sys.argv[1:]
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    raise OSError(ctypes.get_errno(), "cannot adopt fixture descendants")
+pid_path = Path(scratch) / "detached.pid"
+ack_path = Path(scratch) / "detached.ack"
+pid_path.unlink(missing_ok=True)
+ack_path.unlink(missing_ok=True)
+env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "MUTATION_STABILITY_SETTLE")}
+env.update(DETACHED_PID_FILE=str(pid_path), DETACHED_ACK_FILE=str(ack_path), DETACHED_MODE=mode)
+env["PYTHONPATH"] = str(Path(scratch) / ("no-pidfd" if mode == "unavailable" else "no-numeric"))
+fixture = '''
+if [ "$DETACHED_MODE" = kill ]; then trap '' TERM; fi
+setsid sleep 1000 >/dev/null 2>&1 &
+child=$!
+echo "$child" > "$DETACHED_PID_FILE"
+while [ ! -e "$DETACHED_ACK_FILE" ]; do sleep 0.01; done
+exit 0
+'''
+runner = subprocess.Popen([script, "--worktree", repo, "--sha", sha,
+                           "--build", "true", "--mutate", "false", "--stability", "1",
+                           "--test", fixture], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+child = pidfd = None
+try:
+    deadline = time.monotonic() + 15
+    while not pid_path.exists() or not pid_path.read_text().strip():
+        if runner.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError("fixture did not publish its child")
+        time.sleep(0.01)
+    child = int(pid_path.read_text())
+    # The fixture keeps its parent alive until this test holds the process.
+    pidfd = os.pidfd_open(child)
+    while os.getsid(child) != child:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("fixture did not create its session")
+        time.sleep(0.01)
+    ack_path.touch()
+    output = runner.communicate(timeout=15)[0].decode()
+    poll = select.poll()
+    poll.register(pidfd, select.POLLIN)
+    stopped = bool(poll.poll(0))
+    notice = "notice=workspace-process-ended pid=" + str(child) + "\n" in output
+    def assert_child_stopped():
+        assert stopped, output
+
+    # The same assertion must reject group-only and numeric-signal teardown.
+    if mode in ("control", "numeric", "unavailable"):
+        try:
+            assert_child_stopped()
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("negative control did not fail the stopped-child assertion")
+        if mode != "control":
+            cwd = os.readlink("/proc/" + str(child) + "/cwd")
+            assert Path(cwd).is_dir(), "failed cleanup deleted an occupied workspace"
+            assert "error=cleanup-incomplete path=" in output, output
+    else:
+        assert_child_stopped()
+        _, status = os.waitpid(child, 0)
+        expected_signal = signal.SIGKILL if mode == "kill" else signal.SIGTERM
+        assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == expected_signal, status
+        child = None
+        assert notice and runner.returncode == 2, output
+finally:
+    ack_path.touch()
+    try:
+        runner.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        runner.kill()
+        runner.communicate(timeout=15)
+    if pidfd is not None:
+        try:
+            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        poll = select.poll()
+        poll.register(pidfd, select.POLLIN)
+        if not poll.poll(1000):
+            (Path(scratch) / "keep-process-scratch").touch()
+            raise RuntimeError("fixture cleanup did not stop its child")
+        if child is not None:
+            os.waitpid(child, 0)
+        os.close(pidfd)
+    elif child is not None:
+        (Path(scratch) / "keep-process-scratch").touch()
+        raise RuntimeError("fixture cleanup has no safe process handle")
+PY
+  for mode in term kill control numeric unavailable; do
+    script="$MS"
+    [ "$mode" != control ] || script="$MS_GROUP_ONLY"
+    [ "$mode" != numeric ] || script="$MS_NUMERIC"
+    if python3 "$TMP/detached-check.py" "$script" "$REPO" "$SHA_BASE" "$TMP" "$mode"; then
+      pass "detached child: $mode"
     else
-      assert_case "group-only teardown fails detached-child assertion" "$child_stopped" no
-      cwd=$(readlink "/proc/$child/cwd" 2>/dev/null) || cwd=""
-      case "$cwd" in "$RUNTIME_TMP"/mutation-stability.*/*) kill -KILL "$child" ;; esac
-      stopped "$child" || fail "detached control cleanup" "owned child did not stop"
+      fail "detached child: $mode" "child termination or negative-control cleanup failed"
     fi
   done
 fi

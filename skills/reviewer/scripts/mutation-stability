@@ -200,28 +200,102 @@ cleanup_active() {
 }
 
 # Linux permits ownership checks by cwd even after a child starts a session.
-# Recheck before each signal: a saved PID can be reused by another process.
+# A proc directory descriptor never follows a reused PID. Open it before the
+# pidfd, then read cwd through it: an exited original cannot validate a pidfd
+# for a replacement. Signals and exit checks use only the validated pidfd.
 cleanup_workspace() {
-  [ ! -d /proc/self ] || command -v readlink >/dev/null || refuse cleanup-unavailable path "$ROOT" "readlink is required; workspace kept"
-  sweep=0
-  while [ -d /proc/self ]; do
-    found=0
-    for entry in /proc/[0-9]*/cwd; do
-      cwd=$(readlink "$entry" 2>/dev/null) || continue
-      case "$cwd/" in "$ROOT/"*) ;; *) continue ;; esac
-      found=1
-      [ "$sweep" -lt 20 ] || refuse cleanup-incomplete path "$ROOT" "workspace still has live processes; workspace kept"
-      pid=${entry#/proc/}; pid=${pid%/cwd}
-      signal=KILL
-      [ "$sweep" -ne 0 ] || signal=TERM
-      if kill -s "$signal" "$pid" 2>/dev/null; then
-        notice workspace-process-ended pid "$pid" "sent $signal to a process inside the mutation workspace"
-      fi
-    done
-    [ "$found" -ne 0 ] || break
-    sleep 0.05
-    sweep=$((sweep + 1))
-  done
+  [ "$(uname -s)" = Linux ] || return 0
+  [ -d /proc/self ] && command -v python3 >/dev/null || refuse cleanup-unavailable path "$ROOT" "Linux proc and Python pidfd support are required; workspace kept"
+  cleanup_status=0
+  python3 - "$ROOT" 2>"$ROOT/cleanup.log" <<'PY' || cleanup_status=$?
+import errno
+import os
+import select
+import signal
+import sys
+
+root = sys.argv[1]
+
+def start_time(procfd):
+    with os.fdopen(os.open("stat", os.O_RDONLY, dir_fd=procfd)) as stat:
+        fields = stat.read().rsplit(")", 1)[-1].split()
+    # The command name may contain spaces and parentheses. Fields after its
+    # closing parenthesis begin at state (field 3); starttime is field 22.
+    if len(fields) < 20 or not fields[19].isdecimal():
+        raise RuntimeError("process start time is unavailable")
+    return int(fields[19])
+
+try:
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise RuntimeError("Python pidfd support is unavailable")
+    # Probe the kernel even when the workspace contains no processes.
+    probe = os.pidfd_open(os.getpid())
+    try:
+        signal.pidfd_send_signal(probe, 0)
+    finally:
+        os.close(probe)
+
+    ownerfd = os.open("/proc/" + str(os.getppid()), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        owner_start = start_time(ownerfd)
+    finally:
+        os.close(ownerfd)
+
+    for sweep in range(20):
+        found = False
+        for entry in os.listdir("/proc"):
+            if not entry.isdecimal():
+                continue
+            procfd = pidfd = None
+            try:
+                procfd = os.open("/proc/" + entry, os.O_RDONLY | os.O_DIRECTORY)
+                pidfd = os.pidfd_open(int(entry))
+                # An older process cannot be this Bash owner's descendant.
+                # Equal clock ticks still qualify, so a fast child is kept.
+                if start_time(procfd) < owner_start:
+                    continue
+                cwd = os.readlink("cwd", dir_fd=procfd)
+                if cwd != root and not cwd.startswith(root + "/"):
+                    continue
+                found = True
+                poll = select.poll()
+                poll.register(pidfd, select.POLLIN)
+                signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+                ended_by = "TERM"
+                if not poll.poll(50):
+                    signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                    ended_by = "KILL"
+                    if not poll.poll(1000):
+                        raise RuntimeError("a workspace process did not exit")
+                print("notice=workspace-process-ended pid=" + entry, file=sys.stderr)
+                print("workspace process exited after " + ended_by, file=sys.stderr)
+            except OSError as error:
+                # Proc inode ownership changes when dumpability changes;
+                # credentials distinguish another user's private cwd.
+                if error.errno in (errno.EACCES, errno.EPERM) and procfd is not None:
+                    with os.fdopen(os.open("status", os.O_RDONLY, dir_fd=procfd)) as status:
+                        uid_rows = [line.split()[1:] for line in status if line.startswith("Uid:")]
+                    if len(uid_rows) != 1 or len(uid_rows[0]) != 4:
+                        raise RuntimeError("process credentials are unavailable")
+                    if os.geteuid() not in [int(uid) for uid in uid_rows[0]]:
+                        continue
+                if error.errno not in (errno.ENOENT, errno.ESRCH):
+                    raise
+            finally:
+                if pidfd is not None:
+                    os.close(pidfd)
+                if procfd is not None:
+                    os.close(procfd)
+        if not found:
+            break
+    else:
+        raise RuntimeError("workspace processes keep appearing")
+except (OSError, RuntimeError) as error:
+    print(str(error), file=sys.stderr)
+    sys.exit(2)
+PY
+  [ "$cleanup_status" = 0 ] || refuse_with_log cleanup-incomplete path "$ROOT" "safe workspace cleanup failed; workspace kept" "$ROOT/cleanup.log"
+  [ ! -s "$ROOT/cleanup.log" ] || cat -- "$ROOT/cleanup.log" >&2
 }
 
 cleanup() {
