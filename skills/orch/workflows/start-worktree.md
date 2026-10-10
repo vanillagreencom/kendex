@@ -1,6 +1,6 @@
 # Start Session Workflow (Worktree)
 
-The full session from inside a worktree: implement → review → submit → finalize. The consumer's publication order decides when the pull request opens (§ 2.1).
+The full session from inside a worktree: implement → publication and review in the order from § 2.1 → finalize.
 
 | Command | Flow |
 |---------|------|

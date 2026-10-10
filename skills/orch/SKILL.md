@@ -23,7 +23,7 @@ Load `github` and `worktree` before anything else; a Linear work item also needs
 
 ## The Cycle
 
-Get the issue → dev implements → review and fixes → publish → required CI and review gate → merge. `pr-order --help` owns publication order.
+Get the issue → dev implements → publication, review and fixes in the order from `pr-order --help` → required CI and review gate → merge.
 
 - **Bounded loops.** A fix round addresses blockers only, and the same pass declines or tracks every `fix` suggestion ([workflows/review-pr.md](workflows/review-pr.md) § 4); re-review narrows to the fix diff, the domains it touched, and the class of every defect it fixed ([reviewer/SKILL.md](../reviewer/SKILL.md) § Re-Review Rounds); two consecutive rounds with no new blocker end the review, except at `REVIEW_MAX_CYCLES` 0, where the one fix round ends it with no re-review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with a one-line reason, not fixed, not filed.

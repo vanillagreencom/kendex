@@ -47,6 +47,7 @@ clock_now() { cat "$STUB_CLOCK"; }
 # A project whose settings carry one validation command and one bound. The
 # environment is passed explicitly so a developer's own DEV_VALIDATE_* never
 # reaches the run: orch-env reads the process environment first.
+# Runner refusal fixtures have no GitHub repository, so fix their publication order.
 make_proj() { # NAME CMD TIMEOUT_SECS
   local dir="$TMP_ROOT/$1"
   git init -q "$dir"
@@ -54,6 +55,7 @@ make_proj() { # NAME CMD TIMEOUT_SECS
   git -C "$dir" config maintenance.auto false
   {
     printf '[env]\n'
+    printf 'ORCH_PR_ORDER = "review-first"\n'
     printf 'DEV_VALIDATE_CMD = "%s"\n' "$2"
     printf 'DEV_VALIDATE_TIMEOUT_SECS = "%s"\n' "$3"
   } > "$dir/kendex.settings.toml"
@@ -344,7 +346,7 @@ fi
 # --- With no bound set, the script's own default is the one that applies -------
 proj_default="$TMP_ROOT/proj-default"
 git init -q "$proj_default"
-printf '[env]\nDEV_VALIDATE_CMD = "echo x"\n' > "$proj_default/kendex.settings.toml"
+printf '[env]\nORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_CMD = "echo x"\n' > "$proj_default/kendex.settings.toml"
 run_script "$RUN" --worktree "$proj_default" --poll 1
 assert_eq "$(sed -n 's/^state=started .* \(timeout-secs=[0-9]*\) .*$/\1/p' <<<"$OUT")" "timeout-secs=3600" \
   "a project that sets no bound gets the documented hour" "$ERR"
@@ -1130,22 +1132,23 @@ PUSH_ROWS=(
   'internal fix before publication|push-first|pr-no-pr|standard|CI|ci|none|ci||pending'
   'Copilot fix before publication|push-first|rules|standard|CI|ci|none|ci||pending'
   'range subset on open PR|push-first|rules|standard|CI|range|subset|ci||pending'
-  'stacked full request|push-first|stacked|standard|CI|full|none|full|context-unrequired|pass'
-  'stacked fix subset|push-first|stacked|standard|CI|ci|subset|range|context-unrequired|pass'
-  'stacked required base|push-first|stacked-required|standard|CI|ci|none|ci||pending'
+  'stacked full request|push-first|stacked|standard|CI|full|none|full|context-unrequired|pass||range'
+  'stacked fix subset|push-first|stacked|standard|CI|ci|subset|range|context-unrequired|pass||range'
+  'stacked required base|push-first|stacked-required|standard|CI|ci|none|ci||pending||ci'
   'unread PR under push-first|push-first|pr-unread|standard|CI|full|none|full|base-unresolved|pass'
   'invalid PR under push-first|push-first|pr-invalid|standard|CI|full|none|full|base-unresolved|pass'
   'closed PR under push-first|push-first|pr-closed|standard|CI|full|none|full|pr-not-open|pass'
   'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
 )
 push_rows() { # SCRIPT [LABEL]
-  local row label order world class context request selector want_mode fallback verdict local_range proj args dir head n=0
+  local row label order world class context request selector want_mode fallback verdict local_range want_resolve resolved proj args dir head n=0
   for row in "${PUSH_ROWS[@]}"; do
-    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range <<<"$row"
+    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "push-${label// /-}-${1##*/}-${3:-live}" "$context")"
-    printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$proj/kendex.settings.toml"
+    sed "s/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = \"$order\"/" "$proj/kendex.settings.toml" > "$proj/settings.next"
+    mv "$proj/settings.next" "$proj/kendex.settings.toml"
     if [[ "$local_range" == unset ]]; then
       sed '/^DEV_VALIDATE_RANGE_CMD =/d' "$proj/kendex.settings.toml" > "$proj/settings.next"
       mv "$proj/settings.next" "$proj/kendex.settings.toml"
@@ -1157,6 +1160,16 @@ push_rows() { # SCRIPT [LABEL]
     ci_world "$world"
     # A pre-PR branch still has required base CI under push-first.
     [[ "$order" != push-first || "$world" != pr-no-pr ]] || STUB_RULES=CI
+    if [[ -n "$want_resolve" ]]; then
+      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true \
+        run_script "$1" --resolve-mode --worktree "$proj" --base HEAD
+      resolved="$RC $OUT"
+      if [[ "${3:-}" == resolve ]]; then
+        printf '%s\n' "$resolved"
+        continue
+      fi
+      [[ -n "${2:-}" ]] || assert_eq "$resolved" "0 validate-mode=$want_resolve" "$label resolves the actual PR base" "$ERR"
+    fi
     args=(--worktree "$proj" --poll 1 --validate-mode "$request")
     [[ "$request" == full ]] || args+=(--base HEAD)
     : > "$TMP_ROOT/push-rule-reads"
@@ -1214,6 +1227,16 @@ mutate_file "$CI_SCRIPT.mutant" \
   '"$SCRIPT_DIR/resolve-base-branch" "$worktree"'
 assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked full request' default-base)" 'ci||pending' \
   'control: checking the default base instead of the open PR base skips required local validation'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+# Keep the PR read and actual-base getter; only resolution uses the wrong base.
+# shellcheck disable=SC2016
+mutate_file "$CI_SCRIPT.mutant" \
+  '  if ! uri="$(jq -rn --arg v "$base_branch" '\''$v | @uri'\'' 2>>"$log")"; then' \
+  $'  if [[ "$mode" == resolve && "$pr_order" == push-first && "$pr_state" == OPEN ]]; then\n    base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$log")"\n  fi\n  if ! uri="$(jq -rn --arg v "$base_branch" \'$v | @uri\' 2>>"$log")"; then'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked fix subset' resolve)" '0 validate-mode=ci' \
+  'control: default-base resolution skips local validation on an unrequired PR base'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked required base' resolve)" '0 validate-mode=range' \
+  'control: default-base resolution misses CI required only on the PR base'
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
 # The rules read names the base branch: a read of another branch's rules is
@@ -1237,7 +1260,7 @@ assert_eq "$([[ -f "$(run_dir_of "$OUT")/ci.log" ]] && echo kept || echo dropped
 # A ci run left to CI reads neither command, so a project that sets neither
 # passes it. Control: resolving the range mode first, as a range run does,
 # reads the empty DEV_VALIDATE_CMD and refuses.
-printf '[env]\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' > "$proj_ci/kendex.settings.toml"
+printf '[env]\nORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' > "$proj_ci/kendex.settings.toml"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" '[[ "$validate_mode" == ci ]] || resolve_range_mode' 'resolve_range_mode'
 ci_run "$CI_SCRIPT"
@@ -1884,7 +1907,7 @@ live_rows() { # SCRIPT
     git init -q "$proj"
     git -C "$proj" config gc.auto 0
     git -C "$proj" config maintenance.auto false
-    printf '[env]\nDEV_VALIDATE_CMD = "true"\nDEV_VALIDATE_TIMEOUT_SECS = "30"\n' > "$proj/kendex.settings.toml"
+    printf '[env]\nORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_CMD = "true"\nDEV_VALIDATE_TIMEOUT_SECS = "30"\n' > "$proj/kendex.settings.toml"
     run_script "$1" --worktree "$proj" --poll 1
     if [[ "$RC" == 2 ]]; then
       result="refused $(sed -n 1p <"$ERR" | sed "s|$proj|PROJ|; s|pid=$PLANTED\$|pid=PLANTED|")"
