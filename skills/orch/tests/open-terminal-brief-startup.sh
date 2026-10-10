@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The local --brief-file contract through real terminal input before the pane
 # shell finishes startup. Inputs: open-terminal, pane-write and lane-launch,
-# plus the shared launcher fixtures. The inline-prompt control loses input at
-# that boundary; a ready-shell argv test alone cannot exercise it.
+# plus the shared launcher fixtures. The command-snapshot control restores the
+# overlong paste; a ready-shell argv test alone misses startup loss.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,14 +31,13 @@ if [[ "${1:-}" == --case ]]; then
   trap 'exit 143' TERM
   ot_stub_bin "$ROOT/bin"
   mkfifo "$ROOT/startup-gate"
-  printf 'printf ready > %s\nread --nchars 1 < %s\nprintf ready > %s\n' \
-    "$ROOT/startup-entered" "$ROOT/startup-gate" "$ROOT/startup-released" > "$ROOT/home/.config/fish/config.fish"
-  printf 'printf ready > %q\nread -r -n 1 < %q\nprintf ready > %q\n' \
-    "$ROOT/startup-entered" "$ROOT/startup-gate" "$ROOT/startup-released" > "$ROOT/bashrc"
+  printf 'cd %s\nprintf ready > %s\nread --nchars 1 < %s\nprintf ready > %s\n' \
+    "$ROOT/home" "$ROOT/startup-entered" "$ROOT/startup-gate" "$ROOT/startup-released" > "$ROOT/home/.config/fish/config.fish"
+  printf 'cd %q\nprintf ready > %q\nread -r -n 1 < %q\nprintf ready > %q\n' \
+    "$ROOT/home" "$ROOT/startup-entered" "$ROOT/startup-gate" "$ROOT/startup-released" > "$ROOT/bashrc"
   # Positive rows must fit macOS's 1024-byte input queue, including Enter.
-  # The inline control deliberately exceeds it to prove actual delivery loss.
-  check_capacity=false
-  [[ "$OT" != "$SCRIPTS_DIR/open-terminal" ]] || check_capacity=true
+  # The control keeps this bound and restores the complete command paste.
+  check_capacity=true
   {
     printf '#!%s\nroot=%q\nreal_tmux=%q\nreal_sleep=%q\ncheck_capacity=%q\n' \
       "$BASH" "$ROOT" "$REAL_TMUX" "$REAL_SLEEP" "$check_capacity"
@@ -65,8 +64,8 @@ fi
 WRAPPER
   } > "$ROOT/real-bin/tmux"
   chmod +x "$ROOT/real-bin/tmux"
-  printf '#!%s\nprintf "%%s\\0" "$@" > %q\nprintf "%%s" "${!#}" > %q\nmv -- %q %q\n' \
-    "$BASH" "$ROOT/argv" "$ROOT/received.tmp" "$ROOT/received.tmp" "$ROOT/received" > "$ROOT/bin/$HARNESS"
+  printf '#!%s\nprintf "%%s\\0" "$@" > %q\nprintf "%%s" "${KENDEX_LANE_ORIGIN-}" > %q\nprintf "%%s" "${!#}" > %q\nmv -- %q %q\n' \
+    "$BASH" "$ROOT/argv" "$ROOT/origin" "$ROOT/received.tmp" "$ROOT/received.tmp" "$ROOT/received" > "$ROOT/bin/$HARNESS"
   chmod +x "$ROOT/bin/$HARNESS"
   tm -f /dev/null new-session -d -s fixture -x 200 -y 50
   if [[ "$SHELL_BIN" == "$REAL_FISH" ]]; then
@@ -97,13 +96,14 @@ WRAPPER
   esac
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 LINEAR_TEAM= \
     WORKTREE_CLI="$ROOT/bin/worktree" ORCH_TMUX_SESSION=fixture \
-    ORCH_LANE_HOST=local OT_WT_LOG="$ROOT/worktree.log" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+    ORCH_LANE_HOST=local OT_WT_LOG="$ROOT/worktree.log" OT_WT_PATH="$ROOT/worktree-path" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     "$OT" --tmux --harness "$HARNESS" --cmd "$HARNESS $flags $QUESTION_OFF_ALL {brief}" \
     --brief-file "$ROOT/brief" KEN-1 > "$ROOT/launch.log" 2>&1
   for i in {1..100}; do [[ ! -f "$ROOT/received" ]] || break; "$REAL_SLEEP" 0.02; done
   [[ -f "$ROOT/startup-entered" && -f "$ROOT/startup-released" ]] || exit 71
   if [[ -f "$ROOT/received" ]]; then
     cmp -s "$ROOT/received" "$ROOT/expected" || exit 1
+    [[ "$(cat "$ROOT/origin")" == "$(cat "$ROOT/worktree-path")" ]] || exit 1
     # The argv recorder includes every argument, including the full prompt.
     perl -e 'local $/; open my $a,"<",$ARGV[0] or die $!; my @a=split /\0/,<$a>; open my $b,"<",$ARGV[1] or die $!; exit($a[-1] eq <$b> ? 0 : 1)' \
       "$ROOT/argv" "$ROOT/expected"
@@ -117,16 +117,20 @@ TMP_ROOT="$(mktemp -d)" || { echo 'brief-startup: scratch=mktemp-failed' >&2; ex
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || exit 1
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-OLD="$(mutant_scripts inline-brief open-terminal)"
+OLD="$(mutant_scripts command-brief open-terminal)"
 orch_fixture_shared_libs "${OLD%/scripts}"
 git -C "${OLD%/scripts}" init -q
 git -C "${OLD%/scripts}" config gc.auto 0
 git -C "${OLD%/scripts}" config maintenance.auto false
-mutate_file "$OLD/open-terminal" 'brief_path="${6:-}"' 'brief_path=""'
+mutate_file "$OLD/open-terminal" 'cmd="bash $(lane_single_quote "$brief_command_file")"' \
+  'cmd="bash $(lane_single_quote "$brief_command_file")"; cmd="$(cat -- "$brief_command_file")"'
 
 run_case() { # NAME SCRIPT HARNESS SHELL
   local name="$1" ot="$2" harness="$3" shell="$4"
   RUN="$TMP_ROOT/$name"
+  # Reproduce the long paths of macOS scratch roots on shorter Linux roots.
+  # Keep the private tmux socket below the platform's pathname bound.
+  while (( ${#RUN} < 90 )); do RUN="$TMP_ROOT/p${RUN##*/}"; done
   mkdir -p "$RUN"
   RC=0
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 timeout 20 "$BASH" "$TEST_DIR/open-terminal-brief-startup.sh" \
@@ -146,16 +150,12 @@ claude|$BASH
 pi|$BASH
 ROWS
 
-run_case old-inline "$OLD/open-terminal" codex "$REAL_FISH"
-assert_eq "$RC" 1 'control: the original inline brief fails the same full-message readback' "$RUN/log"
-if [[ -f "$RUN/startup-released" ]] \
-  && { [[ ! -f "$RUN/argv" && ! -f "$RUN/received" ]] \
-    || { [[ -f "$RUN/argv" && -f "$RUN/received" ]] && ! cmp -s "$RUN/received" "$RUN/expected"; }; }; then
-  # The launch command clears the screen even after successful delivery.
-  # The tail can survive an earlier lost paragraph, so compare the full brief.
-  pass 'control: startup completed after paste without complete brief delivery'
+run_case command-brief "$OLD/open-terminal" codex "$REAL_FISH"
+assert_eq "$RC" 1 'control: the overlong command paste fails the same complete-message case' "$RUN/log"
+if [[ -f "$RUN/input-bound" && ! -f "$RUN/argv" && ! -f "$RUN/received" ]]; then
+  pass 'control: the restored command paste exceeds the unchanged input bound'
 else
-  fail 'control: startup completed after paste without complete brief delivery'
+  fail 'control: the restored command paste exceeds the unchanged input bound'
 fi
 printf '\npass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

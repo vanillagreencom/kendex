@@ -2745,7 +2745,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
 # caller checks it, which suspends errexit for this whole body, so every
 # substitution here is checked explicitly.
 launch_finish() {
-  local context_session brief_prompt_file="" brief_prompt_dir rc=0
+  local context_session brief_prompt_file="" brief_prompt_dir brief_command_file rc=0
   LANE_MARKER_REASON=marker-failed
   if [[ "$host_pending_step" == selection ]]; then
     record_session="" LAUNCH_ALLOW_ALL=null
@@ -2910,6 +2910,14 @@ launch_finish() {
   fi
   if [[ "$LANE_HOST" == local ]]; then
     cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt"); $cmd"
+    if [[ -n "$brief_prompt_file" ]]; then
+      # Login shells can change directory during startup. Keep the explicit
+      # origin and the complete launch line off the terminal's input queue.
+      brief_command_file="$(mktemp "$brief_prompt_dir/local-command.XXXXXX")" \
+        && printf '%s\n' "$cmd" > "$brief_command_file" \
+        || { ot_message brief-command-failed "item=$item" >&2; return 1; }
+      cmd="bash $(lane_single_quote "$brief_command_file")"
+    fi
   fi
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || return 1
