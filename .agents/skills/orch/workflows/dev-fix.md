@@ -54,6 +54,16 @@ Cancel ends the workflow; a selection goes to § 2.
 
 Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree to the selected dev agent before every fix round, including a caller-supplied `dev_agent`.
 
+Before stamping or delegating the round, check its base:
+
+```bash
+.agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
+```
+
+- Exit 0 keeps the current validation route, including the later `restack-skip` check.
+- Exit 4 first unarms any open PR through [merge-pr-restack.md](merge-pr-restack.md#unarm-at-a-stop) step 1, then requires `worktree create [ISSUE_ID] --restack` before validation. Resolve conflicts and run `worktree restack continue [ISSUE_ID]` until complete. Apply [Rules reload after a rebase](../SKILL.md#the-cycle), then run the gate again. Only exit 0 permits stamping the round on the rebased HEAD and validating its fixes.
+- Any other exit, or an incomplete restack, stops delegation and validation. Never validate the stale head first.
+
 1. **Determine the agent.** `dev_agent` wins. Otherwise read state, falling back to the issue's `agent:*` label or the component paths:
 
    ```bash
