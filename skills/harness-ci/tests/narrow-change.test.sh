@@ -267,6 +267,8 @@ a miss keeps trivial|standard_miss_base|docs/risk.md=2||class=trivial measured=t
 a miss keeps micro|standard_miss_base|runtime/product.ts=2||class=micro measured=true cause=production-within-micro production=2
 a miss keeps small|standard_miss_base|runtime/product.ts=40||class=small measured=true cause=production-within-small subsystem=runtime
 an empty declaration adds no exclusions|standard_empty_base|runtime/product.ts=2||class=micro measured=true cause=production-within-micro production=2
+an empty declaration keeps shared exclusions|standard_empty_base|hooks/guard.sh=2||class=standard measured=true cause=excluded-path path=hooks/guard.sh glob=hooks/!(*/*|*.md)
+a nonempty declaration keeps shared-only exclusions|standard_base|hooks/guard.sh=2||class=standard measured=true cause=excluded-path path=hooks/guard.sh glob=hooks/!(*/*|*.md)
 the environment cannot clear base exclusions|standard_base|runtime/product.ts=2|HARNESS_CI_STANDARD_PATHS=|class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
 the environment cannot add exclusions|base|runtime/product.ts=2|HARNESS_CI_STANDARD_PATHS=runtime/*|class=micro measured=true cause=production-within-micro production=2
 the settings overlay wins over the root table|standard_overlay_base|runtime/product.ts=2||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
@@ -277,10 +279,6 @@ adding the setting in the head cannot select its cause|base|standard-head-add||c
 ROWS
 require_rows repository-standard-path "$standard_rows"
 ROW_ENV=""
-ROW_BASE="$standard_empty_base"
-assert_eq "an empty declaration keeps shared exclusions" \
-  "class=standard measured=true cause=excluded-path" \
-  "$(verdict_of "$(run_row "$CHANGE_CLASS" hooks/guard.sh=2)")"
 
 # The supplied base endpoint can acquire its declaration after the fork.
 ROW_BASE="$base" reset_case
@@ -298,6 +296,10 @@ assert_eq "a reader of head settings loses the base endpoint exclusion" "$MICRO"
 
 # Controls change each independent rule in a disposable script copy.
 ROW_BASE="$standard_base"
+control "a nonempty declaration cannot replace shared exclusions" "$MICRO" \
+  hooks/guard.sh=2 standard-additive change-class \
+  'if path_class_matches narrow standard; then' \
+  'if path_class_matches narrow standard && [ -z "${HARNESS_CI_STANDARD_PATHS:-}" ]; then'
 control "skipping repository matching lets its path through" "$MICRO" \
   runtime/product.ts=2 standard-match change-class \
   '  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured' \
