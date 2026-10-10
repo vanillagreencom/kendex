@@ -33,13 +33,13 @@
 #      ignoring the event and a CI lane ignoring the selection.
 #      A dead classifier runs every gated job its event runs and the whole
 #      Linux shard roster. A pull
-#      request's run is cancelled by its next push; no other run is. The `CI` job needs every job that can run on a gated event but the aggregators and
+#      request's run is cancelled by its next push; no other run is. The `CI` job needs every other job that can run on a gated event and
 #      runs on both gated events whatever its needs did. Must-fail arms plant
 #      a lane condition that reads no selection, one that drops its status
 #      function, one that ignores the class on a merge group, a matrix with
 #      its arms swapped, one ignoring the event, a shard key reading no
 #      selection, a cancel held to no event, a job dropped from CI's needs, CI without always(),
-#      a lane dropped from one aggregate alone and an event-held job held to
+#      a lane dropped from CI and an event-held job held to
 #      another condition. Every run step of the bot-instructions job is held
 #      to the events it runs on: the doc-limits, todo-ban and secrets scans on
 #      a pull request alone, the bot-instructions, decision-ID and changelog checks on
@@ -245,11 +245,9 @@ GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 [ "$(printf '%s\n' "$GATE_PAIRS" | grep -c .)" -gt 0 ] ||
   { echo "no gated job read out of $WORKFLOW, so the extractor is broken" >&2; exit 1; }
 
-# Each aggregate, on its own, holds every gated job it needs to the lane that
+# CI holds every gated job it needs to the lane that
 # job's own condition reads, and every job it needs whose condition stands it
-# down on a gated event to that condition, spelled as the job spells it. The
-# aggregates repeat each other's lanes, so a comparison over their union
-# would hide one aggregate's omission behind another's copy. A needed job
+# down on a gated event to that condition, spelled as the job spells it. A needed job
 # with no lane is event-held where its own condition evaluates false on
 # pull_request or merge_group; a condition the evaluator refuses prints its
 # refusal into the gap.
@@ -283,10 +281,10 @@ for agg in $(aggregators "$WORKFLOW"); do
   check "$agg holds each job it needs to the selection its own condition reads" \
     "lanes: missing= extra= events: missing= extra=" "$(aggregate_gap "$WORKFLOW" "$agg")"
 done
-[ "$AGGREGATE_ROWS" -ge 4 ] || { echo "the aggregate table read $AGGREGATE_ROWS rows" >&2; exit 1; }
+[ "$AGGREGATE_ROWS" -ge 1 ] || { echo "the aggregate table read no rows" >&2; exit 1; }
 # The event-held set, derived above, holds the two diff checks CI names.
 EVENT_HELD="$(aggregate_events "$WORKFLOW" | cut -f1 | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
-check "the aggregates hold the two diff checks to an event" "markdown preflight" "$EVENT_HELD"
+check "CI holds the two diff checks to an event" "markdown preflight" "$EVENT_HELD"
 
 # --- 2. The job set ---------------------------------------------------------
 # gh-eval.py's header names the expression forms it covers and refuses the
@@ -824,8 +822,8 @@ done
 # --- 2a. The one context ---------------------------------------------------
 # `CI` is the aggregate context the organization standard has every repository
 # report, checked by review-gate's standard-ci-context row.
-# Every job reports into it but the aggregators, which run tools/ci-aggregate
-# as it does; it runs on both gated events whatever its needs did, and the
+# Every other gated job reports into it; it runs on both gated events
+# whatever its needs did, and the
 # classifier it reads runs on both.
 
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on gated events
@@ -843,14 +841,10 @@ ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can ru
 }
 check "one job is named CI" "ci" "$(jobs_named "$WORKFLOW" CI | tr '\n' ' ' | sed 's/ $//')"
 AGGREGATORS="$(aggregators "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
-check "the aggregators are read out of the workflow" "cargo-tests cargo-tests-macos ci skill-suites" "$AGGREGATORS"
-check "CI needs every gated-event job but the aggregators" "missing= extra=" "$(ci_needs_gap "$WORKFLOW")"
-plant "$WORKFLOW" "needs: [changes, skill-suites-shard, ui-tests, bot-instructions]" \
-  "needs: [changes, skill-suites-shard, skill-suites-macos, ui-tests, bot-instructions]" "$TMP/wf-required-macos.yml" skill-suites
-check "must-fail: required skill suites can name a macOS push dependency" skill-suites-macos \
-  "$(job_needs "$TMP/wf-required-macos.yml" | awk -F '\t' '$1 == "skill-suites" { print $2 }' | tr ',' '\n' | grep -x skill-suites-macos)"
-check "required contexts have no macOS skill-suite dependency" '' \
-  "$(job_needs "$WORKFLOW" | awk -F '\t' '$1 == "ci" || $1 == "skill-suites" { print $2 }' | tr ',' '\n' | grep -x skill-suites-macos || true)"
+check "CI is the only aggregate read out of the workflow" "ci" "$AGGREGATORS"
+check "CI needs every other gated-event job" "missing= extra=" "$(ci_needs_gap "$WORKFLOW")"
+check "CI has no main-push macOS skill-suite dependency" '' \
+  "$(job_needs "$WORKFLOW" | awk -F '\t' '$1 == "ci" { print $2 }' | tr ',' '\n' | grep -x skill-suites-macos || true)"
 # EVENT|RESULT|RUNS
 ci_rows=0
 while IFS='|' read -r event result runs; do
@@ -961,15 +955,13 @@ plant "$WORKFLOW" "needs: [changes, bot-instructions, skill-suites-shard," "need
 check "must-fail: a job dropped from CI's needs is named" "missing=bot-instructions extra=" \
   "$(ci_needs_gap "$TMP/wf-ci-short.yml")"
 
-# A lane dropped from one aggregate alone, while another aggregate still
-# passes it, is named on that aggregate: CI, and a per-repository aggregator.
+# A lane dropped from CI is named.
 # AGGREGATE|LANE LINE|GAP
 while IFS='|' read -r agg line gap; do
   plant "$WORKFLOW" "$line" '' "$TMP/wf-lane-$agg.yml" "$agg"
   check "must-fail: a lane dropped from $agg alone is named" "$gap" "$(aggregate_gap "$TMP/wf-lane-$agg.yml" "$agg")"
 done <<'ROWS'
 ci|--lane "$UI:ui-tests"|lanes: missing=ui:ui-tests extra= events: missing= extra=
-cargo-tests|--lane "$CARGO_LINT:cargo-lint"|lanes: missing=cargo_lint:cargo-lint extra= events: missing= extra=
 ROWS
 
 # Without always(), GitHub's implicit success() skips CI on a failed need, and
@@ -998,31 +990,29 @@ aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal ke
   sed -n 's/^ci-aggregate: cause=/ /p' "$TMP/aggregate-err" | head -1
 }
 
-# The workflow combines the shard and runner selections for each required
-# shell aggregate. Keep both output names in the control: name coverage
+# CI combines the shard and runner selections. Keep both output names in
+# the control: name coverage
 # alone cannot detect an expression that authorizes every skipped shell job.
 saved_results="$RESULTS"
 RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
-for agg in skill-suites "$CI_JOB"; do
-  expr="$(aggregate_lanes "$WORKFLOW" "$agg" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
-  while IFS='|' read -r row event sel expected_value expected_status; do
-    value="$(gh_eval value "$(context_json "$event" success "$sel" "$TMP/published-map")" "$expr")"
-    check "$agg shell selection on $row" "$expected_value" "$value"
-    check "$agg skipped shell result on $row" "$expected_status" \
-      "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
-  done <<ROWS
+expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
+while IFS='|' read -r row event sel expected_value expected_status; do
+  value="$(gh_eval value "$(context_json "$event" success "$sel" "$TMP/published-map")" "$expr")"
+  check "$CI_JOB shell selection on $row" "$expected_value" "$value"
+  check "$CI_JOB skipped shell result on $row" "$expected_status" \
+    "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
+done <<ROWS
 selected-linux|pull_request|$one_skill|true|1
 tree-proof-integration|merge_group|$ORCH_PROOF_ROW|true|1
 patch-proof-integration|merge_group|$PATCH_PROOF_ROW|true|1
 tree-proof-full-integration|merge_group|$SOURCE_PROOF_ROW|true|1
 ROWS
-  plant "$WORKFLOW" "SHELL_SHARDS: \${{ $expr }}" "SHELL_SHARDS: \${{ $expr && false }}" \
-    "$TMP/wf-shell-false-$agg.yml" "$agg"
-  false_expr="$(aggregate_lanes "$TMP/wf-shell-false-$agg.yml" "$agg" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
-  value="$(gh_eval value "$(context_json pull_request success "$one_skill" "$TMP/published-map")" "$false_expr")"
-  check "must-fail: $agg with selection behavior removed authorizes skipped Linux" "0" \
-    "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
-done
+plant "$WORKFLOW" "SHELL_SHARDS: \${{ $expr }}" "SHELL_SHARDS: \${{ $expr && false }}" \
+  "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB"
+false_expr="$(aggregate_lanes "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
+value="$(gh_eval value "$(context_json pull_request success "$one_skill" "$TMP/published-map")" "$false_expr")"
+check "must-fail: $CI_JOB with selection behavior removed authorizes skipped Linux" "0" \
+  "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
 RESULTS="$saved_results"
 
 # The queue's macOS legs report into CI: a failed or cancelled leg fails it,

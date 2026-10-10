@@ -26,11 +26,9 @@ name: Skill Tests
 # integrated tree, even when its tree equals the pull request's tree.
 # `tools/ci-job-set --event-parity` holds the Ubuntu selection equal across
 # events before applying proof. The required checks retain their names.
-# The aggregators
-# still report and accept only the skips the
-# selection authorized, and the last job, `CI`, is the one every other job
-# reports into, the three aggregators and the main-push macOS skill suites
-# excepted. The push to main
+# The last job, `CI`, accepts only the skips the selection authorized.
+# Every other job reports into it except the main-push macOS skill suites.
+# The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so its Linux and Windows cargo lanes run only the compile steps and save
@@ -199,7 +197,7 @@ jobs:
       # DEFAULT BRANCH's copy, where the pull request's author cannot change
       # it; `subject` is the tree under judgement; and the workspace root
       # carries the action wrapper, `tools/ci-job-set` and the
-      # `tools/ci-aggregate` the aggregators run, which this repository is
+      # `tools/ci-aggregate` that CI runs, which this repository is
       # proving on this pull request and which review holds. A consumer
       # calling the action at `@main` gets the same split with one checkout,
       # because there the action's own tree IS kendex at main.
@@ -1561,48 +1559,6 @@ jobs:
         working-directory: ui
         run: npm run check:lint
 
-  # AGGREGATOR — this job's name is the per-repository ruleset's required
-  # context, so the `(shell + node)` in it is frozen history: renaming it to
-  # match today's shards leaves the ruleset waiting on a context nothing
-  # creates. It and the two cargo aggregators stand while the repository
-  # required-checks ruleset names them. `CI` holds every lane they hold;
-  # removing their required contexts must precede deleting the jobs. It runs on
-  # pull_request and merge_group, the two events the ruleset gates; not on
-  # push, where the shards are skipped and nothing requires a context. GitHub
-  # counts a SKIPPED required context as satisfied, so on the gated events no
-  # further condition may skip this job: a PR with a red shard would enter the
-  # queue and be ejected there. `always()` is required
-  # because skipped/failed needs would otherwise skip this job too, and a
-  # skipped required context would satisfy the ruleset without any suite having
-  # run (the fail-open this line exists to close).
-  #
-  # tools/ci-aggregate judges `toJSON(needs)` as a set. It requires the
-  # classifier to succeed, and accepts a skipped lane only where the changes
-  # job published `false` for that lane's selection. Failure, cancellation and
-  # every other skip fail this required context.
-  skill-suites:
-    name: Skill suites (shell + node)
-    needs: [changes, skill-suites-shard, ui-tests, bot-instructions]
-    if: always() && github.event_name != 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: every needed job succeeded
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]' }}
-          UI: ${{ needs.changes.outputs.ui }}
-          BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
-        run: |
-          echo "$RESULTS"
-          tools/ci-aggregate --results "$RESULTS" --classifier changes \
-            --lane "$SHELL_SHARDS:skill-suites-shard" \
-            --lane "$UI:ui-tests" \
-            --lane "$BOT_INSTRUCTIONS:bot-instructions"
-
   preflight:
     # Dogfoods the preflight skill on this repo's own PR diffs. PR-only
     # because it is diff-scoped and a merge group has no PR base to diff
@@ -1657,12 +1613,8 @@ jobs:
   # step in that job gives. Every lane compiles in a step of its own
   # (`--no-run`) so a compile failure reads as one, and on the push to main
   # that step is the whole Linux and Windows job. macOS also runs tests to
-  # catch failures from combined patches after proof reuse. The aggregators after the
-  # shards carry the per-repository ruleset's required contexts, `Cargo
-  # (workspace tests)` and `macOS cargo (workspace tests)`: frozen names, for
-  # the reason the Skill suites aggregator gives, and retired with it.
-  # Splitting a lane adds legs under one of those two contexts and under `CI`
-  # and changes no name.
+  # catch failures from combined patches after proof reuse. Splitting a lane
+  # adds legs under `CI` and changes no required context name.
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
   # toolchain and RUSTFLAGS, plus the crate — and on macOS the leg — through
@@ -2001,59 +1953,6 @@ jobs:
         timeout-minutes: 10
         run: cargo doc --no-deps --document-private-items --workspace --locked
 
-  # AGGREGATORS for the two required cargo contexts; the shape and the
-  # reasons are the Skill suites aggregator's. Each accepts a skipped cargo
-  # lane only through tools/ci-aggregate, against the selection the changes
-  # job published for it. Not on push: the shards ran compile-only there and
-  # nothing requires a context on that event.
-  cargo-tests:
-    name: Cargo (workspace tests)
-    # The two Windows lanes aggregate here rather than standing as contexts of
-    # their own. GitHub counts a SKIPPED required context as satisfied, so a
-    # lane that skips on its own name is a lane nothing holds; under this
-    # aggregate a skip is accepted only where the class authorized it.
-    needs: [changes, cargo-linux, cargo-lint, cargo-check-windows, cargo-tests-windows]
-    if: always() && github.event_name != 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: every needed job succeeded
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-          CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}
-          CARGO_LINT: ${{ needs.changes.outputs.cargo_lint }}
-          CARGO_WINDOWS: ${{ needs.changes.outputs.cargo_windows }}
-          CARGO_WINDOWS_CHECK: ${{ needs.changes.outputs.cargo_windows_check }}
-        run: |
-          echo "$RESULTS"
-          tools/ci-aggregate --results "$RESULTS" --classifier changes \
-            --lane "$CARGO_LINUX:cargo-linux" \
-            --lane "$CARGO_LINT:cargo-lint" \
-            --lane "$CARGO_WINDOWS_CHECK:cargo-check-windows" \
-            --lane "$CARGO_WINDOWS:cargo-tests-windows"
-
-  cargo-tests-macos:
-    name: macOS cargo (workspace tests)
-    needs: [changes, cargo-macos]
-    if: always() && github.event_name != 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: every needed job succeeded
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-          CARGO_MACOS: ${{ needs.changes.outputs.cargo_macos }}
-        run: |
-          echo "$RESULTS"
-          tools/ci-aggregate --results "$RESULTS" --classifier changes \
-            --lane "$CARGO_MACOS:cargo-macos"
-
   # The app ships on Windows and release.yml builds it there. `cargo check`
   # does not link, so the Linux runner proves the Windows targets compile
   # without one, and it answers in a minute where the executing lane below
@@ -2122,14 +2021,10 @@ jobs:
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
 
   # The aggregate CI context follows the repository required-checks ruleset.
-  # Every other job
-  # in this workflow reports into it, the three aggregators and main-push
-  # macOS skill suites excepted:
-  # it holds every lane they hold, plus Preflight and Markdown,
-  # and they keep the per-repository ruleset's names until that ruleset is
-  # retired. The shape and the reasons are the Skill suites
-  # aggregator's: `always()` so a failed or skipped need fails this context
-  # rather than skipping it, and not on push, where nothing requires it.
+  # Every other job reports into it except main-push macOS skill suites.
+  # GitHub counts a skipped required context as satisfied. `always()` keeps
+  # a failed or skipped need from skipping this context on pull_request and
+  # merge_group. It does not run on push, where nothing requires it.
   #
   # tools/ci-aggregate accepts a skipped lane only where the changes job
   # selected it `false`, on pull_request and merge_group alike, so a merge
