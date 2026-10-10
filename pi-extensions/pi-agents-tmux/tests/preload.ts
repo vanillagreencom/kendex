@@ -19,8 +19,8 @@ mkdirSync(CORE_BIN);
 const CORE_PEER = join(CORE_BIN, "kendex");
 writeFileSync(CORE_PEER, `#!/usr/bin/env node
 const args = process.argv.slice(2);
-if (args.length !== 7 || args[0] !== "tier-model" || args[1] !== "pi" || args[2] !== "--model" || args[4] !== "--runtime-context-json" || args[6] !== "--json") process.exit(71);
-const context = JSON.parse(args[5]);
+if (args.length !== 6 || args[0] !== "tier-model" || args[1] !== "pi" || args[2] !== "--model" || args[4] !== "--runtime-context-stdin" || args[5] !== "--json") process.exit(71);
+const context = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
 if (context.protocol !== "model-resolution-v1" || context.harness !== "pi") process.exit(72);
 const resolution = args[3] === "inherit" ? {tag:"inherit", diagnostics:[]} : {tag:"selected",selection:{nativeSelector:args[3]},diagnostics:[]};
 console.log(JSON.stringify({protocol:"model-resolution-v1",harness:"pi",resolution}));
@@ -79,7 +79,7 @@ const withLiveEnv = (options: SyncOptions) => ({ env: process.env, ...(options ?
 mock.module("node:child_process", () => ({
 	...realChildProcess,
 	spawn: (command: string, args?: readonly string[], options?: childProcess.SpawnOptions) =>
-		realChildProcess.spawn(command === "kendex" ? CORE_PEER : command, args ?? [], options ?? {}),
+		realChildProcess.spawn(command === "kendex" && (options?.env?.PATH ?? process.env.PATH) === process.env.PATH ? CORE_PEER : command, args ?? [], options ?? {}),
 	execFileSync: (command: string, args?: string[] | SyncOptions, options?: SyncOptions) =>
 		Array.isArray(args)
 			? realChildProcess.execFileSync(command, args, withLiveEnv(options))

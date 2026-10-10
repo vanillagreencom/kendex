@@ -28,8 +28,8 @@ export function modelRegistryFixture(getAvailable: AgentModelRegistry["getAvaila
 export function withModelFixtureCapture(capture: NonNullable<Parameters<typeof import("../extensions/subagent/pane.js").setPaneExecCaptureForTests>[0]>): typeof capture {
 	return async (command, args, options) => {
 		if (command !== "kendex") return capture(command, args, options);
-		assert.deepEqual([args[0], args[1], args[2], args[4], args[6]], ["tier-model", "pi", "--model", "--runtime-context-json", "--json"]);
-		assert.equal(JSON.parse(args[5]!).protocol, "model-resolution-v1");
+		assert.deepEqual([args[0], args[1], args[2], args[4], args[5]], ["tier-model", "pi", "--model", "--runtime-context-stdin", "--json"]);
+		assert.equal(JSON.parse(options!.input!).protocol, "model-resolution-v1");
 		const resolution = args[3] === "inherit" ? { tag: "inherit", diagnostics: [] } : { tag: "selected", selection: { nativeSelector: args[3] }, diagnostics: [] };
 		return { code: 0, stdout: JSON.stringify({ protocol: "model-resolution-v1", harness: "pi", resolution }), stderr: "" };
 	};

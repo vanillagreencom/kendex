@@ -124,7 +124,7 @@ async function commandPath(kind: "start" | "send", runtime: typeof agentsCommand
       coreCalls += 1;
       expect(options?.cwd).toBe(ctx.cwd);
       expect(args[3]).toBe("standard");
-      const context = JSON.parse(args[5]);
+      const context = JSON.parse(options!.input!);
       try {
         expect(context.models.tag).toBe("complete");
         expect(context.models.models).toEqual([{ provider: "custom", id: "chat", nativeSelector: "custom/chat", allowed: true, chat: true, isDefault: false }]);
