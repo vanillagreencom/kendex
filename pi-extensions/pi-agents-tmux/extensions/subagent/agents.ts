@@ -31,6 +31,8 @@ export interface AgentConfig {
 	 */
 	allowedSubagents?: string[];
 	model?: string;
+	/** The execute-time agent copy retains file intent if its call model cannot resolve. */
+	callModelFallback?: { model?: string };
 	effort?: string;
 	pane: boolean;
 	systemPrompt: string;

@@ -110,6 +110,25 @@ export async function resolveAgentModel(
 	agent: AgentConfig, parentModel: string | undefined, cwd: string,
 	registry: AgentModelRegistry | undefined, capture: ModelCapture,
 ): Promise<string | undefined> {
+	try {
+		return await resolveAgentModelAttempt(agent, parentModel, cwd, registry, capture);
+	} catch (error) {
+		if (agent.callModelFallback === undefined) throw error;
+		if (!modelWarningEmitted) {
+			console.warn(`model-resolution: requested=${agent.model} fallback=${agent.callModelFallback.model ?? "inherit"} cause=${String(error)}`);
+			modelWarningEmitted = true;
+		}
+		// The launcher's effort chooser must read the fallback's raw suffix too.
+		agent.model = agent.callModelFallback.model;
+		delete agent.callModelFallback;
+		return resolveAgentModelAttempt(agent, parentModel, cwd, registry, capture);
+	}
+}
+
+async function resolveAgentModelAttempt(
+	agent: AgentConfig, parentModel: string | undefined, cwd: string,
+	registry: AgentModelRegistry | undefined, capture: ModelCapture,
+): Promise<string | undefined> {
 	const raw = selectedModelForAgent(agent, parentModel, cwd);
 	const request = agent.model === undefined || subagentModelSource(cwd) === "parent"
 		? "inherit" : modelWithoutEffortSuffix(raw) ?? raw ?? "inherit";

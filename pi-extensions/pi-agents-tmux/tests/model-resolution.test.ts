@@ -5,16 +5,78 @@ import type { AgentConfig } from "../extensions/subagent/agents.js";
 import { discoverAgents } from "../extensions/subagent/agents.js";
 import * as settings from "../extensions/subagent/settings.js";
 import { resetModelWarning, resolveAgentModel } from "../extensions/subagent/settings.js";
-import { cleanupTempRuntimes, modelRegistryFixture, tempRuntime, writeSettings } from "./single-agent-fixture.js";
+import { cleanupTempRuntimes, installMockSpawn, modelRegistryFixture, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 import { importRuntimeCopy, writeProjectAgent } from "./browser-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
+import { setPaneExecCaptureForTests } from "../extensions/subagent/pane.js";
+import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import { withExtensionTools } from "./extension-fixture.js";
 
 const agent = { name: "runtime", model: "standard", source: "project" } as AgentConfig;
 const nativeModel = { provider: "custom", id: "chat", contextWindow: 123456 } as Model<Api>;
 const registry = modelRegistryFixture(() => [nativeModel]);
 const selected = { protocol: "model-resolution-v1", harness: "pi", resolution: { tag: "selected", selection: { nativeSelector: "custom/chat" }, diagnostics: [] } };
 const capture = async () => ({ code: 0, stdout: JSON.stringify(selected), stderr: "" });
-afterEach(() => { resetModelWarning(); clearPackageConfigCache(); cleanupTempRuntimes(); });
+afterEach(() => { setPaneExecCaptureForTests(); setSingleAgentSpawnForTests(); resetModelWarning(); clearPackageConfigCache(); cleanupTempRuntimes(); });
+
+for (const row of [
+  { model: "light:medium", request: "light", selector: "custom/light-chat", effort: "medium" },
+  { model: undefined, request: "standard", selector: "custom/chat", effort: "high" },
+]) {
+  test(`single tool dispatch transports model and effort, override=${row.model !== undefined}`, async () => {
+    await withExtensionTools(async (tools, ctx) => {
+      writeProjectAgent(ctx.cwd, "call-model-test", ["model: standard:high"]);
+      ctx.modelRegistry = registry;
+      const requests: string[] = [];
+      setPaneExecCaptureForTests(async (command, args) => {
+        expect(command).toBe("kendex");
+        requests.push(args[3]);
+        return { code: 0, stdout: JSON.stringify({ ...selected, resolution: { tag: "selected", selection: { nativeSelector: row.selector }, diagnostics: [] } }), stderr: "" };
+      });
+      const spawns = installMockSpawn([{}]);
+      const result = await tools.get("subagent").execute("call", { agent: "call-model-test", task: "review", model: row.model }, undefined, undefined, ctx);
+      expect(requests).toEqual([row.request]);
+      expect(spawns).toHaveLength(1);
+      const args = spawns[0].args;
+      expect(args[args.indexOf("--model") + 1]).toBe(row.selector);
+      expect(args[args.indexOf("--thinking") + 1]).toBe(row.effort);
+      expect(result.details.results[0].model).toBe(row.selector);
+      expect(discoverAgents(ctx.cwd, "project").agents.find(item => item.name === "call-model-test")?.model).toBe("standard:high");
+    });
+  });
+}
+
+test("an unresolvable call model starts on file intent and warns once per session", async () => {
+  await withExtensionTools(async (tools, ctx) => {
+    writeProjectAgent(ctx.cwd, "call-model-test", ["model: standard:high"]);
+    ctx.modelRegistry = registry;
+    const requests: string[] = [];
+    setPaneExecCaptureForTests(async (command, args) => {
+      expect(command).toBe("kendex");
+      requests.push(args[3]);
+      return args[3] === "typo"
+        ? { code: 1, stdout: "", stderr: "model-resolution: invalid=request" }
+        : capture();
+    });
+    const warnings = spyOn(console, "warn").mockImplementation(() => undefined);
+    const spawns = installMockSpawn([{}, {}]);
+    try {
+      for (const task of ["review", "review again"]) {
+        const result = await tools.get("subagent").execute("call", { agent: "call-model-test", task, model: "typo:medium" }, undefined, undefined, ctx);
+        expect(result.isError).not.toBe(true);
+        expect(result.details.results[0].model).toBe("custom/chat");
+        expect(result.details.results[0].effort).toBe("high");
+      }
+      expect(requests).toEqual(["typo", "standard", "typo", "standard"]);
+      expect(spawns).toHaveLength(2);
+      for (const { args } of spawns) {
+        expect(args[args.indexOf("--model") + 1]).toBe("custom/chat");
+        expect(args[args.indexOf("--thinking") + 1]).toBe("high");
+      }
+      expect(warnings.mock.calls).toHaveLength(1);
+    } finally { warnings.mockRestore(); }
+  });
+});
 
 test("the shared child preparation transports registry and child directory to core", async () => {
   let calls = 0;

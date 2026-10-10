@@ -2023,7 +2023,8 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "project";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
+			const agents = params.model === undefined ? discovery.agents : discovery.agents.map((agent) =>
+				agent.name === params.agent ? { ...agent, model: params.model, callModelFallback: { model: agent.model } } : agent);
 			const confirmProjectAgents = params.confirmProjectAgents ?? false;
 			const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 			const parentThinkingLevel = pi.getThinkingLevel();
