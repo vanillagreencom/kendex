@@ -27,7 +27,7 @@
 #      queue_macos_shards list names; matching patch proof waives these
 #      legs only on the group. The full
 #      macOS roster runs on main pushes. The queue's legs expand to that
-#      list, or to all three where nothing classified, and CI's lane for
+#      list, or to the macOS-capable roster where nothing classified, and CI's lane for
 #      them is true exactly where they run. Must-fail arms plant a queue
 #      condition and a queue shard key that read no selection, a queue job
 #      ignoring the event and a CI lane ignoring the selection.
@@ -472,6 +472,11 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
 }
 # A merge group touching the script the orch-terminal shard races.
 open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
+open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
+orch_proof_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$ORCH_PROOF_ROW")")"
+linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls"]' '[]')"
+check "the portability row selects orch-rest" true \
+  "$(jq -c 'index("orch-rest") != null' <<<"$open_terminal_queue")"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"
 # EVENT|RESULT|SELECTION|LEGS. VERIFY_ROW, PROSE_ROW and one_skill name no leg.
 queue_rows=0
@@ -484,22 +489,45 @@ while IFS='|' read -r event result sel expected; do
   check "CI's queue lane is $lane on $event at $result under '$sel'" "$lane" \
     "$(queue_lane "$WORKFLOW" "$event" "$result" "$sel")"
 done <<ROWS
-merge_group|success|$open_terminal|$QUEUE_ALL
-merge_group|success|$ORCH_PROOF_ROW|$QUEUE_ALL
+merge_group|success|$open_terminal|$open_terminal_queue
+merge_group|success|$ORCH_PROOF_ROW|$orch_proof_queue
 merge_group|success|$SOURCE_PROOF_ROW|$QUEUE_ALL
 merge_group|success|$PATCH_PROOF_ROW|none
-merge_group|success|$ORCH_CODE_ROW|["orch-terminal","orch-oversee-succeed"]
+merge_group|success|$ORCH_CODE_ROW|$(macos_shards "$ORCH_SHARDS")
 merge_group|success|$only_succeed|["orch-oversee-succeed"]
 merge_group|success|$one_skill|none
 merge_group|success|$VERIFY_ROW|none
 merge_group|success|$PROSE_ROW|none
+merge_group|success|$linux_only|none
 merge_group|failure|$ALL_OFF|$QUEUE_ALL
 pull_request|success|$ALL_ON|$QUEUE_ALL
-pull_request|success|$open_terminal|$QUEUE_ALL
+pull_request|success|$open_terminal|$open_terminal_queue
+pull_request|success|$ORCH_CODE_ROW|$(macos_shards "$ORCH_SHARDS")
+pull_request|success|$one_skill|none
+pull_request|success|$VERIFY_ROW|none
+pull_request|success|$PROSE_ROW|none
+pull_request|success|$linux_only|none
 pull_request|failure|$ALL_OFF|$QUEUE_ALL
 push|skipped|$ALL_OFF|none
 ROWS
 [ "$queue_rows" -ge 13 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
+
+# Restoring the old subset must omit the orch-rest leg before either event.
+mkdir -p "$TMP/subset/tools"
+cp -R "$ROOT/tools/lib" "$TMP/subset/tools/lib"
+cp "$ROOT/tools/rust-reads" "$TMP/subset/tools/rust-reads"
+sed '/^queue=""$/,/^fi$/s/for shard in \$SHARDS/for shard in orch-terminal orch-oversee-succeed guards-tools/' \
+  "$JOB_SET" >"$TMP/subset/tools/ci-job-set"
+chmod +x "$TMP/subset/tools/ci-job-set"
+[ "$(diff "$JOB_SET" "$TMP/subset/tools/ci-job-set" | grep -c '^>' || :)" -eq 1 ] || exit 1
+for event in pull_request merge_group; do
+  subset="$(SELECT_WITH="$TMP/subset/tools/ci-job-set" SELECT_EVENT="$event" selection micro false skills/orch/scripts/open-terminal)"
+  subset_legs="$(queue_legs "$WORKFLOW" "$event" success "$subset")"
+  check "must-fail: the old subset drops orch-rest on $event" false \
+    "$(jq -c 'index("orch-rest") != null' <<<"$subset_legs")"
+  [ "$subset_legs" != "$open_terminal_queue" ] && ok "must-fail: the old subset fails the portability row on $event" ||
+    bad "must-fail: the old subset leaves the portability row green on $event"
+done
 
 # A condition reading no selection runs the legs on a group of prose alone.
 plant "$WORKFLOW" "|| needs.changes.outputs.queue_macos_shards != '[]')" "|| true)" \

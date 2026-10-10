@@ -17,7 +17,8 @@
 #                            commas
 #   lanes / measured         a measured row's lanes, and with its shards
 #   ROSTER, ORCH             the whole shard roster, and orch's shards
-#   QUEUE_ALL                the queue's three macOS shards, in order
+#   QUEUE_ALL                the whole macOS-capable roster, in order
+#   macos_shards SHARDS       SHARDS less the selector's Linux-only shards
 #   LINUX, MACOS, BOTH       the runner lists, as ci-job-set spells them
 #   ALL_ON, ALL_OFF, VERIFY_ROW, PROSE_ROW, CODE_ROW, UI_ROW,
 #   ORCH_CODE_ROW, ORCH_PROOF_ROW, SOURCE_PROOF_ROW
@@ -30,8 +31,7 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 JOB_SET="$ROOT/tools/ci-job-set"
 
-mkdir -p "$ROOT/tmp"
-TMP="$(mktemp -d "$ROOT/tmp/ci-world.XXXXXX")" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -107,8 +107,14 @@ macos_record() { # CLASS DOCS PATHS — actual PR coverage fields
 # The whole shard roster, in the matrix's order.
 ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear","linear-controls","worktree","rest","slack","node","pi-claude-bridge"]'
 ORCH='"orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-state","orch-rest"'
-# The shards a merge group runs on macOS, the whole queue_macos_shards list.
-QUEUE_ALL='["orch-terminal","orch-oversee-succeed","guards-tools"]'
+# The expected queue list comes from each row's shards, with the platform
+# exclusions held to the workflow by orch-shard-partition.test.sh.
+macos_shards() { # SHARDS: the macOS-capable members in the same order
+  local excluded
+  excluded="$(sed -n 's/^LINUX_ONLY_SHARDS="\(.*\)"$/\1/p' "$JOB_SET" | jq -Rc 'split(" ")')" || return 1
+  jq -ce --argjson excluded "$excluded" '[.[] | select(. as $shard | $excluded | index($shard) | not)]' <<<"$1"
+}
+QUEUE_ALL="$(macos_shards "$ROSTER")"
 # The runner lists the shell shards expand on, as ci-job-set spells them.
 LINUX='["ubuntu-latest"]'
 MACOS='["macos-latest"]'
@@ -143,7 +149,7 @@ PROSE_ROW="$(measured none false false false '[]' '[]')"
 CODE_ROW="$(measured none false true false '[]' '[]')"
 UI_ROW="$(measured none true true false '[]' '[]')"
 ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
-ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" '["orch-terminal","orch-oversee-succeed"]')"
+ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" "$(macos_shards "$ORCH_SHARDS")")"
 # Two proof selections over this tree: a merge group of an orch code diff
 # whose tree proof is a pull request run over orch's prose alone, and one
 # of a .github prose diff whose pull request ran over the same paths.

@@ -45,10 +45,9 @@
 #      The omission and duplication controls run on each runner's claims.
 #   4c. the macOS exclusions — tools/ci-job-set's Linux-only shard list
 #      matches the main-push macOS matrix's exclusions, and the merge
-#      queue's macOS shards, the queue job's fallback and ci-job-set's
-#      QUEUE_MACOS_SHARDS alike, name none of them. The must-fail arms drop
-#      one exclude row, plant a Linux-only queue shard and drop one from
-#      QUEUE_MACOS_SHARDS.
+#      queue's fallback equals the main-push roster less those exclusions.
+#      The must-fail arms drop one exclude row and plant a Linux-only
+#      queue shard.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
 #      target and integration test name. The legs are the combinations the
 #      matrix expands rather than its raw list. Each target other than the
@@ -996,37 +995,25 @@ else
 fi
 
 # The merge queue's macOS legs: the queue job's fallback list, which runs
-# where nothing classified, names ci-job-set's QUEUE_MACOS_SHARDS, the list
-# its selection draws from, and none of them is a shard the macOS roster
-# excludes as Linux-only.
+# where nothing classified, names the main-push roster less the shards
+# excluded as Linux-only.
 queue_fallback_shards() { # queue_fallback_shards <workflow>
   awk '/^  [A-Za-z0-9_-]+:/ { job = $1 }
        job == "skill-suites-macos-queue:" && /^        shard: / { print }' "$1" |
     sed -n "s/.*'\(\[[^]]*\]\)'.*/\1/p" | tr -d '[]" ' | tr ',' '\n' | grep . | sort -u
 }
-queue_job_set_shards() { # queue_job_set_shards <ci-job-set>
-  sed -n 's/^QUEUE_MACOS_SHARDS="\(.*\)"$/\1/p' "$1" | tr ' ' '\n' | grep . | sort -u
-}
 queue_shards="$(queue_fallback_shards "$WORKFLOW")"
 grep -qx orch-terminal <<< "$queue_shards" ||
   bad "no queue shard read from $WORKFLOW, so the queue reader is broken"
-check "the queue job's fallback names ci-job-set's QUEUE_MACOS_SHARDS" \
-  "$(queue_job_set_shards "$JOB_SET")" "$queue_shards"
+check "the queue fallback equals the main-push roster less its macOS exclusions" \
+  "$(comm -23 <(sed -n "s/^        shard: &skill-suite-shards .*'\[\([^]]*\)\]'.*/\1/p" "$WORKFLOW" | tr -d ' "' | tr ',' '\n' | sort -u) <(printf '%s\n' "$excluded"))" "$queue_shards"
 check "no queue macOS shard is Linux-only" "" \
   "$(comm -12 <(printf '%s\n' "$queue_shards") <(linux_only_shards "$JOB_SET"))"
-sed "s/'\[\"orch-terminal\", /'[\"linear-controls\", \"orch-terminal\", /" "$WORKFLOW" > "$TMP/queue-linux.yml"
+sed "s/'\[\"review-gate\", /'[\"linear-controls\", \"review-gate\", /" "$WORKFLOW" > "$TMP/queue-linux.yml"
 cmp -s "$WORKFLOW" "$TMP/queue-linux.yml" &&
   bad "must-fail: the queue fallback list is no longer one line in $WORKFLOW"
 check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-controls" \
   "$(comm -12 <(queue_fallback_shards "$TMP/queue-linux.yml") <(linux_only_shards "$JOB_SET"))"
-sed 's/^QUEUE_MACOS_SHARDS="orch-terminal /QUEUE_MACOS_SHARDS="/' "$JOB_SET" > "$TMP/queue-short-job-set"
-cmp -s "$JOB_SET" "$TMP/queue-short-job-set" &&
-  bad "must-fail: QUEUE_MACOS_SHARDS no longer starts with orch-terminal in $JOB_SET"
-if [[ "$(queue_job_set_shards "$TMP/queue-short-job-set")" != "$queue_shards" ]]; then
-  ok "must-fail: a QUEUE_MACOS_SHARDS without orch-terminal disagrees with the queue job"
-else
-  bad "must-fail: a QUEUE_MACOS_SHARDS without orch-terminal disagrees with the queue job"
-fi
 
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
 # Linux runs every shell suite. macOS runs the same files except linear's

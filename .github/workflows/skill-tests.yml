@@ -435,9 +435,9 @@ jobs:
   # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
   # their steps records.
   #
-  # THE macOS LEG runs the full shell roster on main pushes, and the queue's
-  # three macOS shards in a merge group, on the runner whose /bin/bash is 3.2.57,
-  # the shell every skill claims to support (skills/AGENTS.md).
+  # THE macOS LEG uses the shard selection stated in tools/ci-job-set's
+  # header. It runs on the runner whose /bin/bash is 3.2.57, the shell every
+  # skill claims to support (skills/AGENTS.md).
   # tools/bash32-lint scans the source for that claim; this leg runs it, which is the only way
   # to reach what a text scan cannot — a quoted builtin name, a construct
   # assembled at runtime. The image's only
@@ -1503,11 +1503,10 @@ jobs:
 
   # THE PATCH'S macOS LEGS: pull requests and merge groups run the shards the
   # changes job's `queue_macos_shards` list names; tools/ci-job-set's header
-  # states when it is empty. Every other macOS-capable shard runs on main
-  # pushes only. Where the classifier published nothing the list below,
-  # ci-job-set's QUEUE_MACOS_SHARDS, runs. A matching PR proof can clear the
-  # group's list. CI
-  # holds this job to the same list, so a failed or cancelled leg ejects the
+  # states when it is empty. Where the classifier published nothing the
+  # main-push roster less its Linux-only shards runs. A matching PR proof
+  # can clear the group's list. CI holds this job to the same list,
+  # so a failed or cancelled leg ejects the
   # entry and an unselected one does not.
   skill-suites-macos-queue:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
@@ -1516,7 +1515,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["orch-terminal", "orch-oversee-succeed", "guards-tools"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout

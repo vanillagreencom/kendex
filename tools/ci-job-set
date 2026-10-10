@@ -6,7 +6,7 @@
 # here; this script maps it, and the changed paths behind it, onto one
 # `<lane>=true|false` line per gated lane, plus one `shards=` line naming the
 # shell shards the diff selects as a JSON list and one `queue_macos_shards=`
-# line naming those the merge queue runs on macOS. Every lane condition in
+# line naming the selected macOS-capable shards. Every lane condition in
 # that workflow reads one of those lines, the Linux shard matrix `shards` and
 # the queue's macOS matrix `queue_macos_shards` on a classified group, so the
 # selection is made once instead of re-derived in each `if:`.
@@ -143,7 +143,7 @@
 #   cargo_windows       the Windows test run.
 #   cargo_windows_check the Windows compile check of the core and CLI targets.
 #   ui                  the vitest, tsc and biome lane.
-#   queue_macos_shards  the selected members of QUEUE_MACOS_SHARDS, as a JSON
+#   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false or group patch proof covers it.
 #                       Pull requests and groups run these on macOS.
@@ -180,10 +180,6 @@ SHARDS="review-gate orch-terminal orch-oversee orch-oversee-watch orch-oversee-s
 # `exclude:` rows, which tools/tests/orch-shard-partition.test.sh holds to
 # this list. The selector uses them for its macOS runner arithmetic.
 LINUX_ONLY_SHARDS="node pi-claude-bridge linear-controls"
-# The shards a merge group may run on macOS; every other macOS-capable shard
-# runs on main pushes only. skill-tests.yml's skill-suites-macos-queue job
-# falls back to this list, in this order, on an unclassified group.
-QUEUE_MACOS_SHARDS="orch-terminal orch-oversee-succeed guards-tools"
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
@@ -663,9 +659,10 @@ was_shards=""
 covered=false
 if [ -n "$was" ]; then
   covered=true
-  coverage_shards="$SHARDS"
-  [ -z "$patch_was" ] || coverage_shards="$QUEUE_MACOS_SHARDS"
-  for shard in $coverage_shards; do
+  for shard in $SHARDS; do
+    if [ -n "$patch_was" ]; then
+      case " $LINUX_ONLY_SHARDS " in *" $shard "*) continue ;; esac
+    fi
     case "$now_shards" in *"\"$shard\""*) ;; *) continue ;; esac
     case "$was_shards" in *"\"$shard\""*) ;; *) covered=false ;; esac
   done
@@ -701,7 +698,8 @@ shell=false
 # The PR and queue macOS legs; matching patch proof can clear only the group.
 queue=""
 if [ "$(sel_get "$now" macos)" = true ]; then
-  for shard in $QUEUE_MACOS_SHARDS; do
+  for shard in $SHARDS; do
+    case " $LINUX_ONLY_SHARDS " in *" $shard "*) continue ;; esac
     case "$now_shards" in *"\"$shard\""*) queue="${queue:+$queue,}\"$shard\"" ;; esac
   done
 fi
