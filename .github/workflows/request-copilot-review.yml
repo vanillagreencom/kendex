@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   request:
+    if: github.event_name != 'merge_group' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -22,10 +23,6 @@ jobs:
       - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
-            if (context.eventName === 'merge_group') {
-              core.info('copilot-request: skipped=merge-group');
-              return;
-            }
             try {
               const pr = context.payload.pull_request;
               // REVISIT(D023): Require Copilot again if render proof admits consumer product changes.
