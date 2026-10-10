@@ -1268,6 +1268,11 @@ jobs:
         if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
         with:
           node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: |
+            pi-extensions/pi-caveman/package-lock.json
+            pi-extensions/pi-claude-bridge/package-lock.json
+            .github/workflows/skill-tests.yml
 
       - name: deep-research node suite
         if: matrix.shard == 'node'
