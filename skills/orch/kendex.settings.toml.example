@@ -129,6 +129,11 @@ ORCH_QUESTION_TOOL = "off"
 # `lane-mail --help` states what the deadline does for each form of
 # question. An ask's own --wait overrides it.
 ORCH_ASK_WAIT_MINUTES = "120"
+# An item ask assigns the person, adds this label and posts the question.
+# Both LINEAR_TEAM and this label must be set to enable the tracker route.
+# With no ORCH_OWNER_EMAIL, the route uses KENDEX_USER_EMAIL.
+# ORCH_OWNER_EMAIL = "owner@example.com"
+# ORCH_OWNER_ASK_LABEL = "owner-gated"
 
 # Who the session is talking to. "ceo" asks only about outcomes, in plain
 # language, and settles the two questions below and issue creation on its

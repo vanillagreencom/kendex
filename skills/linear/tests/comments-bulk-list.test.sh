@@ -30,7 +30,7 @@ payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r)
 printf '%s\n' "$payload" >>"$CALLS"
 jq -cj '
 def comment($id; $body): {id: $id, body: $body, createdAt: "2026-10-01T00:00:00.000Z",
-    updatedAt: "2026-10-01T00:00:00.000Z", user: {name: "Fixture Person"}};
+    updatedAt: "2026-10-01T00:00:00.000Z", user: {name: "Fixture Person", email: "owner@example.com"}};
 def issue($id): {id: ("uuid-" + $id), identifier: $id,
     comments: (if $id == "KEN-8" then {pageInfo: {hasNextPage: true, endCursor: "c8"}, nodes: [comment("c8a"; "first page")]}
       else {pageInfo: {hasNextPage: false, endCursor: null},
@@ -66,6 +66,8 @@ assert_eq "two issues: one request" "$(wc -l <"$TMP_ROOT/calls" | tr -d ' ')" 1
 assert_jq "two issues: the request names both identifiers" "$(cat "$TMP_ROOT/calls")" \
     '.variables.filter.id.in == ["KEN-1", "KEN-2"]'
 
+assert_jq "safe comments: author email" "$OUT" '.["KEN-1"][0].user_email == "owner@example.com"'
+assert_jq "comment query: requests email" "$(cat "$TMP_ROOT/calls")" '.query | contains("user { name email }")'
 run_bulk KEN-1 --format=raw
 assert_jq "raw: comments keep Linear's fields" "$OUT" '.["KEN-1"][0].user.name == "Fixture Person"'
 
@@ -79,6 +81,8 @@ run_bulk OLD-8
 assert_eq "a moved issue's comments past one page: succeeds" "$RC" 0
 assert_jq "a moved issue's comments past one page are read to the end" "$OUT" \
     '[.["OLD-8"][].body] == ["first page", "second page"]'
+assert_jq "continued comments: author email" "$OUT" '.["OLD-8"][1].user_email == "owner@example.com"'
+assert_jq "continued comment query: requests email" "$(tail -1 "$TMP_ROOT/calls")" '.query | contains("user { name email }")'
 assert_eq "a moved issue's comments past one page: three requests" "$(wc -l <"$TMP_ROOT/calls" | tr -d ' ')" 3
 
 run_bulk KEN-1 KEN-404

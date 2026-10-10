@@ -1,0 +1,1 @@
+- Comment reads include the author's email. Issue lists accept an assignee email, and issue updates can remove the assignee.

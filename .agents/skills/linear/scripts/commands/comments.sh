@@ -104,7 +104,7 @@ list_comments() {
                     body
                     createdAt
                     updatedAt
-                    user { name }
+                    user { name email }
                 }
             }
         }
@@ -175,7 +175,7 @@ bulk_list_comments() {
                         body
                         createdAt
                         updatedAt
-                        user { name }
+                        user { name email }
                     }
                 }'
     local result
@@ -279,7 +279,7 @@ create_comment() {
                 body
                 createdAt
                 updatedAt
-                user { name }
+                user { name email }
                 issue { identifier updatedAt }
             }
         }
@@ -332,7 +332,7 @@ update_comment() {
                 body
                 createdAt
                 updatedAt
-                user { name }
+                user { name email }
                 issue { identifier updatedAt }
             }
         }

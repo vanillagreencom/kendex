@@ -1162,5 +1162,27 @@ REPORT_UNDER_TEST="$USE1_MUTANT" run -- render --state "$CASE/state.json" --repo
 assert_eq "$RC|$(awk '/^Use 1/' <<<"$OUT")" "0|${USE1_WANT/fallback=0/fallback=2}" \
   "control: without the window the use1 rows outside it are counted"
 
+new_case tracker_owner_asks
+report -60
+fleet '' ''
+printf '%s\n' \
+  '{"id":"tracker-1","kind":"ask","to":"owner","issue":"KEN-7","text":"First tracker ask"}' \
+  '{"id":"tracker-2","kind":"ask","to":"owner","issue":"KEN-8","text":"Second tracker ask"}' \
+  '{"id":"chat-1","kind":"ask","to":"owner","text":"Chat ask"}' >"$CASE/pending-overseer.jsonl"
+for item in KEN-7 KEN-8; do
+  jq -n --arg url "https://linear.app/test/issue/$item" '{url:$url}' >"$CASE/linear-$item.json"
+done
+run -- render --state "$CASE/state.json" --repo owner/repo
+TRACKER_WANT='2 on the tracker: [KEN-7](https://linear.app/test/issue/KEN-7), [KEN-8](https://linear.app/test/issue/KEN-8)
+- Question for you: Chat ask'
+assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "0|$TRACKER_WANT" \
+  'the report groups tracker links and keeps the chat-only ask line'
+TRACKER_REPORT_MUTANT="$(mutant_scripts tracker-report/orch oversee-report)/oversee-report"
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/tracker-report/github"
+mutate_file "$TRACKER_REPORT_MUTANT" '[[ "$tracker_count" -gt 0 ]]' '[[ "$tracker_count" -lt 0 ]]'
+REPORT_UNDER_TEST="$TRACKER_REPORT_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" '0|- Question for you: Chat ask' \
+  'control: dropping the tracker row fails the report grouping assertion'
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -38,6 +38,7 @@ while IFS='|' read -r label args want check; do
         assert_jq "$label: filter" "$(cat "$TMP_ROOT/calls")" ".variables.filter | $check"
     fi
 done <<'ROWS'
+email assignee|--assignee Owner@Example.com|0|.assignee == {email: {eqIgnoreCase: "Owner@Example.com"}}
 all projects|--all-projects --state Todo|0|has("project") | not
 no project|--no-project|0|.project == {null: true}
 one label|--label bug|0|.labels == {name: {eq: "bug"}}

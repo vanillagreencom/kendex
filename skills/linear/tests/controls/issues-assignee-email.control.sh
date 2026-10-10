@@ -40,3 +40,8 @@ control_expect "update-attach-miss: no file is uploaded"
 control_replace scripts/commands/issues.sh 2 \
     '    if [ -n "$assignee" ]; then' \
     '    if [ -n "$assignee" ] && [ ${#attach_paths[@]} -eq 0 ]; then'
+
+control_expect 'clear assignee: null in mutation'
+control_replace scripts/commands/issues.sh 1 \
+    "        input_parts+=('\"assigneeId\": null')" \
+    "        : input_parts+=('\"assigneeId\": null')"

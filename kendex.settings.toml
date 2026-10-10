@@ -9,6 +9,8 @@
 # pair is kept until it expires in a private per-user file outside the checkout.
 
 [env]
+
+ORCH_OWNER_ASK_LABEL = "owner-gated"
 # The team every Linear write targets. No default: an empty value refuses
 # writes instead of guessing inside whatever workspace the API key reaches
 # (the create actions still take `--team <name>` per call). Confirm with

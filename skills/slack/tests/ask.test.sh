@@ -98,6 +98,28 @@ draft_ask control-not-literal "$FENCED_DRAFT"
 sk_assert_red "$JOURNALED" "refused text-not-literal" "control: a draft posted past its backtick run fails the refusal assertion"
 sk_bin_reset
 
+# The tracker carries the detail. Slack posts the first question line and
+# the issue identifier, which outbound markup expands into its link.
+tracker_ask() {
+  local root
+  root="$(sk_tracker_root "$1" Team '')"
+  sk_bind "$root"
+  ASK="$(sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$1" 'Approve action?
+Details on the item.')" --options approve,hold --recommend approve)"
+  ASK="${ASK#id=}"
+  sk_event_filter "$root" 'if .kind == "ask" then .issue = "KEN-1" else . end'
+  sk_poll "$root"
+  TRACKER_POST="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
+}
+tracker_ask tracker-line
+assert_eq "$TRACKER_POST" 'Approve action? [KEN-1](https://linear.app/workspace/issue/KEN-1)' \
+  'tracker ask posts the first question line and issue link'
+sk_mutant tracker-line relay.py 'if envelope.get\("issue"\):' 'if False:'
+tracker_ask tracker-line-control
+sk_assert_red "$TRACKER_POST" 'Approve action? [KEN-1](https://linear.app/workspace/issue/KEN-1)' \
+  'control: posting the whole ask fails the tracker line assertion'
+sk_bin_reset
+
 echo "=== slack reserved ask ==="
 # reserved_ask NAME WAIT — a reserved ask posted from a fresh root, then
 # polled once more. Sets ROOT, CH, ASK, ASK_TS (empty when nothing posted)

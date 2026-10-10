@@ -71,7 +71,7 @@ List Options:
   --project <name>      Filter by project name
   --project-id <uuid>   Filter by project ID
   --team <ref>          Filter by team key or name (no default; omit = all teams)
-  --assignee <name|me>  Filter by assignee
+  --assignee <name|me|email>  Filter by assignee; addresses match exactly, ignoring case
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd>  Filter by created date
   --limit <n>           Max results (default: 75); a larger value spans pages,
@@ -167,6 +167,7 @@ Update Options:
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
   --clear-estimate      Clear the estimate (unset; e.g. coordination parents = no estimate)
   --assignee <name|me|email|id>  Change assignee (matched as on create)
+  --clear-assignee     Remove the assignee
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
   --milestone <name|uuid> Set project milestone (a name resolves in --project,
@@ -1597,6 +1598,7 @@ update_issue() {
     local estimate=""
     local clear_estimate="false"
     local clear_labels="false"
+    local clear_assignee="false"
     local sort_order=""
     local output_format=""
     local attach_paths=()
@@ -1712,6 +1714,10 @@ update_issue() {
             clear_estimate="true"
             shift
             ;;
+        --clear-assignee)
+            clear_assignee="true"
+            shift
+            ;;
         --clear-labels)
             clear_labels="true"
             shift
@@ -1789,6 +1795,10 @@ update_issue() {
     # Same rule as the label resolution below, applied to the pure argument
     # check: a combination that can only be refused must be refused before any
     # upload, or the refusal strands the uploaded asset in Linear storage.
+    if [ "$clear_assignee" = "true" ] && [ -n "$assignee" ]; then
+        echo '{"error": "Use either --assignee or --clear-assignee"}' >&2
+        return 1
+    fi
     if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then
         echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
         return 1
@@ -1961,6 +1971,9 @@ update_issue() {
     # Resolved above, before the attachment upload.
     if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
+    fi
+    if [ "$clear_assignee" = "true" ]; then
+        input_parts+=('"assigneeId": null')
     fi
 
     # Handle parent (set or remove) - resolve identifier to UUID

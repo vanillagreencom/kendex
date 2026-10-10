@@ -76,8 +76,12 @@ The template carries outcomes only. A question in the set names no mechanism the
 An overseer's question to the owner is one owner ask: the template above for the mode, written to a file, sent with its form and its deadline as fields, never as prose. The template's recommendation is the option the ask records as `recommend`, the relay's Recommended line, and a question whose ask records none leaves it out. The chat shows one line naming the ask. `--wait` names one ask's minutes, and an ask without it takes `ORCH_ASK_WAIT_MINUTES`. Which forms record a recommendation, and what the deadline does for each, is the [lane-mail owner-channel contract](../scripts/lane-mail)'s.
 
 ```bash
-.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH]
+.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH] --issue [ITEM]
 ```
+
+For an item ask, set `ORCH_OWNER_ASK_LABEL` and `LINEAR_TEAM` to enable the Linear route. `ORCH_OWNER_EMAIL` names the person and defaults to `KENDEX_USER_EMAIL`. The overseer assigns that person, adds the label without replacing other labels, and posts the question with its options, recommendation, deadline and `ask=` id. Linear sends the assignment notification. Slack posts one line with the question's first line and the item link. A failed tracker write leaves the chat ask open. An ask with no item stays on the chat route and creates no issue.
+
+The person answers with one comment on the issue and changes no state. `ok`, `yes` or `done`, alone and in any case, accepts the recommendation or approves the action a reserved ask proposes. Any other text is a change request. The overseer acts on that request and replies on the same issue. Each long watch pass reads new comments by that person's email after the ask's comment. Each comment ID is its delivery ID, so a repeated read delivers nothing new. A failed tracker read reports `KEN-3624-unread` and leaves the other checks running.
 
 The owner can answer more than once. Each answer lands through `send --item overseer --re [ASK_ID] --file [PATH]`, with its own delivery id. Answers leave the ask open in `pending --item overseer --to owner`. The § 4 watch in [oversee.md](../workflows/oversee.md) reports each answer as `owner-ask-resolved`, with its answer id.
 
@@ -94,7 +98,7 @@ A decision the owner's authority rule reserves to the owner is a reserved ask: a
 
 An ask for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`. The [lane-mail owner-channel contract](../scripts/lane-mail) states the draft's fields and its `text_hash`. Send only when the approval for that ask id names the `text_hash` that `pending --item overseer --to owner` prints. An edited draft is a new ask.
 
-The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
+At `owner-ask-closed`, by any route including the watch's default close, the tracker route posts the ruling on the issue and removes the owner-ask label and assignee. The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
 
 For a delivered owner request, `--ref` binds the reply to that request's delivery id through the [lane-mail owner-channel contract](../scripts/lane-mail). Answer it under the Reply row and Thread rule in [§ Owner messages](#owner-messages).
 
@@ -130,7 +134,7 @@ Under `engineer` a report is the same shape with the session's own vocabulary. T
 
 ## Owner-only verification
 
-The master sends the owner one list a day of due post-merge boxes whose evidence no tool on the operator machine reaches. Each line names the item, box, check, Where, and deadline. Repeat every open line until its overseer records a reading. The overseer sends each box to the master once when it becomes due, per [oversee-events.md § Verification](oversee-events.md).
+A post-merge box that only a person can read goes to that person as an owner ask on its item. The overseer names the box, check, Where and deadline in the question. The person answers with one comment under § Owner asks. The overseer records the reading and closes the ask. Each overseer owns these asks through closure.
 
 ## Owner messages
 

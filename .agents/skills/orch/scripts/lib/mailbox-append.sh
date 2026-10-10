@@ -168,3 +168,74 @@ mailbox_warn_legacy() { # FILE
     printf 'lane-mail: legacy-close=%s\nLegacy closing answer retained; supported through kendex 1.4.\n' "$id" >&2
   done <<<"$ids"
 }
+
+# The mailbox owns the ask. Tracker writes are advisory: a failed write must
+# leave that ask available on its existing chat route.
+
+owner_tracker_settings() { # ORCH SCRIPT DIRECTORY
+  OWNER_TRACKER_EMAIL="$("$1/orch-env" ORCH_OWNER_EMAIL "")" || return 1
+  if [[ -z "$OWNER_TRACKER_EMAIL" ]]; then
+    OWNER_TRACKER_EMAIL="$("$1/orch-env" KENDEX_USER_EMAIL "")" || return 1
+  fi
+  OWNER_TRACKER_LABEL="$("$1/orch-env" ORCH_OWNER_ASK_LABEL "")" || return 1
+  OWNER_TRACKER_TEAM="$("$1/orch-env" LINEAR_TEAM "")" || return 1
+  [[ -n "$OWNER_TRACKER_LABEL" && -n "$OWNER_TRACKER_TEAM" && -n "$OWNER_TRACKER_EMAIL" ]]
+}
+
+owner_tracker_unwritten() { # ISSUE CAUSE
+  printf 'lane-mail: tracker-unwritten issue=%s cause=%s\n' "$1" "$2" >&2
+}
+
+owner_tracker_labels() { # TRACKER ISSUE ADD|REMOVE
+  local current
+  current="$("$1" issues get "$2" --format=safe)" || return 1
+  jq -r --arg label "$OWNER_TRACKER_LABEL" --arg action "$3" '
+    .labels | if $action == "ADD" then . + [$label] | unique
+      else map(select(. != $label)) end | join(",")' <<<"$current"
+}
+
+owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
+  local tracker="$1" envelope="$2" work="$3" issue labels
+  issue="$(jq -r '.issue' <<<"$envelope")" || return 1
+  "$tracker" issues update "$issue" --assignee "$OWNER_TRACKER_EMAIL" >"$work/tracker.out" 2>"$work/tracker.err" || {
+    owner_tracker_unwritten "$issue" assign; return 0;
+  }
+  labels="$(owner_tracker_labels "$tracker" "$issue" ADD 2>"$work/tracker.err")" || {
+    owner_tracker_unwritten "$issue" labels-read; return 0;
+  }
+  "$tracker" issues update "$issue" --labels "$labels" >"$work/tracker.out" 2>"$work/tracker.err" || {
+    owner_tracker_unwritten "$issue" label; return 0;
+  }
+  jq -r '.text, "", ("Options: " + (.options | join(", "))),
+    (if .reserved == true then "No default. This action waits for your approval. Due " + .deadline
+      else "Recommendation: " + .recommend + ". At " + .deadline + " it stands unless you answer." end),
+    (if .draft then "Draft: " + (.draft | tojson) else empty end),
+    ("ask=" + .id),
+    "Reply with one comment: ok, yes or done to approve; anything else is a change request."' \
+    <<<"$envelope" >"$work/tracker-comment" || return 1
+  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" ||
+    owner_tracker_unwritten "$issue" comment
+}
+
+owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
+  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id
+  issue="$(jq -r '.issue // empty' <<<"$ask")" || return 1
+  [[ -n "$issue" ]] || return 0
+  # The close guard supplies the ruling from the owner's last answer or the
+  # default. Read that record, rather than computing another ruling here.
+  ask_id="$(jq -r '.id' <<<"$ask")" || return 1
+  jq -rs --arg id "$close" --arg ask "$ask_id" '
+    ([.[] | select(.kind == "answer" and .re == $ask)] | last | .text // "") as $ruling
+    | .[] | select(.id == $id) | "ask=" + .re + " closed (" + .by + "): " + $ruling' \
+    "$TO_LANE" >"$work/tracker-comment" || return 1
+  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
+    owner_tracker_unwritten "$issue" close-comment; return 0;
+  }
+  labels="$(owner_tracker_labels "$tracker" "$issue" REMOVE 2>"$work/tracker.err")" || {
+    owner_tracker_unwritten "$issue" labels-read; return 0;
+  }
+  local label_args=(--clear-labels)
+  [[ -z "$labels" ]] || label_args=(--labels "$labels")
+  "$tracker" issues update "$issue" "${label_args[@]}" --clear-assignee >"$work/tracker.out" 2>"$work/tracker.err" ||
+    owner_tracker_unwritten "$issue" close-update
+}

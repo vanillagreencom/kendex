@@ -181,7 +181,9 @@ Overseer side:
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b
-              (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID]
+              (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM]
+              --issue adds the configured Linear assignment, label and comment.
+              Tracker failures leave the chat ask open.
               a question for the owner, appended to to-overseer.jsonl with
               `to` as a field. Every owner ask, a draft ask too, carries a
               deadline: --wait minutes from now, ORCH_ASK_WAIT_MINUTES
@@ -636,6 +638,7 @@ PARENT=""
 PARENT_JSON=null
 ONCE=0
 STATE_DIR=""
+ISSUE=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -645,6 +648,7 @@ while [ "$#" -gt 0 ]; do
   OPTS_GIVEN="$OPTS_GIVEN$1$NL"
   case "$1" in
     --item) need_val "$@"; ITEM="$2"; shift 2 ;;
+    --issue) need_val "$@"; ISSUE="$2"; shift 2 ;;
     --file) need_val "$@"; FILE="$2"; shift 2 ;;
     --options) need_val "$@"; OPTIONS="$2"; shift 2 ;;
     --root) need_val "$@"; ROOT="$2"; shift 2 ;;
@@ -727,6 +731,7 @@ for given in $OPTS_GIVEN; do
         ask:overseer:peer | notice:overseer:peer) refuse to-invalid "$TO" ;;
         *) refuse option-unknown --to ;;
       esac ;;
+    --issue) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --issue ;;
     --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
     --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown --attach ;;
     --recommend | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
@@ -1457,7 +1462,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
-    --arg reserved "$RESERVED" \
+    --arg reserved "$RESERVED" --arg issue "$ISSUE" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
     --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
@@ -1465,6 +1470,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $re == "" then {} else {re: $re} end)
       + (if $halt == "1" then {halt: true} else {} end)
       + (if $to == "" then {} else {to: $to} end)
+      + (if $issue == "" then {} else {issue: $issue} end)
       + (if $ref == "" then {} else {ref: $ref} end)
       + (if $attach == "" then {} else {attach: $attach} end)
       + (if $recommend == "" then {} else {recommend: $recommend} end)
@@ -1894,6 +1900,11 @@ case "$VERB" in
       lm_ref_find
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
+    OWNER_TRACKER_ACTIVE=0
+    if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ]; then
+      # Linear is optional. An unconfigured tracker leaves the chat ask intact.
+      if owner_tracker_settings "$SCRIPT_DIR"; then OWNER_TRACKER_ACTIVE=1; else ISSUE=""; fi
+    fi
     LINE="$(lm_envelope "$VERB")"
     [ "$VERB" != notice ] || lm_receipt_fields "$LINE"
     # An owner notice is judged on its text for a day, under the lock after
@@ -1905,6 +1916,9 @@ case "$VERB" in
       }
     else
       lm_append_local "$TO_OVERSEER" "$LINE"
+    fi
+    if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
+      owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR"
     fi
     if [ "$VERB" = ask ]; then
       printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
@@ -2000,6 +2014,11 @@ case "$VERB" in
     CLOSE_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
     if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
       lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
+      if [ "$(jq -r '.issue // empty' <<<"$ASK_JSON")" != "" ]; then
+        if owner_tracker_settings "$SCRIPT_DIR"; then
+          owner_tracker_close "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$ASK_JSON" "$CLOSE_ID" "$WORK_DIR"
+        fi
+      fi
     else
       read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||
         refuse file-unreadable "$WORK_DIR/resolved.earlier"
