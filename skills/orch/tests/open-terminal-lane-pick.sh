@@ -651,11 +651,9 @@ echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived
 # from the script's own path would write where `lanes` never looks.
 SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
-mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTREPO/scripts/"
-cp -R "$SCRIPTS_DIR/lib/." "$SCRIPTREPO/scripts/lib/"
+mutant_scripts scriptrepo >/dev/null || exit 1
+mkdir -p "$CALLERREPO"
 orch_fixture_shared_libs "$SCRIPTREPO"
-chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes" "$SCRIPTREPO/scripts/lane-marker"
 git -C "$SCRIPTREPO" init -q
 git -C "$SCRIPTREPO" config gc.auto 0
 git -C "$SCRIPTREPO" config maintenance.auto false

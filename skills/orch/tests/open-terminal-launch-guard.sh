@@ -25,9 +25,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="$SCRIPTS_DIR/open-terminal"
-SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-launch-guard: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-launch-guard: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-launch-guard: scratch=resolve-failed" >&2; exit 1; }
@@ -78,20 +75,16 @@ exit 1
 EOF
 chmod +x "$STUB"
 
-# stage DIR SRC — a copy of open-terminal in a git repo of its own, so
+# stage DIR — open-terminal and its siblings in a git repo of its own, so
 # PROJECT_ROOT resolves hermetically.
 stage() {
-  mkdir -p "$1/scripts/lib"
-  cp "$2" "$1/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$1/scripts/"
-  cp -R "$SRC_LIB_DIR/." "$1/scripts/lib/"
+  mutant_scripts "${1##*/}" >/dev/null || exit 1
   orch_fixture_shared_libs "$1"
-  chmod +x "$1/scripts/open-terminal"
   git -C "$1" init -q
 }
 
 REPO="$TMP_ROOT/repo"
-stage "$REPO" "$SRC_OT"
+stage "$REPO"
 mkdir -p "$REPO/.agents/skills/linear/scripts"
 cat > "$REPO/.agents/skills/linear/scripts/linear.sh" <<'EOF'
 #!/bin/sh

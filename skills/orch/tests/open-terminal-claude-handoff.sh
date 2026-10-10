@@ -41,8 +41,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="$SCRIPTS_DIR/open-terminal"
-SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
@@ -168,15 +166,8 @@ chmod +x "$STUB"
 # A temp git repo containing a copy of open-terminal + its libs, so the
 # script's PROJECT_ROOT resolves to this repo.
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
-# `lanes` is what a --lane row's lane_check calls; without it the row refuses
-# with helper-missing before reaching the gate it is about.
-cp "$SCRIPTS_DIR/lanes" "$REPO/scripts/lanes"
-cp -R "$SRC_LIB_DIR/." "$REPO/scripts/lib/"
+mutant_scripts repo >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal" "$REPO/scripts/lanes"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 # Every row runs whatever binary this names; the control repoints it at a

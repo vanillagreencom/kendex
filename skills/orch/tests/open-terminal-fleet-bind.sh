@@ -72,10 +72,7 @@ EOF
 chmod +x "$STUB"
 
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
-cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
-cp -R "$SCRIPTS_DIR/copilot-lane-context" "$REPO/scripts/"
+mutant_scripts repo >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0

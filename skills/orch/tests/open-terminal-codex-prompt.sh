@@ -16,6 +16,8 @@
 # would launch.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 # An inherited or configured lane host would turn these local launches into
 # hosted ones; the caller environment outranks project settings.
 export ORCH_LANE_HOST=local
@@ -29,7 +31,6 @@ CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_a
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 # The brief ends at the start command, then the unattended words every lane is
 # briefed with, read from lib/lane-launch.sh; start.md owns completion.
@@ -95,12 +96,8 @@ chmod +x "$STUB"
 # Temp git repo containing a copy of open-terminal + its libs, so the script's
 # PROJECT_ROOT resolves to this repo.
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
-cp -R "$SRC_LIB_DIR/." "$REPO/scripts/lib/"
+mutant_scripts repo >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 

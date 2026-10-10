@@ -12,6 +12,8 @@
 # the worktree CLI, GUI terminal, and gh so nothing external is launched.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 # An inherited or configured lane host would turn these local launches into
 # hosted ones; the caller environment outranks project settings.
 export ORCH_LANE_HOST=local
@@ -19,9 +21,6 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="$SCRIPTS_DIR/open-terminal"
-SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-issue-id: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-issue-id: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-issue-id: scratch=resolve-failed" >&2; exit 1; }
@@ -73,12 +72,8 @@ chmod +x "$STUB"
 # script's PROJECT_ROOT resolves to this repo. $2 optional settings body.
 make_ot_repo() {
   local repo="$1" settings="${2:-}"
-  mkdir -p "$repo/scripts/lib"
-  cp "$SRC_OT" "$repo/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$repo/scripts/"
-  cp -R "$SRC_LIB_DIR/." "$repo/scripts/lib/"
+  mutant_scripts "${repo##*/}" >/dev/null || exit 1
   orch_fixture_shared_libs "$repo"
-  chmod +x "$repo/scripts/open-terminal"
   git -C "$repo" init -q
   if [[ -n "$settings" ]]; then
     printf '%s\n' "$settings" > "$repo/kendex.settings.toml"

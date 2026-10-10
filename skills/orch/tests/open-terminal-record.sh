@@ -31,7 +31,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="$SCRIPTS_DIR/open-terminal"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-record: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-record: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-record: scratch=resolve-failed" >&2; exit 1; }
@@ -150,13 +149,8 @@ EXISTS_DIR="$TMP_ROOT/exists"
 mkdir -p "$EXISTS_DIR"
 
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
-cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
-cp -R "$SCRIPTS_DIR/copilot-lane-context" "$REPO/scripts/"
+mutant_scripts repo >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
@@ -510,15 +504,11 @@ retired_under() {
 }
 assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
   "a record only the lane's worktree state holds retires its session though --state-dir names another directory, and the fresh start renews session_since while launched_at stands"
-SINCE_MUTANT="$TMP_ROOT/since-mutant/scripts"
-mkdir -p "$SINCE_MUTANT"
-cp -R "$REPO/scripts/." "$SINCE_MUTANT/"
+SINCE_MUTANT="$(mutant_scripts since-mutant open-terminal)" || exit 1
 mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs)'
 assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=null since=kept launched_at=$LAUNCHED_AT" \
   "control: a relaunch that keeps session_since leaves the fresh start bound to the launch whose session it retired"
-RETIRED_MUTANT="$TMP_ROOT/retired-mutant/scripts"
-mkdir -p "$RETIRED_MUTANT"
-cp -R "$REPO/scripts/." "$RETIRED_MUTANT/"
+RETIRED_MUTANT="$(mutant_scripts retired-mutant open-terminal)" || exit 1
 mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"' \
   'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
 assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
@@ -529,9 +519,7 @@ assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 ses
 printf '[env]\nORCH_STATE_DIR = "state"\n' > "$TMP_ROOT/wt/CC-1/kendex.settings.toml"
 assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
   "a record in the lane worktree's tmp retires its session where its state directory setting names another"
-PLACE_MUTANT="$TMP_ROOT/place-mutant/scripts"
-mkdir -p "$PLACE_MUTANT"
-cp -R "$REPO/scripts/." "$PLACE_MUTANT/"
+PLACE_MUTANT="$(mutant_scripts place-mutant open-terminal)" || exit 1
 mutate_file "$PLACE_MUTANT/open-terminal" 'handoff-standing "$2" --worktree "$3"' 'handoff-standing "$2"'
 assert_eq "$(retired_under "$PLACE_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
   "control: a relaunch naming no worktree misses that record and resumes the retired session"
@@ -814,9 +802,7 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" 
 # $TMP_ROOT/NAME, for the row that takes a helper away.
 fixture_copy() {
   local dir="$TMP_ROOT/$1"
-  mkdir -p "$dir/scripts/lib"
-  cp "$SRC_OT" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$dir/scripts/"
-  cp -R "$SCRIPTS_DIR/lib/." "$dir/scripts/lib/"
+  mutant_scripts "$1" >/dev/null || exit 1
   orch_fixture_shared_libs "$dir"
   git -C "$dir" init -q
   git -C "$dir" config gc.auto 0
@@ -1028,9 +1014,7 @@ HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) missing=$(grep -c '^open-terminal: harness-screen-missing item=CC-83 seconds=2$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=1 waited=1 missing=1 record=stopped none none" \
   "a foreground hosted codex relaunch at a bare shell fails and records stopped"
-NO_SCREEN_OT="$TMP_ROOT/no-screen/scripts"
-mkdir -p "$NO_SCREEN_OT"
-cp -R "$REPO/scripts/." "$NO_SCREEN_OT/"
+NO_SCREEN_OT="$(mutant_scripts no-screen open-terminal)" || exit 1
 mutate_file "$NO_SCREEN_OT/open-terminal" '    tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?' '    :'
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 LANE_HOST_STUB_SELECTION=resume STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" -- SCRIPT="$NO_SCREEN_OT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
 assert_eq "rc=$RC record=$(prepared CC-83)" "rc=0 record=running none none" \
@@ -1040,9 +1024,7 @@ HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-87 STUB_HARNESS_TEXT='Working 
 assert_eq "rc=$RC handed=$(grep -c '^open-terminal: lane-preparing item=CC-87 ' <<<"$OUT" || true) lineless=$(grep -c 'resume-lineless' <<<"$ERR" || true) record=$(settled CC-87)" \
   "rc=0 handed=1 lineless=0 record=running prepare none" \
   "a hosted codex relaunch across a harness switch starts fresh and is handed off"
-LINELESS_MUTANT="$TMP_ROOT/lineless-mutant/scripts"
-mkdir -p "$LINELESS_MUTANT"
-cp -R "$REPO/scripts/." "$LINELESS_MUTANT/"
+LINELESS_MUTANT="$(mutant_scripts lineless-mutant open-terminal)" || exit 1
 mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-88", harness: "claude", status: "running"}]' >/dev/null
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-88 STUB_HARNESS_TEXT='Working (esc to interrupt)' -- SCRIPT="$LINELESS_MUTANT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
@@ -1168,9 +1150,7 @@ printf '%s\n' "$OFF" > "$PI_LOCAL/settings.json"
 
 # Fleet's lane_records reads the resolved effort beside model. Opencode has
 # no fleet adapter: its writer fixture bypasses admission, not the recorder.
-EFFORT_SCRIPTS="$TMP_ROOT/effort-writer/scripts"
-mkdir -p "$EFFORT_SCRIPTS"
-cp -R "$REPO/scripts/." "$EFFORT_SCRIPTS/"
+EFFORT_SCRIPTS="$(mutant_scripts effort-writer open-terminal)" || exit 1
 mutate_file "$EFFORT_SCRIPTS/open-terminal" '    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1 ;;' '    *) ;;'
 while IFS='|' read -r item harness flags want; do
   effort_ot="$OT"
@@ -1188,9 +1168,7 @@ CC-184|pi|--model sonnet --thinking medium|"medium"
 CC-185|opencode|--model example/model|null
 CC-186|claude|--model opus|null
 ROWS
-EFFORT_MUTANT="$TMP_ROOT/effort-mutant/scripts"
-mkdir -p "$EFFORT_MUTANT"
-cp -R "$REPO/scripts/." "$EFFORT_MUTANT/"
+EFFORT_MUTANT="$(mutant_scripts effort-mutant open-terminal)" || exit 1
 mutate_file "$EFFORT_MUTANT/open-terminal" 'model: $model, effort: $effort,' 'model: $model,'
 run_ot SCRIPT="$EFFORT_MUTANT/open-terminal" --ghostty "${FLEET_CMD[@]}" CC-187
 EFFORT_CONTROL="$(FAIL=0; assert_eq "rc=$RC effort=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-187") | [has("effort"), .effort]' | jq -c .)" \

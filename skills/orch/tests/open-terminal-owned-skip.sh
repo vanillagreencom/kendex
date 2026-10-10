@@ -32,7 +32,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 # lane_codex_home_path, so the relaunch row below names a private launch home
 # the way the launcher builds one rather than spelling its checksum.
@@ -171,12 +170,8 @@ EOF
 chmod +x "$STUB"
 
 REPO="$TMP_ROOT/repo"
-mkdir -p "$REPO/scripts/lib"
-cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
-cp -R "$SRC_LIB_DIR/." "$REPO/scripts/lib/"
+mutant_scripts repo >/dev/null || exit 1
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 CMD_ARGS=(--cmd 'echo {item}')
