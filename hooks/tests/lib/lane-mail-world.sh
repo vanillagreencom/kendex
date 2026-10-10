@@ -656,16 +656,44 @@ state_stub() { # path-fails|update-fails|standing-fails|delegate [DIR]
   local dir="${2:-$LANE/.claude/skills/orch/scripts}"
   rm -f -- "${dir:?}/workflow-state" "$STATE_LOG"
   {
-    printf '#!/bin/sh\n'
+    printf '#!%s\n' "$BASH"
     printf 'printf "%%s\\n" "$1" >> %q\n' "$STATE_LOG"
     case "$1" in
       path-fails) printf '[ "$1" != path ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 3; }\n' ;;
+      identify-fails) printf '[ "$1" != get ] || exit 3\n' ;;
+      no-filename)
+        cat <<'NO_FILENAME'
+if [ "$1" = get ]; then
+  replacement='""'
+  filter=${3//input_filename/$replacement}
+  set -- "$1" "$2" "$filter"
+fi
+NO_FILENAME
+        ;;
       update-fails) printf '[ "$1" != update ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 1; }\n' ;;
       standing-fails) printf '[ "$1" != handoff-standing ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 3; }\n' ;;
     esac
     printf 'exec %q "$@"\n' "$REPO_ROOT/skills/orch/scripts/workflow-state"
   } > "$dir/workflow-state"
   chmod +x "$dir/workflow-state"
+}
+
+# A watch-library read that cannot answer. Keep the other installed
+# libraries so identity and the context read still exercise their real code.
+watch_stub() { # [SCRIPTS_DIR]
+  local scripts="${1:-$LANE/.claude/skills/orch/scripts}" entry
+  # workflow-state sources watch-pid too. Its wrapper keeps identity on the
+  # real library, so this defect reaches only the hook's watch read.
+  state_stub delegate "$scripts"
+  if [ -L "$scripts/lib" ]; then
+    rm -- "$scripts/lib"
+    mkdir -p "$scripts/lib"
+    for entry in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
+      [ "${entry##*/}" = watch-pid.sh ] || ln -s -- "$entry" "$scripts/lib/${entry##*/}"
+    done
+  fi
+  rm -f -- "$scripts/lib/watch-pid.sh"
+  printf '%s\n' 'echo "watch-pid: record=unreadable" >&2' 'return 3' > "$scripts/lib/watch-pid.sh"
 }
 
 # The overseer's own native transcript: the claude file the payload's session

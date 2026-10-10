@@ -12,8 +12,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 # HOOK_UNDER_TEST overrides the hook each fixture installs, so a must-fail
 # control runs against these same assertions.
 hook_source="${HOOK_UNDER_TEST:-$ROOT/hooks/command-safety.sh}"
-mkdir -p "$ROOT/tmp"
-scratch="$(mktemp -d "$ROOT/tmp/command-safety.XXXXXX")" || exit 1
+scratch="$(mktemp -d)" || { echo 'command-safety-test: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $scratch && ! -L $scratch ]] || { echo 'command-safety-test: scratch=not-a-directory' >&2; exit 1; }
+scratch="$(cd -- "$scratch" && pwd -P)" || { echo 'command-safety-test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "$scratch"' EXIT
 repo="$scratch/project"
 mkdir -p "$repo/.claude/hooks" "$repo/.agents/skills/commit-guards/scripts"
@@ -32,6 +33,41 @@ settings() { # [SOURCE_FILE]: the file whose one COMMAND_SAFETY_DENY_PATTERN lin
 settings
 passed=0
 failed=0
+. "$ROOT/hooks/tests/lib/process-count.sh"
+process_count_setup "$scratch"
+process_count_reset
+cost_payload=$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}')
+cost_status=0
+env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$BASH" "$hook" \
+  <<<"$cost_payload" >"$scratch/cost.out" 2>"$scratch/cost.err" || cost_status=$?
+jq_count=$(process_count_command jq)
+printf 'cost command-safety jq=%s processes=%s\n' "$jq_count" "$(process_count_total)"
+if [ "$cost_status" -eq 0 ] && [ "$jq_count" -eq 1 ]; then
+  passed=$((passed + 1))
+else
+  printf 'FAIL payload read cost: exit=%s jq=%s\n' "$cost_status" "$jq_count"
+  failed=$((failed + 1))
+fi
+if [ "${1:-}" = --cost-row ]; then
+  [ "$failed" -eq 0 ]
+  exit
+fi
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  cost_mutant="$scratch/two-payload-reads.sh"
+  [ ! -L "$hook_source" ] || exit 1
+  awk '/^fields=.*jq -r / { print "jq -r empty <<<\"$input\" >/dev/null"; changed++ }
+    { print } END { if (changed != 1) exit 1 }' "$hook_source" > "$cost_mutant" || exit 1
+  cmp -s -- "$hook_source" "$cost_mutant" && exit 1
+  control_status=0
+  env -i "HOME=$HOME" "PATH=$PATH" "HOOK_UNDER_TEST=$cost_mutant" "$BASH" "${BASH_SOURCE[0]}" --cost-row \
+    > "$scratch/two-reads.log" 2>&1 || control_status=$?
+  if [ "$control_status" -eq 1 ] && grep -q '^FAIL payload read cost:' "$scratch/two-reads.log"; then
+    passed=$((passed + 1))
+  else
+    failed=$((failed + 1))
+    printf 'FAIL duplicate payload read control: exit=%s\n' "$control_status"
+  fi
+fi
 # `first` is line 1, the contract: the hook captures what a command it ran
 # wrote and replays it under the keyed line, so nothing precedes the key.
 # `cause` says whether that captured text is there. The reader is the shared
@@ -238,7 +274,19 @@ done <<'SHAPES'
 0|-|{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}|an allowed command under a Copilot toolArgs object
 2|command-safety: refused=policy|{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}|a refused command under a Copilot toolArgs string
 0|-|{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}|an allowed command under a Copilot toolArgs string
+2|command-safety: payload=invalid-cwd|{tool_input:{command:"git status"},cwd:42}|a non-string working directory refuses
+0|-|{tool_input:{command:""},cwd:{}}|an empty command still bypasses the working directory read
+0|-|{tool_input:{command:"\n\n"},cwd:{}}|a command containing only trailing newlines still bypasses the working directory read
+0|-|{tool_input:{command:"git status"},cwd:($cwd + "\n\n")}|working directory trailing newlines keep the previous read behavior
+0|-|{tool_input:{command:"git status\n\u0027; $(touch SHOULD_NOT_RUN); \u0027"},cwd:$cwd}|shell syntax in command text stays data
 SHAPES
+[ ! -e SHOULD_NOT_RUN ] || { printf 'FAIL payload text executed\n'; failed=$((failed + 1)); }
+quoted_cwd="$repo/quoted'"$'\t\nback\\slash'
+mkdir -p -- "$quoted_cwd"
+check 0 'git status' 'tabs, newlines, quotes and backslashes in the working directory remain data' "$quoted_cwd"
+printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "(^$|NEVER_MATCH)"\n' > "$repo/kendex.settings.toml"
+check 0 $'git status\n\n' 'command trailing newlines keep the previous read behavior'
+settings
 [ "$((passed + failed))" -gt "$before" ] || { printf 'FAIL no payload shape was asserted\n'; failed=$((failed + 1)); }
 
 # A cwd the payload names and the hook cannot enter: the value is the path as
@@ -370,6 +418,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         defect == "no-quote" && /^default_pattern=/ { swap("[[:punct:]]?", "") }
         defect == "unit-g" && /^default_pattern=/ { swap("[KkMm]", "[KkMmGg]") }
         defect == "default-key" { swap("refuse refused default-policy", "refuse refused policy") }
+        defect == "no-cwd-check" && /^    elif \$payload.cwd != null/ {
+          $0 = "    elif false"; changed++
+        }
         { print }
         END { if (changed != 1) exit 1 }
       ' "$hook_source" >"$mutant" || exit 1
@@ -403,6 +454,7 @@ no-quote|FAIL the example and the doc carry the hook default: hook [
 unit-g|FAIL empty-env: the default passes a gigabyte cap: exit 2, expected 0:
 unit-g|FAIL no-file: the default passes a gigabyte cap: exit 2, expected 0:
 default-key|FAIL empty-env: a bare MemoryMax names the default policy: first line command-safety: refused=policy, expected command-safety: refused=default-policy
+no-cwd-check|FAIL a non-string working directory refuses:
 CONTROLS
 fi
 printf '%s passed, %s failed\n' "$passed" "$failed"
