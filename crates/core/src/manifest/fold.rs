@@ -51,6 +51,35 @@ use writing::{List, entries};
 
 mod writing;
 
+/// Serialize every manifest edit with the file's newline convention.
+/// toml_edit emits LF for trivia but retains CRLF in string representations.
+/// Converting only bare LF keeps both forms valid without doubling CR.
+pub(super) fn serialized(document: &DocumentMut, current: &str) -> String {
+    let mut rendered = document.to_string();
+    if !current.ends_with('\n') && rendered.ends_with('\n') {
+        rendered.pop();
+        if rendered.ends_with('\r') {
+            rendered.pop();
+        }
+    }
+    if crate::fs::line_terminator(current) == "\n" {
+        return rendered;
+    }
+    let mut text = String::with_capacity(rendered.len());
+    for line in rendered.split_inclusive('\n') {
+        if let Some(body) = line.strip_suffix('\n') {
+            text.push_str(body);
+            if !body.ends_with('\r') {
+                text.push('\r');
+            }
+            text.push('\n');
+        } else {
+            text.push_str(line);
+        }
+    }
+    text
+}
+
 /// The text a write should leave behind: the document that is already
 /// there, with the keys this write names edited into it.
 ///
@@ -74,7 +103,7 @@ pub(super) fn folded(
         Some(held.as_table()),
         target.as_table(),
     );
-    Ok(document.to_string())
+    Ok(serialized(&document, current))
 }
 
 /// Walk two tables together. Keys are compared by name, so a table spelled

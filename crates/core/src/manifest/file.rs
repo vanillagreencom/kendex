@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::base::Base;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, line_terminator, read_if_exists};
+use crate::fs::{atomic_write, read_if_exists};
 use crate::model::{HarnessId, Scope};
 
 use super::{
@@ -173,8 +173,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
                     message: e.to_string(),
                 })?;
         if let Some(accounts) = super::migrate::migrate(&mut document) {
-            // toml_edit emits LF even when Git checked this file out with CRLF.
-            let rewritten = document.to_string().replace('\n', line_terminator(text));
+            let rewritten = super::fold::serialized(&document, text);
             table =
                 toml::from_str(&rewritten).map_err(|e: toml::de::Error| CoreError::TomlParse {
                     path: path.to_path_buf(),
@@ -286,12 +285,10 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
             // inside a declaration — is not kendex's to drop, and the fold
             // needs that to tell it from a key kendex really did drop.
             let held = held_by_model(path, current)?;
-            super::fold::folded(current, &held, &desired)
-                .map_err(|e| CoreError::TomlParse {
-                    path: path.to_path_buf(),
-                    message: e.to_string(),
-                })?
-                .replace('\n', line_terminator(current))
+            super::fold::folded(current, &held, &desired).map_err(|e| CoreError::TomlParse {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?
         }
         None => desired,
     };

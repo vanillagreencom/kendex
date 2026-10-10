@@ -7,24 +7,53 @@ fn save_migrates_hand_edited_text_before_folding_the_mutation() {
     let tmp = tempfile::tempdir().unwrap();
     let root = crate::test_util::rooted(&tmp);
     let path = root.join("kendex.toml");
-    // Git checkouts and editors emit both terminators, at either readable schema.
-    for (schema, newline) in [(6, "\n"), (6, "\r\n"), (7, "\n"), (7, "\r\n")] {
-        let original = "# my setup\nschema = {schema}   # pinned\n\n[sources.cat]\nrepo = 'owner/catalog'   # source\n\n[skills.gh]\nsource = 'cat'\nnote = 'why I keep this'\nenabled = true   # still on\n"
-            .replace("{schema}", &schema.to_string())
-            .replace('\n', newline);
-        std::fs::write(&path, &original).unwrap();
-        let mut manifest = load_current(&path).unwrap().unwrap();
-        manifest.skills.get_mut("gh").unwrap().enabled = false;
-        save(&path, &manifest).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            original
-                .replacen("schema = 6", "schema = 7", 1)
-                .replace("enabled = true", "enabled = false")
-        );
-        let on_wire = serde_json::to_value(&manifest).unwrap();
-        assert!(on_wire.get("migration-notes").is_none());
-        assert!(on_wire.get("migrated-text").is_none());
+    // Git checkouts and editors emit each string form with either terminator.
+    let strings = [
+        ("basic", r#""line one\r\nline two\\path""#),
+        ("literal", "'line one\\nline two'"),
+        ("multiline basic", "\"\"\"\nline one\nline two café\n\"\"\""),
+        ("multiline literal", "'''\nline one\nline two café\n'''"),
+        ("basic continuation", "\"\"\"line one\\\n  line two\n\"\"\""),
+    ];
+    for (form, value) in strings {
+        for (schema, newline) in [(6, "\n"), (6, "\r\n"), (7, "\n"), (7, "\r\n")] {
+            for final_newline in [false, true] {
+                let original = format!(
+                    "# my setup\nschema = {schema}   # pinned\n\n[sources.cat]\nrepo = 'owner/catalog'   # source\n\n[skills.gh]\nsource = 'cat'\nnote = {value}\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = 'Stop'\ncommand = {value}\ndescription = {value}\n\n[hooks.guard]\nsource = 'cat'\n\n[hooks.guard.env]\nMESSAGE = {value}\n\n[agent-launch-instructions]\nall = {value}\n\n[agent-additional-instructions]\nall = {value}\n\n[skill-instructions]\nall = {value}\n\n[command-instructions]\nall = {value}\n\n[bot-instructions]\nvalue = {value}\nlist = [{value}]\ninline = {{ text = {value} }}\n\n[[bot-instructions.entries]]\ntext = {value}"
+                );
+                let original = if final_newline {
+                    format!("{original}\n")
+                } else {
+                    original
+                }
+                .replace('\n', newline);
+                std::fs::write(&path, &original).unwrap();
+                let mut manifest = load_current(&path).unwrap().unwrap();
+                let expected = original
+                    .replacen("schema = 6", "schema = 7", 1)
+                    .replace("enabled = true", "enabled = false");
+                if schema == 6 {
+                    assert_eq!(
+                        manifest.migrated_text.as_deref(),
+                        Some(original.replacen("schema = 6", "schema = 7", 1).as_str()),
+                        "{form} migration"
+                    );
+                }
+                manifest.skills.get_mut("gh").unwrap().enabled = false;
+                save(&path, &manifest).unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    expected,
+                    "{form}, schema {schema}, final terminator {final_newline}"
+                );
+                let reloaded = load_current(&path).unwrap().unwrap();
+                assert!(!reloaded.skills["gh"].enabled);
+                assert_eq!(reloaded.skill_instructions, manifest.skill_instructions);
+                let on_wire = serde_json::to_value(&manifest).unwrap();
+                assert!(on_wire.get("migration-notes").is_none());
+                assert!(on_wire.get("migrated-text").is_none());
+            }
+        }
     }
 }
 
