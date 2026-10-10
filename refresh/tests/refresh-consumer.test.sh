@@ -317,6 +317,64 @@ printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"st
 cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
 runner="$repo/refresh/refresh-consumer.sh"
 
+# The shared workflow clones the consumer before release setup. Another
+# writer can advance its default branch before this script fetches it.
+git clone -q --branch main "$TMP/remote" "$TMP/consumer"
+git clone -q --branch main "$TMP/remote" "$TMP/producer"
+git -C "$TMP/producer" config user.name fixture
+git -C "$TMP/producer" config user.email fixture@example.invalid
+printf 'default branch advanced during setup\n' >"$TMP/producer/default-tip.txt"
+commit "$TMP/producer"
+git -C "$TMP/producer" push -q origin main
+new_tip="$(git -C "$TMP/producer" rev-parse HEAD)"
+repo="$TMP/consumer"
+git -C "$repo" config user.name fixture
+git -C "$repo" config user.email fixture@example.invalid
+runner="$repo/refresh/refresh-consumer.sh"
+mkdir -p "$TMP/default-base-control"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/default-base-control/"
+python3 - "$TMP/default-base-control/refresh/refresh-consumer.sh" <<'BASE_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = 'if ! base="$(git rev-parse FETCH_HEAD)"; then'
+assert s.count(old) == 1
+changed = s.replace(old, 'base="$(git rev-parse HEAD)"\nif ! expected="$(git rev-parse FETCH_HEAD)"; then')
+boundary = 'fi\nprs="$(gh api --paginate'
+assert changed.count(boundary) == 1
+refusal = '[ "$base" = "$expected" ] || { printf \'refresh-error=default-moved value=%s\\n\' "$expected" >&2; exit 1; }'
+changed = changed.replace(boundary, 'fi\n' + refusal + '\nprs="$(gh api --paginate')
+assert changed != s
+p.write_text(changed)
+BASE_CONTROL
+for mode in fetched old-base-control; do
+  reset_default
+  [ "$mode" != old-base-control ] || runner="$TMP/default-base-control/refresh/refresh-consumer.sh"
+  : >"$TMP/state/classifier"
+  run_refresh advanced-default pass render
+  fetched_matches=false
+  if [ "$RC" -eq 0 ] &&
+      refresh_parent="$(git -C "$repo" rev-parse 'kendex/refresh^')" &&
+      refresh_head="$(git -C "$repo" rev-parse kendex/refresh)" &&
+      [ "$refresh_parent" = "$new_tip" ] &&
+      grep -qxF -- "--event pull_request --base $new_tip --head $refresh_head --repo $repo" "$TMP/state/classifier"; then
+    fetched_matches=true
+  fi
+  if [ "$mode" = fetched ] && [ "$fetched_matches" = true ]; then
+    ok 'refresh and classifier use the origin tip fetched after consumer clone'
+  elif [ "$mode" = old-base-control ] && [ "$RC" -eq 1 ] && [ "$fetched_matches" = false ] &&
+      grep -qxF "refresh-error=default-moved value=$new_tip" <<<"$OUT"; then
+    ok 'control: the old checkout base refuses the advanced origin tip'
+  else bad "$mode advanced default branch" "$OUT"; fi
+done
+reset_default
+git -C "$repo" merge --ff-only -q origin/main
+runner="$repo/refresh/refresh-consumer.sh"
+git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
+: >"$TMP/state/pr"
+: >"$TMP/state/creates"
+
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary"; then ok 'current run summary reports the exact engine version'; else bad 'current run engine version missing'; fi

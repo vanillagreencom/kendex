@@ -29,15 +29,13 @@ if ! default="$(gh api "repos/$GH_REPO" --jq .default_branch)"; then
   exit 1
 fi
 [ -n "$default" ] && [ "$default" != null ] || { printf 'refresh-error=default-branch value=missing\n' >&2; exit 1; }
-base="$(git rev-parse HEAD)"
 # Private consumer repositories need the app credential for every git read.
 gh auth setup-git
 git fetch --no-tags origin "$default"
-if ! expected="$(git rev-parse FETCH_HEAD)"; then
+if ! base="$(git rev-parse FETCH_HEAD)"; then
   printf 'refresh-error=read value=expected\n' >&2
   exit 1
 fi
-[ "$base" = "$expected" ] || { printf 'refresh-error=default-moved value=%s\n' "$expected" >&2; exit 1; }
 prs="$(gh api --paginate "repos/$GH_REPO/pulls?state=open&head=${GH_REPO%%/*}:kendex/refresh&per_page=100" --jq '.[].number')"
 count=0
 pr=""
