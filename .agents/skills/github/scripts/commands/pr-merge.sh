@@ -238,7 +238,9 @@ Terminal and mutation rules:
   Every gh pr merge invocation is exact-head guarded by --match-head-commit; a changed head is BLOCKED.
   Queue membership comes from GraphQL isInMergeQueue and mergeQueueEntry. An
   OPEN PR with an active queue entry exits 75 even when autoMergeRequest is
-  absent. An OPEN PR with no queue or auto-merge proof fails closed. The
+  absent, including when GitHub is still computing mergeability or that read
+  failed. A queued PR with another readiness refusal still exits 1. An OPEN
+  PR with no queue or auto-merge proof fails closed. The
   --delete-branch cleanup after MERGED is best-effort, not merge-state mutation.
 
 --check JSON:
@@ -781,6 +783,12 @@ volatile_note() {
     echo "  Block on .agents/skills/orch/scripts/queue-wait $pr_num --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks" >&2
 }
 
+exit_queued() {
+    echo "QUEUED IN MERGE QUEUE PR #$1 — queueState=${2:-active}" >&2
+    volatile_note "$1"
+    exit 75
+}
+
 post_merge_snapshot() {
     local pr_num="$1"
     local auth_token="$2"
@@ -1139,6 +1147,20 @@ main() {
     # GitHub holds the armed PR until its required checks, an approval of its
     # current head and thread resolution pass.
     if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then
+        # GitHub can report UNKNOWN for an already queued PR. Exit 1 makes
+        # the caller unarm it, losing its place without a real blocker.
+        if jq -e '.issues | length > 0 and all(.[]; startswith("unknown:"))' >/dev/null <<<"$check_result"; then
+            local refusal_snapshot refusal_queue_state
+            refusal_snapshot=$(post_merge_snapshot "$pr_num" "$token")
+            if refusal_queue_state=$(jq -er --arg expected "$supplied_head" '
+                select(.state == "OPEN")
+                | select(.in_merge_queue or .merge_queue_entry)
+                | select($expected == "" or .head == $expected)
+                | .queue_state
+            ' <<<"$refusal_snapshot"); then
+                exit_queued "$pr_num" "$refusal_queue_state"
+            fi
+        fi
         print_blocked "$check_result" "$pr_num"
         exit 1
     fi
@@ -1301,9 +1323,7 @@ main() {
     fi
 
     if [ "$post_in_queue" = "true" ] || [ "$post_queue_entry" = "true" ]; then
-        echo "QUEUED IN MERGE QUEUE PR #$pr_num — queueState=${post_queue_state:-active}" >&2
-        volatile_note "$pr_num"
-        exit 75
+        exit_queued "$pr_num" "$post_queue_state"
     fi
 
     if [ "$post_auto" = "true" ]; then
