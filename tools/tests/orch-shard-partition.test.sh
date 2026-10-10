@@ -390,7 +390,7 @@ PARTITION_RUNNER_OS=Linux
 # Rosters come from each step's run block in a sandbox whose workflow is the
 # copy under test and whose trees are this checkout. A `bash` shim leaves
 # serial suite calls empty and runs pooled calls over empty suite copies.
-# Both report `=== <path>` from the real globs, skip arms and name filters.
+# The shim reports suite calls from the real globs, skip arms and filters.
 #
 # The file keeps its name: the orch filters above are still the seam most
 # likely to be edited, and this section is the same invariant one level out.
@@ -419,9 +419,9 @@ for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh; do
   mkdir -p "$POOL/${path%/*}"
   printf '#!/usr/bin/env bash\n' > "$POOL/$path"
 done
-# `bash "$t"` in a roster loop prints nothing. A pooled invocation reports
-# its selected files with the same marker the loop uses. Cached invocations
-# have immutable empty batteries, like section 2's UNION_RUNS.
+# Ownership readers consume the shim's suite-invoked marker. Workflow
+# headings do not prove a suite call. A pooled invocation reports the files
+# its real runner selects over immutable empty batteries, as in UNION_RUNS.
 SHIM="$TMP/shim"
 mkdir -p "$SHIM"
 printf '#!%s\n' "$BASH" > "$SHIM/bash"
@@ -439,11 +439,12 @@ if [[ -n "$battery" ]]; then
     # No job deadline or inherited pool bound applies to empty fixture suites.
     (cd "$PARTITION_POOL" && env -u RUN_ALL_DEADLINE_EPOCH -u RUN_ALL_SUITE_SECS \
       PATH="$PARTITION_HOST_PATH" "$BASH" "$@") >"$cache.out" || exit 1
-    sed -n "s%^──── \(.*\) ────\$%=== $battery/\1.sh%p" "$cache.out" > "$cache"
+    sed -n "s%^──── \(.*\) ────\$%suite-invoked: $battery/\1.sh%p" "$cache.out" > "$cache"
   fi
   cat "$cache"
   exit 0
 fi
+printf 'suite-invoked: %s\n' "$1"
 if [ "$1" = tools/tests/orch-shard-partition.test.sh ]; then
   shift
   printf 'partition-arguments: %s\n' "$*"
@@ -499,7 +500,7 @@ claims_of() { # claims_of <workflow> ; every path its roster steps claim
   for f in "$dir"/*.sh; do
     roster_block "$f" || continue
     ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
-      sed -n 's/^=== //p'
+      sed -n 's/^suite-invoked: //p'
   done
   # The orch steps pass name filters to run-all.sh and print no path of their
   # own, so their claims come through section 2's sandbox: the same filters,
@@ -625,7 +626,7 @@ shard_claims() { # WORKFLOW SHARD ; sorted suite files that shard runs
     [[ "$(one_shard "$(cat "${f%.sh}.cond")")" == "$shard" ]] || continue
     roster_block "$f" || continue
     ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
-      sed -n 's/^=== //p'
+      sed -n 's/^suite-invoked: //p'
   done | sort
 }
 hook_tail_expected="$(cd "$ROOT" && printf '%s\n' hooks/tests/lane-mail-*.test.sh \
@@ -647,6 +648,23 @@ edited() { # edited <original> <copy> <arm> ; fails the arm whose edit matched n
     bad "mutation-unmatched arm=[$3]: the copy equals $(basename -- "$1"), so the arm judges nothing"
   fi
 }
+
+# Headings remain intact when a suite call becomes a no-op. Only calls
+# received by the shim can establish the tail's ownership.
+wf_hook_noop="$TMP/wf-hook-tail-noop.yml"
+awk '
+  index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 1 }
+  tail && substr($0, 1, 8) == "      - " && !index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 0 }
+  tail && /if ! bash "\$t"; then/ { sub(/if ! bash/, "if ! :"); hits++ }
+  { print }
+  END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_hook_noop"
+edited "$WORKFLOW" "$wf_hook_noop" hook-tail-noop
+claims_file "$wf_hook_noop" "$TMP/claims-hook-noop"
+check "must-fail: a tail with headings but no suite calls loses every moved suite" \
+  "$hook_tail_expected" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-hook-noop"))"
+check "must-fail: a tail with no suite calls has no shard claims" "" \
+  "$(shard_claims "$wf_hook_noop" guards-hooks-tail)"
 
 # Removing the tail step must return its suites to guards-hooks. Comments
 # carrying either moved glob must not satisfy that fallback.
@@ -967,7 +985,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       # the major version to exercise linear's actual roster branch on Linux.
       sed 's/${BASH_VERSINFO\[0\]}/${PARTITION_BASH_MAJOR}/g' "$f" > "$dir/runner"
       ( cd "$PART" && PARTITION_BASH_MAJOR="${major:-${BASH_VERSINFO[0]}}" PATH="$SHIM:$PATH" "$BASH" "$dir/runner" ) 2>/dev/null |
-        sed -n "s%^=== %$shard	%p"
+        sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
     # its `run:` that names a file in this tree.
@@ -1001,6 +1019,9 @@ unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<ta
     grep -qF "\"$shard\"" "$out" || printf '%s\t%s\n' "$shard" "$path"
   done < "$2"
 }
+
+check "must-fail: a tail with no suite calls has no selection owners" "" \
+  "$(suite_owners "$wf_hook_noop" | awk -F '\t' '$1 == "guards-hooks-tail" { print $2 }')"
 
 OWNERS="$TMP/owners"
 { suite_owners "$WORKFLOW"; suite_owners "$WORKFLOW" directories 3; } | sort -u > "$OWNERS"
