@@ -87,9 +87,13 @@ fields="$(jq -r '
 [ "$fields" != invalid-cwd ] || refuse payload invalid-cwd
 # TSV escapes tabs, newlines and backslashes, so only the field boundary is
 # a literal tab. printf decodes data without evaluating shell syntax.
-printf -v cwd '%b' "${fields%%$'\t'*}"
-printf -v command_text '%b' "${fields#*$'\t'}"
+# Bash 3.2 can unset the target of an empty %b assignment. Keep empty fields
+# as ordinary assignments and decode only nonempty text.
+cwd=${fields%%$'\t'*}
+command_text=${fields#*$'\t'}
 [ -n "$command_text" ] || exit 0
+[ -z "$cwd" ] || printf -v cwd '%b' "$cwd"
+printf -v command_text '%b' "$command_text"
 [ -n "$cwd" ] || cwd="$PWD"
 # The requested path is kept: the substitution below holds cd's own words when
 # the directory cannot be entered, and the physical path when it can, so the

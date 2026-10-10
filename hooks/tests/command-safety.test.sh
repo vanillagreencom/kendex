@@ -246,17 +246,17 @@ settings
 # and Copilot's object and string forms in both directions.
 shape() { # EXPECTED FIRST PAYLOAD_JSON LABEL
   local expected="$1" want_first="$2" payload="$3" label="$4" status=0 output
-  output="$(printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
+  output="$(cd -- "$repo" && printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
   first="$(first_line "$scratch/stderr")"
   cause="$(cause_below "$scratch/stderr")"
   # The status alone cannot tell a refusal for the right reason from one for
   # the wrong reason, and every shape here is meant to reach the policy.
-  if [ "$status" -eq "$expected" ] && [ "$first" = "$want_first" ]; then
+  if [ "$status" -eq "$expected" ] && [ "$first" = "$want_first" ] && [ -z "$output" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
   else
-    printf 'FAIL %s: exit %s (want %s), first %s (want %s)\n' \
-      "$label" "$status" "$expected" "$first" "$want_first"
+    printf 'FAIL %s: exit %s (want %s), first %s (want %s), stdout [%s]\n' \
+      "$label" "$status" "$expected" "$first" "$want_first" "$output"
     failed=$((failed + 1))
   fi
 }
@@ -277,10 +277,12 @@ done <<'SHAPES'
 2|command-safety: payload=invalid-cwd|{tool_input:{command:"git status"},cwd:42}|a non-string working directory refuses
 0|-|{tool_input:{command:""},cwd:{}}|an empty command still bypasses the working directory read
 0|-|{tool_input:{command:"\n\n"},cwd:{}}|a command containing only trailing newlines still bypasses the working directory read
+0|-|{tool_input:{command:"git status"}}|an allowed command without cwd uses the caller directory
+2|command-safety: refused=policy|{tool_input:{command:"qs -c vshell"}}|a denied command without cwd uses the caller policy
 0|-|{tool_input:{command:"git status"},cwd:($cwd + "\n\n")}|working directory trailing newlines keep the previous read behavior
 0|-|{tool_input:{command:"git status\n\u0027; $(touch SHOULD_NOT_RUN); \u0027"},cwd:$cwd}|shell syntax in command text stays data
 SHAPES
-[ ! -e SHOULD_NOT_RUN ] || { printf 'FAIL payload text executed\n'; failed=$((failed + 1)); }
+[ ! -e "$repo/SHOULD_NOT_RUN" ] || { printf 'FAIL payload text executed\n'; failed=$((failed + 1)); }
 quoted_cwd="$repo/quoted'"$'\t\nback\\slash'
 mkdir -p -- "$quoted_cwd"
 check 0 'git status' 'tabs, newlines, quotes and backslashes in the working directory remain data' "$quoted_cwd"
@@ -421,6 +423,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         defect == "no-cwd-check" && /^    elif \$payload.cwd != null/ {
           $0 = "    elif false"; changed++
         }
+        defect == "no-cwd-fallback" { swap("cwd=\"$PWD\"", "cwd=/") }
         { print }
         END { if (changed != 1) exit 1 }
       ' "$hook_source" >"$mutant" || exit 1
@@ -455,6 +458,7 @@ unit-g|FAIL empty-env: the default passes a gigabyte cap: exit 2, expected 0:
 unit-g|FAIL no-file: the default passes a gigabyte cap: exit 2, expected 0:
 default-key|FAIL empty-env: a bare MemoryMax names the default policy: first line command-safety: refused=policy, expected command-safety: refused=default-policy
 no-cwd-check|FAIL a non-string working directory refuses:
+no-cwd-fallback|FAIL a denied command without cwd uses the caller policy:
 CONTROLS
 fi
 printf '%s passed, %s failed\n' "$passed" "$failed"
