@@ -727,6 +727,9 @@ for row in \
   assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
     "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;-c;features.daemon_auto_start=false;--dangerously-bypass-hook-trust;$CODEX_COMPACT$row_tail;$BRIEF;" \
     "$row_what"
+  if [[ "$row_value:$row_words" == overseer:--verbose ]]; then
+    ENTRY_CODEX_LINE="$(recorded_line)"
+  fi
 done
 
 new_caller "$MARK"
@@ -737,6 +740,7 @@ run_succeed same-harness-restricted 'claude:fable:high' -- \
 assert_eq "$RC|$(overseers)|$(recorded claude)" \
   "0|1|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--permission-mode;dontAsk;--verbose;$BRIEF;" \
   "a same-harness named entry preserves the restricted permission spelling"
+ENTRY_SAME_LINE="$(recorded_line)"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
 # The reverse crossing reads the same table in the other direction. No codex
@@ -752,6 +756,88 @@ codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
   "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;$CLAUDE_COMPACT;$BRIEF;|none" \
   "a codex caller picking claude carries claude's permission word and no codex word, its update setting included"
+ENTRY_CLAUDE_LINE="$(recorded_line)"
+
+# Supervisors request one entry instead of rebuilding the live launch line.
+# The fleet record and harness argv stay unchanged: print prepares trust only.
+ENTRYCTL="$(mutant_scripts entryctl oversee-succeed)" || exit 1
+mutate_file "$ENTRYCTL/oversee-succeed" '    if (( ENTRY_GIVEN )); then' '    if false; then'
+ENTRYCOUNTCTL="$(mutant_scripts entrycountctl oversee-succeed)" || exit 1
+mutate_file "$ENTRYCOUNTCTL/oversee-succeed" '      (( OL_NAMED == 1 ))' '      (( OL_NAMED >= 1 ))'
+ENTRYMODECTL="$(mutant_scripts entrymodectl oversee-succeed)" || exit 1
+mutate_file "$ENTRYMODECTL/oversee-succeed" \
+  '(( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"' ':'
+# NAME|CALLER|ENTRY|FLAGS|MODE|CODEX USAGE|EXIT|KEYS|LINE|SCRIPT (a control)
+ENTRY_ROWS="$(printf '%s\n' \
+  "claude-codex|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|" \
+  "codex-claude|codex|claude:fable:high|--dangerously-bypass-approvals-and-sandbox --verbose|--print-launch-line|20|0||$ENTRY_CLAUDE_LINE|" \
+  "same-harness|claude|claude:fable:high|--permission-mode dontAsk --verbose|--print-launch-line|20|0||$ENTRY_SAME_LINE|" \
+  "walled|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|95|3|no-lane-qualifies;||" \
+  "restricted|claude|codex:gpt-6-astra:high|--permission-mode dontAsk|--print-launch-line|20|3|entry-permission-untransferable;no-lane-qualifies;||" \
+  "malformed|claude|codex:bad model:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
+  "two|claude|codex:gpt-6-astra:high,claude:fable:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
+  "empty|claude||--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
+  "wall-mode|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions|--walled-pane %9|20|1|mode-conflict;||" \
+  "check-mode|claude|codex:gpt-6-astra:high||--check-marks|20|1|mode-conflict;||" \
+  "caller-control|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|$ENTRYCTL/oversee-succeed" \
+  "count-control|claude|codex:gpt-6-astra:high,claude:fable:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||$ENTRYCOUNTCTL/oversee-succeed" \
+  "mode-control|claude|codex:gpt-6-astra:high||--check-marks|20|1|mode-conflict;||$ENTRYMODECTL/oversee-succeed")"
+while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage row_rc row_keys row_line row_script; do
+  fleet_state
+  row_lane="CLAUDE_CONFIG_DIR=$H/.claude"
+  if [[ "$row_caller" == codex ]]; then
+    new_caller "$CODEX_SCREEN" 'Context 48% left'
+    row_lane="CODEX_HOME=$H/.codex"
+  else
+    new_caller "$MARK"
+  fi
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  [[ "$row_name" != same-harness ]] || claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+  codex_usage "$row_usage" > "$FIXTURE_DIR/.codex.json"
+  # Remove the earlier live launch's trust so this print must prepare it.
+  if [[ "$row_name" == codex-claude ]]; then
+    jq --arg d "$TMP_ROOT/work" 'del(.projects[$d])' "$H/.claude/.claude.json" > "$TMP_ROOT/trust.json"
+    mv -- "$TMP_ROOT/trust.json" "$H/.claude/.claude.json"
+  elif [[ "$row_name" == claude-codex ]]; then
+    rm -rf -- "$STRIP_HOME"
+  fi
+  row_state="$(cat "$FLEET_STATE")"
+  row_layout="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
+  rm -f "${TMP_ROOT:?}"/argv.*
+  RC=0
+  # shellcheck disable=SC2086  # table-owned mode and flag words are argv.
+  (CALLER_LANE="$row_lane" SUCCEED_BIN="${row_script:-$SUCCEED}" exec_succeed "entry-$row_name" 'copilot:ignored:high' \
+    $row_mode --entry "$row_entry" -- $row_flags) > "$TMP_ROOT/entry.out" 2> "$TMP_ROOT/entry.err" || RC=$?
+  OUT="$(cat "$TMP_ROOT/entry.out")"
+  row_got_keys="$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' "$TMP_ROOT/entry.err" | tr '\n' ';')"
+  row_got="$RC|$row_got_keys|$OUT|$(tm list-windows -t fleet -F '#{window_id} #{window_index}')|$(cat "$FLEET_STATE")|$(recorded claude)|$(recorded codex)"
+  row_want="$row_rc|$row_keys|$row_line|$row_layout|$row_state|none|none"
+  if [[ -n "$row_script" ]]; then
+    if (FAIL=0; assert_eq "$row_got" "$row_want" "$row_name"; (( FAIL == 0 ))) > "$TMP_ROOT/entry-control.out"; then
+      fail "$row_name: the entry contract accepts the mutant"
+    else
+      pass "$row_name: the entry contract rejects the mutant"
+    fi
+  else
+    assert_eq "$row_got" "$row_want" "print entry $row_name" "$TMP_ROOT/entry.err"
+  fi
+  case "$row_name" in
+    walled|restricted)
+      row_walled=0
+      [[ "$row_name" != walled ]] || row_walled=1
+      assert_eq "$(sed -n 's/^oversee-succeed: no-lane-qualifies //p' "$TMP_ROOT/entry.err")" \
+        "entries=1 fallback=none walled=$row_walled unmeasured=0 mark=none" "print entry $row_name refuses without a caller fallback" ;;
+    claude-codex)
+      assert_eq "$(lane_codex_trusted "$STRIP_HOME/config.toml" "$TMP_ROOT/work" && echo trusted || echo untrusted)" \
+        trusted 'print entry prepares the picked codex home trust' ;;
+    codex-claude)
+      assert_eq "$(jq -r --arg d "$TMP_ROOT/work" '.projects[$d].hasTrustDialogAccepted' "$H/.claude/.claude.json")" \
+        true 'print entry prepares the picked claude account trust' ;;
+  esac
+done <<<"$ENTRY_ROWS"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 
 # An alternate full-bypass spelling has the same meaning across harnesses.
 new_caller "$MARK"

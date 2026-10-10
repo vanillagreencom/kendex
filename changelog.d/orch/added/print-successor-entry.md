@@ -1,0 +1,1 @@
+- `oversee-succeed --print-launch-line --entry harness:model:effort` prints a chosen successor's launch command with account selection, flag translation and folder trust. It refuses when that entry cannot run, without falling back to the caller's harness.
