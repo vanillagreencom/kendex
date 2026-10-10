@@ -169,10 +169,11 @@ partition_cargo_steps() { # <workflow> ; mode, compile order and condition of di
 if [[ "$mode" != cargo ]]; then
 
 # --- The sandbox: the real roster, none of the real work --------------------
-SANDBOX="$TMP/battery"
-mkdir -p "$SANDBOX/lib" "$TMP/scripts/lib"
+SANDBOX="$TMP/orch/tests"
+mkdir -p "$SANDBOX/lib" "$TMP/orch/scripts/lib" "$TMP/github/scripts/lib"
 cp "$TEST_DIR/run-all.sh" "$SANDBOX/run-all.sh"
-cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TMP/scripts/lib/lane-state.sh"
+cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TMP/orch/scripts/lib/lane-state.sh"
+cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$TMP/github/scripts/lib/group-leader.sh"
 printf '#!/usr/bin/env bash\n: # the sandbox clears nothing; its suites are empty\n' \
   > "$SANDBOX/lib/git-env.sh"
 roster=""
@@ -377,7 +378,7 @@ PARTITION_RUNNER_OS=Linux
 
 # --- 3. The shell shards' partition over every suite FILE -------------------
 # Section 2 judges one seam, the orch battery's name filters. The rest of the
-# workflow is a second seam and a coarser one: eight steps loop over rosters
+# workflow is a second seam and a coarser one: steps discover suite rosters
 # of suite files, and since two of them name individual paths inside a package
 # another one globs, the file-level partition can no longer be read off the
 # globs. Three of the eight, the commit-guards, tools and rest steps, also
@@ -387,11 +388,10 @@ PARTITION_RUNNER_OS=Linux
 # same suite and both exit 0. The aggregator asserts job success, never
 # suite count, so nothing downstream sees the loss.
 #
-# Rosters are taken by RUNNING each step's run block against a `bash` that
-# does nothing, in a sandbox whose workflow is the copy under test and whose
-# skills/, refresh/, tools/ and hooks/ are this tree. What a block prints as
-# `=== <path>` is its roster, produced by that block's own globs, skip arms
-# and fallbacks rather than by a second reading of them here.
+# Rosters come from each step's run block in a sandbox whose workflow is the
+# copy under test and whose trees are this checkout. A `bash` shim leaves
+# serial suite calls empty and runs pooled calls over empty suite copies.
+# Both report `=== <path>` from the real globs, skip arms and name filters.
 #
 # The file keeps its name: the orch filters above are still the seam most
 # likely to be edited, and this section is the same invariant one level out.
@@ -404,13 +404,47 @@ ln -s "$ROOT/skills" "$PART/skills"
 ln -s "$ROOT/tools"  "$PART/tools"
 ln -s "$ROOT/hooks"  "$PART/hooks"
 ln -s "$ROOT/refresh" "$PART/refresh"
-# `bash "$t"` in a roster loop resolves to this and does nothing, so a loop
-# prints its roster without running a suite. Only `bash` is shimmed; grep, sed
-# and printf stay the host's.
+# Pooled calls use the real runners over empty copies of the suite files.
+# This preserves their discovery and filters without starting the batteries.
+POOL="$TMP/pool"
+mkdir -p "$POOL/skills/orch/tests/lib" "$POOL/skills/orch/scripts/lib" "$POOL/tools/tests" "$TMP/pool-claims"
+mkdir -p "$POOL/skills/github/scripts/lib"
+cp "$TEST_DIR/run-all.sh" "$POOL/skills/orch/tests/run-all.sh"
+cp "$TEST_DIR/lib/git-env.sh" "$POOL/skills/orch/tests/lib/git-env.sh"
+cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$POOL/skills/orch/scripts/lib/lane-state.sh"
+cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$POOL/skills/github/scripts/lib/group-leader.sh"
+cp "$ROOT/tools/tests/run-all.sh" "$POOL/tools/tests/run-all.sh"
+for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh; do
+  [[ "${f##*/}" != run-all.sh ]] || continue
+  path="${f#"$ROOT"/}"
+  mkdir -p "$POOL/${path%/*}"
+  printf '#!/usr/bin/env bash\n' > "$POOL/$path"
+done
+# `bash "$t"` in a roster loop prints nothing. A pooled invocation reports
+# its selected files with the same marker the loop uses. Cached invocations
+# have immutable empty batteries, like section 2's UNION_RUNS.
 SHIM="$TMP/shim"
 mkdir -p "$SHIM"
-cat > "$SHIM/bash" <<'SH'
-#!/bin/sh
+printf '#!%s\n' "$BASH" > "$SHIM/bash"
+cat >> "$SHIM/bash" <<'SH'
+set -euo pipefail
+case "$1:${2-}" in
+  tools/tests/run-all.sh:*) battery=tools/tests ;;
+  skills/orch/tests/run-all.sh:--battery) battery="$3" ;;
+  *) battery='' ;;
+esac
+if [[ -n "$battery" ]]; then
+  key="$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
+  cache="$PARTITION_POOL_CLAIMS/$key"
+  if [[ ! -f "$cache" ]]; then
+    # No job deadline or inherited pool bound applies to empty fixture suites.
+    (cd "$PARTITION_POOL" && env -u RUN_ALL_DEADLINE_EPOCH -u RUN_ALL_SUITE_SECS \
+      PATH="$PARTITION_HOST_PATH" "$BASH" "$@") >"$cache.out" || exit 1
+    sed -n "s%^──── \(.*\) ────\$%=== $battery/\1.sh%p" "$cache.out" > "$cache"
+  fi
+  cat "$cache"
+  exit 0
+fi
 if [ "$1" = tools/tests/orch-shard-partition.test.sh ]; then
   shift
   printf 'partition-arguments: %s\n' "$*"
@@ -418,12 +452,15 @@ fi
 exit 0
 SH
 chmod +x "$SHIM/bash"
+export PARTITION_POOL="$POOL" PARTITION_POOL_CLAIMS="$TMP/pool-claims" PARTITION_HOST_PATH="$PATH"
 
-# A roster step is one that reports its suites as `=== <path>`. That marker is
-# what makes it a roster loop, so the selector needs no list of step names:
-# the orch steps hand their names to run-all.sh and print none of their own,
-# and the node steps run no shell suite at all.
+# Serial blocks carry the path marker. Pooled blocks invoke a battery runner.
+# Orch's name-filter calls remain accounted for by section 2.
 ROSTER_MARK='=== $t'
+roster_block() { # FILE ; a serial roster or a pooled battery invocation
+  grep -qF -e "$ROSTER_MARK" -e 'bash tools/tests/run-all.sh' \
+    -e 'bash skills/orch/tests/run-all.sh --battery' "$1"
+}
 
 # A job outside the shell matrix may run a suite by path. Each job claims
 # a path once, and only a path in the suite universe counts.
@@ -461,7 +498,7 @@ claims_of() { # claims_of <workflow> ; every path its roster steps claim
   cp "$wf" "$PART/.github/workflows/skill-tests.yml"
   split_run_blocks "$wf" "$dir"
   for f in "$dir"/*.sh; do
-    grep -qF "$ROSTER_MARK" "$f" || continue
+    roster_block "$f" || continue
     ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
       sed -n 's/^=== //p'
   done
@@ -594,10 +631,11 @@ edited() { # edited <original> <copy> <arm> ; fails the arm whose edit matched n
 # glob, so the files it alone claims land in no shard at all.
 wf_drop="$TMP/wf-roster-dropped.yml"
 awk '{
-  if (index($0, "for t in tools/tests/*.test.sh; do"))
-    sub(/tools\/tests\/\*\.test\.sh/, "")
+  if (index($0, "bash tools/tests/run-all.sh")) { hits++; next }
   print
-}' "$WORKFLOW" > "$wf_drop"
+}
+END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_drop"
 edited "$WORKFLOW" "$wf_drop" roster-dropped
 claims_file "$wf_drop" "$TMP/claims-drop"
 if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-drop"))" ]]; then
@@ -605,6 +643,35 @@ if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-drop"))" ]]; then
 else
   bad "must-fail: dropping a roster left nothing unclaimed, so the coverage check proves nothing"
 fi
+
+# The pooled tools step must keep the tail out. Slack must discover its own
+# directory. Each damaged copy is judged by the same claims reader above.
+wf_tools_tail="$TMP/wf-tools-tail-repeated.yml"
+awk '
+  /set -- "\$@" "!=\$\{base%\.sh\}"/ {
+    print "              [ \"$base\" = harness-smoke.test.sh ] || " $0; hits++; next
+  }
+  { print }
+  END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_tools_tail" || bad "tools tail control matched other than once"
+edited "$WORKFLOW" "$wf_tools_tail" tools-tail-repeated
+claims_file "$wf_tools_tail" "$TMP/claims-tools-tail"
+check "must-fail: tools stops rejecting harness-smoke and claims it twice" \
+  "tools/tests/harness-smoke.test.sh" "$(uniq -d "$TMP/claims-tools-tail")"
+
+wf_slack_directory="$TMP/wf-slack-wrong-directory.yml"
+awk '
+  /bash skills\/orch\/tests\/run-all.sh --battery skills\/slack\/tests/ {
+    sub(/--battery skills\/slack\/tests/, "--battery skills/slack/tests/wrong"); hits++
+  }
+  { print }
+  END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_slack_directory" || bad "Slack directory control matched other than once"
+edited "$WORKFLOW" "$wf_slack_directory" slack-wrong-directory
+claims_file "$wf_slack_directory" "$TMP/claims-slack-directory"
+check "must-fail: Slack's wrong battery leaves its suites claimed by none" \
+  "$(grep "^skills/slack/tests/" "$UNIV")" \
+  "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-slack-directory"))"
 
 # A roster claimed twice.
 wf_twice="$TMP/wf-roster-repeated.yml"
@@ -681,6 +748,46 @@ edited "$WORKFLOW" "$wf_nostep" globbing-step-deleted
 claims_file "$wf_nostep" "$TMP/claims-nostep"
 check "with the step that globs a package deleted, no suite of it is unclaimed" \
   "" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-nostep"))"
+
+# Dedicated owners disappear independently. Their declarations and the
+# generic rest invocation must not answer the claims search themselves.
+for package in slack review-gate orch; do
+  owner=""
+  case "$package" in
+    slack) owner="- name: Slack suites" ;;
+    review-gate) owner="- name: review-gate suites" ;;
+  esac
+  wf_owner_removed="$TMP/wf-owner-removed-$package.yml"
+  awk -v owner="$owner" -v package="$package" '
+    package == "orch" && $0 ~ /^[[:space:]]*run: bash / &&
+      index($0, "skills/" package "/tests/run-all.sh") { hits++; next }
+    owner != "" && index($0, owner) { drop = 1; hits++; next }
+    drop && substr($0, 1, 8) == "      - " { drop = 0 }
+    drop { next }
+    { print }
+    END { exit hits == 0 }
+  ' "$WORKFLOW" > "$wf_owner_removed" || bad "$package owner removal matched nothing"
+  edited "$WORKFLOW" "$wf_owner_removed" "$package-owner-removed"
+  claims_file "$wf_owner_removed" "$TMP/claims-owner-removed-$package"
+  check "$package suites move to rest when dedicated ownership is removed" \
+    "$(grep "^skills/$package/tests/" "$UNIV")" \
+    "$(grep "^skills/$package/tests/" "$TMP/claims-owner-removed-$package")"
+done
+
+# The old literal Slack declaration answered its own search after removal.
+wf_self_claim="$TMP/wf-slack-self-claim.yml"
+awk '
+  /needle="--battery skills\/\$x\/tests"/ {
+    sub(/skills\/\$x\/tests/, "skills/slack/tests"); hits++
+  }
+  { print }
+  END { exit hits != 1 }
+' "$TMP/wf-owner-removed-slack.yml" > "$wf_self_claim" || bad "Slack self-claim control matched other than once"
+edited "$TMP/wf-owner-removed-slack.yml" "$wf_self_claim" slack-self-claim
+claims_file "$wf_self_claim" "$TMP/claims-self-claim"
+check "must-fail: a Slack declaration that claims itself loses the reclaimed package" \
+  "$(grep '^skills/slack/tests/' "$UNIV")" \
+  "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-self-claim"))"
 
 wf_prefix="$TMP/wf-prefix-needle.yml"
 awk '{ sub(/needle="skills\/\$x\/tests\/\*\.sh"/, "needle=\"skills/$x/tests/\""); print }' \
@@ -781,7 +888,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
   split_run_blocks "$wf" "$dir"
   {
     for f in "$dir"/*.sh; do
-      grep -qF "$ROSTER_MARK" "$f" || continue
+      roster_block "$f" || continue
       shard="$(one_shard "$(cat "${f%.sh}.cond")")"
       [[ -n "$shard" ]] || continue
       # Bash's version array is readonly. This disposable runner copy injects

@@ -84,6 +84,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # lane_process_start, for the stop.
 source "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib/lane-state.sh" ||
   { echo "run-all.sh: ../scripts/lib/lane-state.sh did not load; a stop would have no process reader" >&2; exit 1; }
+source "$(dirname "${BASH_SOURCE[0]}")/../../github/scripts/lib/group-leader.sh" ||
+  { echo "run-all.sh: group-leader-missing" >&2; exit 1; }
 
 # Lane launch settings must not override the suites' own fixture settings.
 unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
@@ -234,6 +236,7 @@ OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
 trap 'rm -rf -- "$OUT_DIR"' EXIT
 trap 'stop_suites; exit 130' INT
 trap 'stop_suites; exit 143' TERM
+trap 'stop_suites; exit 129' HUP
 
 # Prints "PASS FAIL" from a suite's output, per the shapes the header names.
 counts_of() { # FILE
@@ -333,16 +336,28 @@ signal_tree() { # SIGNAL TREE
 
 tree_running() { [ -n "$(tree_live "$1")" ]; } # TREE
 
-# Suites stay in the runner's process group, so HUP, TERM or KILL sent to
-# the group ends them with it. A background job ignores SIGINT, and TERM may
-# reach the runner alone, so on either this sends TERM to every running suite
-# and its descendants and waits for each before the runner exits.
+# One bounded teardown for cancellation and overdue suites. Keep identities
+# from before TERM: a parent that exits no longer leads to its descendants.
+stop_tree() { # TREE
+  local until=$((SECONDS + STOP_GRACE))
+  signal_tree TERM "$1"
+  while tree_running "$1" && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  signal_tree KILL "$1"
+}
+
+# Each suite leads its own group and starts with INT and QUIT restored. A
+# signal to the runner must therefore stop each suite and its descendants
+# before the runner exits.
 stop_suites() {
-  local k=0
+  local k=0 tree=""
   while [ "$k" -lt "$JOBS" ]; do
-    [ -z "${SLOT_PID[k]:-}" ] || signal_tree TERM "$(tree_of "${SLOT_PID[k]}")"
+    if [ -n "${SLOT_PID[k]:-}" ]; then
+      tree="$tree
+$(tree_of "${SLOT_PID[k]}")"
+    fi
     k=$((k + 1))
   done
+  stop_tree "$tree"
   k=0
   while [ "$k" -lt "$JOBS" ]; do
     [ -z "${SLOT_PID[k]:-}" ] || wait "${SLOT_PID[k]}" 2>/dev/null
@@ -355,13 +370,11 @@ stop_suites() {
 # own process group, as GNU timeout does, is in the tree, which no group signal
 # would reach. The slot is reaped and reported on the next pass.
 stop_overdue() { # K
-  local tree until=$((SECONDS + STOP_GRACE))
+  local tree
   SLOT_STOP[$1]="${SLOT_BOUND[$1]}"
   SLOT_LAST[$1]="$(awk 'NF { last = $0 } END { print last }' "$OUT_DIR/${SLOT[$1]}.out" 2>/dev/null)"
   tree="$(tree_of "${SLOT_PID[$1]}")"
-  signal_tree TERM "$tree"
-  while tree_running "$tree" && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
-  signal_tree KILL "$tree"
+  stop_tree "$tree"
 }
 
 # One slot per worker, each empty or holding the suite it runs. A suite is
@@ -412,7 +425,7 @@ while [ "$finished" -lt "$RUN" ]; do
       { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; } &&
       { [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
-      bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
+      "${KENDEX_GROUP_LEADER[@]}" bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS

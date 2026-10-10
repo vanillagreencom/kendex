@@ -46,13 +46,17 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
+SCRATCH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
   { echo "mktemp failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'rm -rf -- "${SCRATCH_ROOT:?}"' EXIT
+# Copied runners resolve github two directories above their battery.
+TMP_ROOT="$SCRATCH_ROOT/fixture/tests"
+mkdir -p "$TMP_ROOT"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
+source "$TEST_DIR/../scripts/lib/lane-state.sh"
 
 # A fresh battery directory holding run-all.sh and no suites, the process
 # library run-all.sh sources at its path beside the directory, and DIR.tmp for
@@ -62,6 +66,8 @@ battery() { # DIR
   cp "$TEST_DIR/run-all.sh" "$1/run-all.sh"
   printf '#!/usr/bin/env bash\n:\n' >"$1/lib/git-env.sh"
   cp "$TEST_DIR/../scripts/lib/lane-state.sh" "${1%/*}/scripts/lib/lane-state.sh"
+  mkdir -p "$1/../../github/scripts/lib"
+  cp "$TEST_DIR/../../github/scripts/lib/group-leader.sh" "$1/../../github/scripts/lib/group-leader.sh"
 }
 
 # A suite that prints BODY, if any, then ERR, if any, to stderr, and exits
@@ -276,27 +282,42 @@ echo "=== 5. a signal that ends the run ends its suites ==="
 # The runner leads its own process group here (set -m), so a group signal
 # never reaches this file; perl sets SIGINT back to its default, as a shell
 # started with it ignored could not trap it. The suite writes its pid and
-# blocks, so only the runner can end it. TERM goes to the runner alone, the
-# case the group does not cover.
+# blocks, so only the runner can end it. Its holder uses the shipped
+# oversee_watch_lifecycle stop_bound_case TERM-ignoring loop. TERM goes to the
+# runner alone, the case the group does not cover.
 # SIGNAL|TARGET|EXPECTED RUNNER STATUS
 SIGNAL_ROWS='INT|group|130
 TERM|runner|143
 HUP|group|129'
+for variant in normal hup-unhandled kill-skipped; do
 while IFS='|' read -r sig target want; do
-  B="$TMP_ROOT/signal-$sig"
+  [[ "$variant" != hup-unhandled || "$sig" == HUP ]] || continue
+  B="$TMP_ROOT/signal-$variant-$sig"
   battery "$B"
-  printf '#!/usr/bin/env bash\necho "$$" >"$PIDFILE"\nwhile :; do sleep 1; done\n' >"$B/block.sh"
+  if [[ "$variant" == hup-unhandled ]]; then
+    mutate_file "$B/run-all.sh" "trap 'stop_suites; exit 129' HUP" "trap 'exit 129' HUP"
+  elif [[ "$variant" == kill-skipped ]]; then
+    mutate_file "$B/run-all.sh" '  signal_tree KILL "$1"' '  :'
+  fi
+  cat >"$B/block.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" >"$PIDFILE"
+bash -c 'trap "" TERM; echo "$$" >"$HOLDERFILE"; while :; do sleep 0.1; done' &
+wait
+SH
   mkdir -p "$B.bin"
   printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
   chmod +x "$B.bin/nproc"
   set -m
   perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i PATH="$B.bin:$PATH" HOME="$HOME" \
-    TMPDIR="$B.tmp" PIDFILE="$B.pid" bash "$B/run-all.sh" >"$B.out" 2>&1 &
+    TMPDIR="$B.tmp" PIDFILE="$B.pid" HOLDERFILE="$B.holder" bash "$B/run-all.sh" >"$B.out" 2>&1 &
   runner=$!
   set +m
   tick=0
-  until [ -s "$B.pid" ] || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
+  until { [ -s "$B.pid" ] && [ -s "$B.holder" ]; } || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
   suite_pid="$(cat "$B.pid" 2>/dev/null)"
+  holder_pid="$(cat "$B.holder" 2>/dev/null)"
+  holder_start="$(lane_process_start "$holder_pid" 2>/dev/null)"
   if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
   RC=0
   wait "$runner" 2>/dev/null || RC=$?
@@ -305,15 +326,49 @@ while IFS='|' read -r sig target want; do
   while kill -0 "$suite_pid" 2>/dev/null && [ "$tick" -lt 50 ]; do sleep 0.1; tick=$((tick + 1)); done
   state=gone
   [ -n "$suite_pid" ] || state=never-started
+  holder_state=gone
+  [ -n "$holder_start" ] || holder_state=never-started
+  if [ -n "$holder_start" ] &&
+    [ "$(lane_process_start "$holder_pid" 2>/dev/null)" = "$holder_start" ]; then
+    case "$(lane_process_state "$holder_pid" 2>/dev/null)" in
+      '' | Z) ;;
+      *) holder_state=alive ;;
+    esac
+  fi
   # The pid names this row's suite only while it runs, so a red row's survivor
   # is killed here and a pid proven gone is never signalled.
   if [ -n "$suite_pid" ] && kill -0 "$suite_pid" 2>/dev/null; then
     state=alive
-    kill -KILL "$suite_pid" 2>/dev/null
   fi
-  assert_eq "rc=$RC suite=$state" \
-    "rc=$want suite=gone" "SIG$sig to the $target ends the run at $want and ends the suite it ran"
+  if [[ "$state" == alive || "$holder_state" == alive ]]; then
+    kill -KILL -- "-$suite_pid" 2>/dev/null
+  fi
+  expected="rc=$want suite=gone holder=gone"
+  [[ "$variant" != hup-unhandled ]] || expected="rc=$want suite=alive holder=alive"
+  [[ "$variant" != kill-skipped ]] || expected="rc=$want suite=gone holder=alive"
+  assert_eq "rc=$RC suite=$state holder=$holder_state" "$expected" \
+    "$variant: SIG$sig to the $target preserves suite teardown"
 done <<<"$SIGNAL_ROWS"
+done
+
+# A suite must be able to install its own INT and QUIT handlers. Bash cannot
+# recover either signal if an asynchronous parent passed it as ignored.
+echo "=== suite signal handlers survive the asynchronous launch ==="
+for variant in normal signals-ignored; do
+  B="$TMP_ROOT/suite-signals-$variant"
+  battery "$B"
+  for sig in INT QUIT; do
+    printf '#!/usr/bin/env bash\ntrap "exit 0" %s\nkill -%s "$$"\nexit 1\n' "$sig" "$sig" > "$B/$sig.sh"
+  done
+  if [[ "$variant" == signals-ignored ]]; then
+    mutate_file "$B/run-all.sh" '      "${KENDEX_GROUP_LEADER[@]}" bash' '      bash'
+  fi
+  run_battery "$B" 2
+  expected='rc=0 red='
+  [[ "$variant" != signals-ignored ]] || expected='rc=1 red=INT QUIT '
+  assert_eq "rc=$RC red=$(failed_of)" "$expected" \
+    "$variant: suites can handle their own INT and QUIT"
+done
 
 echo "=== 6. a name filter selects by substring, or by whole name written =name ==="
 B="$TMP_ROOT/filter"
@@ -493,8 +548,8 @@ edit_of() { # NAME
     stop-skipped) EDIT=('      stop_overdue "$k"' '      :') ;;
     gate-removed) EDIT=("$GATE" '{ :; }') ;;
     unstarted-green) EDIT=('report "${SUITES[next]}" none 0 unstarted' 'report "${SUITES[next]}" 0 0') ;;
-    term-skipped) EDIT=('  signal_tree TERM "$tree"' '  :') ;;
-    kill-skipped) EDIT=('  signal_tree KILL "$tree"' '  :') ;;
+    term-skipped) EDIT=('  signal_tree TERM "$1"' '  :') ;;
+    kill-skipped) EDIT=('  signal_tree KILL "$1"' '  :') ;;
     tree-root-only) EDIT=('table="$(lane_process_table)" || table=""' 'table=""') ;;
     red-by-status) EDIT=('[[ "$2" != 0 || -n "${4:-}" ]]' '[[ "$2" != 0 ]]') ;;
     last-dropped) EDIT=('SLOT_LAST[$1]="$(awk' 'SLOT_LAST[$1]="$(: awk') ;;
