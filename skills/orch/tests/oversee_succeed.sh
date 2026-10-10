@@ -2296,13 +2296,18 @@ assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='
   "a codex caller entry carrying the update setting keeps it exactly once"
 
 CALLER_BRIEF_FILE="$TMP_ROOT/caller-brief.md"
-printf 'Run the caller workflow.\n\n' > "$CALLER_BRIEF_FILE"
 BRIEFCTL="$(mutant_scripts briefctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$BRIEFCTL/lib/overseer-launch.sh" \
   '  (( ! brief_given )) || brief="$caller_brief"' '  : brief="$caller_brief"'
+BRIEFARGCTL="$(mutant_scripts briefargctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$BRIEFARGCTL/lib/overseer-launch.sh" \
+  '  if (( brief_given )); then' '  if false; then'
+# A caller can write a Markdown task list or quote an option name as its task.
+while IFS= read -r brief_text; do
+  printf '%s\n\n' "$brief_text" > "$CALLER_BRIEF_FILE"
 # Each expected command states the prompt independently of the builder.
 while IFS='|' read -r harness expected; do
-  for script in "$SUCCEED" "$BRIEFCTL/oversee-succeed"; do
+  for script in "$SUCCEED" "$BRIEFCTL/oversee-succeed" "$BRIEFARGCTL/oversee-succeed"; do
     flags=()
     case "$harness" in
       claude) new_caller "$UNDER_MARK"; row_lane="CLAUDE_CONFIG_DIR=$H/.claude"; flags=(-- --verbose) ;;
@@ -2320,17 +2325,24 @@ while IFS='|' read -r harness expected; do
     ) > "$TMP_ROOT/brief-assertion.out" 2>&1 || assertion_rc=$?
     want_rc=0
     [[ "$script" == "$SUCCEED" ]] || want_rc=1
-    assert_eq "$assertion_rc" "$want_rc" "$harness prompt assertion rejects an ignored --brief" "$TMP_ROOT/brief-assertion.out"
+    assert_eq "$assertion_rc" "$want_rc" "$harness prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/brief-assertion.out"
   done
 done <<ROWS
-claude|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose 'Run the caller workflow.'
-codex|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 'Run the caller workflow.'
-copilot|$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all -i 'Run the caller workflow.'
+claude|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose -- '$brief_text'
+codex|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- '$brief_text'
+copilot|$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all --interactive='$brief_text'
 ROWS
+done <<'BRIEFS'
+Run the caller workflow.
+- Summarize these points
+--help
+= Summarize these points
+BRIEFS
 
+printf 'Run the caller workflow.\n\n' > "$CALLER_BRIEF_FILE"
 new_caller "$UNDER_MARK"
 run_succeed entrybrief '' --print-launch-line --entry codex:gpt-6-astra:high --brief-file "$CALLER_BRIEF_FILE" -- --dangerously-skip-permissions --verbose
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 'Run the caller workflow.'" \
+assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- 'Run the caller workflow.'" \
   "a named codex entry carries the caller brief from a claude caller"
 
 BRIEFMODECTL="$(mutant_scripts briefmodectl oversee-succeed)" || exit 1
@@ -2375,7 +2387,7 @@ Read the caller's brief: keep "$HOME" and `whoami` as written.
 TEXT
 QUOTE_BRIEFCTL="$(mutant_scripts quotebriefctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$QUOTE_BRIEFCTL/lib/overseer-launch.sh" \
-  '  cmd+="$brief_flag $(lane_single_quote "$brief")"' '  cmd+="$brief_flag '\''$brief'\''"'
+  '  cmd+="$brief_flag$brief_join$(lane_single_quote "$brief")"' '  cmd+="$brief_flag$brief_join'\''$brief'\''"'
 for script in "$SUCCEED" "$QUOTE_BRIEFCTL/oversee-succeed"; do
   new_caller "$UNDER_MARK"
   SUCCEED_BIN="$script" run_succeed briefquote '' --print-launch-line --brief-file "$CALLER_BRIEF_FILE"

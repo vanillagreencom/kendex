@@ -379,8 +379,9 @@
 #   --print-launch-line [--entry harness:model:effort]
 #                    --brief-file PATH replaces the whole successor brief.
 #                    It takes one line with no control characters. Claude and
-#                    codex take it as the positional prompt, copilot as -i,
-#                    and pi in place of its /skill:orch oversee command.
+#                    codex take it as the positional prompt, copilot as the
+#                    --interactive= value, and pi in place of its
+#                    /skill:orch oversee command.
 #                    With --entry, walk that one preference entry through the
 #                    live account pick, flag translation and folder trust.
 #                    No caller fallback runs. A lane must clear

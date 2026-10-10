@@ -630,8 +630,8 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # own name and the session starts on the bare account with nothing on screen
 # saying so.
 #
-# The brief is a positional prompt on claude and codex; copilot takes it as
-# the value of `-i`, which starts the interactive session and submits it.
+# The brief is a positional prompt on claude, codex and pi; copilot takes it
+# as the interactive option's value, which starts the session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   local brief_given=0 caller_brief=""
@@ -639,7 +639,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
     caller_brief="$2" brief_given=1
     shift 2
   fi
-  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" model
+  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" brief_join=" " model
   shift 4
   brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff"
   case "$harness" in
@@ -655,7 +655,15 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
   done
-  cmd+="$brief_flag $(lane_single_quote "$brief")"
+  # Caller text can start with an option word. Copilot needs an attached value;
+  # the positional parsers need their end-of-options delimiter.
+  if (( brief_given )); then
+    case "$harness" in
+      copilot) brief_flag=" --interactive=" brief_join="" ;;
+      *) brief_flag=" --" ;;
+    esac
+  fi
+  cmd+="$brief_flag$brief_join$(lane_single_quote "$brief")"
   if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
     OL_REASON=launch-trust-missing
     OL_TRUST_REASON="$LANE_TRUST_REASON"

@@ -486,23 +486,33 @@ pi_print_row
 assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high $PI_BRIEF" \
   "--print-launch-line --harness pi prints the pi line, bare on a provider no lane measures" "$TMP_ROOT/err"
 PI_BRIEF_FILE="$TMP_ROOT/pi-brief.md"
-printf 'Run the caller workflow.\n' > "$PI_BRIEF_FILE"
 PIBRIEFCTL="$(mutant_scripts pibriefctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PIBRIEFCTL/lib/overseer-launch.sh" \
   '  (( ! brief_given )) || brief="$caller_brief"' '  : brief="$caller_brief"'
-for script in "$SUCCEED" "$PIBRIEFCTL/oversee-succeed"; do
+PIBRIEFARGCTL="$(mutant_scripts pibriefargctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PIBRIEFARGCTL/lib/overseer-launch.sh" \
+  '  if (( brief_given )); then' '  if false; then'
+while IFS= read -r brief_text; do
+  printf '%s\n' "$brief_text" > "$PI_BRIEF_FILE"
+for script in "$SUCCEED" "$PIBRIEFCTL/oversee-succeed" "$PIBRIEFARGCTL/oversee-succeed"; do
   pi_print_row "$script" openai/gpt-5 "$PI_BRIEF_FILE"
   assertion_rc=0
   (
     FAIL=0
-    assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high 'Run the caller workflow.'" \
+    assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high -- '$brief_text'" \
       "pi takes the caller brief in place of its skill command" "$TMP_ROOT/err"
     [[ "$FAIL" -eq 0 ]]
   ) > "$TMP_ROOT/pi-brief-assertion.out" 2>&1 || assertion_rc=$?
   want_rc=0
   [[ "$script" == "$SUCCEED" ]] || want_rc=1
-  assert_eq "$assertion_rc" "$want_rc" "pi prompt assertion rejects an ignored --brief" "$TMP_ROOT/pi-brief-assertion.out"
+  assert_eq "$assertion_rc" "$want_rc" "pi prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/pi-brief-assertion.out"
 done
+done <<'BRIEFS'
+Run the caller workflow.
+- Summarize these points
+--help
+= Summarize these points
+BRIEFS
 # A github-copilot model spends the Copilot pool, whose account is the Pi root
 # the line opens under PI_CODING_AGENT_DIR (lib/lane-launch.sh §
 # lane_env_prefix), here the home's own.
