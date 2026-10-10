@@ -263,8 +263,11 @@ try:
                 signal.pidfd_send_signal(pidfd, signal.SIGTERM)
                 ended_by = "TERM"
                 if not poll.poll(50):
-                    signal.pidfd_send_signal(pidfd, signal.SIGKILL)
-                    ended_by = "KILL"
+                    try:
+                        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                        ended_by = "KILL"
+                    except ProcessLookupError:
+                        pass
                     if not poll.poll(1000):
                         raise RuntimeError("a workspace process did not exit")
                 print("notice=workspace-process-ended pid=" + entry, file=sys.stderr)

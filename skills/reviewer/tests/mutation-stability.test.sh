@@ -488,6 +488,11 @@ script, repo, sha, scratch, mode = sys.argv[1:]
 libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
     raise OSError(ctypes.get_errno(), "cannot adopt fixture descendants")
+probe = os.pidfd_open(os.getpid())
+try:
+    signal.pidfd_send_signal(probe, 0)
+finally:
+    os.close(probe)
 pid_path = Path(scratch) / "detached.pid"
 ack_path = Path(scratch) / "detached.ack"
 pid_path.unlink(missing_ok=True)
