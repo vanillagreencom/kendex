@@ -123,7 +123,8 @@ reason meanings when ok=false:
              thread count is zero, or a perf_qa payload whose metric's evidence
              carries no numeric value above zero: `percentiles` for a latency
              metric (`metric_kind` absent or "latency"), `instruction_counts`
-             for "instruction_count"; any other `metric_kind` is refused. A
+             for "instruction_count", `process_counts` for "process_count";
+             any other `metric_kind` is refused. A
              zero RESULT is not a zero sample: `stability: 0/10` is ten
              measured runs that all failed and stays valid. Only `.summary` and `.qa_metadata` are scanned — see
              CARRIERS below. `detail` names the offending citation.

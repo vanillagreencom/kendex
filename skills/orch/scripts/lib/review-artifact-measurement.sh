@@ -71,8 +71,9 @@ measurement_declaration() {
 # nothing most naturally emits. A perf_qa payload must carry the evidence its
 # metric produces, with at least one numeric leaf above zero: `percentiles` for
 # a latency metric (`metric_kind` absent or "latency"), `instruction_counts`
-# for "instruction_count". An instruction-count instrument measures no latency
-# distribution: its counts are its samples, and percentiles demanded of it
+# for "instruction_count", `process_counts` for "process_count". A count
+# instrument measures no latency distribution: its counts are its samples,
+# and percentiles demanded of it
 # could only be fabricated or excused by declaring a successful instrument
 # failed. A kind this gate cannot judge is refused, never waved through.
 #
@@ -130,9 +131,11 @@ zero_sample_detail() {
               then evidence_zero("percentiles"; $pq.percentiles?; "percentiles")
             elif $kind == "instruction_count"
               then evidence_zero("instruction_counts"; $pq.instruction_counts?; "instruction counts")
+            elif $kind == "process_count"
+              then evidence_zero("process_counts"; $pq.process_counts?; "process counts")
             elif ($kind | type) != "string"
-              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind type=\($kind | type)\nmetric_kind must be \"latency\" or \"instruction_count\"."]
-            else ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind value=\($kind | @json)\nmetric_kind must be \"latency\" or \"instruction_count\"."]
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind type=\($kind | type)\nmetric_kind must be \"latency\", \"instruction_count\" or \"process_count\"."]
+            else ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind value=\($kind | @json)\nmetric_kind must be \"latency\", \"instruction_count\" or \"process_count\"."]
             end
         end ;
 

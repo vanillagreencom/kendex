@@ -227,6 +227,42 @@ wrapped_table "$IC_TEMPLATE" \
   "counts all zero^\"instruction_counts\":{\"bench_a\":{\"baseline\":0,\"current\":0}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~positive_values:0=true" \
   "counts a bare string^\"instruction_counts\":\"12 benchmarks\"^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.instruction_counts=true detail~type:string=true"
 
+echo "=== perf payload: a process-count metric is judged on its counts ==="
+# KEN-3661 measured these process starts without a latency distribution.
+# The zero row omits the positive mailbox axis so no numeric leaf is positive.
+PC_COUNTS='{"halt":{"mailboxes":[1,10,40],"baseline":[19,37,97],"changed":[13,13,13]},"deliver":{"mailboxes":[1,10,40],"baseline":[19,37,97],"changed":[13,13,13]},"command_safety":{"baseline":47,"changed":44},"overseer_deliver":{"baseline":106,"changed":82}}'
+PC_TEMPLATE='{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":{"metric_kind":"process_count","percentiles":{},"regression_pct":{"halt_M1":-31.57894736842105,"halt_M10":-64.86486486486487,"halt_M40":-86.5979381443299,"deliver_M1":-31.57894736842105,"deliver_M10":-64.86486486486487,"deliver_M40":-86.5979381443299,"command_safety":-6.382978723404255,"overseer_deliver":-22.641509433962263},"regressions":[],"platform":"Linux x86_64; GNU Bash 5.2.21","baseline_sha":"1f981ab20a0f2a7ee4afd384dcd413e90f11bcf4",%s}}}'
+wrapped_table "$PC_TEMPLATE" \
+  "KEN-3661 measured process counts are valid without a declaration^\"process_counts\":$PC_COUNTS^rc=0 ok=true reason=valid measurement_failed=ABSENT measurement_suppressed=ABSENT" \
+  "process counts missing entirely^\"threshold_pct\":5^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~state:missing=true" \
+  "process counts null^\"process_counts\":null^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~state:missing=true" \
+  "process counts an empty object^\"process_counts\":{}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~count:0=true" \
+  "process counts an empty array^\"process_counts\":[]^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~count:0=true" \
+  "process counts all zero^\"process_counts\":{\"halt\":{\"baseline\":[0,0,0],\"changed\":[0,0,0]},\"deliver\":{\"baseline\":[0,0,0],\"changed\":[0,0,0]},\"command_safety\":{\"baseline\":0,\"changed\":0},\"overseer_deliver\":{\"baseline\":0,\"changed\":0}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~positive_values:0=true" \
+  "process counts a bare string^\"process_counts\":\"processes measured\"^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~type:string=true"
+file_table \
+  "percentiles do not replace process counts^{\"agent\":\"reviewer-perf\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{\"perf_qa\":{\"metric_kind\":\"process_count\",\"percentiles\":{\"p99\":4.2}}}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.process_counts=true detail~state:missing=true" \
+  "process_counts is not a metric kind^{\"agent\":\"reviewer-perf\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{\"perf_qa\":{\"metric_kind\":\"process_counts\",\"process_counts\":$PC_COUNTS}}}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.metric_kind=true detail~value:\"process_counts\"=true"
+
+# Must-fail control: removing only process-count dispatch must reject the
+# measured row as an unknown kind, rather than demanding latency evidence.
+PC_CONTROL="$TMP_ROOT/process-control"
+mkdir -p "$PC_CONTROL"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$PC_CONTROL/scripts"
+PC_CONTROL_LIB="$PC_CONTROL/scripts/lib/review-artifact-measurement.sh"
+branch='elif $kind == "process_count"'
+[[ "$(grep -cF -- "$branch" "$PC_CONTROL_LIB")" == 1 ]] || { echo "control: process-count branch is not in the copied lib once" >&2; exit 1; }
+before="$(cksum < "$PC_CONTROL_LIB")"
+perl -0pi -e 's/            elif \$kind == "process_count"\n              then evidence_zero\("process_counts"; \$pq\.process_counts\?; "process counts"\)\n//' "$PC_CONTROL_LIB"
+[[ "$(cksum < "$PC_CONTROL_LIB")" != "$before" ]] || { echo "control: the copied process-count lib did not change" >&2; exit 1; }
+fresh_run
+# shellcheck disable=SC2059
+printf "$PC_TEMPLATE" "\"process_counts\":$PC_COUNTS" > "$F"
+CHECK="$PC_CONTROL/scripts/review-artifact-check" run_check --file %F
+assert_eq "$(observe 'rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.metric_kind=true detail~value:"process_count"=true')" \
+  'rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.metric_kind=true detail~value:"process_count"=true' \
+  "control: removing process-count dispatch rejects measured process counts" "$ERR"
+
 # Must-fail control: a disposable copy of the validator with the metric
 # dispatch removed is today's validator, which required percentiles of every
 # metric. It must reject the measured instruction-count artifact the table
