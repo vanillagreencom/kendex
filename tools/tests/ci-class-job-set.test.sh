@@ -109,8 +109,8 @@ micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+review-gate +orc
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|$ORCH_ALL +guards-scans +guards-tools
 micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
 standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
-micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks $NO_SKILL
-micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-tools-tail
+micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
+micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
 micro|false|skills/orch/scripts/lane-mail|$SHARD_CODE|+guards-tools
@@ -122,8 +122,8 @@ micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
 micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
 micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
 micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
-micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-tools-tail +rest
-micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks +guards-tools-tail
+micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +guards-tools-tail +rest
+micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
@@ -413,19 +413,19 @@ while IFS='|' read -r path expected; do
   check "world selection over '$path'" "$expected" \
     "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | field shards)"
 done <<ROWS
-skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-tools","guards-tools-tail","rest"]
-skills/github/scripts/lib/gh-auth.sh|["review-gate",$ORCH,"guards-scans","guards-hooks","guards-tools","guards-tools-tail","worktree","rest"]
-skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","guards-hooks","guards-tools","guards-tools-tail","rest"]
-skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-hooks","guards-tools","guards-tools-tail","linear"]
+skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
+skills/github/scripts/lib/gh-auth.sh|["review-gate",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","rest"]
+skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
+skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["review-gate","orch-rest","guards-hooks","guards-tools-tail","rest","node"]
-.claude/hooks/lane-mail-check|["guards-hooks","guards-tools-tail","node"]
-.pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-tools-tail","node"]
-hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-tools-tail","node"]
-docs/x/policy.md|["guards-hooks","guards-tools-tail","node"]
-docs/guard/refs.md|["guards-commit","guards-hooks"]
+crates/demo/src/discover.rs|["review-gate","orch-rest","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","node"]
+.claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
+.pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
+hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
+docs/x/policy.md|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
+docs/guard/refs.md|["guards-commit","guards-hooks","guards-hooks-tail"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
 skills/AGENTS.md|["guards-scans","guards-tools-tail"]
 docs/cite.md|["guards-tools-tail"]
@@ -463,13 +463,13 @@ s/^\$path" ;;$/" ;;/@kendex.settings.toml
 /^      \*\.md | \*\.markdown) ;;$/d@README.md
 s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
 s/0) want_shard guards-tools-tail ;;/0) ;;/@docs/cite.md
-s/hooks) want_shard guards-hooks guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-tools-tail ;;/@hooks/block-bare-cd.sh
-s/hooks) want_shard guards-hooks guards-tools-tail node ;;/hooks) want_shard guards-hooks node ;;/@hooks/block-bare-cd.sh
-s/skills\/commit-guards) want_shard guards-commit guards-hooks ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
+s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail ;;/@hooks/block-bare-cd.sh
+s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail node ;;/@hooks/block-bare-cd.sh
+s/skills\/commit-guards) want_shard guards-commit guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x
-s/^        want_shard guards-hooks$/        :/@skills/price-handling/scripts/x
+s/^        want_shard guards-hooks guards-hooks-tail$/        :/@skills/price-handling/scripts/x
 s/ | \.claude\/hooks\/\*//@.claude/hooks/lane-mail-check
 s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
@@ -480,6 +480,9 @@ s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-revie
 s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
 s/^      macos=\$platform$/      macos=true/@skills/price-handling/SKILL.md
 s/^      macos_shard "\$shards" || macos=false$/      :/@pi-extensions/pi-demo/src/x.ts
+s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-tools-tail node ;;/@hooks/block-bare-cd.sh
+s/^        want_shard guards-hooks guards-hooks-tail$/        want_shard guards-hooks/@skills/price-handling/scripts/x
+s/skills\/commit-guards) want_shard guards-commit guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit guards-hooks ;;/@docs/guard/refs.md
 CONTROLS
 
 # Each refusal the shard selection makes, from a fixture or a planted copy.
@@ -504,7 +507,7 @@ s/^  required:/   required:/|exit=2 requirements-unreadable path=skills/doc-limi
 s/\[commit-guards\]/[commit-guard]/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
 ROWS
 # An optional list is read past, never refused and never followed.
-check "an optional list is no dependency" '["guards-scans","guards-hooks","guards-tools","guards-tools-tail","rest"]' \
+check "an optional list is no dependency" '["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]' \
   "$(SELECT_IN="$SEL_WORLD" selection micro false skills/price-handling/scripts/x | field shards)"
 # EDIT#PATH#EXPECTED — a copy of the script with a planted fault. Fields split
 # on `#`, since an edit spells `$@`.
@@ -530,7 +533,7 @@ ROWS
 PRICE=skills/price-handling/scripts/x
 # A Pi package's source, whose one shard, node, the matrix never runs on macOS.
 PI=pi-extensions/pi-demo/src/x.ts
-PRICE_SHARDS='["guards-scans","guards-hooks","guards-tools","guards-tools-tail","rest"]'
+PRICE_SHARDS='["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]'
 # The whole merge-group selection of the price-handling path; that
 # selection less what a pull request run of the same diff ran, which is
 # every lane but the verify job; and less what a pull request run of the

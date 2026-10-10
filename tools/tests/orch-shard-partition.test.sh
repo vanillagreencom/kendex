@@ -380,7 +380,7 @@ PARTITION_RUNNER_OS=Linux
 # workflow is a second seam and a coarser one: steps discover suite rosters
 # of suite files, and since two of them name individual paths inside a package
 # another one globs, the file-level partition can no longer be read off the
-# globs. Three of the eight, the commit-guards, tools and rest steps, also
+# globs. The commit-guards, hooks, tools and rest steps also
 # carry a fallback: each runs a suite another step claims only while that
 # step's path or glob is missing from the workflow's run text. A fallback
 # satisfied by a path written in a COMMENT would let two shards both skip the
@@ -390,7 +390,7 @@ PARTITION_RUNNER_OS=Linux
 # Rosters come from each step's run block in a sandbox whose workflow is the
 # copy under test and whose trees are this checkout. A `bash` shim leaves
 # serial suite calls empty and runs pooled calls over empty suite copies.
-# Both report `=== <path>` from the real globs, skip arms and name filters.
+# The shim reports suite calls from the real globs, skip arms and filters.
 #
 # The file keeps its name: the orch filters above are still the seam most
 # likely to be edited, and this section is the same invariant one level out.
@@ -419,9 +419,9 @@ for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh; do
   mkdir -p "$POOL/${path%/*}"
   printf '#!/usr/bin/env bash\n' > "$POOL/$path"
 done
-# `bash "$t"` in a roster loop prints nothing. A pooled invocation reports
-# its selected files with the same marker the loop uses. Cached invocations
-# have immutable empty batteries, like section 2's UNION_RUNS.
+# Ownership readers consume the shim's suite-invoked marker. Workflow
+# headings do not prove a suite call. A pooled invocation reports the files
+# its real runner selects over immutable empty batteries, as in UNION_RUNS.
 SHIM="$TMP/shim"
 mkdir -p "$SHIM"
 printf '#!%s\n' "$BASH" > "$SHIM/bash"
@@ -439,11 +439,12 @@ if [[ -n "$battery" ]]; then
     # No job deadline or inherited pool bound applies to empty fixture suites.
     (cd "$PARTITION_POOL" && env -u RUN_ALL_DEADLINE_EPOCH -u RUN_ALL_SUITE_SECS \
       PATH="$PARTITION_HOST_PATH" "$BASH" "$@") >"$cache.out" || exit 1
-    sed -n "s%^──── \(.*\) ────\$%=== $battery/\1.sh%p" "$cache.out" > "$cache"
+    sed -n "s%^──── \(.*\) ────\$%suite-invoked: $battery/\1.sh%p" "$cache.out" > "$cache"
   fi
   cat "$cache"
   exit 0
 fi
+printf 'suite-invoked: %s\n' "$1"
 if [ "$1" = tools/tests/orch-shard-partition.test.sh ]; then
   shift
   printf 'partition-arguments: %s\n' "$*"
@@ -499,7 +500,7 @@ claims_of() { # claims_of <workflow> ; every path its roster steps claim
   for f in "$dir"/*.sh; do
     roster_block "$f" || continue
     ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
-      sed -n 's/^=== //p'
+      sed -n 's/^suite-invoked: //p'
   done
   # The orch steps pass name filters to run-all.sh and print no path of their
   # own, so their claims come through section 2's sandbox: the same filters,
@@ -615,6 +616,28 @@ for args in '' --cargo-only; do
   fi
 done
 
+# The new hooks shard owns its name seam and md-refs. Each check reads
+# the workflow's real loop through the same sandbox as the full partition.
+shard_claims() { # WORKFLOW SHARD ; sorted suite files that shard runs
+  local wf="$1" shard="$2" dir="$TMP/shard-blocks" f
+  cp "$wf" "$PART/.github/workflows/skill-tests.yml"
+  split_run_blocks "$wf" "$dir"
+  for f in "$dir"/*.sh; do
+    [[ "$(one_shard "$(cat "${f%.sh}.cond")")" == "$shard" ]] || continue
+    roster_block "$f" || continue
+    ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+      sed -n 's/^suite-invoked: //p'
+  done | sort
+}
+hook_tail_expected="$(cd "$ROOT" && printf '%s\n' hooks/tests/lane-mail-*.test.sh \
+  hooks/tests/reviewer-*.test.sh skills/commit-guards/tests/md-refs.test.sh | sort)"
+hook_tail_claims="$(shard_claims "$WORKFLOW" guards-hooks-tail)"
+hook_kept_claims="$(shard_claims "$WORKFLOW" guards-hooks)"
+check "the hooks tail claims the name seam and md-refs" "$hook_tail_expected" "$hook_tail_claims"
+[[ -n "$hook_tail_claims" ]] && ok "the hooks tail claim set is non-empty" || bad "the hooks tail claims no suites"
+check "the hooks shard claim sets are disjoint" "" \
+  "$(comm -12 <(printf '%s\n' "$hook_tail_claims") <(printf '%s\n' "$hook_kept_claims"))"
+
 # --- 3b. Must-fail: the ways this partition breaks --------------------------
 # Each arm mutates a copy of the workflow, and the section above must name the
 # damage. An arm that stays clean means the section reports nothing. An arm
@@ -625,6 +648,72 @@ edited() { # edited <original> <copy> <arm> ; fails the arm whose edit matched n
     bad "mutation-unmatched arm=[$3]: the copy equals $(basename -- "$1"), so the arm judges nothing"
   fi
 }
+
+# Headings remain intact when a suite call becomes a no-op. Only calls
+# received by the shim can establish the tail's ownership.
+wf_hook_noop="$TMP/wf-hook-tail-noop.yml"
+awk '
+  index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 1 }
+  tail && substr($0, 1, 8) == "      - " && !index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 0 }
+  tail && /if ! bash "\$t"; then/ { sub(/if ! bash/, "if ! :"); hits++ }
+  { print }
+  END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_hook_noop"
+edited "$WORKFLOW" "$wf_hook_noop" hook-tail-noop
+claims_file "$wf_hook_noop" "$TMP/claims-hook-noop"
+check "must-fail: a tail with headings but no suite calls loses every moved suite" \
+  "$hook_tail_expected" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-hook-noop"))"
+check "must-fail: a tail with no suite calls has no shard claims" "" \
+  "$(shard_claims "$wf_hook_noop" guards-hooks-tail)"
+
+# Removing the tail step must return its suites to guards-hooks. Comments
+# carrying either moved glob must not satisfy that fallback.
+wf_no_hook_tail="$TMP/wf-hook-tail-deleted.yml"
+awk '
+  index($0, "- name: lane-mail, reviewer and md-refs suites") { drop = 1; hits++; next }
+  drop && substr($0, 1, 8) == "      - " { drop = 0 }
+  drop { next }
+  { print }
+  END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_no_hook_tail"
+edited "$WORKFLOW" "$wf_no_hook_tail" hook-tail-deleted
+claims_file "$wf_no_hook_tail" "$TMP/claims-no-hook-tail"
+check "deleting the hooks tail leaves no suite unclaimed" "" \
+  "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-no-hook-tail"))"
+reclaimed="$(shard_claims "$wf_no_hook_tail" guards-hooks)"
+check "deleting the hooks tail returns all its suites to guards-hooks" "$hook_tail_expected" \
+  "$(comm -12 <(printf '%s\n' "$hook_tail_expected") <(printf '%s\n' "$reclaimed"))"
+
+# Each glob is an independent claim rule. Keep it only in a comment, then
+# remove the fallback's comment filter to prove the missing suites are named.
+while IFS= read -r glob; do
+  wf_hook_prose="$TMP/wf-hook-glob-comment.yml"
+  awk -v glob="$glob" '
+    index($0, "for t in hooks/tests/lane-mail-") { print "          # " glob }
+    (i = index($0, glob " \\")) { $0 = substr($0, 1, i - 1) substr($0, i + length(glob) + 1); hits++ }
+    { print }
+    END { exit hits != 1 }
+  ' "$WORKFLOW" > "$wf_hook_prose"
+  edited "$WORKFLOW" "$wf_hook_prose" "hook-glob-comment $glob"
+  claims_file "$wf_hook_prose" "$TMP/claims-hook-prose"
+  check "a hooks glob in a comment is reclaimed: $glob" "" \
+    "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-hook-prose"))"
+  wf_hook_open="$TMP/wf-hook-comment-filter-removed.yml"
+  awk '
+    index($0, "- name: hook and moved commit-guards suites") { hook = 1 }
+    hook && /claims="\$\(grep -v/ { print "          claims=\"$(cat \"$wf\")\""; hits++; hook = 0; next }
+    { print }
+    END { exit hits != 1 }
+  ' "$wf_hook_prose" > "$wf_hook_open"
+  edited "$wf_hook_prose" "$wf_hook_open" "hook-comment-filter-removed $glob"
+  claims_file "$wf_hook_open" "$TMP/claims-hook-open"
+  expected="$(cd "$ROOT" && printf '%s\n' $glob | sort)"
+  check "must-fail: a prose-only hooks glob loses its named suites when comments count: $glob" \
+    "$expected" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-hook-open"))"
+done <<'GLOBS'
+hooks/tests/lane-mail-*.test.sh
+hooks/tests/reviewer-*.test.sh
+GLOBS
 
 # A roster no fallback covers, dropped. No skip list points at the tools/tests
 # glob, so the files it alone claims land in no shard at all.
@@ -702,6 +791,7 @@ while IFS='|' read -r moved loop; do
   awk -v moved="$moved" -v loop="$loop" '
     index($0, loop) { print "          # " moved; hits++ }
     (i = index($0, moved " \\")) { $0 = substr($0, 1, i - 1) substr($0, i + length(moved) + 1); cut++ }
+    (i = index($0, moved "; do")) { $0 = substr($0, 1, i - 1) substr($0, i + length(moved)); cut++ }
     { print }
     END { exit !(hits == 1 && cut == 1) }
   ' "$WORKFLOW" > "$wf_prose" ||
@@ -725,13 +815,14 @@ while IFS='|' read -r moved loop; do
 done <<'ROWS'
 skills/commit-guards/tests/install-git-hooks.test.sh|for t in hooks/tests/*.sh
 tools/tests/harness-smoke.test.sh|for t in tools/tests/harness-smoke.test.sh
+skills/commit-guards/tests/md-refs.test.sh|for t in hooks/tests/lane-mail-*.test.sh
 ROWS
-[[ "$prose_rows" -eq 2 ]] || bad "the prose arm table read $prose_rows rows, not 2"
+[[ "$prose_rows" -ge 3 ]] || bad "the prose arm table missed a required path"
 
 # The step that globs a package, deleted. `rest` skips a package only where
 # this file still runs it, and the needle it looks for is the owning loop's
 # glob, which leaves with that loop; the package's suites come back here
-# instead of going nowhere. The two paths `guards-hooks` spells stay, so they
+# instead of going nowhere. The two paths the hooks shards spell stay, so they
 # are claimed twice, which costs time and loses no suite. With the needle
 # reverted to the package's DIRECTORY PREFIX the two surviving paths answer
 # for the whole package and its other suites run in no shard, which is the
@@ -894,7 +985,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       # the major version to exercise linear's actual roster branch on Linux.
       sed 's/${BASH_VERSINFO\[0\]}/${PARTITION_BASH_MAJOR}/g' "$f" > "$dir/runner"
       ( cd "$PART" && PARTITION_BASH_MAJOR="${major:-${BASH_VERSINFO[0]}}" PATH="$SHIM:$PATH" "$BASH" "$dir/runner" ) 2>/dev/null |
-        sed -n "s%^=== %$shard	%p"
+        sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
     # its `run:` that names a file in this tree.
@@ -928,6 +1019,9 @@ unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<ta
     grep -qF "\"$shard\"" "$out" || printf '%s\t%s\n' "$shard" "$path"
   done < "$2"
 }
+
+check "must-fail: a tail with no suite calls has no selection owners" "" \
+  "$(suite_owners "$wf_hook_noop" | awk -F '\t' '$1 == "guards-hooks-tail" { print $2 }')"
 
 OWNERS="$TMP/owners"
 { suite_owners "$WORKFLOW"; suite_owners "$WORKFLOW" directories 3; } | sort -u > "$OWNERS"

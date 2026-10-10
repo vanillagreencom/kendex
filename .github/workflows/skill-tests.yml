@@ -62,7 +62,8 @@ name: Skill Tests
 # Linux, and `guards-tools` and `guards-tools-tail` on both runners do not
 # run through run-all.sh and stand past their figure pending a split.
 #
-# THE `guards-hooks`, `guards-tools` AND `guards-tools-tail` SHARDS were cut
+# THE `guards-hooks`, `guards-hooks-tail`, `guards-tools` AND
+# `guards-tools-tail` SHARDS were cut
 # to eight minutes of summed suite time on Linux and fourteen on macOS, under
 # the 15- and 30-minute job ceilings below. No step measures those sums: they
 # are the figures to re-measure against when one of those legs nears its
@@ -432,8 +433,8 @@ jobs:
   # 675s over 64 files and gave the lane, workflow-state and round-artifact
   # suites to `orch-state`, 382s over 30 files, keeping 34 at 293s.
   # `guards-tools` later grew past both legs' ceilings and splits in three,
-  # `guards-hooks` and `guards-tools-tail` beside it, as the comment above
-  # their steps records.
+  # `guards-hooks` and `guards-tools-tail` beside it. The hooks name seam
+  # adds `guards-hooks-tail`; their measured sums are above their steps.
   #
   # THE macOS LEG uses the shard selection stated in tools/ci-job-set's
   # header. It runs on the runner whose /bin/bash is 3.2.57, the shell every
@@ -483,7 +484,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -501,7 +502,8 @@ jobs:
     # so a leg that builds kendex takes the macOS ceiling until a figure is
     # recorded here; the expression below is the list of legs that take it,
     # and `review-gate`, which builds kendex too, is not on it.
-    # The `guards-hooks`, `guards-tools` and `guards-tools-tail` legs are cut
+    # The `guards-hooks`, `guards-hooks-tail`, `guards-tools` and
+    # `guards-tools-tail` legs are cut
     # to the targets the file header states, eight minutes on Linux and
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
@@ -864,14 +866,14 @@ jobs:
       # FAILED SUITES block at the end — the tail of a red job must name the
       # culprits instead of showing only the later suites passing. Every shell
       # shard below runs its suites through this one loop.
-      # ---- shards: guards-scans, guards-commit, guards-hooks, guards-tools,
-      # guards-tools-tail — the repository-wide scans and the guard packages'
-      # own suites, in five. One `guards` shard held all of it and ran
+      # ---- shards: guards-scans, guards-commit, guards-hooks, guards-hooks-tail,
+      # guards-tools, guards-tools-tail: the repository-wide scans and the
+      # guard packages' own suites, in six. One `guards` shard held all of it and ran
       # 901-1061s on the macOS leg against roughly a third of that on Linux.
       # `guards-scans` is the scans below, each one pass over a tracked-file
       # roster or the shell roster; the document-set and work-marker scans run
       # in the bot-instructions job instead, which every class runs, on a pull
-      # request. The suite files after them are the other four shards' work,
+      # request. The suite files after them are the other five shards' work,
       # and the ruff install rides with the two shards that run a suite
       # needing it: commit-guards' own py-names.test.sh in `guards-commit`,
       # and its install-git-hooks.test.sh in `guards-hooks`.
@@ -884,10 +886,10 @@ jobs:
       # count was a 69/31 split of the time. install-git-hooks at 121s and
       # md-refs at 53s therefore left `guards-commit`, giving 34 files at 499s
       # against 34 at 475s; on the Linux leg that is 226s against 233s of the
-      # undivided 459s. The `guards-hooks` step spells both moved suites as
-      # paths and the `guards-commit` step reads this file for them, the way
-      # `rest` reads it for the roster `worktree` claims, so dropping either
-      # path runs that suite in `guards-commit` rather than in no shard.
+      # undivided 459s. `guards-hooks` keeps install-git-hooks, while
+      # `guards-hooks-tail` spells md-refs. `guards-commit` reads their paths
+      # from this file, as `rest` reads the roster `worktree` claims. A
+      # removed path returns its suite to a fallback instead of losing it.
       #
       # THE SECOND SEAM cut the tools/, hooks/ and moved commit-guards step in
       # three, to targets of eight minutes on Linux and fourteen on macOS. On
@@ -901,7 +903,7 @@ jobs:
       # suite sums over those legs, Linux then macOS:
       #   guards-tools       the rest of tools/tests   326-372s   533-674s
       #   guards-tools-tail  those two tools/ suites    269-341s   488-617s
-      # The guards-hooks budget is stated above its step below.
+      # The hooks name seam and both budgets are above their steps below.
       # `guards-tools-tail` spells its two suites as paths and the
       # `guards-tools` step reads this file for them, the fallback the
       # `guards-commit` step carries.
@@ -965,7 +967,7 @@ jobs:
       # skipped only where another step RUNS it by path, and runs here
       # otherwise. `claims` is this file with its comment lines dropped,
       # so a path that survives only in prose proves nothing — without that
-      # drop, moving a path from the `guards-hooks` loop into the comment
+      # drop, moving a path from either hooks shard loop into the comment
       # above it would leave both shards skipping the suite and both green,
       # which the aggregator cannot see because it asserts job success and
       # not suite count.
@@ -1035,20 +1037,56 @@ jobs:
           fi
           exit "$fail"
 
-      # Whole-suite mutation controls drove guards-hooks macOS jobs to
-      # 1466-1819s. Selected controls still cancelled at 1754s and 1786s;
-      # whole-hook Bash pattern edits preceded the slow callbacks. Literal
-      # edits and bounded session-row fixtures need a complete macOS receipt
-      # against the fourteen-minute summed-suite target; the
-      # thirty-minute job cap stays unchanged.
+      # The hooks name seam moves lane-mail-* and reviewer-* with md-refs
+      # into guards-hooks-tail. PR runs 38075283555 and 38079248844 sum
+      # 777s and 696s on macOS for guards-hooks, 778s and 749s for its tail.
+      # The first run sums 301s and 389s on Linux. Both halves meet the
+      # eight-minute Linux and fourteen-minute macOS summed-suite targets.
+      # The cancelled merge_group run 38078925605 gives about 933s and
+      # 957s, with md-refs counted at its finished-run high of 123s.
+      # Claims assembled below cannot match their own fallback code. A
+      # removed tail step returns its suites here; comments claim nothing.
       - name: hook and moved commit-guards suites
         if: matrix.shard == 'guards-hooks'
         run: |
           set -u
+          wf=.github/workflows/skill-tests.yml
+          claims="$(grep -v '^[[:space:]]*#' "$wf")"
+          md_refs=skills/commit-guards/tests/md-refs
           fail=0
           failed=""
           for t in hooks/tests/*.sh \
             skills/commit-guards/tests/install-git-hooks.test.sh \
+            "$md_refs.test.sh"; do
+            claim=""
+            case "${t##*/}" in
+              lane-mail-*.test.sh) claim="${t%/*}/lane-mail-"'*.test.sh' ;;
+              reviewer-*.test.sh) claim="${t%/*}/reviewer-"'*.test.sh' ;;
+              md-refs.test.sh) claim="$t" ;;
+            esac
+            if [ -n "$claim" ] && printf '%s\n' "$claims" | grep -qF "$claim"; then
+              continue
+            fi
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      - name: lane-mail, reviewer and md-refs suites
+        if: matrix.shard == 'guards-hooks-tail'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in hooks/tests/lane-mail-*.test.sh \
+            hooks/tests/reviewer-*.test.sh \
             skills/commit-guards/tests/md-refs.test.sh; do
             echo "=== $t"
             if ! bash "$t"; then
@@ -1145,10 +1183,9 @@ jobs:
       # a deleted step sends its package here rather than to no shard.
       #
       # THE NEEDLE IS THE OWNING LOOP'S GLOB, not the package's directory
-      # prefix: `guards-hooks` spells two commit-guards paths of its own, so
-      # the prefix `skills/commit-guards/tests/` now appears three times and
-      # would keep this step skipping the package's other thirty-four suites
-      # after the step that runs them was deleted. Each glob below appears
+      # prefix: the hooks shards also name commit-guards paths. That prefix
+      # would keep this step skipping the package's other suites after the
+      # step that runs them was deleted. Each glob below appears
       # once and disappears with its step. `orch` is claimed by a path to
       # run-all.sh rather than by a glob. Its one-line run prefix excludes
       # this step's pooled call. Package variables keep declarations from
@@ -1515,7 +1552,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
