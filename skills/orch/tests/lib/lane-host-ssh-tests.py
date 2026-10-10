@@ -1415,7 +1415,9 @@ touch node_modules/dep
         self.seed_source("config/private.env", contents)
         older_links = originals["links.sh"]
         for function in ("strip_trailing_slashes", "normalize_worktree_config_path", "split_worktree_config_words"):
-            start = older_links.index(function + "() {\n")
+            header = function + "() {"
+            self.assertEqual(older_links.count(header), 1)
+            start = older_links.index(header)
             end = older_links.index("\n}\n", start) + len("\n}\n")
             block = older_links[start:end]
             self.assertEqual(older_links.count(block), 1)

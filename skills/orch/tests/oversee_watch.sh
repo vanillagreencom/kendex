@@ -1247,12 +1247,12 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-r
 
 STATE_READ_SCRIPTS="$(mutant_scripts state-open-mutant/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/state-open-mutant/github"
-mutate_file "$STATE_READ_SCRIPTS/oversee-watch" '  if { state="$(< /dev/fd/3)"; } 2>/dev/null 3<"$STATE_FILE"; then' \
-  '  if { state="$(< /dev/fd/3)"; } 2>/dev/null 3<"$STATE_FILE" || true; then'
+mutate_file "$STATE_READ_SCRIPTS/oversee-watch" '    die state-unreadable "" "option=--state" "path=$STATE_FILE"' \
+  '    : die state-unreadable "" "option=--state" "path=$STATE_FILE"; exit 1'
 WATCH_BIN="$STATE_READ_SCRIPTS/oversee-watch" fleet_case repeat_state_read_mutant
-assert_eq "$rc" "1" "control: an unchecked state open loses the removal refusal's exit" "$err"
+assert_eq "$rc" "1" "control: replacing the state refusal changes the removal exit" "$err"
 assert_not_contains "$(cat "$err")" "oversee-watch: state-unreadable option=--state" \
-  "control: an unchecked state open loses the named removal refusal" "$err"
+  "control: replacing the state refusal loses the named removal refusal" "$err"
 
 # A parked record: lane-close --park stopped its sandbox with the disk kept
 # while its pull request waited for the queue. The watch carries it for the
