@@ -24,7 +24,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### frontend
 
-- The frontend agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.frontend]` in the consumer manifest. This override wins over the source.
+- The frontend agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.frontend]` in the consumer manifest. This override wins over the source.
 
 #### github
 
@@ -32,7 +32,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### iced
 
-- The iced agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.iced]` in the consumer manifest. This override wins over the source.
+- The iced agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.iced]` in the consumer manifest. This override wins over the source.
 
 #### jarvis
 
@@ -61,7 +61,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### maintainer
 
-- The maintainer agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.maintainer]` in the consumer manifest. This override wins over the source.
+- The maintainer agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.maintainer]` in the consumer manifest. This override wins over the source.
 
 #### orch
 
@@ -84,7 +84,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### planner
 
-- The planner agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.planner]` in the consumer manifest. This override wins over the source.
+- The planner agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.planner]` in the consumer manifest. This override wins over the source.
 
 #### preflight
 
@@ -99,7 +99,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### researcher
 
-- The researcher agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.researcher]` in the consumer manifest. This override wins over the source.
+- The researcher agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.researcher]` in the consumer manifest. This override wins over the source.
 
 #### review-gate
 
@@ -111,39 +111,39 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### reviewer-arch
 
-- The reviewer-arch agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-arch]` in the consumer manifest. This override wins over the source.
+- The reviewer-arch agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-arch]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-correctness
 
-- The reviewer-correctness agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-correctness]` in the consumer manifest. This override wins over the source.
+- The reviewer-correctness agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-correctness]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-doc
 
-- The reviewer-doc agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-doc]` in the consumer manifest. This override wins over the source.
+- The reviewer-doc agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-doc]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-error
 
-- The reviewer-error agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-error]` in the consumer manifest. This override wins over the source.
+- The reviewer-error agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-error]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-perf
 
-- The reviewer-perf agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-perf]` in the consumer manifest. This override wins over the source.
+- The reviewer-perf agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-perf]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-quality
 
-- The reviewer-quality agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-quality]` in the consumer manifest. This override wins over the source.
+- The reviewer-quality agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-quality]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-safety
 
-- The reviewer-safety agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-safety]` in the consumer manifest. This override wins over the source.
+- The reviewer-safety agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-safety]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-security
 
-- The reviewer-security agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-security]` in the consumer manifest. This override wins over the source.
+- The reviewer-security agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-security]` in the consumer manifest. This override wins over the source.
 
 #### reviewer-test
 
-- The reviewer-test agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-test]` in the consumer manifest. This override wins over the source.
+- The reviewer-test agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-test]` in the consumer manifest. This override wins over the source.
 
 #### reviewer
 
@@ -152,15 +152,15 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### runtime
 
-- The runtime agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.runtime]` in the consumer manifest. This override wins over the source.
+- The runtime agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.runtime]` in the consumer manifest. This override wins over the source.
 
 #### rust
 
-- The rust agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.rust]` in the consumer manifest. This override wins over the source.
+- The rust agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.rust]` in the consumer manifest. This override wins over the source.
 
 #### scout
 
-- The scout agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.scout]` in the consumer manifest. This override wins over the source.
+- The scout agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.scout]` in the consumer manifest. This override wins over the source.
 
 #### second-opinion
 
@@ -175,11 +175,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### swift
 
-- The swift agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.swift]` in the consumer manifest. This override wins over the source.
+- The swift agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.swift]` in the consumer manifest. This override wins over the source.
 
 #### tpm
 
-- The tpm agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot until model bindings ship. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.tpm]` in the consumer manifest. This override wins over the source.
+- The tpm agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.tpm]` in the consumer manifest. This override wins over the source.
 
 #### worktree
 
