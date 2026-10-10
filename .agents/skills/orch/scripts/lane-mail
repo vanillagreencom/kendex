@@ -1888,7 +1888,14 @@ if [ "$FAST_READ" -eq 1 ]; then
   # These functions are defined below for the other verbs. The fast path does
   # not use their scratch files or per-file filters.
   READ_BOX="$BOX"
-  READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ")
+  READ_DELIVER=0
+  if [ "$VERB:$PEEK:$ACK" = inbox:0: ]; then
+    # Keep plain delivery outside READ_OUT so the locked helper can flush the
+    # caller's output before it advances the cursor.
+    exec 6>&1
+    READ_DELIVER=1
+  fi
+  READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ" "$READ_DELIVER")
   if [ "$HOST" -eq 1 ]; then
     # read-many already fetched the host's files once. Copy its raw pair and
     # numbering into this helper's world, without starting a snapshot per file.

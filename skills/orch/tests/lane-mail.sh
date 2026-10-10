@@ -1318,6 +1318,54 @@ mutant_reader() {
   LANE_MAIL_BIN="$dir/lane-mail"
 }
 
+# A real send --halt must survive an interrupted plain inbox. The first byte
+# is the barrier: the unread payload then exceeds the pipe's capacity. Keep
+# each killed early-advance control beside repeated unmodified cases.
+mutant_reader inbox-before-delivery '    if deliver == "1":' \
+  '    if deliver == "1":
+        if result["cursor"] is not None:
+            cursor_put(cursor, result["cursor"])'
+DELIVERY_MUTANT="$LANE_MAIL_BIN"
+DELIVERY_COUNT=yes
+[[ -n "${BASHPID:-}" ]] || DELIVERY_COUNT=no
+for delivery_mode in term pipe; do
+  DELIVERY_STABLE=0
+  DELIVERY_KILLED=0
+  for delivery_variant in stable-1 stable-2 stable-3 stable-4 stable-5 control \
+    stable-6 stable-7 stable-8 stable-9 stable-10; do
+    new_lane "delivery_${delivery_mode}_$delivery_variant"
+    DELIVERY_SCRIPT="$LANE_MAIL"
+    [ "$delivery_variant" != control ] || DELIVERY_SCRIPT="$DELIVERY_MUTANT"
+    DELIVERY_RC=0
+    python3 "$REPO_ROOT/skills/orch/tests/lib/mail-read-cases.py" "$DELIVERY_SCRIPT" \
+      "$LANE" "$BASH" "delivery-$delivery_mode" "$DELIVERY_COUNT" \
+      >"$TMP_ROOT/delivery.out" 2>"$TMP_ROOT/delivery.err" \
+      || DELIVERY_RC=$?
+    if [ "$delivery_variant" = control ]; then
+      DELIVERY_FAIL_BEFORE="$FAIL"
+      assert_eq "$DELIVERY_RC" 1 "$delivery_mode: advancing before delivery kills the interruption assertion" \
+        "$TMP_ROOT/delivery.err"
+      assert_file_contains "$TMP_ROOT/delivery.err" 'AssertionError: delivery-before-cursor' \
+        "$delivery_mode: the control fails at cursor advancement during delivery"
+      [ "$FAIL" -ne "$DELIVERY_FAIL_BEFORE" ] || DELIVERY_KILLED=1
+    else
+      assert_eq "$DELIVERY_RC" 0 "$delivery_mode $delivery_variant: interrupted delivery retains unread halt" \
+        "$TMP_ROOT/delivery.err"
+      DELIVERY_OUT="$(cat "$TMP_ROOT/delivery.out")"
+      assert_eq "${DELIVERY_OUT%% starts=*}" \
+        "delivery $delivery_mode: cursor=0 retry_halt=1 delivered_cursor=1 empty_retry=1" \
+        "$delivery_mode $delivery_variant: retry and successful delivery preserve cursor semantics"
+      [ "$DELIVERY_COUNT" = no ] || assert_le "${DELIVERY_OUT##* starts=}" 8 \
+        "$delivery_mode $delivery_variant: plain inbox includes normal root resolution within eight starts"
+      printf '%s\n' "$DELIVERY_OUT"
+      [ "$DELIVERY_RC" -ne 0 ] || DELIVERY_STABLE=$((DELIVERY_STABLE + 1))
+    fi
+  done
+  printf 'delivery evidence: mode=%s mutation=%s/1 stability=%s/10\n' \
+    "$delivery_mode" "$DELIVERY_KILLED" "$DELIVERY_STABLE"
+done
+unset LANE_MAIL_BIN
+
 # mutant_lib NAME OLD NEW — the same for lib/mailbox-append.sh, a rule
 # `scripts/lib` owns that a mutant of lane-mail itself cannot reach. MUTANT_LIB
 # is the library for a provider fixture, MUTANT_LIB_BIN the shipped lane-mail

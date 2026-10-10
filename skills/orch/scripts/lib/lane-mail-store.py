@@ -93,7 +93,7 @@ def cursor_put(path, count):
             scratch.unlink(missing_ok=True)
 
 
-def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs):
+def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver):
     """Read both inherited locked mailboxes and classify them with one jq."""
     cursor = box / "to-lane.cursor"
     directives = verb == "pending" and not to and due == "0"
@@ -133,6 +133,18 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs):
                             env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ})
     result = json.loads(result.stdout)
     lowered = result["lowered"]
+    if deliver == "1":
+        # The caller's stdout bypasses its control-result capture. A failed or
+        # interrupted flush leaves these lines unread under the same locks.
+        try:
+            with os.fdopen(os.dup(6), "w", encoding="utf-8") as output:
+                for line in result["output"]:
+                    output.write(line + "\n")
+                output.flush()
+        except OSError as error:
+            print("error\x1fwrite-failed\x1f/dev/stdout\x1f")
+            print(error)
+            return
     if verb == "inbox":
         try:
             if result["cursor"] is not None:
@@ -147,8 +159,9 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs):
     for id_ in result["legacy"]:
         print(f"legacy\x1f{id_}")
     print("output")
-    for line in result["output"]:
-        print(line)
+    if deliver != "1":
+        for line in result["output"]:
+            print(line)
 
 
 def envelope(raw):
