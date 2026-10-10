@@ -72,6 +72,8 @@ make_repo() {
   local root="$1" name="$2"
   mkdir -p "$root/$name"
   git -C "$root/$name" init -q -b main
+  git -C "$root/$name" config gc.auto 0
+  git -C "$root/$name" config maintenance.auto false
   git -C "$root/$name" config user.email test@example.com
   git -C "$root/$name" config user.name Test
   git -C "$root/$name" config commit.gpgsign false
@@ -79,6 +81,8 @@ make_repo() {
   git -C "$root/$name" add base.txt
   git -C "$root/$name" commit -q -m base
   git init -q --bare "$root/origin-$name.git"
+  git -C "$root/origin-$name.git" config gc.auto 0
+  git -C "$root/origin-$name.git" config maintenance.auto false
   git -C "$root/$name" remote add origin "$root/origin-$name.git"
   git -C "$root/$name" push -q -u origin main
 }
@@ -277,7 +281,13 @@ out_text() {
 
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|env|command|rc|out|err|state
-ROWS='the default base dir is .worktrees/<checkout name> beside the checkout|repo|-|path ISSUE-1|0|<root>/.worktrees/main/issue-1|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+ROWS='a missing item path falls back to the caller checkout|repo|-|path --checkout-fallback ISSUE-1|0|<main>|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+a configured item directory remains the selected path|repo create:issue-existing|-|path --checkout-fallback issue-existing|0|<root>/.worktrees/main/issue-existing|-|trees=<root>/.worktrees/main/issue-existing@issue-existing branches=issue-existing remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/issue-existing/base.txt
+a missing configured directory falls back after the settings load|repo settings|-|path --checkout-fallback ISSUE-1|0|<main>|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+a registered legacy tree remains selected with checkout fallback|repo legacy:issue-legacy|-|path --checkout-fallback issue-legacy|0|<root>/trees/issue-legacy|-|trees=<root>/trees/issue-legacy@issue-legacy branches=issue-legacy remote=- checkout=main@clean dirs=trees,trees/issue-legacy files=trees/issue-legacy/base.txt
+a hosted tree remains selected with checkout fallback|repo create-hosted:issue-a|-|path --checkout-fallback issue-a|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+a detached hosted tree remains selected with checkout fallback|repo create-hosted:issue-a conflict:issue-a|-|path --checkout-fallback issue-a|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@detached branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+the default base dir is .worktrees/<checkout name> beside the checkout|repo|-|path ISSUE-1|0|<root>/.worktrees/main/issue-1|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
 sibling checkouts get distinct default base dirs for the same ID|repo:repo-b|-|path ISSUE-1|0|<root>/.worktrees/repo-b/issue-1|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
 create lands in the default external base dir and adds nothing under the checkout|repo|-|create issue-default|0|<root>/.worktrees/main/issue-default|-|trees=<root>/.worktrees/main/issue-default@issue-default branches=issue-default remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/issue-default/base.txt
 an absolute WORKTREE_BASE_DIR is honoured|repo|WORKTREE_BASE_DIR=<root>/abs-base|path ISSUE-2|0|<root>/abs-base/issue-2|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
@@ -345,6 +355,68 @@ while IFS= read -r row; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+# The missing-item row must detect an owner that skips its checkout fallback.
+build fallback-control repo
+mkdir -p "$TMP_ROOT/fallback-control-scripts"
+cp -p "$WORKTREE_SCRIPT" "$TMP_ROOT/fallback-control-scripts/worktree"
+ln -s "${WORKTREE_SCRIPT%/*}/lib" "$TMP_ROOT/fallback-control-scripts/lib"
+python3 - "$TMP_ROOT/fallback-control-scripts/worktree" <<'CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+assert not path.is_symlink()
+text = path.read_text()
+old = '  if [[ "${2:-}" == checkout-fallback && ! -d "$configured" ]]; then\n    configured="$CALLER_ROOT"'
+assert text.count(old) == 1
+new = old.replace('if [[', 'if false && [[')
+assert new != old
+path.write_text(text.replace(old, new))
+CONTROL
+for half in before after; do
+  for repeat in 1 2 3 4 5; do
+    assert_eq "$(cd "$MAIN" && "$WORKTREE_SCRIPT" path --checkout-fallback issue-missing)" "$MAIN" \
+      "$half control: missing-item fallback is stable ($repeat)"
+  done
+  [[ "$half" != before ]] || assert_eq \
+    "$(cd "$MAIN" && "$TMP_ROOT/fallback-control-scripts/worktree" path --checkout-fallback issue-missing)" \
+    "$ROOT/.worktrees/main/issue-missing" "control: missing-item row rejects the skipped checkout fallback"
+done
+
+# Git's field separator must not split a newline inside the checkout path.
+mkdir -p "$TMP_ROOT/newline-selection"
+make_repo "$TMP_ROOT/newline-selection" $'main\ncheckout'
+NEWLINE_MAIN="$TMP_ROOT/newline-selection/"$'main\ncheckout'
+NEWLINE_TREE="$TMP_ROOT/newline-selection/registered"
+git -C "$NEWLINE_MAIN" worktree add -q -b issue-newline "$NEWLINE_TREE"
+mkdir -p "$TMP_ROOT/newline-control-scripts"
+cp -p "$WORKTREE_SCRIPT" "$TMP_ROOT/newline-control-scripts/worktree"
+ln -s "${WORKTREE_SCRIPT%/*}/lib" "$TMP_ROOT/newline-control-scripts/lib"
+python3 - "$TMP_ROOT/newline-control-scripts/worktree" <<'CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+assert not path.is_symlink()
+text = path.read_text()
+old = 'if [[ "$PROJECT_CONTEXT" == *$\'\\n\'*$\'\\n\'* ]]; then'
+assert text.count(old) == 1
+new = old.replace('if [[', 'if false && [[')
+assert new != old
+path.write_text(text.replace(old, new))
+CONTROL
+for half in before after; do
+  for repeat in 1 2 3 4 5; do
+    for caller in "$NEWLINE_MAIN" "$NEWLINE_TREE"; do
+      assert_eq "$(cd "$caller" && "$WORKTREE_SCRIPT" path --checkout-fallback issue-newline)" "$NEWLINE_TREE" \
+        "$half control: newline checkout selection stays physical ($repeat)"
+    done
+  done
+  if [[ "$half" == before ]]; then
+    newline_rc=0
+    newline_path="$(cd "$NEWLINE_MAIN" && "$TMP_ROOT/newline-control-scripts/worktree" path --checkout-fallback issue-newline 2>/dev/null)" || newline_rc=$?
+    assert_eq "$newline_rc:$newline_path" '1:' 'control: newline selection rejects a split root field'
+  fi
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

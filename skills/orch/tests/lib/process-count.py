@@ -54,7 +54,7 @@ def count(root):
     exec_pids = {line.split()[1] for line in external}
     existing = set((root / "existing").read_text().splitlines()) if (root / "existing").exists() else set()
     bash_pids = set()
-    for line in (root / "trace").read_text().splitlines():
+    for line in (root / "trace").read_text(errors="surrogateescape").splitlines():
         if line == "count:end":
             break
         if line.startswith("+") and line.lstrip("+").startswith("count:"):

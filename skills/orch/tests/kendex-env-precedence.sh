@@ -593,5 +593,72 @@ for variant in production mutant; do
 done
 
 echo
+# Prefix probes and physical path checks retain the loader's output and cwd.
+PREFIX_SCRIPTS="$(mutant_scripts startup-prefix lib/kendex-env.sh)" || exit 1
+mutate_file "$PREFIX_SCRIPTS/lib/kendex-env.sh" \
+  '[[ "$_kendex_prefix" == $'\''\xEF\xBB\xBF'\'' ]]' \
+  '[[ "$_kendex_prefix" == prefix-control-disabled ]]'
+CWD_SCRIPTS="$(mutant_scripts startup-cwd lib/kendex-env.sh)" || exit 1
+mutate_file "$CWD_SCRIPTS/lib/kendex-env.sh" \
+  '    _kendex_at="$PWD"
+    cd -- "$_kendex_cwd" >/dev/null || return 1' \
+  '    _kendex_at="$PWD"
+    :'
+
+prefix_load() { # LIB PROJECT
+  (
+    unset KENDEX_ENV_FILE
+    source "$1"
+    prefix_cwd="$PWD"
+    prefix_selected=unset
+    prefix_rc=0
+    kendex_load_project_env "$2" prefix_selected >"$2/out" 2>"$2/err" || prefix_rc=$?
+    prefix_key=""
+    IFS= read -r prefix_key <"$2/err" || :
+    prefix_position=kept
+    [[ "$PWD" == "$prefix_cwd" ]] || prefix_position=moved
+    printf '%s|%s|%s|%s\n' "$prefix_rc" "$prefix_key" "$prefix_position" "$prefix_selected"
+  )
+}
+
+PREFIX_ROWS='empty|kendex.settings.toml|empty|0
+short|kendex.settings.toml|short|0
+nul|kendex.settings.toml|nul|0
+partial-bom|kendex.settings.toml|partial-bom|0
+settings|kendex.settings.toml|settings|0
+root-bom|kendex.settings.toml|bom|1
+nested-bom|.kendex/settings.toml|bom|1
+private-bom|.env.local|bom|1
+absent|absent|absent|0'
+for half in before after; do
+  for repeat in 1 2 3 4 5; do
+    while IFS='|' read -r prefix_name prefix_file prefix_content prefix_rc; do
+      prefix_root="$TMP_ROOT/prefix-$half-$repeat-$prefix_name"
+      mkdir -p "$prefix_root/.kendex"
+      case "$prefix_content" in
+        empty) : >"$prefix_root/$prefix_file" ;;
+        short) printf '#' >"$prefix_root/$prefix_file" ;;
+        nul) printf '\000\357\273\277# private or shared settings\n' >"$prefix_root/$prefix_file" ;;
+        partial-bom) printf '\357\273' >"$prefix_root/$prefix_file" ;;
+        settings) printf '[env]\nPREFIX_LOCAL = "loaded"\n' >"$prefix_root/$prefix_file" ;;
+        bom) printf '\357\273\277# private or shared settings\n' >"$prefix_root/$prefix_file" ;;
+        absent) ;;
+      esac
+      prefix_expected='0||kept|.env.local'
+      [[ "$prefix_rc" != 1 ]] || prefix_expected="1|kendex-env: byte-order-mark arg1=$prefix_root/$prefix_file|kept|unset"
+      assert_eq "$(prefix_load "$LIB" "$prefix_root")" "$prefix_expected" \
+        "$half control: $prefix_name preserves prefix and cwd behavior ($repeat)"
+    done <<<"$PREFIX_ROWS"
+  done
+  if [[ "$half" == before ]]; then
+    prefix_root="$TMP_ROOT/prefix-before-1-root-bom"
+    assert_eq "$(prefix_load "$PREFIX_SCRIPTS/lib/kendex-env.sh" "$prefix_root")" '0||kept|.env.local' \
+      'control: the prefix rows reject a loader that accepts a byte-order mark'
+    prefix_root="$TMP_ROOT/prefix-before-1-absent"
+    assert_eq "$(prefix_load "$CWD_SCRIPTS/lib/kendex-env.sh" "$prefix_root")" '0||moved|.env.local' \
+      'control: the cwd rows reject a physical path check that leaves the caller directory'
+  fi
+done
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

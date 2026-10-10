@@ -1092,10 +1092,9 @@ if [ -z "$ROOT" ]; then
     *:send | *:drain | *:pending | *:events | *:compact)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
-        ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
-        # `worktree path` composes the path an item's worktree would live
-        # at whether or not one is there, so the directory decides: an item
-        # with no worktree is a lane running in the checkout itself.
+        ROOT="$(exec "$WORKTREE" path --checkout-fallback "$ITEM" 2>/dev/null)" || ROOT=""
+        # The path owner also returns the caller checkout when the selected
+        # item directory is absent. Keep that fallback in the same lookup.
         [ -n "$ROOT" ] && [ -d "$ROOT" ] || ROOT=""
       fi
       ;;

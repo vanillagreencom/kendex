@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import sys
+import subprocess
 
 
 def prepare(root, state):
@@ -27,6 +28,33 @@ def prepare(root, state):
         (box / "to-lane.cursor").write_text("1\n")
     if state != "absent":
         (box / "to-lane.cursor.lock").touch()
+
+
+def reader_case(root, state, env, settings, spelling):
+    """Build real Git roots for the owner's default, configured and linked reads."""
+    root = Path(root)
+    caller = root / "main\ncheckout" if spelling == "newline" else root
+    caller.mkdir(parents=True, exist_ok=True)
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(caller), *args], env=env,
+                       capture_output=True, check=True, timeout=30)
+
+    git("init", "-q", "-b", "main")
+    git("config", "gc.auto", "0")
+    git("config", "maintenance.auto", "false")
+    prepare(caller, state)
+    if spelling == "newline":
+        git("config", "user.name", "Reader fixture")
+        git("config", "user.email", "reader@example.com")
+        git("config", "core.hooksPath", str(root / "no-hooks"))
+        git("-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture")
+        target = root / "registered"
+        git("worktree", "add", "-q", "-b", "ken-1", str(target))
+        prepare(target, state)
+    if settings:
+        (caller / "kendex.settings.toml").write_text('[env]\nWORKTREE_BASE_DIR = "../custom-trees"\n')
+    return caller
 
 
 if __name__ == "__main__":

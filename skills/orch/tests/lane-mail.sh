@@ -1629,6 +1629,28 @@ assert_eq "$RC" 2 'compaction refuses an archive inside the configured state fol
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$before" \
   'a refused compaction archive keeps the expired message bytes'
 
+# C-locale Bash tracing can carry raw bytes beside its ASCII PID records.
+RAW_COUNT_DIR="$TMP_ROOT/raw-trace-count"
+mkdir -p "$RAW_COUNT_DIR"
+printf '+count:123: comparison \357\\273\n+count:124: exec git\n' >"$RAW_COUNT_DIR/trace"
+printf 'w 124 git\n' >"$RAW_COUNT_DIR/external"
+cp "$REPO_ROOT/skills/orch/tests/lib/process-count.py" "$TMP_ROOT/strict-process-count.py"
+mutate_file "$TMP_ROOT/strict-process-count.py" 'errors="surrogateescape"' 'errors="strict"'
+for half in before after; do
+  for repeat in 1 2 3 4 5; do
+    assert_eq "$(python3 "$REPO_ROOT/skills/orch/tests/lib/process-count.py" count "$RAW_COUNT_DIR")" 2 \
+      "$half control: raw trace bytes preserve both counted starts ($repeat)"
+  done
+  if [[ "$half" == before ]]; then
+    raw_rc=0
+    python3 "$TMP_ROOT/strict-process-count.py" count "$RAW_COUNT_DIR" >"$RAW_COUNT_DIR/out" 2>"$RAW_COUNT_DIR/err" || raw_rc=$?
+    assert_eq "$raw_rc" 1 'control: strict trace decoding rejects the raw-byte workload'
+    raw_type=0
+    [[ "$(cat "$RAW_COUNT_DIR/err")" != *UnicodeDecodeError* ]] || raw_type=1
+    assert_eq "$raw_type" 1 'control: the raw-byte failure is the decoder exception'
+  fi
+done
+
 # One instrument counts the Bash processes and PATH commands for these verbs.
 # The fixture outputs were captured from the base before production edits.
 source "$REPO_ROOT/skills/orch/tests/lib/process-count.sh"
@@ -1640,12 +1662,20 @@ while IFS= read -r row; do
   IFS= read -r result
   IFS= read -r processes
   assert_eq "$result" 'stdout=1 exit=1 key=1' "$row preserves the base output, exit and keyed refusal"
-  [[ "$READ_COUNT" == no ]] || assert_le "$processes" 8 "$row starts at most eight processes"
+  READ_LIMIT="${row##* limit=}"
+  if [[ "$READ_LIMIT" == 8 ]]; then
+    [[ "$READ_COUNT" == no ]] || assert_le "$processes" 8 "$row starts at most eight processes"
+  else
+    [[ "$READ_COUNT" == no ]] || assert_le "$processes" "$READ_LIMIT" "$row stays within the accepted owner lookup count"
+  fi
   printf 'read evidence: %s processes=%s %s\n' "$row" "$processes" "$result"
 done <"$TMP_ROOT/read-results"
 
+# A private orch copy must still call the shipped worktree owner for default
+# root rows. Without that sibling it would silently use the checkout fallback.
 # The same rows reject restoring the per-file read path.
 READ_MUTANT="$(mutant_scripts read-cost/orch lane-mail)/lane-mail"
+ln -s "$REPO_ROOT/skills/worktree" "${READ_MUTANT%/scripts/lane-mail}/../worktree"
 mutate_file "$READ_MUTANT" '  READ_BOX="$BOX"' '  WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")"; date -u +%s >/dev/null; jq -n null >/dev/null; jq -n null >/dev/null; READ_BOX="$BOX"'
 python3 "$REPO_ROOT/skills/orch/tests/lib/mail-read-cases.py" "$READ_MUTANT" \
   "$TMP_ROOT/read-control" "$BASH" "$READ_COUNT" >"$TMP_ROOT/read-control-results"
@@ -1653,7 +1683,12 @@ while IFS= read -r row; do
   IFS= read -r result
   IFS= read -r processes
   assert_eq "$result" 'stdout=1 exit=1 key=1' "control: $row keeps output while adding per-file cost"
-  [[ "$READ_COUNT" == no ]] || assert_le 9 "$processes" "control: $row rejects the old per-file cost"
+  READ_LIMIT="${row##* limit=}"
+  if [[ "$READ_LIMIT" == 8 ]]; then
+    [[ "$READ_COUNT" == no ]] || assert_le 9 "$processes" "control: $row rejects the old per-file cost"
+  else
+    [[ "$READ_COUNT" == no ]] || assert_le "$((READ_LIMIT + 1))" "$processes" "control: $row rejects startup work above the accepted count"
+  fi
   printf 'read control: %s processes=%s\n' "$row" "$processes"
 done <"$TMP_ROOT/read-control-results"
 

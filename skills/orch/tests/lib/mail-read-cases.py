@@ -30,14 +30,23 @@ def run(script, root, bash, counting):
         count_dir = case / "counter"
         counter.install(count_dir, os.environ["PATH"], bash)
         env = {key: os.environ[key] for key in ("HOME", "PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
+        args = [bash, script, *row["args"], "--item", "KEN-1"]
+        caller = case
+        limit = 8
+        if row.get("root") in ("default", "newline"):
+            caller = world.reader_case(case, row["state"], env, row.get("settings", False), row["root"])
+            if row["args"][0] != "inbox":
+                # The owner accepted the snapshot and newline-read exceptions.
+                limit += int(row.get("settings", False)) + 2 * int(row["root"] == "newline")
+        else:
+            args.extend(("--root", str(case)))
         if counting:
             env.update(PATH=str(count_dir / "bin") + os.pathsep + env["PATH"], BASH_ENV=str(count_dir / "bash-env"))
-        result = subprocess.run([bash, script, *row["args"], "--item", "KEN-1", "--root", str(case)],
-                                capture_output=True, env=env, timeout=30)
+        result = subprocess.run(args, cwd=caller, capture_output=True, env=env, timeout=30)
         stdout_matches = result.stdout == row["stdout"].encode()
         stderr_key = result.stderr.split(b"\n", 1)[0]
         expected_key = row["stderr"].encode().split(b"\n", 1)[0]
-        print(f"row={index} state={row['state']} args={' '.join(row['args'])}")
+        print(f"row={index} root={row.get('root', 'explicit')} settings={int(row.get('settings', False))} state={row['state']} args={' '.join(row['args'])} limit={limit}")
         print(f"stdout={int(stdout_matches)} exit={int(result.returncode == row['exit'])} key={int(stderr_key == expected_key)}")
         if not stdout_matches or stderr_key != expected_key:
             print(f"actual stdout={result.stdout!r} stderr={result.stderr!r}", file=sys.stderr)

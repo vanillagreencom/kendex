@@ -1,1 +1,1 @@
-- Reduce idle watcher and mailbox read processes while retaining message output, cursor positions, and hosted read batching.
+- Reduce idle watcher, mailbox read, and default-root lookup process starts while retaining message output, cursor positions, and hosted read batching.
