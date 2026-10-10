@@ -142,7 +142,7 @@ run_wait() { # MODE [BOUND] [ITEM] [TOKEN_VARIABLE=VALUE]
     rm -f -- "$mail"
   fi
   RC=0
-  OUT=$(cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" \
+  OUT=$(cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" \
     ${auth[@]+"${auth[@]}"} \
     MODE="$1" HEAD_A="$HEAD_A" HEAD_B="$HEAD_B" READS="$TMP_ROOT/reads" \
     STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
@@ -203,11 +203,11 @@ assert_eq "$OUT" 'copilot-wait: mail=1' 'lane mail uses the waiter contract'
 # pr-data is the workflow consumer. The same finishing run must have its
 # review before that read. The old route reads immediately and misses it.
 run_wait finishing
-READ_DATA=$(cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" READS="$TMP_ROOT/reads" \
+READ_DATA=$(cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" READS="$TMP_ROOT/reads" \
   "$REPO_ROOT/skills/github/scripts/github.sh" pr-data 42)
 assert_eq "$(jq -r '.threads[0].id' <<<"$READ_DATA")" PRRT_81 'the wait settles before the production pr-data read'
 echo 0 > "$TMP_ROOT/reads"
-READ_DATA=$(cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" READS="$TMP_ROOT/reads" \
+READ_DATA=$(cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" READS="$TMP_ROOT/reads" \
   "$REPO_ROOT/skills/github/scripts/github.sh" pr-data 42)
 assert_eq "$(jq -r '.threads[0].id' <<<"$READ_DATA")" null 'must-fail: the old route misses the same review'
 

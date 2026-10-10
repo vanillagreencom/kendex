@@ -26,7 +26,7 @@ if [[ "${1:-}" == --case ]]; then
   mkdir -p "$ROOT/home/.local/share/fish/generated_completions" \
     "$ROOT/home/.cache/fish/generated_completions"
   # macOS temp paths leave too little room for tmux's default socket suffix.
-  tm() { env -i PATH="$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
+  tm() { env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 SHELL="$BASH" "$REAL_TMUX" -S "$ROOT/s" "$@"; }
   trap 'tm kill-server 2>/dev/null || true' EXIT
   trap 'exit 143' TERM
   ot_stub_bin "$ROOT/bin"
@@ -95,7 +95,7 @@ WRAPPER
     pi) flags='--model github-copilot/claude-sonnet-5 --thinking high' ;;
     *) exit 2 ;;
   esac
-  env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 LINEAR_TEAM= \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" LANG=C.UTF-8 LINEAR_TEAM= \
     WORKTREE_CLI="$ROOT/bin/worktree" ORCH_TMUX_SESSION=fixture \
     ORCH_LANE_HOST=local OT_WT_LOG="$ROOT/worktree.log" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     "$OT" --tmux --harness "$HARNESS" --cmd "$HARNESS $flags $QUESTION_OFF_ALL {brief}" \
@@ -129,7 +129,7 @@ run_case() { # NAME SCRIPT HARNESS SHELL
   RUN="$TMP_ROOT/$name"
   mkdir -p "$RUN"
   RC=0
-  env -i PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 timeout 20 "$BASH" "$TEST_DIR/open-terminal-brief-startup.sh" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 timeout 20 "$BASH" "$TEST_DIR/open-terminal-brief-startup.sh" \
     --case "$RUN" "$ot" "$harness" "$shell" > "$RUN/log" 2>&1 || RC=$?
   [[ ! -f "$RUN/input-bound" ]] || cat "$RUN/input-bound" >> "$RUN/log"
 }

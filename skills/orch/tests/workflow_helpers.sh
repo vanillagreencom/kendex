@@ -283,7 +283,7 @@ review_classification_requires_review() { # workflow
   command="${command//\[WORKTREE_PATH\]/$review_subject}"
   command="${command//\[BASE_BRANCH\]/main}"
   # The review workflow consumes these machine-read fields to select § 9.
-  answer="$(cd "$review_subject" && env -i PATH="$PATH" HOME="$TMP_ROOT" \
+  answer="$(cd "$review_subject" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" \
     bash --noprofile --norc -c "$command" 2>"$diagnostic")" || return 1
   [[ "$answer" == change_class=standard ]] &&
     grep -Eq '^class: class=standard measured=true( |$)' "$diagnostic"

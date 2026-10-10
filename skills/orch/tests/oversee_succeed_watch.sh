@@ -125,7 +125,7 @@ run_succeed() {
   [[ "$ROW_MANAGER" != unit ]] || manager=(PATH="${ROW_PATH:+$ROW_PATH:}$LINGERING:$BIN:$PATH"
     XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}")
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i HOME="$H" "${manager[@]}" \
+  OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" "${manager[@]}" \
     TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
@@ -286,7 +286,7 @@ restart_helper() {
   start_watch
   watch_argv_read "$FLEET_STATE"
   SUCC_PANE="$(tm new-window -d -t fleet:2 -P -F '#{pane_id}' 'exec sleep 100000')"
-  ( cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX="$TMUX_ADDR" \
+  ( cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX="$TMUX_ADDR" \
       "${1:-$SUCCEED}" --watch-restart "$FLEET_STATE" "$CALLER_PANE" "$SUCC_PANE" CLAUDE_CONFIG_DIR "$H/.claude" claude \
       "$WATCH_CWD" "$WATCH_SCRIPT" "${#WATCH_ARGV[@]}" "${WATCH_ARGV[@]}" \
       >>"$WATCH_ERR" 2>&1 </dev/null & )

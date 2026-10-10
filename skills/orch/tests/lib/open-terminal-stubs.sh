@@ -301,7 +301,7 @@ EOF
   : > "$run/harness.log"
   line="${line/#exec bash -lc /bash -c }"
   line="${line/cd \/srv\/lane /cd $sandbox }"
-  env -i PATH="$run/harness-bin:$PATH" HOME="$home" CODEX_HOME="$home/codex account" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$run/harness-bin:$PATH" HOME="$home" CODEX_HOME="$home/codex account" \
     PI_CODING_AGENT_DIR="$home/pi agent" HARNESS_LOG="$run/harness.log" HARNESS_RC="$status" \
     bash -c "$line" 2> "$run/replay.err" || rc=$?
   while IFS= read -r -d '' arg; do

@@ -40,7 +40,7 @@ for row in 'expired|1791460799000|5|expired' 'at-end|1791460800000|5|expired' 'n
     args=(pick --harness claude --json)
     [[ "$verb" != named ]] || args+=(--lane "$H/.claude")
     rc=0
-    (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
+    (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
       OVERSEE_WATCH_STATE_DIR="$H/store" "$LANES" "${args[@]}") > "$H/out" 2> "$H/err" || rc=$?
     want_rc="$expected_rc"; [[ "$verb" != chooser || "$expected_rc" == 0 ]] || want_rc=3
@@ -54,14 +54,14 @@ for row in 'expired|1791460799000|5|expired' 'at-end|1791460800000|5|expired' 'n
   done
   if [[ "$name" == expired ]]; then
     rc=0
-    (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
+    (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
       OVERSEE_WATCH_STATE_DIR="$H/control-store" "$CONTROL/lanes" pick --harness claude --json) > "$H/control-out" 2> "$H/control-err" || rc=$?
     assert_eq "$rc" 0 "must-fail: removing the refresh expiry check seats the expired account" "$H/control-err"
     assert_eq "$(jq -r .config_dir "$H/control-out")" "$H/.claude" "must-fail: the refused account itself is picked" "$H/control-err"
   elif [[ "$name" == not-yet-ended ]]; then
     rc=0
-    (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
+    (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
       OVERSEE_WATCH_STATE_DIR="$H/rounding-store" "$ROUNDING/lanes" pick --harness claude --json) > "$H/control-out" 2> "$H/control-err" || rc=$?
     assert_eq "$rc" 3 "must-fail: rounding expiry down rejects a login that has not ended" "$H/control-err"

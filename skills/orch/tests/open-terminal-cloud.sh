@@ -207,7 +207,7 @@ chmod +x "$CLAUDE_BIN/clear" "$CLAUDE_BIN/claude"
 described() {
   local word cloud=none refs=0
   rm -f -- "${ARGV:?}"
-  (cd "$TMP_ROOT" && env -i PATH="$CLAUDE_BIN:/usr/bin:/bin" ARGV_FILE="$ARGV" bash -c "$(pasted 1)") >/dev/null 2>&1 || true
+  (cd "$TMP_ROOT" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$CLAUDE_BIN:/usr/bin:/bin" ARGV_FILE="$ARGV" bash -c "$(pasted 1)") >/dev/null 2>&1 || true
   [[ -f "$ARGV" ]] || { echo "claude=unrun"; return; }
   while IFS= read -r -d '' word; do
     case "$word" in

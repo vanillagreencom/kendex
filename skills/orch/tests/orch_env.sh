@@ -174,7 +174,7 @@ for row in \
   git init -q "$project"
   git -C "$project" config gc.auto 0
   git -C "$project" config maintenance.auto false
-  retired_env=(env -i "PATH=$PATH" "HOME=$TMP_ROOT")
+  retired_env=(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "PATH=$PATH" "HOME=$TMP_ROOT")
   case "$source_kind" in
     environment) retired_env+=("ORCH_CONSUMER_REPOS=$configured") ;;
     settings) printf '[env]\nORCH_CONSUMER_REPOS = "%s"\n' "$configured" > "$project/kendex.settings.toml" ;;
@@ -193,7 +193,7 @@ for row in \
     "retired setting from $source_kind is refused, including empty values ($configured)"
 done
 
-got="$(cd "$proj_bare" && env -i "PATH=$PATH" "HOME=$TMP_ROOT" "$ORCH_ENV" ORCH_OVERSEER_LANES 3)"
+got="$(cd "$proj_bare" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "PATH=$PATH" "HOME=$TMP_ROOT" "$ORCH_ENV" ORCH_OVERSEER_LANES 3)"
 assert_eq "$got" "3" "overseer startup succeeds when the retired key is absent"
 
 # Guard control: keep the diagnostic and setting name, but suppress the
@@ -202,7 +202,7 @@ RETIRED_MUTANT="$(mutant_scripts retired-mutant orch-env)/orch-env" || exit 1
 mutate_file "$RETIRED_MUTANT" 'if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then' \
   'if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]] && false; then'
 status=0
-got="$(cd "$proj_bare" && env -i "PATH=$PATH" "HOME=$TMP_ROOT" ORCH_CONSUMER_REPOS= \
+got="$(cd "$proj_bare" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "PATH=$PATH" "HOME=$TMP_ROOT" ORCH_CONSUMER_REPOS= \
   "$RETIRED_MUTANT" ORCH_OVERSEER_LANES 3 2>"$TMP_ROOT/retired-mutant.err")" || status=$?
 assert_eq "$status|$got|$(cat "$TMP_ROOT/retired-mutant.err")" '0|3|' \
   "must-fail control: disabled retirement guard accepts the retired setting"

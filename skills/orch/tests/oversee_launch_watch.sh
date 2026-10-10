@@ -116,7 +116,7 @@ run_oversee() {
   [[ "$1" == -- ]] || { bin="$1"; shift; }
   shift
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
+  OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$NO_MANAGER:$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_USAGE_TTL=0 \
     ORCH_OVERSEER_PREFERENCE=claude:fable:high ORCH_TMUX_SESSION=fleet \
@@ -804,7 +804,7 @@ PRED="$(recorded pane)"
 ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
 fresh_output
 PRED_TMUX="$(tm display-message -p -t "$PRED" '#{socket_path},#{pid},#{session_id}')"
-( cd "$TMP_ROOT/work" && env -i HOME="$H" TMUX="${PRED_TMUX/,\$/,}" TMUX_PANE="$PRED" \
+( cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" TMUX="${PRED_TMUX/,\$/,}" TMUX_PANE="$PRED" \
     OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" "${WATCH_ENV[@]}" \
     "$SRC_DIR/oversee-watch" --repeat 1 --interval 0 --state "$FLEET_STATE" --repo owner/repo \
     </dev/null >"$TMP_ROOT/first-watch.log" 2>&1 & )

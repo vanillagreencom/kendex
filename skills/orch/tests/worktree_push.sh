@@ -795,7 +795,7 @@ for row in \
   esac
   input="$(cat -- "$restack_map_file")" || exit 1
   RUN_RC=0
-  (cd -- "$work" && env -i PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
+  (cd -- "$work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
     ORCH_WORKTREE_BIN="$stub" STUB_PUSH_STDOUT='pushed' \
     "$PUSH" --worktree "$wt" --issue KEN-1) \
     > "$run_out" 2> "$run_err" || RUN_RC=$?
@@ -819,7 +819,7 @@ for row in \
   reset_state "$work"
   printf '%s\n' "$input" > "$restack_map_file"
   RUN_RC=0
-  (cd -- "$work" && env -i PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
+  (cd -- "$work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
     ORCH_WORKTREE_BIN="$stub" STUB_PUSH_STDOUT='pushed' \
     "$control_scripts/worktree-push" --worktree "$wt" --issue KEN-1) \
     > "$run_out" 2> "$run_err" || RUN_RC=$?

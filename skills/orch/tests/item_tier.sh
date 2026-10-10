@@ -50,7 +50,7 @@ SMALL_MAX="$(conf_value small_max_production)"
 run_tier() { # CLASS ARG...
   local out rc=0
   shift
-  out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" \
+  out="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" TMPDIR="$TMP_ROOT" \
     "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
   if [[ "${TIER_RAW:-false}" != true ]]; then
     out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$out")"
@@ -131,7 +131,7 @@ ROWS
 # overseer's launch reads, and no tier on stdout.
 assert_no_location_refused() {
   local out err rc=0
-  out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
+  out="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
     --body "$TMP_ROOT/no-location-body" 2>"$TMP_ROOT/no-location-err")" || rc=$?
   err="$(cat -- "$TMP_ROOT/no-location-err")"
   assert_eq "rc=$rc stdout=[$out] stderr=[$err]" \
@@ -164,7 +164,7 @@ unset TIER_RAW
 printf '%s\n**Expected delta**: about 4 lines\n' "$LOCATION" > "$TMP_ROOT/about-body"
 printf '%s\n**Expected delta**:\n' "$LOCATION" > "$TMP_ROOT/empty-delta-body"
 warn_count() { # BODY
-  env -i PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" TMPDIR="$TMP_ROOT" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" \
     --production 1 --body "$1" 2>&1 >/dev/null | grep -c "^item-tier-warning: cause=invalid-delta line=\[$2\]" || true
 }
 assert_malformed_warns() {

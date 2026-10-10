@@ -464,7 +464,7 @@ for row in 'claude|.claude-shared/projects/repo|null|{"type":"user","isSidechain
     else touch -t 203001010000 "$GITHUB_HOME/$root/$owner.jsonl"; fi
   done
   selected_rc=0
-  selected="$(env -i PATH="$BIN:$PATH" HOME="$GITHUB_HOME" LANES_HOME="$GITHUB_HOME" \
+  selected="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$GITHUB_HOME" LANES_HOME="$GITHUB_HOME" \
     LANE_ENV= LAUNCH_FLAGS= LANES_CLI="$BIN/lanes" bash -c \
     'set -euo pipefail; source "$1"; find_relaunch_session "$2" "$3" "$4"' _ \
     "$SCRIPTS_DIR/lib/lane-relaunch.sh" "$harness" "$GITHUB_WT" "$GITHUB_HOME/.selected-codex")" || selected_rc=$?
@@ -479,7 +479,7 @@ mutate_file "$GITHUB_CONTROL" \
   'if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1; then' \
   'if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1 && jq -Rne --arg i "#2708" '\''[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)"; "i")'\'' "$file" >/dev/null 2>&1; then'
 selected_rc=0
-selected="$(env -i PATH="$BIN:$PATH" HOME="$GITHUB_HOME" LANES_HOME="$GITHUB_HOME" \
+selected="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$GITHUB_HOME" LANES_HOME="$GITHUB_HOME" \
   LANE_ENV= LAUNCH_FLAGS= LANES_CLI="$BIN/lanes" bash -c \
   'set -euo pipefail; source "$1"; find_relaunch_session "$2" "$3" "$4"' _ \
   "$GITHUB_CONTROL" claude "$GITHUB_WT" "$GITHUB_HOME/.selected-codex")" || selected_rc=$?

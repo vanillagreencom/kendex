@@ -22,7 +22,7 @@ mkdir -p "$SOCK_DIR"
 # other, so the developer's own TMUX never names the server a row writes to.
 # LANG names UTF-8 because tmux prints a tab in a format as `_` to a client
 # whose environment names no UTF-8 locale, and the resolution splits on tabs.
-tm() { env -i PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 SHELL=/bin/sh TMUX_TMPDIR="$SOCK_DIR" "$REAL_TMUX" "$@"; }
+tm() { env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 SHELL=/bin/sh TMUX_TMPDIR="$SOCK_DIR" "$REAL_TMUX" "$@"; }
 trap 'tm kill-server 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # copy_scripts DIR — the entry point and the two libraries it sources, so a
@@ -107,7 +107,7 @@ PW_SETTLE=1
 pw() {
   local dir="$1" self="$2"
   shift 2
-  env -i PATH="${PW_PREFIX:+$PW_PREFIX:}$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 TMUX_TMPDIR="$SOCK_DIR" PANE_WRITE_SETTLE_SECS="$PW_SETTLE" ${self:+TMUX_PANE="$self"} "$dir/pane-write" "$@"
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="${PW_PREFIX:+$PW_PREFIX:}$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 TMUX_TMPDIR="$SOCK_DIR" PANE_WRITE_SETTLE_SECS="$PW_SETTLE" ${self:+TMUX_PANE="$self"} "$dir/pane-write" "$@"
 }
 
 # received [PANE RECV] — what the program in PANE, the lane's by default, read
@@ -239,7 +239,7 @@ assert_eq "$(failed_paste "$REF")" "rc=2 key=write-failed received= buffers=0" \
 # first: a shared name then reads the same way on every run.
 concurrent() { # DIR
   local out
-  out="$(env -i PATH="$SLOWPASTE:$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 TMUX_TMPDIR="$SOCK_DIR" bash -c '
+  out="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$SLOWPASTE:$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 TMUX_TMPDIR="$SOCK_DIR" bash -c '
     source "$1/lib/lane-state.sh"
     source "$1/lib/pane-write.sh"
     pane_write pane "$2" cat text one 2>/dev/null & a=$!
@@ -258,7 +258,7 @@ assert_eq "$(concurrent "$REF")" "rc=0,0 lane=one, pair=two," \
 # a format as `_` to that client, so the id lookup must not split on one.
 no_utf8() { # DIR
   local rc=0 key
-  env -i PATH="$PATH" HOME="$TMP_ROOT" TMUX_TMPDIR="$SOCK_DIR" "$1/pane-write" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" TMUX_TMPDIR="$SOCK_DIR" "$1/pane-write" \
     --pane "$LANE_PANE" --expect cat --file "$HELLO" 2>"$TMP_ROOT/err" >/dev/null || rc=$?
   key="$(awk '$1 == "pane-write:" { print $2; exit }' "$TMP_ROOT/err")"
   printf 'rc=%s key=%s received=%s' "$rc" "${key:-none}" "$(received)"

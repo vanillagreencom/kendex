@@ -120,7 +120,7 @@ run_battery() { # DIR NPROC [VAR=VALUE]... [-- ARG...]
   done
   [ "$#" -eq 0 ] || shift
   RC=0
-  OUT="$(env -i PATH="$stub:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" ${settings[@]+"${settings[@]}"} \
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$stub:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" ${settings[@]+"${settings[@]}"} \
     bash "$dir/run-all.sh" "$@" 2>&1)" || RC=$?
 }
 
@@ -309,7 +309,7 @@ SH
   printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
   chmod +x "$B.bin/nproc"
   set -m
-  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i PATH="$B.bin:$PATH" HOME="$HOME" \
+  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$B.bin:$PATH" HOME="$HOME" \
     TMPDIR="$B.tmp" PIDFILE="$B.pid" HOLDERFILE="$B.holder" bash "$B/run-all.sh" >"$B.out" 2>&1 &
   runner=$!
   set +m
@@ -498,7 +498,7 @@ run_bounded() { # DIR [VAR=VALUE]...
   printf '#!/usr/bin/env bash\necho 1\n' >"$dir.bin/nproc"
   chmod +x "$dir.bin/nproc"
   set -m
-  env -i PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" "$@" \
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" "$@" \
     PIDFILE="$dir.pid" MARK="$dir.mark" bash "$dir/run-all.sh" >"$dir.out" 2>&1 &
   runner=$!
   set +m

@@ -147,7 +147,7 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   : > "$SLEEPS"
   rm -f -- "$INPUT"
   RC=0
-  (cd -- "$TMP_ROOT/cwd" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+  (cd -- "$TMP_ROOT/cwd" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     ${setting[@]+"${setting[@]}"} \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
     CHECK_MODE="${CHECK_MODE-finishing}" CHECK_READS="$CHECK_READS" \

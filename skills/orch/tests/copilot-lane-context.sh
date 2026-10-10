@@ -102,7 +102,7 @@ run_ext() { # NAME EVENTS [ENV=VAL...]
   : > "$dir/timeline.log"
   rm -rf -- "${USER_HOME:?}/.cache"
   RC=0
-  (cd "$REPO" && env -i PATH="$PATH" HOME="$USER_HOME" COPILOT_HOME="$COP_HOME" \
+  (cd "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$USER_HOME" COPILOT_HOME="$COP_HOME" \
     FAKE_EVENTS="$dir/events.json" FAKE_LOG="$dir/timeline.log" FAKE_HOOK_LOG="$dir/hook.log" "$@" \
     node "$dir/extension.mjs") >"$dir/out" 2>&1 || RC=$?
   HOOK_RUNS="$(cat "$dir/hook.log")"

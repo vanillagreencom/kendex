@@ -17,7 +17,7 @@ mkdir "$TMP_ROOT/project"
 
 read_value() { # LIBRARY FUNCTION KEY
   RC=0
-  OUT="$(env -i PATH="$PATH" "$BASH" -c '
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" "$BASH" -c '
     set -euo pipefail
     cd -- "$4"
     source "$1"

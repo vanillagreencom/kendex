@@ -31,6 +31,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 new_sandbox() { # new_sandbox <dir>
   mkdir -p "$1"
   git -C "$1" init -q -b main
+  git -C "$1" config gc.auto 0
+  git -C "$1" config maintenance.auto false
   git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
 }
 
@@ -88,6 +90,39 @@ if [[ "$mutant_before" != "$(fingerprint "$mutant_sandbox")" ]]; then
   pass "must-fail: without the lib the same run writes into the sandbox"
 else
   fail "must-fail: the sandbox survived a run with the lib neutralized, so the control proves nothing"
+fi
+
+# --- 2. Scratch below a linked worktree does not discover its checkout ----
+# The prune suite writes fleet state before it can fail. That write must stay
+# in its fixture, never in the main checkout shared by linked worktrees.
+ceiling_sandbox="$TMP/ceiling-sandbox"
+new_sandbox "$ceiling_sandbox"
+linked="$TMP/linked"
+git -C "$ceiling_sandbox" worktree add -q -b fixture "$linked"
+mkdir -p "$linked/tmp"
+shared_state="$ceiling_sandbox/tmp/workflow-state-oversee.json"
+
+run_prune_suite() { # SUITE ; no git redirects, scratch inside a worktree
+  env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+    -u ORCH_STATE_DIR TMPDIR="$linked/tmp" \
+    bash "$1" > "$TMP/prune.out" 2>&1
+}
+
+prune_status=0
+run_prune_suite "$TEST_DIR/workflow-state-prune.sh" || prune_status=$?
+assert_eq "$prune_status" "0" "the prune suite passes with scratch inside a linked worktree"
+if [[ ! -e "$shared_state" ]]; then
+  pass "scratch fixtures leave the main checkout's fleet state absent"
+else
+  fail "scratch fixtures wrote fleet state in the main checkout"
+fi
+
+ln -s "$TEST_DIR/workflow-state-prune.sh" "$mutant/tests/workflow-state-prune.sh"
+run_prune_suite "$mutant/tests/workflow-state-prune.sh" || true
+if [[ -f "$shared_state" ]]; then
+  pass "must-fail: without the lib scratch fixtures write shared fleet state"
+else
+  fail "must-fail: the neutralized lib did not expose the shared fleet state write"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

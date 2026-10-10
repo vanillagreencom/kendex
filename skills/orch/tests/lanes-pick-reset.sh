@@ -66,7 +66,7 @@ fi
 pick_run() { # SCRIPT FETCHER ARGS... — one pick in H's world, its stderr in H/err
   local script="$1" fetcher="$2"
   shift 2
-  (cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$H" REAL_DATE="$REAL_DATE" \
+  (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" REAL_DATE="$REAL_DATE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$fetcher" \
     ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_ACCOUNTS="$H/accounts" LANE_HOST_STUB_LOG="$H/host.log" \
     OVERSEE_WATCH_STATE_DIR="$H/store" ORCH_STATE_DIR="$H/state" ORCH_LANE_DIRS="$H/.8claude:$H/.10claude" \

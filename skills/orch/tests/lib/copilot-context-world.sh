@@ -39,18 +39,18 @@ export async function joinSession() {
 SDK
   printf '{"type":"session.start","data":{"sessionId":"s1"}}\n' > "$cop_home/session-state/s1/events.jsonl"
   payload="$(jq -nc --arg cwd "$root" '{sessionId:"s1",cwd:$cwd}')" || return 1
-  FLOW_START="$(cd -- "$root" && env -i PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+  FLOW_START="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
     ORCH_STATE_DIR="$root/tmp" "$@" bash "$root/.github/hooks/lane-mail-start.sh" <<<"$payload")" || return 1
   : > "$root/tmp/flow.log"
   if [[ -r "$cop_home/extensions/kendex-lane-context/extension.mjs" ]] && \
       jq -e '.enabledFeatureFlags.EXTENSIONS == true' "$cop_home/settings.json" >/dev/null 2>&1; then
-    (cd -- "$root" && env -i PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+    (cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
       ORCH_STATE_DIR="$root/tmp" FLOW_LOG="$root/tmp/flow.log" "$@" \
       node "$cop_home/extensions/kendex-lane-context/extension.mjs") || return 1
   fi
   payload="$(jq -nc --arg cwd "$root" --arg transcript "$cop_home/session-state/s1/events.jsonl" \
     '{sessionId:"s1",cwd:$cwd,transcript_path:$transcript}')" || return 1
-  FLOW_STOP="$(cd -- "$root" && env -i PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+  FLOW_STOP="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
     ORCH_STATE_DIR="$root/tmp" ORCH_LANE_DIRS="" ORCH_OVERSEER_SUCCESSION=on "$@" \
     bash "$root/.github/hooks/lane-mail-check.sh" <<<"$payload")" || return 1
   FLOW_RECORD=none FLOW_VERDICT=""
@@ -70,7 +70,7 @@ SDK
   # no context argument, so main/control cannot be given a fabricated reading.
   local context=()
   [[ -z "$reading" ]] || context=(--context "$reading")
-  FLOW_VERDICT="$(cd -- "$root" && env -i PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+  FLOW_VERDICT="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
     ORCH_STATE_DIR="$root/tmp" ORCH_LANE_DIRS="" ORCH_OVERSEER_SUCCESSION=on "$@" \
     "$scripts/oversee-succeed" --check-marks --harness copilot ${context[@]+"${context[@]}"})" || return 1
 }

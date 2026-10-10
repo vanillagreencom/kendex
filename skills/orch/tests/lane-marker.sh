@@ -82,7 +82,7 @@ while IFS='|' read -r name recorded_harness recorded_session harness session ret
   ARGS=()
   [[ -z "$harness" ]] || ARGS=("$harness" "$session")
   RC=0
-  ERR="$(env -i HOME="$TMP_ROOT" PATH="$PATH" "$LANE_MARKER" "$WT" KEN-1 ${ARGS[@]+"${ARGS[@]}"} 2>&1)" || RC=$?
+  ERR="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" "$LANE_MARKER" "$WT" KEN-1 ${ARGS[@]+"${ARGS[@]}"} 2>&1)" || RC=$?
   ACTUAL=absent EXPECTED=absent
   [[ ! -f "$CONTEXT" ]] || ACTUAL="$(cat "$CONTEXT")"
   [[ "$retained" != yes ]] || EXPECTED="$RECORD"
@@ -104,7 +104,7 @@ CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
 mkdir -p "${CONTEXT%/*}"
 printf '{broken\n' > "$CONTEXT"
 RC=0
-ERR="$(env -i HOME="$TMP_ROOT" PATH="$PATH" "$LANE_MARKER" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
+ERR="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" "$LANE_MARKER" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
 assert_eq "rc=$RC first=${ERR%%$'\n'*} context=$(cat "$CONTEXT") marker=$([[ -e "$WT/.git/lane-mail/ken-1" ]] && echo present || echo absent)" \
   "rc=2 first=lane-marker: read=$CONTEXT context={broken marker=absent" \
   "an unreadable identity leaves the context intact and reports the read failure"
@@ -118,7 +118,7 @@ CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
 mkdir -p "${CONTEXT%/*}"
 printf '%s\n' '{"harness":"codex","session_id":"previous","tokens":400000}' > "$CONTEXT"
 RC=0
-ERR="$(env -i HOME="$TMP_ROOT" PATH="$PATH" "$CONTEXT_CONTROL/lane-marker" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
+ERR="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" "$CONTEXT_CONTROL/lane-marker" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
 assert_eq "rc=$RC error=$ERR context=$([[ -f "$CONTEXT" ]] && echo present || echo absent)" \
   "rc=0 error= context=present" "control: accepting a mismatched identity keeps the predecessor reading"
 

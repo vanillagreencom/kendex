@@ -41,7 +41,7 @@ for row in \
   'claude:1:HIGH|fable|1|0|||claude:1:HIGH|claude:1:HIGH|0' \
   'bad,claude:1:high,codex::low|fable|1|1|claude:fable:high|claude:1:high|bad codex::low|bad|1'; do
   IFS='|' read -r preference caller rc named models deprecated refused first warnings <<<"$row"
-  OUT="$(env -i PATH="$PATH" bash "$TMP_ROOT/read" "$LIB" "$preference" "$caller" 2>"$TMP_ROOT/err")"
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" bash "$TMP_ROOT/read" "$LIB" "$preference" "$caller" 2>"$TMP_ROOT/err")"
   warning_count="$(wc -l <"$TMP_ROOT/err" | tr -d ' ')"
   assert_eq "$OUT|$warning_count" "$rc|$named|$models|$deprecated|$refused|$first|$warnings" "parse $preference on caller $caller"
   if [[ "$warnings" == 1 ]]; then
@@ -50,7 +50,7 @@ for row in \
 done
 # Lane settings may name a host. Overseer settings keep their local route.
 while IFS='|' read -r preference mode expected; do
-  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
   assert_eq "$OUT" "$expected" "host grammar: $preference mode=$mode"
 done <<'ROWS'
 claude@claude-cloud:claude-opus-5-5:high|lane|0|1|claude@claude-cloud:claude-opus-5-5:high|||
@@ -63,11 +63,11 @@ ROWS
 # A bare word such as false is true inside [[ ... ]]. Each control keeps its
 # original condition but makes only that condition false.
 while IFS='|' read -r mutation preference mode old admitted; do
-  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
   assert_eq "$OUT" "1|0|||$preference|$preference" "control baseline: $mutation refuses $preference"
   MUTANT="$(mutant_scripts "$mutation" lib/overseer-launch.sh)"
   mutate_file "$MUTANT/lib/overseer-launch.sh" "$old" "( 0 == 1 && $old )"
-  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
   assert_eq "$OUT" "0|1|$admitted|||" "control: $mutation admits $preference"
 done <<'ROWS'
 host-grammar|claude@:opus:high|lane|! "$host" =~ ^[a-zA-Z0-9_./~-]+$|claude:opus:high
@@ -97,7 +97,7 @@ changed = text.replace(old, '# ' + old + '\n' + new)
 assert changed != text
 path.write_text(changed)
 PY
-  OUT="$(env -i PATH="$PATH" bash "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" 'claude:1:high' fable 2>"$TMP_ROOT/err")"
+  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" bash "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" 'claude:1:high' fable 2>"$TMP_ROOT/err")"
   warnings="$(wc -l <"$TMP_ROOT/err" | tr -d ' ')"
   if [[ "$OUT|$warnings" != '0|1|claude:fable:high|claude:1:high|||1' ]]; then
     pass "control: $mutation turns the numeric must-pass assertion red"

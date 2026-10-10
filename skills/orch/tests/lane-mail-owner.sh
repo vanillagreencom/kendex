@@ -291,7 +291,7 @@ race_repeats() { # NAME MODE ACTION LIB
   await_marker "$TMP_ROOT/$name.taken" || exit 1
   for n in 1 2; do
     (cd -- "$sender" && rc=0
-      env -i PATH="$TMP_ROOT/clock-bin:$PATH" HOME="$TMP_ROOT/repeat-home" LC_ALL=C \
+      env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/clock-bin:$PATH" HOME="$TMP_ROOT/repeat-home" LC_ALL=C \
         STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
         RACE_MARKER="$TMP_ROOT/$name-$n.waiting" ORCH_LANE_HOST="$FIXTURE_HOST" \
         LANE_HOST_STUB_LOG="$STUB_LOG" LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_LIB="$lib" \
@@ -781,7 +781,7 @@ assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$INVALID_POINTER" "a parent o
 # Missing jq must name the dependency before parsing a readable parent.
 BASH_BIN="$(command -v bash)"
 RC=0
-OUT="$(env -i PATH= "$BASH_BIN" "$LANE_MAIL" send --item overseer --directive --file "$POINTER" --thread-ts 1.1 --parent "$POINTER" 2>"$TMP_ROOT/err")" || RC=$?
+OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH= "$BASH_BIN" "$LANE_MAIL" send --item overseer --directive --file "$POINTER" --thread-ts 1.1 --parent "$POINTER" 2>"$TMP_ROOT/err")" || RC=$?
 assert_eq "$RC=$(sed -n '1p' "$TMP_ROOT/err")" "2=lane-mail: command-missing=jq" "a threaded send names missing jq, not the readable parent"
 
 # --- events -------------------------------------------------------------------

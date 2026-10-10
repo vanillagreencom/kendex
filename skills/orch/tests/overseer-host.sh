@@ -47,7 +47,7 @@ run_host() { # ENV... -- ARGS...
   while [[ $# -gt 0 && "$1" != -- ]]; do env_args+=("$1"); shift; done
   shift
   RC=0
-  OUT="$(cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$PATH" ${env_args[@]+"${env_args[@]}"} "$HOST" "$@" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$TMP_ROOT" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" ${env_args[@]+"${env_args[@]}"} "$HOST" "$@" 2>&1 </dev/null)" || RC=$?
 }
 run_host -- resolve
 assert_eq "$RC|$OUT" \
@@ -61,7 +61,7 @@ run_host ORCH_OVERSEER_HOST="$FIXTURE" -- resolve
 assert_eq "$RC|$OUT" \
   "0|$FIXTURE" \
   "resolve with a script path answers the path"
-OUT="$(cd "$TMP_ROOT" && printf 'block\n' | env -i HOME="$TMP_ROOT" PATH="$PATH" ORCH_OVERSEER_HOST="$FIXTURE" "$HOST" deliver --session %3 2>&1)" && RC=0 || RC=$?
+OUT="$(cd "$TMP_ROOT" && printf 'block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" ORCH_OVERSEER_HOST="$FIXTURE" "$HOST" deliver --session %3 2>&1)" && RC=0 || RC=$?
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
   "7|fixture deliver --session %3;block;fixture-err;" \
   "a verb reaches the provider with its argv, stdin, streams and exit status unchanged"
@@ -90,7 +90,7 @@ SERVER_PID="$(tm display-message -p '#{pid}')"
 KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 run_tmux() { # ARGS...
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="${RUN_PATH:-$PATH}" TMUX="$TMUX_ADDR" "${PROVIDER_BIN:-$HOST}" "$@" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="${RUN_PATH:-$PATH}" TMUX="$TMUX_ADDR" "${PROVIDER_BIN:-$HOST}" "$@" 2>&1 </dev/null)" || RC=$?
 }
 layout() { tm list-windows -t fleet -F '#{window_id} #{window_name}' | awk -v keep="$KEEP_WINDOW" '$1 != keep { print $2 }' | sort | tr '\n' ';'; }
 field() { awk -v k="$2=" 'NR == 1 { for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }' <<<"$1"; }
@@ -265,11 +265,11 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "inspect refuses a target that is not a pane id"
 
 # deliver: the block is consumed, the session's liveness is the answer.
-OUT="$(cd "$TMP_ROOT/work" && printf 'a block\n' | env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "$HOST" deliver --session "$SESSION" 2>&1)" && RC=0 || RC=$?
+OUT="$(cd "$TMP_ROOT/work" && printf 'a block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "$HOST" deliver --session "$SESSION" 2>&1)" && RC=0 || RC=$?
 assert_eq "$RC|$OUT" \
   "0|deliver=watch-log session=$SESSION" \
   "deliver on a live session confirms the watch-log route"
-OUT="$(cd "$TMP_ROOT/work" && printf 'a block\n' | env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "$HOST" deliver --session %999 2>&1)" && RC=0 || RC=$?
+OUT="$(cd "$TMP_ROOT/work" && printf 'a block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "$HOST" deliver --session %999 2>&1)" && RC=0 || RC=$?
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "4|overseer-host-tmux: session-gone session=%999" \
   "deliver on a session the server does not list refuses at 4"
@@ -372,7 +372,7 @@ rm -f -- "${BIN:?}/tmux"
 # A has-session answer that is not "can't find session" is the call failing,
 # not a missing session: TMUX pointed at a socket with no server refuses
 # tmux-failed, not tmux-session-missing.
-OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMP_ROOT/dead-socket,1,0" "$HOST" create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 1" 2>&1)" && RC=0 || RC=$?
+OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMP_ROOT/dead-socket,1,0" "$HOST" create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 1" 2>&1)" && RC=0 || RC=$?
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|overseer-host-tmux: tmux-failed operation=has-session session=fleet" \
   "create against a socket with no server refuses tmux-failed, not a missing session"
