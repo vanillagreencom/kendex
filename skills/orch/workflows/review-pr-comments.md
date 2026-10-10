@@ -110,10 +110,11 @@ URL: [URL]
 2. Classify into arrays per `../../reviewer/schemas/review-finding.md`:
    - `blockers[]`: verified and blocking, or P1/P2
    - `suggestions[]`: verified, non-blocking
-   - `questions[]`: QUESTION type — include a draft response
-   - Noise or failed checks: omit entirely
+   - `questions[]`: QUESTION type — include a draft response. For review-body inputs, use `Declined: [VERIFIED_DECISION_FLOW_REASON]`, answering the non-defect claim.
+   - Noise or failed checks from other sources: omit.
+   - Every review-body input must remain in one array, including false claims, Step 0 exclusions, vague or informational items, and other verified declines. Keep these in `questions[]`: copy the original claim into `question` and put `Declined: [VERIFIED_DECISION_FLOW_REASON]` in `draft_response`. Use the existing Question Fields; this is a reply carrier, not a fix item or a question to the user.
    - Already fixed: do NOT omit silently. Return it in `questions[]` with `outcome: "already_fixed"`, `commit: "[SHA]"`, and a `draft_response`.
-3. Preserve `source_id` and `source_type` from the input on every item.
+3. Preserve `source_id` and `source_type` from the input on every item. This report boundary owns disposition retention: no filter or omission rule removes a review-body input or its verified reply reason.
 4. Write the JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` with your harness file-write tool — never shell redirection, a heredoc, `tee`, or `echo >`.
 5. Return exactly:
 
@@ -133,7 +134,7 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 ## 5. Triage Report
 
-Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions.
+Read every report and aggregate across agents preserving attribution. Keep every review-body item with its source identity and verified reply draft through § 6.3; do not deduplicate it away. Deduplicate other items by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions. Show verified body declines in SKIPPING with their draft reason. These reply-only items never enter the fix set.
 
 **Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
@@ -336,7 +337,7 @@ With workflow state `pr_order` reading `open-first-returned`, publish through `.
 
 ### 6.3 Re-Triage Or Exit
 
-**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7. For `source_type: "review-body"`, collect § 6.3's replies in one `Dispositions at [HEAD_SHA]` PR comment, bound to the head after any fix push, with each line opening with its `source_id` (`file:line`), per `check-review-replies --help`. Post it with `post-comment --body-file`; record each item in `pr_comment_review.replied` with its `source_id` and `source_type`. These items use neither `post-reply` nor `resolve-thread`; continue to this section's single `iterations` increment.
+**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7. For `source_type: "review-body"`, collect § 6.3's replies for every retained report item in one `Dispositions at [HEAD_SHA]` PR comment, bound to the head after any fix push, with each line opening with its `source_id` (`file:line`), per `check-review-replies --help`. Post it with `post-comment --body-file`; record each item in `pr_comment_review.replied` with its `source_id` and `source_type`. These items use neither `post-reply` nor `resolve-thread`; continue to this section's single `iterations` increment.
 
 | Outcome | Reply body |
 |---------|------------|
@@ -344,7 +345,7 @@ With workflow state `pr_order` reading `open-first-returned`, publish through `.
 | Skipped, blocked, or declined, nothing filed | `Declined: [REASON]` |
 | Blocked or skipped → issue | `Tracked: [CREATED_ISSUE_ID]` |
 | Already fixed | Review-body: `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]`, using its verified fix SHA; otherwise the finding's `draft_response` |
-| Question | Review-body: `Declined: [VERIFIED_DECISION_FLOW_REASON]`, answering its non-defect claim; otherwise the finding's `draft_response` |
+| Question or verified decline | Review-body: its retained `draft_response`, in `Declined: [VERIFIED_DECISION_FLOW_REASON]` form; otherwise the finding's `draft_response` |
 
 A `Tracked:` reply names the issue it filed, and a decline is a decline — say so. Resolving a thread is not a reply.
 
