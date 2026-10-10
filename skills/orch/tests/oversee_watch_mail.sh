@@ -539,7 +539,8 @@ local_removed_mail() { # CASE FIRST_PASS
 local_removed_mail mail_local_removed learn
 assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=1 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "a removed local lane's closing notice is read from the main checkout once" "$STUB_DIR/run2.err"
 local_removed_mail mail_local_unknown absent
-assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=2 notice=0 unknown=1; pass=3 rc=0 notice=0 unknown=0; ' "a removed local lane without a recorded checkout reports clone=unknown and no notice" "$STUB_DIR/run2.err"
+assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=2; pass=3 rc=0 notice=0 unknown=2; ' "an unknown local checkout skips only its mailbox and reports each attempted read" "$STUB_DIR/run2.err"
+assert_eq "$(awk -F'\t' '$1 == "lane-failed" && $2 == "KEN-93" { n++ } END { print n + 0 }' "$STATE_DIR"/*.mail)" 0 "an unknown local checkout adds no lane-failed report row"
 LOCAL_MAIL_WATCH="$(mutant_scripts local-mail/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/local-mail/github"
 mutate_file "$LOCAL_MAIL_WATCH" 'elif [[ "$item" != overseer && -n "$root" ]]; then' 'elif false && [[ "$item" != overseer && -n "$root" ]]; then'
@@ -547,6 +548,54 @@ WATCH_BIN="$LOCAL_MAIL_WATCH" local_removed_mail mail_local_removed_control lear
 assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "control: today's local route loses the close-out notice" "$STUB_DIR/run2.err"
 WATCH_BIN="$LOCAL_MAIL_WATCH" local_removed_mail mail_local_unknown_control absent
 assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "control: today's local route omits the unknown-checkout failure" "$STUB_DIR/run2.err"
+
+# An explicit local mailbox can stand before its directory becomes a Git
+# checkout. Discovery is advisory then, and the next pass must learn it.
+local_learning_mail() { # CASE
+  local root pass rc out clone
+  new_case "$1"
+  root="$STUB_DIR/lane"
+  mkdir -p "$root/tmp/lane-mail/KEN-93"
+  jq -nc --arg root "$root" '{lanes:[{item:"KEN-93",status:"running",host:"local",mail_root:$root,harness:"claude"}]}' > "$STUB_DIR/local-state.json"
+  LOCAL_LEARN_FACTS=""
+  for pass in 1 2; do
+    if [[ "$pass" -eq 2 ]]; then
+      git -C "$root" init -q
+      git -C "$root" config gc.auto 0
+      git -C "$root" config maintenance.auto false
+    fi
+    printf '{"id":"learning-%s","kind":"notice","at":"t","text":"Working."}\n' "$pass" >> "$root/tmp/lane-mail/KEN-93/to-overseer.jsonl"
+    rc=0
+    out="$(run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" 2> "$STUB_DIR/run$pass.err")" || rc=$?
+    clone="$(awk -F'\t' '$1 == "clone-root" && $2 == "KEN-93" { print $3 }' "$STATE_DIR"/*.mail)"
+    LOCAL_LEARN_FACTS+="pass=$pass rc=$rc notice=$(grep -cx "EVENT lane-notice KEN-93 learning-$pass" <<<"$out" || :) diagnostic=$(grep -c '^oversee-watch: handoff-read-failed ' "$STUB_DIR/run$pass.err" || :) clone=${clone:+learned}; "
+    [[ -z "$clone" ]] || assert_eq "$clone" "$root" "the retry saves the standing local checkout"
+  done
+}
+local_learning_mail mail_local_learning
+assert_eq "$LOCAL_LEARN_FACTS" 'pass=1 rc=0 notice=1 diagnostic=0 clone=; pass=2 rc=0 notice=1 diagnostic=0 clone=learned; ' "local discovery failure leaves mail readable and retries next pass" "$STUB_DIR/run1.err"
+WATCH_BIN="$LOCAL_MAIL_WATCH" local_learning_mail mail_local_learning_control
+assert_eq "$LOCAL_LEARN_FACTS" 'pass=1 rc=0 notice=1 diagnostic=0 clone=; pass=2 rc=0 notice=1 diagnostic=0 clone=; ' "control: without local discovery the next pass learns no checkout"
+
+LOCAL_LEARN_SCRIPTS="$(mutant_scripts local-learn/orch lib/watch-host-kinds.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/local-learn/github"
+mutate_file "$LOCAL_LEARN_SCRIPTS/lib/watch-host-kinds.sh" \
+  'LOCAL_CLONE="$("$SCRIPT_DIR/git-context" common-root "$LOCAL_ROOT" 2>/dev/null)" || LOCAL_CLONE=""' \
+  'LOCAL_CLONE="$("$SCRIPT_DIR/git-context" common-root "$LOCAL_ROOT" 2>/dev/null)" || { lane_failure_set handoff-read-failed "" "item=$1" "path=$LOCAL_ROOT"; return 1; }'
+WATCH_BIN="$LOCAL_LEARN_SCRIPTS/oversee-watch" local_learning_mail mail_local_learning_failure_control
+assert_eq "$LOCAL_LEARN_FACTS" 'pass=1 rc=0 notice=0 diagnostic=2 clone=; pass=2 rc=0 notice=1 diagnostic=0 clone=learned; ' "control: treating failed discovery as required loses the standing mailbox read"
+
+LOCAL_FAILURE_SCRIPTS="$(mutant_scripts local-failure/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/local-failure/github"
+mutate_file "$LOCAL_FAILURE_SCRIPTS/oversee-watch" \
+  'ow_message "$LANE_FAILURE_REASON" ${LANE_FAILURE_FIELDS[@]+"${LANE_FAILURE_FIELDS[@]}"} >&2
+        continue' \
+  'lane_failure_report "$item" "$state"
+        mail_row_commit "$LANE_FAILURE_STATE"
+        state="$MAIL_SEEN"
+        continue'
+WATCH_BIN="$LOCAL_FAILURE_SCRIPTS/oversee-watch" local_removed_mail mail_local_unknown_failure_control absent
+assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=2 notice=0 unknown=1; pass=3 rc=0 notice=0 unknown=0; ' "control: an unknown checkout as a lane failure fails the run and suppresses repeated diagnostics"
 
 # Two overseers of two repositories on one host point OVERSEE_WATCH_STATE_DIR
 # at one directory, which is how their lane claims line up. Each reads its own

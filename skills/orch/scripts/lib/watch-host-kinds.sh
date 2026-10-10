@@ -120,11 +120,11 @@ local_root() { # ITEM
 # removes its worktree. Call after local_root; sets LOCAL_CLONE and LOCAL_GONE.
 local_clone() { # ITEM STATE
   LOCAL_GONE=0
+  LOCAL_CLONE=""
   if [[ -d "$LOCAL_ROOT" ]]; then
-    if ! LOCAL_CLONE="$("$SCRIPT_DIR/git-context" common-root "$LOCAL_ROOT" 2>"$WORK_DIR/local.err")"; then
-      lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/local.err")" "item=$1" "path=$LOCAL_ROOT"
-      return 1
-    fi
+    # Learning the fallback is advisory while the mailbox itself still stands.
+    # An explicit local root can be a plain directory; retry on the next pass.
+    LOCAL_CLONE="$("$SCRIPT_DIR/git-context" common-root "$LOCAL_ROOT" 2>/dev/null)" || LOCAL_CLONE=""
   else
     LOCAL_GONE=1
     if ! LOCAL_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$LOCAL_CLONE" ]]; then

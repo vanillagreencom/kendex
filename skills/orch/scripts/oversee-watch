@@ -2162,12 +2162,12 @@ check_mail() { # [overseer]
       fi
     elif [[ "$item" != overseer && -n "$root" ]]; then
       if ! local_clone "$item" "$state"; then
-        lane_failure_report "$item" "$state"
-        mail_row_commit "$LANE_FAILURE_STATE"
-        state="$MAIL_SEEN"
+        # An unknown local checkout prevents only this mailbox read. The lane's
+        # workflow state and pane still supply events that do not need mail.
+        ow_message "$LANE_FAILURE_REASON" ${LANE_FAILURE_FIELDS[@]+"${LANE_FAILURE_FIELDS[@]}"} >&2
         continue
       fi
-      state="$(lane_row_set clone-root "$state" "$item" "$LOCAL_CLONE")"
+      [[ -z "$LOCAL_CLONE" ]] || state="$(lane_row_set clone-root "$state" "$item" "$LOCAL_CLONE")"
       if [[ "$LOCAL_GONE" -eq 1 ]]; then
         root="$LOCAL_CLONE"; cursor="$item@clone"
       fi
