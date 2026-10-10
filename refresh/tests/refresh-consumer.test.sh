@@ -2129,6 +2129,22 @@ set -euo pipefail
 # The render call clears test variables, so its executable path is fixture data.
 if [ "$1" = bot-instructions-render ]; then exec "@REAL_KENDEX@" "$@"; fi
 printf '%s\n' "$*" >>"$TEST_STATE/kendex"
+if [ "$TEST_KENDEX_OUTPUT" = legacy-schema ] &&
+    { [ "$1" = refresh ] || { [ "$1" = apply ] && [ "${2:-}" = --plan ]; }; }; then
+  # The legacy CLI refusal is fixture data; the runner still owns its rewrite.
+  python3 - "$TEST_STATE/legacy-schema.json" <<'LEGACY_SCHEMA'
+from pathlib import Path
+import json
+import sys
+fixture = json.loads(Path(sys.argv[1]).read_text())
+path = Path(fixture["path"])
+old, current = fixture["old"], fixture["current"]
+# This table's producer puts the root schema on its first line.
+if path.read_bytes().split(b"\n", 1)[0] == f"schema = {old}".encode():
+    print(f"Error: {path}: this manifest could not be read \u2014 it is a schema {old} manifest, and this kendex writes schema {current}", file=sys.stderr)
+    raise SystemExit(1)
+LEGACY_SCHEMA
+fi
 if [ "$TEST_KENDEX_OUTPUT" = failed ] && [ "$1" = refresh ]; then
   printf 'catalog read failed\n' >&2
   exit 17
@@ -2142,18 +2158,18 @@ fi
 REAL_KENDEX_SH
   file_edit "$TMP/bin" kendex 1 '@REAL_KENDEX@' "s|@REAL_KENDEX@|$REAL_KENDEX|"
   REAL_MANIFEST_SCHEMA="$(real_manifest_schema)"
-  # The real refresh refuses the old schema unless the runner edits it first.
-  # The same assertion judges each disposable runner control.
-  for row in previous older newer missing current source-catalog step-control distance-control table-control manifest-control; do
+  # Live rows test engine migration. Legacy refusal rows reach the shell fallback
+  # with the same byte assertion for its passing baselines and runner controls.
+  for row in previous older newer missing current source-catalog legacy-previous legacy-source-catalog step-control distance-control table-control manifest-control; do
     manifest=kendex.toml
-    case "$row" in source-catalog | manifest-control) manifest=kendex-local.toml ;; esac
+    case "$row" in source-catalog | legacy-source-catalog | manifest-control) manifest=kendex-local.toml ;; esac
     real_refresh_fixture "schema-$row" "$manifest"
     file_edit "$repo" .agents/skills/probe/SKILL.md 1 '^Hand edit\.$' '/^Hand edit\.$/d'
     printf 'New upstream content.\n' >>"$real_root/git/owner/catalog/skills/probe/SKILL.md"
     commit "$real_root/git/owner/catalog"
     committed="$REAL_MANIFEST_SCHEMA"
     case "$row" in
-      previous | source-catalog | step-control | table-control | manifest-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
+      previous | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
       older | distance-control) committed=$((REAL_MANIFEST_SCHEMA - 2)) ;;
       newer) committed=$((REAL_MANIFEST_SCHEMA + 1)) ;;
     esac
@@ -2166,6 +2182,22 @@ _, rest = data.split(b"\n", 1)
 schema = b"" if sys.argv[3] == "missing" else f"schema = {sys.argv[2]}\n".encode()
 path.write_bytes(schema + rest + b"\n" + sys.argv[4].encode())
 SCHEMA_FIXTURE
+    KENDEX_OUTPUT=normal
+    case "$row" in
+      legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control)
+        KENDEX_OUTPUT=legacy-schema
+        python3 - "$TMP/state/legacy-schema.json" "$repo/$manifest" "$committed" "$REAL_MANIFEST_SCHEMA" <<'LEGACY_FIXTURE'
+from pathlib import Path
+import json
+import sys
+Path(sys.argv[1]).write_text(json.dumps({
+    "path": str(Path(sys.argv[2]).resolve()),
+    "old": int(sys.argv[3]),
+    "current": int(sys.argv[4]),
+}))
+LEGACY_FIXTURE
+        ;;
+    esac
     runner="$repo/refresh/refresh-consumer.sh"
     cp "$runner" "$real_root/schema-runner"
     if [[ "$row" == *-control ]]; then
@@ -2215,7 +2247,7 @@ SCHEMA_CONTROL
       older | newer | missing | distance-control)
         if real_refresh_stopped 'refresh-error=refresh value=' &&
             cmp -s "$real_root/schema-before" "$repo/$manifest"; then schema_passed=yes; fi ;;
-      previous | current | source-catalog | step-control | table-control | manifest-control)
+      previous | current | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control)
         if [ "$RC" -eq 0 ] && [ -s "$TMP/state/creates" ]; then
           git --git-dir="$real_root/remote" show "refs/heads/kendex/refresh:$manifest" >"$real_root/schema-after"
           if python3 - "$real_root/schema-before" "$real_root/schema-after" "$committed" "$REAL_MANIFEST_SCHEMA" <<'SCHEMA_ASSERT'
@@ -2265,10 +2297,12 @@ TABLE_CONTROL_ASSERT
         then ok 'control: an unbounded rewrite also changes the bot-instructions schema'
         else bad "$row schema control" "$OUT"; fi ;;
       *-control:yes) bad "$row schema control" "$OUT" ;;
+      legacy-*:yes) ok "$row legacy refusal contract preserves every other manifest byte" ;;
       *:yes) ok "$row real schema refresh preserves every other manifest byte" ;;
       *) bad "$row real schema refresh" "$OUT" ;;
     esac
   done
+  unset KENDEX_OUTPUT
   for row in local upstream shared multiple discard-control baseline; do
     real_refresh_fixture "$row"
     expected_edits='.agents/skills/probe/SKILL.md'
