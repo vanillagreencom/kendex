@@ -36,7 +36,7 @@ kendex add vanillagreencom/kendex --skill slack
 - Posts get an `inflight` record before sending. After a stop or lost response, they stay `unknown` in `listen --status`, never repeated. Explicit refusals retry after a token fix if needed.
 - Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. Later answers and referenced notices go to the channel. [Journal](schemas/journal.md) defines the records.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
-- A master session can hold a root's mailbox posts. Owner messages and relay replies still pass. [The master hold](#the-master-hold) defines the hold and resume.
+- A master session can hold a root's mailbox posts; replies to messages the owner typed in the channel still post in their threads. Owner messages still reach the overseer. [The master hold](#the-master-hold) defines the hold and resume.
 - The relay compacts its journal daily. Run `slack compact` only while the relay is stopped.
 - A package update restarts the relay in place once its files hold for two polls. A changed setting still needs `slack setup`.
 
@@ -92,6 +92,8 @@ The app must be a member of every channel it posts to. `setup` creates or adopts
 
 Each root reads the presence pair from its own settings and private env files, with caller exports taking precedence. An empty or absent `SLACK_MASTER_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold. `slack listen --status` shows `held-by=master` while held.
 
+Replies to messages the owner typed in the channel still post in their threads while held.
+
 The master's watch writes a bare read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen`. On resume, the relay clamps the count to the mailbox length, skips notices at or below it and journals their ids. Later notices, open asks and held answers still post. A missing or unreadable count skips nothing; hold times do not set the cutoff.
 
 `lane-mail events` supplies `line` (physical position) and `count` (complete line count) for suppression. The oldest supported producer is orch 3.0.0 with its [owner channel](https://github.com/vanillagreencom/kendex/commit/ac62981e). [Position metadata](https://github.com/vanillagreencom/kendex/commit/e9c9497e) enables master-read suppression and the read mark on an answer. Missing or malformed positions still route without that suppression. Each bad field gets an `envelope-field` diagnostic with root and id. Other bad fields skip the envelope. A checkout poll failure names the root; other checkouts still run.
@@ -139,7 +141,7 @@ Other Slack settings are process-wide and use the launch checkout, the first `--
 | `KENDEX_USER_HANDLE` | The person in `setup`'s default channel name, first name plus last initial (`bradm`), beside `KENDEX_USER_EMAIL` in the private env file | the local part of `KENDEX_USER_EMAIL` |
 | `SLACK_POLL_SECONDS` | Seconds between two reads of each mailbox for posts and receipt marks | `15` |
 | `SLACK_THREAD_DAYS` | Journal retention and reconnect lookback in days; live replies have no age limit | `7` |
-| `SLACK_MASTER_FILE` | Per root: the master's presence file; while fresh it holds that root's mailbox posts | empty: no hold |
+| `SLACK_MASTER_FILE` | Per root: the master's presence file; while fresh it holds mailbox posts except replies to messages the owner typed in the channel, which still post in their threads | empty: no hold |
 | `SLACK_MASTER_MAX_AGE` | Per root: seconds after the file's last touch that it still holds posts | `600` |
 
 ## Licence

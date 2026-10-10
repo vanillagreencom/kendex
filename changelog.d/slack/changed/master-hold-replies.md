@@ -1,0 +1,1 @@
+- Replies to messages the owner sends in the bound Slack channel post in their threads while the master hold is active; other mailbox posts stay held.

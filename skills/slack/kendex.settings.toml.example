@@ -26,6 +26,7 @@ SLACK_THREAD_DAYS = "7"
 # "~/.fleet/master-live". While it is younger than SLACK_MASTER_MAX_AGE the
 # relay holds its mailbox posts and `slack listen --status` shows
 # held-by=master; owner messages in the channel still reach the overseer.
+# Replies to messages the owner typed in the channel still post in their threads.
 # README.md says what posts on resume. Empty means no hold.
 SLACK_MASTER_FILE = ""
 
