@@ -174,7 +174,16 @@ pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 6] {
     };
     [
         ("HOME", env.home.clone().into_os_string()),
-        ("KENDEX_REAL_HOME", OsString::from("1")),
+        (
+            "KENDEX_REAL_HOME",
+            // Windows Known Folders ignore HOME and XDG; Unix fixtures need
+            // OS discovery to honor explicit XDG overrides after these defaults.
+            if cfg!(windows) {
+                env.home.clone().into_os_string()
+            } else {
+                "1".into()
+            },
+        ),
         ("XDG_CONFIG_HOME", base(env.settings_file())),
         ("XDG_CACHE_HOME", base(env.app_update_cache_file())),
         ("XDG_DATA_HOME", base(env.installed_command_file())),
