@@ -164,20 +164,23 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
             found: schema.unwrap_or_default(),
         });
     }
-    // The floor. Nothing converts an older file, and reading one is not the
-    // harmless half of that: every schema since 1 changed what a table
-    // means, so a value read under the wrong one is a wrong answer, and the
-    // write that follows makes it durable — including over the person's own
-    // comments. So the file is left exactly as they wrote it and the
-    // refusal says what to do with it.
+    // Refuse before interpreting tables or writing bytes. The advice follows
+    // MANIFEST_SCHEMA's compatibility contract.
     if schema != Some(i64::from(MANIFEST_SCHEMA)) {
+        let advice = if schema == Some(i64::from(MANIFEST_SCHEMA) - 1) {
+            format!("set `schema = {MANIFEST_SCHEMA}`; nothing else in the manifest changes")
+        } else {
+            "move it aside and install fresh, declaring again from the file you moved".to_owned()
+        };
         return Err(CoreError::LegacyManifest {
             path: path.to_path_buf(),
             message: match schema {
                 Some(schema) => format!(
-                    "it is a schema {schema} manifest, and this kendex writes schema {MANIFEST_SCHEMA}"
+                    "it is a schema {schema} manifest, and this kendex writes schema {MANIFEST_SCHEMA}; {advice}"
                 ),
-                None => "it names no schema, so nothing here can say what shape it is".to_owned(),
+                None => format!(
+                    "it names no schema, so nothing here can say what shape it is; {advice}"
+                ),
             },
         });
     }

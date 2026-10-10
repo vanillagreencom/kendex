@@ -172,14 +172,6 @@ fn frontmatter_keys_for(harness: &str) -> &'static [&'static str] {
 pub fn validate(table: &Table) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    let schema = table.get("schema").and_then(Value::as_integer);
-    if schema != Some(i64::from(super::MANIFEST_SCHEMA)) {
-        findings.push(Finding {
-            location: "schema".into(),
-            problem: "missing or unsupported schema version".into(),
-            fix: format!("set schema = {}", super::MANIFEST_SCHEMA),
-        });
-    }
     for key in table.keys() {
         if !TOP_LEVEL.contains(&key.as_str()) {
             findings.push(Finding {

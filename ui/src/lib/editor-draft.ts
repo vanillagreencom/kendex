@@ -46,10 +46,7 @@ export const EMPTY_FRONTMATTER: DraftFrontmatter = {
 
 /**
  * The draft the editor opens for a scope with no kendex.toml yet. The
- * schema is the one this build writes, read off the exported constant:
- * `save::check` validates this draft before the plan's `manifest::save`
- * would stamp anything, so a number of our own here would be a first save
- * refused by its own validator.
+ * exported constant keeps its schema aligned with the manifest writer.
  */
 export function emptyDraft(): Draft {
   return { schema: MANIFEST_SCHEMA };

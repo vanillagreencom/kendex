@@ -68,8 +68,8 @@ fn read_manifest(env: &Env, scope: &Scope) -> Result<ManifestRead, String> {
     })
 }
 
-/// Validate an edited manifest the way a hand-written file is validated, so
-/// the editor rejects exactly the same things — fix strings included.
+/// Validate an edited manifest's tables with the file reader's table
+/// validator, including each finding's fix.
 fn check(manifest: &Manifest) -> Result<(), String> {
     let text = toml::to_string_pretty(manifest).map_err(|e| e.to_string())?;
     let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;

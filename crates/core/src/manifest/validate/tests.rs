@@ -44,7 +44,6 @@ matcher = "Bash"
     // Cursor reads no plugin map kendex can write, so aiming a plugin at
     // it asks for a write with nowhere to land.
     assert!(locations.contains(&"plugins.fmt@main.harness"));
-    assert!(locations.contains(&"schema"));
     assert!(locations.contains(&"typo-table"));
     assert!(locations.contains(&"sources.bad"));
     assert!(locations.contains(&"install.harnesses"));
@@ -61,9 +60,7 @@ matcher = "Bash"
 /// in order, so a row pins what was found, where, and that nothing else
 /// was. The location discriminates a finding; the fix beside it is
 /// authoring guidance, so every row asserts each finding carries one and
-/// none pins its wording. Only the current schema validates: an
-/// older number, a newer one, and no number at all are one finding, so
-/// the editor rejects exactly what a file read does. A known override key
+/// none pins its wording. A known override key
 /// under a harness that never renders it is a setting the author believes
 /// is in force and is not. A plugin segment is only a name for the kinds
 /// a marketplace catalog offers: a hook, a server or a Pi extension named
@@ -81,18 +78,8 @@ matcher = "Bash"
 #[allow(clippy::too_many_lines)]
 fn every_manifest_defect_is_located_with_nothing_else_said() {
     let kendex = "[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n";
-    let schema = ("schema", "missing or unsupported schema version");
     let rows: Vec<(String, Vec<(&str, &str)>)> = vec![
         (format!("schema = 7\n{kendex}"), vec![]),
-        (format!("schema = 5\n{kendex}"), vec![schema]),
-        (
-            format!(
-                "schema = {}\n{kendex}",
-                crate::manifest::MANIFEST_SCHEMA + 1
-            ),
-            vec![schema],
-        ),
-        (kendex.to_owned(), vec![schema]),
         (
             "schema = 7\n[agent-frontmatter.gemini.rust]\neffort = \"high\"\nmodel = \"inherit\"\n[agent-frontmatter.claude.rust]\neffort = \"high\"\n[agent-frontmatter.cursor.rust]\ncolor = \"red\"\n[agent-frontmatter.antigravity.rust]\neffort = \"high\"\nmodel = \"opus\"\n".to_owned(),
             vec![

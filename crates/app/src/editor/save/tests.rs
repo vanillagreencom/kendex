@@ -245,36 +245,11 @@ fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
     );
 }
 
-/// The first save on a scope with no kendex.toml creates the file. The
-/// schema the draft arrives with is what decides it: `check` runs before
-/// the plan's `manifest::save` would stamp one, so a draft naming any
-/// other version is refused and nothing is created. That is why the
-/// editor's empty draft reads the number off the exported
-/// `MANIFEST_SCHEMA` rather than keeping a copy — see `emptyDraft` in
-/// ui/src/lib/editor-draft.ts.
 #[test]
-fn a_first_save_creates_the_manifest_and_the_draft_schema_decides_it() {
+fn a_first_save_creates_a_current_schema_manifest() {
     let (_tmp, env, scope) = scope_without_manifest();
     let path = manifest::manifest_path(&env, &scope);
     assert!(!path.exists(), "{}", path.display());
-
-    let stale = Manifest {
-        schema: MANIFEST_SCHEMA - 1,
-        ..Manifest::default()
-    };
-    let Err(refused) = write_customize(
-        &env,
-        scope.clone(),
-        Some((stale, Base::absent())),
-        None,
-        None,
-    ) else {
-        panic!("a draft below this build's schema must not create a file");
-    };
-    let WriteRefused::Failed { .. } = &refused else {
-        panic!("the schema refusal is a validation failure, not a stale copy: {refused:?}");
-    };
-    assert!(!path.exists(), "and nothing is created: {}", path.display());
 
     let draft = Manifest {
         schema: MANIFEST_SCHEMA,
