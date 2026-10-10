@@ -6,7 +6,8 @@
 # Usage:
 #   oversee-succeed [--harness H] [--context TOKENS:WINDOW] [--handoff PATH] [--wait-secs N]
 #                   [-- HARNESS_FLAGS...]
-#   oversee-succeed --print-launch-line [--harness H] [--handoff PATH] [-- HARNESS_FLAGS...]
+#   oversee-succeed --print-launch-line [--entry ENTRY] [--harness H] [--handoff PATH]
+#                   [-- HARNESS_FLAGS...]
 #   oversee-succeed --check-marks [--harness H] [--context TOKENS:WINDOW]
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
 #   oversee-succeed --walled-pane PANE [--harness H] [--handoff PATH] [--wait-secs N]
@@ -375,14 +376,19 @@
 #                    for those refusals. Takes
 #                    no other option but --context, --handoff and --wait-secs
 #                    included
-#   --print-launch-line
-#                    Print the command a successor of THIS overseer would be
+#   --print-launch-line [--entry harness:model:effort]
+#                    With --entry, walk that one preference entry through the
+#                    live account pick, flag translation and folder trust.
+#                    No caller fallback runs. A lane must clear
+#                    ORCH_OVERSEER_HEADROOM_PCT. No mark is judged, so a
+#                    no-lane-qualifies refusal names mark=none.
+#                    Without --entry, print the command a successor of THIS overseer would be
 #                    launched with — the caller's own harness, its own lane,
 #                    the flags after --, and the brief naming --handoff, each
 #                    as its launch record answers where one names this pane,
 #                    so a session whose pane names no harness is still
 #                    printed — and launch nothing. ORCH_OVERSEER_PREFERENCE is not walked and
-#                    no account's headroom is read: the line records what this
+#                    no account's headroom is read without --entry: the line records what this
 #                    session runs, and the preference chooses where a LATER
 #                    successor goes. A codex line still carries the folder-trust
 #                    preparation of step 4, because the pane that replays it is
@@ -478,7 +484,7 @@ message() { # KEY FIELD=VALUE...
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
-    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option but --context, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone.' ;;
+    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --entry is taken only by --print-launch-line. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option but --context, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     record-unread) text='The fleet state could not be read, so this session'\''s launch record was not consulted: its harness, account and model are read off its pane and its environment, as for a session nothing has recorded.' ;;
     record-unwritten) text='The session record in the fleet state could not be written for the successor, or put back after an abandoned launch, so the record does not name the session that is running. The step field says which; the succession itself stands.' ;;
@@ -509,7 +515,7 @@ message() { # KEY FIELD=VALUE...
     pi-handoff-unmarked) text='A pi successor would compact or reach its wall with no handoff mark, so nothing was launched. The reason field names which: compaction-on is a pi settings file, the one the file field names, leaving compaction.enabled on; settings-unreadable is that file present and unreadable, its reader words below; no-window-read is no installed pi-hooks carrier sending the context window.' ;;
     successor-account-unmeasured) text='The successor opens on this overseer'\''s own account, which nothing measured and the caller already spends.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
-    no-lane-qualifies) text='No lane walked clears the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
+    no-lane-qualifies) text='No lane walked clears the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. With --print-launch-line --entry, the walk is that one entry with no caller fallback, and mark=none says no mark was judged. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable or unparseable, a dangling shim link being the usual codex cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account, or the claude config dir .claude.json, that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
@@ -698,6 +704,8 @@ DEAD_PANE=""
 WALLED_PANE=""
 LINE_FILE=""
 PRINT_LINE=0
+ENTRY_ARG=""
+ENTRY_GIVEN=0
 CHECK_MARKS=0
 # Whether the caller SUPPLIED the two options that carry a default, so check
 # mode can refuse them: a value it parsed and then ignored is a setting the
@@ -709,11 +717,12 @@ CONTEXT_GIVEN=0
 HARNESS_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness)
+    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --context) CONTEXT_ARG="$2"; CONTEXT_GIVEN=1 ;;
         --harness) HARNESS_ARG="$2" ;;
+        --entry) ENTRY_ARG="$2"; ENTRY_GIVEN=1 ;;
         --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
         --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
         --dead-pane) DEAD_PANE="$2" ;;
@@ -769,6 +778,7 @@ elif [[ "$PRINT_LINE" -eq 1 ]]; then
 else
   [[ -z "$LINE_FILE" ]] || die mode-conflict "line-file=$LINE_FILE" "dead-pane=none"
 fi
+(( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"
 # The two modes that judge a mark, matched by name at every site below rather
 # than re-conjoined there: `succeed` acts on the judgement and `check` reports
 # it, and every read they rest on is the same read.
@@ -1092,7 +1102,7 @@ if (( JUDGES )); then
 fi
 
 # The preference names where a LATER successor goes; `print` records what THIS
-# session runs, so it walks the caller entry alone whatever the setting says,
+# session runs without --entry, so it walks the caller entry alone whatever the setting says,
 # and `dead` walks nothing: the recorded line IS the choice, already made by
 # whichever of the two modes above wrote it.
 #
@@ -1109,7 +1119,15 @@ build_entries() {
   # entries were stated and that the fallback ran after all of them.
   NAMED_ENTRIES=0
   if [[ "$MODE" == print ]]; then
-    ENTRIES=(caller)
+    # A requested entry names the only harness this caller wants a line for.
+    if (( ENTRY_GIVEN )); then
+      ol_preference_entries "$ENTRY_ARG" || die invalid-preference "entry=$OL_BAD_ENTRY"
+      (( OL_NAMED == 1 )) || die invalid-preference "entry=$ENTRY_ARG"
+      ENTRIES=("${OL_ENTRIES[0]}")
+      NAMED_ENTRIES="$OL_NAMED"
+    else
+      ENTRIES=(caller)
+    fi
   else
     # The parse is lib/overseer-launch.sh's ol_preference_entries, the one
     # `oversee launch` reads the same setting with, so the two launchers cannot
@@ -1396,6 +1414,7 @@ if [[ -z "$chosen" ]]; then
   # "walked" means here.
   WALK=("entries=$NAMED_ENTRIES" "fallback=$OL_FALLBACK_WALKED"
         "walled=$OL_WALKED_WALLED" "unmeasured=$OL_WALKED_UNMEASURED")
+  [[ "$MODE" != print ]] || die_status 3 no-lane-qualifies "${WALK[@]}" mark=none
   [[ "$MODE" != walled ]] || die_status 3 no-lane-qualifies "${WALK[@]}" mark=wall
   [[ "$MARK_KIND" != headroom ]] || die_status 3 no-lane-qualifies "${WALK[@]}" \
     mark=headroom "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"
