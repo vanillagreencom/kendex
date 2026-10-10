@@ -92,7 +92,9 @@ files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (
 channel name; default KENDEX_USER_EMAIL's local part), SLACK_POLL_SECONDS (15),
 SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
 SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600) are read per root
-from that root's files, with the original caller exports taking precedence.
+at every poll, using the settings reader when that root's files change,
+with the original caller exports taking precedence. Other settings need
+slack setup or a restart.
 A relative file path starts at its root; ~ expands to the home directory.
 While its file is younger than its age bound, --status shows held-by=master.
 A root naming no file has no hold. README.md defines the master hold and resume.

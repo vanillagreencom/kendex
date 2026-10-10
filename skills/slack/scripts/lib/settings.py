@@ -33,9 +33,10 @@ CALLER_ENV = (
 ROOT_ENV = r'''
 set -euo pipefail
 source "$1/scripts/lib/kendex-env.sh"
-kendex_load_project_env "$2" || exit 1
+kendex_project_env_supports selected-private-path || exit 1
+kendex_load_project_env "$2" _slack_private_file || exit 1
 export SLACK_MASTER_FILE="${SLACK_MASTER_FILE-}" SLACK_MASTER_MAX_AGE="${SLACK_MASTER_MAX_AGE-}"
-exec "$3" -c 'import json, os, sys; print(json.dumps({name: os.environ.get(name, "") for name in sys.argv[1:]}))' SLACK_MASTER_FILE SLACK_MASTER_MAX_AGE
+exec "$3" -c 'import json, os, sys; print(json.dumps(dict({name: os.environ.get(name, "") for name in sys.argv[2:]}, private_file=sys.argv[1])))' "$_slack_private_file" SLACK_MASTER_FILE SLACK_MASTER_MAX_AGE
 '''
 
 
@@ -45,6 +46,7 @@ class Presence:
 
     master_file: str
     master_max_age: int
+    private_file: str = ".env.local"
 
 
 @dataclass
@@ -121,6 +123,7 @@ def load_presence(root: Path) -> Presence:
     return Presence(
         master_file=path,
         master_max_age=_positive_int("SLACK_MASTER_MAX_AGE", DEFAULT_MASTER_MAX_AGE, values, root),
+        private_file=values["private_file"],
     )
 
 

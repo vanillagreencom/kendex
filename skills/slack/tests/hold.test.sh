@@ -12,7 +12,9 @@
 # snapshot clamps. An absent master file or an empty setting posts as before,
 # SLACK_MASTER_MAX_AGE bounds the hold, and a file whose age cannot be read
 # refuses the post step alone. Compaction keeps a standing hold and the resumes inside the
-# horizon. The controls plant one mutant per rule.
+# horizon. Changed root settings update the presence pair on the next poll
+# without a restart; unchanged files run no settings reader. A refused read
+# retains the hold and fails only that root. The controls plant one mutant per rule.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -372,6 +374,147 @@ printf '[env]\nSLACK_MASTER_FILE = []\n' > "$R/kendex.settings.toml"
 sk_run -- listen --once --root "$A" --root "$R"
 assert_eq "$RC" "2" "an unreadable root setting refuses startup instead of disabling its hold"
 assert_has "$ERR1" "slack: setting-invalid=root=$R settings-reader=" "the root settings failure names its root and reader"
+
+# --- changed files update a running relay, without restarting it -------------------
+# A status timestamp is the poll acknowledgement. Wait for a later completed
+# poll of both roots, bounded by the parent suite's timeout.
+polled_after() { # ROOT LAST_POLL
+  local tries=0 value
+  while [ "$tries" -lt 100 ]; do
+    value="$(jq -r --argjson after "$2" '.last_poll > $after' "$1/tmp/slack/status.json" 2>/dev/null)"
+    [ "$value" != true ] || return 0
+    tries=$((tries + 1)); sleep 0.1
+  done
+  bad "running relay did not complete its next poll" "$1"
+  return 1
+}
+live_setting() { # ROOT SOURCE AGE
+  case "$2" in
+    toml) printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "%s"\n' "$MASTER" "$3" > "$1/kendex.settings.toml" ;;
+    local) mkdir -p "$1/.kendex"; printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "%s"\n' "$MASTER" "$3" > "$1/.kendex/settings.toml" ;;
+    private) printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$MASTER" "$3" > "$1/.env.local" ;;
+    named) printf '[env]\nKENDEX_ENV_FILE = "private.env"\n' > "$1/kendex.settings.toml"; printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$MASTER" "$3" > "$1/private.env" ;;
+  esac
+}
+while read -r name source caller control; do
+  R="$(sk_new_root "live-$name")"; S="$(sk_new_root "peer-$name")"
+  sk_bind "$R"; sk_bind "$S"
+  CHANNEL="$(sk_channel "$R")"; PEER_CHANNEL="$(sk_channel "$S")"
+  if [ "$control" = mutant ]; then
+    sk_mutant no-poll-presence relay.py 'presence = load_presence\(self.path\)' 'presence = self.presence'
+  fi
+  case "$caller" in
+    empty) sk_relay_start "$R" --root "$S" SLACK_MASTER_FILE= ;;
+    *) sk_relay_start "$R" --root "$S" ;;
+  esac
+  polled_after "$S" 0 || exit 1
+  PID="$(jq -r .pid "$R/tmp/slack/status.json")"
+  row "$R"; assert_lacks "$LINE" held-by= "$name: first root starts without a hold"
+  row "$S"; assert_lacks "$LINE" held-by= "$name: second root starts without a hold"
+  fresh
+  live_setting "$R" "$source" 3600
+  notice "$R" "live-$name-held" "Changed hold $name."
+  notice "$S" "live-$name-peer" "Peer notice $name."
+  AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
+  PEER_AFTER="$(jq -r .last_poll "$S/tmp/slack/status.json")"
+  polled_after "$R" "$AFTER" || exit 1
+  polled_after "$S" "$PEER_AFTER" || exit 1
+  row "$R"
+  case "$caller:$control" in
+    empty:real)
+      assert_lacks "$LINE" held-by= "$name: caller's empty export still wins after the file changes"
+      assert_eq "$(count "$CHANNEL" "Changed hold $name.")" 1 "$name: caller override permits the notice" ;;
+    *:mutant)
+      sk_assert_red "$(field "$LINE" held-by)=$(count "$CHANNEL" "Changed hold $name.")" "master=0" \
+        "control: dropping the per-poll read fails the running hold assertion" ;;
+    *)
+      assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)=$(count "$CHANNEL" "Changed hold $name.")" "ok=master=0" \
+        "$name: the changed setting holds on the next completed poll"
+      live_setting "$R" "$source" invalid
+      notice "$R" "live-$name-invalid" "Invalid hold $name."
+      AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
+      polled_after "$R" "$AFTER" || exit 1
+      row "$R"
+      assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)=$(count "$CHANNEL" "Invalid hold $name.")" "failing=master=0" \
+        "$name: a refused reading retains the hold and posts nothing"
+      assert_has "$(jq -r .last_error "$R/tmp/slack/status.json")" "setting-invalid=SLACK_MASTER_MAX_AGE=invalid root=$R" \
+        "$name: the refused reading names its root"
+      row "$S"; assert_eq "$(field "$LINE" state)" ok "$name: a refused reading leaves its peer ok"
+      case "$source" in
+        toml) rm -- "$R/kendex.settings.toml" ;;
+        local) rm -- "$R/.kendex/settings.toml" ;;
+        private) printf 'SLACK_MASTER_FILE=\n' > "$R/.env.local" ;;
+        named) printf 'SLACK_MASTER_FILE=\n' > "$R/private.env" ;;
+      esac
+      AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
+      polled_after "$R" "$AFTER" || exit 1
+      row "$R"; assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)" "ok=" "$name: removing or emptying the setting resumes"
+      assert_eq "$(count "$CHANNEL" "Changed hold $name.")=$(count "$CHANNEL" "Invalid hold $name.")" "1=1" \
+        "$name: resume posts the held notices once"
+      AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
+      polled_after "$R" "$AFTER" || exit 1
+      assert_eq "$(count "$CHANNEL" "Changed hold $name.")" 1 "$name: the resumed notice never repeats" ;;
+  esac
+  assert_eq "$(count "$PEER_CHANNEL" "Peer notice $name.")" 1 "$name: the other root posts its notice"
+  assert_eq "$(jq -r .pid "$R/tmp/slack/status.json")" "$PID" "$name: settings changes keep the running pid"
+  assert_lacks "$(cat "$SK_TMP/relay.out" "$SK_TMP/relay.err")" reloading= "$name: settings changes trigger no code reload"
+  sk_relay_stop
+  sk_bin_reset
+done <<'ROWS'
+toml toml none real
+local local none real
+private private none real
+named named none real
+caller-empty toml empty real
+no-read toml none mutant
+ROWS
+
+# Count calls through the real Relay start and poll owners. A stub returns
+# an unconfigured presence pair; no parser or API behavior is under test here.
+R="$(sk_new_root presence-count)"; S="$(sk_new_root presence-count-peer)"
+sk_bind "$R"; sk_bind "$S"
+OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  python3 - "${SK_BIN%/*}/lib" "$R" "$S" <<'PY'
+import collections, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import relay
+from settings import Presence, Settings
+roots = [pathlib.Path(path) for path in sys.argv[2:]]
+calls = collections.Counter()
+def reader(root):
+    calls[root] += 1
+    return Presence("", 600)
+class API:
+    def get(self, method):
+        assert method == "auth.test"
+        return {"user_id": "UBOT"}
+relay.load_presence = reader
+listener = relay.Relay(roots, Settings("", "", [], 1, 7, ""), API(), clock=lambda: 0)
+try:
+    for root in listener.roots:
+        root.ready = lambda: None
+        root.due = None
+        root.mark_seen = lambda delivered: None
+        root.mark_read = lambda: None
+        root.mail.events = lambda: []
+    for _ in range(3):
+        for root in listener.roots:
+            root.poll("UBOT")
+    assert [calls[root] for root in roots] == [1, 1], calls
+    (roots[0] / "kendex.settings.toml").write_text('[env]\nSLACK_MASTER_FILE = "master"\n')
+    for root in listener.roots:
+        root.poll("UBOT")
+    assert [calls[root] for root in roots] == [2, 1], calls
+    for root in listener.roots:
+        root.poll("UBOT")
+    assert [calls[root] for root in roots] == [2, 1], calls
+    print("reader-count=ok")
+finally:
+    for root in listener.roots:
+        root.lock.handle.close()
+PY
+)"; COUNT_RC=$?
+assert_eq "$COUNT_RC=$OUT" "0=reader-count=ok" "unchanged polls run no reader; one changed root reads once more"
 
 # --- controls, one mutant per rule --------------------------------------------------
 # The same held reply and unrelated-notice assertions must fail when the
