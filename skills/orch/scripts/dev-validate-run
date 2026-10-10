@@ -159,13 +159,13 @@
 #          a zero-second wall time, only where the project names the status
 #          check context that runs its validation in DEV_VALIDATE_CI_CONTEXT
 #          and the base branch requires that context. Under push-first,
-#          pr-order permits this before publication and resolve-base-branch
-#          names the base. Other orders need an open pull request and use its
-#          base. Both rule reads must succeed: its rulesets and classic branch
+#          pr-order permits this before publication, when no PR exists and
+#          resolve-base-branch names the base. Every order uses an open PR's
+#          own base. Both rule reads must succeed: its rulesets and classic branch
 #          protection, as GitHub reports them for the repository gh resolves
 #          (GH_REPO, else the worktree). The base is the pull request's own,
 #          which a stacked pull request sets to a branch other than the
-#          default in the other orders. A full request under push-first also
+#          default. A full request under push-first also
 #          takes CI where these coverage checks pass. --record reports
 #          verdict=pending, never a CI pass. Submit's exact-head wait proves CI.
 #          Anywhere else it runs the command a range request runs, records
@@ -690,7 +690,8 @@ ci_class_covered() {
 
 # Whether the pull request CI validates the change, as --help's ci mode states
 # it: the current directory's project names the context, and the base branch
-# of the open pull request requires it, or push-first's resolved base does.
+# of the open pull request requires it, or push-first's resolved base does
+# before a pull request exists.
 # Where it does not, sets ci_fallback to the cause --help names.
 # A read that fails is no proof, and the run validates locally; its stderr
 # goes to ci.log in the class scratch directory, which the run directory
@@ -704,18 +705,15 @@ ci_runs_validation() {
     ci_fallback=setting-empty
     return 1
   fi
-  pr_state=NO_PR
-  if [[ "$pr_order" != push-first ]]; then
-    if ! pr_json="$("$SCRIPT_DIR/pr-view-json" "$worktree" --json baseRefName,state 2>>"$log")"; then
-      ci_fallback=base-unresolved
-      return 1
-    fi
-    if ! pr_state="$(jq -er 'if .status == "no_pr" then "NO_PR" else .state | select(. == "OPEN" or . == "CLOSED" or . == "MERGED") end' <<<"$pr_json" 2>>"$log")"; then
-      ci_fallback=base-unresolved
-      return 1
-    fi
+  if ! pr_json="$("$SCRIPT_DIR/pr-view-json" "$worktree" --json baseRefName,state 2>>"$log")"; then
+    ci_fallback=base-unresolved
+    return 1
   fi
-  if [[ "$pr_order" == push-first ]]; then
+  if ! pr_state="$(jq -er 'if .status == "no_pr" then "NO_PR" else .state | select(. == "OPEN" or . == "CLOSED" or . == "MERGED") end' <<<"$pr_json" 2>>"$log")"; then
+    ci_fallback=base-unresolved
+    return 1
+  fi
+  if [[ "$pr_state" == NO_PR && "$pr_order" == push-first ]]; then
     base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$log")" || {
       ci_fallback=base-unresolved
       return 1

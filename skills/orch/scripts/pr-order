@@ -7,7 +7,8 @@
 # stdout, exit 0: pr-order=review-first|open-first|push-first
 # review-first (default): validate, review, then publish.
 # open-first: validate, publish, then review.
-# push-first: publish a draft, let required PR CI validate, then review.
+# push-first: publish a draft, then run internal review while CI may be pending.
+# Submit verifies required CI on the published head before merge.
 # Review completes before merge in every order.
 #
 # Exit 2 prints pr-order-error: cause=CAUSE on stderr and no order:

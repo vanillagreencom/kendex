@@ -863,7 +863,8 @@ case "$path" in
     [[ -z "${STUB_PR_STDERR:-}" ]] || printf '%s\n' "$STUB_PR_STDERR" >&2
     ;;
   'repos/{owner}/{repo}/rules/branches/feature%2Fparent')
-    payload='[]'
+    payload="$(jq -cn --argjson req "$(list "${STUB_PARENT_RULES:-}")" '
+      [{type: "required_status_checks", parameters: {required_status_checks: ($req | map({context: .}))}}]')"
     status=0
     ;;
   'repos/{owner}/{repo}/branches/feature%2Fparent')
@@ -888,7 +889,7 @@ case "$path" in
     ;;
   *) exit 9 ;;
 esac
-[[ -z "${STUB_CI_LOG:-}" ]] || printf '%s\n' "$path" >> "$STUB_CI_LOG"
+[[ -z "${STUB_CI_LOG:-}" || "$path" == pr-view ]] || printf '%s\n' "$path" >> "$STUB_CI_LOG"
 if [[ -n "$filter" ]]; then jq -r "$filter" <<<"$payload" || exit $?; else printf '%s\n' "$payload"; fi
 exit "$status"
 SH
@@ -904,12 +905,13 @@ chmod +x "$GH_STUB_BIN/gh"
 #   classic-fail    the classic read prints CI, then fails
 #   stacked         main requires CI; the pull request's base,
 #                   feature/parent, requires nothing
+#   stacked-required  only the pull request's feature/parent base requires CI
 #   pr-no-pr        gh reports no pull request; pr-view-json confirms no_pr
 #   pr-closed/merged  the branch's older pull request is CLOSED/MERGED
 #   pr-unread/network  the PR lookup fails with an auth/network error
 #   pr-invalid/state/empty/uri  the response or base encoding cannot be read
 ci_world() {
-  export STUB_RULES=Lint STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0 \
+  export STUB_RULES=Lint STUB_PARENT_RULES="" STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0 \
     STUB_PR_BASE=main STUB_PR_STATE=OPEN STUB_PR_EXIT=0 STUB_PR_PAYLOAD="" STUB_PR_STDERR="" STUB_URI_EXIT=0
   case "$1" in
     rules) STUB_RULES=Lint,CI ;;
@@ -921,6 +923,7 @@ ci_world() {
     classic-absent) STUB_CLASSIC=absent ;;
     classic-fail) STUB_CLASSIC=CI STUB_CLASSIC_EXIT=1 ;;
     stacked) STUB_RULES=Lint,CI STUB_PR_BASE=feature/parent ;;
+    stacked-required) STUB_PARENT_RULES=CI STUB_PR_BASE=feature/parent ;;
     pr-no-pr) STUB_PR_EXIT=1 STUB_PR_STDERR='no pull requests found for branch' ;;
     pr-closed) STUB_RULES=Lint,CI STUB_PR_STATE=CLOSED ;;
     pr-merged) STUB_RULES=Lint,CI STUB_PR_STATE=MERGED ;;
@@ -1111,8 +1114,8 @@ ci_control 'the measured marker unread' '[[ "$CHANGE_CLASS_MEASURED" == true ]]'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
 }
-# Push-first uses the resolved base before any PR exists. Each row runs the
-# production runner against real commits; the command's output proves local
+# Push-first uses an open PR's base, or the resolved base before any PR exists.
+# Each row runs the production runner against real commits; its output proves local
 # fallback, and the record proves which exact head remains pending.
 PUSH_ROWS=(
   'implement before PR|push-first|pr-no-pr|standard|CI|full|none|ci||pending'
@@ -1127,6 +1130,12 @@ PUSH_ROWS=(
   'internal fix before publication|push-first|pr-no-pr|standard|CI|ci|none|ci||pending'
   'Copilot fix before publication|push-first|rules|standard|CI|ci|none|ci||pending'
   'range subset on open PR|push-first|rules|standard|CI|range|subset|ci||pending'
+  'stacked full request|push-first|stacked|standard|CI|full|none|full|context-unrequired|pass'
+  'stacked fix subset|push-first|stacked|standard|CI|ci|subset|range|context-unrequired|pass'
+  'stacked required base|push-first|stacked-required|standard|CI|ci|none|ci||pending'
+  'unread PR under push-first|push-first|pr-unread|standard|CI|full|none|full|base-unresolved|pass'
+  'invalid PR under push-first|push-first|pr-invalid|standard|CI|full|none|full|base-unresolved|pass'
+  'closed PR under push-first|push-first|pr-closed|standard|CI|full|none|full|pr-not-open|pass'
   'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
 )
 push_rows() { # SCRIPT [LABEL]
@@ -1196,9 +1205,15 @@ assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'unrequired base')" 'ci||pending' \
   'control: dropping the base requirement breaks the unrequired-base fallback'
 # A resolver mutation forbidding the no-PR path must turn the implement row local.
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
-mutate_file "$CI_SCRIPT.mutant" 'if [[ "$pr_order" == push-first ]]; then' 'if false; then'
+mutate_file "$CI_SCRIPT.mutant" 'if [[ "$pr_state" == NO_PR && "$pr_order" == push-first ]]; then' 'if false; then'
 assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement before PR' pr-state)" 'full|pr-not-open|pass' \
   'control: using PR state again breaks implement-before-PR CI'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" \
+  "jq -er '.baseRefName | select(type == \"string\" and length > 0)' <<<\"\$pr_json\"" \
+  '"$SCRIPT_DIR/resolve-base-branch" "$worktree"'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked full request' default-base)" 'ci||pending' \
+  'control: checking the default base instead of the open PR base skips required local validation'
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
 # The rules read names the base branch: a read of another branch's rules is
