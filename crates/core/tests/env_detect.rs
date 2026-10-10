@@ -88,12 +88,12 @@ fn fixture_data_and_trash_stay_inside_each_home() {
             ])
             .env_clear()
             .envs(fixture_env(home))
-            .env("XDG_DATA_HOME", home.parent().unwrap())
             .env(INNER, home);
         if system {
             command
                 .env("HOME", home.parent().unwrap())
-                .env("KENDEX_REAL_HOME", "1");
+                .env("KENDEX_REAL_HOME", "1")
+                .env("XDG_DATA_HOME", home.parent().unwrap());
         }
         command.spawn().unwrap()
     };
