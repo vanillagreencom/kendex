@@ -204,6 +204,18 @@ time|2026-10-05T00:00:00Z|2026-10-08T00:00:00Z
 release|release owner/repo v*|+72h
 ROWS
 
+# The validator and watch consume these normalized fields from one parser.
+while IFS='|' read -r stored repo glob; do
+  parsed="$(done_when_parse "## Done when"$'\n'"- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release $stored; Deadline: +24h" '[]' "$merged")"
+  assert_jq "release $stored normalizes before classification" "$parsed" \
+    "(.errors | length) == 0 and .boxes[0].trigger_kind == \"release\" and .boxes[0].release_repo == \"$repo\" and .boxes[0].release_glob == \"$glob\" and .boxes[0].trigger == \"release $repo $glob\""
+done <<'ROWS'
+owner/repo v*|owner/repo|v*
+owner/repo v1.\*|owner/repo|v1.*
+owner/repo v\[12\]\*|owner/repo|v[12]*
+owner/repo\_name v\~\*|owner/repo_name|v~*
+ROWS
+
 # Independent refusals must precede both the summary and the state mutation.
 # Columns: name | description's post-merge body | branch box checked | rule.
 while IFS='|' read -r name body branch rule; do

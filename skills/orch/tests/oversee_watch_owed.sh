@@ -491,7 +491,7 @@ assert_eq "$(box_status)" '' "a tick removes the due box" "$ERR"
 assert_contains "$(verification_lines)" 'verifying KEN-1 boxes=0' "all ticked boxes request completion" "$ERR"
 
 release_world() {
-  verifying_one "$1" 'release owner/releases v*'
+  verifying_one "$1" "${2:-release owner/releases v*}"
   jq 'map(if .id == "KEN-1" then .description |= sub("Deadline: [^;]+$"; "Deadline: +24h") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/release-items.json"
   mv -- "$STUB_DIR/release-items.json" "$STUB_DIR/tracker.out"
   printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-01T00:00:00Z"}]' >"$STUB_DIR/merged.json"
@@ -516,6 +516,23 @@ assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "the first matching publicati
 assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "the deadline uses the first matching publication" "$ERR"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=due events=' "release evidence stays due on every pass" "$ERR"
+release_world release_escaped 'release owner/releases v\*'
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "a Markdown-escaped release glob fires in the first pass" "$ERR"
+assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "the escaped glob uses the first matching publication" "$ERR"
+MUTANT_DIR="$TMP_ROOT/release-escape-mutant"
+MUTANT_WATCH="$(mutant_scripts release-escape-mutant/orch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+mkdir -p "$MUTANT_DIR/linear/scripts/lib"
+cp "$REPO_ROOT/skills/linear/scripts/lib/issue-validation.sh" "$MUTANT_DIR/linear/scripts/lib/issue-validation.sh"
+mutate_file "$MUTANT_DIR/linear/scripts/lib/issue-validation.sh" \
+  'gsub("\\\\(?<punct>[\\x21-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e])"; .punct)' '.'
+rm -- "$TMP_ROOT/repo/.agents/skills/linear"
+ln -s "$MUTANT_DIR/linear" "$TMP_ROOT/repo/.agents/skills/linear"
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+rm -- "$TMP_ROOT/repo/.agents/skills/linear"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/repo/.agents/skills/linear"
+assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: skipping parser unescape violates the escaped glob's due status" "$ERR"
 release_world release_waiting
 printf '%s\n' '[]' >"$STUB_DIR/releases.owner_releases.json"
 watch_pass -- --state "$STUB_DIR/state.json"

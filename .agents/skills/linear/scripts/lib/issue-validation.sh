@@ -256,7 +256,8 @@ done_when_parse() {
                 | (if $post then
                     (try ($body | capture("^Post-merge: (?<reading>.+); Where: (?<where>.+); Why after merge: (?<why>.+?); (?:Trigger: (?<trigger>[^;]+); )?Deadline: (?<deadline>[^; ]+)$")) catch null) // {}
                    else {} end) as $fields
-                | ($fields.trigger // "merge") as $trigger
+                | ($fields.trigger // "merge"
+                    | gsub("\\\\(?<punct>[\\x21-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e])"; .punct)) as $trigger
                 | (if $trigger == "merge" then {trigger_kind: "merge", trigger_epoch: $merge_epoch}
                    elif ($trigger | utc_epoch) != null then {trigger_kind: "time", trigger_epoch: ($trigger | utc_epoch)}
                    else ((try ($trigger | capture("^release (?<release_repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) (?<release_glob>[^ ;]+)$")) catch null) // {})

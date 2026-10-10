@@ -98,8 +98,8 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 control_expect 'a missing Trigger parses as merge'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                | ($fields.trigger // "merge") as $trigger' \
-    '                | ($fields.trigger // "2026-10-01T00:00:00Z") as $trigger'
+    '                | ($fields.trigger // "merge"' \
+    '                | ($fields.trigger // "2026-10-01T00:00:00Z"'
 
 control_expect "post-merge date refuses before any write"
 control_replace scripts/lib/issue-validation.sh 1 \
