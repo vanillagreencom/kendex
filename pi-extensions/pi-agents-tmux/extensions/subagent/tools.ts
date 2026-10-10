@@ -23,6 +23,7 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 });
 
 export const SubagentParams = Type.Object({
+	model: Type.Optional(Type.String({ description: "Model for this single call, using the agent model grammar, including class:effort (light:medium). Unresolvable values fall back to the agent file model. Parent-model settings and live pane reuse keep their existing model." })),
 	sameSession: Type.Optional(Type.Boolean({ description: "With a background sessionKey, require that exact session. Refuse above the context guard threshold instead of handing the new task and prior final result to a fresh agent." })),
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
