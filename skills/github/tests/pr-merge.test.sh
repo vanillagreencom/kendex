@@ -21,14 +21,43 @@ printf '\n \t\ngh: Server Error (HTTP 502)\nsecond diagnostic\n' >"$TMPDIR/merge
 mutant_copy lost-mergeable-error \
   '        issues+=("unknown: cause=read-failed $mergeable_detail; retry, or arm with --auto")' \
   '        issues+=("unknown: GitHub still computing mergeable status; retry, or arm with --auto")' >/dev/null
+mutant_copy mergeable-prose \
+  '        issues+=("unknown: cause=read-failed $mergeable_detail; retry, or arm with --auto")' \
+  '        issues+=("unknown: cause=read-failed revised explanation")' >/dev/null
 UNKNOWN_OPEN="state=OPEN mergeable=UNKNOWN at=-"
 READ_FAILED="unknown: cause=read-failed gh: Server Error (HTTP 502); retry, or arm with --auto"
 run_table "the mergeable read" "\
 a failed mergeable read keeps its first nonblank stderr line|checks:ci-required env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[$READ_FAILED] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>|check-mutant:lost-mergeable-error
-a failed mergeable read refuses the immediate merge with no mutation|checks:ci-required env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|immediate|1|-|{blocked};{transient};✗ unknown: cause=read-failed gh: Server Error (HTTP 502)\\; retry, or arm with --auto;{hint-auto}|calls=$CHECK auth=<unset>
+a failed mergeable read refuses the immediate merge with no mutation|checks:ci-required env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|immediate|1|-|protocol:BLOCKED PR #123;unknown: cause=read-failed|calls=$CHECK,graphql:queue auth=<unset>|same:route-mutant:mergeable-prose
 a real UNKNOWN answer names computing|checks:ci-required env:STUB_MERGEABLE=UNKNOWN|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[unknown: cause=computing GitHub still computing mergeable status; retry, or arm with --auto] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a silent mergeable failure names gh and its exit code|checks:ci-required env:STUB_MERGEABLE_EXIT=4|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[unknown: cause=read-failed gh pr view exited 4 with no diagnostic; retry, or arm with --auto] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 an invalid successful mergeable answer is an unreadable read|checks:ci-required env:STUB_MERGEABLE=null|check|0|merge=false transient=true $UNKNOWN_OPEN runs=- issues=[unknown: cause=read-failed gh pr view returned invalid mergeable answer 'null'; retry, or arm with --auto] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
+"
+
+# orch merge-pr consumes exit 75 and the queued line to keep the active entry.
+# These copies remove the read or relax one condition for that answer.
+mutant_copy no-refusal-queue '            refusal_snapshot=$(post_merge_snapshot "$pr_num" "$token")' "            refusal_snapshot='{}'" >/dev/null
+mutant_copy every-refusal-queue '        if jq -e '\''.issues | length > 0 and all(.[]; startswith("unknown:"))'\'' >/dev/null <<<"$check_result"; then' '        if true; then' >/dev/null
+mutant_copy refusal-any-state '                select(.state == "OPEN")' '                select(true)' >/dev/null
+mutant_copy refusal-no-queue '                | select(.in_merge_queue or .merge_queue_entry)' '                | select(true)' >/dev/null
+mutant_copy refusal-any-head '                | select($expected == "" or .head == $expected)' '                | select(true)' >/dev/null
+mutant_copy volatile-prose \
+  '    echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2' \
+  '    echo "  NOTE: queue/auto-merge state is VOLATILE: revised explanation" >&2' >/dev/null
+COMPUTING_REFUSAL='protocol:BLOCKED PR #123;unknown: cause=computing'
+QUEUED_UNKNOWN='protocol:QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note'
+run_table "unknown mergeability on a queued PR" "\
+a queued computing PR keeps its entry without a mutation|checks:ci-required post-queue env:STUB_MERGEABLE=UNKNOWN|immediate|75|-|$QUEUED_UNKNOWN|calls=$CHECK,graphql:queue auth=<unset>|route-mutant:no-refusal-queue
+a queued PR keeps its entry when the mergeable read fails|checks:ci-required post-queue env:STUB_MERGEABLE_EXIT=1 env:STUB_MERGEABLE_STDERR_FILE=$TMPDIR/mergeable.err|immediate|75|-|$QUEUED_UNKNOWN|calls=$CHECK,graphql:queue auth=<unset>|same:route-mutant:volatile-prose
+a queue entry alone proves enrollment while computing|checks:ci-required post-entry env:STUB_MERGEABLE=UNKNOWN|immediate|75|-|$QUEUED_UNKNOWN|calls=$CHECK,graphql:queue auth=<unset>
+a matching expected head keeps its queue entry|checks:ci-required post-queue head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa env:STUB_MERGEABLE=UNKNOWN|with:--expected-head+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|75|-|$QUEUED_UNKNOWN|calls=$CHECK,graphql:queue auth=<unset>
+a different expected head stays blocked|checks:ci-required post-queue head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa env:STUB_MERGEABLE=UNKNOWN|with:--expected-head+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|1|-|$COMPUTING_REFUSAL|calls=$CHECK,graphql:queue auth=<unset>|mutant:refusal-any-head:--expected-head+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+an unqueued computing PR stays blocked|checks:ci-required env:STUB_MERGEABLE=UNKNOWN|immediate|1|-|$COMPUTING_REFUSAL|calls=$CHECK,graphql:queue auth=<unset>|route-mutant:refusal-no-queue
+a queued conflict stays blocked without a queue read|checks:ci-required post-queue env:STUB_MERGEABLE=CONFLICTING|immediate|1|-|protocol:BLOCKED PR #123;conflicts:|calls=$CHECK auth=<unset>|route-mutant:every-refusal-queue
+computing plus changes requested stays blocked without a queue read|checks:ci-required post-queue review:CHANGES_REQUESTED env:STUB_MERGEABLE=UNKNOWN|immediate|1|-|protocol:BLOCKED PR #123;unknown: cause=computing;changes_requested:|calls=$CHECK auth=<unset>
+a failed queue read cannot prove enrollment|checks:ci-required post-queue graphql:fail env:STUB_MERGEABLE=UNKNOWN|immediate|1|-|$COMPUTING_REFUSAL|calls=$CHECK,graphql:queue,view:post auth=<unset>
+both snapshot reads failing cannot prove enrollment|checks:ci-required post-queue graphql:fail post-view-fail env:STUB_MERGEABLE=UNKNOWN|immediate|1|-|$COMPUTING_REFUSAL|calls=$CHECK,graphql:queue,view:post auth=<unset>
+a closed snapshot cannot keep a queue entry|checks:ci-required post-queue post:CLOSED env:STUB_MERGEABLE=UNKNOWN|immediate|1|-|$COMPUTING_REFUSAL|calls=$CHECK,graphql:queue auth=<unset>|route-mutant:refusal-any-state
 "
 
 run_table "the readiness check" "\
