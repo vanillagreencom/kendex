@@ -1,0 +1,317 @@
+[
+  {
+    "state": "whole",
+    "args": [
+      "drain",
+      "--after",
+      "0"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "whole",
+    "args": [
+      "drain",
+      "--after",
+      "0",
+      "--receipts"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\nreceipts cursor=1 count=4 first=answer\n3 directive 946684800\n4 halt \n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "whole",
+    "args": [
+      "pending"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "whole",
+    "args": [
+      "pending",
+      "--due"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "whole",
+    "args": [
+      "inbox",
+      "--peek"
+    ],
+    "stdout": "count=4 first=answer\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "whole",
+    "args": [
+      "inbox",
+      "--ack",
+      "4"
+    ],
+    "stdout": "",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "broken",
+    "args": [
+      "drain",
+      "--after",
+      "0"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "broken",
+    "args": [
+      "drain",
+      "--after",
+      "0",
+      "--receipts"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\nreceipts cursor=1 count=4 first=answer\n3 directive 946684800\n4 halt \n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "broken",
+    "args": [
+      "pending"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "broken",
+    "args": [
+      "pending",
+      "--due"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "broken",
+    "args": [
+      "inbox",
+      "--peek"
+    ],
+    "stdout": "count=4 first=answer\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "broken",
+    "args": [
+      "inbox",
+      "--ack",
+      "4"
+    ],
+    "stdout": "",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "numbered",
+    "args": [
+      "drain",
+      "--after",
+      "0"
+    ],
+    "stdout": "count=9 first=original\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "numbered",
+    "args": [
+      "drain",
+      "--after",
+      "0",
+      "--receipts"
+    ],
+    "stdout": "count=9 first=original\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\nreceipts cursor=1 count=9 first=original\n7 directive 946684800\n8 halt \n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "numbered",
+    "args": [
+      "pending"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "numbered",
+    "args": [
+      "pending",
+      "--due"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "numbered",
+    "args": [
+      "inbox",
+      "--peek"
+    ],
+    "stdout": "count=9 first=original\n{\"id\":\"answer\",\"kind\":\"answer\",\"re\":\"answered\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "numbered",
+    "args": [
+      "inbox",
+      "--ack",
+      "4"
+    ],
+    "stdout": "",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "missed",
+    "args": [
+      "drain",
+      "--after",
+      "0"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "missed",
+    "args": [
+      "drain",
+      "--after",
+      "0",
+      "--receipts"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\nreceipts cursor=missed count=4 first=answer\n3 directive 946684800\n4 halt \n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "missed",
+    "args": [
+      "pending"
+    ],
+    "stdout": "",
+    "stderr": "lane-mail: mail-read-failed=KEN-1 cursor=missed\nThe hosted mailbox could not be read, so the read is refused rather than reported as empty.\n",
+    "exit": 2
+  },
+  {
+    "state": "missed",
+    "args": [
+      "pending",
+      "--due"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "missed",
+    "args": [
+      "inbox",
+      "--peek"
+    ],
+    "stdout": "count=4 first=answer\n{\"id\":\"answer\",\"kind\":\"answer\",\"re\":\"answered\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "missed",
+    "args": [
+      "inbox",
+      "--ack",
+      "4"
+    ],
+    "stdout": "",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "absent",
+    "args": [
+      "drain",
+      "--after",
+      "0"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "absent",
+    "args": [
+      "drain",
+      "--after",
+      "0",
+      "--receipts"
+    ],
+    "stdout": "count=4 first=answered\n{\"id\":\"notice\",\"kind\":\"notice\",\"text\":\"Notice\"}\n{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\nreceipts cursor=0 count=4 first=answer\n3 directive 946684800\n4 halt \n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "absent",
+    "args": [
+      "pending"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "absent",
+    "args": [
+      "pending",
+      "--due"
+    ],
+    "stdout": "{\"id\":\"open\",\"kind\":\"ask\",\"to\":\"owner\",\"deadline\":\"2000-01-01T00:00:00Z\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "absent",
+    "args": [
+      "inbox",
+      "--peek"
+    ],
+    "stdout": "count=4 first=answer\n{\"id\":\"answer\",\"kind\":\"answer\",\"re\":\"answered\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"directive\",\"kind\":\"directive\",\"text\":\"First\\nSecond\",\"at\":\"2000-01-01T00:00:00Z\"}\n{\"id\":\"halt\",\"kind\":\"directive\",\"halt\":true,\"at\":\"invalid\"}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "state": "absent",
+    "args": [
+      "inbox",
+      "--ack",
+      "4"
+    ],
+    "stdout": "",
+    "stderr": "",
+    "exit": 0
+  }
+]

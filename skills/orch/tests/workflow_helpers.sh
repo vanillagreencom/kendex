@@ -184,8 +184,14 @@ ln -s "$deep_repo/sub/deeper" "$deep_link"
 assert_eq "$("$GC" common-root "$deep_link")" "$deep_top" \
   "and resolves a symlink to a nested directory to the checkout it is inside"
 relative_gc="$TMP_ROOT/git-context-relative"
-sed 's@\*/\.git) (cd -P -- "\$worktree" && cd -P -- "\$(dirname -- "\$git_common_dir")" && pwd -P) ;;@*/.git) dirname "$git_common_dir" ;;@' \
-  "$GC" > "$relative_gc"
+python3 - "$GC" "$relative_gc" <<'PY_MUTATE'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '*/.git) cd -P -- "$worktree" && cd -P -- "${git_common_dir%/*}" && pwd -P ;;'
+assert text.count(old) == 1
+Path(sys.argv[2]).write_text(text.replace(old, '*/.git) dirname "$git_common_dir" ;;'))
+PY_MUTATE
 chmod +x "$relative_gc"
 assert_eq "$(cmp -s "$relative_gc" "$GC" && echo same || echo differs)" "differs" \
   "control: the relative mutant really restores the unresolved answer"

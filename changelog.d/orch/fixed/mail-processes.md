@@ -1,0 +1,1 @@
+- Reduce idle watcher and mailbox read processes while retaining message output, cursor positions, and hosted read batching.

@@ -817,6 +817,13 @@ mutant() {
   LANE_MAIL_BIN="$dir/lane-mail"
 }
 
+mutant_reader() {
+  local dir
+  dir="$(mutant_scripts "mutants/$1" lib/lane-mail-store.py)" || exit 1
+  mutate_file "$dir/lib/lane-mail-store.py" "$2" "$3"
+  LANE_MAIL_BIN="$dir/lane-mail"
+}
+
 new_repo control_pointer
 mutant pointer-fields '+ (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)' '+ {}'
 lm send --item overseer --directive --delivery-id C1:2.2 --file "$(text reply 'Continue.')" --thread-ts 1.1 --parent "$POINTER"
@@ -907,7 +914,7 @@ assert_eq "$RC" "0" "control: bypassing the answer close guard admits a reply af
 new_repo control_answer_pending
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --re "$ASK" --delivery-id first:reply --file "$(text a 'b')"
-mutant answer-closes-pending 'if $envelope.to == "owner" then $closed else $done end' 'if $envelope.to == "owner" then $done else $done end'
+mutant_reader answer-closes-pending 'if .to == "owner" then $closed else $answered end' 'if .to == "owner" then $answered else $answered end'
 lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "control: pending drops an answered ask when it judges answers as closes"
 
@@ -1059,20 +1066,20 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.attach')" "0=$LANE/elsewhere/x
 
 new_repo control_to
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Owner?' a,b a 120
-mutant to-unfiltered 'select($to == "" or $envelope.to == $to)' 'select(true)'
+mutant_reader to-unfiltered 'select($in.to == "" or .to == $in.to)' 'select(true)'
 lm pending --item overseer --to peer
 assert_eq "$RC=$(jq -r '.to' <<<"$OUT")" "0=owner" "control: without the audience filter --to peer lists the owner's ask"
 
 new_repo control_due
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Later?' a,b a 120
-mutant due-unfiltered 'select($due == 0 or ' 'select(true or '
+mutant_reader due-unfiltered 'select($in.due == false or (.reserved != true and' 'select(true or (.reserved != true and'
 lm pending --item overseer --to owner --due
 assert_eq "$RC=$(jq -r '.wait' <<<"$OUT")" "0=120" "control: without the deadline filter --due lists an ask not yet due"
 
 new_repo control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cursor?' a,b a 0
 touch "$BOX/to-lane.cursor.lock"
-mutant cursor-for-asks 'if [ "$LISTS_DIRECTIVES" -eq 1 ]; then' 'if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then'
+mutant_reader cursor-for-asks 'directives = verb == "pending" and not to and due == "0"' 'directives = verb == "pending"'
 lm pending --item overseer --to owner
 assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=overseer cursor=missed" \
   "control: with the cursor read for every pending a missed read refuses the asks --to keeps"
@@ -1134,7 +1141,7 @@ assert_eq "$RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1" "control: 
 
 new_repo control_reserved_due
 LANE_MAIL_BIN="$LANE_MAIL" reserved_ask --wait 0
-mutant reserved-due '($envelope.reserved != true' '(true'
+mutant_reader reserved-due '(.reserved != true and' '(true and'
 lm pending --item overseer --to owner --due
 assert_eq "$RC=$(jq -r '.id' <<<"$OUT")" "0=$ASK" "control: without the reserved rule --due lists the reserved ask for the watch to close"
 
