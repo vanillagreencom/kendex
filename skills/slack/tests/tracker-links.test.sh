@@ -56,17 +56,18 @@ done
 printf '1\n' > "$ROOT/linear.exit"
 sk_run -- post --root "$ROOT" --text 'Failed KEN-1'
 assert_eq "$RC=$(sk_state ".messages.${CH}[-1].text")" '0=Failed KEN-1' 'failed Linear read still posts unlinked'
-assert_has "$OUT" "slack: tracker-links-unavailable=$ROOT" 'failed Linear read prints its keyed notice'
+assert_has "$ERR" "slack: tracker-links-unavailable=$ROOT" 'failed Linear read prints its keyed notice on stderr'
+assert_eq "$RC=${OUT%%=*}=$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" '0=slack: posted=1' 'a failed tracker read keeps the posted receipt alone on stdout'
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text failed-notice 'Failed notice KEN-1')" >/dev/null
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text failed-again 'Failed again KEN-1')" >/dev/null
 sk_poll "$ROOT"
-assert_eq "$RC=$(sk_state ".messages.${CH}[-1].text")=$(printf '%s\n' "$OUT" | grep -c '^slack: tracker-links-unavailable=')" '0=Failed again KEN-1=1' 'failed relay read still posts both notices and notices once'
+assert_eq "$RC=$(sk_state ".messages.${CH}[-1].text")=$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '0=Failed again KEN-1=1' 'failed relay read still posts both notices and warns once on stderr'
 rm "$ROOT/linear.exit"
 # A missing optional skill is the same non-blocking discovery failure.
 mv "$SK_LINEAR_STUB/scripts/linear.sh" "$SK_LINEAR_STUB/scripts/moved.sh"
 sk_run -- post --root "$ROOT" --text 'Missing KEN-1'
 assert_eq "$RC=$(sk_state ".messages.${CH}[-1].text")" '0=Missing KEN-1' 'missing Linear skill still posts unlinked'
-assert_has "$OUT" "slack: tracker-links-unavailable=$ROOT" 'missing Linear skill prints its keyed notice'
+assert_has "$ERR" "slack: tracker-links-unavailable=$ROOT" 'missing Linear skill prints its keyed notice on stderr'
 mv "$SK_LINEAR_STUB/scripts/moved.sh" "$SK_LINEAR_STUB/scripts/linear.sh"
 
 GH="$(sk_tracker_root github '' org/repo)"
@@ -118,7 +119,7 @@ NONE="$(sk_tracker_root none '' '')"
 printf '1\n' > "$NONE/linear.exit"
 sk_run -- post --root "$NONE" --channel C777 --text 'KEN-1 #2'
 assert_eq "$RC=$(sk_state '.messages.C777[-1].text')" '0=KEN-1 #2' 'post with no workspace credentials remains unchanged'
-assert_has "$OUT" "slack: tracker-links-unavailable=$NONE" 'post with no workspace credentials prints its keyed notice'
+assert_has "$ERR" "slack: tracker-links-unavailable=$NONE" 'post with no workspace credentials prints its keyed notice on stderr'
 
 # Restoring the former team gate breaks both outbound edges in an empty-team root.
 sk_mutant team-gate markup.py '(            script = Path\(os.environ\["SLACK_LINEAR_DIR"\]\))' '            team = self._read(root, [str(Path(os.environ["SLACK_ORCH_DIR"]) / "scripts/orch-env"), "LINEAR_TEAM", ""])\n            if not team:\n                self.cache[root] = (now, None)\n                return None\n\1'
@@ -128,12 +129,17 @@ sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text team-control '
 sk_poll "$ROOT"
 sk_assert_red "$RC=$(sk_state ".messages.${CH}[-1].text")" "0=Team control notice $LINK" 'control: the former team gate breaks relay links'
 sk_bin_reset
-sk_mutant no-notice markup.py '                notice\("tracker-links-unavailable", f"\{root\} cause=\{err\}"\)' '                pass'
+sk_mutant no-notice markup.py '                notice\("tracker-links-unavailable", f"\{root\} cause=\{err\}", file=sys.stderr\)' '                pass'
 printf '1\n' > "$ROOT/linear.exit"
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text warning-control-a 'Warning control A KEN-1')" >/dev/null
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text warning-control-b 'Warning control B KEN-1')" >/dev/null
 sk_poll "$ROOT"
-sk_assert_red "$RC=$(sk_state ".messages.${CH}[-1].text")=$(printf '%s\n' "$OUT" | grep -c '^slack: tracker-links-unavailable=')" '0=Warning control B KEN-1=1' 'control: dropping the notice breaks failure reporting across two sends'
+sk_assert_red "$RC=$(sk_state ".messages.${CH}[-1].text")=$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '0=Warning control B KEN-1=1' 'control: dropping the notice breaks failure reporting across two sends'
+sk_bin_reset
+sk_mutant warning-stdout markup.py '(notice\("tracker-links-unavailable", f"\{root\} cause=\{err\}", file=)sys.stderr' '\1sys.stdout'
+sk_run -- post --root "$ROOT" --text 'Receipt control KEN-1'
+sk_assert_red "$RC=${OUT%%=*}=$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" '0=slack: posted=1' 'control: a tracker warning on stdout breaks the posted receipt'
+sk_assert_red "$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '1' 'control: a tracker warning on stdout loses the stderr notice'
 sk_bin_reset
 rm "$ROOT/linear.exit"
 

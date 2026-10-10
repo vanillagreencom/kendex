@@ -130,7 +130,7 @@ class TrackerMetadata:
             tracker = (pattern, lambda identifier: f"https://linear.app/{slug}/issue/{identifier}")
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as err:
             if root not in self.warned:
-                notice("tracker-links-unavailable", f"{root} cause={err}")
+                notice("tracker-links-unavailable", f"{root} cause={err}", file=sys.stderr)
                 self.warned.add(root)
         self.cache[root] = (now, tracker)
         return tracker

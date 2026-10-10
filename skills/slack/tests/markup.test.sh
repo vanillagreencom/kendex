@@ -51,7 +51,7 @@ assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")=$(jq -r '.result[0] | endswith("<
 sk_markup "$GH" outbound '#2 org/other#3 KEN-1 x#4' markdown
 assert_eq "$RC=$(jq -r '.result[0]' <<<"$OUT")" '0=[#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3) [KEN-1](https://linear.app/workspace/issue/KEN-1) x#4' 'GitHub PRs and workspace ids link without a team'
 sk_markup "$NONE" outbound 'KEN-1 #2' markdown
-assert_eq "$RC=$(jq -c '[.result[0], (.notices | length), (.notices[0] | startswith("slack: tracker-links-unavailable="))]' <<<"$OUT")" '0=["KEN-1 #2",1,true]' 'failed workspace discovery leaves ids unchanged with a notice'
+assert_eq "$RC=$(jq -c '[.result[0], (.notices | length)]' <<<"$OUT")=$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '0=["KEN-1 #2",0]=1' 'failed workspace discovery leaves ids unchanged with one stderr notice'
 # One process sees every root independently, even while a Linear cache is warm.
 sk_markup "$ROOT" roots "$ROOT" "$GH" "$NONE"
 assert_eq "$RC=$(jq -c '.result' <<<"$OUT")" '0=["[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 [org/other#3](https://github.com/org/other/pull/3)","[KEN-1](https://linear.app/workspace/issue/KEN-1) [#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3)","KEN-1 #2 [org/other#3](https://github.com/org/other/pull/3)"]' 'one process selects workspace keys independently for each root'
@@ -100,9 +100,9 @@ for fixture in exit json slug keys item empty; do
     empty) printf '{"urlKey":"workspace","keys":[]}\n' > "$BROKEN/linear.json" ;;
   esac
   sk_markup "$BROKEN" lifetime
-  assert_eq "$RC=$(jq -r '[(.result.reads | join(",")), (.result.texts | unique | join(" ")), (.notices | length), (.notices[0] | startswith("slack: tracker-links-unavailable="))] | join(" ")' <<<"$OUT")" '0=1,1,1,2,2 HTIO-5 1 true' "failed $fixture read stays unlinked and notices once"
+  assert_eq "$RC=$(jq -r '[(.result.reads | join(",")), (.result.texts | unique | join(" ")), (.notices | length)] | join(" ")' <<<"$OUT")=$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '0=1,1,1,2,2 HTIO-5 0=1' "failed $fixture read stays unlinked and warns once on stderr"
   if [ "$fixture" = exit ]; then
-    assert_has "$OUT" "cause=$SK_LINEAR_STUB/scripts/linear.sh exit=1" 'failed exit read names the subprocess and status'
+    assert_has "$ERR" "cause=$SK_LINEAR_STUB/scripts/linear.sh exit=1" 'failed exit read names the subprocess and status'
   fi
 done
 
@@ -133,11 +133,11 @@ assert_eq "$RC=$(jq -r '.result.texts | join(";")' <<<"$OUT")" "0=$BEFORE;$BEFOR
 sk_bin_reset
 sk_mutant warning markup.py 'if root not in self.warned:' 'if True:'
 sk_markup "$SK_TMP/broken-exit" lifetime
-assert_eq "$RC=$(jq -r '.notices | length' <<<"$OUT")" '0=2' 'control: without notice deduplication failure repeats its notice'
+assert_eq "$RC=$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '0=2' 'control: without notice deduplication failure repeats its notice'
 sk_bin_reset
 sk_mutant status markup.py 'if proc.returncode != 0:' 'if False:'
 sk_markup "$SK_TMP/broken-exit" lifetime
-assert_lacks "$OUT" "cause=$SK_LINEAR_STUB/scripts/linear.sh exit=1" 'control: ignoring exit status loses the failed-exit baseline cause'
+assert_lacks "$ERR" "cause=$SK_LINEAR_STUB/scripts/linear.sh exit=1" 'control: ignoring exit status loses the failed-exit baseline cause'
 sk_bin_reset
 sk_mutant slug markup.py 'if not isinstance\(slug, str\) or re.fullmatch\(r"\[a-zA-Z0-9_\-\]\+", slug\) is None:' 'if False:'
 sk_markup "$SK_TMP/broken-slug" outbound 'KEN-1' markdown
@@ -149,7 +149,7 @@ assert_has "$OUT" '[K-1](https://linear.app/workspace/issue/K-1)' 'control: with
 sk_bin_reset
 sk_mutant empty markup.py 'or not keys or any\(' 'or any('
 sk_markup "$SK_TMP/broken-empty" outbound '-1' markdown
-assert_eq "$RC=$(jq -r '.notices | length' <<<"$OUT")" '0=0' 'control: an empty metadata array is accepted without its notice'
+assert_eq "$RC=$(printf '%s\n' "$ERR" | grep -c '^slack: tracker-links-unavailable=')" '0=0' 'control: an empty metadata array is accepted without its notice'
 sk_bin_reset
 sk_mutant cap markup.py 'len\(markdown\) > MARKDOWN_LIMIT' 'input_size > MARKDOWN_LIMIT'
 sk_markup "$ROOT" outbound "$LONG" markdown
