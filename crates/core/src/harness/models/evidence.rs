@@ -522,7 +522,7 @@ pub(super) fn resolve(
         })
         .or_else(|| stable.first())
     {
-        diagnostics.push(diagnostic("unclassified-provider"));
+        diagnostics.push(diagnostic("unclassified-model"));
         return select(request, context, model, None, source, diagnostics);
     }
     diagnostics.push(Diagnostic {
@@ -545,6 +545,12 @@ fn resolve_class(
 ) -> Option<ModelResolution> {
     let ModelRequest::Class { class } = request else {
         unreachable!("class walk requires a class request");
+    };
+    let session_vendor = match &context.default {
+        HarnessModelPath::ObservedSessionOrDefault { id, selector, .. } => {
+            family::vendor(id.as_deref().unwrap_or(selector))
+        }
+        HarnessModelPath::NativeDefault | HarnessModelPath::NoUsableModel { .. } => None,
     };
     for effective in class.walk() {
         let row = effective.row();
@@ -586,6 +592,12 @@ fn resolve_class(
             };
             priority(a)
                 .cmp(&priority(b))
+                .then_with(|| {
+                    let preferred = |model: &AvailableModel| {
+                        session_vendor.is_some() && family::vendor(&model.id) == session_vendor
+                    };
+                    preferred(b).cmp(&preferred(a))
+                })
                 .then_with(|| br.cmp(ar))
                 .then_with(|| a.provider.cmp(&b.provider))
                 .then_with(|| a.id.cmp(&b.id))
@@ -595,10 +607,7 @@ fn resolve_class(
                 diagnostics.push(diagnostic("fallback"));
             }
             if override_request.is_none()
-                && matches!(
-                    model.provider.as_str(),
-                    "openai" | "openai-codex" | "github-copilot"
-                )
+                && family::vendor(&model.id) == Some(family::Vendor::Gpt)
                 && let (Some(actual), Some(preferred)) = (
                     family::matches(&model.provider, &model.id, row),
                     family::matches("openai", row.preferred, row),

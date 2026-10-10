@@ -11,6 +11,9 @@ pub(super) fn selectors_equivalent(harness: HarnessId, prior: &str, current: &st
     }
     let prior = prior.strip_prefix("anthropic/").unwrap_or(prior);
     let current = current.strip_prefix("anthropic/").unwrap_or(current);
+    if prior.contains('/') || current.contains('/') {
+        return false;
+    }
     prior == current
         || TIERS.iter().any(|row| {
             (row.claude == Some(prior) && matches("anthropic", current, row).is_some())
@@ -94,26 +97,38 @@ pub(super) fn excluded_haiku(id: &str) -> bool {
             .is_some_and(|release| release.components.as_slice() <= [4, 5].as_slice())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Vendor {
+    Claude,
+    Gpt,
+}
+
+pub(super) fn vendor(id: &str) -> Option<Vendor> {
+    let id = id.rsplit('/').next()?;
+    if id.starts_with("claude-") {
+        Some(Vendor::Claude)
+    } else if id.starts_with("gpt-") {
+        Some(Vendor::Gpt)
+    } else {
+        None
+    }
+}
+
 pub(super) fn matches(provider: &str, id: &str, row: &ClassRow) -> Option<Release> {
-    if provider == "anthropic" {
-        let family = row.claude?;
-        if id == family {
+    let segment = id.rsplit('/').next()?;
+    match vendor(segment) {
+        Some(Vendor::Claude) => return claude_release(segment, row.claude?),
+        Some(Vendor::Gpt) => {}
+        None if provider == "anthropic" && row.claude == Some(id) => {
             return Some(Release {
                 components: vec![u32::MAX],
                 undated: true,
                 date: 0,
             });
         }
-        return claude_release(id, family);
+        None => return None,
     }
-    if !matches!(provider, "openai" | "openai-codex" | "github-copilot") {
-        return None;
-    }
-    // Copilot lists both GPT and Claude under its own provider identity.
-    if provider == "github-copilot" && id.starts_with("claude-") {
-        return matches("anthropic", id, row);
-    }
-    let rest = id.strip_prefix("gpt-")?;
+    let rest = segment.strip_prefix("gpt-")?;
     let (version, tail) = rest.split_once('-')?;
     let snapshot = if tail == row.gpt {
         None
