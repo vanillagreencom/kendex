@@ -24,7 +24,7 @@ Resolve the decision mode once for every post-PR choice in this workflow. Named 
 .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
 ```
 
-Bind the repository root as `[MAIN_REPO_ROOT]` and create the directory every stop below renders into, before any stop route can fire. Every stop this workflow records is written under that root, so none of them depends on `[WORKTREE_PATH]`, which § 3 binds for each PR:
+Bind the repository root as `[MAIN_REPO_ROOT]` and create the directory every stop below renders into, before any stop route can fire. Every stop this workflow records is written under that root, so none of them depends on `[WORKTREE_PATH]`, which § 4 binds and most of the stop routes run before:
 
 ```bash
 .agents/skills/orch/scripts/git-context common-root .
@@ -88,24 +88,6 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_stop = null'
 ```
 
-**Per-PR worktree context.** Run `worktree exists` only with the `[ISSUE]` this section extracted:
-
-```bash
-.agents/skills/worktree/scripts/worktree exists "$ISSUE"
-```
-
-When it exists, bind `[WORKTREE_PATH]` from:
-
-```bash
-.agents/skills/worktree/scripts/worktree path "$ISSUE"
-```
-
-With no issue or no issue worktree, bind `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`. Create its scratch directory before any nested review route runs:
-
-```bash
-mkdir -p [WORKTREE_PATH]/tmp
-```
-
 Read `[CHECK_HEAD]` before each readiness check:
 
 ```bash
@@ -135,7 +117,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 The following conditions are merge gates, not advice:
 
 - **Open review threads** — not a `CHECK` field: run § 3.3 before the `not_approved` wait.
-- **`not_approved`**: bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing), then resolve the gate mode the pull request's base sets. A non-zero exit is no mode: report it and stop.
+- **`not_approved`** — resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
 
   ```bash
   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
@@ -144,15 +126,11 @@ The following conditions are merge gates, not advice:
   Route on the printed `GATE_MODE`:
 
   - `off` — informational; never gate or wait.
-  - `approval`: a GitHub-native approval verdict is required. Before the first approval wait on this head, run [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) with caller context `worktree: [WORKTREE_PATH]`, `lifecycle: "managed"`, `issue_id: [STATE_KEY]`, and `pr_number: [PR_NUMBER]`. Keep `[REVIEW_BASE_CHECKOUT]` bound above. Bypass only its **Skip if** conditions, as [submit-pr.md § 2 step 1](submit-pr.md#2-push-and-submit) does for its first pushed head. With no Copilot review, the head takes **Head moved**. That existing route owns the current-head review and pending-request reads, the request decision, and [Copilot request routing](../references/gates.md#copilot-requests).
-
-  **Return from the head route.** A read or request failure that stops § 7.2 stops this step too. If it resolves `off`, take the `off` route above. If the route or its wait reports a head other than `[CHECK_HEAD]`, discard the prior result and return to § 3's head read and readiness check. Otherwise keep the status, exit code and head of any terminal approval wait it ran. After its body checks and notices, return that answer to the result routes below. Only when § 7.2 ran no approval wait, poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]`.
-
-  After either wait exhausts its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
+  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   A `copilot-error` answer routes as [Copilot requests](../references/gates.md#copilot-requests) says, then re-runs this wait. It is never a met approval gate.
 
-  A `comments` answer (exit 1) from either wait is an open thread. For this caller, replace § 7.2's loop to its own § 1 with § 3.3, keeping this § 3.2 gate step as the original caller. [Thread read](../references/thread-read.md#after-the-triage) owns the return after triage: an unchanged head returns here; a changed head returns to § 3's readiness check. Resume this gate step when the thread read returns.
+  A `comments` answer (exit 1) is an open thread: run § 3.3, then this wait again.
 
   With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` — treat it as a met gate and record it in the § 6 report. An open thread answers `comments` instead; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
 
@@ -168,11 +146,13 @@ Read the open review threads by [references/thread-read.md](../references/thread
 
 ## 4. Prepare
 
-Reuse the `[ISSUE]`, `[PR_BRANCH]` and `[WORKTREE_PATH]` § 3 resolved for this PR. A [micro.md](micro.md) § 4 entry starts here instead. It binds `[ISSUE]`, `[PR_BRANCH]`, `[STATE_KEY]` and § 1's run-level bindings, then runs § 3's **Per-PR worktree context** block before continuing here. Nothing waits on CI or on a reviewer before § 5 arms the merge. That entry escapes on a § 5 step 1 return to § 3.2, whose `CHECK` object § 3 never produced for it. With no issue worktree, there is none to dispose of in § 5.
-
 ```bash
+.agents/skills/worktree/scripts/worktree exists "$ISSUE"
+.agents/skills/worktree/scripts/worktree path "$ISSUE"
 .agents/skills/github/scripts/github.sh bot-token
 ```
+
+Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree commands only with an `[ISSUE]`. A [micro.md](micro.md) § 4 entry starts here instead, binding those two, `[STATE_KEY]` and § 1's own run-level bindings itself, so nothing waits on CI or on a reviewer before § 5 arms the merge; that entry escapes on a § 5 step 1 return to § 3.2, whose `CHECK` object § 3 never produced for it. When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no issue worktree to dispose of in § 5.
 
 `bot-token` reporting `.configured: false` is an identity decision, not a budget choice: the merge would land under the human's name. `auto-recommended` records `bot-auth-missing` rather than taking that decision; `ask` presents `Merge as current user` | `Abort`, with `Abort` recommended.
 
@@ -466,7 +446,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions ([references/finding-disposition.md](../references/finding-disposition.md)): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with the issue created first under [skill-rules.md § Coordination](../references/skill-rules.md#coordination). Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`, under the section's clearing rule and `-C [MAIN_REPO_ROOT]` like the read above. This read happens once. A thread landing after it is unhandled: nothing else reads a merged PR's threads.
 
-6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. A project's install record (`.kendex-lock.json`) is recorded by the route its own instructions name, never re-recorded by the lane after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree. Once it passes, close the item out under the main checkout's state directory, `tmp/` under `[MAIN_REPO_ROOT]` by default, before worktree removal. Where the worktree context found an issue worktree, name its `tmp/` for the close-out's archive; otherwise drop the `--archive` pair:
+6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. A project's install record (`.kendex-lock.json`) is recorded by the route its own instructions name, never re-recorded by the lane after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree. Once it passes, close the item out under the main checkout's state directory, `tmp/` under `[MAIN_REPO_ROOT]` by default, before worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive; otherwise drop the `--archive` pair:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state remove [STATE_KEY] --archive [WORKTREE_PATH]/tmp
@@ -482,7 +462,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
    ```
 
-   A foreign-lease refusal from the helper keeps the worktree too; carry its diagnostic onto § 6's worktree line. Where the worktree context found an issue worktree, read its path last, whichever way the removal went:
+   A foreign-lease refusal from the helper keeps the worktree too; carry its diagnostic onto § 6's worktree line. Where § 4 found an issue worktree, read its path last, whichever way the removal went:
 
    ```bash
    ls -d -- "[WORKTREE_PATH]"
@@ -511,7 +491,7 @@ Worktree `[WORKTREE_PATH]` gone / standing — [cause]
 
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`, or `close-out refused`. Omit it only where the worktree context found no issue worktree. The `tmp/ close-out` line carries step 6's `removed kept=` line from `workflow-state remove`, or the first line of its refusal, and is omitted where that command never ran. Add a `Review gate` row only when the merge did not proceed on a plain `approved` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`, or `close-out refused`. Omit it only where § 4 found no issue worktree. The `tmp/ close-out` line carries step 6's `removed kept=` line from `workflow-state remove`, or the first line of its refusal, and is omitted where that command never ran. Add a `Review gate` row only when the merge did not proceed on a plain `approved` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 
