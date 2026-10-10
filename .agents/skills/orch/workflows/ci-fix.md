@@ -168,7 +168,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
 
 ```bash
-.agents/skills/orch/scripts/ci-wait [PR_NUMBER] --item [STATE_KEY]
+.agents/skills/orch/scripts/ci-wait [PR_NUMBER] --required-only --item [STATE_KEY]
 ```
 
 A passing or unconfigured CI result clears the head-bound standalone budget:
