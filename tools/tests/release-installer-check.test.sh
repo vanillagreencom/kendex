@@ -34,11 +34,12 @@
 # the lane-that-signs row (APPLE_SIGNING_IDENTITY set) refuses, and a
 # signed app is the release lane's alone to prove.
 #
-# The attach table is `label|refusals|rc|first|checked|cause` and runs on
+# The attach table is `label|sidecar|refusals|rc|first|checked|cause|info` and runs on
 # every host, with hdiutil and codesign stubbed on PATH: the stub refuses
 # the first `refusals` attaches, saying `stub refusal` on stderr, then
-# mounts a disk image whose app carries the sidecar. `cause` is `yes` when
-# the annotation line carries the stub's words, `no` when it does not.
+# mounts an app built with the `sidecar` word. `cause` and `info` say whether
+# the FAIL log carries the stub's refusal and image listing. The log is
+# the CI diagnosis when the real hdiutil cannot attach an image.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,6 +59,10 @@ assert_eq() {
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$label" "$want" "$got"
+    if [[ "${4:-}" == macos && "$got" == *" first=extract="* ]]; then
+      cat "$TMP/err"
+      hdiutil info || printf 'hdiutil info: exit=%s\n' "$?"
+    fi
   fi
 }
 
@@ -213,12 +218,11 @@ if command -v hdiutil >/dev/null 2>&1 && command -v codesign >/dev/null 2>&1; th
   while IFS='|' read -r label app archive dmg rc first checked; do
     [[ "$label" != "" && "$label" != \#* ]] || continue
     build_macos "$app" "$archive" "$dmg"
-    assert_eq "$(run "$MACOS")" "rc=$rc first=$first checked=$checked" "$label"
+    assert_eq "$(run "$MACOS")" "rc=$rc first=$first checked=$checked" "$label" macos
   done <<EOF
 the app, its updater archive and its disk image all carry the sidecar|command|command|command|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,bundle/dmg/kendex_${VERSION}_aarch64.dmg
 an app with no sidecar|absent|command|command|1|absent=$OUT/bundle/macos/kendex.app|-
 an updater archive with no sidecar|command|absent|command|1|absent=$OUT/bundle/macos/kendex.app.tar.gz|bundle/macos/kendex.app
-a disk image with no sidecar|command|command|absent|1|absent=$OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz
 no disk image at all|command|command|none|1|missing=*.dmg|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz
 EOF
   build_macos command command command
@@ -239,10 +243,10 @@ fi
 # stub_tools — hdiutil as check_dmg calls it, and a codesign the unsigned
 # lane never runs, under STUB
 STUB="$TMP/stub"
-stub_tools() {
+stub_tools() { # SIDECAR
   rm -rf -- "${STUB:?}"
   mkdir -p "$STUB/bin"
-  mac_app "$STUB/image/kendex.app" command
+  mac_app "$STUB/image/kendex.app" "$1"
   cat >"$STUB/bin/hdiutil" <<STUBEOF
 #!/bin/sh
 case "\$1" in
@@ -260,6 +264,7 @@ case "\$1" in
     cp -R "$STUB/image/." "\$mount"
     ;;
   detach) ;;
+  info) echo "image-path : $OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg" ;;
   *) echo "hdiutil stub: no verb \$1" >&2; exit 2 ;;
 esac
 STUBEOF
@@ -269,19 +274,28 @@ STUBEOF
 
 echo "=== the disk image attach, hdiutil stubbed ==="
 DMG="bundle/dmg/kendex_${VERSION}_aarch64.dmg"
-while IFS='|' read -r label refusals rc first checked cause; do
+while IFS='|' read -r label sidecar refusals rc first checked cause info; do
   [[ "$label" != "" && "$label" != \#* ]] || continue
   build_macos command command none
-  stub_tools
+  stub_tools "$sidecar"
   printf '%s\n' "$refusals" >"$STUB/refusals"
   : >"$OUT/$DMG"
   got="$(PATH="$STUB/bin:$PATH" run "$MACOS")"
   got_cause=no
-  [[ "$(sed -n 2p "$TMP/err")" != *"stub refusal"* ]] || got_cause=yes
-  assert_eq "$got cause=$got_cause" "rc=$rc first=$first checked=$checked cause=$cause" "$label"
+  got_info=no
+  if [[ "$first" == extract=* ]]; then
+    # A failed success expectation reaches the real FAIL printer without
+    # adding its deliberate mismatch to this suite's failure count.
+    detail="$(PATH="$STUB/bin:$PATH" assert_eq "$got" "rc=0 first=- checked=$DMG" "$label" macos)"
+    [[ "$detail" != *"stub refusal"* ]] || got_cause=yes
+    [[ "$detail" != *"image-path : $OUT/$DMG"* ]] || got_info=yes
+  fi
+  PATH="$STUB/bin:$PATH" assert_eq "$got cause=$got_cause info=$got_info" \
+    "rc=$rc first=$first checked=$checked cause=$cause info=$info" "$label" macos
 done <<EOF
-a disk image refused once and mounted on the next attempt is checked|1|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG|no
-a disk image refused on every attempt names hdiutil's refusal|3|1|extract=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|yes
+a disk image with no sidecar|absent|0|1|absent=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|no|no
+a disk image refused once and mounted on the next attempt is checked|command|1|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG|no|no
+a disk image refused on every attempt names hdiutil's refusal|command|3|1|extract=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|yes|yes
 EOF
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
