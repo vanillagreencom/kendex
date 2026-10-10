@@ -244,7 +244,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 3
         shell: bash
-        run: classifier/install.sh --git --cli-only
+        run: sh classifier/install.sh --git --cli-only
       # `kendex verify` re-renders out of the local mirror and never fetches
       # it, so on a runner that has never fetched the source every package
       # reports its origin unavailable and the class falls to `standard`.
