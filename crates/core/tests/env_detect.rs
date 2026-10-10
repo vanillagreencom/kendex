@@ -67,8 +67,8 @@ fn an_explicit_root_outranks_os_directories() {
 #[allow(clippy::unwrap_used)]
 fn fixture_data_and_trash_stay_inside_each_home() {
     const INNER: &str = "KENDEX_TEST_FIXTURE_TRASH";
-    if std::env::var_os(INNER).is_some() {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    if let Some(home) = std::env::var_os(INNER) {
+        let home = PathBuf::from(home);
         let detected = Env::detect().unwrap();
         assert!(detected.installed_command_file().starts_with(&home));
         assert!(detected.trash_dir().starts_with(&home));
@@ -89,9 +89,11 @@ fn fixture_data_and_trash_stay_inside_each_home() {
             .env_clear()
             .envs(fixture_env(home))
             .env("XDG_DATA_HOME", home.parent().unwrap())
-            .env(INNER, "1");
+            .env(INNER, home);
         if system {
-            command.env("KENDEX_REAL_HOME", "1");
+            command
+                .env("HOME", home.parent().unwrap())
+                .env("KENDEX_REAL_HOME", "1");
         }
         command.spawn().unwrap()
     };
