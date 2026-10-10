@@ -51,6 +51,9 @@ new_repo() {
   git -C "$d" config user.email test@example.com
   git -C "$d" config user.name Test
   git -C "$d" config commit.gpgsign false
+  # These receipt fixtures exercise review-first modes, not repository visibility.
+  printf '[env]\nORCH_PR_ORDER = "review-first"\n' > "$d/kendex.settings.toml"
+  git -C "$d" add kendex.settings.toml
   git -C "$d" commit -q --allow-empty -m base
   init_growth_state "$STATE" "$d" "$2" "${3:-seed}" ${4:+"$4"} >/dev/null
   mkdir -p "$d/.cache/tracker-fixture"
@@ -427,8 +430,8 @@ MODE_WRITTEN="$(cat "$MODE_RECEIPT")"
 MODE_HEAD="$(git -C "$MW" rev-parse HEAD)"
 MODE_FAKE_SHA="${MODE_HEAD:0:8}00000000000000000000000000000000"
 mode_row() { # RANGE_CMD MODE_FILTER [RECORD_FILTER] — the project's setting, the receipt's mode, the round's record
-  rm -f "$MW/kendex.settings.toml"
-  [[ -z "$1" ]] || printf '[env]\nDEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" > "$MW/kendex.settings.toml"
+  printf '[env]\nORCH_PR_ORDER = "review-first"\n' > "$MW/kendex.settings.toml"
+  [[ -z "$1" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" >> "$MW/kendex.settings.toml"
   jq -c "$2" <<<"$MODE_WRITTEN" > "$MODE_RECEIPT"
   jq "${3:-.}" <<<"$MODE_RECORD_WRITTEN" > "$MODE_RECORD"
 }
