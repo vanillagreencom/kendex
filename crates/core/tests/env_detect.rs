@@ -5,12 +5,14 @@ use std::process::Command;
 
 /// Portable installs and CLI fixtures must select their roots before OS
 /// discovery. The child has conflicting OS variables and no inherited env.
+/// The lane launcher supplies an origin independent of the current directory.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_explicit_root_outranks_os_directories() {
     const INNER: &str = "KENDEX_TEST_ROOT_OVERRIDE";
     if std::env::var_os(INNER).is_some() {
         let home = PathBuf::from(std::env::var_os("KENDEX_REAL_HOME").unwrap());
+        let origin = home.parent().unwrap().join("launch lane");
         let expected = Env::host_rooted(&home);
         let detected = Env::detect().unwrap();
         assert_eq!(detected.home, home);
@@ -25,6 +27,7 @@ fn an_explicit_root_outranks_os_directories() {
             expected.installed_command_file()
         );
         assert_eq!(detected.cwd(), Some(home.as_path()));
+        assert_eq!(detected.lane_origin(), Some(origin.as_path()));
         assert_eq!(detected.temp_dir(), expected.temp_dir());
         assert_eq!(detected.var("CODEX_HOME"), Some("explicit-codex-root"));
         assert!(!sandboxed());
@@ -35,6 +38,8 @@ fn an_explicit_root_outranks_os_directories() {
     let root = rooted(&tmp);
     let home = root.join("portable home");
     std::fs::create_dir(&home).unwrap();
+    let origin = root.join("launch lane");
+    std::fs::create_dir(&origin).unwrap();
     let output = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -46,6 +51,7 @@ fn an_explicit_root_outranks_os_directories() {
         .envs(fixture_env(&home))
         .env("HOME", root.join("other-home"))
         .env("KENDEX_REAL_HOME", &home)
+        .env("KENDEX_LANE_ORIGIN", &origin)
         .env("XDG_CONFIG_HOME", root.join("other-config"))
         .env("XDG_CACHE_HOME", root.join("other-cache"))
         .env("XDG_DATA_HOME", root.join("other-data"))
