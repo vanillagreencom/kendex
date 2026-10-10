@@ -8,6 +8,23 @@ set -euo pipefail
 process_count_setup "$TMP_ROOT"
 
 if process_count_supported; then
+if [ "${1:-}" = --trace-off-control ]; then COUNT_TRACE=/dev/null; fi
+for route in child exec; do
+  child=$BASH
+  if [ "$route" = exec ]; then child=$COUNT_BIN/bash; fi
+  process_count_reset
+  env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$child" -c ':'
+  assert_eq "$(process_count_total)" 1 "$route counts one Bash process"
+done
+case "${1:-}" in
+  --trace-off-control) [ "$FAIL" -eq 0 ]; exit ;;
+esac
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  control_rc=0
+  "$BASH" "$TEST_DIR/lane-mail-check-cost.test.sh" --trace-off-control \
+    > "$TMP_ROOT/trace-off.control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control: disabled tracing fails the single Bash child assertion'
+fi
 new_lane mailbox_cost main
 unmark_lanes
 install_arms

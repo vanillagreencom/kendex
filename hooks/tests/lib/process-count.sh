@@ -19,7 +19,7 @@ process_count_setup() { # SCRATCH_ROOT [COMMAND_PATH]
       [ ! -e "$COUNT_BIN/$name" ] || continue
       {
         printf '#!/bin/sh\n'
-        printf 'printf "command %%s\\n" %q >> "$PROCESS_COUNT_LOG"\n' "$name"
+        printf 'printf "command %%s %%s\\n" %q "$$" >> "$PROCESS_COUNT_LOG"\n' "$name"
         printf 'exec %q "$@"\n' "$executable"
       } > "$COUNT_BIN/$name"
       chmod +x "$COUNT_BIN/$name"
@@ -36,8 +36,9 @@ TRACE
 process_count_reset() { : > "$COUNT_LOG"; }
 process_count_total() {
   process_count_supported || { echo unavailable; return 0; }
-  awk '$1 == "bash" { ids[$2] = 1 } $1 == "command" { commands++ }
-    END { for (id in ids) shells++; print shells + commands }' "$COUNT_LOG"
+  # An exec keeps its PID, including when a PATH wrapper becomes Bash.
+  awk '$1 == "bash" { ids[$2] = 1 } $1 == "command" { ids[$3] = 1 }
+    END { for (id in ids) processes++; print processes + 0 }' "$COUNT_LOG"
 }
 process_count_command() { # COMMAND
   awk -v name="$1" '$1 == "command" && $2 == name { n++ } END { print n + 0 }' "$COUNT_LOG"
