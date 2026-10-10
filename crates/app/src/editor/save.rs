@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::env;
-use crate::audit::{AuditView, view};
+use crate::audit::AuditView;
 use crate::repo_effects::ExecuteError;
 use crate::whole_file::{WriteRefused, refusal, stale_at};
 
@@ -213,7 +213,7 @@ fn write_customize(
         .map_err(|refused| refused_write(refused, &targets))?;
     Ok(AuditView {
         undone,
-        ..view(env, &scope)
+        ..crate::audit::view_after_apply(env, &scope, &report)
     })
 }
 
@@ -259,6 +259,11 @@ fn plan_customize(
                     ops::manifest_for_mutation(env, scope).map_err(|e| e.to_string())?,
                 ),
             };
+            // The draft crossed serde without read-time accounts. Restore
+            // them from the same file read that verified its claimed base.
+            if let Some(current) = &current {
+                manifest.migration_notes = current.migration_notes.clone();
+            }
             // A custom hook's name is its identity everywhere downstream;
             // saving is when a derived one stops being derived.
             kendex_core::hook::name_custom_hooks(&mut manifest);

@@ -1,0 +1,1 @@
+- Older supported personal and project manifests are rewritten to the current schema on apply, refresh, install and any write. Comments and layout stay in place. Each migrated file gets an apply note with the schema change and the changelog link. Read-only commands and plan preview leave the file unchanged.

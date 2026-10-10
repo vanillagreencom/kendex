@@ -1,8 +1,5 @@
-//! What this build does with a manifest it cannot read: nothing at all.
-//!
-//! No importer exists, in either direction. A file below this build's
-//! schema and one above it both refuse, the file is left exactly as it was
-//! written, and the refusal names the way out.
+//! Supported older manifests migrate in memory, then persist in the scope's
+//! transaction. Unsupported schemas refuse without changing a byte.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -63,39 +60,19 @@ fn fixture(schema: &str) -> Fixture {
     }
 }
 
-/// A manifest this build cannot read is refused and left byte for byte
-/// where the person put it, one row per schema. The complete refusal is
-/// part of this contract: consumer refresh reads the schema clause, and
-/// the advice must distinguish a one-line edit from a fresh declaration.
+/// These schemas have no rewrite chain. Refusal preserves their bytes.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
     enum Refusal {
-        Legacy(String),
+        Legacy,
         TooNew(i64),
     }
-    let one_below = (MANIFEST_SCHEMA - 1).to_string();
     let one_above = (MANIFEST_SCHEMA + 1).to_string();
     let rows: [(&str, Option<&str>, Refusal); 4] = [
-        (
-            "one below current",
-            Some(&one_below),
-            Refusal::Legacy(format!(
-                "it is a schema {one_below} manifest, and this kendex writes schema {MANIFEST_SCHEMA}; set `schema = {MANIFEST_SCHEMA}`; nothing else in the manifest changes"
-            )),
-        ),
-        (
-            "schema 1",
-            Some("1"),
-            Refusal::Legacy(format!(
-                "it is a schema 1 manifest, and this kendex writes schema {MANIFEST_SCHEMA}; move it aside and install fresh, declaring again from the file you moved"
-            )),
-        ),
-        (
-            "no schema",
-            None,
-            Refusal::Legacy("it names no schema, so nothing here can say what shape it is; move it aside and install fresh, declaring again from the file you moved".to_owned()),
-        ),
+        ("schema 5 with retired tables", Some("5"), Refusal::Legacy),
+        ("schema 1", Some("1"), Refusal::Legacy),
+        ("no schema", None, Refusal::Legacy),
         (
             "one above current with bindings",
             Some(&one_above),
@@ -106,6 +83,11 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
         let f = fixture(schema.unwrap_or("1"));
         if schema.is_none() {
             fs::write(&f.manifest_path, f.original.replace("schema = 1\n", "")).unwrap();
+        } else if schema == Some("5") {
+            fs::write(
+                &f.manifest_path,
+                format!("{}\n[safety-overrides.\"skill:gh:claude\"]\nreview-hash = 'abc'\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = 'abc'\nruleset = 3\n", f.original),
+            ).unwrap();
         } else {
             fs::write(
                 &f.manifest_path,
@@ -121,17 +103,8 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
         let error = audit(&f.env, &f.scope).unwrap_err();
 
         match (&refusal, &error) {
-            (Refusal::Legacy(expected), CoreError::LegacyManifest { path, message }) => {
+            (Refusal::Legacy, CoreError::LegacyManifest { path, .. }) => {
                 assert_eq!(path, &f.manifest_path, "{what}");
-                assert_eq!(message, expected, "{what}");
-                assert_eq!(
-                    error.to_string(),
-                    format!(
-                        "{}: this manifest could not be read — {expected}",
-                        f.manifest_path.display()
-                    ),
-                    "{what}"
-                );
             }
             (Refusal::TooNew(expected), CoreError::SchemaTooNew { found, .. }) => {
                 assert_eq!(found, expected, "{what}");
@@ -147,6 +120,137 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
             !f.scope_lock().exists(),
             "{what}: a refusal installs nothing"
         );
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
+    for global in [false, true] {
+        let mut f = fixture("6   # pinned");
+        if global {
+            f.scope = Scope::Global;
+            f.manifest_path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
+            fs::create_dir_all(f.env.home.join(".claude")).unwrap();
+            fs::create_dir_all(f.manifest_path.parent().unwrap()).unwrap();
+        }
+        let expected = f.original.replacen("schema = 6", "schema = 7", 1);
+        fs::write(&f.manifest_path, &expected).unwrap();
+        let current = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+        fs::write(&f.manifest_path, &f.original).unwrap();
+
+        let migrated = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+        let loaded = kendex_core::manifest::load_current(&f.manifest_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.schema, MANIFEST_SCHEMA);
+        assert_eq!(loaded.migrated_text.as_deref(), Some(expected.as_str()));
+        assert_eq!(loaded.migration_notes.len(), 1);
+        assert!(migrated.notes.ends_with(&loaded.migration_notes));
+        assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
+        assert_eq!(
+            migrated
+                .plan
+                .ops
+                .iter()
+                .filter(|op| matches!(op.op, apply::Op::WriteManifest { .. }))
+                .count(),
+            1,
+        );
+        let other_ops = |ops: &[apply::PlannedOp]| {
+            ops.iter()
+                .filter_map(|op| match &op.op {
+                    apply::Op::WriteManifest { .. } | apply::Op::WriteLock { .. } => None,
+                    _ => Some(op.clone()),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(other_ops(&migrated.plan.ops), other_ops(&current.plan.ops));
+        let committed = |ops: &[apply::PlannedOp]| {
+            ops.iter()
+                .filter_map(|op| match &op.op {
+                    apply::Op::WriteLock { path, lock, .. } => {
+                        Some(kendex_core::lock::committed_text(path, lock).unwrap())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(committed(&migrated.plan.ops), committed(&current.plan.ops));
+        apply::execute(&f.env, &migrated.plan).unwrap();
+        assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), expected);
+        assert!(
+            load_lock(&f.scope_lock())
+                .unwrap()
+                .entries
+                .contains_key("skill:gh:claude")
+        );
+        assert!(
+            kendex_core::manifest::load_current(&f.manifest_path)
+                .unwrap()
+                .unwrap()
+                .migration_notes
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_read_accepts_the_older_personal_manifest_without_writing_it() {
+    let f = fixture("7");
+    let path = kendex_core::manifest::manifest_path(&f.env, &Scope::Global);
+    let personal = "schema = 6   # personal\n\n[model-classes]\nstandard = 'openai/gpt-6.1-sol'\n\n[model-bindings.codex]\nstandard = 'gpt-6.1-sol'\n";
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, personal).unwrap();
+    let manifest = kendex_core::manifest::load_current(&f.manifest_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        kendex_core::manifest::model_class_overrides(&f.env, &f.scope, &manifest).unwrap()["standard"],
+        "openai/gpt-6.1-sol"
+    );
+    assert_eq!(
+        kendex_core::manifest::model_bindings(&f.env, &f.scope, &manifest).unwrap()["codex"]["standard"],
+        "gpt-6.1-sol"
+    );
+    let report = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(path).unwrap(), personal);
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_migration_write_rechecks_original_bytes_and_rolls_back() {
+    for stale in [false, true] {
+        let f = fixture("6   # pinned");
+        let mut report = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+        let before = if stale {
+            format!("{}\n# a later edit\n", f.original)
+        } else {
+            f.original.clone()
+        };
+        fs::write(&f.manifest_path, &before).unwrap();
+        if !stale {
+            report
+                .plan
+                .insert(
+                    report.plan.ops.len(),
+                    apply::PlannedOp {
+                        description: "refuse".into(),
+                        op: apply::Op::WriteFile {
+                            path: f.manifest_path.clone(),
+                            bytes: b"never written".to_vec(),
+                            pre: apply::Pre::Absent,
+                        },
+                    },
+                )
+                .unwrap();
+        }
+        let error = apply::execute(&f.env, &report.plan).unwrap_err();
+        assert!(matches!(error, CoreError::RolledBack { .. }), "{error}");
+        assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), before);
+        assert!(!f.scope_lock().exists());
     }
 }
 
@@ -524,7 +628,7 @@ impl Fixture {
     }
 
     fn scope_lock(&self) -> std::path::PathBuf {
-        self.project().join(".kendex-lock.json")
+        lock_path(&self.env, &self.scope)
     }
 
     fn installed_skill(&self) -> std::path::PathBuf {

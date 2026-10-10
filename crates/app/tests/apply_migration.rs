@@ -1,7 +1,5 @@
-//! What the app does with an unsupported manifest schema: says so, and
-//! leaves it alone. The preview reports the refusal as a scope error and
-//! the apply refuses too, so nothing rewrites a file this build cannot read
-//! — the person's comments included.
+//! The app previews a supported migration without writing, then retains
+//! its account after apply. Unsupported schemas refuse without changing bytes.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -36,6 +34,40 @@ const KEPT: &str = "# my project setup\nschema = {schema}\n\n# where the content
 
 /// The tables accepted by manifest schema 5 and rejected by schema 6.
 const RETIRED: &str = "[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\nfindings = [\"f1\"]\ngranted-at = \"2026-01-01T00:00:00Z\"\n\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n";
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn migration_preview_is_read_only_and_apply_keeps_its_note() {
+    let f = fixture(|source| {
+        KEPT.replace("{schema}", "6   # pinned")
+            .replace("{source}", &source_path(source))
+    });
+    let original = fs::read_to_string(&f.manifest_path).unwrap();
+    let loaded = kendex_core::manifest::load_current(&f.manifest_path)
+        .unwrap()
+        .unwrap();
+    let preview = view(&f.env, &f.scope);
+    assert!(preview.error.is_none());
+    assert!(preview.notes.ends_with(&loaded.migration_notes));
+    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
+    assert!(!f.scope_root().join(".kendex-lock.json").exists());
+
+    let applied = apply_scope(&f.env, &f.scope, false).unwrap();
+    assert!(applied.error.is_none());
+    assert!(applied.notes.ends_with(&loaded.migration_notes));
+    assert_eq!(loaded.migration_notes.len(), 1);
+    assert_eq!(
+        fs::read_to_string(&f.manifest_path).unwrap(),
+        original.replacen("schema = 6", "schema = 7", 1)
+    );
+    let again = view(&f.env, &f.scope);
+    assert!(
+        again
+            .notes
+            .iter()
+            .all(|note| !loaded.migration_notes.contains(note))
+    );
+}
 
 #[allow(clippy::unwrap_used)]
 fn schema5_fixture() -> Fixture {

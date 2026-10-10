@@ -4813,10 +4813,9 @@ export type ScopeErrorKind =
  */
 "lock-corrupt" | 
 /**
- *  The manifest parses under an unsupported schema, and nothing
- *  converts it. Kept apart from a damaged lock because the file is
- *  intact and the person's own — moving it aside loses what they wrote
- *  in it.
+ *  No migration step recognises this manifest's schema. The file is
+ *  intact and the person's own, unlike a damaged lock; moving it aside
+ *  loses what they wrote in it.
  */
 "manifest-outdated" | 
 /**  The manifest or lock was written by a newer kendex than this one. */

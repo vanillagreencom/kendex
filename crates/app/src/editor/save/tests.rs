@@ -8,6 +8,32 @@ use std::collections::BTreeMap;
 use crate::test_util::source_path;
 
 #[test]
+fn a_schema_6_editor_draft_migrates_and_returns_its_note_after_serde() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let project = home.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let scope = Scope::Project { root: project };
+    let path = manifest::manifest_path(&env, &scope);
+    let original = "# my setup\nschema = 6   # pinned\n";
+    std::fs::write(&path, original).unwrap();
+    let read = read_manifest(&env, &scope).unwrap();
+    let loaded = read.manifest.unwrap();
+    let notes = loaded.migration_notes.clone();
+    let draft: Manifest = serde_json::from_value(serde_json::to_value(&loaded).unwrap()).unwrap();
+    assert!(draft.migration_notes.is_empty());
+    let applied = write_customize(&env, scope, Some((draft, read.base)), None, None).unwrap();
+    assert!(applied.error.is_none());
+    assert!(applied.notes.ends_with(&notes));
+    assert_eq!(notes.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        original.replacen("schema = 6", "schema = 7", 1)
+    );
+}
+
+#[test]
 fn the_editor_reads_and_saves_the_scope_manifest_name() {
     use crate::test_util::rooted;
     for (catalog, file) in [(true, "kendex-local.toml"), (false, "kendex.toml")] {

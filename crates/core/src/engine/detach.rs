@@ -278,7 +278,7 @@ pub fn remove(
     let mut report =
         super::plan_scope_with_lock_base(env, &scope, &without, &rebound, &lock, &options)?;
     if !super::persists_manifest(&report.plan.ops) {
-        crate::engine::ops::insert_manifest_save(env, &scope, &mut report.plan, without)?;
+        crate::engine::ops::insert_manifest_save(env, &scope, &mut report.plan, without, None)?;
     }
     Ok(report)
 }

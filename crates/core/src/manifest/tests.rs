@@ -3,6 +3,27 @@ use crate::error::CoreError;
 use crate::model::ItemKind;
 
 #[test]
+fn save_migrates_hand_edited_text_before_folding_the_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let path = root.join("kendex.toml");
+    let original = "# my setup\nschema = 6   # pinned\n\n[sources.cat]\nrepo = 'owner/catalog'   # source\n\n[skills.gh]\nsource = 'cat'\nnote = 'why I keep this'\nenabled = true   # still on\n";
+    std::fs::write(&path, original).unwrap();
+    let mut manifest = load_current(&path).unwrap().unwrap();
+    manifest.skills.get_mut("gh").unwrap().enabled = false;
+    save(&path, &manifest).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        original
+            .replacen("schema = 6", "schema = 7", 1)
+            .replace("enabled = true", "enabled = false")
+    );
+    let on_wire = serde_json::to_value(&manifest).unwrap();
+    assert!(on_wire.get("migration-notes").is_none());
+    assert!(on_wire.get("migrated-text").is_none());
+}
+
+#[test]
 fn catalog_alias_uses_the_native_catalog_basename() {
     // Add and subscription requests carry native local paths or remote references.
     let sep = std::path::MAIN_SEPARATOR;

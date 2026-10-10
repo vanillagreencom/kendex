@@ -101,7 +101,7 @@ standard = "claude-opus-4.6"
 
 `model-classes.<class>` supplies a provider-qualified selector to runtime class resolution through `kendex tier-model`. It does not put that selector in a static agent file. `[model-bindings.<harness>]` selects a native model for a class in a Codex or Copilot agent file. Other harnesses reject bindings. Claude Code already renders the class family alias. Pi keeps the class for runtime dispatch.
 
-Bindings require manifest format 7. Use a kendex release that reads format 7 before setting `schema = 7` in a personal or project manifest. Older readers refuse the newer format and leave the file unchanged. kendex does not convert manifest formats.
+Bindings require manifest format 7. Upgrade kendex before adding bindings. kendex reads a schema 6 personal or project manifest in the current form and persists `schema = 7` on apply, refresh, install or the next write. It keeps comments and layout. Read-only commands and plan preview leave the file unchanged. An unsupported older schema or a newer schema still refuses without changing the file.
 
 Bindings use canonical class names and nonempty selectors with no whitespace. The model owner, `crates/core/src/harness/models.rs`, declares the classes. Render preview checks the selector against the harness loader. A binding gives no compatibility warning. Without a binding, the agent keeps its existing render. `inherit` keeps the session model. A per-agent `[agent-frontmatter.<harness>.<agent>] model` replaces the request before binding selection, so it takes precedence.
 

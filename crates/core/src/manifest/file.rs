@@ -1,6 +1,5 @@
-//! Reading and writing a manifest file: what sits at a path, how a
-//! mutation upgrades the schema as a side effect of writing at all, and
-//! the one place a fresh scope gets its default source.
+//! Reads migrate supported older text in memory. The plan or the next
+//! write persists that rewrite through the existing byte-faithful fold.
 
 use std::path::Path;
 
@@ -15,7 +14,7 @@ use super::{
 };
 
 /// What sits at a manifest path — absent, or the one schema this build
-/// reads. Anything else is refused by the read that classified it.
+/// reads after any supported rewrite. Other forms refuse at the read.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ManifestFile {
     Absent,
@@ -151,27 +150,46 @@ pub fn model_bindings(
 /// [`load`] for text the caller already read — the importer classifies the
 /// exact bytes its preconditions bind to.
 pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
-    let table: toml::Table = text
-        .parse()
-        .map_err(|e: toml::de::Error| CoreError::TomlParse {
-            path: path.to_path_buf(),
-            message: e.to_string(),
-        })?;
-    let schema = table.get("schema").and_then(toml::Value::as_integer);
+    let mut table: toml::Table =
+        text.parse()
+            .map_err(|e: toml::de::Error| CoreError::TomlParse {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?;
+    let mut schema = table.get("schema").and_then(toml::Value::as_integer);
     if schema.is_some_and(|schema| schema > i64::from(MANIFEST_SCHEMA)) {
         return Err(CoreError::SchemaTooNew {
             path: path.to_path_buf(),
             found: schema.unwrap_or_default(),
         });
     }
-    // Refuse before interpreting tables or writing bytes. The advice follows
-    // MANIFEST_SCHEMA's compatibility contract.
+    let mut migrated_text = None;
+    let mut migration_notes = Vec::new();
+    if schema.is_some_and(|schema| schema < i64::from(MANIFEST_SCHEMA)) {
+        let mut document =
+            text.parse()
+                .map_err(|e: toml_edit::TomlError| CoreError::TomlParse {
+                    path: path.to_path_buf(),
+                    message: e.to_string(),
+                })?;
+        if let Some(accounts) = super::migrate::migrate(&mut document) {
+            let rewritten = document.to_string();
+            table =
+                toml::from_str(&rewritten).map_err(|e: toml::de::Error| CoreError::TomlParse {
+                    path: path.to_path_buf(),
+                    message: e.to_string(),
+                })?;
+            schema = table.get("schema").and_then(toml::Value::as_integer);
+            migration_notes = accounts.into_iter().map(|account| format!(
+                "{}: {account}; https://github.com/vanillagreencom/kendex/blob/main/CHANGELOG.md",
+                path.display()
+            )).collect();
+            migrated_text = Some(rewritten);
+        }
+    }
+    // Interpret no tables unless the whole rewrite chain reached this schema.
     if schema != Some(i64::from(MANIFEST_SCHEMA)) {
-        let advice = if schema == Some(i64::from(MANIFEST_SCHEMA) - 1) {
-            format!("set `schema = {MANIFEST_SCHEMA}`; nothing else in the manifest changes")
-        } else {
-            "move it aside and install fresh, declaring again from the file you moved".to_owned()
-        };
+        let advice = "move it aside and install fresh, declaring again from the file you moved; https://github.com/vanillagreencom/kendex/blob/main/CHANGELOG.md";
         return Err(CoreError::LegacyManifest {
             path: path.to_path_buf(),
             message: match schema {
@@ -191,11 +209,14 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
             findings,
         });
     }
-    let manifest: Manifest =
-        toml::from_str(text).map_err(|e: toml::de::Error| CoreError::TomlParse {
+    let mut manifest: Manifest = toml::from_str(migrated_text.as_deref().unwrap_or(text)).map_err(
+        |e: toml::de::Error| CoreError::TomlParse {
             path: path.to_path_buf(),
             message: e.to_string(),
-        })?;
+        },
+    )?;
+    manifest.migration_notes = migration_notes;
+    manifest.migrated_text = migrated_text;
     Ok(ManifestFile::Current(Box::new(manifest)))
 }
 
@@ -254,6 +275,11 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     let current = read_if_exists(path)?;
     let text = match &current {
         Some(current) => {
+            let loaded = parse_text(path, current)?;
+            let ManifestFile::Current(loaded) = loaded else {
+                unreachable!("parse_text classifies present text");
+            };
+            let current = loaded.migrated_text.as_deref().unwrap_or(current);
             // What this file already gives the model, taken the same way
             // the target was. A key outside it — a note somebody left
             // inside a declaration — is not kendex's to drop, and the fold
@@ -291,9 +317,8 @@ fn held_by_model(path: &Path, current: &str) -> Result<String> {
     })
 }
 
-/// Load for mutation. Only the current schema loads at all, so there is
-/// nothing to upgrade here. [`read_for_mutation`] with the base dropped, so
-/// the two cannot drift.
+/// Load for mutation, including supported in-memory rewrites.
+/// [`read_for_mutation`] with the base dropped, so the two cannot drift.
 pub fn load_for_mutation(path: &Path) -> Result<Option<Manifest>> {
     Ok(read_for_mutation(path)?.0)
 }
