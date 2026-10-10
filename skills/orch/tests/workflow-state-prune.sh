@@ -16,7 +16,7 @@ unset ORCH_ARCHIVE_ROOT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workflow-state-prune.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 
