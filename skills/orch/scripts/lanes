@@ -282,7 +282,7 @@
 #         Unread overseer seats print `pick-overseer-seats-unread` and judge
 #         the wall reading alone, with no seat reserve. Under --projected
 #         they instead refuse with exit 8, keyed `pick-overseer-seats`, before
-#         the lane is measured.
+#         local or provider usage is read.
 #         A cloud-credit refusal on 3 or 5 carries `refusal`, whose cause and
 #         retry_at decide the refusal instead of any plan fields. Other records
 #         printed on 3 under --json carry `wall` and `binding_bucket`,
@@ -3145,7 +3145,7 @@ copilot_pool_records_fix() { # RECORDS
 
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9" for_overseer="${10}"
-	local target found="" d record="" wall bucket verdict hosted projected credits refusal cause retry
+	local target found="" d record="" wall bucket verdict hosted projected credits refusal cause retry seat_harness=""
 	# A malformed override refuses this form as it refuses the chooser, before a
 	# provider row could stand in for an entry nobody can parse.
 	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi
@@ -3170,10 +3170,14 @@ cmd_pick_lane() {
 		fi
 		message pick-lane-claims >&2
 	fi
-	pick_host_rows "$harness"
 	SEATS=""
 	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
-		if ! overseer_seats; then
+		if [[ "$projected_verdict" == true ]]; then
+			seat_harness="$harness"
+		else
+			pick_host_rows "$harness"
+		fi
+		if ! overseer_seats "$seat_harness"; then
 			if [[ "$projected_verdict" == true ]]; then
 				message pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE" >&2
 				return 8
@@ -3181,6 +3185,8 @@ cmd_pick_lane() {
 			message pick-overseer-seats-unread "$SEATS_STEP" "$SEATS_STATE" >&2
 			SEATS=""
 		fi
+	else
+		pick_host_rows "$harness"
 	fi
 	lane_canon "$dir" || return 1; target="$LANE_CANON"
 	# Both sides through the one normaliser, so a dir given with a trailing
@@ -3324,8 +3330,10 @@ cmd_pick_lane() {
 #
 # The seats land in SEATS; a failure leaves SEATS_STEP and SEATS_STATE naming
 # the step and the state it could not read, for the caller's refusal.
+# A projected named pick passes its harness so fleet-state failures precede
+# provider usage reads. Other callers already loaded the provider's rows.
 SEATS="" SEATS_STEP="" SEATS_STATE=""
-overseer_seats() {
+overseer_seats() { # [HARNESS]
 	local fleets claimed f account provider_seats
 	SEATS="" SEATS_STATE=oversee
 	SEATS_STEP=fleet-state
@@ -3341,6 +3349,7 @@ overseer_seats() {
 		lane_canon "$account" || return 1
 		SEATS+="$LANE_CANON"$'\n'
 	done < <(printf '%s\n%s\n' "$fleets" "$claimed" | sort -u)
+	if [[ -n "${1:-}" ]]; then pick_host_rows "$1"; fi
 	# host_lane_rows already read host_accounts_answer; failures leave no rows.
 	provider_seats="$(host_account_rows "$HOST_ACCOUNTS_ROWS" all seats)" || return 1
 	SEATS+="${provider_seats:+$provider_seats$'\n'}"

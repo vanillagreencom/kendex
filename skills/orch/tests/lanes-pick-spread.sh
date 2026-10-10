@@ -481,6 +481,23 @@ table "$SEAT_UNREAD_READING" "$SEAT_UNREAD_PROJECTED" \
   "a named lane at its mark still hands off with unread seats|$ALL_DIRS|own:broken|a:97:97|pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=3 wall=97 seatnotice=named" \
   "the overseer mark does not read broken seat state|$ALL_DIRS|own:broken||pick --lane $H/.aclaude --harness claude --for-overseer --min-headroom-pct 3 --json|rc=0 wall=20 seatnotice=none keyed.pick-overseer-seats=none"
 
+printf 'account=%s\tharness=claude\tsession-5h-pct=50\tseat=1\n' "$H/.aclaude" > "$TMP_ROOT/unread-seat-host-accounts"
+SEAT_HOST="ORCH_LANE_HOST=$PROVIDER;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/unread-seat-host-accounts;ORCH_LANE_DIRS=$H/.aclaude"
+SEAT_HOST_UNREAD_PROJECTED="a hosted projected pick refuses unread seats before any usage read|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --projected --json --no-cache|rc=8 out= seatrefusal=named accounts_calls=0 measurements=0"
+SEAT_HOST_PROJECTED="a hosted projected pick retains provider seats after the fleet read|$SEAT_HOST|||pick --lane $H/.aclaude --harness claude --projected --json --no-cache|rc=3 verdict=seat-reserve measured_through=host projected_headroom_pct=50 accounts_calls=1 measurements=0"
+table "$SEAT_HOST_UNREAD_PROJECTED" "$SEAT_HOST_PROJECTED" \
+  "a hosted reading still uses provider usage when seats are unread|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json --no-cache|rc=0 wall=50 measured_through=host seatnotice=named accounts_calls=1 measurements=0" \
+  "a hosted overseer projection bypasses the unread fleet seats|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --for-overseer --projected --json --no-cache|rc=0 wall=50 measured_through=host seatnotice=none keyed.pick-overseer-seats=none accounts_calls=1 measurements=0"
+
+CTRL="$(mutant_scripts mutant-seat-host-read-first lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'if ! overseer_seats "$seat_harness"; then' 'pick_host_rows "$harness"
+		if ! overseer_seats "$seat_harness"; then'
+rc=0
+( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$SEAT_HOST_UNREAD_PROJECTED"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/seat-host-order-control.log" || rc=$?
+RUN_SEQ=$((RUN_SEQ + 1))
+assert_eq "$rc" 1 'reading provider usage first fails the same hosted projected-refusal row'
+
 CTRL="$(mutant_scripts mutant-seat-notice-fatal lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$CTRL/lanes" 'message pick-overseer-seats-unread "$SEATS_STEP" "$SEATS_STATE" >&2' 'die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"'
@@ -558,6 +575,10 @@ rc=0
 ( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$REMOTE_OMISSION"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/provider-seat-control.log" || rc=$?
 RUN_SEQ=$((RUN_SEQ + 1))
 assert_eq "$rc" 1 'dropping the provider seat read fails the same omission row'
+rc=0
+( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$SEAT_HOST_PROJECTED"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/provider-seat-projected-control.log" || rc=$?
+RUN_SEQ=$((RUN_SEQ + 1))
+assert_eq "$rc" 1 'dropping provider seats fails the same hosted projected-reserve row'
 for seat in absent 0 true broken 01; do
   mark=""; [[ "$seat" == absent ]] || mark=$'\t'"seat=$seat"
   printf 'account=%s\tharness=claude\tsession-5h-pct=50%s\n' "$H/.aclaude" "$mark" > "$TMP_ROOT/remote-seats"
