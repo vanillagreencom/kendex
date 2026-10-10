@@ -216,9 +216,10 @@ fn the_explicit_override_lands_for_every_project_writer() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "fixture CLI launches must succeed")]
 fn global_writes_and_main_checkout_writes_keep_their_existing_paths() {
     for verb in ["refresh", "apply", "updates"] {
-        for target in ["global", "main"] {
+        for (target, lane_origin) in [("global", true), ("main", false), ("main", true)] {
             // Windows Known Folder home ignores fixture overrides, so global writes lack isolation.
             if cfg!(windows) && target == "global" {
                 continue;
@@ -236,7 +237,31 @@ fn global_writes_and_main_checkout_writes_keep_their_existing_paths() {
                 args.push("--global");
                 &fixture.linked
             };
-            let output = kendex(&fixture, cwd, &args);
+            let mut command = fixture.command(env!("CARGO_BIN_EXE_kendex"), cwd);
+            if lane_origin {
+                command.env("KENDEX_LANE_ORIGIN", &fixture.linked);
+            }
+            let before = snapshot(&fixture.root);
+            let output = command.args(&args).output().expect("kendex runs");
+            if target == "main" && lane_origin {
+                assert!(refusal(&output), "moved lane {args:?}: {output:?}");
+                assert_eq!(snapshot(&fixture.root), before, "moved refusal wrote");
+                let output = command
+                    .arg("--lane-refresh")
+                    .output()
+                    .expect("override runs");
+                assert!(
+                    output.status.success(),
+                    "moved override {args:?}: {output:?}"
+                );
+                assert!(
+                    fixture
+                        .main
+                        .join(".claude/skills/deploy/SKILL.md")
+                        .is_file()
+                );
+                continue;
+            }
             assert!(output.status.success(), "{target} {args:?}: {output:?}");
             assert!(
                 !String::from_utf8_lossy(&output.stderr).contains("lane-refresh: item="),
@@ -250,6 +275,29 @@ fn global_writes_and_main_checkout_writes_keep_their_existing_paths() {
             assert!(root.join(".claude/skills/deploy/SKILL.md").is_file());
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::expect_used, reason = "fixture shell and CLI must run")]
+fn a_marked_lane_moving_into_main_keeps_its_origin_and_refuses_before_writes() {
+    let fixture = world();
+    fixture.mark();
+    let before = snapshot(&fixture.root);
+    let output = fixture
+        .command("/bin/bash", &fixture.linked)
+        .env("KENDEX_LANE_ORIGIN", &fixture.linked)
+        .args([
+            "-c",
+            "(cd -- \"$1\" && \"$2\" refresh --scope project --yes --leave)",
+            "moved-lane",
+        ])
+        .arg(&fixture.main)
+        .arg(env!("CARGO_BIN_EXE_kendex"))
+        .output()
+        .expect("moved-to-main refresh runs");
+    assert!(refusal(&output), "moved-to-main: {output:?}");
+    assert_eq!(snapshot(&fixture.root), before, "moved refusal wrote");
 }
 
 #[test]

@@ -198,18 +198,18 @@ lane_launch() {
   # command, not the harness word, so the prefix is all this row matches on.
   # The value the prefix must name: the lane itself, or the home `home=` gives
   # a row whose launch builds one.
-  local want="clear; env $var='$prefix_home' "
+  local want="; env $var='$prefix_home' "
   if [[ -z "$template" ]]; then
     [[ "$harness" != codex ]] || want+="ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' "
     want+="$harness "
   fi
   grep -qF "$want" "$runs/tmux.log" && form=prefix
-  grep -qF "clear; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
+  grep -qF "; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
   for f in $fields; do
     case "$f" in
       rc) value="$rc" ;;
       form) value="$form" ;;
-      bare) value="$(grep -cF "clear; '$launcher' " "$runs/tmux.log" || true)" ;;
+      bare) value="$(grep -cF "; '$launcher' " "$runs/tmux.log" || true)" ;;
       verified) value="$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" ;;
       mismatch) value="$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" ;;
       closed) value="$(grep -c '^kill-window' "$runs/tmux.log" || true)" ;;

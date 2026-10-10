@@ -1,0 +1,1 @@
+- Refuse project refreshes from marked lanes after they change directory into the main checkout; `--lane-refresh` still permits refresh lanes.

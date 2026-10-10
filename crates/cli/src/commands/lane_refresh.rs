@@ -67,10 +67,17 @@ fn check_project_writes_in(
             "lane-refresh: item={item}; project writes belong in the repository rolling refresh pull request; pass --lane-refresh for a refresh lane"
         ))
     };
-    if lane_target.is_some()
-        && let Some(item) = marker(caller.as_ref())?
-    {
-        return Ok(lane_refusal(item));
+    if lane_target.is_some() {
+        if let Some(item) = marker(caller.as_ref())? {
+            return Ok(lane_refusal(item));
+        }
+        // orch's open-terminal exports the launch root inside the pane shell.
+        // A later cd changes the destination but preserves this lane origin.
+        if let Some(origin) = std::env::var_os("KENDEX_LANE_ORIGIN")
+            && let Some(item) = kendex_core::lane::marked_worktree(std::path::Path::new(&origin))?
+        {
+            return Ok(lane_refusal(item));
+        }
     }
     if lane_target.is_none() && caller.is_none() {
         return Ok(None);

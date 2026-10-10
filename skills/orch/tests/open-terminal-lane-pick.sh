@@ -768,6 +768,13 @@ marked() {
     [[ "$(cat "$wt/.git/lane-refresh")" != "$wt" ]] || refresh=root
   fi
   printf 'rc=%s marker=%s box=%s refresh=%s refused=%s' "$rc" "$marker" "$box" "$refresh" "$(grep -c '^open-terminal: marker-failed item=KEN-40 ' <<<"$out" || true)"
+  if [[ "${5:-}" == origin ]]; then
+    local command origin
+    command="$(sed -n 's/^clear; //p' "$runs/tmux.log")" || return 1
+    origin="$(env -u KENDEX_LANE_ORIGIN bash -c "$command; printf '%s' \"\$KENDEX_LANE_ORIGIN\"")" || return 1
+    [[ "$origin" != "$wt" ]] || origin=root
+    printf ' origin=%s' "${origin:-absent}"
+  fi
 }
 
 assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=made refresh=none refused=0" \
@@ -776,6 +783,15 @@ assert_eq "$(marked "$OPEN_TERMINAL" refresh "$OT_STUB_BIN/worktree" --lane-refr
   "a --lane-refresh launch also writes the refresh record holding the lane's root"
 assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none box=none refresh=none refused=1" \
   "a tree git cannot mark fails the item instead of launching it"
+
+assert_eq "$(marked "$OPEN_TERMINAL" origin "$OT_STUB_BIN/worktree" '' origin)" \
+  "rc=0 marker=root box=made refresh=none refused=0 origin=root" \
+  "the executed local launch exports its lane origin"
+ORIGIN_DROPPED="$(mutant_scripts ctl-origin-dropped open-terminal)/open-terminal" || exit 1
+mutate_file "$ORIGIN_DROPPED" 'cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt"); $cmd"' 'cmd="$cmd"'
+assert_eq "$(marked "$ORIGIN_DROPPED" origin-dropped "$OT_STUB_BIN/worktree" '' origin)" \
+  "rc=0 marker=root box=made refresh=none refused=0 origin=absent" \
+  "control: removing the export loses the executed launch origin"
 
 # The must-fail control for the option: a copy that reads --lane-refresh and
 # hands lane-marker nothing for it, so the refresh row above turns red.

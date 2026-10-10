@@ -95,6 +95,7 @@ PLAIN='^[[:alnum:]_./:@%=+,[:space:]&|;-]*$'
 NONPLAIN_KENDEX_RE='(^|[[:space:];()&|`'"'"'"$=])([^[:space:];()&|`'"'"'"$=]*/)?kendex($|[[:space:];()&|`'"'"'"])'
 # Text selection is a compatibility backstop for accidental quoted/compound
 # forms, not a claim about shell execution. The CLI guards parsed writes.
+# The CLI also checks orch's inherited lane origin after a lane moves into main.
 if [[ ! $COMMAND =~ $PLAIN ]]; then
   [[ $COMMAND =~ $NONPLAIN_KENDEX_RE ]] || exit 0
   NONPLAIN=yes

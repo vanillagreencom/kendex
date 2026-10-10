@@ -331,7 +331,7 @@ observe() {
       cmd_model)
         # The tmux stub logs events before the command; the model reader takes
         # one command line, not the complete event log.
-        value="$(sed -n '/^clear; env CLAUDE_CONFIG_DIR=/{p;q;}' "$RUN/tmux.log")" || return 1
+        value="$(sed -n '/^clear; .*env CLAUDE_CONFIG_DIR=/{p;q;}' "$RUN/tmux.log")" || return 1
         value="$(launch_choice_launch_model claude "$value")" || return 1
         value="${value:-none}"
         ;;

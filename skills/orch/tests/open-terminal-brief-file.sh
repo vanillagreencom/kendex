@@ -182,7 +182,7 @@ while IFS='|' read -r harness flags; do
   run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
     --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness "$harness" \
     --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
-  line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
+  line="$(typed_line "; $HARNESS_STUB ")" || line=""
   assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
     "$TMUX_BRIEF_ASSERTION ($harness)" "$OUT"
 done <<'ROWS'
@@ -225,7 +225,7 @@ ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" |
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \
   --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
-line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
+line="$(typed_line "; $HARNESS_STUB ")" || line=""
 APPEND_GOT="rc=$RC harness=$(received "$line")"
 assert_eq "$APPEND_GOT" "rc=0 harness=altered" \
   "control: Pi still launches but receives the appended mailbox-monitor instruction" "$OUT"
