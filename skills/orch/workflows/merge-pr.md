@@ -462,6 +462,8 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
    ```
 
+   For any close-out notice, follow [skill-rules.md § Lane mail](../references/skill-rules.md#coordination): send it after removal returns, from `[MAIN_REPO_ROOT]`.
+
    A foreign-lease refusal from the helper keeps the worktree too; carry its diagnostic onto § 6's worktree line. Where § 4 found an issue worktree, read its path last, whichever way the removal went:
 
    ```bash

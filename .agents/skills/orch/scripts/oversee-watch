@@ -284,7 +284,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   directive<TAB><item>[@clone]<TAB><to-lane.cursor reported read> <last line reported unread>[:<passes since unread reported>] <first id>
-#   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
+#   clone-root<TAB><item><TAB><the lane's main checkout, on its own host>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the mail pass reported>
 #   long-pass<TAB>fleet<TAB><the epoch the last long pass started at>
 #   mail-pass<TAB>fleet<TAB><the epoch the last full mail pass started at>
@@ -2159,6 +2159,17 @@ check_mail() { # [overseer]
       if [[ "$HOSTED_GONE" -eq 1 ]]; then
         HOSTED_GONE_ITEMS+="$item"$'\n'
         root="$HOSTED_CLONE"; cursor="$item@clone"
+      fi
+    elif [[ "$item" != overseer && -n "$root" ]]; then
+      if ! local_clone "$item" "$state"; then
+        lane_failure_report "$item" "$state"
+        mail_row_commit "$LANE_FAILURE_STATE"
+        state="$MAIL_SEEN"
+        continue
+      fi
+      state="$(lane_row_set clone-root "$state" "$item" "$LOCAL_CLONE")"
+      if [[ "$LOCAL_GONE" -eq 1 ]]; then
+        root="$LOCAL_CLONE"; cursor="$item@clone"
       fi
     fi
     args=(--item "$item")

@@ -782,8 +782,8 @@ Options:
                       while `lane-host resolve` answers local is refused as
                       hosted-without-host rather than read on this disk
   --root ITEM=PATH    the item's lane worktree on this disk, where its
-                      mailbox is read; a lane whose worktree sits outside
-                      this checkout is read nowhere else. Repeatable, once per
+                      mailbox is read; after removal, its mailbox is read
+                      at its main checkout. Repeatable, once per
                       item; a --hosted entry for the same item wins
   --handoff PATH      the overseer handoff file a successor's brief names,
                       passed through to `oversee-succeed` when this watch

@@ -116,6 +116,23 @@ local_root() { # ITEM
     return 0
   done
 }
+# A local lane's main checkout, retained for notices sent after merge-pr
+# removes its worktree. Call after local_root; sets LOCAL_CLONE and LOCAL_GONE.
+local_clone() { # ITEM STATE
+  LOCAL_GONE=0
+  if [[ -d "$LOCAL_ROOT" ]]; then
+    if ! LOCAL_CLONE="$("$SCRIPT_DIR/git-context" common-root "$LOCAL_ROOT" 2>"$WORK_DIR/local.err")"; then
+      lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/local.err")" "item=$1" "path=$LOCAL_ROOT"
+      return 1
+    fi
+  else
+    LOCAL_GONE=1
+    if ! LOCAL_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$LOCAL_CLONE" ]]; then
+      lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
+      return 1
+    fi
+  fi
+}
 # Whether a route of either type already names the item, for the state merge:
 # a state record of either type displaces a hand-passed entry, so a lane that
 # moved between this disk and a host is read where its record says.

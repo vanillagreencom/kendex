@@ -512,6 +512,42 @@ assert_eq "$WT_SEEN" "1" \
   "a note is reported once across a pass in the main checkout and a pass in a linked worktree of it" \
   "$TMP_ROOT/wt-watch-worktree"
 
+# A recorded local worktree is gone before the close-out notice lands in the
+# main checkout. Each mailbox starts with one row, so reusing its cursor loses it.
+local_removed_mail() { # CASE FIRST_PASS
+  local root pass out rc=0 first="$2"
+  new_case "$1"
+  root="$STUB_DIR/lane"
+  mail_reset KEN-93
+  git -C "$CASE_REPO_ROOT" worktree add -q --detach "$root"
+  mkdir -p "$root/tmp/lane-mail/KEN-93"
+  printf '{"id":"early-1","kind":"notice","at":"t","text":"Working."}\n' > "$root/tmp/lane-mail/KEN-93/to-overseer.jsonl"
+  jq -nc --arg root "$root" '{lanes:[{item:"KEN-93",status:"running",host:"local",mail_root:$root,harness:"claude"}]}' > "$STUB_DIR/local-state.json"
+  if [[ "$first" == learn ]]; then
+    run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" > "$STUB_DIR/run1.out" 2> "$STUB_DIR/run1.err"
+    assert_eq "$(grep -cx 'EVENT lane-notice KEN-93 early-1' "$STUB_DIR/run1.out" || :)" 1 "the standing local lane's mailbox is read"
+  fi
+  git -C "$CASE_REPO_ROOT" worktree remove --force "$root"
+  printf '{"id":"closing-1","kind":"notice","at":"t","text":"Merged."}\n' > "$CASE_REPO_ROOT/tmp/lane-mail/KEN-93/to-overseer.jsonl"
+  LOCAL_MAIL_FACTS=""
+  for pass in 2 3; do
+    rc=0
+    out="$(run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" 2> "$STUB_DIR/run$pass.err")" || rc=$?
+    LOCAL_MAIL_FACTS+="pass=$pass rc=$rc notice=$(grep -cx 'EVENT lane-notice KEN-93 closing-1' <<<"$out" || :) unknown=$(grep -cx 'oversee-watch: handoff-read-failed item=KEN-93 clone=unknown' "$STUB_DIR/run$pass.err" || :); "
+  done
+}
+local_removed_mail mail_local_removed learn
+assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=1 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "a removed local lane's closing notice is read from the main checkout once" "$STUB_DIR/run2.err"
+local_removed_mail mail_local_unknown absent
+assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=2 notice=0 unknown=1; pass=3 rc=0 notice=0 unknown=0; ' "a removed local lane without a recorded checkout reports clone=unknown and no notice" "$STUB_DIR/run2.err"
+LOCAL_MAIL_WATCH="$(mutant_scripts local-mail/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/local-mail/github"
+mutate_file "$LOCAL_MAIL_WATCH" 'elif [[ "$item" != overseer && -n "$root" ]]; then' 'elif false && [[ "$item" != overseer && -n "$root" ]]; then'
+WATCH_BIN="$LOCAL_MAIL_WATCH" local_removed_mail mail_local_removed_control learn
+assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "control: today's local route loses the close-out notice" "$STUB_DIR/run2.err"
+WATCH_BIN="$LOCAL_MAIL_WATCH" local_removed_mail mail_local_unknown_control absent
+assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "control: today's local route omits the unknown-checkout failure" "$STUB_DIR/run2.err"
+
 # Two overseers of two repositories on one host point OVERSEE_WATCH_STATE_DIR
 # at one directory, which is how their lane claims line up. Each reads its own
 # mailbox through that mailbox's own cursor, so neither replays its mail.
@@ -796,6 +832,11 @@ hosted_runs() { # CASE LANES KEEP RUNS [ENV...]
   HOSTED_RUNS="$runs"
   HOSTED_OUT=("" "" "" "")
   HOSTED_RC=()
+  HOSTED_NOTICE_IDS=()
+  mkdir -p "$HOSTED_DISK/srv/clone"
+  git -C "$HOSTED_DISK/srv/clone" init -q
+  git -C "$HOSTED_DISK/srv/clone" config gc.auto 0
+  git -C "$HOSTED_DISK/srv/clone" config maintenance.auto false
   for n in $lanes; do
     mkdir -p "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
     if [[ "$keep" != absent ]]; then
@@ -831,8 +872,11 @@ hosted_runs() { # CASE LANES KEEP RUNS [ENV...]
     [[ "$run" -eq 1 && "$keep" == gone ]] || continue
     for n in $lanes; do
       rm -rf -- "${HOSTED_DISK:?}/srv/lane/issue-$n"
-      printf '{"id":"closing-%s","kind":"notice","at":"t","text":"Merged."}\n' "$n" \
-        > "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n/to-overseer.jsonl"
+      printf 'Merged.\n' > "$STUB_DIR/closing.txt"
+      HOSTED_NOTICE_IDS[n]="$(cd "$HOSTED_DISK/srv/clone" && env -u ORCH_LANE_HOST -u ORCH_STATE_DIR \
+        "$LANE_MAIL" notice --item "issue-$n" --file "$STUB_DIR/closing.txt")"
+      HOSTED_NOTICE_IDS[n]="${HOSTED_NOTICE_IDS[n]#* id=}"
+      HOSTED_NOTICE_IDS[n]="${HOSTED_NOTICE_IDS[n]%% *}"
       printf '{"handoff":{"written_at":"t2"}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
     done
   done
@@ -846,7 +890,7 @@ hosted_facts() { # LANES
   for n in $1; do
     out+="issue-$n: handoff=$(grep -cx "EVENT handoff issue-$n" <<<"${HOSTED_OUT[1]}" || :)"
     if (( HOSTED_RUNS > 1 )); then
-      out+=" notice=$(grep -cx "EVENT lane-notice issue-$n closing-$n" <<<"${HOSTED_OUT[2]}" || :)"
+      out+=" notice=$(grep -cx "EVENT lane-notice issue-$n ${HOSTED_NOTICE_IDS[n]:-closing-$n}" <<<"$later" || :)"
       out+=" closed=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -c '^kept=' || :)"
       out+=" refused=$(grep -A1 -x "EVENT lane-close-refused issue-$n" <<<"$later" | grep -cx 'path=/srv/clone' || :)"
     fi
@@ -889,6 +933,12 @@ for row in \
   assert_eq "$(hosted_facts "$lanes")" "$expect" "$label" "$STUB_DIR/run${run:-2}.err"
   [[ -z "$exit" ]] || assert_eq "$(hosted_exit "$run" "$needle" "$event")" "$exit" "$label: exit status and keyed line" "$STUB_DIR/run$run.err"
 done
+
+CLONE_MAIL_WATCH="$(mutant_scripts clone-mail/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/clone-mail/github"
+mutate_file "$CLONE_MAIL_WATCH" '        root="$HOSTED_CLONE"; cursor="$item@clone"' '        : # root="$HOSTED_CLONE"; cursor="$item@clone"'
+WATCH_BIN="$CLONE_MAIL_WATCH" hosted_runs hosted_clone_mail_control 2 gone 3
+assert_eq "$(hosted_facts 2)" 'issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1 none=0' "control: without the hosted clone root switch the real closing notice is lost" "$STUB_DIR/run2.err"
 
 # A host that no longer held the item: the watch relays lane-close's
 # closed=absent line under lane-closed, never a kept=none it did not give. The
