@@ -38,7 +38,7 @@ if text.count(line) != 1:
     sys.exit("git-boundary: measurement-match-failed")
 probe = '''(cd "$SK_RUN_FROM" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C "$BASH" -c '
 printf "git-boundary-measurement: scratch=%s\\n" "$1"
-printf "git-boundary-measurement: pwd=%s\\n" "$(pwd -P)"
+printf "git-boundary-measurement: launch-directory=%s\\n" "$(pwd -P)"
 rc=0
 top="$(git rev-parse --show-toplevel 2>&1)" || rc=$?
 printf "git-boundary-measurement: git-exit=%s top=%s\\n" "$rc" "$top"
