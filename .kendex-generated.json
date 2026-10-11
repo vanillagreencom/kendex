@@ -739,6 +739,7 @@
   ".agents/skills/project-management/schemas/roadmap-plan-input.md",
   ".agents/skills/project-management/schemas/roadmap-plan-output.md",
   ".agents/skills/project-management/scripts/verification-scope",
+  ".agents/skills/project-management/templates/initiative-project-template.md",
   ".agents/skills/project-management/templates/issue-description-template.md",
   ".agents/skills/project-management/templates/parent-issue-template.md",
   ".agents/skills/project-management/workflows/audit-issues.md",
