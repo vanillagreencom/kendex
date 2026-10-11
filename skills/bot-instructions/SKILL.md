@@ -42,7 +42,7 @@ repo-effects:
 
 Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
 
-Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks on both nonzero codes, except the `unconfigured` refusal carrying its `renders=none` attestation, which [schemas/validators.md](schemas/validators.md) § `orphan` defines. `render`, the installer, prints that record and exits 0 having written nothing, so installing the package into a repository not yet configured finishes. The `commit-guards` chain runs `check --staged` itself where this package is installed.
+Exit codes: 0 clean, 1 findings, 2 could not complete. An unconfigured repository follows [schemas/validators.md](schemas/validators.md) § `orphan`, including its empty JSON ownership report. The `commit-guards` chain runs `check --staged` itself where this package is installed. A pre-commit lane blocks on nonzero codes, except an older check's `unconfigured` refusal carrying its `renders=none` attestation.
 
 ## What reads what
 

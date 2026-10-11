@@ -414,21 +414,21 @@ expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a tabl
   'a bot configuration scalar is refused as a table error naming the selected file' \
   check --repo "$repo"
 # A missing table is no schema finding: the package was never configured
-# here, and the record says so. The commit-guards pre-commit lane and
-# `kendex verify` read this line to leave such a repository alone; the
-# installer row in exit-codes.test.sh holds `render`. Without the refusal the run falls
-# through to the schema, which is the control.
+# here, and the successful empty result names the selected manifest. Without
+# that result the run falls through to the schema, which is the control.
 printf 'schema = 7\n' > "$repo/kendex-local.toml"
-unconfigured_raise='            raise Unconfigured(config_path)
+unconfigured_result='            self.config = Unconfigured(config_path)
+            self.build = render_mod.Build(None, {}, {}, None)
+            return
 '
-for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_raise" '')"; do
+for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_result" '')"; do
   out="$("$launcher" check --repo "$repo" 2>&1)"
   status=$?
   case "$launcher:$status:$(printf '%s\n' "$out" | grep -cxF 'bot-instructions: unconfigured=kendex-local.toml')" in
-    "$BI:2:1") ok 'a missing bot table is refused as unconfigured, naming the manifest read' ;;
-    "$BI:"*) bad 'a missing bot table is refused as unconfigured, naming the manifest read' "$status: $out" ;;
-    *:1:0) ok 'control: without the refusal a missing table is a schema finding' ;;
-    *) bad 'control: without the refusal a missing table is a schema finding' "$status: $out" ;;
+    "$BI:0:1") ok 'a missing bot table succeeds as unconfigured, naming the manifest read' ;;
+    "$BI:"*) bad 'a missing bot table succeeds as unconfigured, naming the manifest read' "$status: $out" ;;
+    *:1:0) ok 'control: without the empty result a missing table is a schema finding' ;;
+    *) bad 'control: without the empty result a missing table is a schema finding' "$status: $out" ;;
   esac
 done
 

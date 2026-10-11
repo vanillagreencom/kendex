@@ -85,7 +85,12 @@ class Context:
             stranded = vr.unconfigured_orphans(tree, config_path)
             if stranded:
                 raise ValidationFailed(stranded)
-            raise Unconfigured(config_path)
+            # The orphan scan proves this empty result. Keep it as the
+            # configuration state so render and every check mode agree;
+            # adopt still needs a configured set to take ownership of.
+            self.config = Unconfigured(config_path)
+            self.build = render_mod.Build(None, {}, {}, None)
+            return
         with _as_finding("toml-schema", config_path):
             self.config = config_mod.parse(
                 resolved.data.get("bot-instructions"), f"{config_path} [bot-instructions]"

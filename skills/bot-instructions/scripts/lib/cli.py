@@ -18,11 +18,11 @@ repository or spec root for a failure reading them, the argument for a usage
 refusal, the interpreter for a launcher refusal, the count for findings, and
 the `--input` path for `region-bounds`. It is not always a path.
 
-`unconfigured` names the manifest read; `errors.Unconfigured` says when it is
-raised and which callers read it. Its `renders=none` line is the attestation
-`validators.md` § `orphan` defines. On `render` the same two lines open a
-clean run on stdout, exit 0, that wrote nothing: `render` is the package's
-installer, and a repository not yet configured has nothing to install.
+`unconfigured` names the manifest read; `errors.Unconfigured` defines this
+empty state and its refusal on adopt. Its `renders=none` line is the attestation
+`validators.md` § `orphan` defines. On `render` and `check` the same two lines
+open a clean run on stdout, exit 0, that wrote nothing. `check --json` instead
+reports an empty owned-file set. `adopt` still refuses on stderr, exit 2.
 
 `region-input` is the one subject a person cannot open: the host writes the
 snapshot to a temporary file and unlinks it as soon as the child returns. The
@@ -173,7 +173,12 @@ def main(argv=None):
         ctx = run.Context(repo, work, spec_tree, spec_paths,
                           "render" if args.verb == "render" else "check",
                           spec_names=SPEC_FILES, launcher=launcher)
-        if args.verb == "render":
+        if isinstance(ctx.config, Unconfigured):
+            if args.verb == "adopt":
+                raise ctx.config
+            lines = [f"bot-instructions: {ctx.config.key}={ctx.config.subject}",
+                     f"bot-instructions: {ctx.config.attestation}", str(ctx.config)]
+        elif args.verb == "render":
             lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run)
         elif args.verb == "check":
             lines = verbs.check_verb(ctx)
@@ -193,13 +198,6 @@ def main(argv=None):
             print(finding, file=sys.stderr)
         return 1
     except BotInstructionsError as exc:
-        if isinstance(exc, Unconfigured) and args.verb == "render":
-            # `Context` raises this only after the orphan scan found nothing,
-            # so the attestation holds and a stranded render stays a finding.
-            print(f"bot-instructions: {exc.key}={exc.subject}")
-            print(f"bot-instructions: {exc.attestation}")
-            print(str(exc))
-            return 0
         # Could not complete, which is 2 in the exit convention the
         # commit-guards pre-commit lane reads: 0 clean, 1 findings, 2 the
         # check could not answer. Everything a validator can attribute to the

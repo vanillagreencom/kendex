@@ -658,8 +658,7 @@ done
 # The bots still load every marked render a manifest with no
 # `[bot-instructions]` table leaves behind, and no render removes one, so
 # `check --staged` reports each as `orphan`. Only a judged tree holding none is
-# the `unconfigured` refusal, the record the commit-guards pre-commit lane, a
-# consumer refresh and `kendex verify` read to leave a repository alone.
+# the successful `unconfigured` result. The JSON checker reports no owned files.
 # A row is `label|world|launcher|want`: `want` is `orphan`, whose finding paths
 # must be every staged file carrying the marker, or the `unconfigured` record.
 # Each control is a copy missing one half of the rule, on the row only that
@@ -736,7 +735,7 @@ while IFS='|' read -r label world launcher want; do
     "orphan:1:orphan ")
       if [ -n "$expected" ] && [ "$found" = "$expected" ]; then ok "$label"
       else bad "$label" "want [$expected]; found [$found]"; fi ;;
-    unconfigured:2:*)
+    unconfigured:0:*)
       # A control's world still stages marked files; the real run's must not.
       # The second line is the attestation the commit-guards lane requires.
       if { [ "$launcher" != STRANDED_LAUNCH ] || [ -z "$expected" ]; } &&

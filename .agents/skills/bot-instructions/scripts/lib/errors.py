@@ -1,6 +1,6 @@
 """Failure types.
 
-Every failure here fails a run. Nothing in this package warns: a warning on a
+Every raised failure here fails a run. Nothing in this package warns: a warning on a
 surface that fails silently is one more thing nobody reads.
 
 `InputError` is the input-side family — a value this package will not render.
@@ -66,14 +66,12 @@ class Unconfigured(InputError):
     """The resolved manifest declares no `[bot-instructions]` table, and
     nothing is left to judge: `validators.md` § `orphan` is the condition.
 
-    A refusal of its own rather than a `toml-schema` finding: such a repo has
-    nothing to render or judge, and a caller that runs every installed
-    package's render or check reads this key to leave that repo alone: a
-    consumer refresh, the commit-guards pre-commit lane and `kendex verify`.
-    `render`, the installer, prints the same record and exits 0.
+    `Context.config` holds this empty state after the orphan scan. Render and
+    check succeed with its record; JSON checks report no owned files.
+    Adopt raises it as a refusal because there is no configured set to own.
     The subject is the manifest that was read. The attestation says the
-    orphan scan ran and found nothing; a copy older than that scan raises
-    this refusal without it.
+    orphan scan ran and found nothing; a copy older than that scan reports
+    the refusal without it.
     """
 
     key = "unconfigured"
