@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for the header-shape guard. Under the reach guard's key, `issues
-# create` and `issues update --description` / `--description-file` refuse,
+# create`, `issues update --description` / `--description-file`, and `issues
+# bulk-update --description` refuse,
 # before any API call, a body whose first non-empty line is a `**Key**:` or
 # `Reached by:` header, and one with a header line over 500 characters; each
 # refusal names the line and its length. `issues complete` ticking boxes in an
@@ -70,6 +71,7 @@ assert_written() { # DESC OPERATION
 }
 assert_refused() { # DESC RULE LINE LENGTH
   assert_ne "$1 is refused" "$RC" 0
+  assert_eq "$1 emits no stdout" "$OUT" ""
   assert_eq "$1 refuses before any API call" "$(api_calls)" "0"
   assert_jq "$1 names the rule, the line and its length" "$ERR" \
     ".rule == \"$2\" and .line == $3 and .length == $4"
@@ -130,6 +132,44 @@ assert_written "a template-shaped update --description-file" issueUpdate
 run_linear issues update CC-1 --description ""
 assert_written "an update clearing the description" issueUpdate
 
+echo "=== bulk-update: the shared authored description ==="
+for form in split equals; do
+  for shape in opening long template boundary empty; do
+    rule=""
+    case "$shape" in
+      opening) description="$SOURCE_LINE"; rule=issue-header-opening; line=1; length="${#SOURCE_LINE}" ;;
+      long) description="$(printf '%s\n\n%s' "$OUTCOME" "$LONG")"; rule=issue-header-length; line=3; length=501 ;;
+      template) description="$(printf '%s\n\n%s' "$OUTCOME" "$SOURCE_LINE")" ;;
+      boundary) description="$(printf '%s\n\n%s' "$OUTCOME" "$(pad '**Symptom**: ' 500)")" ;;
+      empty) description="" ;;
+    esac
+    case "$form" in
+      split) description_args=(--description "$description") ;;
+      equals) description_args=(--description="$description") ;;
+    esac
+    run_linear issues bulk-update CC-1 CC-2 "${description_args[@]}"
+    if [ -n "$rule" ]; then
+      assert_refused "a bulk-update $form $shape description" "$rule" "$line" "$length"
+    else
+      assert_written "a bulk-update $form $shape description" issueUpdate
+      assert_jq "a bulk-update $form $shape description updates every issue" "$OUT" \
+        '.success == true and .updated == 2 and .failed == 0'
+      assert "a bulk-update $form $shape description writes the authored text" \
+        jq -s -e --arg desc "$description" \
+        '[.[] | select(.query | contains("issueUpdate")) | .variables.input.description] == [$desc, $desc]' "$CURL_LOG"
+    fi
+  done
+done
+
+run_linear issues bulk-update CC-1 --description "$SOURCE_LINE" --description="$OUTCOME"
+assert_written "a bulk-update replacing an invalid description option with a valid one" issueUpdate
+run_linear issues bulk-update CC-1 --description="$OUTCOME" --description "$SOURCE_LINE"
+assert_refused "a bulk-update replacing a valid description option with an invalid one" issue-header-opening 1 "${#SOURCE_LINE}"
+
+printf '%s\n' "$SOURCE_LINE" "$LONG" >"$FILED"
+run_linear issues bulk-update CC-1 --title "Keep the filed description"
+assert_written "a bulk-update with no authored description keeps a filed header-first body" issueUpdate
+
 echo "=== complete: ticking a body filed before the guard ==="
 printf '%s\n' "$SOURCE_LINE" "$LONG" '' '## Done when' '' '- [ ] first' >"$FILED"
 run_linear issues complete CC-1 --done-when-met 1
@@ -143,7 +183,11 @@ body "$SOURCE_LINE" "$REACH_LINE"
 REACH=unset
 run_linear issues create --title "Default key" --description-file "$TMP_ROOT/body.md"
 assert_refused "with no LINEAR_REQUIRE_REACH key a create opening with a header" issue-header-opening 1 "${#SOURCE_LINE}"
+run_linear issues bulk-update CC-1 --description "$SOURCE_LINE"
+assert_refused "with no LINEAR_REQUIRE_REACH key a bulk-update opening with a header" issue-header-opening 1 "${#SOURCE_LINE}"
 
 REACH=""
 run_linear issues create --title "Key off" --description-file "$TMP_ROOT/body.md"
 assert_written "with an empty LINEAR_REQUIRE_REACH a create opening with a header" issueCreate
+run_linear issues bulk-update CC-1 --description="$SOURCE_LINE"
+assert_written "with an empty LINEAR_REQUIRE_REACH a bulk-update opening with a header" issueUpdate

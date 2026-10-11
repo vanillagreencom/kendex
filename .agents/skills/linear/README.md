@@ -35,7 +35,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_TEAM` | Team target for creates and writes that do not address an issue, and the one team whose issues `linear.sh` creates or changes; [SKILL.md § Team Target](SKILL.md#team-target) |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
 | `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of; under a declared label taxonomy, the agent labels it declares |
-| `LINEAR_REQUIRE_REACH` | Enforces the `Reached by:` and `Symptom:` lines at create, and at create and on `issues update --description` or `--description-file` refuses a body whose first non-empty line is a `**Key**:` or `Reached by:` header or that has a header line over 500 characters; on when unset, off when empty |
+| `LINEAR_REQUIRE_REACH` | Enforces the `Reached by:` and `Symptom:` lines at create, and at create, on `issues update --description` or `--description-file`, and on `issues bulk-update --description` refuses a body whose first non-empty line is a `**Key**:` or `Reached by:` header or that has a header line over 500 characters; on when unset, off when empty |
 | `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
 | `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a rate-limited call, or of a query or attachment download answered 5xx or not at all, doubling after |
 | `KENDEX_USER_EMAIL` | Your email address, in the project's private env file; `issues activate` assigns an unassigned issue to the Linear user with that address |

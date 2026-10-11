@@ -148,7 +148,8 @@ Create Options:
   [env], create refuses a description with no `Reached by:` line, and a
   `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
   token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
-  Under the same key, create and update --description/--description-file
+  Under the same key, create, update --description/--description-file,
+  and bulk-update --description
   refuse a body whose first non-empty line is a header (a line-start
   `**Key**:` or `Reached by:`), and one with a header line over 500
   characters; each refusal names the line number and its length.
@@ -650,6 +651,7 @@ bulk_update_issues() {
     local from_stdin="false"
     local update_args=()
     local attach_paths=()
+    local description="" description_set="false"
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -664,6 +666,10 @@ bulk_update_issues() {
             # but each issue gets its own embed/attachment)
             update_args+=("$1" "$2")
             [[ "$1" != --attach ]] || attach_paths+=("$2")
+            if [[ "$1" == --description ]]; then
+                description="$2"
+                description_set="true"
+            fi
             shift 2
             ;;
         --state=* | --status=* | --labels=* | --label=* | --title=* | --description=* | --project=* | --parent=* | --milestone=* | --priority=* | --estimate=* | --assignee=* | --cycle=* | --sort-order=* | --attach=*)
@@ -671,6 +677,10 @@ bulk_update_issues() {
             local _key="${1%%=*}" _val="${1#*=}"
             update_args+=("$_key" "$_val")
             [[ "$_key" != --attach ]] || attach_paths+=("$_val")
+            if [[ "$_key" == --description ]]; then
+                description="$_val"
+                description_set="true"
+            fi
             shift
             ;;
         --remove-parent | --clear-cycle | --clear-estimate)
@@ -712,6 +722,7 @@ bulk_update_issues() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
+    [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1
     linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
 
     # Process each issue

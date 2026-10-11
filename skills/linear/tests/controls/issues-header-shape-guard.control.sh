@@ -57,3 +57,11 @@ control_expect "with an empty LINEAR_REQUIRE_REACH a create opening with a heade
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	[[ -n ${LINEAR_REQUIRE_REACH-1} ]] || return 0' \
 	'	[[ -n ${LINEAR_REQUIRE_REACH:-1} ]] || return 0'
+
+# 9. Bulk preflight. Keeping the per-issue check still sends a team lookup
+#    and nests the structured refusal inside the bulk results.
+control_expect "a bulk-update split opening description refuses before any API call"
+control_expect "a bulk-update equals long description names the rule, the line and its length"
+control_replace scripts/commands/issues.sh 1 \
+	'    [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1' \
+	'    [[ "$description_set" != "true" ]] || :'
