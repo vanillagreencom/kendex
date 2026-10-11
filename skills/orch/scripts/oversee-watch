@@ -1211,12 +1211,19 @@ close_hosted_lane() { # ITEM [--if-terminal]
   esac
 }
 
-close_finished_hosted_lane() { # LANE ROW KEY; updates check_lanes' asking_state and close_failed
+finished_hosted_lane_eligible() { # LANE; sets hosted lane identity
   hosted_lane_item "$1"
   # A worktree still standing belongs to a lane inside merge close-out,
   # or one the overseer resumes. Only its removed worktree admits close.
   if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
      && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then
+    return 0
+  fi
+  return 1
+}
+
+close_finished_hosted_lane() { # LANE ROW KEY; updates check_lanes' asking_state and close_failed
+  if finished_hosted_lane_eligible "$1"; then
     # Commit before the irreversible close so a stopped pass cannot repeat it.
     lane_row_commit "$asking_state"
     if ! close_hosted_lane "$LANE_ITEM"; then
@@ -4142,12 +4149,10 @@ check_lanes() {
         capacity=1
       fi
     else
-      hosted_lane_item "$lane"
       # Removed Pi rows cannot judge idle. Hold the merged-and-gone evidence
       # for two long passes so close-out can send its final clone notice.
-      if [[ "${LANE_ROWS[$i]:-}" == none && "$(lane_obs_state "$states" "$i")" == unjudged && -n "$HOSTED_ROOT" \
-            && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
-         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then
+      if [[ "${LANE_ROWS[$i]:-}" == none && "$(lane_obs_state "$states" "$i")" == unjudged ]] \
+         && finished_hosted_lane_eligible "$lane"; then
         if ! prior="$(lane_row_get lane-idle "$asking_state" "$lane")"; then
           die state-read-failed "" "lane=$lane" "row=lane-idle"
         fi

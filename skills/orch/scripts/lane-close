@@ -1312,21 +1312,25 @@ fi
 
 case "$state" in
   exited | windowless) ;;
-  unjudged)
-    { [[ "$harness" == pi ]] && record_merged && worktree_gone; } || { message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1; }
-    state=idle ;;
-  idle)
-    tracker_rc=0
-    tracker_terminal || tracker_rc=$?
+  idle | unjudged)
+    tracker_rc=1
+    if [[ "$state" == idle ]]; then
+      tracker_rc=0
+      tracker_terminal || tracker_rc=$?
+    elif [[ "$harness" != pi ]]; then
+      message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2
+      exit 1
+    fi
     case "$tracker_rc" in
       0) ;;
       # The overseer's record of the merge, with the worktree the lane's
       # close-out removes gone, says the lane's work is done: an item held
-      # open for a box the overseer checks itself leaves the lane idle on
-      # nothing, a hosted one's sandbox billing until the box is checked.
-      1) { record_merged && worktree_gone; } || { message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1; } ;;
+      # open for a box the overseer checks itself leaves no lane work,
+      # while a hosted one's sandbox bills until the box is checked.
+      1) { record_merged && worktree_gone; } || { message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1; } ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
-    esac ;;
+    esac
+    state=idle ;;
   walled)
     message lane-live "item=$ITEM" "state=walled" "pane=$pane_id" "account=$WALL_ACCOUNT" ${WALL_RESETS:+"resets=$WALL_RESETS"} >&2
     exit 1 ;;
