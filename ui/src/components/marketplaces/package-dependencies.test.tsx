@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { Children, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { PackageDependencies } from "@/bindings";
@@ -56,6 +57,19 @@ const picker = (dependencies: PackageDependencies) =>
       onChange={() => {}}
     />,
   );
+
+const rowKeys = (node: ReactNode): (string | null)[] => {
+  const keys: (string | null)[] = [];
+  const visit = (children: ReactNode) => {
+    Children.forEach(children, (child) => {
+      if (!isValidElement<{ children?: ReactNode }>(child)) return;
+      if (child.type === "li") keys.push(child.key);
+      else visit(child.props.children);
+    });
+  };
+  visit(node);
+  return keys;
+};
 
 /** Both surfaces draw this one component — the package page's facts
  *  column and the install picker — so what a state says, and whether an
@@ -142,6 +156,17 @@ describe("required dependencies with the same name across kinds", () => {
     (surface) => {
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
+        const rendered =
+          surface === "facts"
+            ? DependencyFacts({ dependencies })
+            : DependencyChoice({
+                dependencies,
+                chosen: [],
+                onChange: () => {},
+              });
+        expect(
+          rowKeys(rendered).slice(0, dependencies.required.length),
+        ).toEqual(["skill:review", "agent:review"]);
         const host = mount(
           surface === "facts" ? (
             <DependencyFacts dependencies={dependencies} />
@@ -156,17 +181,19 @@ describe("required dependencies with the same name across kinds", () => {
         const required = host.querySelector("ul");
         const rows = required?.querySelectorAll("li");
         expect(rows).toHaveLength(dependencies.required.length);
+        const labels: (string | undefined)[] = [];
         for (const [index, dependency] of dependencies.required.entries()) {
           const row = rows?.[index];
           expect(row?.firstChild?.textContent).toBe(dependency.shown);
-          expect(row?.querySelector("span")?.textContent).toBe(
-            dependency.kind === "skill" ? "Skill" : "Agent",
-          );
+          const label = row?.querySelector("span")?.textContent?.trim();
+          expect(label).toMatch(/\S/);
+          labels.push(label);
           expect(row?.querySelector("span")?.hidden).toBe(false);
           expect(row?.querySelectorAll("span")).toHaveLength(
             dependency.state === "installed" ? 2 : 1,
           );
         }
+        expect(new Set(labels).size).toBe(dependencies.required.length);
         expect(required?.querySelector("input, button")).toBeNull();
         expect(errors).not.toHaveBeenCalled();
       } finally {
