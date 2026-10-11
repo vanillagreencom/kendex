@@ -2852,6 +2852,9 @@ launch_finish() {
     # exits, so the shell stays to run it rather than exec the first.
     local run="exec $cmd"
     [[ "$RELAUNCH_ROUTE" != resume-or-fresh ]] || run="{ $cmd; }"
+    # An exported empty email wins over private files in the project loader.
+    # A lane has no person to assign when it activates its work item.
+    run="export KENDEX_USER_EMAIL='' && $run"
     # Keep the marked launch root when a lane's tool shell changes directory.
     run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
@@ -2907,6 +2910,7 @@ launch_finish() {
     cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
   fi
   if [[ "$LANE_HOST" == local ]]; then
+    cmd="export KENDEX_USER_EMAIL='' && $cmd"
     cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"
     if [[ -n "$brief_prompt_file" ]]; then
       # Login shells can change directory during startup. Keep the explicit
