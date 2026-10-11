@@ -594,8 +594,8 @@ assert_eq "a classifier that reads a missing list as not queue-only lets the lis
   "queue_only=false cause=queue-list-unreadable" \
   "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
 order_mutant="$(mutant queue-order change-class '  queue_only_of_paths' '  :' \
-  'if [ ! -s "$paths_file" ]; then' \
-  '[ ! -s "$paths_file" ] || queue_only_of_paths; if [ ! -s "$paths_file" ]; then')"
+  'if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then' \
+  '[ ! -s "$paths_file" ] || queue_only_of_paths; if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then')"
 assert_eq "a classifier that judges the class after the refusals loses it on a refusal" \
   "queue_only=true cause=paths-unread" \
   "$(queue_of "$(run_row "$order_mutant" inventory-invalid runtime/product.ts=2)")"
