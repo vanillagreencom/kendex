@@ -1489,7 +1489,18 @@ lane_copilot_allows_all() { # CMD [HARNESS]
 # pgrep's 0 and 1 are its two answers and anything else is the probe breaking.
 # pgrep, not `ps --ppid`, which is procps-only and rejected by BSD ps.
 lane_observed_dir() { # PANE_PID NAME
-  local name="$2" frontier next pid kids value rc found="" command
+  local name="$2" frontier next pid kids value rc found="" command name_re lib_dir
+  if [[ "$name" == CODEX_HOME ]]; then
+    # Standalone readers need the classifier without replacing caller globals.
+    name_re="$(
+      if ! declare -F lane_harness_process_re >/dev/null; then
+        lib_dir="$(dirname "${BASH_SOURCE[0]}")" || exit 2
+        # shellcheck source=lane-state.sh
+        source "$lib_dir/lane-state.sh" || exit 2
+      fi
+      lane_harness_process_re codex
+    )" || return 2
+  fi
   frontier="$(pgrep -P "$1" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; frontier=""; }
   while [[ -n "$frontier" ]]; do
     next=""
@@ -1500,7 +1511,7 @@ lane_observed_dir() { # PANE_PID NAME
       # commands, including Copilot's MainThread and Pi on CLAUDE_CONFIG_DIR.
       if [[ "$name" == CODEX_HOME ]]; then
         read -r command 2>/dev/null < "/proc/$pid/comm" || continue
-        [[ "$command" == codex ]] || continue
+        [[ "$command" =~ $name_re ]] || continue
       fi
       # A process that exits mid-walk takes its /proc entry with it; that is an
       # absent value, not a broken probe.

@@ -135,9 +135,14 @@ env -i PATH="$PATH" "${child_env[@]}" "$BIN/$CHILD_COMMAND" -c '\''printf "ready
 child=$!
 trap '\''kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true'\'' EXIT
 wait "$child"'
-  account_row() { # LIB NAME PARENT_COMMAND CHILD_COMMAND CHILD_HOME
+  account_row() { # LIB NAME PARENT_COMMAND CHILD_COMMAND CHILD_HOME [STATE_LIB]
     (
       source "$1"
+      # Production launchers load lane-state; direct readers do not. Both must
+      # retain the caller's state when they obtain the process classifier.
+      unset -f lane_harness_process_re
+      if [[ -n "${6:-}" ]]; then source "$6" || return 1; fi
+      WORKING_RE=account-fixture LANE_STOP_COUNT=account-fixture
       mkfifo "$TMP_ROOT/ready" "$TMP_ROOT/hold"
       exec 8<> "$TMP_ROOT/ready" 9<> "$TMP_ROOT/hold"
       env -i PATH="$PATH" "$2=$TMP_ROOT/picked" ACCOUNT_NAME="$2" BIN="$BIN" CHILD_COMMAND="$4" CHILD_HOME="$5" \
@@ -147,13 +152,18 @@ wait "$child"'
       trap 'kill "$pane_pid" 2>/dev/null || true; wait "$pane_pid" 2>/dev/null || true; rm -- "$TMP_ROOT/ready" "$TMP_ROOT/hold"' EXIT
       read -r -t 5 ready <&8
       [[ "$ready" == ready ]]
+      lane_observed_dir "$pane_pid" "$2" >/dev/null || return 1
+      [[ "$WORKING_RE" == account-fixture && "$LANE_STOP_COUNT" == account-fixture ]] || return 1
+      if [[ -z "${6:-}" ]]; then
+        ! declare -F lane_harness_process_re >/dev/null || return 1
+      fi
       tmux() { printf '%s\n' "$pane_pid"; }
       PATH="$BIN:$PATH"
       lane_account_check %1 "$2" "$TMP_ROOT/picked" prefix 1 || true
       printf '%s' "$LANE_ACCOUNT_RESULT"
     )
   }
-  # name|parent command|child command|child home|result|label
+  # name|parent command|child command|child home|result|label|optional state library
   # Copilot's native binary uses MainThread. lane_env_prefix emits
   # CLAUDE_CONFIG_DIR for Pi-on-Claude and Opencode as well as Claude.
   for row in \
@@ -167,16 +177,20 @@ wait "$child"'
     "CLAUDE_CONFIG_DIR|pi|pi|$TMP_ROOT/picked|verified|Pi-on-Claude on the picked home verifies" \
     "CLAUDE_CONFIG_DIR|pi|pi|$TMP_ROOT/default|mismatch|Pi-on-Claude on another home mismatches" \
     "CLAUDE_CONFIG_DIR|opencode|opencode|$TMP_ROOT/picked|verified|Opencode on the picked home verifies" \
-    "CLAUDE_CONFIG_DIR|opencode|opencode|$TMP_ROOT/default|mismatch|Opencode on another home mismatches"; do
-    IFS='|' read -r name parent_command child_command child_home expect label <<<"$row"
-    assert_eq "$(account_row "$LIB" "$name" "$parent_command" "$child_command" "$child_home")" "$expect" "$label"
+    "CLAUDE_CONFIG_DIR|opencode|opencode|$TMP_ROOT/default|mismatch|Opencode on another home mismatches" \
+    "CODEX_HOME|codex|node_repl|$TMP_ROOT/default|verified|the loaded shared classifier ignores the Codex helper without changing caller state|$SCRIPTS_DIR/lib/lane-state.sh"; do
+    IFS='|' read -r name parent_command child_command child_home expect label state_lib <<<"$row"
+    assert_eq "$(account_row "$LIB" "$name" "$parent_command" "$child_command" "$child_home" "$state_lib")" "$expect" "$label"
   done
   ACCOUNT_CONTROL="$(mutant_scripts helper-account lib/lane-launch.sh)" || exit 1
-  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" '[[ "$command" == codex ]] || continue' ':'
+  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" '[[ "$command" =~ $name_re ]] || continue' ':'
   assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh" CODEX_HOME codex node_repl "$TMP_ROOT/default")" mismatch \
     "control: reading every descendant lets node_repl replace the picked harness account"
   ACCOUNT_CONTROL="$(mutant_scripts non-codex-account lib/lane-launch.sh)" || exit 1
-  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" 'if [[ "$name" == CODEX_HOME ]]; then' 'if :; then'
+  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" \
+    $'\n  if [[ "$name" == CODEX_HOME ]]; then\n' \
+    $'\n  if :; then\n'
+  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" $'if [[ "$name" == CODEX_HOME ]]; then\n        read -r command' $'if :; then\n        read -r command'
   assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh" COPILOT_HOME MainThread MainThread "$TMP_ROOT/default")" unobserved:no-lane-variable \
     "control: filtering non-Codex process names hides a replaced Copilot account"
   ACCOUNT_CONTROL="$(mutant_scripts unset-codex-account lib/lane-launch.sh)" || exit 1
@@ -187,6 +201,18 @@ wait "$child"'
   mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" 'if [[ "$name" == CODEX_HOME || -n "$value" ]]; then' 'if :; then'
   assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh" COPILOT_HOME MainThread MainThread unset)" unobserved:no-lane-variable \
     "control: retaining an empty non-Codex reading hides the account still carried by its parent"
+  ACCOUNT_CONTROL="$(mutant_scripts classifier-account lib/lane-state.sh)" || exit 1
+  mutate_file "$ACCOUNT_CONTROL/lib/lane-state.sh" \
+    "    copilot) printf '%s\\n' '^(copilot|MainThread)\$' ;;" \
+    $'    codex) printf \'%s\\n\' \'^node_repl$\' ;;\n    copilot) printf \'%s\\n\' \'^(copilot|MainThread)$\' ;;'
+  for state_lib in "" "$ACCOUNT_CONTROL/lib/lane-state.sh"; do
+    assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh" CODEX_HOME codex node_repl "$TMP_ROOT/default" "$state_lib")" mismatch \
+      "control: the account reader follows the shared classifier for ${state_lib:-standalone loading}"
+  done
+  ACCOUNT_CONTROL="$(mutant_scripts caller-state-account lib/lane-launch.sh)" || exit 1
+  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" $'  printf \'%s\\n\' "$found"' $'  WORKING_RE=changed; printf \'%s\\n\' "$found"'
+  assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh" CODEX_HOME codex node_repl "$TMP_ROOT/default" || printf 'caller-state-rejected=%s' "$?")" caller-state-rejected=1 \
+    "control: a direct account read that changes caller state fails its fixture"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
