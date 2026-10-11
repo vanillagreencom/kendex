@@ -1,1 +1,0 @@
-- Keep user facts in the user's own skills or memory and return research to the caller when planner instructions or a tracker are unavailable.

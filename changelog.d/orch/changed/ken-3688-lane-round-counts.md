@@ -1,1 +1,0 @@
-- The lane age event and status report show separate review, fix receipt, validation, recorded restack and repeated class counts. Unavailable counts read `unread`. Lane status files have no write-side line cap. The overseer reads only the last non-empty lines to limit context use.

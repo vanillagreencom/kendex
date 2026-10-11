@@ -1,1 +1,0 @@
-- The Slack app manifest ships as `app-manifest.yaml`, linked from the Slack app setup instructions.

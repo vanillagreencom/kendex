@@ -1,1 +1,0 @@
-- Reduce startup work when mailbox readers resolve their worktree or checkout.

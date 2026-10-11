@@ -1,1 +1,0 @@
-- Mail delivery from a linked checkout finds the main checkout when either path contains a newline.
