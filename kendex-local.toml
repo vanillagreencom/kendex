@@ -565,6 +565,10 @@ harnesses = [
 source = "."
 harnesses = ["claude", "codex", "pi", "copilot"]
 
+[skills.youtube-publish]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+
 [skills.xcode-run]
 source = "."
 harnesses = [

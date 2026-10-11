@@ -1,0 +1,26 @@
+{
+  "sources": [
+    "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
+    "https://developers.google.com/youtube/v3/docs/commentThreads/insert",
+    "https://developers.google.com/youtube/v3/docs/comments/insert",
+    "https://developers.google.com/youtube/v3/docs/channels/list"
+  ],
+  "note": "Recorded documentation request/response shapes. Identifiers and media bytes are anonymized fixture values. No live product API call.",
+  "channel": "fixture-channel",
+  "user_email": "owner@example.invalid",
+  "issue": "FIX-1",
+  "video_hex": "6669787475726520766964656f",
+  "upload_body": {
+    "snippet": {"title": "Product demo", "description": "Synthetic demo", "categoryId": "22"},
+    "status": {"privacyStatus": "unlisted", "containsSyntheticMedia": true, "selfDeclaredMadeForKids": false}
+  },
+  "comment_body": {
+    "snippet": {"channelId": "fixture-channel", "videoId": "fixture-video", "topLevelComment": {"snippet": {"textOriginal": "Thanks for the question."}}}
+  },
+  "reply_body": {"snippet": {"parentId": "fixture-parent", "textOriginal": "Thanks for the question."}},
+  "channels_response": {"items": [{"id": "fixture-channel"}]},
+  "upload_headers": {"Location": "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=fixture"},
+  "upload_response": {"id": "fixture-upload", "status": {"privacyStatus": "private"}},
+  "comment_response": {"id": "fixture-comment"},
+  "reply_response": {"id": "fixture-reply"}
+}
