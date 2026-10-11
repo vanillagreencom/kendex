@@ -230,9 +230,10 @@ The long pass's events, checked and reported in this order:
                              parked.until_pr closed without merging. repo= is
                              in lower case. Reported once per selected
                              dependency or state change, recorded in the
-                             parked-until row. No heartbeat replay. The
-                             sandbox stays stopped and the record stays
-                             parked. Recovery instructions are in
+                             parked-until row. No heartbeat replay. This
+                             event does not start the sandbox. The terminal
+                             judge can close the lane later in the same pass.
+                             Recovery instructions are in
                              references/oversee-events.md
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
