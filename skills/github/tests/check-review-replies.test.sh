@@ -352,10 +352,18 @@ reply_body_of() {
 H6="${HEAD:0:6}"
 H7="${HEAD:0:7}"
 O7="${OTHER:0:7}"
+OVERVIEW_OTHER_ENTRY='review:5481548444'
 while IFS='|' read -r label body author commenter bound reply want; do
   [ -n "$label" ] || continue
   world "$author"
-  at_head "$(reply_body_of "$body")"
+  # GitHub can return multiple Copilot reviews at the same head. Each has
+  # its own REST id, even when the overview bodies are identical.
+  if [ "$body" = overview-pair ]; then
+    reviews_set "$(review copilot COMMENTED "$HEAD" "$OVERVIEW_BODY")" \
+      "$(review copilot COMMENTED "$HEAD" "$OVERVIEW_BODY" 5481548444)"
+  else
+    at_head "$(reply_body_of "$body")"
+  fi
   comments_set "$(comment "$commenter" "$(eval "printf 'Dispositions at %s:\n%b' \"$bound\" \"$reply\"")")"
   assert_eq "$(run)" "$(eval "printf '%s' \"$want\"")" "$label"
 done <<'ROWS'
@@ -389,6 +397,8 @@ a reasoned decline answers the overview|overview|author|author|$H7|\`$OVERVIEW_E
 a tracked issue answers the overview|overview|author|author|$H7|**$OVERVIEW_ENTRY** - Tracked: KEN-1400|$PASSED
 a label-only decline leaves the overview standing|overview|author|author|$H7|$OVERVIEW_ENTRY - Declined: frozen|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 a tracking reply without an issue leaves the overview standing|overview|author|author|$H7|$OVERVIEW_ENTRY - Tracked separately|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
+an answer to the first review leaves the second review's own token standing|overview-pair|author|author|$H7|$OVERVIEW_ENTRY - Fixed in $HEAD|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_OTHER_ENTRY
+an answer to the second review leaves the first review's own token standing|overview-pair|author|author|$H7|$OVERVIEW_OTHER_ENTRY - Fixed in $HEAD|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 ROWS
 
 # Two reviews whose section counts cancel, every parsed entry answered: the
@@ -577,6 +587,9 @@ mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR_AUTHOR [FILE]]
   assert_eq "$got" "$6" "must-fail: $1"
 }
 READ_FAILED='rc=2  check-review-replies: read-failed pr=7'
+mutant_row "with a constant overview id, answering one review clears the other" overview-id \
+  '            .entries += 1 | .list += ["review:\($id)"]' '            .entries += 1 | .list += ["review:5481571326"]' \
+  'reviews_set "$(review copilot COMMENTED "$HEAD" "$OVERVIEW_BODY")" "$(review copilot COMMENTED "$HEAD" "$OVERVIEW_BODY" 5481548444)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n%s - Fixed in %s" "$H7" "$OVERVIEW_ENTRY" "$HEAD")")"' "$PASSED"
 mutant_row "without overview counting, fleet#1176 passes as the old checker did" overview-count \
   '      | ($body | overview_verdict) as $verdict' '      | "" as $verdict' \
   'at_head "$(body_of overview)"' "$PASSED"
