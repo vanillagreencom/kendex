@@ -120,7 +120,7 @@ fn bare_cd_only_installs_on_shells_that_persist_between_calls() {
     let f = world();
     fs::write(
         f.source.join("hooks/block-bare-cd.sh"),
-        include_str!("../../../../hooks/block-bare-cd.sh"),
+        fs::read(test_util::checkout_root().join("hooks/block-bare-cd.sh")).unwrap(),
     )
     .unwrap();
     let manifest = f.project.join("kendex.toml");

@@ -264,6 +264,18 @@ receiver command|command|2|block-repo-copy: refused=cp|echo x | cp -r /repo/.git
 }
 command_position_rows
 skill_load_control executable-selection "$HOOK" 'command_text "${remaining%%|*}"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real cp'
+delivered_reader_rows() {
+  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"cp -r /repo/.git /tmp/copy"}}' 'block-repo-copy: refused=cp'
+}
+delivered_reader_rows
+skill_load_control native-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in */../../skills/*) continue ;; esac' \
+  HOOK delivered_reader_rows 'native-copy delivered reader'
+skill_load_control shared-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
+  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

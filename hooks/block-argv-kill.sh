@@ -105,7 +105,9 @@ reader=""
 for candidate in "${BASH_SOURCE[0]%/*}/../skills/commit-guards/scripts/lib/command-position.sh" \
   "${BASH_SOURCE[0]%/*}/../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
   "${BASH_SOURCE[0]%/*}/../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh"; do
+  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../../skills/commit-guards/scripts/lib/command-position.sh" \
+  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do
   if [ -f "$candidate" ]; then reader=$candidate; break; fi
 done
 [ -n "$reader" ] || refuse reader unavailable

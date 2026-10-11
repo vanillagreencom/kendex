@@ -279,5 +279,17 @@ cached git removal|command|0|-|git rm --cached "$HOME"
 }
 command_position_rows
 skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real rm'
+delivered_reader_rows() {
+  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"rm -rf $X/sub"}}' 'block-unsafe-rm: refused=recursive-rm'
+}
+delivered_reader_rows
+skill_load_control native-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in */../../skills/*) continue ;; esac' \
+  HOOK delivered_reader_rows 'native-copy delivered reader'
+skill_load_control shared-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
+  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

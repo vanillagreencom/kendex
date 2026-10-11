@@ -264,6 +264,18 @@ git heredoc data|command|0|-|cat <<'\''EOF'\''\ngit commit\ngit reset --hard\nEO
 }
 command_position_rows
 skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real git write'
+delivered_reader_rows() {
+  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' 'reviewer-read-only: refused=git-write'
+}
+delivered_reader_rows
+skill_load_control native-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in */../../skills/*) continue ;; esac' \
+  HOOK delivered_reader_rows 'native-copy delivered reader'
+skill_load_control shared-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
+  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

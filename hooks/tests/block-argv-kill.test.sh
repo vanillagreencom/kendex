@@ -130,6 +130,18 @@ kill heredoc data|command|0|-|cat <<'\''EOF'\''\npkill killall\nEOF
 }
 command_position_rows
 skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real pkill'
+delivered_reader_rows() {
+  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"pkill -f x"}}' 'block-argv-kill: refused=pkill'
+}
+delivered_reader_rows
+skill_load_control native-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in */../../skills/*) continue ;; esac' \
+  HOOK delivered_reader_rows 'native-copy delivered reader'
+skill_load_control shared-reader-lookup "$HOOK" \
+  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
+  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
+  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
 
 echo
 echo "block-argv-kill: $PASS passed, $FAIL failed"
