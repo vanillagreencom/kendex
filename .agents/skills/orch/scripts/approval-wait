@@ -588,6 +588,7 @@ if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then
 fi
 enter_base_checkout() {
   local base_root
+  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 2; }
   if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P); then
     approval_message base-checkout-invalid >&2
     return 2

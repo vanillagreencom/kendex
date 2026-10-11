@@ -757,7 +757,7 @@ table "$APPROVAL" \
   'unreadable review identities refuse without a request||STUB_APPROVAL_MODE=copilot_error,STUB_REVIEW_READ=fail|rc=1 status=error requests=0' \
   'an empty success body is no review evidence||STUB_APPROVAL_MODE=copilot_error,STUB_REVIEW_READ=empty|rc=1 status=error requests=0' \
   'a non-list body is no review evidence||STUB_APPROVAL_MODE=copilot_error,STUB_REVIEW_READ=invalid|rc=1 status=error requests=0' \
-  'missing retry context stops without a request||STUB_APPROVAL_MODE=copilot_error,STUB_NO_BASE_CHECKOUT=1|rc=2 stdout=empty requests=0' \
+  'missing retry context stops without a request||STUB_APPROVAL_MODE=copilot_error,STUB_NO_BASE_CHECKOUT=1|rc=2 stdout=empty requests=0 rules_reads=0' \
   'a failed mode read stops without a request||STUB_APPROVAL_MODE=copilot_error,STUB_BASE_MODE=fail|rc=2 stdout=empty requests=0' \
   'a REST reviewer mismatch consumes no request||STUB_APPROVAL_MODE=copilot_error,STUB_REST_REVIEWER=human|rc=1 status=timeout requests=0' \
   'an open thread routes before any retry||STUB_APPROVAL_MODE=copilot_error,STUB_THREADS_UNRESOLVED=1|rc=1 status=comments requests=0'
@@ -984,6 +984,11 @@ control wait-mode '[[ -n "$MODE" ]] || $RESOLVE_MODE || $REQUEST_REVIEW || { app
 control consumer-context '  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }' \
   '  : # [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }' \
   '1 --resolve-mode' 'STUB_REQUIRED_APPROVALS=1' 'rc=2 stdout=empty rules_reads=0'
+# shellcheck disable=SC2016 # the lines are matched literally, unexpanded
+control retry-base-context '  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 2; }' \
+  '  : # [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 2; }' \
+  '1 1 3 --json --mode approval' 'STUB_APPROVAL_MODE=copilot_error,STUB_NO_BASE_CHECKOUT=1' \
+  'rc=2 stdout=empty requests=0 rules_reads=0'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control approved-first '  if [ "$approved" = true ] && [ "$last_unresolved" -eq 0 ]; then' \
   '  if [ "$approved" = true ]; then' \
