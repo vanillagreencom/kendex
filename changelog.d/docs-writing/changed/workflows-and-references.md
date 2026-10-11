@@ -1,0 +1,1 @@
+- Docs-writing adds a reader-and-job test for choosing between skill workflows and references, with a split rule for files that hold both steps and contracts.
