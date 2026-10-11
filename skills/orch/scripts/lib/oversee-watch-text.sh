@@ -403,7 +403,7 @@ The long pass's events, checked and reported in this order:
                              first and whose fleet-log row names the send's
                              cause; the item waits on a hosted relaunch on its
                              branch
-  EVENT lane-long <item> age=<secs> review_rounds=<n> repeated_class_rounds=<n> stage=<step>
+  EVENT lane-long <item> age=<secs> review_rounds=<n> fix_receipts=<n> validation_runs=<n> restacks=<n> repeated_class_rounds=<n> stage=<step>
                              a running or parked --state record is
                              ORCH_WATCH_LANE_AGE_SECS past its launched_at,
                              which --relaunch and handoffs keep and a fresh
@@ -412,15 +412,11 @@ The long pass's events, checked and reported in this order:
                              failed, or `none`. Reported once per age interval
                              of ORCH_WATCH_LANE_AGE_SECS, including after a
                              relaunch; a late pass reports the current interval
-                             review_rounds adds the first internal panel,
-                             re-review cycles and comment-review iterations.
-                             repeated_class_rounds counts later distinct patch
-                             commits repeating a recorded cause or location,
-                             once per commit. A recurrence answer keeps the count.
-                             With no patch entry that count is `-`.
-                             Both counts are `-` for absent or unread state,
-                             a file-less lane, or a parked lane whose stopped
-                             disk is never read
+                             The counts are review_rounds, fix_receipts,
+                             validation_runs, restacks, repeated_class_rounds.
+                             Unavailable counts read unread. Definitions are
+                             in references/oversee-events.md, lane-long.
+                             A parked lane reads none of its stopped disk
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
                              the line: the remedy is one relaunch, which
                              reads the item's worktree and PR, not a screen

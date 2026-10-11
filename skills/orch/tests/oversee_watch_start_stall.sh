@@ -137,7 +137,7 @@ assert_eq "events=$EVENTS unread=$(grep -c '^oversee-watch: start-stall-unread i
   "events= unread=1" "a failed hosted read is noted and reports no stall" "$STUB_DIR/err"
 # lane-long reads a hosted lane's Step line through lane-host too.
 watch 12600 "${HOSTED_ENV[@]}"
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-5 age=12600 review_rounds=- repeated_class_rounds=- stage=none|EVENT lane-long issue-6 age=12600 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-5 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=none|EVENT lane-long issue-6 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "a hosted lane past the lane-long bound carries the Step line its host holds, or none" "$STUB_DIR/err"
 # A hosted read that failed is unread, never none: issue-6's host holds a Step
 # line, which a read that went through would carry.
@@ -150,7 +150,7 @@ write_state "$(launched issue-6 /srv/lane/issue-6 claude "$FIXTURE_HOST")"
 HOSTED_ENV=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK")
 watch 12600 "${HOSTED_ENV[@]}" LANE_HOST_STUB_CAT_STATUS=5 LANE_HOST_STUB_CAT_ITEM=issue-6 \
   LANE_HOST_STUB_CAT_PATH=/srv/lane/issue-6/tmp/lane-status-issue-6.md
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-6 age=12600 review_rounds=- repeated_class_rounds=- stage=unread" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-6 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=unread" \
   "a hosted lane whose status read failed is lane-long with stage=unread" "$STUB_DIR/err"
 
 echo "=== a lane whose kind writes no file starts with its own pull request ==="
@@ -189,16 +189,16 @@ long_state() { # STATUS_1 [RUNNING_AFTER_1]
 # crosses it, later passes, the stopped record a handoff leaves, and the
 # relaunch that renews running_at but keeps launched_at.
 for row in "running||12599|" \
-  "running||12600|EVENT lane-long issue-3 age=12600 review_rounds=- repeated_class_rounds=- stage=parked|EVENT lane-long issue-1 age=12600 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+  "running||12600|EVENT lane-long issue-3 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running||12660|" "stopped||15000|" "running|15060|15100|" "running|15060|16199|" \
-  "running|15060|16200|EVENT lane-long issue-2 age=12600 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+  "running|15060|16200|EVENT lane-long issue-2 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|15060|25199|" \
-  "running|15060|25200|EVENT lane-long issue-3 age=25200 review_rounds=- repeated_class_rounds=- stage=parked|EVENT lane-long issue-1 age=25200 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+  "running|15060|25200|EVENT lane-long issue-3 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|25300|25360|" \
-  "running|25300|28800|EVENT lane-long issue-2 age=25200 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+  "running|25300|28800|EVENT lane-long issue-2 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|25300|37799|" \
-  "running|25300|37800|EVENT lane-long issue-3 age=37800 review_rounds=- repeated_class_rounds=- stage=parked|EVENT lane-long issue-1 age=37800 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
-  "running|25300|63000|EVENT lane-long issue-3 age=63000 review_rounds=- repeated_class_rounds=- stage=parked|EVENT lane-long issue-1 age=63000 review_rounds=- repeated_class_rounds=- stage=dev round 1|EVENT lane-long issue-2 age=59400 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+  "running|25300|37800|EVENT lane-long issue-3 age=37800 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=37800 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
+  "running|25300|63000|EVENT lane-long issue-3 age=63000 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=63000 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1|EVENT lane-long issue-2 age=59400 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|25300|63060|"; do
   IFS='|' read -r status running age want <<<"$row"
   want="${row#*|*|*|}"
@@ -214,7 +214,7 @@ default_long_case() { # NAME [WATCH_BIN]
   WATCH_BIN="${2:-}" watch 12601
 }
 assert_default_long() {
-  assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+  assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
     "the unset default reports a lane aged 12601s" "$STUB_DIR/err"
 }
 new_case lane_long_below_default
@@ -227,34 +227,50 @@ assert_default_long
 echo "=== lane-long counts existing review and patch records ==="
 # The two fix writers append one {cause, commit} per fixed finding. Several
 # entries in one commit remain one patch round, including repeated causes.
-rounds_case() { # NAME STATE [WATCH_BIN]
+rounds_case() { # NAME STATE [WATCH_BIN] [MODE]
   local root
   new_case "$1"
   root="$(worktree issue-1 status)"
-  printf '%s\n' "$2" > "$root/tmp/workflow-state-issue-1.json"
-  write_state "$(launched issue-1 "$root" claude)"
+  [[ -z "$2" ]] || printf '%s\n' "$2" > "$root/tmp/workflow-state-issue-1.json"
+  case "${4:-}" in
+    fileless)
+      write_state "$(launched issue-1 "$root" claude claude-cloud)"
+      printf '7\tissue-1\tcloud lane\toctocat\tabc111\t## Lane status\n' > "$STUB_DIR/open.txt" ;;
+    parked) write_state "$(launched issue-1 "$root" claude | jq -c '.status = "parked" | .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T10:30:00Z"}')" ;;
+    *) write_state "$(launched issue-1 "$root" claude)" ;;
+  esac
   WATCH_BIN="${3:-}" watch 12601
 }
 REPEATED_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}'
 LOCATION_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111","location":" src/x.rs (`f`) "},{"cause":"stale count","commit":"bbb222","location":"src/x.rs (`f`)"}]}}'
-# NAME|STATE|REVIEW|REPEATED
+COUNTS_STATE='{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}]}'
+NO_STAGES_STATE="$(jq -c 'del(.stages)' <<<"$COUNTS_STATE")"
+# NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED
 for row in \
-  "two_bot_rounds|$REPEATED_STATE|2|1" \
-  "different_causes_one_location|$LOCATION_STATE|2|1" \
-  'one_location_one_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"aaa111","location":"src/x.rs (`f`)"}]}}|1|0' \
-  'ht_2098|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"8f27054b","location":"src/x.rs (`f`)"},{"cause":"b","commit":"e4ed9beb","location":"src/x.rs (`f`)"},{"cause":"c","commit":"70110a24","location":"src/x.rs (`f`)"},{"cause":"d","commit":"d48cc623","location":"src/x.rs (`f`)"}]}}|2|3' \
-  'unknown_locations|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"general"},{"cause":"b","commit":"bbb222","location":"general"}]}}|2|0' \
-  'new_symbol|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"bbb222","location":"src/x.rs (`g`)"}]}}|2|0' \
-  'internal_and_bot|{"first_panel":{"agents":["reviewer-error"]},"rereview_cycles":1,"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}|4|1' \
-  'no_classes|{"first_panel":{"agents":["reviewer-error"]},"rereview_cycles":1,"pr_comment_review":{"iterations":2}}|4|-' \
-  'same_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"aaa111"}]}}|1|0' \
-  'two_classes_one_round|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"stale count","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"},{"cause":"stale count","commit":"bbb222"}]}}|2|1' \
-  'initial_state|{"rereview_cycles":0,"pr_comment_review":{"iterations":0,"patched_causes":[]}}|0|-' \
-  'unread_state|{|-|-' \
-  'invalid_rounds|{"rereview_cycles":"unknown"}|-|-' ; do
-  IFS='|' read -r name state review repeated <<<"$row"
-  rounds_case "lane_long_$name" "$state"
-  assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=$review repeated_class_rounds=$repeated stage=dev round 1" \
+  "separate_counts|$COUNTS_STATE|5|3|2|4|1" \
+  "no_stages|$NO_STAGES_STATE|5|unread|2|4|1" \
+  "fileless|$COUNTS_STATE|unread|unread|unread|unread|unread" \
+  "parked|$COUNTS_STATE|unread|unread|unread|unread|unread" \
+  'no_validation_lists|{"stages":[]}|0|0|0|0|unread' \
+  'absent_state||unread|unread|unread|unread|unread' \
+  "two_bot_rounds|$REPEATED_STATE|2|unread|0|0|1" \
+  "different_causes_one_location|$LOCATION_STATE|2|unread|0|0|1" \
+  'one_location_one_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"aaa111","location":"src/x.rs (`f`)"}]}}|1|unread|0|0|0' \
+  'ht_2098|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"8f27054b","location":"src/x.rs (`f`)"},{"cause":"b","commit":"e4ed9beb","location":"src/x.rs (`f`)"},{"cause":"c","commit":"70110a24","location":"src/x.rs (`f`)"},{"cause":"d","commit":"d48cc623","location":"src/x.rs (`f`)"}]}}|2|unread|0|0|3' \
+  'unknown_locations|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"general"},{"cause":"b","commit":"bbb222","location":"general"}]}}|2|unread|0|0|0' \
+  'new_symbol|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"bbb222","location":"src/x.rs (`g`)"}]}}|2|unread|0|0|0' \
+  'internal_and_bot|{"first_panel":{"agents":["reviewer-error"]},"rereview_cycles":1,"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}|4|unread|0|0|1' \
+  'no_classes|{"first_panel":{"agents":["reviewer-error"]},"rereview_cycles":1,"pr_comment_review":{"iterations":2}}|4|unread|0|0|unread' \
+  'same_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"aaa111"}]}}|1|unread|0|0|0' \
+  'two_classes_one_round|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"stale count","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"},{"cause":"stale count","commit":"bbb222"}]}}|2|unread|0|0|1' \
+  'initial_state|{"rereview_cycles":0,"pr_comment_review":{"iterations":0,"patched_causes":[]}}|0|unread|0|0|unread' \
+  'unread_state|{|unread|unread|unread|unread|unread' \
+  'invalid_rounds|{"rereview_cycles":"unknown"}|unread|unread|unread|unread|unread' ; do
+  IFS='|' read -r name state review fixes validations restacks repeated <<<"$row"
+  stage='dev round 1'
+  case "$name" in fileless) stage=none ;; parked) stage=parked ;; esac
+  rounds_case "lane_long_$name" "$state" "" "$name"
+  assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=$review fix_receipts=$fixes validation_runs=$validations restacks=$restacks repeated_class_rounds=$repeated stage=$stage" \
     "$name: lane-long carries the recorded counts" "$STUB_DIR/err"
   case "$name" in unread_state|invalid_rounds)
     assert_file_contains "$STUB_DIR/err" 'oversee-watch: lane-long-rounds-unread item=issue-1' "$name: the unread count has a keyed notice" ;;
@@ -271,14 +287,14 @@ printf '%s\n' "$REPEATED_STATE" > "$REMOTE_DISK/srv/clone/tmp/workflow-state-iss
 write_state "$(launched issue-1 /srv/lane/issue-1 claude "$FIXTURE_HOST")"
 HOSTED_ENV=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK")
 watch 12601 "${HOSTED_ENV[@]}"
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=1 stage=review" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=1 stage=review" \
   "the hosted lane reads its clone's state" "$STUB_DIR/err"
 new_case lane_long_parked_rounds
 : > "$STUB_DIR/host.log"
 HOSTED_ENV=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK")
 write_state "$(launched issue-1 /srv/lane/issue-1 claude "$FIXTURE_HOST" | jq -c '.status = "parked" | .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T10:30:00Z"}')"
 watch 12601 "${HOSTED_ENV[@]}"
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=- repeated_class_rounds=- stage=parked" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked" \
   "a parked lane carries unavailable counts" "$STUB_DIR/err"
 assert_eq "reads=$(grep -c '^cat ' "$STUB_DIR/host.log" || true)" "reads=0" "a parked lane reads no stopped disk" "$STUB_DIR/err"
 
@@ -288,7 +304,7 @@ ROOT_1="$(worktree issue-1 status)"
 write_state "$(launched issue-1 "$ROOT_1" claude)"
 watch 12600
 write_state "$(launched issue-1 "$ROOT_1" claude | jq -c '.launched_at = "2026-08-15T13:30:00Z"')"
-for row in "25199|" "25200|EVENT lane-long issue-1 age=12600 review_rounds=- repeated_class_rounds=- stage=dev round 1" "28860|"; do
+for row in "25199|" "25200|EVENT lane-long issue-1 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" "28860|"; do
   IFS='|' read -r age want <<<"$row"
   watch "$age"
   assert_eq "events=$EVENTS" "events=$want" "a fresh launch reports only when its own age crosses the bound" "$STUB_DIR/err"
@@ -300,8 +316,8 @@ ROOT_1="$(worktree issue-1 status)"
 write_state "$(launched issue-1 "$ROOT_1" claude)"
 mkdir -p "$STATE_DIR"
 printf 'lane-long\tissue-1\t%s\n' "$LAUNCHED_EPOCH" > "$STATE_DIR/owner_repo__none"
-for row in "12660|" "25199|" "25200|EVENT lane-long issue-1 age=25200 review_rounds=- repeated_class_rounds=- stage=dev round 1" "28860|" \
-  "37800|EVENT lane-long issue-1 age=37800 review_rounds=- repeated_class_rounds=- stage=dev round 1"; do
+for row in "12660|" "25199|" "25200|EVENT lane-long issue-1 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" "28860|" \
+  "37800|EVENT lane-long issue-1 age=37800 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1"; do
   IFS='|' read -r age want <<<"$row"
   watch "$age"
   assert_eq "events=$EVENTS" "events=$want" "an older row suppresses interval one and permits later intervals" "$STUB_DIR/err"
@@ -317,7 +333,7 @@ step_case() {
   printf '# issue-1 lane status\n\n%s\n- PR: none\n' "$2" > "$root/tmp/lane-status-issue-1.md"
   write_state "$(launched issue-1 "$root" claude)"
   WATCH_BIN="${3:-}" watch 12600
-  STAGE="${EVENTS#EVENT lane-long issue-1 age=12600 review_rounds=- repeated_class_rounds=- stage=}"
+  STAGE="${EVENTS#EVENT lane-long issue-1 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=}"
 }
 # NAME|LINE|STAGE
 for row in "step_bare|Step: range validation|range validation" "step_dash|- Step: range validation|range validation" \
@@ -354,7 +370,7 @@ assert_eq "refused=$LANE_STALL_REFUSED" "refused=1" \
 new_case lane_long_bound
 write_state "$(launched issue-1 "$(worktree issue-1 status)" pi)"
 watch 61 ORCH_WATCH_LANE_AGE_SECS=60
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=61 review_rounds=- repeated_class_rounds=- stage=dev round 1" "ORCH_WATCH_LANE_AGE_SECS sets the bound" "$STUB_DIR/err"
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=61 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" "ORCH_WATCH_LANE_AGE_SECS sets the bound" "$STUB_DIR/err"
 watch 120 ORCH_WATCH_LANE_AGE_SECS=060
 assert_eq "refused=$(grep -c '^oversee-watch: lane-age-secs-invalid value=060$' "$STUB_DIR/err" || true)" "refused=1" \
   "a lane-long bound that is not a positive whole number refuses the watch" "$STUB_DIR/err"
@@ -371,28 +387,51 @@ if (FAIL=0; assert_default_long; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out";
 else
   assert_file_contains "$STUB_DIR/control.out" 'got:      events=' "control: the old default reddens the above-threshold row"
 fi
-COUNTS_WATCH="$(mutant_scripts lane-long-counts/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+COUNTS_WATCH="$(mutant_scripts lane-long-counts/orch lib/lane-gitfile.sh)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-long-counts/github"
 # shellcheck disable=SC2016
-mutate_file "${COUNTS_WATCH%/*}/lib/watch-host-kinds.sh" '($history.repeated | unique | length)' '(($history.repeated | unique | length) * 0)'
+mutate_file "${COUNTS_WATCH%/*}/lib/lane-gitfile.sh" '($history.repeated | unique | length)' '(($history.repeated | unique | length) * 0)'
 rounds_case lane_long_counts_mutant "$REPEATED_STATE" "$COUNTS_WATCH"
-if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=1 stage=dev round 1" counts-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
+if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=1 stage=dev round 1" counts-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
   fail "control: removing repeated rounds did not redden their event row"
 else
-  assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=0' \
+  assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=0' \
     "control: removing repeated rounds reddens their event row"
 fi
-LOCATION_WATCH="$(mutant_scripts lane-long-location/orch lib/watch-host-kinds.sh)/oversee-watch" || exit 1
+LOCATION_WATCH="$(mutant_scripts lane-long-location/orch lib/lane-gitfile.sh)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-long-location/github"
 # shellcheck disable=SC2016
-mutate_file "${LOCATION_WATCH%/*}/lib/watch-host-kinds.sh" 'and .location == $location' 'and false'
+mutate_file "${LOCATION_WATCH%/*}/lib/lane-gitfile.sh" 'and .location == $location' 'and false'
 rounds_case lane_long_location_mutant "$LOCATION_STATE" "$LOCATION_WATCH"
-if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=1 stage=dev round 1" location-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
+if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=1 stage=dev round 1" location-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
   fail "control: removing location matches did not redden their event row"
 else
-  assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 repeated_class_rounds=0' \
+  assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=0' \
     "control: removing location matches reddens their event row"
 fi
+# Each mutation changes the shared reader the event consumes.
+for name in fixes skips unread; do
+  case "$name" in
+    fixes) old='[.stages[] | select(.kind == "fix")] | length' new='.cycles' ;;
+    skips) old='(.restack_skips // [] | length)' new='0' ;;
+    unread) old='LANE_REVIEW_ROUNDS=unread' new='LANE_REVIEW_ROUNDS=0' ;;
+  esac
+  ROUND_WATCH="$(mutant_scripts "lane-round-$name/orch" lib/lane-gitfile.sh)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-round-$name/github"
+  mutate_file "${ROUND_WATCH%/*}/lib/lane-gitfile.sh" "$old" "$new"
+  state="$COUNTS_STATE"
+  expected='review_rounds=5 fix_receipts=3 validation_runs=2 restacks=4 repeated_class_rounds=1'
+  if [[ "$name" == unread ]]; then
+    state=''
+    expected='review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread'
+  fi
+  rounds_case "lane_round_${name}_mutant" "$state" "$ROUND_WATCH"
+  if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 $expected stage=dev round 1" round-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
+    fail "control: $name did not redden the event count row"
+  else
+    assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1' "control: $name reddens the event count row"
+  fi
+done
 # The status file never looked for: a lane that wrote its file is reported
 # stalled all the same.
 MUTANT_DIR="$TMP_ROOT/start-stall-mutant"
@@ -465,7 +504,7 @@ new_case lane_long_once_mutant
 write_state "$(launched issue-1 "$(worktree issue-1 status)" claude)"
 WATCH_BIN="$ONCE_WATCH" watch 12600
 WATCH_BIN="$ONCE_WATCH" watch 12660
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12660 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12660 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "control: without the reported key a lane past the bound is lane-long on every pass" "$STUB_DIR/err"
 # A fixed interval restores the older watch's once-per-launch behavior.
 REPEAT_DIR="$TMP_ROOT/lane-long-repeat"
@@ -493,7 +532,7 @@ for row in "running||12600" "stopped||15000" "running|15060|15100"; do
   write_state "$(launched issue-1 "$ROOT_1" claude "" "$running" | jq -c --arg s "$status" '.status = $s')"
   WATCH_BIN="$GAP_WATCH" watch "$age"
 done
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=15100 review_rounds=- repeated_class_rounds=- stage=dev round 1" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=15100 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "control: pruned by the running set, a relaunch after a handoff reports the lane again" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

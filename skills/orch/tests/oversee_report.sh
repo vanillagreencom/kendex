@@ -20,7 +20,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/oversee-report-fixture.sh"
 # waits on an ask and on red checks, KEN-3 on a post-PR stop. KEN-7 is still
 # preparing on its host. KEN-10 is parked on its host, its sandbox stopped
 # while #14 waits for the queue, so nothing reads its disk. KEN-3 has
-# validated twice, a full implement round and a range fix round; KEN-2 not yet.
+# recorded implement, fix and restack validation runs; KEN-2 not yet.
 seed_fleet() {
   new_case "$1"
   report -3600
@@ -32,8 +32,14 @@ seed_fleet() {
   echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
   echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test", "lint"]}]' > "$CASE/failing.json"
   item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]},
+    "first_panel": {}, "rereview_cycles": 1, "cycles": 7,
+    "pr_comment_review": {"iterations": 3, "patched_causes": [{"cause": "a", "commit": "aaa111"}, {"cause": "a", "commit": "bbb222"}]},
+    "stages": [{"kind": "implement"}, {"kind": "fix"}, {"kind": "fix"}, {"kind": "fix"}, {"kind": "review"}],
     "validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 3300, "lanes": "lint,test", "selection": "all"},
-      {"round_id": "r2", "kind": "fix", "mode": "range", "seconds": 290, "lanes": "lint", "selection": "subset"}]}'
+      {"round_id": "r2", "kind": "fix", "mode": "range", "seconds": 290, "lanes": "lint", "selection": "subset"},
+      {"round_id": "r3", "kind": "restack", "mode": "range", "seconds": 60},
+      {"round_id": "r4", "kind": "restack", "mode": "range", "seconds": 60}],
+    "restack_skips": [{}, {}]}'
   item_state KEN-2 '{"post_pr_stop": null}'
   printf '%s\n' "$(merged_pr 11 ken-1 -60 abcdef1234)" "$(merged_pr 13 ken-3 -7200 1234567abc)" \
     "$(merged_pr 19 ken-9 -60 9999999aaa)" "$(merged_pr 21 ken-1 -30 2121212aaa someone-else)" \
@@ -66,7 +72,11 @@ Running:
 
 Validation:
 - KEN-2: no validation run recorded
-- KEN-3: 60 min over 2 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint
+- KEN-3: 62 min over 4 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint, restack range 1 selection=unreported, restack range 1 selection=unreported; restack re-test skipped 2 times
+
+Rounds:
+- KEN-2: review_rounds=0 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=unread
+- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=2 restacks=4 repeated_class_rounds=1
 
 Use 1: none
 
@@ -84,6 +94,32 @@ Waiting on you:
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
   "Landed holds only the fleet item merged since the last report, Running each live, preparing or parked lane with its PR, the parked one's from its record, Validation each running lane's minutes in total and per run, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
+
+echo "=== render: round counts use the shared reader ==="
+for name in fixes skips; do
+  ROUND_REPORT="$(mutant_scripts "report-round-$name/orch" lib/lane-gitfile.sh)/oversee-report" || exit 1
+  ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/report-round-$name/github"
+  case "$name" in
+    fixes) old='[.stages[] | select(.kind == "fix")] | length' new='.cycles' ;;
+    skips) old='(.restack_skips // [] | length)' new='0' ;;
+  esac
+  mutate_file "${ROUND_REPORT%/*}/lib/lane-gitfile.sh" "$old" "$new"
+  seed_fleet "round_${name}_mutant"
+  REPORT_UNDER_TEST="$ROUND_REPORT" run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC" "0" "control: $name leaves the report readable"
+  if (FAIL=0; assert_eq "$OUT" "$WANT" round-control; [[ "$FAIL" -eq 0 ]]) > "$CASE/control.out"; then
+    fail "control: $name did not redden the report count row"
+  else
+    assert_file_contains "$CASE/control.out" '- KEN-3: review_rounds=5' "control: $name reddens the report count row"
+  fi
+done
+new_case rounds_no_state
+report -60
+fleet '' "$(lane KEN-3 running)"
+issue KEN-3 "Title 3" "Outcome 3"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_contains "$OUT" 'Rounds:
+- KEN-3: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread' "a running lane with no state has unread round counts"
 
 echo "=== render: Waiting on you reads the overseer mailbox and nothing else ==="
 seed_fleet owner_asks_mail
@@ -147,6 +183,8 @@ $ESCAPES_UNREAD
 Running: none
 
 Validation: none
+
+Rounds: none
 
 Use 1: none
 
@@ -700,12 +738,15 @@ seed_unreadable() {
 seed_unreadable mail_unreadable
 MARK="- KEN-8 mailbox unreadable (mail-read=KEN-8): lane-mail: host-unreachable=KEN-8 state=unknown"
 run -- render --state "$CASE/state.json" --repo owner/repo
+assert_contains "$OUT" '- KEN-8: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread' "a lane whose host did not answer has unread round counts"
 ROW10='| KEN-10 (#14, parked) | Title 10 | Outcome 10 \| kept |'
 ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
-VAL3='- KEN-3: 60 min over 2 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint'
+VAL3='- KEN-3: 62 min over 4 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint, restack range 1 selection=unreported, restack range 1 selection=unreported; restack re-test skipped 2 times'
+ROUND3='- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=2 restacks=4 repeated_class_rounds=1'
+ROUND8='- KEN-8: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread'
 VAL8='- KEN-8: validation unread, its host unreachable'
-WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
-  $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"
+WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" round3="$ROUND3" round8="$ROUND8" awk '{ print }
+  $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] } $0 == ENVIRON["round3"] { print ENVIRON["round8"] }' <<<"$WANT")"
 assert_eq "$RC|$OUT" "0|$WANT8
 $MARK" "render lists KEN-8 under Running, marks its validation unread and its mailbox under Waiting on you, and every other lane as before"
 printf 'One lane is unreadable.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
