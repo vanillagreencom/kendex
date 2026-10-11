@@ -18,7 +18,7 @@ name: Refresh kendex
   repository_dispatch:
     types: [kendex-refresh]
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch: {}
 
 jobs:

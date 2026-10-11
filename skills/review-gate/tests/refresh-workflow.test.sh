@@ -43,7 +43,7 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
       esac
     done
     cron="$(schedule_cron "$file")" || return 2
-    if [ "$cron" != '17 */6 * * *' ]; then
+    if [ "$cron" != '17 * * * *' ]; then
       printf 'caller=%s cron=%s\n' "$index" "$cron"
       failed=1
     fi
@@ -56,8 +56,8 @@ for file in "$TEMPLATE" "$CALLER"; do
 done
 
 # Each control uses the same assertions as the shipped callers.
-plant "$TEMPLATE" '    - cron: "17 */6 * * *"' '    - cron: "*/30 * * * *"' "$TMP_ROOT/template.yml"
-plant "$CALLER" '    - cron: "17 */6 * * *"' '    - cron: "*/30 * * * *"' "$TMP_ROOT/caller.yml"
+plant "$TEMPLATE" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
+plant "$CALLER" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
 
 while IFS='|' read -r shape expected_exit; do
   case "$shape" in
@@ -68,7 +68,7 @@ while IFS='|' read -r shape expected_exit; do
   result="$(check_cadence "$@")" || status=$?
   expected=''
   if [ "$shape" = unfixed ]; then
-    expected=$'caller=1 cron=*/30 * * * *\ncaller=2 cron=*/30 * * * *'
+    expected=$'caller=1 cron=17 */6 * * *\ncaller=2 cron=17 */6 * * *'
   fi
   if [ "$status" != "$expected_exit" ] || [ "$result" != "$expected" ]; then
     printf 'refresh-workflow: case=%s exit=%s result=[%s]\n' "$shape" "$status" "$result" >&2
