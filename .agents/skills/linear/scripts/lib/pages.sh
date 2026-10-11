@@ -183,7 +183,7 @@ linear_connection_fields() {
     issue:children) linear_children_fields "${LINEAR_CHILD_DEPTH:-1}" ;;
     issue:comments) printf '%s' 'id body createdAt updatedAt user { name email }' ;;
     issue:attachments) printf '%s' 'id url title' ;;
-    project:links|initiative:links) printf '%s' 'id label url' ;;
+    project:externalLinks|initiative:links) printf '%s' 'id label url' ;;
     project:relations) printf '%s' 'id type anchorType relatedAnchorType relatedProject { id name state progress }' ;;
     project:inverseRelations) printf '%s' 'id type anchorType relatedAnchorType project { id name state progress }' ;;
     project:projectUpdates) printf '%s' 'id body health createdAt user { name }' ;;

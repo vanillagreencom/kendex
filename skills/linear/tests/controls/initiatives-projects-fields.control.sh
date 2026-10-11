@@ -51,5 +51,23 @@ control_replace scripts/lib/common.sh 1 \
 
 control_expect 'initiatives: later-page duplicate skips'
 control_replace scripts/lib/pages.sh 1 \
-    '    project:links|initiative:links) printf '\''%s'\'' '\''id label url'\'' ;;' \
-    '    project:links|initiative:links) printf '\''%s'\'' '\''id label'\'' ;;'
+    '    project:externalLinks|initiative:links) printf '\''%s'\'' '\''id label url'\'' ;;' \
+    '    project:externalLinks|initiative:links) printf '\''%s'\'' '\''id label'\'' ;;'
+
+# Native owner and lead IDs must be verified before writes.
+control_expect 'initiatives-create-ownerId-refused: refuses'
+control_replace scripts/lib/common.sh 1 \
+    '        if [[ "$role" == Assignee ]]; then' \
+    '        if true; then'
+
+# Each requested link keeps its own label and URL.
+control_expect 'initiatives-create-link: parent and URL'
+control_replace scripts/lib/common.sh 1 \
+    '        vars=$(jq -cn --arg key "${entity}Id" --arg id "$id" --argjson link "$link" '\''{input: ($link + {($key): $id})}'\'') || return 1' \
+    '        vars=$(jq -cn --arg key "${entity}Id" --arg id "$id" --argjson link "$link" --argjson links "$links" '\''{input: ($links[0] + {($key): $id})}'\'') || return 1'
+
+# Project reads use Linear's externalLinks field.
+control_expect 'projects-list: succeeds'
+control_replace scripts/commands/projects.sh 1 \
+    '                externalLinks(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }' \
+    '                links(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }'

@@ -206,7 +206,7 @@ list_projects() {
                 lead { name }
                 teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
                 labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
-                links { pageInfo { hasNextPage endCursor } nodes { id label url } }
+                externalLinks(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }
                 url
                 createdAt
                 updatedAt
@@ -297,7 +297,7 @@ get_project() {
             url
             teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
             labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
-            links { pageInfo { hasNextPage endCursor } nodes { id label url } }
+            externalLinks(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }
             lead { name email }
             createdAt
             updatedAt

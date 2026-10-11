@@ -1081,7 +1081,8 @@ find_user_by_email() {
 
 # resolve_assignee_id REF — the id of the user an --assignee value names, on
 # stdout. `me` is the API key's own user, a user id is taken as given (the
-# form activate_issue passes once it has resolved the person), a value
+# form activate_issue passes once it has resolved the person). Owner and Lead
+# writes resolve IDs before mutation. A value
 # containing `@` is an email address (find_user_by_email), and anything else
 # is a name matched as a case-insensitive substring. A miss refuses: every
 # other resolver here fails closed, and dropping the field on an unresolvable
@@ -1089,7 +1090,14 @@ find_user_by_email() {
 resolve_assignee_id() {
     local ref="$1" role="${2:-Assignee}" result assignee_id
     if [[ "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
-        assignee_id="$ref"
+        if [[ "$role" == Assignee ]]; then
+            assignee_id="$ref"
+        else
+            local id_vars
+            id_vars=$(jq -cn --arg id "$ref" '{id: $id}') || return 1
+            result=$(graphql_pages 'query GetUserById($id: ID!, $after: String) { users(filter: {id: {eq: $id}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }' "$id_vars" users) || return 1
+            assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result") || return 1
+        fi
     elif [ "$ref" = "me" ]; then
         result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
         assignee_id=$(jq -r '.viewer.id // empty' <<<"$result") || return 1
@@ -1144,7 +1152,7 @@ linear_parse_entity_link() {
 
 # Links follow the entity write. A failed link leaves that write in place.
 linear_finish_entity_write() {
-    local result="$1" operation="$2" entity="$3" links="$4" normalized id query vars existing link url reply
+    local result="$1" operation="$2" entity="$3" links="$4" normalized id query vars existing link url reply connection=links
     normalized=$(normalize_mutation_response "$result" "$operation" "$entity") || return 1
     if [[ "$links" == '[]' ]]; then
         printf '%s\n' "$normalized"
@@ -1155,13 +1163,14 @@ linear_finish_entity_write() {
         return 1
     fi
     id=$(jq -er --arg op "$operation" --arg entity "$entity" '.[$op][$entity].id | strings | select(length > 0)' <<<"$result") || return 1
-    query="query EntityLinks(\$id: String!) { $entity(id: \$id) { id links { pageInfo { hasNextPage endCursor } nodes { id label url } } } }"
+    [[ "$entity" != project ]] || connection=externalLinks
+    query="query EntityLinks(\$id: String!) { $entity(id: \$id) { id $connection(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } } } }"
     vars=$(jq -cn --arg id "$id" '{id: $id}') || return 1
     if ! reply=$(graphql_query "$query" "$vars"); then
         jq -c '. + {partial: true}' <<<"$normalized"
         return 1
     fi
-    existing=$(jq -ce --arg entity "$entity" '.[$entity].links.nodes | arrays' <<<"$reply") || {
+    existing=$(jq -ce --arg entity "$entity" --arg connection "$connection" '.[$entity][$connection].nodes | arrays' <<<"$reply") || {
         jq -c '. + {partial: true}' <<<"$normalized"
         return 1
     }

@@ -340,7 +340,7 @@ format_projects_list() {
         lead: (.lead.name // ""),
         teams: [(.teams.nodes // [])[] | .name],
         labels: [(.labels.nodes // [])[] | .name],
-        links: [(.links.nodes // [])[] | {id, label, url}],
+        links: [(.externalLinks.nodes // [])[] | {id, label, url}],
         url: (.url // "")
     }]'
 }
@@ -363,7 +363,7 @@ format_project_single() {
         lead: (.lead.name // ""),
         teams: [(.teams.nodes // [])[] | .name],
         labels: [(.labels.nodes // [])[] | .name],
-        links: [(.links.nodes // [])[] | {id, label, url}],
+        links: [(.externalLinks.nodes // [])[] | {id, label, url}],
         url: (.url // ""),
         blocked_by: [(.relations.nodes // [])[] | select(.type == "dependency") | {id: .relatedProject.id, name: .relatedProject.name, state: .relatedProject.state, progress: .relatedProject.progress}],
         blocks: [(.inverseRelations.nodes // [])[] | select(.type == "dependency") | {id: .project.id, name: .project.name, state: .project.state, progress: .project.progress}]

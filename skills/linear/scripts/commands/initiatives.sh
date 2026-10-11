@@ -109,9 +109,9 @@ list_initiatives() {
                 targetDate
                 owner { name email }
                 leadTeam { id key name }
-                labels { pageInfo { hasNextPage endCursor } nodes { name } }
-                links { pageInfo { hasNextPage endCursor } nodes { id label url } }
-                projects { pageInfo { hasNextPage endCursor } nodes { id name state } }
+                labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+                links(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }
+                projects(first: 10) { pageInfo { hasNextPage endCursor } nodes { id name state } }
                 createdAt
                 updatedAt
             }
