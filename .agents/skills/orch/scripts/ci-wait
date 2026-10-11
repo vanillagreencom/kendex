@@ -180,7 +180,7 @@ failures (max 1 retry).
 
   <PR#>          pull request number (required)
   poll_interval  seconds between polls (default 180; do not go lower, the GitHub API budget is shared by every lane)
-  max_wait       total budget in seconds (default 600)
+  max_wait       total budget in seconds (default CI_WAIT_MAX_SECS, or 600)
   --json         emit the machine-readable result object on stdout
   --item ID      the lane whose new mail exits 5; no mail check without it
   --required-only  classify as GitHub gates the merge: only a classic context or workflow check the
@@ -279,6 +279,10 @@ JSON output (always when --json):
   }
 
 Environment:
+  CI_WAIT_MAX_SECS
+                default total wait budget in seconds (default 600).
+                Set it above the longest required job's run time.
+                A positional max_wait overrides this setting.
   CI_WAIT_NO_CHECKS_GRACE
                 seconds to keep polling before failing when no checks have
                 registered yet, counted from the start of the wait, or
@@ -365,7 +369,7 @@ fi
 
 PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-180}"
-MAX_WAIT="${POSITIONAL[2]:-600}"
+MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" CI_WAIT_MAX_SECS 600)}" || exit $?
 
 if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]] || [ "$PR_NUM" -lt 1 ]; then
   ci_message invalid-pr "$@" >&2

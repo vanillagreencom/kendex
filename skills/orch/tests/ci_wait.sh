@@ -434,7 +434,7 @@ run_wait() {
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   set +e
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u GH_REPO ${env_args[@]+"${env_args[@]}"} \
+    env -u GH_REPO -u CI_WAIT_MAX_SECS ${env_args[@]+"${env_args[@]}"} \
         STUB_GH_API_USER_COUNT_FILE="$RUN/api-user-calls" \
         STUB_RUN_STARTED="$(cat "$STUB_CLOCK")" \
         STUB_PR_CHECKS_COUNT_FILE="$RUN/checks-polls" \
@@ -515,18 +515,19 @@ observe() {
   printf '%s' "${got# }"
 }
 
-# stage SPEC — the repo-side fixture one row needs: `envlocal=<line>` writes
-# that line to .env.local (`envlocal=` removes it). Several items separate
-# with `;`. Every row's stage is applied from a clean repo.
+# stage SPEC — `envlocal=<line>` writes .env.local, `settings=<line>` writes
+# the [env] table in kendex.settings.toml. Several items separate with `;`.
+# Every row's stage is applied from a clean repo.
 stage() {
   local spec="$1" items item
-  rm -f "$TMP_ROOT/repo/.env.local"
+  rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/repo/kendex.settings.toml"
   [[ -n "$spec" ]] || return 0
   IFS=';' read -ra items <<<"$spec"
   for item in "${items[@]}"; do
     case "$item" in
       envlocal=) ;;
       envlocal=*) printf '%s\n' "${item#envlocal=}" > "$TMP_ROOT/repo/.env.local" ;;
+      settings=*) printf '[env]\n%s\n' "${item#settings=}" > "$TMP_ROOT/repo/kendex.settings.toml" ;;
       *) echo "stage: unknown item $item" >&2; exit 1 ;;
     esac
   done
@@ -558,6 +559,14 @@ JSON_SHORT='1 1 5 --json'
 # The script's own defaults for poll interval and budget: positional args
 # omitted, so a row using this reads whatever ci-wait defaults to.
 JSON_DEFAULTS='1 --json'
+
+echo "=== the default wait budget reads the effective setting ==="
+table '1 5 --json' \
+  'a configured budget times out with the pending check|||CI_WAIT_MAX_SECS=5,STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending elapsed_seconds=5 check.build=IN_PROGRESS' \
+  'a committed setting supplies the budget|settings=CI_WAIT_MAX_SECS = "5"||STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending elapsed_seconds=5 check.build=IN_PROGRESS' \
+  'a private setting supplies the budget|envlocal=CI_WAIT_MAX_SECS=5||STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending elapsed_seconds=5 check.build=IN_PROGRESS' \
+  'a positional budget overrides the setting||1 1 9 --json|CI_WAIT_MAX_SECS=5,STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending elapsed_seconds=9 check.build=IN_PROGRESS' \
+  'an unset setting keeps the portable budget||1 100 --json|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending elapsed_seconds=600 check.build=IN_PROGRESS'
 
 echo "=== the auth ladder: env token, keyring, bot token ==="
 # A stale inherited token is unset with a warning and the keyring tried; with
@@ -892,6 +901,7 @@ workflow_failed_bypass='elif any(.[]; (.conclusion | IN("success", "neutral", "s
 workflow_unreadable_match="then \$runs else error(\"incomplete workflow runs\") end' <<<\"\$runs\" 2>/dev/null); then\\n            echo '{\"state\":\"unreadable\",\"contexts\":[]}'"
 workflow_unreadable_bypass="then \$runs else error(\"incomplete workflow runs\") end' <<<\"\$runs\" 2>/dev/null); then\\n            echo '{\"state\":\"ready\",\"contexts\":[\"build\",\"request\"]}'"
 control_rows=(
+  'configured wait budget~MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" CI_WAIT_MAX_SECS 600)}"~MAX_WAIT="${POSITIONAL[2]:-600}"~CI_WAIT_MAX_SECS=5,STUB_PR_CHECKS_MODE=pending_always~rc=1 status=timeout verdict=pending elapsed_seconds=5 check.build=IN_PROGRESS~1 5 --json~rc=1 status=timeout verdict=pending elapsed_seconds=600 check.build=IN_PROGRESS'
   "head progress~$head_reset~if false; then~STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_NEXT_HEAD_SHA=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"
   "head window~$head_reset~if false; then~STUB_PR_CHECKS_SEQUENCE=green,STUB_NEXT_HEAD_SHA=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"
   "same-head completion~if [ \"\$seen_in_progress\" = true ]; then~if [ \"\$seen_in_progress\" = false ]; then~STUB_PR_CHECKS_SEQUENCE=pending:green~rc=0 verdict=pass elapsed_seconds=30"

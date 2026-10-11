@@ -97,6 +97,10 @@ REVIEW_GATE_REFRESH_AUTHOR = ""
 # begins. A value that is not a whole number of seconds waits the default.
 CI_WAIT_NO_CHECKS_GRACE = "600"
 
+# Default CI wait budget in seconds. Set it above the longest required job's
+# run time. A positional max_wait overrides this setting.
+CI_WAIT_MAX_SECS = "600"
+
 # How many times a lane may try to fix a failing build before a person
 # takes over.
 CI_FIX_MAX_CYCLES = "6"

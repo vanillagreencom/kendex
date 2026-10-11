@@ -49,6 +49,9 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # with slow dispatch.
 CI_WAIT_NO_CHECKS_GRACE = "600"
 
+# Wait past the observed 50 to 70 minute macOS jobs.
+CI_WAIT_MAX_SECS = "5400"
+
 # Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 
