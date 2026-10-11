@@ -23,7 +23,8 @@
 #      arguments the template passes, fed to aggregate-needs with the needs
 #      the template's own outputs make, accept a skipped lane only where the
 #      classifier succeeded and `lanes` or the lane's verdict was false, and
-#      CI runs on both events whatever its needs did.
+#      CI runs on both events whatever its needs did. Its helper runs from
+#      an unconditional default-branch checkout and a missing helper fails.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package or its required dependencies ship.
 #   5. the steps the classifier can live without: the render-reach, kendex
@@ -36,6 +37,7 @@
 #      PR adds a row excluding every path.
 #   7. concurrency: two heads of one PR share a group and cancel, while
 #      merge-group and default-branch runs each keep their own group.
+#   8. checkout: every discovered checkout uses the adopted current major.
 # Must-fail arms plant a lane condition without its status function, one
 # running only on a true verdict, one without its `lanes` term, CI without
 # the waiver, a lane output forwarding the action's `lanes` in place of the
@@ -267,8 +269,8 @@ assert_eq "the class output forwards the action's proof" render \
 # The aggregate step's arguments after its RESULTS, one per line, read out
 # of the step as the shell would split them, "$WAIVER" still unexpanded.
 aggregate_args() { # TEMPLATE
-  awk '/aggregate-needs$/ { on = 1; next } on && !/^          / { exit } on { print }' "$1" |
-    tr ' ' '\n' | grep -v '^$' | grep -vxF -- '--results' | grep -vxF -- '"$RESULTS"' || true
+  awk '/^          \.agents\/skills\/harness-ci\/scripts\/aggregate-needs( \\)?$/ { on = 1; next } on && !/^          / { exit } on { print }' "$1" |
+    tr ' ' '\n' | grep -v '^$' | grep -vxF -- '\' | grep -vxF -- '--results' | grep -vxF -- '"$RESULTS"' || true
 }
 ARGS="$(aggregate_args "$TEMPLATE")"
 [ -n "$ARGS" ] || { echo "no aggregate-needs arguments read out of $TEMPLATE" >&2; exit 1; }
@@ -409,6 +411,105 @@ credential_step() { # TEMPLATE KEY
     step && body && /^          / { sub(/^          /, ""); print }
   ' "$1"
 }
+
+# Read the aggregate's shell and directory from the step that invokes it.
+aggregate_step() { # TEMPLATE KEY
+  awk -v key="$2" '
+    function emit() {
+      if (body ~ /(^|\n)\.agents\/skills\/harness-ci\/scripts\/aggregate-needs( |\n)/) {
+        if (key == "body") printf "%s", body
+        else if (key == "working-directory") print work
+      }
+    }
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
+    !in_job { next }
+    /^      - / { emit(); body = ""; work = ""; in_body = 0 }
+    /^        working-directory:/ { work = $2 }
+    /^        run: \|$/ { in_body = 1; next }
+    in_body && /^          / { line = $0; sub(/^          /, "", line); body = body line "\n" }
+    END { emit() }
+  ' "$1"
+}
+
+# The helper's checkout must use the default branch on every event.
+aggregate_checkout() { # TEMPLATE -> ref|condition of the helper's directory
+  local work
+  work="$(aggregate_step "$1" working-directory)" || return 1
+  [ -n "$work" ] || return 1
+  awk -v work="$work" '
+    function emit() { if (checkout && path == work) print ref "|" condition }
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
+    !in_job { next }
+    /^      - / { emit(); checkout = 0; path = "."; ref = ""; condition = "" }
+    /uses: actions\/checkout@/ { checkout = 1 }
+    /^        if:/ { condition = $0; sub(/^        if: /, "", condition) }
+    checkout && /^          path:/ { path = $2 }
+    checkout && /^          ref:/ { ref = $0; sub(/^          ref: /, "", ref) }
+    END { emit() }
+  ' "$1"
+}
+check_aggregate_checkout() { # TEMPLATE
+  assert_eq "the skip judge's directory is an unconditional default-branch checkout" \
+    '${{ github.event.repository.default_branch }}|' "$(aggregate_checkout "$1")"
+  [ "$FAIL" -eq 0 ]
+}
+check_aggregate_checkout "$TEMPLATE"
+plant "$TEMPLATE" '        working-directory: guards' '        working-directory: subject' "$SANDBOX/subject-aggregate.yml" ci line
+plant "$TEMPLATE" '          path: guards' '          path: guards
+        if: github.event_name == '\''pull_request'\''' "$SANDBOX/pr-only-aggregate.yml" ci line
+for control in subject-aggregate pr-only-aggregate; do
+  status=0
+  (FAIL=0; check_aggregate_checkout "$SANDBOX/$control.yml") >"$SANDBOX/$control.log" 2>&1 || status=$?
+  assert_eq "must-fail: the trusted aggregate contract rejects $control" 1 "$status"
+done
+
+# Execute the template's aggregate step. The subject helper would accept a
+# failed classifier, while the real helper in guards rejects it.
+aggregate_root="$SANDBOX/aggregate-step"
+mkdir -p "$aggregate_root/guards/.agents/skills/harness-ci/scripts" "$aggregate_root/subject/.agents/skills/harness-ci/scripts"
+cp "$AGGREGATE_NEEDS" "$aggregate_root/guards/.agents/skills/harness-ci/scripts/aggregate-needs"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$aggregate_root/subject/.agents/skills/harness-ci/scripts/aggregate-needs"
+chmod +x "$aggregate_root/subject/.agents/skills/harness-ci/scripts/aggregate-needs"
+run_aggregate_step() { # TEMPLATE -> exit; GitHub error annotation paths
+  local work body status=0
+  work="$(aggregate_step "$1" working-directory)" || return 1
+  body="$(aggregate_step "$1" body)" || return 1
+  [ -n "$work" ] && [ -n "$body" ] || return 1
+  (cd -- "$aggregate_root/$work" && env -i PATH="$PATH" \
+    RESULTS='{"changes":{"result":"failure"},"test":{"result":"skipped"}}' WAIVER=true \
+    "$BASH" -e -o pipefail -c "$body") >"$aggregate_root/out" 2>&1 || status=$?
+  printf 'exit=%s\n' "$status"
+  sed -n 's/^::error::.*\(guards\/\.agents\/skills\/harness-ci\/scripts\/aggregate-needs\)$/error-path=\1/p' "$aggregate_root/out"
+}
+assert_eq "the default-branch helper rejects an unclassified skip" exit=1 "$(run_aggregate_step "$TEMPLATE")"
+assert_eq "must-fail: the subject helper accepts an unclassified skip" exit=0 "$(run_aggregate_step "$SANDBOX/subject-aggregate.yml")"
+rm "$aggregate_root/guards/.agents/skills/harness-ci/scripts/aggregate-needs"
+check_missing_aggregate() { # TEMPLATE
+  assert_eq "a missing default-branch helper fails with its GitHub error path" 'exit=1
+error-path=guards/.agents/skills/harness-ci/scripts/aggregate-needs' "$(run_aggregate_step "$1")"
+  [ "$FAIL" -eq 0 ]
+}
+check_missing_aggregate "$TEMPLATE"
+plant "$TEMPLATE" 'if [ ! -x .agents/skills/harness-ci/scripts/aggregate-needs ]; then' \
+  'if false; then' "$SANDBOX/no-missing-helper-error.yml" ci
+status=0
+(FAIL=0; check_missing_aggregate "$SANDBOX/no-missing-helper-error.yml") >"$SANDBOX/no-missing-helper-error.log" 2>&1 || status=$?
+assert_eq "must-fail: missing-helper evidence rejects an absent annotation guard" 1 "$status"
+
+# Discover every checkout, so a new step also follows the adoption policy.
+check_checkout_major() { # TEMPLATE
+  local refs
+  refs="$(awk '/^[[:space:]-]*uses: actions\/checkout@/ { for (i = 1; i <= NF; i++) if ($i ~ /^actions\/checkout@/) print $i }' "$1")" || return 1
+  [ -n "$refs" ] || return 1
+  assert_eq "every discovered checkout uses the current major" "" \
+    "$(printf '%s\n' "$refs" | grep -vxF actions/checkout@v7 || true)"
+  [ "$FAIL" -eq 0 ]
+}
+check_checkout_major "$TEMPLATE"
+plant "$TEMPLATE" actions/checkout@v7 actions/checkout@v4 "$SANDBOX/old-checkout.yml" test
+status=0
+(FAIL=0; check_checkout_major "$SANDBOX/old-checkout.yml") >"$SANDBOX/old-checkout.log" 2>&1 || status=$?
+assert_eq "must-fail: the checkout policy rejects an old major" 1 "$status"
 
 # Both the installer and scanner in the PR are no-ops, and its exclusion
 # list excludes every path. The credential is assembled at runtime, so the

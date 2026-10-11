@@ -6,6 +6,27 @@ Every shape passes the event and the endpoints through `env:` rather than interp
 
 Every classifier checkout uses `fetch-depth: 0`. The classifier diffs two real commits; a shallow clone holds neither endpoint. An aggregate checkout does not need history.
 
+## Action pinning
+
+Review holds these rules when a consumer adopts or changes a workflow:
+
+- GitHub-owned `actions/*` use a major tag, such as `actions/checkout@v7`. A moved tag can execute changed code without a consumer commit. A harmful move by GitHub is unlikely. The cost is trust in GitHub's tag updates and review of major upgrades.
+- Third-party actions use a full commit SHA with the version in a trailing comment. A moved third-party tag can execute unreviewed code with the job's permissions. Its likelihood depends on the publisher and its account security. The cost is a reviewed pin update for each release.
+- This organization's own actions use the default-branch ref, such as `vanillagreencom/kendex/.github/actions/change-class@main`. That ref has the same trust as the default-branch checkout. A harmful change needs an incorrect or compromised merge to that branch. The cost is accepting its reviewed updates before the consumer's next refresh.
+
+Enable GitHub's Dependabot `github-actions` ecosystem in the consumer's `.github/dependabot.yml`. Dependabot opens update pull requests for action tags and commit pins. Review those updates under the rules above. Add this entry to an existing `updates` list, or use this file when none exists:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+```
+
+[GitHub's Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference) define the configuration.
+
 ## The endpoint expressions
 
 ```yaml
@@ -48,7 +69,7 @@ jobs:
     outputs:
       harness_only: ${{ steps.classify.outputs.harness_only }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: classify
@@ -100,7 +121,7 @@ jobs:
     name: CI
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: classify
@@ -137,14 +158,21 @@ Two rules, both about a check that never appears.
     if: always()
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: guards
           persist-credentials: false
       - name: the classifier ran and every lane that skipped was told to
+        working-directory: guards
         env:
           RESULTS: ${{ toJSON(needs) }}
           HARNESS_ONLY: ${{ needs.changes.outputs.harness_only }}
         run: |
+          if [ ! -x .agents/skills/harness-ci/scripts/aggregate-needs ]; then
+            echo "::error::missing default-branch helper: guards/.agents/skills/harness-ci/scripts/aggregate-needs"
+            exit 1
+          fi
           printf '%s\n' "$RESULTS" |
             jq -c 'to_entries | map({job: .key, result: .value.result})'
           .agents/skills/harness-ci/scripts/aggregate-needs \
@@ -153,6 +181,8 @@ Two rules, both about a check that never appears.
 ```
 
 Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. `aggregate-needs` rejects a classifier that did not succeed and any skipped job that a true verdict did not authorize.
+
+Run `aggregate-needs` from the default branch on every event, including `pull_request`, `merge_group` and an adopted `push` trigger. A missing default-branch helper fails `CI` with one `::error::` line naming its path. Keep the trusted checkout unconditional. A pull request must not change the helper that judges its own skipped jobs. Land a new `aggregate-needs` flag in the helper on the default branch first. Then add the flag to `ci.yml`. A pull request that changes both fails its own CI because the default-branch helper cannot read the new flag.
 
 Every trigger the ruleset requires the context on must appear under `on:`, `merge_group` included. A required context that a merge group never produces blocks the queue forever.
 
@@ -181,12 +211,12 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
     steps:
       - name: the classifier, from the default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: classifier
       - name: the tree under judgement
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           path: subject
@@ -371,8 +401,8 @@ The order of this change and the ruleset change, and the check that confirms bot
 - **Superseded PR runs cancel.** The workflow groups runs by workflow, event, and pull request number. Only `pull_request` runs cancel an in-progress run in their group. Other events use their own run id, so neither running nor pending runs replace each other under [GitHub's concurrency rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). A release or publication workflow keeps its own serialization and takes no PR cancellation.
 - **The render prerequisites are Shape 4's.** The template uses review-gate's latest-release installer from the trusted default branch. The released engine must support the render verifier's document and flags. Neither network step fails the job, and neither does the step ahead of them that reads `harness-only` out of the default branch, which the adoption pull request and its merge group do not have yet. Without any of the three the `render` class is out of reach, and every other class is judged as usual.
 - **Every job runs on `vars.CI_RUNNER_2V`, falling back to `ubuntu-latest`.** The organization variable names the shared runner; a repository without it runs on GitHub's hosted runner.
-- **CI is Shape 3's aggregate.** It runs under `always()`, and `aggregate-needs` accepts a skipped lane only where the classifier succeeded and a verdict stood it down, per [§ Per-lane verdicts](#per-lane-verdicts).
-- **The secrets step scans each pull request's commits with default-branch code.** Land commit-guards on the default branch before adopting the template. An adoption pull request that adds both fails the secrets step because the `guards` checkout has no installer or scanner. The `guards` checkout supplies the pinned gitleaks installer and the scanner, including its libraries. The separate `subject` checkout holds the pull request's merge ref and full history. The step runs in `subject` and executes the scripts by their absolute paths in `guards`, so an edit to the pull request's scanner cannot disable the scan. Its `--policy-root` reads the exclusion list and its setting from `guards` too, so a pull request that excludes its own credential is still refused. A scanner without `--policy-root` refuses the flag on every pull request, so a repository that updates its copy of the template first merges the kendex refresh that gives the default branch a commit-guards with the flag. It runs on every pull request, including one the classifier clears. A repository without commit-guards deletes this step and the `guards` checkout.
+- **CI is Shape 3's aggregate.** It runs under `always()`. Its `guards` checkout supplies the default-branch helper on every event, under [§ Shape 3](#shape-3--merge-queues-where-the-required-context-must-report). `aggregate-needs` accepts a skipped lane only where the classifier succeeded and a verdict stood it down, per [§ Per-lane verdicts](#per-lane-verdicts).
+- **The secrets step scans each pull request's commits with default-branch code.** Land commit-guards on the default branch before adopting the template. An adoption pull request that adds both fails the secrets step because the `guards` checkout has no installer or scanner. The `guards` checkout supplies the pinned gitleaks installer and the scanner, including its libraries. The separate `subject` checkout holds the pull request's merge ref and full history. The step runs in `subject` and executes the scripts by their absolute paths in `guards`, so an edit to the pull request's scanner cannot disable the scan. Its `--policy-root` reads the exclusion list and its setting from `guards` too, so a pull request that excludes its own credential is still refused. A scanner without `--policy-root` refuses the flag on every pull request, so a repository that updates its copy of the template first merges the kendex refresh that gives the default branch a commit-guards with the flag. It runs on every pull request, including one the classifier clears. A repository without commit-guards deletes only the secrets step. Keep `guards` for the aggregate helper.
 
 [`tests/ci-template.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/tests/ci-template.test.sh) runs the template's `lanes` step, evaluates its job outputs and conditions per event and action answer, and hands its waiver and aggregate arguments to the real `aggregate-needs`. It also runs the secrets step against a pull request that replaces its scanner and installer with successful exits, excludes every path, and adds a test credential. The trusted scanner still refuses that credential.
 
