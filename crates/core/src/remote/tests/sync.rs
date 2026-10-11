@@ -6,7 +6,96 @@ use std::fs;
 use super::{REPO, fixture};
 use crate::manifest;
 use crate::model::Scope;
-use crate::remote::{cache_head, sync_declared_sources, sync_sources};
+use crate::remote::{
+    cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_source, sync_sources,
+};
+
+#[test]
+fn the_catalog_revision_is_run_scoped_and_declared_revisions_win() {
+    for (case, repo, override_rev, declared_rev, expected_tag) in [
+        (
+            "override",
+            manifest::DEFAULT_SOURCE_REPO,
+            Some("vN"),
+            None,
+            Some("vN"),
+        ),
+        (
+            "https override",
+            "https://github.com/vanillagreencom/kendex",
+            Some("vN"),
+            None,
+            Some("vN"),
+        ),
+        (
+            "declared",
+            manifest::DEFAULT_SOURCE_REPO,
+            Some("vN"),
+            Some("declared"),
+            Some("declared"),
+        ),
+        ("other repo", REPO, Some("vN"), None, None),
+        ("unset", manifest::DEFAULT_SOURCE_REPO, None, None, None),
+    ] {
+        let mut f = fixture();
+        if repo == manifest::DEFAULT_SOURCE_REPO {
+            let upstream = f.upstream.parent().unwrap().parent().unwrap().join(repo);
+            fs::create_dir_all(upstream.parent().unwrap()).unwrap();
+            fs::rename(&f.upstream, &upstream).unwrap();
+            f.upstream = upstream;
+        }
+        let tagged = super::head(&f.upstream);
+        super::git(&f.upstream, &["tag", "vN"]);
+        super::write_skill(&f.upstream, "declared");
+        let declared = super::commit(&f.upstream, "declared");
+        super::git(&f.upstream, &["tag", "declared"]);
+        super::write_skill(&f.upstream, "head");
+        let head = super::commit(&f.upstream, "head");
+        assert_ne!(tagged, head, "{case}: fixture tag must precede HEAD");
+        let expected = match expected_tag {
+            Some("vN") => &tagged,
+            Some("declared") => &declared,
+            None => &head,
+            Some(_) => panic!("unknown fixture tag"),
+        };
+        let env = match override_rev {
+            Some(rev) => f.env.with_var("KENDEX_CATALOG_REV", rev),
+            None => f.env,
+        };
+        if repo.contains("://") {
+            // Full URLs bypass host rebasing; this mirror uses the fixture transport.
+            let mirror = super::store::mirror_dir(&env, &crate::remote::cache_key(&env, repo));
+            super::store::ensure_mirror(&mirror, &format!("file://{}", f.upstream.display()))
+                .unwrap();
+        }
+        let source = manifest::SourceDecl {
+            repo: Some(repo.to_owned()),
+            path: None,
+            rev: declared_rev.map(str::to_owned),
+            enabled: true,
+        };
+        let synced = sync_source(&env, "cat", &source).unwrap();
+        assert!(synced.notes.is_empty(), "{case}");
+        assert_eq!(
+            &sync(&env, repo, declared_rev).unwrap().commit,
+            expected,
+            "{case}: sync read"
+        );
+        let resolved = cached(&env, repo, declared_rev).unwrap().unwrap();
+        assert_eq!(&resolved.commit, expected, "{case}: cached read");
+        assert_eq!(
+            mirror_commit(&env, repo, declared_rev).as_ref(),
+            Some(expected),
+            "{case}: mirror read"
+        );
+        assert_eq!(
+            cache_head(&env, repo, declared_rev),
+            Some(expected.chars().take(7).collect()),
+            "{case}: displayed commit"
+        );
+        assert_eq!(source.rev.as_deref(), declared_rev, "{case}: declaration");
+    }
+}
 
 /// Every enabled remote in a manifest resolves; a never-cached one that
 /// cannot be reached fails the whole call rather than half-resolving.

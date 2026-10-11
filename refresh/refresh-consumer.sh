@@ -20,6 +20,9 @@ cd "$ROOT"
 : "${GH_REPO:?GH_REPO names the running repository}"
 : "${GH_TOKEN:?GH_TOKEN must be the repository-scoped app installation token}"
 : "${REFRESH_APP_SLUG:?REFRESH_APP_SLUG names that app}"
+# The shared workflow supplies the tag only after it verifies the installed engine.
+: "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the installed release tag}"
+export KENDEX_CATALOG_REV
 if ! clean="$(git status --porcelain)"; then
   printf 'refresh-error=read value=clean\n' >&2
   exit 1

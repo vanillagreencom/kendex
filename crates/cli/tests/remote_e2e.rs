@@ -49,6 +49,7 @@ fn git(dir: &Path, args: &[&str]) {
         .args(args)
         .current_dir(dir)
         .env_remove("GIT_DIR")
+        .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_OBJECT_DIRECTORY")
@@ -73,6 +74,7 @@ fn git_stdout(dir: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(dir)
         .env_remove("GIT_DIR")
+        .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_OBJECT_DIRECTORY")
@@ -128,6 +130,78 @@ fn fixture() -> tempfile::TempDir {
     fs::create_dir_all(home.join(".claude")).unwrap();
     fs::create_dir_all(home.join("proj/.claude")).unwrap();
     tmp
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_uses_the_catalog_tag_without_changing_the_declared_revision() {
+    for (case, revision, expected_body) in [
+        ("tag", Some("vN"), "Upstream v1."),
+        ("unset control", None, "Upstream HEAD."),
+    ] {
+        let tmp = fixture();
+        let home = test_util::rooted(&tmp);
+        let project = home.join("proj");
+        let upstream = home.join("git/vanillagreencom/kendex");
+        let tag_commit = git_stdout(&upstream, &["rev-parse", "HEAD"]);
+        git(&upstream, &["tag", "vN"]);
+        fs::write(
+            upstream.join("skills/gh/SKILL.md"),
+            "---\nname: gh\ndescription: github flows\n---\nUpstream HEAD.\n",
+        )
+        .unwrap();
+        git(&upstream, &["commit", "--quiet", "-am", "head"]);
+        let head_commit = git_stdout(&upstream, &["rev-parse", "HEAD"]);
+        assert_ne!(tag_commit, head_commit, "{case}: fixture history");
+        let manifest_path = project.join("kendex.toml");
+        let manifest = b"schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n";
+        fs::write(&manifest_path, manifest).unwrap();
+        let args = ["refresh", "--scope", "project", "--yes", "--leave"];
+        let output = match revision {
+            Some(rev) => kendex_with(&home, &project, &args, ("KENDEX_CATALOG_REV", rev)),
+            None => kendex(&home, &project, &args),
+        };
+        assert!(output.status.success(), "{case}: {}", said(&output));
+        let rendered_path = project.join(".claude/skills/gh/SKILL.md");
+        let rendered = fs::read(&rendered_path).unwrap();
+        assert_eq!(
+            rendered,
+            format!("---\nname: gh\ndescription: github flows\n---\n{expected_body}\n").as_bytes(),
+            "{case}: rendered bytes"
+        );
+        assert_eq!(
+            fs::read(&manifest_path).unwrap(),
+            manifest,
+            "{case}: manifest"
+        );
+        let lock_path = project.join(".kendex-lock.json");
+        let lock_bytes = fs::read(&lock_path).unwrap();
+        let lock: serde_json::Value = serde_json::from_slice(&lock_bytes).unwrap();
+        let source = &lock["sources"]["kendex"];
+        assert!(source.get("rev").is_none(), "{case}: lock selector");
+        assert_eq!(
+            source["commit"].as_str(),
+            Some(if revision.is_some() {
+                tag_commit.as_str()
+            } else {
+                head_commit.as_str()
+            }),
+            "{case}: lock commit"
+        );
+        // Apply has no override; its recorded commit must retain the tag's bytes.
+        let before_apply = test_util::lane::snapshot(&project);
+        let applied = kendex(
+            &home,
+            &project,
+            &["apply", "--scope", "project", "--yes", "--leave"],
+        );
+        assert!(applied.status.success(), "{case}: {}", said(&applied));
+        assert_eq!(
+            test_util::lane::snapshot(&project),
+            before_apply,
+            "{case}: apply tree"
+        );
+    }
 }
 
 /// A check can start the download that a foreground refresh meets. The

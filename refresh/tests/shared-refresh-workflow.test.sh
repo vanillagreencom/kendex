@@ -305,11 +305,12 @@ run_install() { # BODY REF TAG_LINES INSTALLED [TAGS_EXIT INSTALL_EXIT]
   mkdir -p "$TMP/home"
   : >"$TMP/installs"
   : >"$TMP/github-path"
+  : >"$TMP/github-env"
   RC=0
   OUT="$(cd "$TMP/kendex" && env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP/home" GH_TOKEN="" \
     WORKFLOW_REF="vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@$2" WORKFLOW_SHA="$A" \
-    GITHUB_PATH="$TMP/github-path" TAGS="$TMP/tags" TAGS_EXIT="${5:-0}" INSTALL_EXIT="${6:-0}" \
-    INSTALLS="$TMP/installs" INSTALLED="$4" bash -c "$(cat "$1")" 2>&1)" || RC=$?
+    GITHUB_PATH="$TMP/github-path" GITHUB_ENV="$TMP/github-env" TAGS="$TMP/tags" TAGS_EXIT="${5:-0}" INSTALL_EXIT="${6:-0}" \
+    INSTALLS="$TMP/installs" INSTALLED="$4" "$BASH" -c "$(cat "$1")" 2>&1)" || RC=$?
 }
 
 # Success: the exact report, the installer arguments with no token, the
@@ -325,14 +326,16 @@ kendex-install: version=$1 commit=$A" ] || return 1
     [ "$records" = "kendex-install: version=$1 commit=$A" ] || return 1
   fi
   [ "$(cat "$TMP/installs")" = "--version $1 --cli-only|unset|unset" ] &&
-    [ "$(cat "$TMP/github-path")" = "$TMP/home/.local/bin" ]
+    [ "$(cat "$TMP/github-path")" = "$TMP/home/.local/bin" ] &&
+    [ "$(cat "$TMP/github-env")" = "KENDEX_CATALOG_REV=$1" ]
 }
 
 # Refusal: one keyed record and, before the installer, no install.
 install_refused() { # CAUSE VALUE INSTALLS
   [ "$RC" -eq 1 ] && grep -qxF "kendex-install: cause=$1 value=$2" <<<"$OUT" &&
     ! grep -q '^kendex-install: version=' <<<"$OUT" &&
-    [ "$(wc -l <"$TMP/installs" | tr -d ' ')" -eq "$3" ] && [ ! -s "$TMP/github-path" ]
+    [ "$(wc -l <"$TMP/installs" | tr -d ' ')" -eq "$3" ] &&
+    [ ! -s "$TMP/github-path" ] && [ ! -s "$TMP/github-env" ]
 }
 
 # name | ref | tag list | installed version | tags exit | installer exit | expected
@@ -359,6 +362,25 @@ a failed tag read refuses|refs/tags/v1|$A\trefs/tags/v1.7.0\n|1.7.0|1|0|refused:
 a failed installer refuses|refs/tags/v1|$A\trefs/tags/v1.7.0\n|1.7.0|0|1|refused:installer-run:v1.7.0:1
 an engine reporting another version refuses|refs/tags/v1|$A\trefs/tags/v1.7.0\n|1.6.0|0|0|refused:engine-version:kendex 1.6.0:1
 ROWS
+# GitHub reads GITHUB_ENV after the step ends. A failed version check must
+# leave it empty even when the installer has already returned success.
+python3 - "$TMP/install-body" "$TMP/early-catalog-rev" <<'CATALOG_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+body = path.read_text()
+write = "printf 'KENDEX_CATALOG_REV=%s\\n' \"$tag\" >>\"$GITHUB_ENV\"\n"
+check = '[ "$installed" = "kendex ${tag#v}" ] ||\n'
+assert body.count(write) == body.count(check) == 1
+changed = body.replace(write, '').replace(check, write + check)
+assert changed != body
+Path(sys.argv[2]).write_text(changed)
+CATALOG_CONTROL
+run_install "$TMP/early-catalog-rev" refs/tags/v1 "$A\trefs/tags/v1.7.0\n" 1.6.0
+if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/github-env")" = 'KENDEX_CATALOG_REV=v1.7.0' ] &&
+    ! install_refused engine-version 'kendex 1.6.0' 1; then
+  ok 'control: writing the catalog revision before the engine check turns its failure row red'
+else bad 'catalog revision ordering control' "$OUT"; fi
 
 # Each rule keeps its matched text in a disposable copy of the body and
 # loses its behavior; the row it governs then turns red.

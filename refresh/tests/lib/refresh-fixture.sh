@@ -105,11 +105,15 @@ run_refresh_command() {
 # RUNNER_ARGS, an array, holds the runner's own arguments.
 run_refresh() { # CONTENT VERIFY CLASS
   local result=0
+  local catalog_env=()
+  if [ -n "${CATALOG_REV-v1.7.0}" ]; then
+    catalog_env=("KENDEX_CATALOG_REV=${CATALOG_REV-v1.7.0}")
+  fi
   rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/refreshed" \
     "$TMP/state/head-reads" "$TMP/state/shown-head" "$TMP/state/arm-attempted" \
     "$TMP/state/armed" "$TMP/state/queued" "$TMP/state/merged" "$TMP/state/arm-state.json"
   : >"$TMP/state/summary"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
   RC="$result"
 }
 
@@ -405,12 +409,12 @@ run_real_refresh() {
   RC=0
   OUT="$(cd -- "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$real_root/home" \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-    GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" \
+    GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes KENDEX_CATALOG_REV=v1.7.0 TEST_STATE="$TMP/state" \
     TEST_REAL_GIT="$REAL_GIT" TEST_REAL_KENDEX="$REAL_KENDEX" TEST_KENDEX_OUTPUT="${KENDEX_OUTPUT:-normal}" \
     TEST_LEASE_REMOTE="$real_root/remote" \
     TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" \
     TEST_CLASS=render TEST_MEASURED=true TEST_CLASS_EXIT=0 TEST_REASON=cause=renders-match-their-sources \
-    KENDEX_REAL_HOME=1 KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain bash "$runner" 2>&1)" || RC=$?
+    KENDEX_REAL_HOME=1 KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$BASH" "$runner" 2>&1)" || RC=$?
 }
 
 real_refresh_preserved() { # DISTINCT_ITEM_COUNT
