@@ -167,7 +167,7 @@ control "the base commit's selector judges where the branch changes it" \
 control "a selector named in the process environment alone never runs" \
   'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]' \
   environment-selector change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR' 'unset HARNESS_CI_QUEUE_PATHS'
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS' 'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_STANDARD_PATHS'
 control "a selector outside the repository is queue-only" \
   "queue_only=true cause=queue-selector-failed selector=../select detail=command-absent" \
   climbing change-class "    '' | /* | .. | ../* | */.. | */../*) name=\"\" ;;" "    '') name=\"\" ;;"

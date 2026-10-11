@@ -2039,6 +2039,7 @@ else
 
   # kendex reaches this sandbox alone: its home, its caches and its state are
   # all under SANDBOX, so the suite never writes the developer's own install.
+  # An independent fixture cannot inherit the launcher's lane identity.
   # A failed call names itself. The output is captured rather than discarded
   # and every call is checked: with the output dropped under `set -e`, a runner
   # whose kendex lacks a flag this section passes died at exit 2 with no FAIL
@@ -2048,7 +2049,8 @@ else
   kendex_here() { # WORKDIR ARGS...
     local where="$1" status=0
     shift
-    (cd -- "$where" && HOME="$render_home" KENDEX_REAL_HOME=1 \
+    (cd -- "$where" && env -i PATH="$PATH" SystemRoot="${SystemRoot:-}" \
+      TMPDIR="${TMPDIR:-$SANDBOX}" HOME="$render_home" KENDEX_REAL_HOME=1 \
       XDG_CONFIG_HOME="$render_home/.config" \
       XDG_CACHE_HOME="$render_home/.cache" \
       XDG_DATA_HOME="$render_home/.local/share" \
@@ -2520,6 +2522,55 @@ TOML
     "$(jq '[.rows[] | select(.kind == "bot-instructions")] |
       length == 1 and .[0].state == "failed" and (.[0].positions | length) == 0' \
       "$SANDBOX/bot-verify.json")"
+
+  # Replay the real producer's refresh onto a base with a repository policy.
+  # The setting stays unchanged across that diff, so render ownership cannot
+  # choose the class of a declared path. Both successful render routes use it.
+  render_policy_head="$(git -C "$consumer" rev-parse refreshed)"
+  render_policy_mutant="$(mutant render-policy change-class \
+    '  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured' \
+    '  : "cause=repository-standard-path $PATH_MATCH_HIT" measured')"
+  cp -R "$TEST_DIR/../../bot-instructions" \
+    "$(dirname "$render_policy_mutant")/../../bot-instructions"
+  render_policy_rows=0
+  while IFS='|' read -r label fixture base_name head_name declared classifier expected; do
+    render_policy_rows=$((render_policy_rows + 1))
+    policy_repo="${!fixture}"
+    policy_base="${!base_name}"
+    policy_head="${!head_name}"
+    if [ "$declared" != undeclared ]; then
+      git -C "$policy_repo" checkout -q -B render-policy "$policy_base"
+      if [ ! -f "$policy_repo/kendex.settings.toml" ]; then
+        printf '[env]\n' >"$policy_repo/kendex.settings.toml"
+      fi
+      printf 'HARNESS_CI_STANDARD_PATHS = "%s"\n' "$declared" \
+        >>"$policy_repo/kendex.settings.toml"
+      git -C "$policy_repo" add -A
+      git -C "$policy_repo" commit -q -m "repository policy before the refresh"
+      policy_base="$(git -C "$policy_repo" rev-parse HEAD)"
+      git -C "$policy_repo" cherry-pick "$policy_head" >"$SANDBOX/policy-pick" 2>&1
+      policy_head="$(git -C "$policy_repo" rev-parse HEAD)"
+    fi
+    for policy_event in pull_request merge_group; do
+      policy_err="$(CHANGE_CLASS="${!classifier}" classify_stderr --repo "$policy_repo" \
+        --event "$policy_event" --base "$policy_base" --head "$policy_head")"
+      assert_eq "$label on $policy_event" "$expected" \
+        "$(sed -n 's/^class: //p' <<<"$policy_err")"
+    done
+  done <<'POLICIES'
+a real ownership gain without a declaration remains render|consumer|consumer_base|render_policy_head|undeclared|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
+an empty declaration leaves the real ownership gain render|consumer|consumer_base|render_policy_head||CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
+a miss leaves the real ownership gain render|consumer|consumer_base|render_policy_head|runtime/*|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
+a declared real rendered skill always takes standard|consumer|consumer_base|render_policy_head|.agents/skills/demo/* .claude/skills/demo/*|CHANGE_CLASS|class=standard measured=true cause=repository-standard-path path=.agents/skills/demo/SKILL.md glob=.agents/skills/demo/*
+a real bot refresh without a declaration remains render|bot_consumer|bot_base|bot_render_head|undeclared|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
+an empty declaration leaves the real bot refresh render|bot_consumer|bot_base|bot_render_head||CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
+a miss leaves the real bot refresh render|bot_consumer|bot_base|bot_render_head|runtime/*|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
+a declared real bot output always takes standard|bot_consumer|bot_base|bot_render_head|.github/copilot-instructions.md|CHANGE_CLASS|class=standard measured=true cause=repository-standard-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md
+control: skipping repository policy admits the declared skill refresh|consumer|consumer_base|render_policy_head|.agents/skills/demo/* .claude/skills/demo/*|render_policy_mutant|class=render measured=true cause=renders-match-their-sources
+control: skipping repository policy admits the declared bot refresh|bot_consumer|bot_base|bot_render_head|.github/copilot-instructions.md|render_policy_mutant|class=render measured=true cause=renders-match-their-sources
+POLICIES
+  require_rows change-class-render-policy "$render_policy_rows"
+  git -C "$consumer" checkout -q refreshed
 
   # The catalog moves on after the refresh is pushed, and the runner's mirror
   # with it. The refresh is weighed at the commits its record names, so it is

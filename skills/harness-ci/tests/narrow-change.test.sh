@@ -74,6 +74,8 @@ apply_edit() { # EDIT
       write_lines "$KEPT_RENDER" 2
       edit_inventory 'map(select(. != $kept))' ;;
     inventory-invalid) printf '{unparsed\n' >"$repo/$INVENTORY" ;;
+    standard-head-clear) printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\n' >"$repo/kendex.settings.toml" ;;
+    standard-head-add) printf '[env]\nHARNESS_CI_STANDARD_PATHS = "runtime/*"\n' >"$repo/kendex.settings.toml" ;;
     unmark-bench) printf 'bench benches/*\n' >"$repo/.github/ci-lanes.conf" ;;
     *=*) write_lines "${1%=*}" "${1##*=}" ;;
     *) echo "unknown edit $1" >&2; exit 1 ;;
@@ -232,6 +234,87 @@ list_base() { # GLOBS -> prints the base commit
   settings_base "$(printf '[env]\nHARNESS_CI_QUEUE_PATHS = "%s"' "$1")"
 }
 empty_base="$(list_base "")"
+
+# Orch reads this machine line. Assert its path and glob as well as its class.
+class_line_of() { # STDERR
+  sed -n 's/^class: //p' <<<"$1"
+}
+standard_base="$(settings_base $'[env]\nHARNESS_CI_STANDARD_PATHS = "docs/* runtime/*"')"
+standard_empty_base="$(settings_base $'[env]\nHARNESS_CI_STANDARD_PATHS = ""')"
+standard_miss_base="$(settings_base $'[env]\nHARNESS_CI_STANDARD_PATHS = "other/*"')"
+standard_glob_base="$(settings_base $'[env]\nHARNESS_CI_STANDARD_PATHS = "runtime/!(kept).ts"')"
+ROW_BASE="$standard_miss_base" reset_case
+mkdir -p "$repo/.kendex"
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = "runtime/*"\n' >"$repo/.kendex/settings.toml"
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "settings overlay base"
+standard_overlay_base="$(git -C "$repo" rev-parse HEAD)"
+
+# label | base | edit | environment | exact structured class line
+standard_rows=0
+while IFS='|' read -r label row_base edit ROW_ENV expected; do
+  standard_rows=$((standard_rows + 1))
+  ROW_BASE="${!row_base}"
+  assert_eq "$label" "$expected" "$(class_line_of "$(run_row "$CHANGE_CLASS" "$edit")")"
+done <<'ROWS'
+a declared path forces trivial to standard|standard_base|docs/risk.md=2||class=standard measured=true cause=repository-standard-path path=docs/risk.md glob=docs/*
+the same trivial diff without a declaration stays trivial|base|docs/risk.md=2||class=trivial measured=true cause=documentation-paths lines=2
+a declared path forces micro to standard|standard_base|runtime/product.ts=2||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
+the same micro diff without a declaration stays micro|base|runtime/product.ts=2||class=micro measured=true cause=production-within-micro production=2
+a declared path forces small to standard|standard_base|runtime/product.ts=40||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
+the same small diff without a declaration stays small|base|runtime/product.ts=40||class=small measured=true cause=production-within-small subsystem=runtime
+a miss keeps trivial|standard_miss_base|docs/risk.md=2||class=trivial measured=true cause=documentation-paths lines=2
+a miss keeps micro|standard_miss_base|runtime/product.ts=2||class=micro measured=true cause=production-within-micro production=2
+a miss keeps small|standard_miss_base|runtime/product.ts=40||class=small measured=true cause=production-within-small subsystem=runtime
+an empty declaration adds no exclusions|standard_empty_base|runtime/product.ts=2||class=micro measured=true cause=production-within-micro production=2
+an empty declaration keeps shared exclusions|standard_empty_base|hooks/guard.sh=2||class=standard measured=true cause=excluded-path path=hooks/guard.sh glob=hooks/!(*/*|*.md)
+a nonempty declaration keeps shared-only exclusions|standard_base|hooks/guard.sh=2||class=standard measured=true cause=excluded-path path=hooks/guard.sh glob=hooks/!(*/*|*.md)
+the environment cannot clear base exclusions|standard_base|runtime/product.ts=2|HARNESS_CI_STANDARD_PATHS=|class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
+the environment cannot add exclusions|base|runtime/product.ts=2|HARNESS_CI_STANDARD_PATHS=runtime/*|class=micro measured=true cause=production-within-micro production=2
+the settings overlay wins over the root table|standard_overlay_base|runtime/product.ts=2||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
+repository paths use the shared extglob grammar|standard_glob_base|runtime/product.ts=2||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/!(kept).ts
+an extglob miss keeps micro|standard_glob_base|runtime/kept.ts=2||class=micro measured=true cause=production-within-micro production=2
+clearing the setting in the head cannot narrow its class|standard_base|standard-head-clear||class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml
+adding the setting in the head cannot select its cause|base|standard-head-add||class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml
+ROWS
+require_rows repository-standard-path "$standard_rows"
+ROW_ENV=""
+
+# The supplied base endpoint can acquire its declaration after the fork.
+ROW_BASE="$base" reset_case
+write_lines runtime/product.ts 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "old fork"
+assert_eq "the base endpoint declares exclusions after the fork" \
+  "class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*" \
+  "$(class_line_of "$("$CHANGE_CLASS" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
+standard_head_mutant="$(mutant standard-head change-class \
+  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||' \
+  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" ||')"
+assert_eq "a reader of head settings loses the base endpoint exclusion" "$MICRO" \
+  "$(verdict_of "$("$standard_head_mutant" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
+
+# Controls change each independent rule in a disposable script copy.
+ROW_BASE="$standard_base"
+control "a nonempty declaration cannot replace shared exclusions" "$MICRO" \
+  hooks/guard.sh=2 standard-additive change-class \
+  'if path_class_matches narrow standard; then' \
+  'if path_class_matches narrow standard && [ -z "${HARNESS_CI_STANDARD_PATHS:-}" ]; then'
+control "skipping repository matching lets its path through" "$MICRO" \
+  runtime/product.ts=2 standard-match change-class \
+  '  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured' \
+  '  : "cause=repository-standard-path $PATH_MATCH_HIT" measured'
+control "omitting the key loses the base declaration" "$MICRO" \
+  runtime/product.ts=2 standard-reader change-class \
+  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS'" \
+  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR'"
+ROW_ENV="HARNESS_CI_STANDARD_PATHS="
+control "keeping the caller setting loses the base exclusion" "$MICRO" \
+  runtime/product.ts=2 standard-environment change-class \
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS' \
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR'
+ROW_ENV=""
+ROW_BASE=""
 
 # One row per `queue` entry, each touching one path that entry alone names,
 # in the source or the render spelling; a queue path beside others; a path
@@ -538,7 +621,7 @@ assert_eq "a classifier that never reads the base's settings loses the declared 
   "queue_only=true cause=queue-list-undeclared" \
   "$(settings_queue "$base_mutant" "$declared_base")"
 environment_mutant="$(mutant queue-environment change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR' 'unset HARNESS_CI_QUEUE_SELECTOR')"
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS' 'unset HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS')"
 assert_eq "a classifier that keeps the process environment's list lets the base's newly listed path through" \
   "queue_only=false cause=no-queue-path" \
   "$(settings_queue "$environment_mutant" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
