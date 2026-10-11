@@ -39,6 +39,16 @@ git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEA
 
 Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Read any already accepted dev receipt through `dev-artifact-check --file [WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json`; this same acceptance reader refuses a `ci` receipt for an earlier HEAD. A valid `ci` receipt for the current commit accepts completed local edits with required CI pending on the head about to be published. Start no `DEV_VALIDATE_CMD` for that receipt. After publication, § 5 and its existing § 5.1 CI-fix route prove required CI on the exact published head. Reuse a successful local validation result for the current commit whose mode is `full` and whose class covered the whole branch, from an accepted dev completion artifact's `validate_mode` with a `null` `validate_class_base` or a `validate_selection` of `battery`, or this submit session. A `range` pass, or any other `full` pass with a `validate_class_base`, is never reused, because it covers one fix round's changes and not the branch: submit then runs `DEV_VALIDATE_CMD` for the current commit as when no dev result exists. A failing dev validation artifact blocks submission and is reported without another validation run. A dev `no-verdict` result for the current commit, `full` or `range`, is not re-run: its battery already hit the bound, its `validate_note` names the scoped suites that passed, and CI is the full record. A run submit starts that ends `no-verdict` takes the fallback [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) gives the dev round: its scoped suites once each, one red blocking the push and all green pushing with those suites named in the PR body; a diff whose fallback selects no suite file is a failing result and blocks the push. When no dev result exists, run the project's `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run`, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out, the same route [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) takes. A start refused as `run-live` ran nothing: it blocks no push and returns nothing to the caller; take that section's route for that refusal, then start again. What the runner hands the command, and whose failure a full battery the class does not need is, are that section's. A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
+Retain the mode of the validation result this section accepts as `SUBMIT_VALIDATE_MODE`. For an accepted dev receipt, use its `validate_mode`. For a run this submit starts or reuses, read its existing metadata below. Bind `[RUN_DIR]` to that accepted run's directory, including a `ci` run with `verdict=pending`:
+
+```bash
+if ! SUBMIT_VALIDATE_RECORD="$(.agents/skills/orch/scripts/dev-validate-run --record --run-dir "[RUN_DIR]")"; then
+  exit 1
+fi
+SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_RECORD%% *}"
+SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"
+```
+
 ### 1.2 Local Pre-PR Review
 
 Drain what a review bot would surface before the PR exists.
@@ -347,16 +357,16 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 | Result | Action |
 |--------|--------|
 | `status=complete`, `verdict=pass` | → § 6 |
-| `status=complete`, `verdict=none` | Run the receipt check below. Only exit 0 permits recording `ci: none` in workflow state and → § 6 |
+| `status=complete`, `verdict=none` | Run the coverage check below. Only exit 0 permits recording `ci: none` in workflow state and → § 6 |
 | `status=complete`, `verdict=fail` | → § 5.1 |
 | `status=timeout` or `status=error` | Re-run once. If it repeats, `auto-recommended` records `ci-status-unconfirmed`; `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended |
 
 A PR already green when the wait started reaches the first row, never this one: `ci-wait --help` pairs `verdict=pass` with `status=complete` alone.
 
-For `verdict=none`, bind `RECEIPT_VALIDATE_MODE` to the accepted receipt's `validate_mode` from § 1.1, or empty when no receipt exists. A pending `ci` receipt requires CI proof. With no required CI, stop before § 6:
+For `verdict=none`, use `SUBMIT_VALIDATE_MODE` retained by § 1.1. A pending `ci` result requires CI proof, including a run submit started without a dev receipt. With no required CI, stop before § 6:
 
 ```bash
-if [[ "$RECEIPT_VALIDATE_MODE" == ci ]]; then
+if [[ "$SUBMIT_VALIDATE_MODE" == ci ]]; then
   printf 'submit-pr: ci-uncovered cause=no-required-ci\n' >&2
   exit 1
 fi
@@ -385,7 +395,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 | # | Gate | Check |
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
-| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` after its receipt check passes (satisfied with a `CI: none configured` note in the summary) |
+| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` after its coverage check passes (satisfied with a `CI: none configured` note in the summary) |
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) AND `check-review-replies` exits 0 |
 | 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets it. `off`: not applicable |
 

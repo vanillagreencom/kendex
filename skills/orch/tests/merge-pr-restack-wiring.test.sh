@@ -349,23 +349,39 @@ else
   printf 'control: bare-array requires Bash 3.2; current=%s\n' "$BASH_VERSION"
 fi
 
-# A pending restack receipt relies on submit's required-CI proof. Execute its
-# no-CI check from the workflow; a ci receipt cannot pass with verdict=none.
-submit_none_check() { # DOC
-  local block
+# Pending validation comes from an accepted receipt or a run submit starts.
+# Execute the workflow's binding and no-CI check against the real run record.
+submit_none_check() { # DOC SOURCE
+  local block binding mode=ci
   block="$(awk '/^```bash/ {inside=1; block=""; next} /^```/ && inside {if (index(block, "submit-pr: ci-uncovered")) {printf "%s", block; exit} inside=0} inside {block=block $0 ORS}' "$1")"
   [[ -n "$block" ]] || return 2
-  RECEIPT_VALIDATE_MODE=ci "$BASH" -uc "$block"
+  if [[ "$2" == run ]]; then
+    binding="$(awk '/^```bash/ {inside=1; block=""; next} /^```/ && inside {if (index(block, "SUBMIT_VALIDATE_RECORD=")) {printf "%s", block; exit} inside=0} inside {block=block $0 ORS}' "$1")"
+    [[ -n "$binding" ]] || return 2
+    binding="${binding//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
+    binding="${binding//\[RUN_DIR\]/$CI_DIR}"
+    block="$binding"$'\n'"$block"
+    mode=
+  fi
+  env -i PATH="$PATH" SUBMIT_VALIDATE_MODE="$mode" "$BASH" -uc "$block"
 }
 SUBMIT_DOC="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
-none_rc=0
-submit_none_check "$SUBMIT_DOC" > "$TMP_ROOT/submit-none.out" 2> "$TMP_ROOT/submit-none.err" || none_rc=$?
-assert_eq "$none_rc" 1 'a pending ci receipt blocks submit when the live CI wait has verdict=none'
+for source in receipt run; do
+  none_rc=0
+  submit_none_check "$SUBMIT_DOC" "$source" > "$TMP_ROOT/submit-none-$source.out" 2> "$TMP_ROOT/submit-none-$source.err" || none_rc=$?
+  # Submit's caller consumes this keyed refusal, not the runner's read errors.
+  assert_eq "$none_rc $(sed -n 's/^submit-pr: ci-uncovered cause=//p' "$TMP_ROOT/submit-none-$source.err")" '1 no-required-ci' "a pending ci $source blocks submit when the live CI wait has verdict=none"
+done
 cp "$SUBMIT_DOC" "$TMP_ROOT/submit-none-mutant.md"
-mutate_file "$TMP_ROOT/submit-none-mutant.md" '[[ "$RECEIPT_VALIDATE_MODE" == ci ]]' '[[ "$RECEIPT_VALIDATE_MODE" == full ]]'
+mutate_file "$TMP_ROOT/submit-none-mutant.md" '[[ "$SUBMIT_VALIDATE_MODE" == ci ]]' '[[ "$SUBMIT_VALIDATE_MODE" == full ]]'
 none_rc=0
-submit_none_check "$TMP_ROOT/submit-none-mutant.md" > "$TMP_ROOT/submit-none-control.out" 2> "$TMP_ROOT/submit-none-control.err" || none_rc=$?
+submit_none_check "$TMP_ROOT/submit-none-mutant.md" receipt > "$TMP_ROOT/submit-none-control.out" 2> "$TMP_ROOT/submit-none-control.err" || none_rc=$?
 assert_eq "$none_rc" 0 'control: dropping the ci receipt check permits an uncovered submit'
+cp "$SUBMIT_DOC" "$TMP_ROOT/submit-mode-mutant.md"
+mutate_file "$TMP_ROOT/submit-mode-mutant.md" 'SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"' 'SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"; SUBMIT_VALIDATE_MODE=full'
+none_rc=0
+submit_none_check "$TMP_ROOT/submit-mode-mutant.md" run > "$TMP_ROOT/submit-mode-control.out" 2> "$TMP_ROOT/submit-mode-control.err" || none_rc=$?
+assert_eq "$none_rc" 0 'control: discarding the pending run mode permits an uncovered submit'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
