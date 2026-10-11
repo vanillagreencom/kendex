@@ -606,6 +606,12 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   if [[ "$control" == missing ]]; then
     expected_watch='verifying KEN-0 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T00:00:00Z merged=2026-10-01T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'$'\n'"$expected"
   fi
+  if [[ "$status" == waiting || "$status" == blocked ]]; then
+    assert_eq "$watch_lines" '' "$name does not add unkeyed boxes to the merged event" "$ERR"
+    watch_pass -- --state "$STUB_DIR/state.json"
+    assert_contains "$OUT" 'EVENT heartbeat' "$name full comparison runs at heartbeat" "$ERR"
+    watch_lines="$(verification_lines)"
+  fi
   assert_eq "$watch_lines" "$expected_watch" "$name status, date and blockers" "$ERR"
   reconcile_same_world "$RECONCILE_SCRIPTS" "$gh_command"
   assert_eq "$(awk '/^verifying /' <<<"$RECONCILE_OUT")" "$expected" "$name callers print identical lines for readable local merge evidence" "$STUB_DIR/reconcile.err"
@@ -677,6 +683,10 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   esac
   # A fresh event store is necessary to observe the invalid row's commit.
   WATCH_BIN="$MUTANT_WATCH" watch_pass OVERSEE_WATCH_STATE_DIR="$STUB_DIR/old-state" -- --state "$STUB_DIR/state.json"
+  if [[ "$RC" == 0 && ( "$status" == waiting || "$status" == blocked ) ]]; then
+    WATCH_BIN="$MUTANT_WATCH" watch_pass OVERSEE_WATCH_STATE_DIR="$STUB_DIR/old-state" -- --state "$STUB_DIR/state.json"
+    assert_contains "$OUT" 'EVENT heartbeat' "control: $name observes the full mutated row at heartbeat" "$ERR"
+  fi
   if [[ "$RC" != 0 || "$(verification_lines)" != "$expected" ]]; then
     pass "control: $name rejects the previous reader's result"
   else
@@ -718,9 +728,14 @@ own_release_world() {
 while IFS='|' read -r name first second status deadline calls; do
   own_release_world "release_contains_$name" "$first" "$second"
   watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$(awk '/^api repos\/.*\/compare\// {n++} END {print n+0}' "$STUB_DIR/gh.calls")" "$calls" "$name compares only matching candidates through the first contained tag" "$ERR"
+  if [[ "$status" == waiting ]]; then
+    assert_eq "$(verification_lines)" '' "$name keeps its unkeyed box out of the merged event" "$ERR"
+    watch_pass -- --state "$STUB_DIR/state.json"
+    assert_contains "$OUT" 'EVENT heartbeat' "$name waiting status is read at heartbeat" "$ERR"
+  fi
   assert_eq "rc=$RC $(box_status)" "rc=0 status=$status" "$name containment status" "$ERR"
   assert_contains "$(verification_lines)" "deadline=$deadline" "$name containment deadline" "$ERR"
-  assert_eq "$(awk '/^api repos\/.*\/compare\// {n++} END {print n+0}' "$STUB_DIR/gh.calls")" "$calls" "$name compares only matching candidates through the first contained tag" "$ERR"
   if [[ "$status" == waiting ]]; then
     assert_eq "$(verification_events)" '' "$name raises no verification event" "$ERR"
   fi
@@ -813,6 +828,9 @@ assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: skipping parser
 release_world release_waiting
 printf '%s\n' '[]' >"$STUB_DIR/releases.owner_releases.json"
 watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$(verification_lines)" '' 'no matching publication adds no unkeyed box to the merged event' "$ERR"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_contains "$OUT" 'EVENT heartbeat' 'no matching publication keeps its full waiting row at heartbeat' "$ERR"
 assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=waiting events=' "no matching publication waits without an event" "$ERR"
 while IFS='|' read -r name setup key; do
   release_world "release_unread_$name"
@@ -889,6 +907,8 @@ old='releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --
 new='releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" || :'
 mutate_verifying "$MUTANT_WATCH" "$old" "$new"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_contains "$OUT" 'EVENT heartbeat' 'control: failed release read exposes its fabricated full row at heartbeat' "$ERR"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: ignoring the release read failure fabricates waiting" "$ERR"
 
 # A due set's status change must raise attention even when its membership
@@ -898,6 +918,51 @@ watch_pass -- --state "$STUB_DIR/state.json"
 jq -nr '"2026-10-03T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_contains "$(verification_events)" 'status=overdue' "due becoming overdue raises attention" "$ERR"
+
+# Linear can keep an overdue box beside a due box on the same item. Moving
+# the second box past its deadline must not repeat the first box's line.
+BOX_KEY_ROWS='first|2026-10-02T00:00:01Z|box=2/status=overdue,box=3/status=due|box=2,box=3
+changed|2026-10-03T00:00:01Z|box=3/status=overdue|box=3
+heartbeat|2026-10-03T00:00:01Z|box=2/status=overdue,box=3/status=overdue|'
+box_key_sequence() {
+  verifying_world "$1"
+  BOX_KEY_DIR="$STUB_DIR"
+  local phase stamp expected events
+  jq '[.[] | select(.id == "KEN-1")]' "$STUB_DIR/tracker.out" > "$STUB_DIR/box-keys.json"
+  mv -- "$STUB_DIR/box-keys.json" "$STUB_DIR/tracker.out"
+  fleet '[]' "$(record KEN-1 running claude)"
+  while IFS='|' read -r phase stamp expected events; do
+    jq -nr --arg stamp "$stamp" '$stamp | fromdateiso8601' > "$STUB_DIR/now.epoch"
+    watch_pass -- --state "$STUB_DIR/state.json"
+    printf '%s\n' "$OUT" > "$BOX_KEY_DIR/$phase.out"
+    printf '%s\n' "$RC" > "$BOX_KEY_DIR/$phase.rc"
+    cp "$ERR" "$BOX_KEY_DIR/$phase.err"
+  done <<<"$BOX_KEY_ROWS"
+}
+box_key_contract() {
+  local phase stamp expected events out
+  while IFS='|' read -r phase stamp expected events; do
+    out="$(cat "$BOX_KEY_DIR/$phase.out")"
+    assert_eq "$(cat "$BOX_KEY_DIR/$phase.rc")" 0 "$phase box-key pass completes" "$BOX_KEY_DIR/$phase.err"
+    assert_eq "$(awk '$1 == "verifying" && $2 == "KEN-1" {for(i=1;i<=NF;i++) if($i ~ /^status=/) print $3 "/" $i}' <<<"$out" | paste -sd, -)" \
+      "$expected" "$phase prints only its selected box keys" "$BOX_KEY_DIR/$phase.err"
+    assert_eq "$(awk '$1 == "EVENT" && $2 == "verifying-deadline" && $3 == "KEN-1" {print $4}' <<<"$out" | paste -sd, -)" \
+      "$events" "$phase wakes only for changed box keys" "$BOX_KEY_DIR/$phase.err"
+    [[ "$phase" != heartbeat ]] || assert_contains "$out" 'EVENT heartbeat' 'quiet pass retains the full box list at heartbeat'
+  done <<<"$BOX_KEY_ROWS"
+}
+box_key_sequence changed_box_keys
+box_key_contract
+MUTANT_DIR="$TMP_ROOT/box-keys-mutant"
+MUTANT_WATCH="$(mutant_scripts box-keys-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_verifying "$MUTANT_WATCH" '[[ "|$prior|" != *"|$row|"* ]] || continue' '[[ "|$prior|" != *"|$row|"* ]] || :'
+WATCH_BIN="$MUTANT_WATCH" box_key_sequence changed_box_keys_control
+control_rc=0
+( FAIL=0; box_key_contract; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/box-keys-control.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control: selecting unchanged sibling keys reddens the box-key contract'
+
 # Fresh state keeps the repeated-listing clock monotonic.
 verifying_one repeated_due merge
 watch_pass -- --state "$STUB_DIR/state.json"

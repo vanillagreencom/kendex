@@ -582,8 +582,8 @@ The long pass's events, checked and reported in this order:
                              stays due, so it stops once a report is written;
                              read only with --state
   EVENT verifying-deadline <item> box=<N> trigger=<JSON> status=<due|overdue> deadline=<UTC>
-                             the item's due or overdue box set changed. Read
-                             each due box in that pass and record evidence.
+                             that due or overdue box key changed. Read
+                             each emitted box in that pass and record evidence.
                              Pass: tick and complete the same item. Fail or
                              unreadable by deadline: keep Verifying and file
                              one blocking peer fix through audit-issues.
@@ -610,8 +610,13 @@ The long pass's events, checked and reported in this order:
                              Merge triggers keep their deadline from merge.
                              Invalid items report their parser
                              error on stderr; the pass reads the next item.
-                             Event blocks print only items whose deadline row
-                             changed. The heartbeat prints every box. An item
+                             Event blocks print only due or overdue boxes
+                             whose number, trigger, status or deadline key
+                             changed in the saved deadline row. Other fields
+                             wait for the heartbeat, which prints every box.
+                             Waiting and blocked statuses have no individual
+                             deadline keys; those boxes print at heartbeat.
+                             An item
                              with none prints verifying <item> boxes=0 once at
                              first read, with EVENT verifying-deadline <item>
                              boxes=0, and again at heartbeat.

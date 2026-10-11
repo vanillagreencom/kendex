@@ -4521,7 +4521,7 @@ owed_accounts() { # HOST
 # lane filtering. Deadlines remain per box in the issue description.
 verifying_read() { # SAFE_ITEMS
   local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
-  local rows row id boxes merged merged_repos repo lines due prior key rc
+  local rows row id boxes merged merged_repos repo lines due prior key selected rc
   local state="${PW_SEEN[0]}" errf="$WORK_DIR/verifying.err"
   rows="$(jq -c '.[] | select(.state == "verifying")' <<<"$1")" \
     || die tracker-list-invalid "" "team=$LINEAR_TEAM"
@@ -4576,16 +4576,22 @@ verifying_read() { # SAFE_ITEMS
       || die state-read-failed "" "row=verifying-deadline" "issue=$id"
     state="$(lane_row_set verifying-deadline "$state" "$id" "$key")"
     [[ "$prior" != "$key" ]] || continue
-    VERIFYING_EVENT_LINES+="$lines"$'\n'
     if [[ "$key" == boxes=0 ]]; then
+      VERIFYING_EVENT_LINES+="$lines"$'\n'
       echo "EVENT verifying-deadline $id boxes=0"
       PASS_EVENT=1
     fi
     [[ -n "$due" ]] || continue
     while IFS= read -r row; do
+      # The saved row already holds each due box key. A changed sibling must
+      # not repeat this box's instructions before the full heartbeat.
+      [[ "|$prior|" != *"|$row|"* ]] || continue
+      selected="$(awk -v box="${row%% *}" '$3 == box' <<<"$lines")" \
+        || die verifying-invalid "" "issue=$id"
+      VERIFYING_EVENT_LINES+="$selected"$'\n'
       echo "EVENT verifying-deadline $id $row"
+      PASS_EVENT=1
     done <<<"$due"
-    PASS_EVENT=1
   done <<<"$rows"
   VERIFYING_LINES="${VERIFYING_LINES%$'\n'}"
   VERIFYING_EVENT_LINES="${VERIFYING_EVENT_LINES%$'\n'}"

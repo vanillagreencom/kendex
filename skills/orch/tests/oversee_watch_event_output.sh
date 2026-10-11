@@ -87,7 +87,7 @@ completion_contract
 
 output_world waiting 2026-10-02T12:00:00Z
 output_pass
-assert_eq "$(grep -c '^verifying KEN-1 .* status=waiting ' <<<"$OUT" || true)" 1 'a first waiting read prints under the new reducer event'
+assert_not_contains "$OUT" 'verifying KEN-1' 'a waiting box has no due key for an event block'
 assert_contains "$(cat "$STATE_DIR/owner_repo__none")" $'verifying-deadline\tKEN-1\t-' 'a valid no-due read reuses the deadline row'
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-1.txt"
 output_pass
@@ -95,7 +95,7 @@ assert_not_contains "$OUT" 'verifying KEN-1' 'a standing no-due row stays out of
 
 # oversee-report due reads owner reports through lane-mail events. An
 # unreachable mailbox is a shipped failure after verification rows advance.
-DELIVERY_ROWS=$'due|merge|due\nwaiting|2026-10-02T12:00:00Z|waiting\ncompletion|merge|boxes=0'
+DELIVERY_ROWS=$'due|merge|due\ncompletion|merge|boxes=0'
 delivery_sequence() {
   DELIVERY_PREFIX="$1"
   local kind trigger status failed_rc

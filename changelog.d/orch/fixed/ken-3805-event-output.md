@@ -1,1 +1,1 @@
-- **Breaking:** Event blocks print verification rows for items whose saved `verifying-deadline` row changed, plus new pull request attention keys. The heartbeat keeps both full lists.
+- **Breaking:** Event blocks print due or overdue verification rows only when their box keys change in the saved `verifying-deadline` row, plus new pull request attention keys. Changes outside those keys wait for the heartbeat, which keeps both full lists.
