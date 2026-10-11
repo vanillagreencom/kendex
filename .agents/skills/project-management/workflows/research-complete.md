@@ -32,13 +32,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) § Validat
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description and put the research reference at the top when absent. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) even when the reference already exists. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
-
-```markdown
-**Research**: [FINDINGS_REF]
-```
-
-With several references, convert to a bulleted list under one `**Research**:` header, still at the top, each line noting its topic.
+For each blocked issue and, recursively, its children (`issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description and add `[FINDINGS_REF]` when absent. Use [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules for the Research header in Filing record, including multiple references and longer evidence. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) even when the reference already exists. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 ## 5. Analyze Impact
 
@@ -116,7 +110,7 @@ If no decision is recorded, skip section 6.2 and decision-only updates. Use the 
 
 ### 6.2 Append the Decision to Blocked Issues
 
-**Skip if** `.blocks` is empty. For each blocked issue and its recursive children, skip when `**Decision**: [DECISION_ID]` is already present; otherwise add `**Decision [DECISION_ID]**: [project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` directly after the § 4 Research block.
+**Skip if** `.blocks` is empty. For each blocked issue and its recursive children, skip when `**Decision [DECISION_ID]**:` is already present. Otherwise add the decision reference through [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules in Filing record. Use the decider-owned reference format that template cites.
 
 ### 6.3 Apply Doc and Config Updates
 

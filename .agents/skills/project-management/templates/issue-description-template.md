@@ -23,7 +23,7 @@
 **Expected delta**: [N] lines
 **Regressed-by**: [REGRESSED_BY]
 **Research**: [RESEARCH_REF]
-**Decision**: [DXXX] [DECISION_PATH]
+**Decision [DXXX]**: [DECISION_PATH]
 
 ## Context
 
@@ -48,7 +48,7 @@
 | `[DONE]` / `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | Summarize completion in one sentence; list its observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
-| `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Filing record; omit the line when absent |
+| `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Filing record; omit the line when absent. Decision references use decider's `schemas/decision-format.md` § Cross-references |
 
 ## Rules
 

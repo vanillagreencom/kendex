@@ -2,12 +2,13 @@
 
 Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** § Project Taxonomy Contract defines. The project defines the names, colors, and required categories.
 
-## Issue Labels vs Project Labels
+## Label lists
 
 | Resource | Used for | Source |
 |----------|----------|--------|
 | Issue labels | Issue routing, ownership, workflow, classification, domain/stack | `linear.sh labels list --max` / `gh label list` |
-| Project labels | Project and initiative categorization only | `linear.sh project-labels ...` |
+| Project labels | Project categorization | `linear.sh project-labels list --max` |
+| Initiative labels | Initiative categorization | Names from the approved plan or the user's answers; `linear.sh initiatives create` resolves them against initiative labels |
 
 Preflight uses **issue labels only**. Never validate an issue label against the project-label list.
 

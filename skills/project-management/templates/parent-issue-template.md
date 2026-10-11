@@ -23,7 +23,7 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 ## Filing record
 
 **Research**: [RESEARCH_REF]
-**Decision**: [DXXX] [DECISION_PATH]
+**Decision [DXXX]**: [DECISION_PATH]
 **Source**: [ORIGIN_CONTEXT]
 **Reached by**: [REACH]
 
