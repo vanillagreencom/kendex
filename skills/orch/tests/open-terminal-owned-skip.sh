@@ -532,16 +532,60 @@ for setting in '-c check_for_update_on_startup=false' '-c features.daemon_auto_s
       "a caller's $setting leaves one $word in the Codex command"
   done
 done
-# A --cmd template is the caller's whole command and gains no setting: the
-# pane runs the substituted template exactly as written.
+# A --cmd template keeps the caller's arguments while the launch owner supplies
+# its account environment. Execute the captured pane command to read both.
 CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false {issue} '$UNATTENDED_TEXT'"
 OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-cmd -- \
   --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
 await_file "$TMP_ROOT/launch-codex-cmd.cmd"
 LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
-assert_eq "${LAUNCH_CODEX_CMD#* && }" \
-  "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-11' && export KENDEX_USER_EMAIL='' && env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11 '$UNATTENDED_TEXT'" \
-  "a codex --cmd launch runs its substituted template exactly, with no update setting added"
+CODEX_TEMPLATE_BIN="$TMP_ROOT/codex-template-bin"
+mkdir -p "$CODEX_TEMPLATE_BIN"
+printf '#!%s\n' "$BASH" > "$CODEX_TEMPLATE_BIN/codex"
+cat >> "$CODEX_TEMPLATE_BIN/codex" <<'EOF'
+set -euo pipefail
+printf '%s\n' "$PWD" "${KENDEX_LANE_ORIGIN-unset}" "${KENDEX_USER_EMAIL-unset}" \
+  "${CODEX_HOME-unset}" "${ORCH_COMPACTION_OVERRIDES-unset}" "$@" > "$CODEX_TEMPLATE_RECORD"
+EOF
+chmod +x "$CODEX_TEMPLATE_BIN/codex"
+codex_template_result() { # CAPTURED_PANE_COMMAND
+  local record="$TMP_ROOT/codex-template.record" status=0
+  rm -f -- "$record"
+  env -i PATH="$CODEX_TEMPLATE_BIN:/usr/bin:/bin" HOME="$SESSION_HOME" CODEX_TEMPLATE_RECORD="$record" \
+    KENDEX_USER_EMAIL=caller CODEX_HOME=wrong-account ORCH_COMPACTION_OVERRIDES=caller \
+    "$BASH" -c "$1" > "$TMP_ROOT/codex-template-pane.log" 2>&1 || status=$?
+  printf 'rc=%s\n' "$status"
+  if [[ -f "$record" ]]; then cat "$record"; else printf 'child-record-missing\n'; fi
+}
+CODEX_TEMPLATE_EXPECTED="$(printf '%s\n' rc=0 "$TMP_ROOT/wt/CC-11" "$TMP_ROOT/wt/CC-11" '' \
+  "$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")" '' \
+  -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false \
+  CC-11 "$UNATTENDED_TEXT")"
+assert_eq "$(codex_template_result "$LAUNCH_CODEX_CMD")" "$CODEX_TEMPLATE_EXPECTED" \
+  "a codex --cmd child receives only the caller's arguments and its lane environment"
+
+# Keep the caller's template in the control, but append an unwanted setting in
+# a private launch owner. The same child comparison must reject the extra argv.
+CODEX_TEMPLATE_CONTROL="$(mutant_scripts codex-template-control lib/lane-launch.sh)" || exit 1
+git -C "$TMP_ROOT/codex-template-control" init -q
+orch_fixture_shared_libs "$TMP_ROOT/codex-template-control"
+mutate_file "$CODEX_TEMPLATE_CONTROL/lib/lane-launch.sh" \
+  '"$(lane_single_quote "$cmd")"' '"$(lane_single_quote "$cmd -c check_for_update_on_startup=false")"'
+OT="$CODEX_TEMPLATE_CONTROL/open-terminal" OT_CAPTURE="$TMP_ROOT/launch-codex-cmd-control.cmd" \
+  LANES_HOME="$SESSION_HOME" run_case launch-codex-cmd-control -- \
+  --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
+await_file "$TMP_ROOT/launch-codex-cmd-control.cmd"
+CODEX_TEMPLATE_CONTROL_RESULT="$(codex_template_result "$(cat "$TMP_ROOT/launch-codex-cmd-control.cmd")")"
+assert_eq "$CODEX_TEMPLATE_CONTROL_RESULT" "$(printf '%s\n' "$CODEX_TEMPLATE_EXPECTED" -c check_for_update_on_startup=false)" \
+  "control: the custom command reaches Codex with an added startup setting"
+control_rc=0
+(
+  source "$TEST_DIR/lib/assertions.sh"
+  assert_eq "$CODEX_TEMPLATE_CONTROL_RESULT" "$CODEX_TEMPLATE_EXPECTED" "custom Codex command arguments"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/codex-template-control.log" || control_rc=$?
+assert_eq "$control_rc" 1 "control: the child comparison rejects the added startup setting" \
+  "$TMP_ROOT/codex-template-control.log"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\",\"cwd\":\"$TMP_ROOT/wt/CC-2\"}}" >"$OLD_CODEX/sessions/2026/cross.jsonl"
