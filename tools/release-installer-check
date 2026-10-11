@@ -36,10 +36,9 @@
 # failed; a lane that exports APPLE_SIGNING_IDENTITY has to have signed.
 set -euo pipefail
 
-# The disk image a macOS check has mounted, detached on exit whatever the
-# answer, so a refusal never leaves it mounted on the runner or under the
-# directory the trap removes.
-MOUNTED=""
+# A failed hdiutil attach can leave devices without a mount point. Keep the
+# image's identity until its devices are detached, including on refusal.
+IMAGE=""
 
 message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
   case "$1" in
@@ -65,6 +64,8 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
       else
         printf '%s could not be taken apart, so what it installs is unknown.\n' "$2"
       fi ;;
+    detach)
+      printf '%s could not be detached, so its devices may still hold the image.\n' "$2" ;;
     absent)
       printf '%s installs no kendex command at %s; the download would install the app alone.\n' "$2" "$3" ;;
     unrunnable)
@@ -105,8 +106,13 @@ expected=$("$built" --version) || die version-unreadable "$built"
 
 TMP=$(mktemp -d)
 cleanup() {
-  [ -z "$MOUNTED" ] || hdiutil detach "$MOUNTED" >/dev/null 2>&1 || true
+  local rc=$?
+  if [ -n "$IMAGE" ] && ! detach_image "$IMAGE"; then
+    emit detach "$IMAGE"
+    rc=1
+  fi
   rm -rf -- "${TMP:?}"
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -202,6 +208,32 @@ check_app_archive() {
   answers "$archive" "$dir/kendex.app/Contents/MacOS/kendex"
 }
 
+# hdiutil info's documented plist interface identifies unmounted devices too.
+# Match only this check's image: the runner also holds macOS system images.
+# Python's standard plist parser avoids parsing the human-readable listing.
+detach_image() { # DMG — release every attachment of this image
+  local dmg=$1 device
+  hdiutil info -plist >"$TMP/images.plist" || return 1
+  python3 - "$dmg" "$TMP/images.plist" >"$TMP/devices" <<'PY' || return 1
+import os
+import plistlib
+import sys
+
+with open(sys.argv[2], "rb") as source:
+    images = plistlib.load(source)["images"]
+for image in images:
+    if os.path.realpath(image["image-path"]) == os.path.realpath(sys.argv[1]):
+        devices = [entity["dev-entry"] for entity in image["system-entities"]
+                   if "dev-entry" in entity]
+        if not devices:
+            raise ValueError("attached image has no device")
+        print(devices[0])
+PY
+  while IFS= read -r device; do
+    hdiutil detach -force "$device" >/dev/null || return 1
+  done <"$TMP/devices"
+}
+
 # hdiutil on the GitHub macOS runner now and then refuses to attach an
 # image it mounts on another try, the suite's fixture images included. A
 # bad image is refused on every attempt, so the retry costs it a few
@@ -211,6 +243,9 @@ attach() { # DMG MOUNT — mounted read-only at MOUNT, or the extract refusal
   for attempt in 1 2 3; do
     hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>"$TMP/attach" &&
       return 0
+    # A failed attach can still own devices. Release them before another
+    # attempt, so the image cannot contend with its own previous attachment.
+    detach_image "$dmg" || die detach "$dmg"
     # A pause, so a refusal that lasts while the runner holds the image
     # has time to clear before the next attempt.
     [ "$attempt" -eq 3 ] || sleep 2
@@ -222,15 +257,11 @@ check_dmg() {
   local dmg mount
   dmg=$(only_match "$out/bundle/dmg" "*.dmg")
   mount=$(opened dmg-mount)
+  IMAGE=$dmg
   attach "$dmg" "$mount"
-  # The EXIT trap detaches it, so a refusal inside answers cannot leave
-  # the image mounted; a detach that fails here leaves it recorded, and
-  # the trap tries again.
-  MOUNTED=$mount
   answers "$dmg" "$mount/kendex.app/Contents/MacOS/kendex"
-  if hdiutil detach "$mount" >/dev/null 2>&1; then
-    MOUNTED=""
-  fi
+  detach_image "$dmg" || die detach "$dmg"
+  IMAGE=""
 }
 
 case "$target" in
@@ -241,6 +272,7 @@ case "$target" in
   aarch64-apple-darwin | x86_64-apple-darwin)
     need hdiutil
     need codesign
+    need python3
     check_app
     check_app_archive
     check_dmg

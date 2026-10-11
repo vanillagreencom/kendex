@@ -34,17 +34,20 @@
 # the lane-that-signs row (APPLE_SIGNING_IDENTITY set) refuses, and a
 # signed app is the release lane's alone to prove.
 #
-# The attach table is `label|sidecar|refusals|rc|first|checked|cause|info` and runs on
+# The attach table adds partial attachment and detach failure inputs. It runs on
 # every host, with hdiutil and codesign stubbed on PATH: the stub refuses
 # the first `refusals` attaches, saying `stub refusal` on stderr, then
 # mounts an app built with the `sidecar` word. `cause` and `info` say whether
 # the FAIL log carries the stub's refusal and image listing. The log is
-# the CI diagnosis when the real hdiutil cannot attach an image.
+# the CI diagnosis when the real hdiutil cannot attach an image. Each row also
+# asserts that no owned device remains. The foreign image must stay attached.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK="$(cd "$TEST_DIR/.." && pwd)/release-installer-check"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d)" || { echo 'release-installer-check.test: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d "$TMP" && ! -L "$TMP" ]] || { echo 'release-installer-check.test: scratch=not-a-directory' >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'release-installer-check.test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 OUT="$TMP/out"
 VERSION=9.9.9
@@ -247,13 +250,19 @@ stub_tools() { # SIDECAR
   rm -rf -- "${STUB:?}"
   mkdir -p "$STUB/bin"
   mac_app "$STUB/image/kendex.app" "$1"
+  : >"$STUB/foreign"
   cat >"$STUB/bin/hdiutil" <<STUBEOF
 #!/bin/sh
 case "\$1" in
   attach)
+    if [ -f "$STUB/attached" ]; then
+      echo "hdiutil: attach failed - Resource temporarily unavailable" >&2
+      exit 1
+    fi
     left=\$(cat "$STUB/refusals")
     if [ "\$left" -gt 0 ]; then
       echo \$((left - 1)) >"$STUB/refusals"
+      [ "\$(cat "$STUB/partial")" != yes ] || : >"$STUB/attached"
       echo "hdiutil: attach failed - stub refusal" >&2
       exit 1
     fi
@@ -262,9 +271,25 @@ case "\$1" in
       shift
     done
     cp -R "$STUB/image/." "\$mount"
+    : >"$STUB/attached"
     ;;
-  detach) ;;
-  info) echo "image-path : $OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg" ;;
+  detach)
+    [ "\$2" = -force ] && [ "\$3" = /dev/stub-owned ] || exit 2
+    [ "\$(cat "$STUB/detach-error")" != yes ] || exit 1
+    rm "$STUB/attached"
+    ;;
+  info)
+    if [ "\${2:-}" = -plist ]; then
+      printf '%s\n' '<plist version="1.0"><dict><key>images</key><array>'
+      printf '%s\n' '<dict><key>image-path</key><string>/foreign.dmg</string><key>system-entities</key><array><dict><key>dev-entry</key><string>/dev/stub-foreign</string></dict></array></dict>'
+      if [ -f "$STUB/attached" ]; then
+        printf '%s\n' '<dict><key>image-path</key><string>$OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg</string><key>system-entities</key><array><dict><key>dev-entry</key><string>/dev/stub-owned</string></dict><dict><key>dev-entry</key><string>/dev/stub-owned-partition</string></dict></array></dict>'
+      fi
+      printf '%s\n' '</array></dict></plist>'
+    else
+      echo "image-path : $OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg"
+    fi
+    ;;
   *) echo "hdiutil stub: no verb \$1" >&2; exit 2 ;;
 esac
 STUBEOF
@@ -274,11 +299,13 @@ STUBEOF
 
 echo "=== the disk image attach, hdiutil stubbed ==="
 DMG="bundle/dmg/kendex_${VERSION}_aarch64.dmg"
-while IFS='|' read -r label sidecar refusals rc first checked cause info; do
+while IFS='|' read -r label sidecar refusals partial detach_error rc first checked cause info remaining; do
   [[ "$label" != "" && "$label" != \#* ]] || continue
   build_macos command command none
   stub_tools "$sidecar"
   printf '%s\n' "$refusals" >"$STUB/refusals"
+  printf '%s\n' "$partial" >"$STUB/partial"
+  printf '%s\n' "$detach_error" >"$STUB/detach-error"
   : >"$OUT/$DMG"
   got="$(PATH="$STUB/bin:$PATH" run "$MACOS")"
   got_cause=no
@@ -290,13 +317,50 @@ while IFS='|' read -r label sidecar refusals rc first checked cause info; do
     [[ "$detail" != *"stub refusal"* ]] || got_cause=yes
     [[ "$detail" != *"image-path : $OUT/$DMG"* ]] || got_info=yes
   fi
-  PATH="$STUB/bin:$PATH" assert_eq "$got cause=$got_cause info=$got_info" \
-    "rc=$rc first=$first checked=$checked cause=$cause info=$info" "$label" macos
+  got_remaining=no
+  [[ ! -f "$STUB/attached" ]] || got_remaining=yes
+  foreign=yes
+  [[ -f "$STUB/foreign" ]] || foreign=no
+  PATH="$STUB/bin:$PATH" assert_eq "$got cause=$got_cause info=$got_info remaining=$got_remaining foreign=$foreign" \
+    "rc=$rc first=$first checked=$checked cause=$cause info=$info remaining=$remaining foreign=yes" "$label" macos
 done <<EOF
-a disk image with no sidecar|absent|0|1|absent=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|no|no
-a disk image refused once and mounted on the next attempt is checked|command|1|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG|no|no
-a disk image refused on every attempt names hdiutil's refusal|command|3|1|extract=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|yes|yes
+a disk image with no sidecar releases its attachment on refusal|absent|0|no|no|1|absent=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|no|no|no
+a disk image refused once and mounted on the next attempt is checked|command|1|no|no|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG|no|no|no
+a disk image refused on every attempt names hdiutil's refusal|command|3|no|no|1|extract=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|yes|yes|no
+a partially attached failed attempt releases its devices before the next attach|command|1|yes|no|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG|no|no|no
+a final failed attach leaves no image attached|command|3|yes|no|1|extract=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|yes|yes|no
+a detach failure refuses and retains the image for exit cleanup|command|1|yes|yes|1|detach=$OUT/$DMG|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz|no|no|yes
 EOF
+
+# The same partial-attachment row must fail when failed-attempt cleanup is
+# removed from a disposable production copy. Keep the attach and its refusal.
+CONTROL="$TMP/check-without-failed-attach-cleanup"
+python3 - "$CHECK" "$CONTROL" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+needle = '    detach_image "$dmg" || die detach "$dmg"\n'
+assert source.count(needle) == 1
+changed = source.replace(needle, '    : # failed-attempt cleanup disabled\n')
+assert changed != source
+Path(sys.argv[2]).write_text(changed)
+PY
+chmod +x "$CONTROL"
+build_macos command command none
+stub_tools command
+printf '1\n' >"$STUB/refusals"
+printf 'yes\n' >"$STUB/partial"
+printf 'no\n' >"$STUB/detach-error"
+: >"$OUT/$DMG"
+got="$(CHECK="$CONTROL" PATH="$STUB/bin:$PATH" run "$MACOS")"
+detail="$(assert_eq "$got" "rc=0 first=- checked=bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,$DMG" \
+  'partial attachment control')"
+red=no
+[[ "$detail" != *"  FAIL  "* ]] || red=yes
+assert_eq "$got red=$red" \
+  "rc=1 first=extract=$OUT/$DMG checked=bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz red=yes" \
+  'must-fail: without failed-attempt cleanup the same image blocks the next attach'
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
