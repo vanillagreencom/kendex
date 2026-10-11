@@ -18,6 +18,13 @@
 #             workspace manifest and lock, the toolchain pin and the cargo,
 #             clippy and rustfmt configuration, whether or not the checkout
 #             holds each file today, so a diff deleting one still names it.
+#   cli-build, cli-include   with --cli-smoke, compiled inputs of kendex-cli
+#             and its cli_smoke target. Cargo metadata supplies local package
+#             dependencies, target roots and all workspace manifests. The
+#             source pass follows literal #[path] modules from those roots.
+#             Other test targets and unrelated workspace source are excluded.
+#             Source directories retain their inline test code and includes.
+#             Local dependencies include all declared features and platforms.
 #
 # `.` is the row for what this reader does not follow: a chain that reaches
 # the repository root, and a chain that goes on with an argument that is not
@@ -32,7 +39,7 @@
 # A resolved path that climbs out of the checkout names no repository path and
 # is not printed.
 #
-# Usage: tools/rust-reads [ROOT]
+# Usage: tools/rust-reads [--cli-smoke] [ROOT]
 #   ROOT   the checkout to read; the current directory when omitted
 # stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
 # relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
@@ -44,10 +51,12 @@
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
+cli_scope=
+if [ "${1:-}" = --cli-smoke ]; then cli_scope=1; shift; fi
 case $# in
   0) root=. ;;
   1) root=$1 ;;
-  *) echo "rust-reads: usage=tools/rust-reads [ROOT]" >&2; exit 2 ;;
+  *) echo "rust-reads: usage=tools/rust-reads [--cli-smoke] [ROOT]" >&2; exit 2 ;;
 esac
 cd -- "$root" 2>/dev/null || { printf 'rust-reads: unreadable=%s\n' "$root" >&2; exit 2; }
 [ -d crates ] || { echo 'rust-reads: unreadable=crates' >&2; exit 2; }
@@ -58,7 +67,41 @@ if ! manifests=$(find crates -type f -name Cargo.toml) || [ -z "$manifests" ]; t
   exit 2
 fi
 
-if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -exec awk '
+scope=
+if [ -n "$cli_scope" ]; then
+  # --no-deps reads workspace declarations without fetching registry crates.
+  # Keep every member manifest: Cargo reads them to resolve a CLI build too.
+  if ! metadata=$(cargo metadata --format-version 1 --no-deps --locked) ||
+     ! scope=$(jq -er --arg root "$(pwd -P)/" '
+      .packages as $packages
+      | def closure($paths):
+          ($paths + [$packages[] | select(.manifest_path as $p | $paths | index($p))
+            | . as $package | .dependencies[]
+            | select(.path != null and (.kind != "dev" or $package.name == "kendex-cli"))
+            | .path + "/Cargo.toml"] | unique) as $next
+          | if $next == $paths then $next else closure($next) end;
+        [$packages[] | select(.name == "kendex-cli")] as $cli
+      | if ($cli | length) != 1 or
+           ([$cli[0].targets[] | select(.name == "cli_smoke" and (.kind | index("test")))] | length) != 1
+        then error("missing CLI smoke target") else . end
+      | closure([$cli[0].manifest_path]) as $paths
+      | ([$packages[].manifest_path | ["file", .]] +
+          [$packages[] | select(.manifest_path as $p | $paths | index($p))
+           | . as $package | .targets[]
+           | if (.kind | index("lib")) or
+                ($package.name == "kendex-cli" and (.kind | index("bin")))
+             then ["dir", (.src_path | sub("/[^/]+$"; ""))]
+             elif (.kind | index("custom-build")) or
+                  ($package.name == "kendex-cli" and .name == "cli_smoke" and (.kind | index("test")))
+             then ["file", .src_path] else empty end])[]
+      | select(.[1] | startswith($root)) | .[1] |= ltrimstr($root) | @tsv
+    ' <<<"$metadata"); then
+    echo 'rust-reads: unreadable=cli-smoke' >&2
+    exit 2
+  fi
+fi
+
+if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" find crates -type f -name '*.rs' -exec awk '
   BEGIN {
     n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
     for (i = 1; i <= n; i++) {
@@ -84,7 +127,9 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
     return out
   }
   function emit(kind, path) {
-    if (path != "") printf "%s\t%s\n", kind, path
+    if (path == "") return
+    if (!compiling) printf "%s\t%s\n", kind, path
+    else if (kind == "include") printf "cli-include\t%s\n", path
   }
   function unquote(tok) {
     sub(/^[^"]*"/, "", tok)
@@ -107,6 +152,13 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
     while (match(rest, /include_(str|bytes)![ \t\n]*\([ \t\n]*"[^"]*"/)) {
       emit("include", resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))
       rest = substr(rest, RSTART + RLENGTH)
+    }
+    if (compiling) {
+      rest = text
+      while (match(rest, /#[ \t\n]*\[[ \t\n]*path[ \t\n]*=[ \t\n]*"[^"]*"/)) {
+        visit(resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))
+        rest = substr(rest, RSTART + RLENGTH)
+      }
     }
     owner = manifest_dir(file)
     if (owner == "") return
@@ -133,19 +185,54 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
       if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".")
     }
   }
+  function visit(file,   line, status, text) {
+    if (file == "" || file in visited) return
+    visited[file] = 1
+    printf "cli-build\t%s\n", file
+    if (file !~ /\.rs$/) return
+    if (file in source) text = source[file]
+    else {
+      while ((status = (getline line < file)) > 0) text = text line "\n"
+      close(file)
+      if (status < 0) { printf "unreadable\t%s\n", file; return }
+    }
+    scan(file, text)
+  }
   FNR == 1 {
-    if (NR > 1) scan(prev, text)
+    if (NR > 1) { source[prev] = text; scan(prev, text) }
     prev = FILENAME
     text = $0
     next
   }
   { text = text "\n" $0 }
-  END { if (NR > 0) scan(prev, text) }
+  END {
+    if (NR > 0) { source[prev] = text; scan(prev, text) }
+    compiling = 1
+    n = split(ENVIRON["RUST_READS_SCOPE"], roots, "\n")
+    for (i = 1; i <= n; i++) {
+      split(roots[i], root, "\t")
+      if (root[2] == "") continue
+      if (root[1] == "file") visit(root[2])
+      else if (root[1] == "dir") {
+        printf "cli-build\t%s\n", root[2]
+        for (file in source) if (index(file, root[2] "/") == 1) visit(file)
+      }
+    }
+  }
 ' {} +); then
   echo 'rust-reads: unreadable=crates' >&2
   exit 2
 fi
 
+if [[ "$rows" == *$'unreadable\t'* ]]; then
+  echo 'rust-reads: unreadable=cli-smoke' >&2
+  exit 2
+fi
+
 build=$(printf 'build\t%s\n' crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo \
   clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml)
-printf '%s\n%s\n' "$build" "$rows" | grep . | LC_ALL=C sort -u
+shared=
+if [ -n "$cli_scope" ]; then
+  shared=$(awk -F '\t' '$2 != "crates" { print "cli-build\t" $2 }' <<<"$build")
+fi
+printf '%s\n%s\n%s\n' "$build" "$rows" "$shared" | grep . | LC_ALL=C sort -u

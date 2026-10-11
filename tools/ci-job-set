@@ -118,7 +118,7 @@
 #     one is inside the docs path set and its line ceiling, or a plan of any
 #     size.
 #   - catalog and smoke take the union of the explicit catalog inputs and
-#     the compiled inputs rust-reads derives. A compiled include counts even
+#     the CLI smoke compiled inputs rust-reads derives. A compiled include counts even
 #     when it is prose; a run-time manifest read alone does not. Both lanes
 #     run on either event and accept no tree proof for external releases.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
@@ -263,13 +263,14 @@ SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What selects every shell shard: the lane sources and the rest of .github/.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES"
 
-# Which changed paths tools/rust-reads rows name, as two lines: named=1 where
+# Which changed paths tools/rust-reads rows name: named=1 where
 # an include or manifest row other than `.` names one, build=1 where a path
-# other than prose sits under a build or include row. Each match is printed
+# other than prose sits under a workspace build or include row, compiled=1
+# where a CLI-smoke scoped row names a compiled input. Each match is printed
 # on stderr.
 reads() {
   local rows
-  rows="$("$TOOLS_DIR/rust-reads" .)" ||
+  rows="$("$TOOLS_DIR/rust-reads" --cli-smoke .)" ||
     die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
   PROSE="$PROSE" PATHS="$paths" awk -F '\t' '
     { kind[NR] = $1; read[NR] = $2 }
@@ -279,9 +280,9 @@ reads() {
         path = changed[p]
         for (r = 1; r <= NR; r++) {
           if (path == "" || read[r] == "." || (path != read[r] && index(path, read[r] "/") != 1)) continue
-          if (kind[r] != "build") named = 1
-          if (kind[r] != "manifest" && path !~ ENVIRON["PROSE"]) build = 1
-          if (kind[r] == "include" || (kind[r] == "build" && path !~ ENVIRON["PROSE"])) compiled = 1
+          if (kind[r] == "include" || kind[r] == "manifest") named = 1
+          if ((kind[r] == "include" || kind[r] == "build") && path !~ ENVIRON["PROSE"]) build = 1
+          if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1
           printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
         }
       }

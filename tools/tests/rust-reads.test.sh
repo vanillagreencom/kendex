@@ -142,5 +142,78 @@ s/if (match(rest, \/^\[ \\t\\n\]\*\\)+\/)) rest = substr(rest, RLENGTH + 1)//|a 
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the controls" >&2; exit 2; }
 
+echo "=== CLI smoke compiled scope retains its inputs and excludes other targets ==="
+# Cargo metadata and the real CLI target produce this scope. The default
+# workspace rows remain available to guard and the other compiler lanes.
+SCOPE_TMP="$(mktemp -d)" || exit 2
+trap 'rm -rf -- "${TMP:?}" "${SCOPE_TMP:?}"' EXIT
+scope_rows() { # READER — sets SCOPE_ROWS and SCOPE_RC
+  SCOPE_RC=0
+  SCOPE_ROWS="$(cd "$ROOT" && "$1" --cli-smoke . 2>"$SCOPE_TMP/err")" || SCOPE_RC=$?
+}
+scope_matches() { # PATH — whether a scoped row contains this path
+  awk -F '\t' -v path="$1" '
+    $1 ~ /^cli-(build|include)$/ && (path == $2 || index(path, $2 "/") == 1) { found=1 }
+    END { print found ? "true" : "false" }
+  ' <<<"$SCOPE_ROWS"
+}
+scope_table() {
+  local path expected
+  while IFS='|' read -r path expected; do
+    [ "$(scope_matches "$path")" = "$expected" ] && ok "CLI compiled scope: $path" || bad "CLI compiled scope: $path"
+  done <<'ROWS'
+crates/core/src/lib.rs|true
+crates/cli/src/bin/kendex.rs|true
+crates/cli/build.rs|true
+crates/cli/tests/cli_smoke.rs|true
+crates/test_util.rs|true
+ui/src/index.css|true
+docs/authoring/README.md|false
+Cargo.toml|true
+Cargo.lock|true
+.cargo/config.toml|true
+rust-toolchain.toml|true
+crates/app/Cargo.toml|true
+crates/app/src/editor.rs|false
+crates/core/tests/main.rs|false
+crates/cli/tests/main.rs|false
+README.md|false
+ROWS
+}
+scope_rows "$READS"
+[ "$SCOPE_RC" -eq 0 ] || { bad "CLI scope is readable"; cat "$SCOPE_TMP/err"; }
+scope_table
+grep -qFx $'build\tcrates' <<<"$SCOPE_ROWS" && ok "scoped output retains workspace build rows" || bad "scoped output retains workspace build rows"
+
+# Copies broaden package selection or remove one required input shape.
+# Each copy must make the same scope table red, without a compile error.
+while IFS='@' read -r needle replacement; do
+  [ "$(grep -cxF -- "$needle" "$READS")" -eq 1 ] || exit 2
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
+    $0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }
+  ' "$READS" >"$SCOPE_TMP/reader"
+  chmod +x "$SCOPE_TMP/reader"
+  scope_rows "$SCOPE_TMP/reader"
+  if [ "$SCOPE_RC" -eq 0 ] && ! (PASS=0 FAIL=0; scope_table >"$SCOPE_TMP/control"; [ "$FAIL" -eq 0 ]); then
+    ok "control: CLI scope table rejects the changed derivation"
+  else
+    bad "control: CLI scope table accepts the changed derivation"
+  fi
+done <<'ROWS'
+      | closure([$cli[0].manifest_path]) as $paths@      | [$packages[].manifest_path] as $paths
+      | closure([$cli[0].manifest_path]) as $paths@      | [$cli[0].manifest_path] as $paths
+        visit(resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))@        # no path-module visit
+    else if (kind == "include") printf "cli-include\t%s\n", path@    else if (kind == "include") printf "include\t%s\n", path
+  shared=$(awk -F '\t' '$2 != "crates" { print "cli-build\t" $2 }' <<<"$build")@  shared=
+ROWS
+
+# A failed metadata invocation cannot become an empty scoped read set.
+mkdir -p "$SCOPE_TMP/bin"
+printf '#!/bin/sh\nexit 1\n' >"$SCOPE_TMP/bin/cargo"
+chmod +x "$SCOPE_TMP/bin/cargo"
+PATH="$SCOPE_TMP/bin:$PATH" scope_rows "$READS"
+[ "$SCOPE_RC" -eq 2 ] && grep -qFx 'rust-reads: unreadable=cli-smoke' "$SCOPE_TMP/err" &&
+  ok "failed Cargo metadata refuses the scoped read" || bad "failed Cargo metadata refuses the scoped read"
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

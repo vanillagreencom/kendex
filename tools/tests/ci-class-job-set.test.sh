@@ -298,7 +298,24 @@ check "a row that forgets a lane is refused" \
 READ_WORLD="$TMP/read-world"
 mkdir -p "$READ_WORLD/crates/demo/src"
 git init -q "$READ_WORLD"
-printf '[package]\nname = "demo"\n' >"$READ_WORLD/crates/demo/Cargo.toml"
+printf '[package]\nname = "demo"\nversion = "0.1.0"\n' >"$READ_WORLD/crates/demo/Cargo.toml"
+printf '[workspace]\nmembers = ["crates/*"]\nresolver = "2"\n' >"$READ_WORLD/Cargo.toml"
+for package in core cli app; do
+  mkdir -p "$READ_WORLD/crates/$package/src"
+  printf '[package]\nname = "kendex-%s"\nversion = "0.1.0"\n' "$package" >"$READ_WORLD/crates/$package/Cargo.toml"
+  printf 'fn main() {}\n' >"$READ_WORLD/crates/$package/src/lib.rs"
+done
+cat >>"$READ_WORLD/crates/cli/Cargo.toml" <<'TOML'
+[dependencies]
+kendex-core = { path = "../core" }
+[[test]]
+name = "cli_smoke"
+path = "tests/cli_smoke.rs"
+TOML
+printf '\n[dependencies]\ndemo = { path = "../demo" }\n' >>"$READ_WORLD/crates/core/Cargo.toml"
+mkdir -p "$READ_WORLD/crates/cli/tests"
+printf '#[path = "../../test_util.rs"]\nmod test_util;\n' >"$READ_WORLD/crates/cli/tests/cli_smoke.rs"
+printf 'fn fixture() {}\n' >"$READ_WORLD/crates/test_util.rs"
 cat >"$READ_WORLD/crates/demo/src/lib.rs" <<'RS'
 const A: &str = include_str!("../../../docs/a.md");
 const X: &str = include_str!("../../../assets/x.json");
@@ -324,7 +341,8 @@ done <<<"$READ_ROWS"
 # Each declared build name is a build input. Read in the fixture checkout,
 # where no file names one, so the search adds no further shard.
 while IFS= read -r p; do
-  check "build name $p is a build input" "$BUILD_ROW" "$(SELECT_IN="$READ_WORLD" selection micro false "$p")"
+  check "build name $p is a build input" "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"$BUILD_ROW")" \
+    "$(SELECT_IN="$READ_WORLD" selection micro false "$p" | sed 's/ catalog=[^ ]* smoke=[^ ]*//')"
 done <<<"$names"
 mkdir -p "$TMP/no-crates"
 check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed" \
@@ -357,6 +375,10 @@ standard|README.md|false
 render|.agents/skills/orch/SKILL.md|false
 micro|$UI_ONLY|false
 micro|tools/guard|false
+micro|crates/app/src/editor.rs|false
+micro|crates/app/tests/integration.rs|false
+micro|crates/core/tests/integration.rs|false
+micro|crates/cli/tests/integration.rs|false
 trivial|skills/orch/SKILL.md|true
 render|skills/orch/SKILL.md|true
 micro|agents/runtime.md|true
@@ -375,6 +397,7 @@ micro|tools/catalog-release-check|true
 micro|crates/core/src/render/agent.rs|true
 micro|crates/cli/tests/cli_smoke.rs|true
 micro|crates/test_util.rs|true
+micro|crates/app/Cargo.toml|true
 micro|Cargo.toml|true
 micro|Cargo.lock|true
 micro|rust-toolchain.toml|true
@@ -391,10 +414,11 @@ mkdir -p "$TMP/catalog/tools"
 cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
 cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
 catalog_copy="$TMP/catalog/tools/ci-job-set"
-for rule in inputs compiled skip proof; do
+for rule in inputs compiled scope skip proof; do
   case "$rule" in
     inputs) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false' ;;
     compiled) needle='  case "$read_lines" in *compiled=1*) catalog=true ;; esac'; replacement='  case "$read_lines" in *compiled=1*) catalog=false ;; esac' ;;
+    scope) needle='          if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1'; replacement='          if (kind[r] == "include" || (kind[r] == "build" && path !~ ENVIRON["PROSE"])) compiled = 1' ;;
     skip) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  catalog=true; any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true' ;;
     proof) needle='  case "$lane" in bot_instructions | catalog | smoke) ran=false ;; esac'; replacement='  case "$lane" in bot_instructions) ran=false ;; esac' ;;
   esac
@@ -443,13 +467,13 @@ while IFS='|' read -r edit class paths expected; do
   [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
     bad "control: $edit reddens $class over $paths (still '$got')"
 done <<CONTROLS
-s/row=trivial-read ;;/row=trivial ;;/|trivial|docs/a.md|$PROSE_ROW
+s/row=trivial-read ;;/row=trivial ;;/|trivial|docs/a.md|$READ_PROSE_ROW
 s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legalese.md|$VERIFY_ROW
-s/if (kind\[r\] != "manifest" .*) build = 1/build = 1/|micro|docs/a.md|$PROSE_ROW
-s/kind\[r\] != "manifest" .. //|micro|tools/x|$TOOL_ROW
+s/if (.*) build = 1/build = 1/|micro|docs/a.md|$READ_PROSE_ROW
+s/if (.*) build = 1/if (path !~ ENVIRON["PROSE"]) build = 1/|micro|tools/x|$TOOL_ROW
 s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
 s/\(ci-aggregate.rust-reads)\)[$]/\1/|standard|tools/ci-job-set.orig|$TOOL_ROW
-s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$PROSE_ROW
+s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$READ_PROSE_ROW
 CONTROLS
 
 # The shard selection in a fixture world, where every reader is planted and
@@ -468,6 +492,7 @@ CONTROLS
 SEL_WORLD="$TMP/sel-world"
 mkdir -p "$SEL_WORLD/tools/tests" "$SEL_WORLD/hooks/tests"
 cp -R "$READ_WORLD/crates" "$SEL_WORLD/crates"
+cp "$READ_WORLD/Cargo.toml" "$SEL_WORLD/Cargo.toml"
 skill() { # NAME REQUIRED-LIST — a SKILL.md, with a dependencies block where REQUIRED-LIST is given
   mkdir -p "$SEL_WORLD/skills/$1/scripts" "$SEL_WORLD/skills/$1/tests"
   if [ -n "$2" ]; then
