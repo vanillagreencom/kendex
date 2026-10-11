@@ -104,7 +104,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
     let wrappers = capture_wrappers(of, &publisher, &around).map_err(&render_refused)?;
     let local_root = crate::source::local_source_root(env, scope);
-    let local_path = super::local_item(env, scope, ItemKind::Agent, name);
+    let local_path = super::local_item(env, scope, ItemKind::Agent, installed_as);
     let paths = local_body_paths(of, &local_root, &local_path, edited);
     let bytes = source_form(&published, &edited_text, name, &wrappers, paths)?;
     let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))

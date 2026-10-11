@@ -180,7 +180,11 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
 #[allow(clippy::unwrap_used)]
 fn a_fork_keeps_relative_link_targets_after_capture_and_apply() {
     for harness in [HarnessId::Claude, HarnessId::Gemini, HarnessId::Pi] {
-        for beside in [false, true] {
+        for (name, source_prefix) in [
+            ("rev", "../"),
+            ("rev-mine", "../"),
+            ("plugin/rev-mine", "../../"),
+        ] {
             let w = agent_world(
                 &format!("\"{}\"", harness.name()),
                 "---\nname: rev\ndescription: Agent\n---\nUpstream body.\n\n[skill](../.agents/skills/s/workflows/w.md#part)\n`../.agents/skills/s/workflows/w.md § Part`\n",
@@ -193,8 +197,7 @@ fn a_fork_keeps_relative_link_targets_after_capture_and_apply() {
             assert!(before.contains("`../../.agents/skills/s/workflows/w.md § Part`"));
             edit_body(&file);
             let edited = fs::read_to_string(&file).unwrap();
-            let name = if beside { "rev-mine" } else { "rev" };
-            let plan = if beside {
+            let plan = if name != "rev" {
                 fork::fork_beside(
                     &w.env,
                     &w.scope,
@@ -212,14 +215,23 @@ fn a_fork_keeps_relative_link_targets_after_capture_and_apply() {
             resettle(&w);
             let source = fs::read_to_string(captured(&w, name)).unwrap();
             assert!(
-                source.contains("[skill](../.agents/skills/s/workflows/w.md#part)"),
+                source.contains(&format!(
+                    "[skill]({source_prefix}.agents/skills/s/workflows/w.md#part)"
+                )),
                 "{source}"
             );
             assert!(
-                source.contains("`../.agents/skills/s/workflows/w.md § Part`"),
+                source.contains(&format!(
+                    "`{source_prefix}.agents/skills/s/workflows/w.md § Part`"
+                )),
                 "{source}"
             );
-            let after = fs::read_to_string(rendered(&w, harness, name)).unwrap();
+            let after = fs::read_to_string(rendered(
+                &w,
+                harness,
+                &kendex_core::harness::rendered_name(harness, name),
+            ))
+            .unwrap();
             assert!(
                 after.contains("[skill](../../.agents/skills/s/workflows/w.md#part)"),
                 "{after}"
@@ -228,7 +240,7 @@ fn a_fork_keeps_relative_link_targets_after_capture_and_apply() {
                 after.contains("`../../.agents/skills/s/workflows/w.md § Part`"),
                 "{after}"
             );
-            if !beside {
+            if name == "rev" {
                 assert_eq!(after, edited);
             }
         }
