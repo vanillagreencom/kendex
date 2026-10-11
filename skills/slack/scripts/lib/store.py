@@ -1,5 +1,5 @@
 """What one checkout keeps under tmp/slack/: the binding, the journal, the
-status record, the relay lock, and the files owners sent.
+status record, the relay and hold locks, and the files owners sent.
 
 The journal is a transport ledger of identifiers, one JSON object per line,
 replayed into `State` at start and appended to as the relay works. Its line
@@ -28,6 +28,7 @@ BINDING = "binding.json"
 JOURNAL = "journal.jsonl"
 STATUS = "status.json"
 LOCK = "listen.lock"
+JARVIS_LOCK = "jarvis-session.lock"
 FILES = "files"
 # `<id>-<name>` is cut to this many characters, each ASCII once substituted,
 # so it stays inside the 255 bytes a file name may take.
@@ -391,15 +392,18 @@ def write_status(root: Path, record: Dict) -> None:
 
 
 class RelayLock:
-    """The OS lock one relay holds on a checkout for its lifetime."""
+    """An OS lock for a relay lifetime or its Jarvis session hold."""
 
-    def __init__(self, root: Path) -> None:
-        self.path = root_dir(root) / LOCK
+    def __init__(self, root: Path, name: str = LOCK) -> None:
+        self.path = root_dir(root) / name
         self.handle = None
 
     def acquire(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = self.path.open("a+")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle = self.path.open("a+")
+        except OSError as err:
+            raise Refusal("lock-failed", f"{self.path} ({err.strerror})") from err
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as err:
@@ -414,3 +418,29 @@ class RelayLock:
         handle.write(str(os.getpid()))
         handle.flush()
         self.handle = handle
+
+    def release(self) -> None:
+        if self.handle is not None:
+            try:
+                self.handle.close()
+            except OSError as err:
+                raise Refusal("lock-failed", f"{self.path} ({err.strerror})") from err
+            self.handle = None
+
+    def held(self) -> bool:
+        """Read ownership without rewriting the holder's record. A closed
+        relay leaves a file behind, but no OS lock."""
+        try:
+            handle = self.path.open("r")
+        except FileNotFoundError:
+            return False
+        except OSError as err:
+            raise Refusal("lock-failed", f"{self.path} ({err.strerror})") from err
+        with handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError as err:
+                if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    return True
+                raise Refusal("lock-failed", f"{self.path} ({err.strerror})") from err
+        return False

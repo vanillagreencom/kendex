@@ -281,6 +281,9 @@ while read -r name control reserved expires; do
     READ_ASK="$(ask "$R" "read-$name" "Read by the session in $name?")"
   fi
   sk_jarvis_read "$R" "$(wc -l < "$(sk_box "$R")/to-overseer.jsonl")"
+  if [ "$expires" = closed ]; then
+    sk_lm "$R" resolve --item overseer --id "$READ_ASK" --default >/dev/null || exit 1
+  fi
   if [ "$reserved" = yes ]; then
     UNREAD_ASK="$(ask "$R" "unread-$name" "Unread by the session in $name?" --reserved --wait 30)"
   else
@@ -333,6 +336,7 @@ while read -r name control reserved expires; do
   sk_bin_reset
 done <<'ROWS'
 real real no after
+closed real no closed
 every-ask-control every-ask no after
 reserved-expired real yes before
 reserved-later real yes after
@@ -724,6 +728,110 @@ dropped real 10
 read-new-control new-only 900
 keep-control keep 10
 post-control post 10
+ROWS
+
+# A real 429 retry waits through the API's injectable sleep. Move the clock
+# by its Retry-After and post from a separate process inside that wait. The
+# same table covers startup, a retained rename, a new hold and process exit.
+while read -r name control; do
+  R="$(sk_new_root "retry-hold-$name")"; sk_bind "$R"
+  OLD="$SK_TMP/retry-$name-old"; NEW="$SK_TMP/retry-$name-new"
+  case "$control" in
+    startup) sk_mutant hold-startup relay.py '            root.prepare_hold\(\)' '            pass' ;;
+    poll) sk_mutant hold-poll relay.py '        self.prepare_hold\(\)' '        pass' ;;
+    post) sk_mutant hold-retry-post relay.py 'if RelayLock\(root, JARVIS_LOCK\).held\(\):' 'if False and RelayLock(root, JARVIS_LOCK).held():' ;;
+  esac
+  OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
+    python3 - "${SK_BIN%/*}/lib" "$SK_BIN" "$R" "$OLD" "$NEW" <<'PY'
+import json, os, pathlib, subprocess, sys, time, urllib.request
+sys.path.insert(0, sys.argv[1])
+from api import Slack
+from relay import Relay
+from settings import load
+from store import JARVIS_LOCK, RelayLock
+binary, root, old, new = sys.argv[2], *map(pathlib.Path, sys.argv[3:])
+settings = load()
+settings.poll_seconds = 1
+now = time.time() - 60
+phase = "startup"
+rows = []
+def presence(path, fresh):
+    path.touch()
+    stamp = now - (10 if fresh else 900)
+    os.utime(path, (stamp, stamp))
+def setting(path):
+    (root / "kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "' + str(path) + '"\n')
+api = Slack(settings.token, settings.api_url)
+def fixture(path, **body):
+    request = urllib.request.Request(settings.api_url + "/_test/" + path, json.dumps(body).encode())
+    return json.load(urllib.request.urlopen(request))
+def waiting(seconds):
+    global now
+    assert seconds == 60, seconds
+    now += seconds
+    held = RelayLock(root, JARVIS_LOCK).held()
+    status = root / "tmp/slack/status.json"
+    stale = not status.exists() or time.time() - json.loads(status.read_text())["last_poll"] > 7
+    result = subprocess.run([binary, "post", "--root", str(root), "--text", "Retry " + phase, "--mention"],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    message = json.load(urllib.request.urlopen(settings.api_url + "/_test/state"))["messages"][channel][-1]
+    rows.append([held, stale, message["text"].startswith("<@"),
+                 sum(line.startswith("slack: mention-held=") for line in result.stderr.splitlines())])
+api.sleep = waiting
+channel = json.loads((root / "tmp/slack/binding.json").read_text())["channel"]
+presence(old, True); setting(old)
+fixture("fault", method="auth.test", status=429, times=1, retry_after=60)
+listener = Relay([root], settings, api, clock=lambda: now)
+relay = listener.roots[0]
+# Leave a real delivered message without its courtesy mark for the next poll.
+fixture("message", channel=channel, user="U001", text="Hold retry directive.")
+fixture("fault", method="reactions.add", error="not_in_channel", times=1)
+now -= 60
+assert listener.poll_once()
+setting(new)
+phase = "rename"
+fixture("fault", method="reactions.add", status=429, times=1, retry_after=60)
+assert listener.poll_once()
+assert relay.state.held and old.exists() and not new.exists()
+# Release both files, then a new fresh file must publish before mark_seen waits.
+presence(old, False); presence(new, False)
+assert listener.poll_once()
+assert not RelayLock(root, JARVIS_LOCK).held()
+presence(new, True)
+relay.state.marks.clear()
+phase = "new-hold"
+now -= 60
+relay.record_status(True, "", listener.code, "disconnected", listener.since, "")
+fixture("fault", method="reactions.add", status=429, times=1, retry_after=60)
+assert listener.poll_once()
+# The final hold survives until this owner exits. Age the current file so the
+# shell's next post can only regain mentions through OS release at exit.
+presence(new, False)
+print("retry-rows=" + json.dumps(rows, separators=(",", ":")))
+PY
+)"; RETRY_RC=$?
+  RETRY_ROW="$(printf '%s\n' "$OUT" | sed -n 's/^retry-rows=//p')"
+  if [ "$control" = real ]; then
+    assert_eq "$RETRY_RC=$RETRY_ROW" '0=[[true,true,false,1],[true,true,false,1],[true,true,false,1]]' \
+      "$name: startup, retained rename and new holds precede live retries despite stale health"
+  else
+    sk_assert_red "$RETRY_RC=$RETRY_ROW" '0=[[true,true,false,1],[true,true,false,1],[true,true,false,1]]' \
+      "$name: the same retry state table fails without early publication or shared ownership"
+  fi
+  sk_run -- post --root "$R" --text "Stopped retry $name." --mention
+  CHANNEL="$(sk_channel "$R")"
+  assert_eq "$RC=$(sk_state ".messages.${CHANNEL}[-1].text | startswith(\"<@U001> <@U002> \")")=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')" '0=true=0' \
+    "$name: process exit releases the lock even when its health record reports held"
+  sk_bin_reset
+done <<'ROWS'
+retry real
+startup-control startup
+poll-control poll
+retry-post-control post
 ROWS
 
 # Count calls through the real Relay start and poll owners. A stub returns

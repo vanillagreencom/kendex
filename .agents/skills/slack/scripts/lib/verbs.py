@@ -15,7 +15,7 @@ from typing import List, Optional
 from api import Slack, markdown_checked
 from markup import outbound, plain
 from refusals import Refusal, keyed, notice
-from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, jarvis_session_held, mention, resolve_owner_ids, status_fresh
+from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, jarvis_session_held, mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
 from settings import CALLER_ENV, Settings, load, load_presence, user_handle
@@ -341,7 +341,7 @@ def status(roots: List[Path], now: float) -> int:
             print(keyed("slack-relay", f"{root} state=never fix=start the relay with `slack listen --root {root}`"))
             continue
         age = now - float(record["last_poll"])
-        fresh = status_fresh(record, now)
+        fresh = age <= 2 * int(record["poll_seconds"]) + 5
         # A record the pre-Socket-Mode relay wrote has no connection fields:
         # its state comes from freshness and last_poll_ok alone.
         last_poll_at = format_at(float(record["last_poll"]))
