@@ -292,7 +292,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   clone-root<TAB><item><TAB><the lane's main checkout, on its own host>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the mail pass reported>
 #   long-pass<TAB>fleet<TAB><the epoch the last long pass started at>
-#   mail-pass<TAB>fleet<TAB><the epoch the last full mail pass started at>
+#   mail-pass<TAB>fleet<TAB><the epoch the last full mail pass completed at>
 # Four rows are keyed by the overseer's own pane rather than by a lane, and
 # are pruned on every pass so a pane that stops being the overseer's leaves
 # nothing behind:
@@ -427,7 +427,7 @@ WORKFLOW_STATE_ARGS=(--state-dir "$FLEET_STATE_DIR")
 # The age a usage figure may be served at, named to every lane reader a pass
 # runs: two of this watch's intervals. A long pass reads once an --interval,
 # counted start to start, or longer where one overruns. The mail pass idles
-# a full mail interval after each turn and
+# a full mail interval after each full read and
 # judges a standing wall at most once an interval too, so a window of one
 # interval has always expired by the next read and every one would post for
 # every account; two cover that. A larger ORCH_LANES_USAGE_MAX_AGE
@@ -4782,6 +4782,11 @@ tick_wait() {
 mail_turn() { # [overseer]
   BOX_SEEN="$(overseer_box_size)"
   overseer_down || check_mail "$@"
+  if [[ $# -eq 0 ]]; then
+    MAIL_DUE=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))
+    [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$MAIL_DUE")"
+    MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))
+  fi
 }
 
 # One clock per turn. The stamp a lane's wall is observed on and the
@@ -4798,7 +4803,9 @@ PASS_EVENT=0
 PASS_FAILED=0
 PASS_FAILED_ITEMS=""
 # The full mail pass is due an interval after the last one ended, in this
-# run or an earlier one: a run started early on a note to the overseer reads
+# run or an earlier one, including run_end's owed full read. The first long
+# pass can require a fresh full read before that interval ends. A run started
+# early on a note to the overseer reads
 # that mailbox alone first, and holds the lane mailboxes to their interval.
 if ! MAIL_DUE="$(lane_row_get mail-pass "$MAIL_SEEN" fleet)"; then
   die state-read-failed "" "path=$MAIL_STATE_FILE" "row=mail-pass"
@@ -4862,9 +4869,6 @@ while :; do
     MAIL_OWED=0
     MAIL_FULL=1
     mail_turn
-    MAIL_DUE=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))
-    [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$MAIL_DUE")"
-    MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))
   elif [[ "$(overseer_box_size)" != "$BOX_SEEN" ]]; then
     mail_turn overseer
   fi

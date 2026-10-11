@@ -23,8 +23,8 @@ Blocks until the fleet needs the overseer, then prints every event it found
 as one block, each line prefixed with its kind, and exits once. Re-run after
 handling every line with the live fleet in scope.
 
-Two passes run on one clock. The mail pass idles for
-ORCH_WATCH_MAIL_INTERVAL seconds after each turn, reads every lane mailbox, the overseer
+Two passes run on one clock. After each full read, including the heartbeat's
+owed read, the mail pass idles for ORCH_WATCH_MAIL_INTERVAL seconds. It reads every lane mailbox, the overseer
 mailbox and the lane records one after another, and prints what it finds as
 it finds it: lane-question, lane-notice, directive-read, directive-unread,
 peer-note, owner-note, owner-ask-resolved and owner-ask-closed. Hosted mail
@@ -37,8 +37,9 @@ two mail passes, and through a --repeat sleep, the overseer mailbox's size is
 checked once a second, and once it moves that mailbox alone is read, so a
 note to the overseer is printed within about a second while the lane
 mailboxes keep the interval; a run's first turn reads it alone too when no
-mail pass is due. A run's first long pass follows a read of every mailbox in
-that run, due or not. ORCH_WATCH_MAIL_INTERVAL 0 checks nothing between turns. A read that waits
+mail pass is due. A run's first long pass requires a fresh read of every
+mailbox in that run, which can run before the interval ends.
+ORCH_WATCH_MAIL_INTERVAL 0 checks nothing between turns. A read that waits
 on a lock or a slow host delays the mailboxes after it. The overseer pane
 below, a run's one GitHub auth check before its first long pass and the
 heartbeat's open-PR listing can also delay the next turn. The long pass reads everything else
