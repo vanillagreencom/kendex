@@ -88,14 +88,14 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_stop = null'
 ```
 
-**Ready-head review request.** Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing). Before each readiness check, request an open ready head through the existing owner. This includes a cloud PR whose request run skipped its draft opening. The owner preserves an active request or completed Copilot review at that head. A skipped request run supplies no such work. Never close and reopen a PR to request review.
+**Ready-head review request.** Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing). Before each readiness check, request an open ready head through the existing owner. This includes a cloud PR whose request run skipped its draft opening. The owner reads this item's saved error retry outcome. It preserves a completed retry or fallback, an active request or a completed Copilot review at that head. A skipped request run supplies no such work. Never close and reopen a PR to request review.
 
 ```bash
 if ! MERGE_PR_OPEN_READY="$(env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json state,isDraft --jq '.state == "OPEN" and .isDraft == false')"; then
   exit 1
 fi
 if [[ "$MERGE_PR_OPEN_READY" == true ]]; then
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
 fi
 ```
 

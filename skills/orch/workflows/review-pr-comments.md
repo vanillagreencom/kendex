@@ -446,7 +446,7 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
   Only the route that needs a new request runs this command:
 
   ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
   ```
 
   For a new request, route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head and start no wait. Under `cause=refused`, send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] [CAUSE]`, `[CAUSE]` and the line under it as that section sets, which asks for the overseer's fallback approval; under `cause=off` send nothing, since the caller's approval wait sends it.

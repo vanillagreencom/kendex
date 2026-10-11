@@ -83,6 +83,7 @@ esac
 EOF
 chmod +x "$BASE/.agents/skills/orch/scripts/approval-wait" "$TMP_ROOT/bin/gh"
 RUN="$REPO_ROOT/skills/orch/scripts/approval-wait"
+STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 OUT="$TMP_ROOT/out"
 ERR="$TMP_ROOT/err"
 REQUEST_LOG="$TMP_ROOT/requests"
@@ -176,10 +177,12 @@ ready_doc_args() { # DOC
   line="$(sed 's/^.*approval-wait \[PR_NUMBER\] //' <<<"$line")"
   for field in $line; do
     [[ "$field" != '[REVIEW_BASE_CHECKOUT]' ]] || field="$BASE"
+    [[ "$field" != '[ISSUE_ID]' ]] || field=KEN-3231
     READY_ARGS+=("$field")
   done
 }
 READY_ARGS=()
+"$STATE" --state-dir "$TMP_ROOT/state" init KEN-3231 --worktree "$TMP_ROOT/catalog" >/dev/null
 ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
 for row in \
   'draft held|true|no|0|false|false|0|fallback cause=draft|0|none' \
@@ -202,7 +205,7 @@ RUN_ENV=()
 # Removing the producer's ready flag makes the same publication command fail
 # to produce the ready request. This control exercises the script, not prose.
 cp "$REPO_ROOT/skills/orch/workflows/submit-pr.md" "$TMP_ROOT/submit-mutant.md"
-mutate_file "$TMP_ROOT/submit-mutant.md" '--request-review --mark-ready --base-checkout' '--request-review --base-checkout'
+mutate_file "$TMP_ROOT/submit-mutant.md" '--request-review --mark-ready --item' '--request-review --item'
 ready_doc_args "$TMP_ROOT/submit-mutant.md" || exit 1
 printf 'true\n' > "$DRAFT_FILE"
 printf 'current-head\n' > "$HEAD_FILE"
@@ -220,8 +223,6 @@ code="${code//\[ISSUE_ID\]/KEN-3231}"
 code="${code//\[HEAD_SHA\]/current-head}"
 code="${code//\[REVIEW_BASE_CHECKOUT\]/\"\$REVIEW_BASE_FIXTURE\"}"
 printf 'set -euo pipefail\n%s\n' "$code" > "$PUBLICATION_SCRIPT"
-STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
-"$STATE" --state-dir "$TMP_ROOT/state" init KEN-3231 --worktree "$TMP_ROOT/catalog" >/dev/null
 "$STATE" --state-dir "$TMP_ROOT/state" set KEN-3231 pr_order push-first-returned >/dev/null
 printf 'true\n' > "$DRAFT_FILE"
 printf 'current-head\n' > "$HEAD_FILE"
@@ -303,8 +304,8 @@ unset ACTION_CWD
 rm -- "$DRAFT_FILE" "$HEAD_FILE"
 # A cloud session outside orch can leave a ready PR with only the skipped
 # request run from its draft opening. Execute the landing workflow's commands.
-landing_script() { # DOC
-  local block
+landing_script() { # DOC [REQUEST SCRIPTS]
+  local block scripts="${2:-$REPO_ROOT/skills/orch/scripts}"
   block="$(awk '
     /^[[:space:]]*```bash/ {inside=1; block=""; next}
     /^[[:space:]]*```/ && inside {
@@ -314,12 +315,14 @@ landing_script() { # DOC
     inside && /github.sh pr-merge \[PR_NUMBER\] --check/ {exit}
     inside {block=block $0 ORS}
   ' "$1")"
-  block="${block//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
+  block="${block//.agents\/skills\/orch\/scripts\//$scripts/}"
   block="${block//\[PR_NUMBER\]/42}"
+  block="${block//\[STATE_KEY\]/KEN-landing}"
   block="${block//\[REVIEW_BASE_CHECKOUT\]/\"\$REVIEW_BASE_FIXTURE\"}"
   printf 'set -euo pipefail\n%s\n' "${block:-:}" > "$TMP_ROOT/landing.sh"
 }
 SKIPPED_REQUEST='[{"check_runs":[{"id":9,"name":"Request Copilot review","status":"completed","conclusion":"skipped","started_at":"2026-10-11T07:25:19Z"}]}]'
+"$STATE" --state-dir "$TMP_ROOT/state" init KEN-landing --worktree "$TMP_ROOT/catalog" >/dev/null
 landing_script "$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 for row in \
   "ready cloud PR with skipped opening run|OPEN|false|$SKIPPED_REQUEST|[]|false|0|1" \
@@ -338,6 +341,49 @@ for row in \
   assert_eq "$RC|$REQUESTS" "$want_rc|$requests" "$label requests before landing waits" "$ERR"
 done
 RUN_ENV=()
+# The error wait writes this record before requesting and retains it after
+# retry or fallback. A landing restart must not restart that finished route.
+for row in \
+  'current-head|requested|0' \
+  'current-head|fallback|0' \
+  'earlier-head|requested|1' \
+  'earlier-head|fallback|1'; do
+  IFS='|' read -r saved_head outcome requests <<<"$row"
+  "$STATE" --state-dir "$TMP_ROOT/state" update KEN-landing --arg head "$saved_head" --arg outcome "$outcome" \
+    '.pr_approval.copilot_error_retries = {($head): {review_id: "10", outcome: $outcome}}' >/dev/null
+  saved="$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-landing '.pr_approval.copilot_error_retries')"
+  RUN_ENV=("CHECKS_JSON=$SKIPPED_REQUEST" "REVIEWS_JSON=$ERROR_REVIEW ${HEAD_REVIEW/copilot-pull-request-reviewer\[bot\]/colleague}")
+  for pass_number in first repeated; do
+    run_action "$TMP_ROOT/landing.sh" 0
+    assert_eq "$RC|$REQUESTS" "0|$requests" "$pass_number landing preserves $outcome at $saved_head" "$ERR"
+    assert_eq "$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-landing '.pr_approval.copilot_error_retries')" "$saved" \
+      "$pass_number landing preserves its saved error outcome" "$ERR"
+  done
+done
+"$STATE" --state-dir "$TMP_ROOT/state" update KEN-landing 'del(.pr_approval.copilot_error_retries)' >/dev/null
+RUN_ENV=()
+run_action "$RUN" 0 --request-review --item KEN-missing-state --base-checkout "$BASE"
+assert_eq "$RC|$REQUESTS|$(cat "$OUT")" '2|0|' 'a request cannot ignore unreadable item state' "$ERR"
+scripts="$(mutant_scripts request-error-outcome approval-wait)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$scripts/approval-wait" '    if [[ -n "$ITEM" ]] && ! $retry_claimed; then' \
+  '    if false && [[ -n "$ITEM" ]] && ! $retry_claimed; then'
+landing_script "$REPO_ROOT/skills/orch/workflows/merge-pr.md" "$scripts"
+for outcome in requested fallback; do
+  "$STATE" --state-dir "$TMP_ROOT/state" update KEN-landing --arg outcome "$outcome" \
+    '.pr_approval.copilot_error_retries = {"current-head": {review_id: "10", outcome: $outcome}}' >/dev/null
+  RUN_ENV=("CHECKS_JSON=$SKIPPED_REQUEST" "REVIEWS_JSON=$ERROR_REVIEW")
+  run_action "$TMP_ROOT/landing.sh" 0
+  assert_eq "$RC|$REQUESTS" '0|1' "control: ignoring $outcome repeats the finished error request" "$ERR"
+done
+"$STATE" --state-dir "$TMP_ROOT/state" update KEN-landing 'del(.pr_approval.copilot_error_retries)' >/dev/null
+RUN_ENV=()
+scripts="$(mutant_scripts request-error-state-read approval-wait)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$scripts/approval-wait" 'get "$ITEM" '\''.pr_approval.copilot_error_retries // {}'\'')' \
+  'get "$ITEM" '\''.pr_approval.copilot_error_retries // {}'\'' || printf '\''{}\n'\'')'
+run_action "$scripts/approval-wait" 0 --request-review --item KEN-missing-state --base-checkout "$BASE"
+assert_eq "$RC|$REQUESTS" '0|1' 'control: substituting empty state requests without reading its item' "$ERR"
 cp "$REPO_ROOT/skills/orch/workflows/merge-pr.md" "$TMP_ROOT/landing-mutant.md"
 mutate_file "$TMP_ROOT/landing-mutant.md" 'if [[ "$MERGE_PR_OPEN_READY" == true ]]; then' 'if false && [[ "$MERGE_PR_OPEN_READY" == true ]]; then'
 landing_script "$TMP_ROOT/landing-mutant.md"
@@ -453,9 +499,9 @@ for row in \
   'stdout-isolation~"enforce"~~~0~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1' \
   'copilot-off~"enforce"~off~~0~    elif [[ "$COPILOT_REQUESTS" == off ]]; then~    elif false; then~0~fallback cause=off~0' \
   'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback cause=refused exit=8~1' \
-  'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2~0~approval~1' \
-  'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; exit 2 ;;~*) ;;~2~~0' \
-  'copilot-setting-unreadable~"enforce"~\"off~~0~PR_COPILOT_REQUESTS on)" || exit 2~PR_COPILOT_REQUESTS on)" || COPILOT_REQUESTS=on~2~~0' \
+  'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || return 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || return 2~0~approval~1' \
+  'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; return 2 ;;~*) ;;~2~~0' \
+  'copilot-setting-unreadable~"enforce"~\"off~~0~PR_COPILOT_REQUESTS on)" || return 2~PR_COPILOT_REQUESTS on)" || COPILOT_REQUESTS=on~2~~0' \
   'copilot-setting-at-resolution~"enforce"~junk~~0~if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then~if true; then~0~approval~0~--resolve-mode'; do
   IFS='~' read -r label setting caller_copilot base_copilot request_exit old new want_rc want_out want_requests action <<< "$row"
   write_settings "$BASE/kendex.settings.toml" "$setting" "$base_copilot"

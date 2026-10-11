@@ -175,7 +175,7 @@ With `pr_order` reading `push-first`, read the existing PR's draft flag before a
    ```bash
    COPILOT_REQUESTED_HEAD="$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_approval.copilot_rerequest_head // empty')"
    if [[ "$COPILOT_REQUESTED_HEAD" != "[HEAD_SHA]" ]]; then
-     env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --base-checkout [REVIEW_BASE_CHECKOUT]
+     env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
    fi
    ```
 

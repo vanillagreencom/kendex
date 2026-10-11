@@ -1,1 +1,1 @@
-- Cloud sessions request Copilot when they mark a pull request ready. The landing route requests ready heads whose draft opening skipped the request, without closing and reopening the pull request.
+- Cloud sessions request Copilot when they mark a pull request ready. The landing route requests ready heads whose draft opening skipped the request, without closing and reopening the pull request or repeating a finished error retry.

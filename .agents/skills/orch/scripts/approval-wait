@@ -165,7 +165,7 @@ approval_message() {
       printf 'approval-wait: result-failed pr=%s repo=%s exit=%s\n' "$PR_NUM" "$REPO" "$rc"
       printf '%s\n' "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)"
       ;;
-    existing-run|existing-review|request-checks-unreadable|request-reviews-unreadable)
+    existing-run|existing-review|existing-error-retry|request-checks-unreadable|request-reviews-unreadable)
       printf 'approval-wait: %s head=%s\n' "$message_key" "$request_head"
       ;;
     *) printf 'approval-wait: message-key key=%q\n' "$message_key"; return 2 ;;
@@ -207,7 +207,7 @@ Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      --mode approval [--on-timeout block|proceed]
                      [--item ID] [--base-checkout PATH]
        approval-wait <PR#> --resolve-mode --base-checkout PATH
-       approval-wait <PR#> --request-review [--mark-ready] --base-checkout PATH
+       approval-wait <PR#> --request-review [--mark-ready] [--item ID] --base-checkout PATH
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 2 and 5 emits
 a final result on stdout: a stable status line with English below, or a JSON
@@ -226,6 +226,7 @@ stop: stdout stays empty and stderr says why.
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
   --item ID      the lane whose new mail exits 5; no mail check without it
+                 Request actions read this item's saved error retry outcome.
   --resolve-mode print the gate mode the PR's base branch sets, read from
                  its rulesets and the PR's reviewDecision (approval |
                  off), and exit: see Mode resolution
@@ -239,7 +240,9 @@ stop: stdout stays empty and stderr says why.
                  and sends no request. An approval gate prints approval when it
                  requests Copilot or finds existing work at the head. It reads
                  active checks, pending requests and completed reviews first.
-                 An error review still permits retry. A failed read is nonzero
+                 With --item, a saved retry at this head sends no further request;
+                 a saved fallback prints fallback cause=error. An error review
+                 with no saved retry still permits retry. A failed read is nonzero
                  and sends no request. It prints a fallback line when no request went out
                  (below). A resolution, refresh-route or PR_COPILOT_REQUESTS
                  failure is nonzero and authorizes no wait or retry.
@@ -283,7 +286,7 @@ Copilot error reviews: a COMMENTED review by copilot-pull-request-reviewer
 containing Copilot's error sentence triggers one retry at the current head.
 The wait reads paginated REST reviews for the review ID and commit_id because
 latestReviews omits those identities. Earlier-head errors do not retry.
-The retry calls this script's --request-review owner with --base-checkout;
+The retry calls this script's private request worker with --base-checkout;
 that owner retains the existing GitHub request accounting. A retry needs a
 trusted base checkout. Without it, exit 2 stops the wait before a request.
 The wait keeps its original time budget. Repeated polls of the same review
@@ -563,7 +566,8 @@ if $MARK_READY && ! $REQUEST_REVIEW; then
   exit 2
 fi
 if $REQUEST_REVIEW || $RESOLVE_MODE; then
-  if [[ ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG$ITEM" ]] \
+  if [[ ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG" ]] \
+    || { $RESOLVE_MODE && [[ -n "$ITEM" ]]; } \
     || $JSON_OUTPUT || { $REQUEST_REVIEW && $RESOLVE_MODE; } \
     || { ! $REQUEST_REVIEW && ! $RESOLVE_MODE; }; then
     approval_message action-options >&2
@@ -572,25 +576,32 @@ if $REQUEST_REVIEW || $RESOLVE_MODE; then
 fi
 # Read before the move into the base checkout, so it is the caller's setting.
 COPILOT_REQUESTS=on
-if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then
-  COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || exit 2
+read_copilot_requests() {
+  COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || return 2
   case "$COPILOT_REQUESTS" in
     on|off) ;;
-    *) approval_message copilot-requests-invalid >&2; exit 2 ;;
+    *) approval_message copilot-requests-invalid >&2; return 2 ;;
   esac
+}
+if $REQUEST_REVIEW || [[ -n "$ITEM" ]]; then
+  read_copilot_requests || exit 2
 fi
-if { $REQUEST_REVIEW || $RESOLVE_MODE; } && [[ -n "$BASE_CHECKOUT" ]]; then
+enter_base_checkout() {
+  local base_root
   if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P); then
     approval_message base-checkout-invalid >&2
-    exit 2
+    return 2
   fi
   BASE_CHECKOUT="$base_root"
-  cd -- "$BASE_CHECKOUT"
+  cd -- "$BASE_CHECKOUT" || { approval_message base-checkout-invalid >&2; return 2; }
   PROJECT_ROOT="$BASE_CHECKOUT"
   # Fleet callers inherit catalog settings. Read only the consumer's policy.
   unset GH_REPO GITHUB_REPOSITORY PR_REVIEW_GATE REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE
   unset REVIEW_GATE_REFRESH_REVIEW REVIEW_GATE_REFRESH_BRANCH REVIEW_GATE_REFRESH_AUTHOR
   unset PR_REVIEW_ON_TIMEOUT PR_REVIEW_WAIT_SECS
+}
+if { $REQUEST_REVIEW || $RESOLVE_MODE; } && [[ -n "$BASE_CHECKOUT" ]]; then
+  enter_base_checkout || exit 2
 fi
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 lane_mail_resolve approval-wait "$ITEM"
@@ -747,7 +758,7 @@ emit_result() {
       echo "Approval: $last_unresolved unresolved review thread(s) pending triage (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
       ;;
     unreviewable)
-      echo "No automatic review for base '${last_base_ref:-unknown}' after ${elapsed}s: the automatic-review target set (${AUTO_REVIEW_TARGETS_TEXT:-none}, source: $AUTO_REVIEW_SOURCE) does not cover it. Request through approval-wait $PR_NUM --request-review --base-checkout PATH (the consumer base checkout)"
+      echo "No automatic review for base '${last_base_ref:-unknown}' after ${elapsed}s: the automatic-review target set (${AUTO_REVIEW_TARGETS_TEXT:-none}, source: $AUTO_REVIEW_SOURCE) does not cover it. Request through approval-wait $PR_NUM --request-review${ITEM:+ --item $ITEM} --base-checkout PATH (the consumer base checkout)"
       ;;
     copilot-error)
       printf 'Copilot review unavailable: head=%s cause=%s\n' "$last_head_sha" "$copilot_fallback_cause"
@@ -827,20 +838,21 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 # --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
-repo_status=0
-REPO=$(orch_resolve_gh_repo "$PROJECT_ROOT") || repo_status=$?
-if [ "$repo_status" -eq 2 ]; then
-  REPO_REJECTED="$REPO"
-  REPO=""
-  emit_error repo-shape
-
-  exit 1
-fi
-if [ "$repo_status" -ne 0 ]; then
-  emit_error repo-unresolved
-
-  exit 1
-fi
+resolve_review_repo() {
+  local repo_status=0
+  REPO=$(orch_resolve_gh_repo "$PROJECT_ROOT") || repo_status=$?
+  if [ "$repo_status" -eq 2 ]; then
+    REPO_REJECTED="$REPO"
+    REPO=""
+    emit_error repo-shape
+    return 1
+  fi
+  if [ "$repo_status" -ne 0 ]; then
+    emit_error repo-unresolved
+    return 1
+  fi
+}
+resolve_review_repo || exit 1
 
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
@@ -949,7 +961,18 @@ read_request_head() {
   IFS=$'\t' read -r request_draft request_head <<<"$request_fields"
 }
 
-if $RESOLVE_MODE || $REQUEST_REVIEW; then
+# The wait's atomic claim grants its first retry. External actions can read
+# that claim, but cannot spend it again. Both routes retain one request owner.
+run_review_action() (
+  local retry_claimed="${1:-false}" saved_retries retry_outcome
+  if $retry_claimed; then
+    REQUEST_REVIEW=true
+    RESOLVE_MODE=false
+    MARK_READY=false
+    read_copilot_requests || exit 2
+    enter_base_checkout || exit 2
+    resolve_review_repo || exit 1
+  fi
   resolve_gate_mode || exit 2
   answer="$GATE_MODE"
   if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then
@@ -979,6 +1002,20 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
         printf 'fallback cause=draft\n'
         exit 0
       fi
+    fi
+    if [[ -n "$ITEM" ]] && ! $retry_claimed; then
+      last_head_sha="$request_head"
+      saved_retries=$(cd -- "$AUTH_PROJECT_ROOT" && "$SCRIPT_DIR/workflow-state" get "$ITEM" '.pr_approval.copilot_error_retries // {}') \
+        || { approval_message copilot-retry-state-failed >&2; exit 2; }
+      retry_outcome=$(jq -er --arg head "$request_head" '.[$head]
+        | if . == null then "none"
+          elif .outcome == "requested" or .outcome == "fallback" then .outcome
+          else error("error retry outcome") end' <<<"$saved_retries") \
+        || { approval_message copilot-retry-state-failed >&2; exit 2; }
+      case "$retry_outcome" in
+        requested) approval_message existing-error-retry >&2; printf 'approval\n'; exit 0 ;;
+        fallback) printf 'fallback cause=error\n'; exit 0 ;;
+      esac
     fi
     # GitHub's automatic request can reach this ready head before the lane.
     # This local request check keeps that work and preserves error-review retry.
@@ -1014,6 +1051,10 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
   fi
   printf '%s\n' "$answer"
   exit 0
+)
+if $RESOLVE_MODE || $REQUEST_REVIEW; then
+  run_review_action
+  exit $?
 fi
 
 # --- automatic-review target set (resolved ONCE, before the poll loop) ---
@@ -1429,7 +1470,7 @@ while true; do
       fi
       if [ "$(jq -r '.request' <<<"$copilot_retry")" = true ]; then
         request_status=0
-        retry_answer=$("$SCRIPT_DIR/approval-wait" "$PR_NUM" --request-review --base-checkout "$BASE_CHECKOUT") || request_status=$?
+        retry_answer=$(run_review_action true) || request_status=$?
         if [ "$request_status" -ne 0 ]; then
           if [[ -n "$ITEM" ]] && ! "$SCRIPT_DIR/workflow-state" update "$ITEM" --arg head "$last_head_sha" \
             'del(.pr_approval.copilot_error_retries[$head])'; then
