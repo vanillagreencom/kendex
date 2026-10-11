@@ -48,6 +48,9 @@
 # read. A refusal is one stderr line:
 #   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be
 #                                   read or holds no crate
+#   rust-reads: unreadable=cli-smoke   Cargo metadata failed, the CLI smoke
+#                                   target is missing, or a literal path
+#                                   module could not be read
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 

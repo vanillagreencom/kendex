@@ -809,6 +809,7 @@ lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
 }
 cat >"$LANE_BIN/cargo" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
 printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
 SH
 cat >"$LANE_BIN/npm" <<'SH'
@@ -817,10 +818,29 @@ printf '%s\n' "$*" >>"$NPM_CALL_LOG"
 SH
 chmod +x "$LANE_BIN/cargo" "$LANE_BIN/npm"
 NPM_CALL_LOG="$TMP/npm-calls"
+REAL_CARGO="$(command -v cargo)" || exit 2
 mkdir -p "$R/ui"
-printf '[workspace]\n' >"$R/Cargo.toml"
+# Selection reads real Cargo metadata; compilation stays logged by the stub.
+mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/crates/cli/tests"
+printf '[workspace]\nmembers = ["crates/core", "crates/cli"]\nresolver = "2"\n[workspace.lints.rust]\n' >"$R/Cargo.toml"
+printf '[package]\nname = "kendex-core"\nversion = "0.1.0"\n[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
+cat >"$R/crates/cli/Cargo.toml" <<'TOML'
+[package]
+name = "kendex-cli"
+version = "0.1.0"
+[dependencies]
+kendex-core = { path = "../core" }
+[lints]
+workspace = true
+[[test]]
+name = "cli_smoke"
+path = "tests/cli_smoke.rs"
+TOML
+printf 'pub fn core() {}\n' >"$R/crates/core/src/lib.rs"
+printf 'pub fn cli() {}\n' >"$R/crates/cli/src/lib.rs"
+printf 'fn smoke() {}\n' >"$R/crates/cli/tests/cli_smoke.rs"
 printf '{}\n' >"$R/ui/package.json"
-git -C "$R" add Cargo.toml ui/package.json
+git -C "$R" add Cargo.toml crates/core crates/cli ui/package.json
 git -C "$R" commit -q -m "chore: a workspace and a ui package"
 lanes_head="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main HEAD
@@ -861,7 +881,7 @@ run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and hande
   RC=0
   OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
     "${GUARD_TEST_BOUNDS[@]}" ${handed[@]+"${handed[@]}"} \
-    PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
+    PATH="$LANE_BIN:$PATH" REAL_CARGO="$REAL_CARGO" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }
 # Path lists are blank-separated and split unquoted on purpose. The crate
@@ -956,7 +976,7 @@ inherited_row() { # — sets OUT and RC
   OUT=""
   RC=0
   OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" DEV_VALIDATE_CLASS=micro DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$PATHS_FILE" \
-    PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
+    PATH="$LANE_BIN:$PATH" REAL_CARGO="$REAL_CARGO" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }
 lane_guard
