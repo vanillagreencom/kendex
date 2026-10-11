@@ -989,9 +989,11 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
     request_review_exists=$(jq -er -s --arg head "$request_head" \
       --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" '
       if length == 0 or any(.[]; type != "array") then error("review pages") else add end
-      | any(.[]; .user.login == $reviewer and .commit_id == $head
-          and (.state == "APPROVED" or .state == "COMMENTED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")
-          and ((.body // "") | contains($sentence) | not))
+      | map(select(.user.login == $reviewer and .commit_id == $head
+          and (.state == "APPROVED" or .state == "COMMENTED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
+      | (map(select(.state != "DISMISSED")) | last) as $latest
+      | if $latest.state == "COMMENTED" and (($latest.body // "") | contains($sentence))
+        then false else any(.[]; (.body // "") | contains($sentence) | not) end
       | tostring' <<<"$request_reviews") \
       || { approval_message request-reviews-unreadable >&2; exit 2; }
     if [[ "$request_runs" != '[]' ]]; then

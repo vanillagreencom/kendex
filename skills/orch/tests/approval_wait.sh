@@ -200,6 +200,10 @@ case "${1:-}" in
       if [[ "${STUB_DUPLICATE_ERRORS:-0}" == 1 ]]; then
         rows="$(jq -c '[.[0] + {id:1}] + .' <<<"$rows")"
       fi
+      # GitHub dismisses the older success before the later error review.
+      if [[ "${STUB_DISMISSED_SUCCESS:-0}" == 1 ]]; then
+        rows="$(jq -c '[.[0] + {id:1,state:"DISMISSED",body:"Reviewed."}] + .' <<<"$rows")"
+      fi
       if [[ "${STUB_REVIEW_PAGES:-0}" == 1 ]]; then
         echo '[]'
         [[ " $* " == *' --paginate '* ]] || exit 0
@@ -741,6 +745,7 @@ echo "=== Copilot error answers retry once through the request owner ==="
 # consumes one retry; unchanged IDs are not new answers. A later ID is terminal.
 table "$APPROVAL" \
   'the error retries once and an approval ends the continued wait||STUB_APPROVAL_MODE=copilot_error_approved|rc=0 status=approved requests=1 approval_polls=3 request_argv=pr+edit+1+--repo+owner/repo+--add-reviewer+@copilot' \
+  'a dismissed success does not consume the later error retry||STUB_APPROVAL_MODE=copilot_error_approved,STUB_DISMISSED_SUCCESS=1,STUB_ERROR_ID=2|rc=0 status=approved requests=1 approval_polls=3' \
   'a new error after unchanged polls ends early||STUB_APPROVAL_MODE=copilot_error_twice|rc=1 status=copilot-error requests=1 approval_polls=3 head_sha=headsha1 copilot_fallback_cause=error elapsed_seconds=2' \
   'duplicate errors in the initial snapshot still permit one retry||STUB_APPROVAL_MODE=copilot_error_twice,STUB_DUPLICATE_ERRORS=1|rc=1 status=copilot-error requests=1 approval_polls=3' \
   'the same error keeps waiting to the original deadline||STUB_APPROVAL_MODE=copilot_error|rc=1 status=timeout requests=1 approval_polls=4 elapsed_seconds=3' \
