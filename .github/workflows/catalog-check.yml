@@ -1,5 +1,5 @@
 # Authoring validation for a kendex catalog. Reusable only: this repository
-# calls it from `own-catalog.yml` like any other caller, so nothing in here
+# calls it from `skill-tests.yml` like any other caller, so nothing in here
 # has to work out whose run it is.
 #
 # Nothing here may ask whose run it is. There is no expression that can
@@ -114,7 +114,7 @@ jobs:
           fi
           python3 kendex/tools/catalog-release-check "$HOME/.local/bin/kendex" "$CATALOG_PATH" ${{ !inputs.strict && '--allow-advisories' || '' }} ${PRIOR_PATH:+--prior "$PRIOR_PATH"}
       # The caller's own answer, honoured as given. This repository asks
-      # for `strict: true` from own-catalog.yml: the default marketplace
+      # for `strict: true` from skill-tests.yml: the default marketplace
       # carries no structural advisories either. Safety findings print
       # here and fail nothing.
       - name: Validate the catalog

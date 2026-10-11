@@ -2035,12 +2035,12 @@ jobs:
           printf '%s\n' "$gated"
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
 
-  # Main pushes keep the unconditional own-catalog jobs: both checks read
-  # external releases that a path selection cannot prove unchanged.
+  # Main pushes run both checks unconditionally: external releases can
+  # change without a repository path changing.
   # The default catalog must pass the released engine's strict validation.
   catalog:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
     permissions:
       contents: read
     uses: ./.github/workflows/catalog-check.yml
@@ -2056,7 +2056,7 @@ jobs:
   # and does not test these renderer binaries.
   smoke:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') }}
     name: real-CLI round trip
     permissions:
       contents: read

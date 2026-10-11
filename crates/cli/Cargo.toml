@@ -62,9 +62,8 @@ rustix = { workspace = true, features = ["pty"] }
 name = "integration"
 path = "tests/main.rs"
 
-# The two targets workflows select by name: the macOS cargo leg of its own in
-# .github/workflows/skill-tests.yml, and the round trip own-catalog.yml runs
-# against the real CLIs.
+# Skill Tests selects these targets by name: the macOS cargo leg runs the
+# render lint, and the round trip runs against the real CLIs.
 [[test]]
 name = "catalog_render_lint"
 path = "tests/catalog_render_lint.rs"

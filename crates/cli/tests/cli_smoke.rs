@@ -89,7 +89,7 @@ struct Probe {
     reads: Reads,
 }
 
-/// Which of these CI installs is decided in `.github/workflows/own-catalog.yml`;
+/// Which of these CI installs is decided in `.github/workflows/skill-tests.yml`;
 /// the rest are reported uncovered when absent.
 const PROBES: &[Probe] = &[
     Probe {

@@ -50,7 +50,7 @@
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
-# Inputs: .github/workflows/skill-tests.yml .github/workflows/own-catalog.yml tools/ci-aggregate tools/ci-job-set tools/lib/* tools/rust-reads skills/* .agents/skills/* crates/* Cargo.toml Cargo.lock clippy.toml .cargo/*
+# Inputs: .github/workflows/skill-tests.yml tools/ci-aggregate tools/ci-job-set tools/lib/* tools/rust-reads skills/* .agents/skills/* crates/* Cargo.toml Cargo.lock clippy.toml .cargo/*
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -942,8 +942,6 @@ ROWS
 # The classifier every lane and CI read runs on both gated events.
 check "the workflow runs on both gated events" "merge_group pull_request push" \
   "$(triggers "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
-check "own-catalog keeps only its unconditional main-push checks" "push" \
-  "$(triggers "$ROOT/.github/workflows/own-catalog.yml" | tr '\n' ' ' | sed 's/ $//')"
 changes_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "changes" { print $2 }')"
 for event in pull_request merge_group; do
   check "the changes job classifies on $event" "true" \
@@ -1079,6 +1077,18 @@ aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal ke
 saved_results="$RESULTS"
 for job in catalog smoke; do
   case "$job" in catalog) variable=CATALOG ;; smoke) variable=SMOKE ;; esac
+  # Main's checkout is a real producer even when classification has no
+  # usable output. The same jobs must check external releases there.
+  while IFS='|' read -r result sel; do
+    case " $(running "$WORKFLOW" "$sel" "$result" push) " in
+      *" $job "*) ok "$job runs on main with classifier $result and no selected inputs" ;;
+      *) bad "$job skips main with classifier $result and no selected inputs" ;;
+    esac
+  done <<ROWS
+success|$ALL_OFF
+skipped|$ALL_OFF
+failure|$ALL_OFF
+ROWS
   expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' -v j="$job" '$2 == j { print $3 }')"
   [ -n "$expr" ] || { bad "missing aggregate expression for $job"; continue; }
   while IFS='|' read -r event result path expected_lane expected_status; do
@@ -1105,16 +1115,21 @@ ROWS
   RESULTS="$(jq -cn --arg job "$job" '{changes: {result: "success"}} + {($job): {result: "skipped"}}')"
   check "must-fail: $job aggregate inverse authorizes an unselected skip" "0" \
     "$(aggregate "$AGGREGATE" --lane "$value:$job")"
-  condition="!cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')"
-  plant "$WORKFLOW" "$condition" "!cancelled() && github.event_name != 'push'" "$TMP/wf-$job-unconditional.yml" "$job"
+  condition="!cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')"
+  plant "$WORKFLOW" "$condition" "!cancelled()" "$TMP/wf-$job-unconditional.yml" "$job"
   case " $(running "$TMP/wf-$job-unconditional.yml" "$VERIFY_ROW" success pull_request) " in
     *" $job "*) ok "must-fail: $job job inverse runs on README" ;;
     *) bad "must-fail: $job unconditional inverse" ;;
   esac
-  plant "$WORKFLOW" "$condition" "github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')" "$TMP/wf-$job-no-status.yml" "$job"
+  plant "$WORKFLOW" "$condition" "github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.$job == 'true'" "$TMP/wf-$job-no-status.yml" "$job"
   case " $(running "$TMP/wf-$job-no-status.yml" "$ALL_OFF" failure merge_group) " in
     *" $job "*) bad "must-fail: $job status inverse still runs" ;;
     *) ok "must-fail: $job status inverse loses the dead-classifier job" ;;
+  esac
+  plant "$WORKFLOW" "$condition" "!cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')" "$TMP/wf-$job-no-main.yml" "$job"
+  case " $(running "$TMP/wf-$job-no-main.yml" "$ALL_OFF" success push) " in
+    *" $job "*) bad "must-fail: $job main inverse still runs" ;;
+    *) ok "must-fail: $job main inverse loses the main-push job" ;;
   esac
 done
 RESULTS="$saved_results"
