@@ -1,1 +1,1 @@
-- Event blocks print only changed verification rows and new pull request attention keys. The heartbeat keeps both full lists.
+- **Breaking:** Event blocks print verification rows for items whose saved `verifying-deadline` row changed, plus new pull request attention keys. The heartbeat keeps both full lists.
