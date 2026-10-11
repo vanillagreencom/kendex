@@ -26,6 +26,9 @@ Output, one JSON object on stdout:
 {
   "pr": 42, "repo": "owner/repo", "state": "MERGED",
   "head": "<final head oid>", "merge_commit": "<oid>" | null,
+  "merge_decision":     {"route": "admin" | "queue", "cause": "<cause>"},
+                         the last merge-route line in the PR body's
+                         Merge decision section; null where none is recorded,
   "stamps": {
     "first_commit":     author date of the PR's first commit,
     "created":          the PR opened,
@@ -154,7 +157,7 @@ RUNS_PAGE_QUERY='query runsPage($id: ID!, $cursor: String!) {
 QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      number state createdAt mergedAt author { login } headRefName headRepository { nameWithOwner }
+      number state body createdAt mergedAt author { login } headRefName headRepository { nameWithOwner }
       mergeCommit { oid ...suites }
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
@@ -322,6 +325,15 @@ def rounds($reviews; $pushed):
   | {
       pr: $p.number, repo: $repo, state: $p.state,
       head: $head.oid, merge_commit: ($p.mergeCommit.oid // null),
+      # merge-attempt records the route here; text in other sections is no
+      # decision. oversee-cycle uses it only after measured waits.
+      merge_decision: ([$p.body // "" | gsub("\r\n"; "\n") | split("\n")[]
+        | {line: .}] | reduce .[] as $row ({inside: false, decision: null};
+          if $row.line == "## Merge decision" then .inside = true
+          elif ($row.line | startswith("## ")) then .inside = false
+          elif .inside then .decision = (($row.line
+            | [capture("merge-route: (?<route>admin|queue) cause=(?<cause>[^\\s`]+)")][0]) // .decision)
+          else . end) | .decision),
       stamps: $stamps,
       ci_head_secs: null,
       ci_head_clean_secs: null,

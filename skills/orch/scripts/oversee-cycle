@@ -134,7 +134,14 @@
 #             clean CI seconds, floored at 0;
 #             work wins a tie, a push before the gap opened leaves it all
 #             ci, and the cause is null where last_push is null or after
-#             ci_green. Null on any other phase, except on a miss, which is
+#             ci_green. On a merged miss at every tier, compare the raw
+#             merge gap's paused seconds, merge-group CI seconds and the
+#             remaining wait. Paused wins a tie, then merge_group. Where
+#             the remaining wait wins, use the recorded merge decision's
+#             route (admin or queue), else keep merged as the cause. Pauses
+#             are clipped to this gap and overlaps count once; gate waits
+#             still describe only the gate_green gap.
+#             Null on any other phase, except on a miss, which is
 #             never recorded without a cause: on a miss the phase is the
 #             cause wherever no split above applies, and the cause is
 #             `unread` where the phase is null
@@ -560,20 +567,23 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   # covers is paused, any other is the wait the latest push or bot review at
   # or before it opened, bot_wait where neither came yet. A push and a bot
   # review in one second read the push first.
-  def gate_waits($from; $to):
+  # The same pause union measures gate holds and merge holds. This local
+  # calculation adds no merge policy or new lane record.
+  def paused_seconds($from; $to):
     ($pauses | map({a: ([.from, $from] | max), b: ([.to // $to, $to] | min)})
      | map(select(.b > .a)) | sort_by(.a)
      | reduce .[] as $p ([]; if length > 0 and $p.a <= .[-1].b
          then .[-1].b = ([.[-1].b, $p.b] | max) else . + [$p] end)) as $union
-    | def paused($a; $b): [$union[] | ([.b, $b] | min) - ([.a, $a] | max) | select(. > 0)] | add // 0;
+    | [$union[] | .b - .a] | add // 0;
+  def gate_waits($from; $to):
     ([$t.push_times[] | {at: fromdate, wait: "bot_wait"}] + [$t.bot_review_times[] | {at: fromdate, wait: "thread_fix"}]
      | sort_by(.at, .wait)) as $events
     | ([{at: $from, wait: ([$events[] | select(.at <= $from)] | last | .wait // "bot_wait")}]
        + [$events[] | select(.at > $from and .at < $to)] + [{at: $to}])
-    | [range(1; length) as $i | {wait: .[$i - 1].wait, secs: ((.[$i].at - .[$i - 1].at) - paused(.[$i - 1].at; .[$i].at))}]
+    | [range(1; length) as $i | {wait: .[$i - 1].wait, secs: ((.[$i].at - .[$i - 1].at) - paused_seconds(.[$i - 1].at; .[$i].at))}]
     | {bot_wait: ([.[] | select(.wait == "bot_wait") | .secs] | add // 0),
        thread_fix: ([.[] | select(.wait == "thread_fix") | .secs] | add // 0),
-       paused: paused($from; $to)};
+       paused: paused_seconds($from; $to)};
   $t.stamps as $s
   | {launched: $lane.launched_at, first_commit: $s.first_commit, pr_opened: $s.created,
      gate_green: $s.gate_met, ci_green: $s.ci_green, armed: ($s.armed // $s.queued),
@@ -616,6 +626,14 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      cause: (if $dominant.phase == "gate_green" and $waits != null
                then $waits | to_entries | sort_by(- .value) | first.key
              elif $dominant.phase == "ci_green" then $ci_cause
+             elif $dominant.phase == "merged" and $class != null and $lane_secs > $targets[$class]
+               then ($seq[-1].at - $seq[-2].at) as $gap
+                 | paused_seconds($seq[-2].at; $seq[-1].at) as $paused
+                 | ($merge_group // 0) as $group
+                 | ([$gap - $paused - $group, 0] | max) as $rest
+                 | if $paused > 0 and $paused >= $group and $paused >= $rest then "paused"
+                   elif $group > 0 and $group >= $rest then "merge_group"
+                   else $t.merge_decision.route end
              else null end),
      missing: $missing, rounds: $rounds, stages: $stages, repeat_refusals: $refusals,
      pr_rounds: ($t.rounds | if . == null then null else map(.secs |= interval) end),

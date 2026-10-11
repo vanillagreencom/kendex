@@ -1,0 +1,1 @@
+- Pull-request timelines now return the recorded merge route for merge-delay reports.

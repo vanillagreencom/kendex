@@ -144,9 +144,28 @@ run() { # EDIT [ARGS...]
 }
 
 echo "=== the stamps and wall times of a merged PR ==="
-WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
+WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","merge_decision":null,"stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
 assert_eq "$(run .) $(cat "$TMP_ROOT/stdout")" "rc=0 $WANT" \
   "the force-pushed-over head's gate is the first pass, the merge group's runs stay out of the head's CI, the author's own review is no bot's, and the pushes are the branch log's for this life of the name"
+
+# merge-attempt writes this section after each attempt. The parsed field is
+# consumed by oversee-cycle, so unrelated route text supplies no decision.
+merge_decision_rows() {
+  local name body want
+  while IFS='|' read -r name body want; do
+    run ".data.repository.pullRequest.body = $body" >/dev/null
+    assert_eq "$(jq -c .merge_decision "$TMP_ROOT/stdout")" "$want" "merge decision: $name"
+  done <<'ROWS'
+admin|"## Merge decision\nHead: h2\nmerge-route: admin cause=queue-bypass-safe ruleset=1"|{"route":"admin","cause":"queue-bypass-safe"}
+queue in code fence|"## Merge decision\n```\nmerge-route: queue cause=queue-required\n```"|{"route":"queue","cause":"queue-required"}
+latest attempt|"## Merge decision\nmerge-route: queue cause=queue-required\nmerge-route: admin cause=queue-bypass-safe"|{"route":"admin","cause":"queue-bypass-safe"}
+other sections|"## Example\nmerge-route: queue cause=queue-required\n## Merge decision\npending\n## Notes\nmerge-route: admin cause=queue-bypass-safe"|null
+absent body|null|null
+absent route|"## Merge decision\nHead: h2\nroute absent"|null
+CRLF inline code|"## Merge decision\r\n`merge-route: queue cause=queue-required`\r\n"|{"route":"queue","cause":"queue-required"}
+ROWS
+}
+merge_decision_rows
 
 echo "=== each stamp a PR did not reach is null ==="
 while IFS='@' read -r label edit want; do
@@ -618,6 +637,21 @@ mutate() { # ANCHOR REPLACEMENT
     "$PR_TIMELINE" > "$BIN"
   assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
 }
+
+mutate 'elif .inside then .decision =' 'elif false then .decision ='
+if (FAIL=0; merge_decision_rows; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/merge-decision-control.out"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  disabled merge-decision parser did not redden the suite\n'
+else
+  assert_eq "$(sed -n '/^  FAIL  merge decision: admin$/p' "$TMP_ROOT/merge-decision-control.out")" \
+    '  FAIL  merge decision: admin' 'control: missing parsed route reddens the admin row'
+  assert_eq "$(sed -n '/^  FAIL  merge decision: queue in code fence$/p' "$TMP_ROOT/merge-decision-control.out")" \
+    '  FAIL  merge decision: queue in code fence' 'control: missing parsed route reddens the queue row'
+fi
+mutate 'number state body createdAt' 'number state createdAt'
+PR_SELECTOR='number state body createdAt'
+assert_eq "$(run .)" 'rc=1' 'control: the query must request the PR body'
+PR_SELECTOR='pullRequest(number'
 
 # The same rows expose the former CI/review classifications when each
 # changed decision is removed from a private source copy.

@@ -783,6 +783,46 @@ pauses() { # ITEM PAUSES PARKED
   filter="$(jq -rn --argjson t0 "$T0" --arg item "$1" --arg p "$2" --arg k "$3" "$program")"
   edit_json "$CASE/state/workflow-state-oversee.json" "$filter"
 }
+
+# The merge gap is 12000 s. Its pause union and CI span come from the
+# existing lane and timeline producers; the printed cycle is the fleet
+# audit protocol, and the stored cause must agree with it at every tier.
+merged_cause_rows() {
+  local name tier group held parked route want gate_paused got
+  while IFS='|' read -r name tier group held parked route want gate_paused; do
+    new_case "merged-cause-$1-$name"
+    printf standard > "$CASE/class"
+    timeline 12420
+    pauses KEN-1 "$held" "$parked"
+    edit_json "$CASE/timeline.json" ".ci_merge_group_secs = $group | .merge_decision = $route"
+    got="$(record KEN-1 "$tier")"
+    assert_eq "$(field verdict "$got") $(field phase "$got") $(field phase_secs "$got") $(field cause "$got") $(field paused "$got")|$(state '.lanes[0].cycle.cause')" \
+      "verdict=miss phase=merged phase_secs=$((12000 - group)) cause=$want paused=${gate_paused:-0}|\"$want\"" "merged cause: $name"
+  done <<'ROWS'
+standard CI|standard|7000|-|-|{"route":"admin","cause":"queue-bypass-safe"}|merge_group
+small CI|small|7000|-|-|null|merge_group
+micro CI|micro|7000|-|-|null|merge_group
+standard hold|standard|0|500-7600|-|{"route":"queue","cause":"queue-required"}|paused
+small hold|small|0|500-7600|-|null|paused
+micro hold|micro|0|500-7600|-|null|paused
+overlapping clipped holds|standard|0|0-300 400-2000 1500-7600|-|null|paused|180
+standing park|standard|0|-|500|null|paused
+CI ties remaining wait|standard|6000|-|-|null|merge_group
+pause ties CI|standard|6000|420-6420|-|null|paused
+queue decision|standard|0|-|-|{"route":"queue","cause":"queue-required"}|queue
+admin decision|standard|0|-|-|{"route":"admin","cause":"queue-bypass-safe"}|admin
+missing decision|standard|0|-|-|null|merged
+ROWS
+}
+merged_cause_rows shipped
+control m-merged-cause oversee-cycle 'elif $dominant.phase == "merged" and $class != null and $lane_secs > $targets[$class]' 'elif false'
+if (FAIL=0; merged_cause_rows control; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/merged-cause-control.out"; then
+  fail 'merged cause: disabling attribution did not redden the suite'
+else
+  assert_file_contains "$TMP_ROOT/merged-cause-control.out" '  FAIL  ' 'merged cause: old phase-only cause fails regression rows'
+fi
+RUN_BIN=""
+
 # One row per rule: the wait a push opens, the wait a bot review opens, a
 # pause taken out of the wait it falls in, pauses overlapping one another and
 # a park still standing, the wait the gap opens in read from before it, a
