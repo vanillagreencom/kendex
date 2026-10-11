@@ -55,6 +55,18 @@ case "$1 $2" in
     [[ "$PULL_JSON" != fail ]] || exit 1
     printf '%s\n' "$PULL_JSON"
     ;;
+  api\ repos/consumer/repo/commits/*/check-runs*)
+    [[ "${CHECKS_FAIL:-false}" != true ]] || exit 1
+    printf '%s\n' "$CHECKS_JSON"
+    ;;
+  'api repos/consumer/repo/issues/42/timeline?per_page=100')
+    [[ "${TIMELINE_FAIL:-false}" != true ]] || exit 1
+    printf '%s\n' "$TIMELINE_JSON"
+    ;;
+  'api repos/consumer/repo/pulls/42/reviews')
+    [[ "${REVIEWS_FAIL:-false}" != true ]] || exit 1
+    printf '%s\n' "$REVIEWS_JSON"
+    ;;
   'pr edit')
     printf '%s\n' "$PWD|$*" >> "$REQUEST_LOG"
     printf 'request head=%s draft=%s\n' "$(cat "$HEAD_FILE" 2>/dev/null || echo current-head)" "$(cat "$DRAFT_FILE" 2>/dev/null || echo false)" >> "$TRANSITION_LOG"
@@ -100,6 +112,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
     DRAFT_FILE="$DRAFT_FILE" HEAD_FILE="$HEAD_FILE" TRANSITION_LOG="$TRANSITION_LOG" \
     ORCH_STATE_DIR="$TMP_ROOT/state" REVIEW_BASE_FIXTURE="$BASE" \
+    CHECKS_JSON='[{"check_runs":[]}]' TIMELINE_JSON='[[]]' REVIEWS_JSON='[]' \
     REQUEST_EXIT="$request_exit" PULL_JSON="$PULL_JSON" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     "$BASH" "$script" 42 "$@" > "$OUT" 2> "$ERR") || RC=$?
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
@@ -225,6 +238,66 @@ run_action "$TMP_ROOT/publication-mutant.sh" 0
 assert_eq "$REQUESTS" 1 'control: ignoring the request record duplicates the ready head request' "$ERR"
 ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
+# GitHub produces queued/running checks, timeline-only requests and submitted
+# head reviews. approval is the request answer consumed by submit-pr and the
+# review workflow; stderr records the cause and head for the caller's log.
+CHECK_ACTIVE='[{"check_runs":[{"name":"copilot-pull-request-reviewer","status":"in_progress","id":7,"started_at":null}]}]'
+TIMELINE_PENDING='[[{"event":"review_requested","id":8,"created_at":"2026-10-10T07:04:13Z","requested_reviewer":{"login":"copilot-pull-request-reviewer[bot]"}}]]'
+HEAD_REVIEW='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"current-head","state":"APPROVED","body":"Reviewed."}]'
+ERROR_REVIEW='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"current-head","state":"COMMENTED","body":"Copilot encountered an error and was unable to review this pull request."}]'
+scripts="$(mutant_scripts request-head-work approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" '    request_runs=$(orch_copilot_check_runs' $'    if false; then\n    request_runs=$(orch_copilot_check_runs'
+mutate_file "$scripts/approval-wait" $'    fi\n    request_rc=0' $'    fi\n    fi\n    request_rc=0'
+# Columns: label~checks~timeline~reviews~failure env~rc~requests~cause
+for row in \
+  "running check~$CHECK_ACTIVE~[[]]~[]~~0~0~existing-run" \
+  "queued check~${CHECK_ACTIVE/in_progress/queued}~[[]]~[]~~0~0~existing-run" \
+  "pending timeline request~[{\"check_runs\":[]}]~$TIMELINE_PENDING~[]~~0~0~existing-run" \
+  "approved head review~[{\"check_runs\":[]}]~[[]]~$HEAD_REVIEW~~0~0~existing-review" \
+  "commented head review~[{\"check_runs\":[]}]~[[]]~${HEAD_REVIEW/APPROVED/COMMENTED}~~0~0~existing-review" \
+  "changes requested head review~[{\"check_runs\":[]}]~[[]]~${HEAD_REVIEW/APPROVED/CHANGES_REQUESTED}~~0~0~existing-review" \
+  "dismissed head review~[{\"check_runs\":[]}]~[[]]~${HEAD_REVIEW/APPROVED/DISMISSED}~~0~0~existing-review" \
+  "earlier head review~[{\"check_runs\":[]}]~[[]]~${HEAD_REVIEW/current-head/earlier-head}~~0~1~" \
+  "error head review~[{\"check_runs\":[]}]~[[]]~$ERROR_REVIEW~~0~1~" \
+  "dismissed error review~[{\"check_runs\":[]}]~[[]]~${ERROR_REVIEW/COMMENTED/DISMISSED}~~0~1~" \
+  'no Copilot work~[{"check_runs":[]}]~[[]]~[]~~0~1~' \
+  'failed check read~[{"check_runs":[]}]~[[]]~[]~CHECKS_FAIL=true~2~0~request-checks-unreadable' \
+  'failed reviews read~[{"check_runs":[]}]~[[]]~[]~REVIEWS_FAIL=true~2~0~request-reviews-unreadable' \
+  'failed timeline read~[{"check_runs":[]}]~[[]]~[]~TIMELINE_FAIL=true~2~0~request-checks-unreadable' \
+  "failed reviews read with active work~$CHECK_ACTIVE~[[]]~[]~REVIEWS_FAIL=true~2~0~request-reviews-unreadable"; do
+  IFS='~' read -r label checks timeline reviews failure want_rc want_requests cause <<<"$row"
+  RUN_ENV=("CHECKS_JSON=$checks" "TIMELINE_JSON=$timeline" "REVIEWS_JSON=$reviews")
+  [[ -z "$failure" ]] || RUN_ENV+=("$failure")
+  run_action "$RUN" 0 --request-review --base-checkout "$BASE"
+  want_out=approval
+  [[ "$want_rc" == 0 ]] || want_out=''
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "$want_rc|$want_out|$want_requests" "$label" "$ERR"
+  [[ -z "$cause" ]] || assert_eq "$(cat "$ERR")" "approval-wait: $cause head=current-head" "$label cause and head" "$ERR"
+  if [[ "$cause" == existing-* ]]; then
+    run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+    assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|approval|1' "$label control reaches the duplicate request" "$ERR"
+  fi
+done
+# Each exception and failed source keeps its own control. All use the real
+# request owner with private defects; the stub supplies only GitHub evidence.
+for row in \
+  'earlier-head~| any(.[]; .user.login == $reviewer and .commit_id == $head~| any(.[]; .user.login == $reviewer~earlier~0|approval|0' \
+  'error-review~contains($sentence) | not~contains($sentence) | not | not~error~0|approval|0' \
+  'checks-failure~request_runs=$(orch_copilot_check_runs "$REPO" "$request_head" "$PR_NUM" 2>"$GH_ERR_FILE")~request_runs=$(orch_copilot_check_runs "$REPO" "$request_head" "$PR_NUM" 2>"$GH_ERR_FILE") || request_runs="[]"~checks~0|approval|1' \
+  'reviews-failure~request_reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE")~request_reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE") || request_reviews="[]"~reviews~0|approval|1'; do
+  IFS='~' read -r label old new fixture want <<<"$row"
+  scripts="$(mutant_scripts "$label-work" approval-wait)" || exit 1
+  mutate_file "$scripts/approval-wait" "$old" "$new"
+  case "$fixture" in
+    earlier) RUN_ENV=("REVIEWS_JSON=${HEAD_REVIEW/current-head/earlier-head}") ;;
+    error) RUN_ENV=("REVIEWS_JSON=$ERROR_REVIEW") ;;
+    checks) RUN_ENV=(CHECKS_FAIL=true) ;;
+    reviews) RUN_ENV=(REVIEWS_FAIL=true) ;;
+  esac
+  run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "$want" "$label control breaks its request rule" "$ERR"
+done
+RUN_ENV=()
 # Controls retain the matched behavior text, so each guard's reachable defect
 # changes its own observation rather than merely removing an assertion.
 scripts="$(mutant_scripts draft-request approval-wait)" || exit 1

@@ -165,6 +165,9 @@ approval_message() {
       printf 'approval-wait: result-failed pr=%s repo=%s exit=%s\n' "$PR_NUM" "$REPO" "$rc"
       printf '%s\n' "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)"
       ;;
+    existing-run|existing-review|request-checks-unreadable|request-reviews-unreadable)
+      printf 'approval-wait: %s head=%s\n' "$message_key" "$request_head"
+      ;;
     *) printf 'approval-wait: message-key key=%q\n' "$message_key"; return 2 ;;
   esac
 }
@@ -233,8 +236,11 @@ stop: stdout stays empty and stderr says why.
                  Authentication stays with the caller's project.
   --request-review
                  resolve through --base-checkout each time. An off gate prints off
-                 and sends no request. An approval gate requests Copilot and prints
-                 approval, or prints a fallback line when no request went out
+                 and sends no request. An approval gate prints approval when it
+                 requests Copilot or finds existing work at the head. It reads
+                 active checks, pending requests and completed reviews first.
+                 An error review still permits retry. A failed read is nonzero
+                 and sends no request. It prints a fallback line when no request went out
                  (below). A resolution, refresh-route or PR_COPILOT_REQUESTS
                  failure is nonzero and authorizes no wait or retry.
                  Print a fallback line, exit 0, when an approval gate sends no
@@ -973,6 +979,29 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
         printf 'fallback cause=draft\n'
         exit 0
       fi
+    fi
+    # GitHub's automatic request can reach this ready head before the lane.
+    # This local request check keeps that work and preserves error-review retry.
+    request_runs=$(orch_copilot_check_runs "$REPO" "$request_head" "$PR_NUM" 2>"$GH_ERR_FILE") \
+      || { approval_message request-checks-unreadable >&2; exit 2; }
+    request_reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE") \
+      || { approval_message request-reviews-unreadable >&2; exit 2; }
+    request_review_exists=$(jq -er -s --arg head "$request_head" \
+      --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" '
+      if length == 0 or any(.[]; type != "array") then error("review pages") else add end
+      | any(.[]; .user.login == $reviewer and .commit_id == $head
+          and (.state == "APPROVED" or .state == "COMMENTED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")
+          and ((.body // "") | contains($sentence) | not))
+      | tostring' <<<"$request_reviews") \
+      || { approval_message request-reviews-unreadable >&2; exit 2; }
+    if [[ "$request_runs" != '[]' ]]; then
+      approval_message existing-run >&2
+      printf 'approval\n'
+      exit 0
+    elif [[ "$request_review_exists" == true ]]; then
+      approval_message existing-review >&2
+      printf 'approval\n'
+      exit 0
     fi
     request_rc=0
     gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?

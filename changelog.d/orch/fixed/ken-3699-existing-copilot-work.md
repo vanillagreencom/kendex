@@ -1,0 +1,1 @@
+- Copilot review requests keep an active run, pending request or completed review at the current head. Error reviews still permit the existing retry. Failed evidence reads send no request.
