@@ -156,7 +156,7 @@ cat >"$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
-  'pr list') echo '[{"state":"MERGED","mergedAt":"2026-10-01T00:00:00Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"}]' ;;
+  'pr list') echo '[{"state":"MERGED","mergedAt":"2026-10-01T00:00:00.123Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"}]' ;;
   'release list') echo '[]' ;;
   *) exit 2 ;;
 esac

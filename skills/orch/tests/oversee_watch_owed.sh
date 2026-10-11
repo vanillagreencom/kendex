@@ -530,28 +530,54 @@ cat >"$TMP_ROOT/bin/reconcile-gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1 $2" == 'pr list' ]]; then
-  jq -c 'map(. + {state:"MERGED",isCrossRepository:false,url:"https://github.com/owner/repo/pull/1"})' "$STUB_DIR/merged.json"
+  [[ ! -f "$STUB_DIR/reconcile-pr-fail" ]] || { echo 'HTTP 502' >&2; exit 1; }
+  head=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --head) head="$2"; shift ;; esac
+    shift
+  done
+  jq -c --arg head "$head" 'map(select(.headRefName == $head)
+    | . + {state:"MERGED",isCrossRepository:false,url:("https://github.com/owner/repo/pull/" + (.number | tostring))})' "$STUB_DIR/merged.json"
 else
   exec "${BASH_SOURCE[0]%/*}/gh" "$@"
 fi
 SH
 chmod +x "$TMP_ROOT/shared-reconcile/linear/scripts/linear.sh" "$TMP_ROOT/bin/reconcile-gh"
 reconcile_same_world() {
+  local scripts="${1:-$RECONCILE_SCRIPTS}"
   RECONCILE_RC=0
   RECONCILE_OUT="$(cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" STUB_DIR="$STUB_DIR" \
     OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" RECONCILE_GH_CLI="$TMP_ROOT/bin/reconcile-gh" \
-    "$RECONCILE_SCRIPTS/reconcile-work-items" 2>"$STUB_DIR/reconcile.err")" || RECONCILE_RC=$?
+    "$scripts/reconcile-work-items" 2>"$STUB_DIR/reconcile.err")" || RECONCILE_RC=$?
 }
-while IFS='|' read -r name trigger blockers now deadline status control; do
+while IFS='|' read -r name trigger blockers now deadline status control merge_at; do
   verifying_one "shared_$name" "$trigger" "$blockers"
   jq --arg d "$deadline" 'map(if .id == "KEN-1" then .description |= sub("Deadline: [^;]+$"; "Deadline: " + $d) else . end)' \
     "$STUB_DIR/tracker.out" >"$STUB_DIR/shared.json"
   mv -- "$STUB_DIR/shared.json" "$STUB_DIR/tracker.out"
   jq -nr --arg now "$now" '$now | fromdateiso8601' >"$STUB_DIR/now.epoch"
   printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-01T00:00:00Z","mergeCommit":{"oid":"1111111111111111111111111111111111111111"}}]' >"$STUB_DIR/merged.json"
+  if [[ -n "$merge_at" ]]; then
+    jq --arg at "$merge_at" 'map(.mergedAt = $at)' "$STUB_DIR/merged.json" >"$STUB_DIR/fractional.json"
+    mv -- "$STUB_DIR/fractional.json" "$STUB_DIR/merged.json"
+  fi
   printf '%s\n' '[{"tagName":"v1","publishedAt":"2026-10-02T00:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json"
   case "$control" in
-    cutoff|waiting) echo '[]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    cutoff|waiting|fractional) echo '[]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    containment)
+      printf '%s\n' '[{"tagName":"v3","publishedAt":"2026-10-02T00:00:00Z","isDraft":false},{"tagName":"v2","publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_repo.json"
+      printf '%s\n' '{"status":"behind"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json"
+      printf '%s\n' '{"status":"ahead"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v3.json"
+      ;;
+    missing)
+      jq '[{id:"KEN-0",state:"Verifying",priority:2,
+          description:"## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/releases v*; Deadline: +24h"}] + .' \
+        "$STUB_DIR/tracker.out" >"$STUB_DIR/missing-first.json"
+      mv -- "$STUB_DIR/missing-first.json" "$STUB_DIR/tracker.out"
+      jq '. + [{number:2,headRefName:"claude/cloud-session",body:"Closes KEN-0",mergedAt:"2026-10-01T00:00:00Z",
+          mergeCommit:{oid:"2222222222222222222222222222222222222222"}}]' "$STUB_DIR/merged.json" >"$STUB_DIR/cloud-merge.json"
+      mv -- "$STUB_DIR/cloud-merge.json" "$STUB_DIR/merged.json"
+      ;;
     invalid)
       jq '[{id:"KEN-0",state:"Verifying",priority:2,description:"## Done when\n- [ ] Post-merge: malformed"}] + .' \
         "$STUB_DIR/tracker.out" >"$STUB_DIR/invalid-first.json"
@@ -564,13 +590,29 @@ while IFS='|' read -r name trigger blockers now deadline status control; do
   expected="verifying KEN-1 box=1 trigger=\"$trigger\" status=$status deadline=$deadline blocked_by="
   case "$control" in
     release) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=KEN-99" ;;
-    cutoff|waiting) expected="${expected%deadline=*}deadline=2026-10-04T00:00:00Z blocked_by=-" ;;
+    containment) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=-" ;;
+    cutoff|waiting|fractional) expected="${expected%deadline=*}deadline=2026-10-04T00:00:00Z blocked_by=-" ;;
     *) [[ "$blockers" != '[]' ]] && expected+=KEN-99 || expected+=- ;;
   esac
   expected+=' reading="Read health" where="service" why="live release"'
-  assert_eq "$watch_lines" "$expected" "$name status, date and blockers" "$ERR"
+  expected_watch="$expected"
+  if [[ "$control" == missing ]]; then
+    expected_watch='verifying KEN-0 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'$'\n'"$expected"
+  fi
+  assert_eq "$watch_lines" "$expected_watch" "$name status, date and blockers" "$ERR"
   reconcile_same_world
-  assert_eq "$(awk '/^verifying /' <<<"$RECONCILE_OUT")" "$watch_lines" "$name callers print identical lines" "$STUB_DIR/reconcile.err"
+  assert_eq "$(awk '/^verifying /' <<<"$RECONCILE_OUT")" "$expected" "$name callers print identical lines for readable local merge evidence" "$STUB_DIR/reconcile.err"
+  if [[ "$control" == missing ]]; then
+    assert_eq "$RECONCILE_RC" 1 "a missing local merge is an item finding" "$STUB_DIR/reconcile.err"
+    assert_contains "$RECONCILE_OUT" 'verifying-merge-unread issue=KEN-0' "the missing merge item is named"
+    assert_contains "$RECONCILE_OUT" 'verifying-counts due=1 overdue=0 blocked=0 waiting=0 items=2' "the later valid item is read and counted"
+    touch "$STUB_DIR/reconcile-pr-fail"
+    reconcile_same_world
+    assert_eq "$RECONCILE_RC" 2 "a failed GitHub read remains fatal" "$STUB_DIR/reconcile.err"
+    assert_contains "$(cat "$STUB_DIR/reconcile.err")" 'verifying-merge-unread issue=KEN-0' "the failed read names its item"
+    assert_not_contains "$RECONCILE_OUT" 'verifying-counts' "a failed read supplies no complete counts"
+    rm -- "$STUB_DIR/reconcile-pr-fail"
+  fi
   if [[ "$control" == invalid ]]; then
     assert_eq "$(grep -c '^oversee-watch: verifying-invalid issue=KEN-0$' "$ERR" || true)" 1 "invalid item reports its key" "$ERR"
     assert_contains "$(cat "$ERR")" '"box":1' "invalid item includes parser box evidence" "$ERR"
@@ -582,6 +624,24 @@ while IFS='|' read -r name trigger blockers now deadline status control; do
   # Restore each old failure in a disposable production copy. Each row
   # observes the contract above fail while the fixture still reaches it.
   MUTANT_DIR="$TMP_ROOT/shared-old-$name"
+  if [[ "$control" == fractional || "$control" == missing || "$control" == containment ]]; then
+    MUTANT_RW="$(mutant_scripts "shared-old-$name/orch" reconcile-work-items)/reconcile-work-items" || exit 1
+    ln -s "$TMP_ROOT/shared-reconcile/linear" "$MUTANT_DIR/linear"
+    case "$control" in
+      fractional) mutate_file "$MUTANT_RW" 'sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 'fromdateiso8601' ;;
+      missing) mutate_file "$MUTANT_RW" 'if [ "$merge_epoch" = none ]; then' 'if [ "$merge_epoch" = none ]; then config_error verifying-merge-unread "issue=$iid"' ;;
+      containment) mutate_file "$MUTANT_RW" 'read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"' 'read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"; merged_repos="{}"' ;;
+    esac
+    reconcile_same_world "${MUTANT_RW%/*}"
+    if [[ "$control" == containment ]]; then
+      assert_eq "$RECONCILE_RC" 0 "control: dropped merge evidence still reaches a release judgement" "$STUB_DIR/reconcile.err"
+      assert_contains "$RECONCILE_OUT" 'deadline=2026-10-02T12:00:00Z' "control: dropped merge evidence chooses the tag without the merge"
+    else
+      assert_eq "$RECONCILE_RC" 2 "control: $name stops before the required result" "$STUB_DIR/reconcile.err"
+    fi
+    assert_not_contains "$RECONCILE_OUT" "$expected" "control: $name loses the independently expected box line"
+    continue
+  fi
   MUTANT_WATCH="$(mutant_scripts "shared-old-$name/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
@@ -606,6 +666,9 @@ release_unfired_late|release owner/releases v*|[]|2026-10-04T01:00:00Z|+24h|over
 release_blocked|release owner/releases v*|["KEN-99"]|2026-10-02T00:00:01Z|+24h|blocked|release
 release_waiting|release owner/releases v*|[]|2026-10-02T00:00:01Z|+24h|waiting|waiting
 invalid_then_due|merge|[]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|due|invalid
+fractional_merge|release owner/releases v*|[]|2026-10-02T00:00:01Z|+24h|waiting|fractional|2026-10-01T00:00:00.123Z
+missing_merge_then_due|merge|[]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|due|missing
+release_contains_merge|release owner/repo v*|[]|2026-10-02T00:00:01Z|+24h|due|containment
 ROWS
 
 release_world release_first
