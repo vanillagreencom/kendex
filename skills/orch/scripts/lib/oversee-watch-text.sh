@@ -446,8 +446,11 @@ The long pass's events, checked and reported in this order:
                              Closing lines follow. Failed provider reads stay
                              unjudged; unusable local probes keep the lane watched
   EVENT lane-closed <item>   for a --hosted item already reported merged, after
-                             lane-exited or two idle passes, once the pass finds
-                             its worktree gone: `lane-close` succeeded; its
+                             lane-exited or two idle passes, once its worktree
+                             is gone; also after two consecutive long passes
+                             with a hosted Pi lane's rows missing, its merged
+                             row recorded and its worktree gone. `lane-close`
+                             succeeded; its
                              `kept=` line follows, its `closed=absent item=ID`
                              line where the host no longer held the item and
                              ran no archive pass, or else `kept=none` because

@@ -1024,7 +1024,7 @@ fi
 # The following passes exercise the finished prompt through the real watch.
 finished_hosted_case() { # NAME STATE KEEP MERGED CLOSE_RC [WATCH]
   local name="$1" state="$2" keep="$3" merged="$4" close_rc="$5" run rc
-  local target="${6:-$WATCH_SRC}" host_env counts=() outcomes=()
+  local target="${6:-$WATCH_SRC}" host_env counts=() outcomes=() state_args=()
   new_case "$name"
   mkdir -p "$STUB_DIR/remote/srv/clone/tmp" "$STUB_DIR/remote/srv/lane/issue-1"
   printf 'gitdir: /srv/clone/.git/worktrees/issue-1\n' > "$STUB_DIR/remote/srv/lane/issue-1/.git"
@@ -1034,8 +1034,14 @@ finished_hosted_case() { # NAME STATE KEEP MERGED CLOSE_RC [WATCH]
   fi
   host_env=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log"
     LANE_HOST_STUB_DIR="$STUB_DIR/remote" LANE_HOST_STUB_CLOSE_STATUS="$close_rc")
+  if [[ "$state" == pi ]]; then
+    jq -cn --arg host "$FIXTURE_HOST" '{triaged: [], lanes: [{item: "issue-1", window: "gh-1", host: $host,
+      mail_root: "/srv/lane/issue-1", status: "running", harness: "pi", tracker: "github", repo: "owner/repo"}]}' > "$STUB_DIR/state.json"
+    state_args=(--state "$STUB_DIR/state.json")
+    printf 'pi\n' > "$STUB_DIR/cmd-gh-1.txt"
+  fi
   WATCH_BIN="$target" run_watch "${host_env[@]}" -- --max-loops 1 \
-    --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 > "$STUB_DIR/prime.out" 2> "$STUB_DIR/prime.err"
+    ${state_args[@]+"${state_args[@]}"} --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 > "$STUB_DIR/prime.out" 2> "$STUB_DIR/prime.err"
   [[ "$keep" != gone ]] || rm -rf -- "${STUB_DIR:?}/remote/srv/lane/issue-1"
   if [[ "$state" == codex ]]; then
     # open-terminal's submitted kickoff turn stays visible after Codex returns.
@@ -1052,7 +1058,7 @@ finished_hosted_case() { # NAME STATE KEEP MERGED CLOSE_RC [WATCH]
   for run in 1 2 3; do
     rc=0
     WATCH_BIN="$target" run_watch "${host_env[@]}" -- --max-loops 1 \
-      --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 \
+      ${state_args[@]+"${state_args[@]}"} --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 \
       > "$STUB_DIR/run$run.out" 2> "$STUB_DIR/run$run.err" || rc=$?
     outcomes+=("$rc")
     counts+=("$(awk 'END {print NR+0}' "$STUB_DIR/lane-close.args" 2>/dev/null || echo 0)")
@@ -1068,6 +1074,11 @@ FINISHED_NONE='calls=0 0 0 rc=0 0 0 closed=0 kept=0 refused=0 failed=0'
 for row in \
   "idle|idle|gone|yes|0|$FINISHED_OK" \
   "codex|codex|gone|yes|0|$FINISHED_OK" \
+  "pi|pi|gone|yes|0|$FINISHED_OK" \
+  "pi_worktree|pi|keep|yes|0|$FINISHED_NONE" \
+  "pi_unmerged|pi|gone|no|0|$FINISHED_NONE" \
+  'pi_refused|pi|gone|yes|3|calls=0 1 1 rc=0 0 0 closed=0 kept=0 refused=1 failed=0' \
+  'pi_retry|pi|gone|yes|1|calls=0 1 2 rc=0 2 2 closed=0 kept=0 refused=0 failed=2' \
   "worktree|idle|keep|yes|0|$FINISHED_NONE" \
   "unmerged|idle|gone|no|0|$FINISHED_NONE" \
   'refused|idle|gone|yes|3|calls=0 1 1 rc=0 0 0 closed=0 kept=0 refused=1 failed=0' \
@@ -1077,6 +1088,11 @@ for row in \
   finished_hosted_case "finished_$name" "$state" "$keep" "$merged" "$close_rc"
   assert_eq "$FINISHED_FACTS" "$expected" "finished hosted $name: close and retry contract" "$STUB_DIR/run2.err"
 done
+
+mutant pi_close oversee-watch '          close_finished_hosted_lane "$lane" lane-idle pi-merged-gone' \
+  '          : close_finished_hosted_lane "$lane" lane-idle pi-merged-gone'
+finished_hosted_case control_pi pi gone yes 0 "$MUTANT"
+assert_eq "$FINISHED_FACTS" "$FINISHED_NONE" "control: without the Pi close a merged lane with no worktree never closes" "$STUB_DIR/run2.err"
 
 mutant idle_close oversee-watch '      close_finished_hosted_lane "$lane" lane-idle "$screen_key"' \
   '      : close_finished_hosted_lane "$lane" lane-idle "$screen_key"'

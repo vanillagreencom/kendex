@@ -161,6 +161,8 @@ refuses as lane-live state=idle. A local lane's worktree is read on this disk;
 a hosted lane's .git through lane-host cat, as oversee-watch reads it before
 its own close of a merged hosted lane, and a read that fails refuses as
 worktree-read-failed.
+A Pi lane read unjudged also closes when its record carries the merge cycle
+and its worktree is gone. Every other unjudged lane refuses as lane-live.
 A limit banner below the lane's last turn is passed over only where
 `lanes pick --lane`, run under the record's host, so a hosted lane is read
 through the provider's copy, reads the account the record names as room, for
@@ -1310,6 +1312,9 @@ fi
 
 case "$state" in
   exited | windowless) ;;
+  unjudged)
+    { [[ "$harness" == pi ]] && record_merged && worktree_gone; } || { message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1; }
+    state=idle ;;
   idle)
     tracker_rc=0
     tracker_terminal || tracker_rc=$?

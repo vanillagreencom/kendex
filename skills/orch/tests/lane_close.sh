@@ -1236,6 +1236,28 @@ LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT" --keep-sandbox
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=4$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped ' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 skipped=0 kill=0 status=running' 'under --keep-sandbox the removed-worktree answer refuses, since the kept sandbox keeps the harness'
 
+pi_unjudged_row() { # SCRIPT HARNESS CYCLE WHERE
+  write_state running "$2" /host; write_panes "$2"
+  printf 'Pi session\n' > "$SCREEN"
+  if [[ "$3" != - ]]; then
+    jq --argjson pr "$3" '.lanes[0].cycle = {pr: $pr}' "$STATE" > "$STATE.next" && mv -- "$STATE.next" "$STATE"
+  fi
+  LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_HOST_GITFILE="$4" run_close "$1"
+  PI_UNJUDGED="rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=unjudged pane=%7$' <<<"$ERR" || true) close=$(close_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+for row in \
+  'pi|7|gone|rc=0 live=0 close=1 kill=1 status=done' \
+  'pi|7|standing|rc=1 live=1 close=0 kill=0 status=running' \
+  'pi|-|gone|rc=1 live=1 close=0 kill=0 status=running' \
+  'codex|7|gone|rc=1 live=1 close=0 kill=0 status=running'; do
+  IFS='|' read -r harness cycle where want <<<"$row"
+  pi_unjudged_row "$SCRIPT" "$harness" "$cycle" "$where"
+  assert_eq "$PI_UNJUDGED" "$want" "unjudged $harness cycle=$cycle worktree=$where: merged-and-gone close"
+done
+MUTANT="$(mutant lane-close-pi-unjudged '    state=idle ;;' '    message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;')"
+pi_unjudged_row "$MUTANT" pi 7 gone
+assert_eq "$PI_UNJUDGED" 'rc=1 live=1 close=0 kill=0 status=running' 'control: without Pi acceptance the merged-and-gone lane refuses as unjudged'
+
 echo '=== an idle lane whose merge cycle is recorded closes while its item stays open ==='
 # A merged lane whose item has been reopened after a later failed check.
 # SCRIPT closes it with the record carrying pull request CYCLE's merge, or no

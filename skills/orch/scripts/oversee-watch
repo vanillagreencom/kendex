@@ -4141,6 +4141,25 @@ check_lanes() {
         capacity=1
       fi
     else
+      hosted_lane_item "$lane"
+      # Removed Pi rows cannot judge idle. Hold the merged-and-gone evidence
+      # for two long passes so close-out can send its final clone notice.
+      if [[ "${LANE_ROWS[$i]:-}" == none && "$(lane_obs_state "$states" "$i")" == unjudged && -n "$HOSTED_ROOT" \
+            && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
+         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then
+        if ! prior="$(lane_row_get lane-idle "$asking_state" "$lane")"; then
+          die state-read-failed "" "lane=$lane" "row=lane-idle"
+        fi
+        [[ "$prior" != pi-merged-gone'|reported' ]] || continue
+        if [[ "$prior" == pi-merged-gone ]]; then
+          asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" 'pi-merged-gone|reported')"
+          PASS_EVENT=1
+          close_finished_hosted_lane "$lane" lane-idle pi-merged-gone
+        else
+          asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" pi-merged-gone)"
+        fi
+        continue
+      fi
       asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
       asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
       continue
