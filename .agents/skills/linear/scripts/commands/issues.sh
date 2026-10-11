@@ -160,7 +160,7 @@ Update Options:
   --state <name>        New state
   --label(s) <a,b,c>    Replace labels (comma-separated)
   --title <text>        New title
-  --description <text>  New description
+  --description <text>  New description (empty text clears it)
   --description-file <path>  Read new description from file (preferred for markdown)
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
@@ -1586,6 +1586,7 @@ update_issue() {
     local labels=""
     local title=""
     local description=""
+    local description_set="false"
     local description_file=""
     local project=""
     local priority=""
@@ -1652,10 +1653,12 @@ update_issue() {
             ;;
         --description)
             description="$2"
+            description_set="true"
             shift 2
             ;;
         --description=*)
             description="${1#*=}"
+            description_set="true"
             shift
             ;;
         --description-file)
@@ -1762,12 +1765,13 @@ update_issue() {
         esac
     done
 
-    if [[ -n "$description" && -n "$description_file" ]]; then
+    if [[ "$description_set" == "true" && -n "$description_file" ]]; then
         echo '{"error": "--description and --description-file are mutually exclusive"}' >&2
         return 1
     fi
     if [[ -n "$description_file" ]]; then
         read_description_file "$description_file"
+        description_set="true"
     fi
 
     # --attach: refuse unreadable paths before any API call.
@@ -1879,7 +1883,7 @@ update_issue() {
     # seed it from the issue's current one so the embed is an append, not a
     # wipe. Non-images queue for attachmentCreate after the update.
     if [ ${#attach_paths[@]} -gt 0 ]; then
-        if [[ -z "$description" && -z "$description_file" ]]; then
+        if [[ "$description_set" == "false" ]]; then
             local has_image_attach=0 attach_probe
             for attach_probe in "${attach_paths[@]}"; do
                 case "$(attach_upload_content_type "$attach_probe")" in
@@ -1898,7 +1902,9 @@ update_issue() {
         escaped_title=$(printf '%s' "$title" | jq -Rs '.')
         input_parts+=("\"title\": $escaped_title")
     fi
-    if [ -n "$description" ]; then
+    # An owner close can clear the last description line. Empty means clear
+    # only when the caller supplied it; attachment embeds also write a body.
+    if [[ "$description_set" == "true" || -n "$description" ]]; then
         local escaped_desc
         escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")

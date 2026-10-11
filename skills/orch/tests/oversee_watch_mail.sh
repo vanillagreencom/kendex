@@ -1830,6 +1830,92 @@ TRACKER_MAIL="$NORMAL_TRACKER_MAIL"
 assert_not_contains "$(cat "$STUB_DIR/posted")" 'Approved action.' \
   'control: dropping the ruling fails the supplied-ruling assertion'
 
+# Linear issues without a body leave only the action line. Exercise close
+# through the real CLI, because an argv stub cannot detect an omitted field.
+new_case mail_real_tracker_close
+REAL_TRACKER_ROOT="$CASE_REPO_ROOT/real-linear-close"
+mkdir -p "$REAL_TRACKER_ROOT/.agents/skills" "$REAL_TRACKER_ROOT/bin"
+git -C "$REAL_TRACKER_ROOT" init -q -b main
+git -C "$REAL_TRACKER_ROOT" config gc.auto 0
+git -C "$REAL_TRACKER_ROOT" config maintenance.auto false
+cp -R "$REPO_ROOT/skills/linear" "$REAL_TRACKER_ROOT/.agents/skills/linear"
+cat >"$REAL_TRACKER_ROOT/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+config=$(cat)
+payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r)
+query=$(jq -r '.query' <<<"$payload")
+printf '%s\n' "$payload" >>"$CLOSE_LOG"
+case "$query" in
+*"commentCreate(input:"*)
+  printf '%s' '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-id","body":"closed","issue":{"identifier":"PROJ-1"}}}}}'
+  ;;
+*"issueUpdate(id:"*)
+  jq --argjson input "$(jq -c '.variables.input' <<<"$payload")" '
+    if $input | has("description") then .description = $input.description else . end
+    | if $input | has("assigneeId") then .assignee = null else . end
+    | if $input | has("labelIds") then .labels.nodes = [] else . end' "$CLOSE_STATE" >"$CLOSE_STATE.next"
+  mv "$CLOSE_STATE.next" "$CLOSE_STATE"
+  jq -c '{data: {issueUpdate: {success: true, issue: .}}}' "$CLOSE_STATE"
+  ;;
+*"issue(id:"*)
+  jq -c '{data: {issue: .}}' "$CLOSE_STATE"
+  ;;
+*) exit 1 ;;
+esac
+printf '___HTTP_CODE___200'
+SH
+chmod +x "$REAL_TRACKER_ROOT/bin/curl"
+cat >"$REAL_TRACKER_ROOT/close-driver" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$CLOSE_LIB"
+OWNER_TRACKER_LABEL=owner-gated
+TO_LANE="$CLOSE_ROOT/mail.jsonl"
+owner_tracker_close "$CLOSE_CLI" '{"id":"ask-id","issue":"PROJ-1"}' close-id "$CLOSE_ROOT"
+SH
+printf '%s\n' '{"kind":"answer","re":"ask-id","text":"Approved."}' \
+  '{"id":"close-id","re":"ask-id","by":"explicit"}' >"$REAL_TRACKER_ROOT/mail.jsonl"
+real_tracker_close() { # BODY CLI
+  local body="$1" cli="$2"
+  jq -n --arg body "$body" '{id:"issue-uuid",identifier:"PROJ-1",title:"test",
+    description:("**Maya, what you do:** Post the message. Its link closes this ask.\n\n" + $body),
+    state:{name:"Todo",type:"unstarted"},assignee:{name:"Maya Owner"},
+    project:null,projectMilestone:null,cycle:null,parent:null,team:{name:"Fixture"},
+    labels:{nodes:[{name:"owner-gated"}],pageInfo:{hasNextPage:false,endCursor:null}},
+    relations:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},
+    inverseRelations:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},
+    children:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},priority:3,estimate:null,
+    sortOrder:1,url:"https://linear.app/fixture/PROJ-1",createdAt:"2026-10-11T00:00:00Z",
+    updatedAt:"2026-10-11T00:00:00Z"}' >"$REAL_TRACKER_ROOT/issue.json"
+  : >"$REAL_TRACKER_ROOT/payloads.jsonl"
+  REAL_CLOSE_RC=0
+  (cd "$REAL_TRACKER_ROOT" && env -i HOME="$REAL_TRACKER_ROOT" PATH="$REAL_TRACKER_ROOT/bin:$PATH" \
+    LINEAR_API_KEY_OVERRIDE=fixture-token LINEAR_TEAM= KENDEX_ENV_FILE=absent.env \
+    CLOSE_ROOT="$REAL_TRACKER_ROOT" CLOSE_CLI="$cli" \
+    CLOSE_LIB="$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh" \
+    CLOSE_STATE="$REAL_TRACKER_ROOT/issue.json" CLOSE_LOG="$REAL_TRACKER_ROOT/payloads.jsonl" \
+    bash "$REAL_TRACKER_ROOT/close-driver") >"$REAL_TRACKER_ROOT/close.out" 2>"$REAL_TRACKER_ROOT/close.err" || REAL_CLOSE_RC=$?
+}
+REAL_CLOSE_CLI="$REAL_TRACKER_ROOT/.agents/skills/linear/scripts/linear.sh"
+for body in '' $'Engineering body.\n\n'; do
+  real_tracker_close "$body" "$REAL_CLOSE_CLI"
+  assert_eq "$REAL_CLOSE_RC" 0 'owner close through the real CLI succeeds' "$REAL_TRACKER_ROOT/close.err"
+  assert_eq "$(jq -c '.description' "$REAL_TRACKER_ROOT/issue.json")" "$(jq -cn --arg body "$body" '$body')" \
+    'owner close through the real CLI leaves the underlying description byte-equal'
+  assert_eq "$(jq -r '.assignee == null and .labels.nodes == []' "$REAL_TRACKER_ROOT/issue.json")" true \
+    'owner close through the real CLI clears assignment and label'
+done
+# Reintroduce the nonempty-only producer in a private CLI copy. Close still
+# succeeds and clears ownership, but the empty-body assertion must detect it.
+cp -R "$REAL_TRACKER_ROOT/.agents/skills/linear" "$REAL_TRACKER_ROOT/mutant-linear"
+mutate_file "$REAL_TRACKER_ROOT/mutant-linear/scripts/commands/issues.sh" \
+  'if [[ "$description_set" == "true" || -n "$description" ]]; then' 'if [ -n "$description" ]; then'
+real_tracker_close '' "$REAL_TRACKER_ROOT/mutant-linear/scripts/linear.sh"
+assert_eq "$REAL_CLOSE_RC" 0 'control: nonempty-only description update still reports close success'
+assert_eq "$(jq -r '.description != "" and .assignee == null and .labels.nodes == []' "$REAL_TRACKER_ROOT/issue.json")" true \
+  'control: nonempty-only description update fails the empty-body close assertion'
+
 # The mailbox process ceilings use the same instrument as the reader suite.
 PROCESS_RC=0
 "$BASH" "$REPO_ROOT/skills/orch/tests/lib/watch-process-cases.sh" || PROCESS_RC=$?

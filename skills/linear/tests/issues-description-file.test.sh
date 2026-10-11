@@ -2,6 +2,7 @@
 # Tests for issues create/update --description-file parsing without the real API.
 
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
@@ -14,11 +15,17 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # The CLI resolves its project from git rev-parse --show-toplevel, so the
 # fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 # Mocked curl: routes by GraphQL operation, logs each request payload for assertions.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 config="$(cat)"
+if [[ "$config" == *'upload-file = '* ]]; then
+  printf '200'
+  exit 0
+fi
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
 variables="$(jq -c '.variables' <<<"$payload")"
@@ -27,6 +34,9 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 issue_json='{"id":"issue-uuid","identifier":"PROJ-1","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-1","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
 
 case "$query" in
+*"fileUpload("*)
+  printf '%s' '{"data":{"fileUpload":{"success":true,"uploadFile":{"uploadUrl":"https://uploads.linear.app/put/shot.png","assetUrl":"https://uploads.linear.app/asset/shot.png","headers":[]}}}}___HTTP_CODE___200'
+  ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"PROJ","name":"Claude"}]}}}___HTTP_CODE___200'
   ;;
@@ -37,7 +47,7 @@ case "$query" in
   printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$issue_json}}}___HTTP_CODE___200"
   ;;
 *"issue(id:"*)
-  printf '%s' '{"data":{"issue":{"id":"issue-uuid","identifier":"PROJ-1","team":{"name":"Claude"}}}}___HTTP_CODE___200'
+  printf '%s' "{\"data\":{\"issue\":$issue_json}}___HTTP_CODE___200"
   ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'
@@ -103,7 +113,7 @@ assert_fails() {
   shift 2
   local err_file="$TMP_ROOT/err.txt" rc=0
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ LINEAR_REQUIRE_REACH= \
-    bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file" || rc=$?
+    CURL_PAYLOAD_LOG="$TMP_ROOT/refusal-payloads.jsonl" bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file" || rc=$?
 
   assert_ne "$label: exits nonzero" "$rc" 0
   assert_file_contains "$label" "$err_file" "$expected"
@@ -120,3 +130,40 @@ assert_fails "create refuses an unreadable --description-file" "not readable" \
   issues create --title "New task" --team Claude --description-file "$TMP_ROOT/does-not-exist.md"
 assert_fails "update refuses an unreadable --description-file" "not readable" \
   issues update PROJ-1 --description-file "$TMP_ROOT/does-not-exist.md"
+
+# An owner close supplies an empty inline description when no body remains.
+# A user can also clear it with an empty file; an omitted option keeps it.
+empty_file="$TMP_ROOT/empty.md"
+: >"$empty_file"
+printf 'PNGDATA' >"$TMP_ROOT/shot.png"
+for form in absent inline equals file file-equals nonempty empty-image absent-image; do
+  args=()
+  case "$form" in
+    absent) args=(--title renamed) ;;
+    inline) args=(--description "") ;;
+    equals) args=(--description=) ;;
+    file) args=(--description-file "$empty_file") ;;
+    file-equals) args=(--description-file="$empty_file") ;;
+    nonempty) args=(--description $'Engineering body.\n\n') ;;
+    empty-image) args=(--description "" --attach "$TMP_ROOT/shot.png") ;;
+    absent-image) args=(--attach "$TMP_ROOT/shot.png") ;;
+  esac
+  log="$TMP_ROOT/$form.jsonl"
+  : >"$log"
+  rc=0
+  (cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ CURL_PAYLOAD_LOG="$log" \
+    bash "$LINEAR" issues update PROJ-1 "${args[@]}") >"$TMP_ROOT/$form.out" 2>"$TMP_ROOT/$form.err" || rc=$?
+  assert_eq "$form description update succeeds" "$rc" 0
+  case "$form" in
+    absent) rule='has("description") | not' ;;
+    nonempty) rule='.description == "Engineering body.\n\n"' ;;
+    empty-image) rule='.description == "![shot.png](https://uploads.linear.app/asset/shot.png)"' ;;
+    absent-image) rule='.description == "d\n\n![shot.png](https://uploads.linear.app/asset/shot.png)"' ;;
+    *) rule='has("description") and .description == ""' ;;
+  esac
+  assert "$form description update sends the requested value" jq -s -e \
+    '[.[] | select(.query | contains("issueUpdate")) | .variables.input] | length == 1 and (.[0] | '"$rule"')' "$log"
+done
+assert_fails "update refuses empty --description with --description-file" "mutually exclusive" \
+  issues update PROJ-1 --description "" --description-file "$desc_file"

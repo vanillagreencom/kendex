@@ -1,0 +1,1 @@
+- Issue updates clear the description when the supplied text or description file is empty. Closing an owner ask also removes its action line when no other text remains.
