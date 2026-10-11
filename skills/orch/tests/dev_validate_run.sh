@@ -1230,6 +1230,9 @@ ci_control 'the original queue-only exclusion' '[[ "$CHANGE_CLASS_QUEUE_ONLY" ==
 ci_control 'the merge queue requirement unread' 'ci_class_covered "$queue"' 'ci_class_covered true' \
   'queue-only work without a merge queue keeps range' \
   'state=done guard-exit=0 validate=pass |ci||merge_group'
+ci_control 'the merge-group record dropped' 'record_ci_event="$(start_field "$run_dir/start" ci-event)"' 'record_ci_event=""' \
+  'queue-only work under required merge-group CI starts no local command' \
+  'state=done guard-exit=0 validate=pass |ci||'
 ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$rules"$'"'"'\n'"'"'"$classic"' 'true' \
   'a context the base does not require runs the range command'
 ci_control 'every rule type read' 'select(.type == "required_status_checks") | ' '' \
