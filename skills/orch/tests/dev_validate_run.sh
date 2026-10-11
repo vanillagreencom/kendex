@@ -185,6 +185,116 @@ farm_path() { # NAME OMIT...
 }
 
 if [[ "$PART" != selection ]]; then
+# The CI shard and exact local callers use the same registration. Tiny suites
+# report their received mode; the selection entry remains the shipped wrapper.
+split_world() { # NAME
+  local dir="$TMP_ROOT/split-$1/skills/orch/tests"
+  mkdir -p "$dir" "$dir/../" "$dir/../../github"
+  cp "$TEST_DIR/run-all.sh" "$TEST_DIR/dev_validate_run_selection.sh" "$dir/"
+  ln -s "$TEST_DIR/lib" "$dir/lib"
+  ln -s "$SCRIPTS_DIR" "$dir/../scripts"
+  ln -s "$REPO_ROOT/skills/github/scripts" "$dir/../../github/scripts"
+  printf '%s\n' "$dir"
+}
+split_rows() { # DIR ARG...
+  local dir="$1"
+  shift
+  run_script "$SPLIT_BOUND" 10 env -u RUN_ALL_SUITE_SECS -u RUN_ALL_DEADLINE_EPOCH \
+    PATH="$SPLIT_BIN:$PATH" "$BASH" "$dir/run-all.sh" "$@"
+  # These fixture lines are machine output consumed by this registration check.
+  SPLIT_ROWS="$(sed -n '/^split-row=/p' <<<"$OUT" | LC_ALL=C sort)"
+}
+SPLIT_BOUND="$(command -v timeout || command -v gtimeout || true)"
+if [[ -n "$SPLIT_BOUND" ]]; then
+  SPLIT_BIN="$TMP_ROOT/split-bin"
+  mkdir -p "$SPLIT_BIN"
+  printf '#!/usr/bin/env bash\nprintf "1\\n"\n' > "$SPLIT_BIN/nproc"
+  chmod +x "$SPLIT_BIN/nproc"
+  SPLIT_RUNNER="$(split_world runner)"
+  cat > "$SPLIT_RUNNER/dev_validate_run.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'split-row=dev_validate_run:%s\n' "${1:-none}"
+SH
+  cat > "$SPLIT_RUNNER/unrelated.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'split-row=unrelated:%s\n' "${1:-none}"
+SH
+  SPLIT_EXTERNAL="$TMP_ROOT/split-external"
+  mkdir -p "$SPLIT_EXTERNAL/lib"
+  cp "$SPLIT_RUNNER/dev_validate_run.sh" "$SPLIT_RUNNER/unrelated.sh" \
+    "$TEST_DIR/dev_validate_run_selection.sh" "$SPLIT_EXTERNAL/"
+  cp "$TEST_DIR/lib/git-env.sh" "$SPLIT_EXTERNAL/lib/"
+  # scope|filter|received rows. Rejection keeps only the unrelated suite in the
+  # canonical tree; an external tree retains its independent exact semantics.
+  SPLIT_CASES=(
+    'canonical|all|dev_validate_run:runner,dev_validate_run:selection,unrelated:none'
+    'canonical|=dev_validate_run|dev_validate_run:runner,dev_validate_run:selection'
+    'canonical|!=dev_validate_run|unrelated:none'
+    'canonical|=dev_validate_run_selection|dev_validate_run:selection'
+    'external|all|dev_validate_run:none,dev_validate_run:selection,unrelated:none'
+    'external|=dev_validate_run|dev_validate_run:none'
+    'external|!=dev_validate_run|dev_validate_run:selection,unrelated:none'
+  )
+  for split_variant in shipped alias-removed runner-removed; do
+    split_dir="$SPLIT_RUNNER"
+    if [[ "$split_variant" != shipped ]]; then
+      split_dir="$(split_world "$split_variant")"
+      cp "$SPLIT_RUNNER/dev_validate_run.sh" "$SPLIT_RUNNER/unrelated.sh" "$split_dir/"
+      if [[ "$split_variant" == alias-removed ]]; then
+        mutate_file "$split_dir/run-all.sh" \
+          $'[ "$1" = dev_validate_run_selection ] && [ "$2" = =dev_validate_run ]; then\n    return 0' \
+          $'[ "$1" = dev_validate_run_selection ] && [ "$2" = =dev_validate_run ]; then\n    return 1'
+      else
+        mutate_file "$split_dir/run-all.sh" 'suite_args+=(runner)' ': # suite_args+=(runner)'
+      fi
+    fi
+    for split_case in "${SPLIT_CASES[@]}"; do
+      IFS='|' read -r split_scope split_filter split_want <<<"$split_case"
+      case "$split_variant:$split_scope:$split_filter" in
+        shipped:*|alias-removed:canonical:=dev_validate_run|alias-removed:canonical:!=dev_validate_run|runner-removed:canonical:all) ;;
+        *) continue ;;
+      esac
+      split_args=()
+      [[ "$split_scope" != external ]] || split_args+=(--battery "$SPLIT_EXTERNAL")
+      [[ "$split_filter" == all ]] || split_args+=("$split_filter")
+      split_rows "$split_dir" ${split_args[@]+"${split_args[@]}"}
+      split_want="$(tr ',' '\n' <<<"$split_want" | sed 's/^/split-row=/' | LC_ALL=C sort)"
+      assert_eq "$RC" 0 "split registration: $split_variant $split_scope $split_filter runs its fixtures" "$ERR"
+      if [[ "$split_variant" == shipped ]]; then
+        assert_eq "$SPLIT_ROWS" "$split_want" "split registration: $split_scope $split_filter runs each intended mode once"
+      elif [[ "$SPLIT_ROWS" != "$split_want" ]]; then
+        pass "split registration: $split_variant $split_filter breaks the partition assertion"
+      else
+        fail "split registration: $split_variant $split_filter breaks the partition assertion"
+      fi
+    done
+  done
+
+  SPLIT_UNAVAILABLE="$(split_world unavailable)"
+  cp "$TEST_DIR/dev_validate_run.sh" "$SPLIT_UNAVAILABLE/dev_validate_run.sh"
+  for split_variant in shipped unavailable-success; do
+    if [[ "$split_variant" == unavailable-success ]]; then
+      mutate_file "$SPLIT_UNAVAILABLE/dev_validate_run.sh" \
+        $'echo "dev_validate_run: unavailable part=selection" >&2\n    exit 2' \
+        $'echo "dev_validate_run: unavailable part=selection" >&2\n    exit 0'
+    fi
+    for split_missing in timeout setsid; do
+      split_omit=("$split_missing")
+      [[ "$split_missing" != timeout ]] || split_omit+=(gtimeout)
+      split_path="$(farm_path "split-no-$split_missing" "${split_omit[@]}")"
+      run_script "$SPLIT_BOUND" 10 env PATH="$split_path" "$BASH" "$SPLIT_UNAVAILABLE/dev_validate_run_selection.sh"
+      assert_eq "$(sed -n '/^dev_validate_run: unavailable part=selection$/p' "$ERR")" \
+        'dev_validate_run: unavailable part=selection' \
+        "split registration: $split_variant missing $split_missing reaches selection refusal" "$ERR"
+      if [[ "$split_variant" == shipped ]]; then
+        assert_eq "$RC" 2 "split registration: missing $split_missing refuses selection" "$ERR"
+      else
+        assert_eq "$RC" 0 "split registration: unavailable success breaks the missing $split_missing assertion" "$ERR"
+      fi
+    done
+  done
+fi
+
 proj_dep="$(make_proj proj-dep "echo x" 20)"
 RUN_PATH="$(farm_path no-timeout timeout gtimeout)"
 run_script "$RUN" --worktree "$proj_dep" --poll 1
@@ -211,6 +321,10 @@ elif ! command -v setsid >/dev/null 2>&1; then
   SKIP_REASON="setsid is not installed"
 fi
 if [[ -n "$SKIP_REASON" ]]; then
+  if [[ "$PART" == selection ]]; then
+    echo "dev_validate_run: unavailable part=selection" >&2
+    exit 2
+  fi
   echo "  skip  $SKIP_REASON; the runner rows did not run"
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
   # The refusal rows above did run, and their result is still the suite's: a
