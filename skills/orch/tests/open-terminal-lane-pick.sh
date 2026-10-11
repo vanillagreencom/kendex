@@ -207,7 +207,7 @@ rm -rf -- "${H:?}/.namedcopilot"
 
 echo "=== a Pi launch on a Copilot model qualifies on the stated Copilot pool ==="
 # Such a launch spends Copilot credits and no Claude window, so a bound that
-# walls every Claude seat here (claude 20, eclaude 80, nclaude 95 against 15)
+# walls every Claude seat here (claude 20, eclaude 80, neutralclaude 95 against 15)
 # leaves it launching on a pool ORCH_LANE_COPILOT_POOL states with room, under
 # Pi's own root variable naming that account, and a pool nothing states or
 # every stated pool spent refuses it by a cause naming the setting, auto and
@@ -322,7 +322,7 @@ PI_CLAUDE='cmd=true --model pi-claude/claude-opus-5-5:high'
 table \
   "auto launches a pi-claude model on the Claude seat with room, under the Claude variable|$PI_CLAUDE|--harness pi --lane auto KEN-1680|rc=0 launched=1 cmd_lane=claude pi_root=none claim_lanes=claude" \
   "auto refuses a pi-claude model when every Claude seat is walled|$PI_CLAUDE|--harness pi --lane auto --lane-max-pct 15 KEN-1681|rc=1 launched=nolog creates=nolog pickrefusal=lane-unavailable,harness=pi" \
-  "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.nclaude KEN-1682|rc=1 launched=nolog walled=lane=$H/.nclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly,projected-headroom=5" \
+  "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.neutralclaude KEN-1682|rc=1 launched=nolog walled=lane=$H/.neutralclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly,projected-headroom=5" \
   "a named Claude seat with room launches a pi-claude model under the Claude variable|$PI_CLAUDE|--harness pi --lane $H/.claude KEN-1683|rc=0 launched=1 cmd_lane=claude pi_root=none walled=none" \
   "auto refuses a provider nothing measures by its own cause|cmd=true --model openai/gpt-6:high|--harness pi --lane auto KEN-1684|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=openai/gpt-6:high"
 # The controls drop the unmeasured arm of the auto refusal, which then names

@@ -74,7 +74,7 @@ table() {
 }
 
 new_home invalid-pct
-for lane in sclaude mclaude nclaude oclaude lclaude aclaude; do make_lane "$H" "$lane" 3600; done
+for lane in sclaude mclaude neutralclaude oclaude lclaude aclaude; do make_lane "$H" "$lane" 3600; done
 for lane in scodex mcodex ncodex ocodex; do make_codex_lane "$H/.$lane"; done
 claude_body() { # LANE FILTER
   jq -n '{five_hour: {utilization: 10, resets_at: "2099-07-27T06:00:00Z"},
@@ -85,7 +85,7 @@ claude_body() { # LANE FILTER
 }
 claude_body sclaude '.five_hour.utilization = "12"'
 claude_body mclaude 'del(.seven_day.utilization)'
-claude_body nclaude '.limits[0].percent = -0.1'
+claude_body neutralclaude '.limits[0].percent = -0.1'
 claude_body oclaude '.limits[1].percent = 1e13'
 claude_body lclaude 'del(.limits) | .seven_day_sonnet = {utilization: 5} | .seven_day_opus = {utilization: "7"}'
 claude_body aclaude '.five_hour = null | del(.limits)'
@@ -113,7 +113,7 @@ echo "=== a percentage that does not read is unmeasured, never an empty window =
 table \
   "a string Claude session beside a readable weekly leaves the lane unmeasured|claude|$(claude_unmeasured sclaude)" \
   "a missing Claude weekly percentage leaves the lane unmeasured|claude|$(claude_unmeasured mclaude)" \
-  "a negative scoped Claude window leaves the lane unmeasured|claude|$(claude_unmeasured nclaude)" \
+  "a negative scoped Claude window leaves the lane unmeasured|claude|$(claude_unmeasured neutralclaude)" \
   "an oversized scoped Claude window leaves the lane unmeasured|claude|$(claude_unmeasured oclaude)" \
   "an unreadable legacy Claude model window leaves the lane unmeasured|claude|$(unmeasured lclaude) lclaude.model_pct=null lclaude.model_label=Opus lclaude.buckets=Sonnet:null,Opus:null" \
   "an absent Claude session window leaves the weekly measured|claude|aclaude.status=ok aclaude.session_5h_pct=null aclaude.weekly_pct=20 aclaude.headroom_pct=80" \
@@ -125,8 +125,8 @@ table \
 # rule that one unreadable window unmeasures the rest. The Claude order control
 # judges the range after `round`, which reads -0.1 as -0 and passes it.
 range='and . >= 0 and . <= 1e12'
-for spec in claude:sclaude:type:round claude:nclaude:range:round codex:scodex:type:floor codex:ncodex:range:floor \
-  claude:nclaude:order:round claude:sclaude:whole: codex:scodex:whole:; do
+for spec in claude:sclaude:type:round claude:neutralclaude:range:round codex:scodex:type:floor codex:ncodex:range:floor \
+  claude:neutralclaude:order:round claude:sclaude:whole: codex:scodex:whole:; do
   IFS=':' read -r harness lane rule op <<<"$spec"
   [[ -z "$op" ]] || op='if $rounding == "unrounded" then . else '"$op"' end'
   range_then="$range"$'\n\t\t                 then '

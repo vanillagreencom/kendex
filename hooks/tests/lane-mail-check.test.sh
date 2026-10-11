@@ -572,16 +572,16 @@ expect 2 "lane-mail-check: context=600000" \
 
 # The account mark, measured through the credential the lane runs on. The
 # standard home is shared with the orch suites, so both accounts are staged
-# HERE rather than there: nclaude AT the default mark this hook judges, and
+# HERE rather than there: neutralclaude AT the default mark this hook judges, and
 # eclaude one point above it. claude has 80 and is room.
 #
 # The pair is what pins the number. The refusal key carries the account's
-# measured headroom and not the threshold, so the nclaude row alone is green
+# measured headroom and not the threshold, so the neutralclaude row alone is green
 # for any mark at or above it; eclaude ends its turn at this default and is
 # refused by the one it replaced, so a mark that drifts back reddens here.
 source "$REPO_ROOT/skills/orch/tests/lib/lanes-fixture.sh"
 standard_home handoff-accounts
-claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.nclaude.json"
+claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.neutralclaude.json"
 claude_usage 5 96 12 Opus > "$FIXTURE_DIR/.eclaude.json"
 FETCHER="$TMP_ROOT/handoff-fetch"
 make_fetcher "$FETCHER"
@@ -638,12 +638,12 @@ write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false $(account_env .claude)
 expect 0 - "a lane on an account with room ends its turn"
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .nclaude)
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 2 "lane-mail-check: headroom=3" "a lane at its account's handoff mark is refused with the headroom left"
 assert_eq "$(grep -cF -- " set KEN-54 handoff " "$ERR_FILE")" "1" \
   "the account refusal carries the same instruction as the context refusal"
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .nclaude) ORCH_HANDOFF_HEADROOM_PCT=1
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude) ORCH_HANDOFF_HEADROOM_PCT=1
 expect 0 - "a mark the setting lowers leaves the same account with room"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .eclaude)
@@ -666,7 +666,7 @@ stop_at "$TRANSCRIPT" false $(account_env .sclaude) "OVERSEE_WATCH_STATE_DIR=$HA
 expect 0 - "a lane on an account with room ends its turn though the lanes on it project past the mark"
 record_handoff KEN-54
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .nclaude)
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 0 - "a lane whose handoff record stands ends its turn at its account's mark"
 
 # An account nothing could measure is a gap the lane cannot act on: it is
@@ -708,9 +708,9 @@ done
 #
 #   PROVIDER|ACCOUNT DIR|POOL READING|RC|FIRST LINE
 PI_ACCOUNT_ROWS='pi-claude|.claude||0|-
-pi-claude|.nclaude||2|lane-mail-check: headroom=3
-github-copilot|.nclaude|97/100|2|lane-mail-check: headroom=3
-github-copilot|.nclaude|50/100|0|-
+pi-claude|.neutralclaude||2|lane-mail-check: headroom=3
+github-copilot|.neutralclaude|97/100|2|lane-mail-check: headroom=3
+github-copilot|.neutralclaude|50/100|0|-
 openai|.claude||0|lane-mail-check: account=unmeasured'
 new_handoff_lane handoff_pi_account KEN-79
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
@@ -754,7 +754,7 @@ assert_eq "RC=$RC first=$(first_line) asked=$(asked)" \
   "a Pi lane on a provider nothing measures is unmeasured by the rule, lanes never asked"
 rm -f "$LANES_ASKED"
 # shellcheck disable=SC2046
-run_payload '{"session_id":"s1","stop_hook_active":false}' "PI_CODING_AGENT_DIR=$PI_ROOT" $(account_env .nclaude)
+run_payload '{"session_id":"s1","stop_hook_active":false}' "PI_CODING_AGENT_DIR=$PI_ROOT" $(account_env .neutralclaude)
 assert_eq "RC=$RC first=$(first_line) asked=$(asked)" \
   "RC=0 first=lane-mail-check: account=unmeasured asked=0" \
   "a Pi lane whose model no reading named is unmeasured for that reason, never blamed on a provider"
@@ -767,7 +767,7 @@ expect 2 "lane-mail-check: context=600000" "and the context mark is judged on a 
 variant no-pi-account -e '/^    pi) pi_account || return 0 ;;$/d'
 install_hook "$VARIANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 # shellcheck disable=SC2046
-stop_pi pi-claude 1000 $(account_env .nclaude)
+stop_pi pi-claude 1000 $(account_env .neutralclaude)
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
   "control: with no Pi arm a Pi lane on a spent Claude seat ends its turn unjudged"
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
@@ -844,7 +844,7 @@ if command -v timeout >/dev/null 2>&1; then
     "the ceiling leaves no credentials mutex behind for the next renewal to wait on"
 
   standard_home handoff-accounts
-  claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.nclaude.json"
+  claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.neutralclaude.json"
   claude_usage 5 96 12 Opus > "$FIXTURE_DIR/.eclaude.json"
 else
   printf '  skip  an account read past the ceiling: this host has no timeout to bound it with\n'
@@ -2617,7 +2617,7 @@ new_handoff_lane control_headroom KEN-57
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .nclaude)
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 0 - "control: without its account refusal a lane at its account's mark ends its turn"
 
 # The verb's own status 2 folded back in with the statuses it cannot attribute:

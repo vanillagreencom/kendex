@@ -1538,17 +1538,17 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 # place, and so do two with the overseer on one of them, however the two
 # readings stand: the other account here has MORE headroom, which is the
 # reading a count without this session's own account would move it on.
-make_lane "$H" nclaude
+make_lane "$H" neutralclaude
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
-THREE_LANES="$H/.claude:$H/.eclaude:$H/.nclaude"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.neutralclaude.json"
+THREE_LANES="$H/.claude:$H/.eclaude:$H/.neutralclaude"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingthree '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40|0" \
   "three accounts above the trigger do not fire the qualifying-set trigger"
-claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.neutralclaude.json"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=01 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwo '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
@@ -1781,7 +1781,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none" \
   "a known harness with no context line still fires the qualifying-set trigger"
 
-claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.neutralclaude.json"
 new_known_claude_caller "$NO_CONTEXT"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownunmeasured '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
@@ -1799,7 +1799,7 @@ new_caller "$NO_CONTEXT" "$NO_CONTEXT" "cat '$TMP_ROOT/caller.screen'; exec '$BI
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed nodeprint '' --print-launch-line --harness codex -- --verbose
 assert_eq "$RC|$(grep -c ' codex ' <<<"$OUT")|$(grep -c 'claude' <<<"$OUT")" "0|1|0" \
   "a node pane with no reading prints its codex line where --harness names codex"
-claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.neutralclaude.json"
 
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"

@@ -319,18 +319,18 @@ standard_home home
 LIST='list --harness claude --json'
 
 echo "=== list: every candidate config dir is measured; headroom is the binding bucket ==="
-# Averaging nclaude's 5% session and 95% weekly would call it half free and
+# Averaging neutralclaude's 5% session and 95% weekly would call it half free and
 # send a fleet into the wall; the largest bucket binds.
 table \
-  "every candidate dir is listed, a dir with no credentials reported, the plan read from the file, headroom 100 minus the largest bucket, the model label from the API, no live claim as 0||$LIST|length=4 openclaude.status=no_credentials claude.plan=max nclaude.headroom_pct=5 eclaude.headroom_pct=20 claude.headroom_pct=80 claude.model_label=Opus claude.claims=0" \
+  "every candidate dir is listed, a dir with no credentials reported, the plan read from the file, headroom 100 minus the largest bucket, the model label from the API, no live claim as 0||$LIST|length=4 openclaude.status=no_credentials claude.plan=max neutralclaude.headroom_pct=5 eclaude.headroom_pct=20 claude.headroom_pct=80 claude.model_label=Opus claude.claims=0" \
   "the human table renders every discovered lane under its header||list --harness claude|rc=0 lines=5"
 
 echo "=== list: each record's verdict is pick's own wall judgement ==="
-# nclaude's weekly 95 meets the default bound, eclaude's session 80 meets it
+# neutralclaude's weekly 95 meets the default bound, eclaude's session 80 meets it
 # only once the setting lowers the bound to 80, and a lane nothing measured is
 # neither room nor a wall.
 table \
-  "under the default bound a lane at 95 is walled, one at 80 has room and one with no credentials is unmeasured||$LIST|claude.verdict=room eclaude.verdict=room nclaude.verdict=walled openclaude.verdict=unmeasured" \
+  "under the default bound a lane at 95 is walled, one at 80 has room and one with no credentials is unmeasured||$LIST|claude.verdict=room eclaude.verdict=room neutralclaude.verdict=walled openclaude.verdict=unmeasured" \
   "the verdict follows ORCH_LANE_MAX_PCT, so a lane at 80 is walled under a bound of 80|ORCH_LANE_MAX_PCT=80|$LIST|claude.verdict=room eclaude.verdict=walled"
 
 echo "=== aliases are an overlay on the discovered inventory ==="
@@ -338,10 +338,10 @@ echo "=== aliases are an overlay on the discovered inventory ==="
 # alias relabels one it found and can neither add nor drop a lane, nor change
 # what was measured.
 table \
-  "with no aliases every discovered lane keeps its directory name||$LIST|aliases=claude,eclaude,nclaude,openclaude" \
-  "an alias renames the lane it names, whitespace around the pairs tolerated|ORCH_LANE_ALIASES=eclaude=work, nclaude = overflow|$LIST|aliases=claude,openclaude,overflow,work" \
+  "with no aliases every discovered lane keeps its directory name||$LIST|aliases=claude,eclaude,neutralclaude,openclaude" \
+  "an alias renames the lane it names, whitespace around the pairs tolerated|ORCH_LANE_ALIASES=eclaude=work, neutralclaude = overflow|$LIST|aliases=claude,openclaude,overflow,work" \
   "the renamed lane is the directory the alias named, its measured headroom unchanged|ORCH_LANE_ALIASES=eclaude=work|$LIST|work.config_dir=$H/.eclaude work.headroom_pct=20" \
-  "an alias naming no discovered directory is inert|ORCH_LANE_ALIASES=notthere=phantom|$LIST|aliases=claude,eclaude,nclaude,openclaude"
+  "an alias naming no discovered directory is inert|ORCH_LANE_ALIASES=notthere=phantom|$LIST|aliases=claude,eclaude,neutralclaude,openclaude"
 
 # open-terminal consumes check's stdout as the local alias's config dir.
 table \
@@ -400,7 +400,7 @@ echo "=== pick: the most headroom, or a refusal ==="
 table \
   "pick returns the lane with the most headroom as a launch env prefix||pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "pick --json returns the whole lane record and the qualifying set size||pick --harness claude --json|alias=claude qualifying_count=2" \
-  "excluding the caller leaves the one other qualifying account|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.nclaude|pick --harness claude --exclude-lane $H/.claude --json|alias=eclaude qualifying_count=1" \
+  "excluding the caller leaves the one other qualifying account|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.neutralclaude|pick --harness claude --exclude-lane $H/.claude --json|alias=eclaude qualifying_count=1" \
   "pick exits 3 when no lane is under the threshold||pick --harness claude --max-pct 15|rc=3"
 
 echo "=== a weekly wall the harness banner stated reads walled until its reset ==="
@@ -410,18 +410,18 @@ echo "=== a weekly wall the harness banner stated reads walled until its reset =
 # lane walled (lib/account-wall.sh; the oversee_watch suites hold the writer).
 # While the stated reset is ahead the account's weekly window reads 100 in
 # `list` and both pick forms; past it, its measured value. A record nobody can
-# read leaves the account unmeasured. nclaude reads 0 everywhere, so without
+# read leaves the account unmeasured. neutralclaude reads 0 everywhere, so without
 # its wall it would be the pick.
 new_home walled
 make_lane "$H" claude 3600
-make_lane "$H" nclaude 3600
+make_lane "$H" neutralclaude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-claude_usage 0  0  0 Opus > "$FIXTURE_DIR/.nclaude.json"
-# stage_wall STATE RESET SEEN — nclaude's wall under STATE, through the writer
+claude_usage 0  0  0 Opus > "$FIXTURE_DIR/.neutralclaude.json"
+# stage_wall STATE RESET SEEN — neutralclaude's wall under STATE, through the writer
 # oversee-watch calls, so the record is the one it writes.
 stage_wall() {
   (source "$SCRIPTS_DIR/lib/lane-claims.sh" && source "$SCRIPTS_DIR/lib/account-wall.sh" \
-    && OVERSEE_WATCH_STATE_DIR="$1" account_wall_record "" "$H/.nclaude" "$2" "$3" $'  \xe2\x8e\xbf \xc2\xa0'"You've hit your weekly limit") \
+    && OVERSEE_WATCH_STATE_DIR="$1" account_wall_record "" "$H/.neutralclaude" "$2" "$3" $'  \xe2\x8e\xbf \xc2\xa0'"You've hit your weekly limit") \
     && compgen -G "$1/walls/*.json" >/dev/null \
     || { echo "stage_wall: no wall record under $1" >&2; exit 1; }
 }
@@ -434,20 +434,20 @@ stage_wall "$TMP_ROOT/wall-ahead" "$((WALL_NOW + 86400))" "$WALL_NOW"
 stage_wall "$TMP_ROOT/wall-passed" "$((WALL_NOW - 60))" "$((WALL_NOW - 3600))"
 stage_wall "$TMP_ROOT/wall-junk" "$((WALL_NOW + 86400))" "$WALL_NOW"
 for f in "$TMP_ROOT"/wall-junk/walls/*.json; do printf 'not json\n' > "$f"; done
-WALL_ROW_LIST="a 0% reading under a stated weekly wall lists walled, its weekly window at 100 until the stated reset|$WALL_AHEAD|$LIST|nclaude.weekly_pct=100 nclaude.binding_bucket=weekly nclaude.binding_resets_at=$WALL_RESET nclaude.verdict=walled claude.weekly_pct=20"
+WALL_ROW_LIST="a 0% reading under a stated weekly wall lists walled, its weekly window at 100 until the stated reset|$WALL_AHEAD|$LIST|neutralclaude.weekly_pct=100 neutralclaude.binding_bucket=weekly neutralclaude.binding_resets_at=$WALL_RESET neutralclaude.verdict=walled claude.weekly_pct=20"
 WALL_ROW_PICK="pick passes over the walled account for the one with room|$WALL_AHEAD|pick --harness claude --json|rc=0 alias=claude qualifying_count=1"
-WALL_ROW_LANE="pick --lane refuses the walled account for any model|$WALL_AHEAD|pick --lane $H/.nclaude --harness claude --model opus --json|rc=3 wall=100"
-WALL_ROW_PASSED="past the stated reset the account reads its measured value|$WALL_PASSED|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room"
-WALL_ROW_JUNK="a wall record nobody can read leaves the account unmeasured, never room|$WALL_JUNK|$LIST|nclaude.status=error nclaude.verdict=unmeasured claude.verdict=room"
+WALL_ROW_LANE="pick --lane refuses the walled account for any model|$WALL_AHEAD|pick --lane $H/.neutralclaude --harness claude --model opus --json|rc=3 wall=100"
+WALL_ROW_PASSED="past the stated reset the account reads its measured value|$WALL_PASSED|$LIST|neutralclaude.weekly_pct=0 neutralclaude.verdict=room"
+WALL_ROW_JUNK="a wall record nobody can read leaves the account unmeasured, never room|$WALL_JUNK|$LIST|neutralclaude.status=error neutralclaude.verdict=unmeasured claude.verdict=room"
 # The record names the account in lane_claims_canon's spelling, and discovery
 # keeps an ORCH_LANE_DIRS entry as written: a trailing slash or a symlink to
 # the account still reaches its wall.
 mkdir -p "$TMP_ROOT/spelled"
-ln -sfn "$H/.nclaude" "$TMP_ROOT/spelled/.nclaude"
-WALL_SLASH="$WALL_AHEAD;ORCH_LANE_DIRS=$H/.claude:$H/.nclaude/"
-WALL_LINK="$WALL_AHEAD;ORCH_LANE_DIRS=$H/.claude:$TMP_ROOT/spelled/.nclaude"
-WALL_ROW_SLASH="a wall reaches an account ORCH_LANE_DIRS spells with a trailing slash|$WALL_SLASH|$LIST|nclaude.weekly_pct=100 nclaude.verdict=walled"
-WALL_ROW_LINK="a wall reaches an account ORCH_LANE_DIRS names through a symlink|$WALL_LINK|$LIST|nclaude.weekly_pct=100 nclaude.verdict=walled"
+ln -sfn "$H/.neutralclaude" "$TMP_ROOT/spelled/.neutralclaude"
+WALL_SLASH="$WALL_AHEAD;ORCH_LANE_DIRS=$H/.claude:$H/.neutralclaude/"
+WALL_LINK="$WALL_AHEAD;ORCH_LANE_DIRS=$H/.claude:$TMP_ROOT/spelled/.neutralclaude"
+WALL_ROW_SLASH="a wall reaches an account ORCH_LANE_DIRS spells with a trailing slash|$WALL_SLASH|$LIST|neutralclaude.weekly_pct=100 neutralclaude.verdict=walled"
+WALL_ROW_LINK="a wall reaches an account ORCH_LANE_DIRS names through a symlink|$WALL_LINK|$LIST|neutralclaude.weekly_pct=100 neutralclaude.verdict=walled"
 table "$WALL_ROW_LIST" "$WALL_ROW_PICK" "$WALL_ROW_LANE" "$WALL_ROW_PASSED" "$WALL_ROW_JUNK" "$WALL_ROW_SLASH" "$WALL_ROW_LINK"
 # Controls for the reading rules of lib/account-wall.sh these rows reach, each
 # row run against a copy of the scripts with that rule's line mutated and
@@ -465,18 +465,18 @@ wall_control() { # NAME OLD NEW ROW...
   LANES="$scripts/lanes" table "$@"
 }
 wall_control mutant-wall-overlay 'weekly_pct: 100,' 'weekly_pct: .weekly_pct,' \
-  "control: the measured weekly figure kept lists the account at room|$WALL_AHEAD|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room" \
+  "control: the measured weekly figure kept lists the account at room|$WALL_AHEAD|$LIST|neutralclaude.weekly_pct=0 neutralclaude.verdict=room" \
   "control: the measured weekly figure kept counts the walled account as a candidate|$WALL_AHEAD|pick --harness claude --json|rc=0 qualifying_count=2" \
-  "control: the measured weekly figure kept passes the walled account|$WALL_AHEAD|pick --lane $H/.nclaude --harness claude --model opus --json|rc=0"
+  "control: the measured weekly figure kept passes the walled account|$WALL_AHEAD|pick --lane $H/.neutralclaude --harness claude --model opus --json|rc=0"
 wall_control mutant-wall-expiry ' or $wall.resets_at <= now' '' \
-  "control: with no reset test a passed wall still walls|$WALL_PASSED|$LIST|nclaude.weekly_pct=100 nclaude.verdict=walled"
+  "control: with no reset test a passed wall still walls|$WALL_PASSED|$LIST|neutralclaude.weekly_pct=100 neutralclaude.verdict=walled"
 wall_control mutant-wall-fail-open 'unmeasured" >&2
   return 1' 'unmeasured" >&2
   printf '"'"'%s\n'"'"' "$3"; return 0' \
-  "control: an unreadable record passed over reads room|$WALL_JUNK|$LIST|nclaude.status=ok nclaude.verdict=room"
+  "control: an unreadable record passed over reads room|$WALL_JUNK|$LIST|neutralclaude.status=ok neutralclaude.verdict=room"
 wall_control mutant-wall-spelling 'ACCOUNT_WALL_CANON="$canon"' 'ACCOUNT_WALL_CANON="$2"' \
-  "control: a dir taken as spelled misses the wall behind a trailing slash|$WALL_SLASH|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room" \
-  "control: a dir taken as spelled misses the wall behind a symlink|$WALL_LINK|$LIST|nclaude.weekly_pct=0 nclaude.verdict=room"
+  "control: a dir taken as spelled misses the wall behind a trailing slash|$WALL_SLASH|$LIST|neutralclaude.weekly_pct=0 neutralclaude.verdict=room" \
+  "control: a dir taken as spelled misses the wall behind a symlink|$WALL_LINK|$LIST|neutralclaude.weekly_pct=0 neutralclaude.verdict=room"
 standard_home home
 
 echo "=== pick: a Pi launch on a Copilot model is judged on the stated Copilot pool ==="
@@ -500,7 +500,7 @@ table \
   "no stated pool is exit 5 by the setting's name||pick --harness pi $COPILOT|rc=5 key=copilot-pool-unstated,model=github-copilot/claude-sonnet-5,setting=ORCH_LANE_COPILOT_POOL,read=local" \
   "a stated pool every entry of which is excluded is a pick with no candidate, not an unstated one|$POOL=1/10;ORCH_LANE_EXCLUDE=pi1|pick --harness pi $COPILOT|rc=3 key=no-candidate,harness=pi,max-pct=95,model=github-copilot/claude-sonnet-5,walled=0,unmeasured=0,seats=0" \
   "a named account the setting states nothing for is unmeasured, never unlisted|$POOL=1/10|pick --lane $H/.eclaude --harness pi $COPILOT --json|rc=5 status=no_usage_data" \
-  "a listing of every harness leaves the stated pool out|$POOL=1/10|list --json|aliases=claude,eclaude,nclaude,openclaude"
+  "a listing of every harness leaves the stated pool out|$POOL=1/10|list --json|aliases=claude,eclaude,neutralclaude,openclaude"
 # An entry nothing can read refuses the pick, one row per shape, and the named
 # form refuses it too.
 table \
@@ -560,7 +560,7 @@ table \
   "a pi-claude model picks the Claude seat with room, as the Claude variable||pick --harness pi $PI_CLAUDE|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a pi-claude model is refused as a claude pick where every Claude seat is walled||pick --harness pi $PI_CLAUDE --max-pct 15|rc=3 key=no-candidate,harness=claude,max-pct=15,model=pi-claude/claude-opus-5-5,walled=3,unmeasured=1,seats=0" \
   "a named Claude seat with room is judged for a pi-claude model||pick --lane $H/.claude --harness pi $PI_CLAUDE|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "a named walled Claude seat is refused for a pi-claude model on its own window||pick --lane $H/.nclaude --harness pi $PI_CLAUDE --json|rc=3 wall=95 binding_bucket=weekly" \
+  "a named walled Claude seat is refused for a pi-claude model on its own window||pick --lane $H/.neutralclaude --harness pi $PI_CLAUDE --json|rc=3 wall=95 binding_bucket=weekly" \
   "a provider nothing measures is unmeasured, never room|$POOL=1/10|pick --harness pi --model sonnet|rc=5 key=pick-provider-unmeasured,harness=pi,model=sonnet" \
   "the named form refuses it as unmeasured too||pick --lane $H/.claude --harness pi --model openai/gpt-6|rc=5 key=pick-provider-unmeasured,harness=pi,model=openai/gpt-6" \
   "a Pi pick naming no model is unmeasured||pick --harness pi|rc=5 key=pick-provider-unmeasured,harness=pi,model=none" \
@@ -1219,7 +1219,7 @@ stage_claims() {
       *) echo "stage_claims: unknown server token in $item" >&2; exit 1 ;;
     esac
     case "$dir" in
-      claude | eclaude | nclaude) dir="$H/.$dir" ;;
+      claude | eclaude | neutralclaude) dir="$H/.$dir" ;;
       claude/) dir="$H/.claude/" ;;
       link) dir="$TMP_ROOT/claude-link" ;;
       away) dir="$AWAY_HOME/.eclaude"; mkdir -p "$dir" ;;
@@ -1386,15 +1386,15 @@ echo "=== exclusion and retirement overlay discovery ==="
 # fetch log proves no usage query. `fetched` lists the lanes the stub served.
 standard_home home
 table \
-  "an excluded lane is not listed and its usage is never fetched|ORCH_LANE_EXCLUDE=claude|$LIST|aliases=eclaude,nclaude,openclaude fetched=eclaude,nclaude" \
-  "pick never returns an excluded lane, even the one with the most headroom|ORCH_LANE_EXCLUDE=sclaude, claude|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude fetched=eclaude,nclaude" \
+  "an excluded lane is not listed and its usage is never fetched|ORCH_LANE_EXCLUDE=claude|$LIST|aliases=eclaude,neutralclaude,openclaude fetched=eclaude,neutralclaude" \
+  "pick never returns an excluded lane, even the one with the most headroom|ORCH_LANE_EXCLUDE=sclaude, claude|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude fetched=eclaude,neutralclaude" \
   "an excluded ORCH_LANE_DIRS entry is neither listed nor fetched|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude;ORCH_LANE_EXCLUDE=.claude|list --json|aliases=eclaude fetched=eclaude" \
-  "an alias names an excluded lane as its directory name does|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_EXCLUDE=personal|$LIST|aliases=eclaude,nclaude,openclaude fetched=eclaude,nclaude" \
+  "an alias names an excluded lane as its directory name does|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_EXCLUDE=personal|$LIST|aliases=eclaude,neutralclaude,openclaude fetched=eclaude,neutralclaude" \
   "an ORCH_LANE_DIRS whose every entry is excluded still keeps discovery off|ORCH_LANE_DIRS=$H/.eclaude;ORCH_LANE_EXCLUDE=eclaude|$LIST|length=0 fetched=none" \
   "pick never returns a retired lane, even the one with the most headroom|ORCH_LANE_RETIRE=claude=2000-01-01|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude" \
   "a lane before its retirement date is picked as usual|ORCH_LANE_RETIRE=claude=2999-12-31|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "retirement dates name aliases and directories, including future dates|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_RETIRE=personal=2999-12-31,eclaude=2000-01-01|$LIST|personal.retire_date=2999-12-31 personal.status=ok eclaude.retire_date=2000-01-01 eclaude.status=retired nclaude.retire_date=null"
-RETIRE_EXPECT='personal.retire_date=2999-12-31 personal.status=ok eclaude.retire_date=2000-01-01 eclaude.status=retired nclaude.retire_date=null'
+  "retirement dates name aliases and directories, including future dates|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_RETIRE=personal=2999-12-31,eclaude=2000-01-01|$LIST|personal.retire_date=2999-12-31 personal.status=ok eclaude.retire_date=2000-01-01 eclaude.status=retired neutralclaude.retire_date=null"
+RETIRE_EXPECT='personal.retire_date=2999-12-31 personal.status=ok eclaude.retire_date=2000-01-01 eclaude.status=retired neutralclaude.retire_date=null'
 retire_control="$(mutant_scripts retire-date lanes)"
 mutate_file "$retire_control/lanes" 'retire_date: (if $retire == "" then null else $retire end),' '"_retire_control": (if $retire == "" then null else $retire end),'
 LANES="$retire_control/lanes"
@@ -1417,7 +1417,7 @@ assert_eq "$RC:$rc" '3:1' 'the option scope row rejects a parser that accepts ca
 LANES="$SCRIPTS_DIR/lanes"
 printf 'not json' > "$H/.claude/.credentials.json"
 table \
-  "a lane past its retirement date is listed as retired, unread and unfetched|ORCH_LANE_RETIRE=claude=2000-01-01|$LIST|claude.status=retired claude.headroom_pct=null fetched=eclaude,nclaude"
+  "a lane past its retirement date is listed as retired, unread and unfetched|ORCH_LANE_RETIRE=claude=2000-01-01|$LIST|claude.status=retired claude.headroom_pct=null fetched=eclaude,neutralclaude"
 
 echo "=== codex lanes are discovered like claude lanes ==="
 # A harness-named directory holding no config marker (a shared session store,
@@ -1494,16 +1494,16 @@ stage_cache() {
   exit 1
 }
 table \
-  "a fresh fetch reports age 0 and writes one cache file per fetched lane||$LIST|claude.usage_age_s=0 cachefiles=claude,eclaude,nclaude"
+  "a fresh fetch reports age 0 and writes one cache file per fetched lane||$LIST|claude.usage_age_s=0 cachefiles=claude,eclaude,neutralclaude"
 stage_cache 30
 table \
-  "a figure within the TTL is reused without a fetch, its age reported|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$LIST|claude.headroom_pct=50 claude.aged=30+ fetched=eclaude,nclaude"
+  "a figure within the TTL is reused without a fetch, its age reported|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$LIST|claude.headroom_pct=50 claude.aged=30+ fetched=eclaude,neutralclaude"
 stage_cache 30
 table \
-  "--no-cache fetches afresh|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$LIST --no-cache|claude.headroom_pct=80 fetched=claude,eclaude,nclaude"
+  "--no-cache fetches afresh|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$LIST --no-cache|claude.headroom_pct=80 fetched=claude,eclaude,neutralclaude"
 stage_cache 30
 table \
-  "a figure at or past the TTL is fetched afresh|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE;ORCH_LANES_USAGE_TTL=30|$LIST|claude.headroom_pct=80 fetched=claude,eclaude,nclaude"
+  "a figure at or past the TTL is fetched afresh|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE;ORCH_LANES_USAGE_TTL=30|$LIST|claude.headroom_pct=80 fetched=claude,eclaude,neutralclaude"
 
 # The displaced cache record is the prior sample. The lane record reports a
 # rate only when the samples are at least a minute apart and usage increased.
@@ -2002,7 +2002,7 @@ echo "=== pick --json names the binding bucket and its reset ==="
 standard_home home
 table \
   "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2099-08-01T06:00:00Z" \
-  "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=$CLAUDE_USAGE_SESSION_RESET nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
+  "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=$CLAUDE_USAGE_SESSION_RESET neutralclaude.binding_bucket=weekly openclaude.binding_bucket=null"
 
 # The Claude endpoint writes fractional seconds and +00:00; every reset a
 # record carries is whole-second UTC with a Z, the spelling Codex resets

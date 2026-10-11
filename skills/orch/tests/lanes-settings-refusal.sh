@@ -107,10 +107,10 @@ while IFS='|' read -r setting value want; do
     assert_eq "${out%%$'\n'*}" "$want" "$setting=$value names the entry"
   fi
 done <<'ROWS'
-ORCH_LANE_RETIRE|nclaude=2026-1012|lanes: invalid-retire entry=nclaude=2026-1012
-ORCH_LANE_RETIRE|nclaude|lanes: invalid-retire entry=nclaude
+ORCH_LANE_RETIRE|neutralclaude=2026-1012|lanes: invalid-retire entry=neutralclaude=2026-1012
+ORCH_LANE_RETIRE|neutralclaude|lanes: invalid-retire entry=neutralclaude
 ORCH_LANE_RETIRE|=2026-10-12|lanes: invalid-retire entry==2026-10-12
-ORCH_LANE_RETIRE|eclaude=2026-10-12, nclaude = 2026-10-12|
+ORCH_LANE_RETIRE|eclaude=2026-10-12, neutralclaude = 2026-10-12|
 ORCH_LANES_USAGE_TTL|soon|lanes: invalid-usage-ttl value=soon
 ORCH_LANES_USAGE_TTL|0|
 ORCH_HANDOFF_HEADROOM_PCT|101|lanes: invalid-handoff-headroom value=101
@@ -123,10 +123,10 @@ ORCH_LANE_BURN_PCT_PER_HOUR|0|
 ORCH_LANE_CODEX_CREDIT_FLOOR|-1|lanes: invalid-lane-codex-credit-floor value=-1
 ORCH_LANE_CODEX_CREDIT_FLOOR|many|lanes: invalid-lane-codex-credit-floor value=many
 ORCH_LANE_CODEX_CREDIT_FLOOR|0|
-ORCH_LANE_RETIRE|nclaude=2026-13-01|lanes: invalid-retire entry=nclaude=2026-13-01
-ORCH_LANE_RETIRE|nclaude=2027-02-29|lanes: invalid-retire entry=nclaude=2027-02-29
-ORCH_LANE_RETIRE|nclaude=2028-02-29|
-ORCH_LANE_RETIRE|~/.nclaude=2026-10-12|lanes: invalid-retire entry=~/.nclaude=2026-10-12
+ORCH_LANE_RETIRE|neutralclaude=2026-13-01|lanes: invalid-retire entry=neutralclaude=2026-13-01
+ORCH_LANE_RETIRE|neutralclaude=2027-02-29|lanes: invalid-retire entry=neutralclaude=2027-02-29
+ORCH_LANE_RETIRE|neutralclaude=2028-02-29|
+ORCH_LANE_RETIRE|~/.neutralclaude=2026-10-12|lanes: invalid-retire entry=~/.neutralclaude=2026-10-12
 ORCH_LANE_EXCLUDE|/home/someone/.xclaude|lanes: invalid-exclude entry=/home/someone/.xclaude
 ORCH_LANE_EXCLUDE|~/.xclaude|lanes: invalid-exclude entry=~/.xclaude
 ORCH_LANE_EXCLUDE|xclaude/|lanes: invalid-exclude entry=xclaude/
