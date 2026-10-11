@@ -1122,14 +1122,14 @@ CI_ROWS=(
   "queue-only work under required merge-group CI starts no local command|yes|queue-required|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci||queue_only=true cause=queue-lane|merge_group"
   "queue-only work without the context keeps range|yes|queue-unrequired|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered|queue_only=true cause=queue-lane|"
   "queue-only work without a merge queue keeps range|yes|rules|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered|queue_only=true cause=queue-lane|"
-  "non-queue-only work keeps required PR CI|yes|queue-required|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci|||pull_request"
+  "non-queue-only work keeps required PR CI|yes|queue-required|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci|||"
 )
 # ci_rows SCRIPT [LABEL] — one line per row: its label, its stderr file, then
 # the verdict, what the command printed, the recorded mode and the recorded
 # ci-fallback, tab-separated. LABEL runs that one row alone, which is all a
 # control reads.
 ci_rows() {
-  local row label named world answer docs measured proj ci_dir queue event
+  local row label named world answer docs measured proj ci_dir queue event result err
   for row in "${CI_ROWS[@]}"; do
     IFS='|' read -r label named world answer docs measured _ _ _ queue event <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
@@ -1139,10 +1139,13 @@ ci_rows() {
     RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE="$queue" STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
       run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD
     ci_dir="$(run_dir_of "$OUT")"
-    event=""
-    [[ -z "$queue" && "$world" != queue-required ]] || event="|$(start_line "$ci_dir" ci-event)"
-    printf '%s\t%s\t%s %s|%s|%s%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
-      "$(start_line "$ci_dir" validate-mode 2>/dev/null)" "$(start_line "$ci_dir" ci-fallback 2>/dev/null)" "$event"
+    err="$ERR"
+    result="$(verdict_of "$OUT") $(output_of "$OUT" 2>/dev/null)|$(start_line "$ci_dir" validate-mode 2>/dev/null)|$(start_line "$ci_dir" ci-fallback 2>/dev/null)"
+    if [[ -n "$queue" || "$world" == queue-required ]]; then
+      run_script "$1" --record --run-dir "$ci_dir"
+      result="$result|$(record_field ci-event "$OUT")"
+    fi
+    printf '%s\t%s\t%s\n' "$label" "$err" "$result"
   done
 }
 CI_GOT="$(ci_rows "$CI_SCRIPT")"
@@ -2405,8 +2408,7 @@ selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
-  'if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then' \
-  'if [[ "$ci_admission_attempted" == false ]] && ci_runs_validation; then # ci_class_covered' \
+  'standard) return 0 ;;' 'standard|render) return 0 ;;' \
   'an all selection CI does not cover retains local execution'
 selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \

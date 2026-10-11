@@ -164,6 +164,7 @@
 #          own base.
 #          For a queue-only change, an open PR's base must also require the
 #          merge queue. Its required context runs on the merge group instead.
+#          --record names that run with ci-event=merge_group.
 #          Both rule reads must succeed: its rulesets and classic branch
 #          protection, as GitHub reports them for the repository gh resolves
 #          (GH_REPO, else the worktree). The base is the pull request's own,
@@ -1238,10 +1239,12 @@ if [[ "$mode" == record ]]; then
   record_class_base="$(start_field "$run_dir/start" class-base)"
   record_scoped="$(start_field "$run_dir/start" scoped)"
   record_ci_fallback="$(start_field "$run_dir/start" ci-fallback)"
-  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
+  record_ci_event="$(start_field "$run_dir/start" ci-event)"
+  [[ "$record_ci_event" == merge_group ]] || record_ci_event=""
+  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
     "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" \
     "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "${record_class_base:+ class-base=$record_class_base}" "$record_timing" \
-    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}"
+    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}" "${record_ci_event:+ ci-event=$record_ci_event}"
   exit 0
 fi
 
