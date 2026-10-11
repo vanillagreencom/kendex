@@ -45,7 +45,13 @@ set -euo pipefail
 if [[ "${1:-} ${2:-}" == 'pr view' ]]; then
   printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
   [[ ! -f "$STUB_DIR/pr-read-failed" ]] || exit 9
-  if [[ -f "$STUB_DIR/pr-state-$3" ]]; then
+  if [[ "$*" != *'--jq '* && -f "$STUB_DIR/pr-view-$3.json" ]]; then
+    cat "$STUB_DIR/pr-view-$3.json"
+  elif [[ "$*" != *'--jq '* ]]; then
+    state_file="$STUB_DIR/pr-state-$3"
+    [[ -f "$state_file" ]] || state_file="$STUB_DIR/pr-state"
+    jq -cn --rawfile state "$state_file" '{state:($state | rtrimstr("\n"))}'
+  elif [[ -f "$STUB_DIR/pr-state-$3" ]]; then
     cat "$STUB_DIR/pr-state-$3"
   else
     cat "$STUB_DIR/pr-state"
@@ -203,6 +209,59 @@ for status in parked stopped; do
     fi
   done
 done
+
+# A dependency park can retain an own delivery on another branch. The
+# provider and fleet log must see that own cycle, never the dependency's.
+SKIP_OWN_DISCOVERY="$(mutant_scripts terminal-skip-own-discovery/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$TMP_ROOT/terminal-watch/github" "$TMP_ROOT/terminal-skip-own-discovery/github"
+ln -s "$REPO_ROOT/skills/harness-ci" "$TMP_ROOT/terminal-skip-own-discovery/harness-ci"
+mutate_file "$SKIP_OWN_DISCOVERY" "      # The dependency is not this item's merge and earns no item cycle." \
+  $'      # The dependency is not this item\'s merge and earns no item cycle.\n      continue'
+while read -r name retained tracker dependency old_cycle owner expected_cycle expected_close expected_events; do
+  terminal_case "own_cycle_$name" parked "$tracker"
+  terminal_busy
+  terminal_merged
+  jq --argjson old "$old_cycle" '.lanes[0].parked.until_pr=2 |
+    if $old == null then . else .lanes[0].cycle={pr:$old} end' \
+    "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+  mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
+  [[ "$retained" != pending ]] || terminal_recovery_run
+  printf 'MERGED\n' > "$STUB_DIR/pr-state-1"
+  printf '%s\n' "$dependency" > "$STUB_DIR/pr-state-2"
+  # The own PR carries no searchable item reference on this second branch.
+  # The dependency mentions the item and must still get no item cycle.
+  printf '[{"number":2,"headRefName":"ken-1","mergedAt":"2026-10-08T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  printf '{"number":1,"state":"MERGED","headRefName":"ken-1-second","headRepositoryOwner":{"login":"owner"},"mergedAt":"2026-10-08T00:00:00Z","title":"fix: delivery","body":""}\n' > "$STUB_DIR/pr-view-1.json"
+  watch="$TERMINAL_WATCH"
+  [[ "$owner" != control ]] || watch="$SKIP_OWN_DISCOVERY"
+  terminal_run "$watch"
+  expected_status=done
+  [[ "$expected_close" != 0 ]] || expected_status="$retained"
+  [[ "$expected_status" != pending ]] || expected_status=stopped
+  assert_eq "$(terminal_result) events=$(terminal_events)" \
+    "rc=0 status=$expected_status close=$expected_close mail=0 closed=$expected_close refused=0 events=$expected_events" \
+    "$name: own delivery discovery does not clear the dependency wait" "$STUB_DIR/err"
+  if [[ "$expected_close" == 1 ]]; then
+    assert_eq "$(cat "$STUB_DIR/cycle-at-close")" "$expected_cycle" \
+      "$name: the provider sees the own cycle before terminal close" "$STUB_DIR/err"
+  fi
+  expected_records=0
+  [[ "$expected_cycle" != 1 ]] || expected_records=1
+  assert_eq "$(jq -r '[.fleet_log[]? | select(.kind == "cycle")] | length' "$STUB_DIR/fleet/workflow-state-oversee.json")" "$expected_records" \
+    "$name: the cycle report belongs to the own delivery" "$STUB_DIR/err"
+  assert_eq "$(awk '$1 == "pr-timeline" && $2 == "2" {n++} END {print n+0}' "$STUB_DIR/timeline-reads")" 0 \
+    "$name: the dependency timeline is never credited to the item"
+done <<'EOF'
+both_merged parked completed MERGED null shipped 1 1 merged,lane-closed,pr-watch
+both_merged_stale parked completed MERGED 7 shipped 1 1 merged,lane-closed,pr-watch
+both_merged_canceled parked canceled MERGED null shipped 1 1 merged,lane-closed,pr-watch
+retained_both_merged pending completed MERGED null shipped 1 1 merged,lane-closed,pr-watch
+own_merged_dependency_open parked completed OPEN null shipped none 0 merged,pr-watch
+own_merged_dependency_closed parked completed CLOSED null shipped 1 1 parked-closed,merged,lane-closed,pr-watch
+both_merged_open_item parked started MERGED null shipped none 0 parked-merged,merged,pr-watch
+skip_own parked completed MERGED null control none 1 lane-closed,pr-watch
+skip_own_stale parked completed MERGED 7 control 7 1 lane-closed,pr-watch
+EOF
 
 # The integration's Done state does not prove that merge close-out ran.
 # The watch must pass open boxes through its existing parked-merged route.

@@ -1475,30 +1475,35 @@ dependency_case() { # NAME OWN_PR DEPENDENCY_STATE [WATCH_BIN]
   jq --arg own "$2" '(.lanes[] | select(.item == "issue-2")).parked |=
     (.until_pr=9 | if $own == "absent" then del(.pr) else . end)' "$STUB_DIR/state.json" >"$STUB_DIR/state.next"
   mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
-  printf '[{"number":2,"headRefName":"issue-2","mergedAt":"2026-09-20T00:00:00Z"}]\n' >"$STUB_DIR/merged.json"
-  printf '{"state":"MERGED"}\n' >"$STUB_DIR/dependency-2.json"
+  printf '[{"number":2,"headRefName":"issue-2-second","mergedAt":"2026-09-20T00:00:00Z"},{"number":9,"headRefName":"issue-2","mergedAt":"2026-09-20T00:00:00Z"}]\n' >"$STUB_DIR/merged.json"
+  printf '{"number":2,"state":"MERGED","headRefName":"issue-2-second","headRepositoryOwner":{"login":"owner"},"mergedAt":"2026-09-20T00:00:00Z","title":"fix: delivery","body":""}\n' >"$STUB_DIR/dependency-2.json"
   jq -nc --arg state "$3" '{state:$state}' >"$STUB_DIR/dependency-9.json"
   WATCH_BIN="${4:-}" parked_run --
 }
 for row in \
   'dependency_no_own|absent|MERGED|rc=0 events=parked-merged issue-2' \
-  'dependency_with_own|present|MERGED|rc=0 events=parked-merged issue-2' \
-  'dependency_own_only|present|OPEN|rc=0 events=heartbeat loops=2' \
+  'dependency_with_own|present|MERGED|rc=0 events=parked-merged issue-2,merged 2' \
+  'dependency_own_only|present|OPEN|rc=0 events=merged 2' \
   'dependency_closed|absent|CLOSED|rc=0 events=parked-closed issue-2'; do
   IFS='|' read -r name own dependency want <<<"$row"
   dependency_case "$name" "$own" "$dependency"
   assert_eq "rc=$rc events=$EVENTS" "$want" "$name: only the dependency determines the resume" "$err"
+  own_merge=0
+  [[ "$own" != present ]] || own_merge=1
+  assert_eq "$(awk '$0 == "EVENT merged 2 issue-2 owner/repo" {n++} END {print n+0}' <<<"$out")" "$own_merge" \
+    "$name: the retained own PR is discovered on its second branch" "$err"
+  assert_not_contains "$out" 'EVENT merged 9 ' "$name: the dependency gets no item merge credit" "$err"
   parked_run --
   if [[ "$dependency" == MERGED ]]; then want='events=parked-merged issue-2,heartbeat loops=2'
   else want='events=heartbeat loops=2'; fi
   assert_eq "events=$EVENTS" "$want" "$name: replay keeps the merge hand or suppresses the closed event" "$err"
-  jq '(.lanes[] | select(.item == "issue-2")) |= (.status="stopped" | del(.parked))' "$STUB_DIR/state.json" >"$STUB_DIR/state.next"
+  jq '(.lanes[] | select(.item == "issue-2")) |= (.pending_pr=(.parked | {pr,repo,head,until_pr}) | .status="stopped" | del(.parked))' "$STUB_DIR/state.json" >"$STUB_DIR/state.next"
   mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
   parked_run --
   assert_not_contains "$out" 'EVENT parked-merged ' "$name: Recovery relaunch ends the resume hand" "$err"
 done
 dependency_case dependency_own_control present OPEN "$DEPENDENCY_BIN"
-assert_eq "events=$EVENTS" 'events=parked-merged issue-2' \
+assert_eq "events=$EVENTS" 'events=parked-merged issue-2,merged 2' \
   'control: reading the own PR instead of the dependency resumes before the dependency merges' "$err"
 dependency_case dependency_closed_repeat_control absent CLOSED "$CLOSED_REPEAT_BIN"
 WATCH_BIN="$CLOSED_REPEAT_BIN" parked_run --

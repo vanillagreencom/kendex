@@ -202,8 +202,9 @@ The long pass's events, checked and reported in this order:
                              queue-parked record's item is an --item for
                              this check alone. Its recorded own PR merge can
                              produce parked-merged below. A dependency park
-                             reads until_pr directly and reports no item
-                             merged event. Another pull
+                             reads until_pr directly. Its dependency merge
+                             reports no item merged event. Its retained own
+                             PR is discovered separately. Another pull
                              request on the branch's name is reported and
                              hands nothing on, under a parked-merge-unmatched
                              note on stderr naming the recorded key and the

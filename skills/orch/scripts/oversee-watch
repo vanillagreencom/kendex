@@ -1521,7 +1521,7 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC]
 
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo pr hit hits prior keys fresh key line until view dependency_state state="${PW_SEEN[0]}"
+  local errf="$WORK_DIR/merged.err" item branch repo pr hit hits prior keys fresh key line until view dependency_state dependency_record own_pr own_repo state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     PARKED_KEY=""
@@ -1545,13 +1545,36 @@ check_merged() {
       fi
       state="$(lane_row_set parked-until "$state" "$item" "$key")"
       # The dependency is not this item's merge and earns no item cycle.
-      continue
+    fi
+    # Its own delivery still needs a merged row before terminal close can
+    # remove the lane. Recovery keeps that identity in pending_pr as well.
+    dependency_record="$(jq -c --arg item "$item" '(.lanes // [])[] | select(.item == $item) | (.parked // .pending_pr) | select(.until_pr != null)' <<<"${FLEET_STATE:-"{}"}")" \
+      || die state-invalid "" "path=$STATE_FILE" "field=parked"
+    own_pr="" own_repo=""
+    if [[ -n "$dependency_record" ]]; then
+      own_pr="$(jq -r '.pr // empty' <<<"$dependency_record")" \
+        || die state-invalid "" "path=$STATE_FILE" "field=parked"
+      own_repo="$(jq -r '.repo | ascii_downcase' <<<"$dependency_record")" \
+        || die state-invalid "" "path=$STATE_FILE" "field=parked"
     fi
     hits=""
     for repo in "${REPOS[@]}"; do
       pr=null
       [[ "${PARKED_KEY%#*}" != "$repo" ]] || pr="${PARKED_KEY##*#}"
-      merged_item_read "$item" "$repo" "$pr" "$SINCE_EPOCH" "$SINCE"
+      if [[ -n "$dependency_record" ]]; then
+        [[ "$repo" == "$own_repo" && -n "$own_pr" ]] || continue
+        pr="$own_pr"
+        # A second branch need not carry a searchable item reference. Read
+        # the retained own number, never the dependency, through gh's PR API.
+        view="$(gh pr view "$pr" --repo "$repo" --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body 2>"$errf")" \
+          || die pr-list-failed "$(cat "$errf")" "repo=$repo" "pr=$pr"
+        if ! MERGED_ITEM_ROWS="$(jq -c --arg item "$item" --arg owner "${repo%%/*}" --argjson pr "$pr" --argjson since "$SINCE_EPOCH" \
+          "$LANE_MERGED_JQ"' [.] | lane_merged($item; $owner; $pr; $since)' <<<"$view" 2>"$errf")"; then
+          die pr-list-invalid "$(cat "$errf")" "repo=$repo" "pr=$pr"
+        fi
+      else
+        merged_item_read "$item" "$repo" "$pr" "$SINCE_EPOCH" "$SINCE"
+      fi
       if ! hit="$(jq -r --arg item "$item" --arg repo "$repo" '.[] | "\(.number) \($item | ascii_downcase) \($repo)"' <<<"$MERGED_ITEM_ROWS" 2>"$errf")"; then
         die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
       fi
@@ -1573,6 +1596,9 @@ check_merged() {
       PASS_EVENT=1
     done <<<"$hits"
     state="$(lane_row_set merged "$state" "$item" "$keys")"
+    # An own merge cannot clear a dependency wait. Its events and heartbeat
+    # replay remain owned by parked-until, independently of this merged row.
+    [[ -z "$dependency_record" ]] || continue
     item_parked "$item" && [[ -n "$fresh" ]] || continue
     # A parked item's fresh merges that are not its own are named, so a park
     # left standing over a merge has a line saying which merge it was not.
