@@ -465,15 +465,22 @@ running_unfinished|MERGED|completed|- [ ] Record proof|running|if|4|running|0
 EOF
 
 LOST_IDENTITY="$(mutant_scripts terminal-lost-identity/orch open-terminal)/open-terminal" || exit 1
-mutate_file "$LOST_IDENTITY" '.pending_pr = (.parked | {pr, repo, head})' '.'
+mutate_file "$LOST_IDENTITY" '.pending_pr = (.parked | {pr, repo, head} + (if .until_pr == null then {} else {until_pr: .until_pr} end))' '.'
 PARKED_PR_CONTROL="$(mutant_scripts terminal-parked-pr-control/orch lane-close)/lane-close" || exit 1
 ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-parked-pr-control/linear"
 mutate_file "$PARKED_PR_CONTROL" 'elif .pending_pr != null then .pending_pr' 'elif .pending_pr != null then null'
-for owner in transfer read; do
-  terminal_case "pending_control_$owner" parked completed
+while read -r owner identity mode; do
+  terminal_case "pending_${owner}_${identity}_${mode}" parked completed
+  if [[ "$identity" == dependency ]]; then
+    jq '.lanes[0].parked |= (del(.pr) + {until_pr:2})' "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+    mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
+  fi
   printf 'OPEN\n' > "$STUB_DIR/pr-state"
   printf '## Done when\n- [x] Record proof\n' > "$STUB_DIR/description"
-  if [[ "$owner" == transfer ]]; then
+  if [[ "$mode" == shipped ]]; then
+    terminal_recovery_run
+    close_bin="$CLOSE_SCRIPTS/lane-close"
+  elif [[ "$owner" == transfer ]]; then
     terminal_recovery_run "$LOST_IDENTITY"
     close_bin="$CLOSE_SCRIPTS/lane-close"
   else
@@ -481,9 +488,21 @@ for owner in transfer read; do
     close_bin="$PARKED_PR_CONTROL"
   fi
   terminal_conditional_run "$close_bin"
-  assert_eq "$(terminal_result)" 'rc=0 status=done close=1 mail=0 closed=0 refused=0' \
-    "control: lost identity at $owner closes the recovered lane with its PR still OPEN" "$STUB_DIR/err"
-done
+  if [[ "$mode" == shipped ]]; then
+    assert_eq "$(terminal_result)" 'rc=4 status=stopped close=0 mail=0 closed=0 refused=0' \
+      "$identity: retained identity keeps the recovered lane open while its PR is OPEN" "$STUB_DIR/err"
+  else
+    assert_eq "$(terminal_result)" 'rc=0 status=done close=1 mail=0 closed=0 refused=0' \
+      "control: lost $identity identity at $owner closes the recovered lane with its PR still OPEN" "$STUB_DIR/err"
+  fi
+done <<'EOF'
+transfer own shipped
+transfer dependency shipped
+transfer own control
+transfer dependency control
+read own control
+read dependency control
+EOF
 
 PENDING_BINDING_CONTROL="$(mutant_scripts terminal-pending-binding-control/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$TMP_ROOT/terminal-watch/github" "$TMP_ROOT/terminal-pending-binding-control/github"
