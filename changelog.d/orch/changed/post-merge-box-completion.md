@@ -1,0 +1,1 @@
+- At merge, completion ticks a post-merge box the merged pull request's own tests, CI or diff prove, so the item does not wait in Verifying for it.

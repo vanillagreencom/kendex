@@ -356,7 +356,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A rate-limited completion is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds, never recorded as a failed step.
 
-   `[MET_BOXES]` names only boxes with recorded proof. Use `all` only when every box has proof. Otherwise use their numbers in section order from 1, comma-separated. When no new box has proof, omit `--done-when-met`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
+   `[MET_BOXES]` names only boxes with recorded proof. A post-merge box the merged PR's own tests, CI or diff prove has that proof and closes here, not in Verifying. Use `all` only when every box has proof. Otherwise use their numbers in section order from 1, comma-separated. When no new box has proof, omit `--done-when-met`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 

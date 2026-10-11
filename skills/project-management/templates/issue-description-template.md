@@ -45,7 +45,7 @@
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[OWNER]` | Caller: the person or request that authorizes the work | Omit when absent |
 | `[OUTCOME]` | `items[].description`, or `create_fields.description` in analyzed mode | State the change and its impact in plain words |
-| `[DONE]` / `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | Summarize completion in one sentence; list its observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition |
+| `[DONE]` / `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | Summarize completion in one sentence; list its observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives, only when it needs a deployment or installation, live use over time, or a person's screen or hands |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
 | `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Filing record; omit the line when absent. Decision references use decider's `schemas/decision-format.md` § Cross-references |

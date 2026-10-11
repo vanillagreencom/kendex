@@ -1,0 +1,1 @@
+- The issue template's Done-when guidance states when a post-merge box is admitted: a deployment or installation, live use over time, or a person's screen or hands.

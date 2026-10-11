@@ -1,0 +1,1 @@
+- A review raises a post-merge Done-when box that the pull request's own tests, CI or diff already prove, or whose reason after merge is none of the three admitted classes, as a fix: tick it at completion or make it a pre-merge test.
