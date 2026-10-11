@@ -301,7 +301,7 @@ set -euo pipefail
 case "$2" in
   status) exit 0 ;;
   view) printf '{"state":"OPEN","baseRefName":"main"}\n' ;;
-  'repos/{owner}/{repo}/rules/branches/main') printf 'CI\n' ;;
+  'repos/{owner}/{repo}/rules/branches/main') printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI"}]}},{"type":"merge_queue"}]\n' ;;
   'repos/{owner}/{repo}/branches/main') : ;;
   *) exit 9 ;;
 esac
