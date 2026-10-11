@@ -115,6 +115,7 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
             try:
                 cursor.touch(exist_ok=True)
             except OSError:
+                # A peek moves no cursor, so a failed touch changes no result.
                 pass
     lane = read_snapshot(9, box / "to-lane.jsonl")
     over = (read_snapshot(8, box / "to-overseer.jsonl") if verb != "inbox" else

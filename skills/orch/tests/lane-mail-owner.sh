@@ -115,27 +115,52 @@ done
 REF_ROWS="$(jq -rs 'map(.id) | join(" ")' < "$BOX/to-lane.jsonl")" || exit 1
 read -r -a REFS <<<"$REF_ROWS"
 FIRST_ID=""
-while IFS='|' read -r audience ref words want; do
-  lm notice --item overseer --to "$audience" --ref "${REFS[$ref]}" --file "$(text n "$words")"
+PROGRESS_ASSERTION='a progress notice carries true and its request reference'
+while IFS='|' read -r audience ref words want progress; do
+  progress_args=(); progress_receipt=""; progress_field=""
+  if [[ "$progress" == yes ]]; then
+    progress_args=(--progress); progress_receipt=' progress=1'; progress_field=',"progress":true'
+  fi
+  lm notice --item overseer --to "$audience" --ref "${REFS[$ref]}" --file "$(text n "$words")" ${progress_args[@]+"${progress_args[@]}"}
+  if [[ "$want" == progress ]]; then
+    PROGRESS_WANT="true|${REFS[$ref]}"
+    assert_eq "$(field "$BOX/to-overseer.jsonl" '[.progress, .ref] | map(tostring) | join("|")')" \
+      "$PROGRESS_WANT" "$PROGRESS_ASSERTION"
+  fi
   if [[ "$want" == duplicate ]]; then
-    assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" '.id')" \
+    assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Reply.") | .id')" \
       "2=lane-mail: duplicate id=$FIRST_ID==$FIRST_ID" "notice repeat refuses before appending"
   elif [[ "$want" == repeated ]]; then
-    assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" '.id')" \
+    assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Reply.") | .id')" \
       "2=lane-mail: owner-notice-repeated=overseer id=$FIRST_ID==$FIRST_ID" \
       "an owner notice text the owner holds refuses whatever its reference"
   else
     ID="$(jq -rs 'last.id' < "$BOX/to-overseer.jsonl")" || exit 1
-    assert_eq "$RC=$OUT" "0=lane-mail: sent item=overseer id=$ID bytes=6 to=$audience ref=${REFS[$ref]}" \
+    assert_eq "$RC=$OUT" "0=lane-mail: sent item=overseer id=$ID bytes=6 to=$audience ref=${REFS[$ref]}$progress_receipt" \
       "notice $want prints its appended receipt"
-    [[ -n "$FIRST_ID" ]] || FIRST_ID="$ID"
+    assert_eq "$(field "$BOX/to-overseer.jsonl" 'del(.id, .at) | tojson' | tail -n 1)" \
+      "{\"kind\":\"notice\",\"from\":\"overseer\",\"to\":\"$audience\",\"ref\":\"${REFS[$ref]}\"$progress_field,\"re_delivery_id\":\"first\",\"text\":\"$words\"}" \
+      "notice $want keeps exactly its envelope fields"
+    [[ "$want" != first ]] || FIRST_ID="$ID"
   fi
 done <<'ROWS'
-owner|0|Reply.|first
-owner|0|Reply.|duplicate
-owner|1|Reply.|repeated
-owner|0|Other.|changed-text
+owner|0|Step..|progress|yes
+owner|0|Reply.|first|no
+owner|0|Reply.|duplicate|no
+owner|1|Reply.|repeated|no
+owner|0|Other.|changed-text|no
 ROWS
+# The same first-row assertion must reject a notice whose marker is dropped.
+new_repo control_progress
+lm send --item overseer --directive --file "$(text d 'Voice request.')"
+OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+PROGRESS_DIR="$(mutant_scripts mutants/progress lane-mail)" || exit 1
+mutate_file "$PROGRESS_DIR/lane-mail" '{progress: true}' '({progress: true} | del(.progress))'
+LANE_MAIL_BIN="$PROGRESS_DIR/lane-mail" lm notice --item overseer --to owner --ref "$OWNER_NOTE" --progress --file "$(text n 'Step..')"
+CONTROL_RC=0
+(FAIL=0; assert_eq "$(field "$BOX/to-overseer.jsonl" '[.progress, .ref] | map(tostring) | join("|")')" \
+  "true|$OWNER_NOTE" "$PROGRESS_ASSERTION"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/progress-assertion" || CONTROL_RC=$?
+assert_eq "$RC=$CONTROL_RC" "0=1" "control: dropping progress fails the first notice row" "$TMP_ROOT/progress-assertion"
 owner_ask 'Retry?' yes,no yes
 FIRST_ASK="$ASK"
 sleep 5
@@ -367,9 +392,17 @@ PEER_ASK="${OUT#id=}"
 # and a resolution are none of them.
 F="$TMP_ROOT/q.txt"
 while IFS='|' read -r args want; do
+  before="$(cat "$BOX/to-overseer.jsonl")"
   # shellcheck disable=SC2086  # a row's arguments are its own words.
   lm $args
   assert_eq "$RC=$ERR" "$want" "refused: $args"
+  if [[ "$args" == *--progress* ]]; then
+    assert_eq "$(cat "$BOX/to-overseer.jsonl")" "$before" "a refused progress notice writes no owner envelope"
+    lane_write=empty
+    [[ ! -s "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" ]] || lane_write=written
+    assert_eq "$lane_write" "empty" \
+      "a refused progress option writes no lane envelope"
+  fi
 done <<ROWS
 ask --item overseer --file $F|2=lane-mail: option-required=--to
 ask --item KEN-1 --to owner --file $F|2=lane-mail: option-unknown=--to
@@ -385,6 +418,11 @@ ask --item overseer --to owner --options a,b --recommend a --reserved --file $F|
 ask --item overseer --to owner --reserved --file $F|2=lane-mail: option-required=--options
 ask --item KEN-1 --options a,b --reserved --file $F|2=lane-mail: option-unknown=--reserved
 notice --item KEN-1 --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--ref
+notice --item overseer --to owner --progress --file $F|2=lane-mail: progress-needs-ref=--progress
+notice --item KEN-1 --progress --file $F|2=lane-mail: option-unknown=--progress
+notice --item overseer --progress --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--progress
+ask --item overseer --to owner --ref $OWNER_NOTE --progress --options a,b --recommend a --file $F|2=lane-mail: option-unknown=--progress
+send --item overseer --directive --progress --file $F|2=lane-mail: option-unknown=--progress
 notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-invalid=no/such
 notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
 notice --item overseer --to owner --ref $NOTE_TO_OWNER --file $F|2=lane-mail: ref-unknown=$NOTE_TO_OWNER
@@ -823,6 +861,20 @@ mutant_reader() {
   mutate_file "$dir/lib/lane-mail-store.py" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
+
+new_repo control_progress_ref
+mutant progress-ref-optional '[ -n "$REF" ] || refuse progress-needs-ref --progress' ': '\''[ -n "$REF" ] || refuse progress-needs-ref --progress'\'''
+lm notice --item overseer --to owner --progress --file "$(text n 'Step..')"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.progress')" "0=true" \
+  "control: removing the reference guard permits an unbound progress notice"
+
+new_repo control_progress_scope
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Voice request.')"
+OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+mutant progress-anywhere '[ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress' ': # [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress'
+lm ask --item overseer --to owner --ref "$OWNER_NOTE" --progress --options a,b --recommend a --file "$(text q 'Which?')"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.progress')" "0=true" \
+  "control: removing the scope guard permits progress on an owner ask"
 
 new_repo control_pointer
 mutant pointer-fields '+ (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)' '+ {}'

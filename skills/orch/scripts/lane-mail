@@ -223,7 +223,7 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               text_hash, the lowercase hex SHA-256 of text's UTF-8 bytes
               that lane-mail computes. The master sends only when the
               approval it holds for that ask id names the same text_hash
-  notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
+  notice --item overseer --to owner --file PATH [--ref MSGID [--progress]] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
               peer's line or a resolution, or an owner ask in
@@ -231,7 +231,8 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               reply where the note or the question was written. Under that
               file's mailbox lock, the notice copies the reference's
               delivery_id, when present, as re_delivery_id. This field is
-              copied, never authored by a caller. --attach
+              copied, never authored by a caller. --progress requires --ref
+              and marks a step report Jarvis may speak or hold. --attach
               names a file the relay carries beside the text: a regular
               file, not itself a symlink, whose directory resolves
               physically to the progress-report directory workflow-state
@@ -349,6 +350,7 @@ Options:
                 filter `pending` keeps
   --ref MSGID   ask and notice --to owner only: the owner note or owner ask
                 answered
+  --progress    notice --to owner with --ref only: mark a step report
   --attach PATH notice --to owner only: the file carried beside the text
   --recommend a ask --to owner only: the option that stands at the deadline
   --wait N      ask --to owner only: minutes until the ask's deadline
@@ -373,7 +375,8 @@ Counts include compacted rows. The first id stays original.
 
 Envelope, one JSON object per line: id, kind, at, from, re (answers and closes),
 halt (true on a directive sent with --halt), text and options (asks with
-choices), and the owner-channel fields each verb above writes: to, ref,
+choices), and the owner-channel fields each verb above writes: to, ref, progress
+(true only with --progress),
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
@@ -415,6 +418,7 @@ overseer does where that watch's exit does not wake the lane. A `peer send` writ
 its receipt always names item `overseer` rather than the repository it reached.
 A `notice` receipt replaces `monitor=<m>` with `to=<owner|peer> ref=<ref>`;
 ref is empty when no --ref was given, and a lane notice has an empty to field.
+Only --progress adds ` progress=1` to that receipt.
 `oversee-report write` reads the notice receipt's id for its report-written line.
 Silence is not a success: a send or notice that printed no receipt appended nothing.
 
@@ -462,7 +466,7 @@ outside the alphabet, a lock, a write or a host that failed; 69
 cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid, box-invalid,
-seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
+seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress-needs-ref,
 recommend-invalid, recommend-missing, recommend-required, draft-field,
 draft-medium, attach-outside,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
@@ -565,6 +569,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     minutes-invalid) text='The option, or ORCH_ASK_WAIT_MINUTES, takes a non-negative integer number of minutes.' ;;
     to-invalid) text='--to takes owner or peer. A peer ask is `peer ask --repo`, which writes peer itself, so an ask or notice typed here takes owner.' ;;
     ref-invalid) text='--ref takes the id of an envelope: ASCII letters, digits, dot, underscore and hyphen.' ;;
+    progress-needs-ref) text='A progress notice requires --ref to bind the step report to its request.' ;;
     ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: close it without --default.' ;;
@@ -644,6 +649,7 @@ ACK=""
 RECEIPTS=0
 TO=""
 REF=""
+PROGRESS=0
 ATTACH=""
 RECOMMEND=""
 WAIT=""
@@ -690,6 +696,7 @@ while [ "$#" -gt 0 ]; do
     --ack) need_val "$@"; ACK="$2"; shift 2 ;;
     --to) need_val "$@"; TO="$2"; shift 2 ;;
     --ref) need_val "$@"; REF="$2"; shift 2 ;;
+    --progress) PROGRESS=1; shift ;;
     --attach) need_val "$@"; ATTACH="$2"; shift 2 ;;
     --recommend) need_val "$@"; RECOMMEND="$2"; shift 2 ;;
     --wait) need_val "$@"; WAIT="$2"; WAIT_GIVEN=1; shift 2 ;;
@@ -757,6 +764,9 @@ for given in $OPTS_GIVEN; do
     --issue) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --issue ;;
     --do) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ] || refuse option-unknown --do ;;
     --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
+    --progress)
+      [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress
+      [ -n "$REF" ] || refuse progress-needs-ref --progress ;;
     --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown --attach ;;
     --recommend | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
@@ -1393,7 +1403,9 @@ lm_monitor() {
 # monitor stands on the mailbox.
 lm_sent() {
   if [ "$VERB" = notice ]; then
-    printf 'lane-mail: sent item=%s id=%s bytes=%s to=%s ref=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$TO" "$REF"
+    printf 'lane-mail: sent item=%s id=%s bytes=%s to=%s ref=%s' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$TO" "$REF"
+    [ "$PROGRESS" -eq 0 ] || printf ' progress=1'
+    printf '\n'
   else
     printf 'lane-mail: sent item=%s id=%s bytes=%s monitor=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$SENT_MONITOR"
   fi
@@ -1517,7 +1529,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   printf '%s\n' "$id" >"$WORK_DIR/id" || refuse write-failed "$WORK_DIR/id"
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
-    --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
+    --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
     --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
@@ -1529,6 +1541,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $issue == "" then {} else {issue: $issue} end)
       + (if $issue == "" then {} else {do: $action} end)
       + (if $ref == "" then {} else {ref: $ref} end)
+      + (if $progress == "1" then {progress: true} else {} end)
       + (if $attach == "" then {} else {attach: $attach} end)
       + (if $recommend == "" then {} else {recommend: $recommend} end)
       + (if $reserved == "1" then {reserved: true} else {} end)

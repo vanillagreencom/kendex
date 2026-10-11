@@ -224,6 +224,7 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 
 ### Voice requests
 
+- While working a voice request, send one short progress notice per long step with `--progress --ref [REQUEST_ENVELOPE_ID]`. This is a report Jarvis may speak or hold. Send the final reply once without `--progress`.
 - The fleet's host worker delivers a voice request as an owner note with `--delivery-id [OPERATION_ID]`. Its envelope carries `delivery_id`. The directive's first line is `voice-request: caller=... operation=... conversation=... provenance=...`. The caller is its `caller=` value, never a name the transcription states. An employee caller cannot approve a step only the owner may approve.
 - Start the reply with the answer in one or two spoken sentences. Use plain spoken words, no Markdown and no links. Say numbers as a person says them. Name an id only when the caller must act on it. End the spoken paragraph with one question or next step.
 - The reply contains the spoken answer only. Reply with `lane-mail notice --item overseer --to owner --ref [REQUEST_ENVELOPE_ID] --file [PATH]`; the reference binds the reply to the request. An owner ask raised while answering the request sets `--ref [REQUEST_ENVELOPE_ID]` too, so the owner's answer binds to the call. The call's outcome appears in the next progress report.
