@@ -186,8 +186,10 @@ Overseer side:
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b
-              (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM]
-              --issue adds the configured Linear assignment, label and comment.
+              (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM --do TEXT]
+              --issue requires --do: at most two sentences saying what the
+              person does and what evidence closes it. It adds the configured
+              Linear assignment, label, opening action line and comment.
               Tracker failures leave the chat ask open.
               a question for the owner, appended to to-overseer.jsonl with
               `to` as a field. Every owner ask, a draft ask too, carries a
@@ -569,6 +571,8 @@ fix=run `oversee register` from the orch skill in the session that should read t
     draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
     draft-medium) text='A draft medium is slack-channel, slack-thread or email.' ;;
     recommend-required) text='An owner ask names what its deadline does by its form, --recommend, --reserved or --draft; the owner-channel ask help states each. The owner can still answer outside the choices, through send --re.' ;;
+    owner-action-missing) text='Use --do with the action and the evidence that closes it.' ;;
+    owner-action-long) sep=' '; text='Use --do with at most two sentences: the action and the evidence that closes it.' ;;
     box-invalid) text='--box takes to-lane or to-overseer, the one mailbox file events reads.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
@@ -656,6 +660,7 @@ PARENT_JSON=null
 ONCE=0
 STATE_DIR=""
 ISSUE=""
+OWNER_DO=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -666,6 +671,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --item) need_val "$@"; ITEM="$2"; shift 2 ;;
     --issue) need_val "$@"; ISSUE="$2"; shift 2 ;;
+    --do) [ "$#" -ge 2 ] || refuse owner-action-missing --do; OWNER_DO="$2"; shift 2 ;;
     --file) need_val "$@"; FILE="$2"; shift 2 ;;
     --options) need_val "$@"; OPTIONS="$2"; shift 2 ;;
     --root) need_val "$@"; ROOT="$2"; shift 2 ;;
@@ -749,6 +755,7 @@ for given in $OPTS_GIVEN; do
         *) refuse option-unknown --to ;;
       esac ;;
     --issue) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --issue ;;
+    --do) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ] || refuse option-unknown --do ;;
     --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
     --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown --attach ;;
     --recommend | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
@@ -770,6 +777,13 @@ for given in $OPTS_GIVEN; do
     --state-dir) [ "$VERB" = send ] || refuse option-unknown --state-dir ;;
   esac
 done
+
+# An item ask supplies the short action the owner sees before the engineering body.
+if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ]; then
+  jq -en --arg action "$OWNER_DO" '$action | test("\\S")' >/dev/null || refuse owner-action-missing --do
+  OWNER_SENTENCES="$(jq -n --arg action "$OWNER_DO" '[ $action | splits("[.!?]+(?:\\s+|$)") | select(test("\\S")) ] | length')" || refuse owner-action-missing --do
+  [ "$OWNER_SENTENCES" -le 2 ] || refuse owner-action-long "sentences=$OWNER_SENTENCES"
+fi
 
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
@@ -1504,7 +1518,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
-    --arg reserved "$RESERVED" --arg issue "$ISSUE" \
+    --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
     --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
@@ -1513,6 +1527,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $halt == "1" then {halt: true} else {} end)
       + (if $to == "" then {} else {to: $to} end)
       + (if $issue == "" then {} else {issue: $issue} end)
+      + (if $issue == "" then {} else {do: $action} end)
       + (if $ref == "" then {} else {ref: $ref} end)
       + (if $attach == "" then {} else {attach: $attach} end)
       + (if $recommend == "" then {} else {recommend: $recommend} end)

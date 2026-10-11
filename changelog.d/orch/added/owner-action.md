@@ -1,0 +1,1 @@
+- **Breaking:** Owner asks with `--issue` require `--do` text. The issue description opens with the person's action and closing evidence. The ask replaces an existing action line, restores a removed line during the watch's existing read, and removes the line at close.
