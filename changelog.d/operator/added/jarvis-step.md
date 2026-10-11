@@ -1,0 +1,1 @@
+- Add an operator that completes one approved browser or account step and checks the result at the service.

@@ -1,0 +1,1 @@
+- Keep user facts in the user's own skills or memory and report unread facts as unread.
