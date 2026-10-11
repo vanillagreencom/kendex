@@ -426,7 +426,8 @@ WORKFLOW_STATE_ARGS=(--state-dir "$FLEET_STATE_DIR")
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
 # The age a usage figure may be served at, named to every lane reader a pass
 # runs: two of this watch's intervals. A long pass reads once an --interval,
-# counted start to start, or longer where one overruns, and the mail pass
+# counted start to start, or longer where one overruns. The mail pass idles
+# a full mail interval after each turn and
 # judges a standing wall at most once an interval too, so a window of one
 # interval has always expired by the next read and every one would post for
 # every account; two cover that. A larger ORCH_LANES_USAGE_MAX_AGE
@@ -4796,7 +4797,7 @@ PASS_NOW=""
 PASS_EVENT=0
 PASS_FAILED=0
 PASS_FAILED_ITEMS=""
-# The full mail pass is due an interval after the last one started, in this
+# The full mail pass is due an interval after the last one ended, in this
 # run or an earlier one: a run started early on a note to the overseer reads
 # that mailbox alone first, and holds the lane mailboxes to their interval.
 if ! MAIL_DUE="$(lane_row_get mail-pass "$MAIL_SEEN" fleet)"; then
@@ -4858,11 +4859,12 @@ while :; do
   long_now=0
   ! long_due || long_now=1
   if [[ "$PASS_NOW" -ge "$MAIL_DUE" || ( "$long_now" -eq 1 && "$MAIL_FULL" -eq 0 ) ]]; then
-    MAIL_DUE=$((PASS_NOW + MAIL_INTERVAL))
     MAIL_OWED=0
     MAIL_FULL=1
-    [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$PASS_NOW")"
     mail_turn
+    MAIL_DUE=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))
+    [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$MAIL_DUE")"
+    MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))
   elif [[ "$(overseer_box_size)" != "$BOX_SEEN" ]]; then
     mail_turn overseer
   fi

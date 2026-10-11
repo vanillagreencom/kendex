@@ -23,8 +23,8 @@ Blocks until the fleet needs the overseer, then prints every event it found
 as one block, each line prefixed with its kind, and exits once. Re-run after
 handling every line with the live fleet in scope.
 
-Two passes run on one clock. The mail pass starts every
-ORCH_WATCH_MAIL_INTERVAL seconds, reads every lane mailbox, the overseer
+Two passes run on one clock. The mail pass idles for
+ORCH_WATCH_MAIL_INTERVAL seconds after each turn, reads every lane mailbox, the overseer
 mailbox and the lane records one after another, and prints what it finds as
 it finds it: lane-question, lane-notice, directive-read, directive-unread,
 peer-note, owner-note, owner-ask-resolved and owner-ask-closed. Hosted mail
@@ -32,17 +32,16 @@ uses `lane-host read-many` once per provider per mail pass, as
 schemas/lane-host.md specifies. Before the overseer mailbox is read,
 `lane-mail resolve --default` closes due owner asks.
 Only an unanswered ask receives a recommendation answer. The interval is
-counted start to start and kept across runs in the state directory. Between
+counted end to start and kept across runs in the state directory. Between
 two mail passes, and through a --repeat sleep, the overseer mailbox's size is
 checked once a second, and once it moves that mailbox alone is read, so a
 note to the overseer is printed within about a second while the lane
 mailboxes keep the interval; a run's first turn reads it alone too when no
 mail pass is due. A run's first long pass follows a read of every mailbox in
 that run, due or not. ORCH_WATCH_MAIL_INTERVAL 0 checks nothing between turns. A read that waits
-on a lock or a slow host delays
-the mailboxes after it past that interval, as do the overseer pane below and,
-run in this loop, a run's one GitHub auth check before its first long pass
-and the heartbeat's open-PR listing. The long pass reads everything else
+on a lock or a slow host delays the mailboxes after it. The overseer pane
+below, a run's one GitHub auth check before its first long pass and the
+heartbeat's open-PR listing can also delay the next turn. The long pass reads everything else
 every --interval seconds, counted start to start and kept across runs in the
 state directory, so a run ending on mail news brings the next one no nearer. A long pass runs apart from the mail pass: one that overruns its
 interval holds up no mail pass, the next one starts only once it has ended,
