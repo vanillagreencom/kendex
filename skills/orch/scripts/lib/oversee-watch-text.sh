@@ -552,7 +552,7 @@ The long pass's events, checked and reported in this order:
                 binding_bucket=<bucket|-> binding_resets_at=<utc|->
                 change=<status|headroom|reset>[,...] was=<status>/<verdict>
                              an account the fleet can launch on changed since
-                             the last pass that read it, as `lanes list --json`
+                             the last compared reading. `lanes list --json`
                              reads it once per pass: its status word changed,
                              its verdict against ORCH_LANE_MAX_PCT crossed in
                              either direction (a Codex account on its credits
@@ -563,17 +563,17 @@ The long pass's events, checked and reported in this order:
                              applies and `was=` the status and verdict before
                              it. `config_dir` names the credentials, since
                              two accounts can share an alias. The first
-                             reading of an account is its baseline and an
+                             compared reading is an account's baseline. An
                              unchanged account says nothing. A reading with
-                             verdict=unmeasured under the status the
-                             account's last unmeasured reading had says
-                             nothing either and is not compared: the next
+                             verdict=unmeasured says nothing and leaves the
+                             saved comparison unchanged: the next
                              measured reading is compared with the last one
                              measured, so a hosted credential the provider
                              holds while a lane runs on it, unmeasured on
-                             alternate passes, is news once. status=expired
-                             is exempt: each expiry after a measured reading
-                             is news. `was=` is the reading compared with
+                             alternate passes, creates no account event.
+                             status=expired and status=retired are exempt:
+                             each such status after a measured reading is
+                             news. `was=` is the reading compared with
   EVENT report-due reason=<minutes|issues> since=<utc> [landed=<N>]
                              the overseer's status report is due, as
                              `oversee-report due --state` judges it from the

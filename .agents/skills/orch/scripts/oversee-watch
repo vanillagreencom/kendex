@@ -286,7 +286,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   main-push-failing<TAB><repo><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
-#   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last unmeasured reading, or ->
+#   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   directive<TAB><item>[@clone]<TAB><to-lane.cursor reported read> <last line reported unread>[:<passes since unread reported>] <first id>
@@ -4281,14 +4281,13 @@ account_roster_read() {
 # An account the listing stops naming keeps its row, so one a provider drops
 # for a pass is compared against its last reading when it comes back.
 #
-# A reading that measured nothing (`verdict=unmeasured`) under the status word
-# the account's last unmeasured reading had is no news and leaves the row on
+# A reading that measured nothing (`verdict=unmeasured`) leaves the row on
 # the reading before it, so the next measured reading is compared with the
 # last one measured. A hosted provider holding a credential while a lane runs
 # on it reads unmeasured on alternate passes; were each alternation news,
 # --max-loops quiet passes, and so the heartbeat, would never come.
-# `status=expired` is exempt: only the operator renews a dead login, so each
-# expiry after a measured reading is news.
+# `status=expired` and `status=retired` are exempt: they require operator
+# action, so each such status after a measured reading is news.
 check_accounts() {
   local key value fields prior state="${PW_SEEN[0]}" change row
   local was_status was_verdict was_resets was_unmeasured status verdict resets reset_epoch unmeasured
@@ -4302,7 +4301,7 @@ check_accounts() {
     IFS='|' read -r status verdict resets <<<"$value"
     unmeasured="${was_unmeasured:--}"
     if [[ "$verdict" == unmeasured ]]; then
-      [[ "$status" == expired || "$status" != "$unmeasured" ]] || continue
+      [[ "$status" == expired || "$status" == retired ]] || continue
       unmeasured="$status"
     fi
     row="$value|$unmeasured"

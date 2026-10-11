@@ -1,0 +1,1 @@
+- Keep account comparisons unchanged during unmeasured readings, except for expired or retired credentials. The next measured reading reports changes from the saved comparison.

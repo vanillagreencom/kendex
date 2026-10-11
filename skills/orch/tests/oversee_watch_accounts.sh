@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # oversee-watch account events and the heartbeat's account roster: one
 # `lanes list --json` reading per pass, an `account` event only when an
-# account's status, its verdict against ORCH_LANE_MAX_PCT or its binding
-# bucket's reset changed against the baseline, and the same reading printed
+# account's compared status, its verdict against ORCH_LANE_MAX_PCT or its
+# binding bucket's reset changed, and the same reading printed
 # under a heartbeat. Every run is one pass (--max-loops 1), so the Nth run
 # reads the stub's lanes.<N>.json.
 set -euo pipefail
@@ -137,79 +137,108 @@ assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
   "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
   "the account's return is judged against its reading before the gap" "$ERR"
 
-# A hosted credential the provider holds while a lane runs on it reads
-# held/unmeasured on alternate passes. Its reset lies ahead of any run, so no
-# row reports a reset. One row per pass: the reading the
-# listing answers, then the account event that pass prints, or `-` for none,
-# where the pass is a heartbeat. A held reading under the status the last
-# unmeasured reading had is no news and leaves the row on the measured reading
-# before it; a new unmeasured status is news, and so is the measured reading
-# after it. An expired reading after a measured one is news every time, but a
-# repeated expired pass is not.
-HELD_FLAP=(
-  "ok room 80 2099-01-01T00:00:00Z|-"
-  "held unmeasured - -|change=status,headroom was=ok/room"
-  "ok room 80 2099-01-01T00:00:00Z|change=status,headroom was=held/unmeasured"
-  "held unmeasured - -|-"
-  "ok room 80 2099-01-01T00:00:00Z|-"
-  "held unmeasured - -|-"
-  "ok walled 2 2099-01-01T00:00:00Z|change=headroom was=ok/room"
-  "held unmeasured - -|-"
-  "expired unmeasured - -|change=status,headroom was=ok/walled"
-  "held unmeasured - -|change=status was=expired/unmeasured"
-  "ok room 80 2099-01-01T00:00:00Z|change=status,headroom was=held/unmeasured"
-  "expired unmeasured - -|change=status,headroom was=ok/room"
-  "ok room 80 2099-01-01T00:00:00Z|change=status,headroom was=expired/unmeasured"
-  "expired unmeasured - -|change=status,headroom was=ok/room"
-  "expired unmeasured - -|-"
+# Each row names a sequence, the provider reading, its event tail, and the
+# saved account row. Unmeasured gaps preserve that row, including when their
+# status changes. Expired and retired readings remain operator news.
+ACCOUNT_SEQUENCES=(
+  "quiet;ok room 80 2099-01-01T00:00:00Z;-;ok|room|2099-01-01T00:00:00Z|-"
+  "quiet;unreachable unmeasured - -;-;ok|room|2099-01-01T00:00:00Z|-"
+  "quiet;held unmeasured - -;-;ok|room|2099-01-01T00:00:00Z|-"
+  "quiet;ok room 80 2099-01-01T00:00:00Z;-;ok|room|2099-01-01T00:00:00Z|-"
+  "crossing;ok walled 2 2099-01-01T00:00:00Z;-;ok|walled|2099-01-01T00:00:00Z|-"
+  "crossing;unreachable unmeasured - -;-;ok|walled|2099-01-01T00:00:00Z|-"
+  "crossing;ok room 80 2099-01-01T00:00:00Z;change=headroom was=ok/walled;ok|room|2099-01-01T00:00:00Z|-"
+  "expired;ok room 80 2099-01-01T00:00:00Z;-;ok|room|2099-01-01T00:00:00Z|-"
+  "expired;unreachable unmeasured - -;-;ok|room|2099-01-01T00:00:00Z|-"
+  "expired;expired unmeasured - -;change=status,headroom was=ok/room;expired|unmeasured|-|expired"
+  "expired;held unmeasured - -;-;expired|unmeasured|-|expired"
+  "expired;ok room 80 2099-01-01T00:00:00Z;change=status,headroom was=expired/unmeasured;ok|room|2099-01-01T00:00:00Z|expired"
+  "expired;expired unmeasured - -;change=status,headroom was=ok/room;expired|unmeasured|-|expired"
+  "expired;expired unmeasured - -;-;expired|unmeasured|-|expired"
+  "retired;ok room 80 2099-01-01T00:00:00Z;-;ok|room|2099-01-01T00:00:00Z|-"
+  "retired;unreachable unmeasured - -;-;ok|room|2099-01-01T00:00:00Z|-"
+  "retired;retired unmeasured - -;change=status,headroom was=ok/room;retired|unmeasured|-|retired"
+  "retired;held unmeasured - -;-;retired|unmeasured|-|retired"
+  "retired;ok room 80 2099-01-01T00:00:00Z;change=status,headroom was=retired/unmeasured;ok|room|2099-01-01T00:00:00Z|retired"
+  "retired;retired unmeasured - -;change=status,headroom was=ok/room;retired|unmeasured|-|retired"
+  "retired;retired unmeasured - -;-;retired|unmeasured|-|retired"
+  "no_baseline;unreachable unmeasured - -;-;-"
+  "no_baseline;held unmeasured - -;-;-"
+  "no_baseline;ok room 80 2099-01-01T00:00:00Z;-;ok|room|2099-01-01T00:00:00Z|-"
+  "retired_baseline;retired unmeasured - -;-;retired|unmeasured|-|retired"
+  "retired_baseline;ok room 80 2099-01-01T00:00:00Z;change=status,headroom was=retired/unmeasured;ok|room|2099-01-01T00:00:00Z|retired"
 )
 
-# held_flap_run CASE — runs the HELD_FLAP passes under WATCH_BIN and sets
-# FLAP_GOT to one `<pass>: <event tail or ->` line per pass.
-held_flap_run() {
-  local n=0 row reading event
-  new_case "$1"
-  for row in "${HELD_FLAP[@]}"; do
-    reading="${row%%|*}"
-    # shellcheck disable=SC2086 # the reading is four words, one per field
+# account_sequence_run CASE NAME: the same observations run against the
+# production script or a disposable control. The expected rows come from
+# the table, never from the script's own comparison.
+account_sequence_run() {
+  local selected="$1" n=0 row name reading expected saved event count
+  new_case "$2"
+  SEQUENCE_WANT=""
+  for row in "${ACCOUNT_SEQUENCES[@]}"; do
+    IFS=';' read -r name reading expected saved <<<"$row"
+    [[ "$name" == "$selected" ]] || continue
+    # shellcheck disable=SC2086 # four fixture words, one per account field
     accounts "$((++n))" "$(jq -c '.measured_through = "host"' <<<"$(account claude $reading)")"
+    count=1; [[ "$expected" != - ]] || count=0
+    SEQUENCE_WANT+="$n: rc=0 events=$count $expected row=$saved"$'\n'
   done
-  FLAP_GOT=""
-  for ((n = 1; n <= ${#HELD_FLAP[@]}; n++)); do
+  SEQUENCE_GOT=""
+  SEQUENCE_EVENTS=0
+  n=0
+  for row in "${ACCOUNT_SEQUENCES[@]}"; do
+    IFS=';' read -r name reading expected saved <<<"$row"
+    [[ "$name" == "$selected" ]] || continue
+    n=$((n + 1))
     watch_pass
+    count="$(account_events)"
+    SEQUENCE_EVENTS=$((SEQUENCE_EVENTS + count))
     event="$(grep '^EVENT account ' <<<"$OUT" | sed 's/.* change=/change=/' || true)"
     if [[ -z "$event" ]]; then
-      [[ "$(head -1 <<<"$OUT")" == "$HEARTBEAT" ]] && event=- || event="no-heartbeat rc=$RC"
+      [[ "$(head -1 <<<"$OUT")" == "$HEARTBEAT" ]] && event=- || event=no-heartbeat
     fi
-    FLAP_GOT+="$n: $event"$'\n'
+    saved="$(awk -F'\t' '$1 == "account" { print $3 }' "$STATE_DIR/owner_repo__none")"
+    SEQUENCE_GOT+="$n: rc=$RC events=$count $event row=${saved:--}"$'\n'
   done
 }
 
-FLAP_WANT=""
-for ((i = 0; i < ${#HELD_FLAP[@]}; i++)); do FLAP_WANT+="$((i + 1)): ${HELD_FLAP[$i]#*|}"$'\n'; done
-held_flap_run held_flap
-assert_eq "$FLAP_GOT" "$FLAP_WANT" \
-  "a held credential's alternation is news once, a measured change and a new unmeasured status are news, and the quiet passes are heartbeats" "$ERR"
-assert_eq "$(awk -F'\t' '$1 == "account" { print $3 }' "$STATE_DIR/owner_repo__none")" "expired|unmeasured|-|expired" \
-  "the row holds the last reading compared and the status of the last unmeasured one"
+for sequence in quiet crossing expired retired no_baseline retired_baseline; do
+  account_sequence_run "$sequence" "$sequence"
+  assert_eq "$SEQUENCE_GOT" "$SEQUENCE_WANT" \
+    "$sequence: account events and saved comparisons follow measured readings and terminal statuses" "$ERR"
+done
 
-# Control: a disposable copy that never skips a repeated unmeasured status
-# reports the alternation on every pass again.
+# Control: restore the old comparison. The unreachable, held and recovered
+# readings all become news, so the quiet sequence rejects that behavior.
 FLAP_MUTANT="$(mutant_scripts flap-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/flap-mutant/github"
-mutate_file "$FLAP_MUTANT" '[[ "$status" == expired || "$status" != "$unmeasured" ]] || continue' ':'
-WATCH_BIN="$FLAP_MUTANT" held_flap_run held_flap_control
-assert_contains "$FLAP_GOT" $'\n4: change=status,headroom was=ok/room\n' \
-  "control: comparing every held reading reports the repeated held pass again" "$ERR"
+mutate_file "$FLAP_MUTANT" '[[ "$status" == expired || "$status" == retired ]] || continue' \
+  '[[ "$status" == expired || "$status" != "$unmeasured" ]] || continue'
+WATCH_BIN="$FLAP_MUTANT" account_sequence_run quiet quiet_control
+assert_eq "$SEQUENCE_EVENTS" "3" "control: the old rule emits three events across the unmeasured gap" "$ERR"
+assert_not_contains "$SEQUENCE_GOT" "$SEQUENCE_WANT" "control: the quiet sequence rejects the old rule" "$ERR"
 
-# Control: a disposable copy without the expired exemption stays silent on a
-# login that dies again after a measured pass.
-EXPIRY_MUTANT="$(mutant_scripts expiry-mutant/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/expiry-mutant/github"
-mutate_file "$EXPIRY_MUTANT" '"$status" == expired ||' '"$status" == never-expired ||'
-WATCH_BIN="$EXPIRY_MUTANT" held_flap_run expiry_control
-assert_contains "$FLAP_GOT" $'\n14: -\n' \
-  "control: without the exemption the second expiry is no news" "$ERR"
+# Control: also suppress a measured room reading. The crossing sequence
+# must reject the missing measured change, not just suppress all events.
+MEASURED_MUTANT="$(mutant_scripts measured-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/measured-mutant/github"
+mutate_file "$MEASURED_MUTANT" 'if [[ "$verdict" == unmeasured ]]; then' \
+  'if [[ "$verdict" == unmeasured || "$verdict" == room ]]; then'
+WATCH_BIN="$MEASURED_MUTANT" account_sequence_run crossing crossing_control
+assert_eq "$SEQUENCE_EVENTS" "0" "control: dropping measured room suppresses the crossing event" "$ERR"
+assert_not_contains "$SEQUENCE_GOT" "$SEQUENCE_WANT" "control: the crossing sequence rejects the missing change" "$ERR"
+
+# Controls: suppress each operator-action status. Its sequence must reject
+# the lost event and unchanged row, including a later recurrence.
+for terminal in expired retired; do
+  TERMINAL_MUTANT="$(mutant_scripts "$terminal-mutant/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$terminal-mutant/github"
+  mutate_file "$TERMINAL_MUTANT" "\"\$status\" == $terminal" "\"\$status\" == never-$terminal"
+  WATCH_BIN="$TERMINAL_MUTANT" account_sequence_run "$terminal" "${terminal}_control"
+  assert_eq "$SEQUENCE_EVENTS" "0" "control: suppressing $terminal loses the terminal events" "$ERR"
+  assert_not_contains "$SEQUENCE_GOT" "$SEQUENCE_WANT" "control: the $terminal sequence rejects the lost events" "$ERR"
+done
 
 # A baseline reset no date can read settles no reset, is noted once, and the
 # status and headroom changes beside it are still reported.
