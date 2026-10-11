@@ -175,6 +175,8 @@ jobs:
       cargo_lint: ${{ steps.select.outputs.cargo_lint }}
       cargo_windows: ${{ steps.select.outputs.cargo_windows }}
       cargo_windows_check: ${{ steps.select.outputs.cargo_windows_check }}
+      catalog: ${{ steps.select.outputs.catalog }}
+      smoke: ${{ steps.select.outputs.smoke }}
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
     # The installer, classifier and orch contract come from the default
@@ -2033,6 +2035,63 @@ jobs:
           printf '%s\n' "$gated"
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
 
+  # Main pushes keep the unconditional own-catalog jobs: both checks read
+  # external releases that a path selection cannot prove unchanged.
+  # The default catalog must pass the released engine's strict validation.
+  catalog:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/catalog-check.yml
+    with:
+      path: .
+      strict: true
+      timeout-minutes: 10
+      # Exercise this branch's CI scripts, never a binary built from it.
+      ref: ${{ github.sha }}
+
+  # Each installed harness CLI reads the sample catalog emitted by this
+  # checkout's renderers. The reusable workflow uses the released engine
+  # and does not test these renderer binaries.
+  smoke:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') }}
+    name: real-CLI round trip
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System dependencies for the keychain store
+        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .github/workflows/skill-tests.yml
+      - name: Install the freely installable harness CLIs
+        # Latest releases detect changes in harness file readers. Version
+        # probes catch launchers whose optional platform binaries failed to
+        # install before the Rust tests start.
+        run: |
+          npm install -g \
+            opencode-ai \
+            @google/gemini-cli \
+            @openai/codex \
+            @github/copilot
+          # Only CLIs whose version flag is confirmed; adding one means
+          # confirming it first, because a wrong probe here reds the build
+          # for a reason that has nothing to do with kendex.
+          for cli in opencode codex gemini copilot; do "$cli" --version; done
+      - name: Round-trip the emitted trees
+        env:
+          KENDEX_CLI_SMOKE: "1"
+        run: cargo test -p kendex-cli --test cli_smoke -- --nocapture
+
   # The aggregate CI context follows the repository required-checks ruleset.
   # Every other job reports into it except main-push macOS skill suites.
   # GitHub counts a skipped required context as satisfied. `always()` keeps
@@ -2047,7 +2106,7 @@ jobs:
   # the event condition it runs under, spelled as its own `if:` spells it.
   ci:
     name: CI
-    needs: [changes, bot-instructions, skill-suites-shard, skill-suites-macos-queue, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
+    needs: [changes, bot-instructions, skill-suites-shard, skill-suites-macos-queue, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows, catalog, smoke]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -2067,6 +2126,8 @@ jobs:
           CARGO_LINT: ${{ needs.changes.outputs.cargo_lint }}
           CARGO_WINDOWS: ${{ needs.changes.outputs.cargo_windows }}
           CARGO_WINDOWS_CHECK: ${{ needs.changes.outputs.cargo_windows_check }}
+          CATALOG: ${{ needs.changes.outputs.catalog }}
+          SMOKE: ${{ needs.changes.outputs.smoke }}
           PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
         run: |
           echo "$RESULTS"
@@ -2080,5 +2141,7 @@ jobs:
             --lane "$CARGO_LINT:cargo-lint" \
             --lane "$CARGO_WINDOWS_CHECK:cargo-check-windows" \
             --lane "$CARGO_WINDOWS:cargo-tests-windows" \
+            --lane "$CATALOG:catalog" \
+            --lane "$SMOKE:smoke" \
             --lane "$PULL_REQUEST:preflight" \
             --lane "$PULL_REQUEST:markdown"

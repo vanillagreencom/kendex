@@ -80,7 +80,10 @@ sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
   got="$(selection "$2" "$3" "$(printf '%s\n' $4)")"
   case "$got" in
     exit=*) check "$1" "$5" "$got" ;;
-    *) check "$1" "$5|" "${got% shards=*}|$(shards_miss "$6" "$(field shards <<<"$got")")" ;;
+    # Catalog selection has its own input table below. These rows hold the
+    # existing compiler, platform and shard contracts independently.
+    *) check "$1" "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"$5")|" \
+      "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"${got% shards=*}")|$(shards_miss "$6" "$(field shards <<<"$got")")" ;;
   esac
 }
 
@@ -95,6 +98,7 @@ DISCOVER_RS="crates/core/src/discover"".rs"
 SKILLS_AGENTS="skills/AGENTS"".md"
 UNREAD_DOC="docs/no-reader"".md"
 UNREAD_LEGAL="docs/legal/no-reader"".md"
+UI_ONLY="ui/src/App.""tsx"
 selection_rows=0
 while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
@@ -269,10 +273,10 @@ ROWS
 mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 forgot="$TMP/forgot/tools/ci-job-set"
-[ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
+[ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 awk '
-  /^      printf .%s. "linux=false macos=false .* cargo_windows_check=false shards=\[\]"$/ {
+  /^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$/ {
     sub(/ cargo_windows_check=false/, "")
   }
   { print }
@@ -303,7 +307,8 @@ fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join
 fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
 RS
 # CLASS|PATHS (blank-separated)|EXPECTED, every row docs-only.
-READ_ROWS="trivial|docs/a.md|$PROSE_ROW
+READ_PROSE_ROW="$(measured none false false false '[]' '[]' true)"
+READ_ROWS="trivial|docs/a.md|$READ_PROSE_ROW
 trivial|docs/legal/terms.md|$PROSE_ROW
 trivial|docs/other.md docs/legal/privacy.md|$PROSE_ROW
 trivial|docs/other.md|$VERIFY_ROW
@@ -331,6 +336,87 @@ check "an included file other than prose is a build input" "$BUILD_ROW" \
   "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json)"
 check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
   "$(SELECT_IN="$READ_WORLD" selection micro false tools/x)"
+
+# Catalog-check consumes the explicit catalog layout and its control file;
+# cli_smoke consumes its compiled CLI, fixture source and build settings.
+# The lanes intentionally take the union. Root README is a run-time Rust
+# read, which selects cargo but does not change these two jobs.
+catalog_bits() { # SELECTION — only the two independently selected jobs
+  printf '%s\n' "$1" | tr ' ' '\n' | grep -E '^(catalog|smoke)='
+}
+catalog_rows() { # SCRIPT — every row must agree on both events
+  local class path selected event
+  while IFS='|' read -r class path selected; do
+    for event in pull_request merge_group; do
+      check "catalog inputs: $event $class $path" "catalog=$selected
+smoke=$selected" "$(catalog_bits "$(SELECT_IN="$READ_WORLD" SELECT_WITH="$1" SELECT_EVENT="$event" selection "$class" false "$path")")"
+    done
+  done <<ROWS
+trivial|README.md|false
+standard|README.md|false
+render|.agents/skills/orch/SKILL.md|false
+micro|$UI_ONLY|false
+micro|tools/guard|false
+trivial|skills/orch/SKILL.md|true
+render|skills/orch/SKILL.md|true
+micro|agents/runtime.md|true
+micro|hooks/guard.sh|true
+micro|commands/run.md|true
+micro|mcp/docs.toml|true
+micro|output-styles/plain.md|true
+micro|pi-extensions/pi-hooks/README.md|true
+micro|plugins/tool/skills/tool/SKILL.md|true
+micro|.claude-plugin/marketplace.json|true
+micro|kendex.toml|true
+micro|.gitignore|true
+micro|.gitattributes|true
+micro|.gitmodules|true
+micro|tools/catalog-release-check|true
+micro|crates/core/src/render/agent.rs|true
+micro|crates/cli/tests/cli_smoke.rs|true
+micro|crates/test_util.rs|true
+micro|Cargo.toml|true
+micro|Cargo.lock|true
+micro|rust-toolchain.toml|true
+micro|.cargo/config.toml|true
+micro|.github/workflows/skill-tests.yml|true
+ROWS
+}
+catalog_rows "$JOB_SET"
+check "compiled catalog prose selects both jobs" 'catalog=true
+smoke=true' "$(catalog_bits "$(SELECT_IN="$READ_WORLD" selection trivial true docs/a.md)")"
+# Plant the inverse at each selection rule. The assertions remain the same
+# as the positive table; the copy must fail at least one of them.
+mkdir -p "$TMP/catalog/tools"
+cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
+cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
+catalog_copy="$TMP/catalog/tools/ci-job-set"
+for rule in inputs compiled skip proof; do
+  case "$rule" in
+    inputs) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false' ;;
+    compiled) needle='  case "$read_lines" in *compiled=1*) catalog=true ;; esac'; replacement='  case "$read_lines" in *compiled=1*) catalog=false ;; esac' ;;
+    skip) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  catalog=true; any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true' ;;
+    proof) needle='  case "$lane" in bot_instructions | catalog | smoke) ran=false ;; esac'; replacement='  case "$lane" in bot_instructions) ran=false ;; esac' ;;
+  esac
+  [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
+  ! cmp -s "$JOB_SET" "$catalog_copy" || exit 1
+  chmod +x "$catalog_copy"
+  case "$rule" in
+    proof)
+      got="$(SELECT_WITH="$catalog_copy" SELECT_PROOF="$(record pull_request micro false skills/orch/SKILL.md | tr ',' '\n')" selection micro false skills/orch/SKILL.md)"
+      [ "$(catalog_bits "$got")" != 'catalog=true
+smoke=true' ] && ok "must-fail: tree proof cannot cover external catalog inputs" || bad "must-fail: external catalog proof inverse"
+      ;;
+    *)
+      if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-$rule"; [ "$FAIL" -eq 0 ]); then
+        bad "must-fail: $rule inverse leaves catalog selection green"
+      else
+        ok "must-fail: $rule inverse fails catalog selection"
+      fi
+      ;;
+  esac
+done
 # The platform lanes run on a standard diff that is not documentation alone,
 # prose included; the control drops that rule.
 mkdir -p "$TMP/standard/tools"
@@ -560,9 +646,9 @@ PRICE_SHARDS='["guards-scans","guards-hooks","guards-hooks-tail","guards-tools",
 # skill's prose ran: the same shards' Linux legs, and every lane but the
 # platform lanes and the verify job.
 PRICE_QUEUE="$(macos_shards "$PRICE_SHARDS")"
-PRICE_GROUP="$(measured both false true false "$PRICE_SHARDS" "$PRICE_QUEUE")"
-PRICE_NONE="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
-PRICE_PLATFORM="shell_shards=true shell_os=$MACOS ui=false bot_instructions=true cargo_linux=false cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
+PRICE_GROUP="$(measured both false true false "$PRICE_SHARDS" "$PRICE_QUEUE" true)"
+PRICE_NONE="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=true smoke=true shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
+PRICE_PLATFORM="shell_shards=true shell_os=$MACOS ui=false bot_instructions=true cargo_linux=false cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false catalog=true smoke=true shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE"
 proof_selection() { # RECORD CLASS DOCS PATHS — the pull-request selection under tree RECORD, in the fixture world
   SELECT_IN="$SEL_WORLD" SELECT_EVENT=pull_request SELECT_PROOF="$(printf '%s' "$1" | tr ',' '\n')" \
     selection "$2" "$3" "$(printf '%s\n' $4)"
@@ -573,10 +659,10 @@ proof_table() {
 the pull request's own diff stands every leg down but the verify job|$(record pull_request micro false "$PRICE")|micro|false|$PRICE|$PRICE_NONE
 a run whose shards cover this diff's stands every leg down but the verify job|$(record pull_request micro false skills/github/scripts/lib/gh-auth.sh)|micro|false|$PRICE|$PRICE_NONE
 a pull request run of the skill's prose leaves the platform lanes|$(record pull_request micro false skills/price-handling/SKILL.md)|micro|false|$PRICE|$PRICE_PLATFORM
-a run whose shards do not cover this diff's keeps every leg|$(record pull_request micro false skills/preflight/scripts/preflight)|micro|false|$PRICE|shell_shards=true shell_os=$BOTH ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE
+a run whose shards do not cover this diff's keeps every leg|$(record pull_request micro false skills/preflight/scripts/preflight)|micro|false|$PRICE|shell_shards=true shell_os=$BOTH ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=true smoke=true shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE
 a trivial run stands nothing down, the verify job reading the base|$(record pull_request trivial true README.md)|micro|false|$PRICE|$PRICE_GROUP
-a pull request run of a diff no macOS leg runs leaves no leg|$(record pull_request micro false "$PI")|micro|false|$PI|shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=["node"] queue_macos_shards=[]
-a merge-group run of a lane source stands down every leg but the verify job|$(record merge_group micro false .github/AGENTS.md "$PRICE")|micro|false|$PRICE|shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE
+a pull request run of a diff no macOS leg runs leaves no leg|$(record pull_request micro false "$PI")|micro|false|$PI|shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=true smoke=true shards=["node"] queue_macos_shards=[]
+a merge-group run of a lane source stands down every leg but the verify job|$(record merge_group micro false .github/AGENTS.md "$PRICE")|micro|false|$PRICE|shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=true smoke=true shards=$PRICE_SHARDS queue_macos_shards=$PRICE_QUEUE
 a record of an event this script does not select for is ignored|$(record push micro false "$PRICE")|micro|false|$PRICE|$PRICE_GROUP
 a record of a measured class with no path is ignored|$(record pull_request micro false)|micro|false|$PRICE|$PRICE_GROUP
 a record of a class this script does not know is ignored|$(record pull_request enormous false "$PRICE")|micro|false|$PRICE|$PRICE_GROUP
@@ -614,7 +700,7 @@ s/^  case "\$lane" in linux | macos) \[ "\$covered" = true \] || ran=false ;; es
 s/^    case "\$was_shards" in \*"\\"\$shard\\""\*) ;; \*) covered=false ;; esac$/    :/@a run whose shards do not cover this diff's keeps every leg
 s/^  \[ "\$known" = true \] || die "unsupported-event event=\$event"/  true || die "unsupported-event event=$event"/@a record of an event this script does not select for is ignored
 s/^      \[ -n "\$paths" \] || die "class-without-paths class=\$class" \\$/      true || die "class-without-paths class=$class" \\/@a record of a measured class with no path is ignored
-s/^  case "\$lane" in bot_instructions) ran=false ;; esac$/  :/@a trivial run stands nothing down, the verify job reading the base
+s/^  case "\$lane" in bot_instructions | catalog | smoke) ran=false ;; esac$/  :/@a trivial run stands nothing down, the verify job reading the base
 CONTROLS
 
 # The world library's two proof selections over this tree, which
@@ -623,7 +709,7 @@ CONTROLS
 # prose, and one of a lane-source diff whose pull request ran the same paths.
 ORCH_GROUP="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/lanes)"
 check "a group tree proof leaves the integrated orch selection running" "$ORCH_GROUP" "$ORCH_PROOF_ROW"
-check "a group tree proof leaves its selected lanes running" "$(measured both false true false "$ROSTER" "$QUEUE_ALL")" "$SOURCE_PROOF_ROW"
+check "a group tree proof leaves its selected lanes running" "$(measured both false true false "$ROSTER" "$QUEUE_ALL" true)" "$SOURCE_PROOF_ROW"
 
 # Patch proof waives portability only. The expected Linux and Windows
 # values come from the unproven row, not from the record's selection.
@@ -631,7 +717,7 @@ patch_record="$(record pull_request micro false "$PRICE" | tr ',' '\n')
 patch_id=p1
 macos_patch=true
 $(SELECT_IN="$SEL_WORLD" macos_record micro false "$PRICE")"
-patch_expected="$(measured linux false true false "$PRICE_SHARDS" '[]')"
+patch_expected="$(measured linux false true false "$PRICE_SHARDS" '[]' true)"
 patch_expected="${patch_expected/cargo_macos=true/cargo_macos=false}"
 check "PR selector records its actual macOS lanes and queue shards" "macos_selected=true
 cargo_macos_selected=true
@@ -660,9 +746,9 @@ $(SELECT_IN="$SEL_WORLD" macos_record micro false skills/preflight/scripts/prefl
 # Removing one selected macOS shard must retain portability for the group.
 wide_paths="$(printf '%s\n' "$PRICE" "$PI")"
 wide_shards="$(jq -c '. + ["node"]' <<<"$PRICE_SHARDS")"
-wide_covered="$(measured linux false true false "$wide_shards" '[]')"
+wide_covered="$(measured linux false true false "$wide_shards" '[]' true)"
 wide_covered="${wide_covered/cargo_macos=true/cargo_macos=false}"
-wide_uncovered="$(measured both false true false "$wide_shards" "$PRICE_QUEUE")"
+wide_uncovered="$(measured both false true false "$wide_shards" "$PRICE_QUEUE" true)"
 wide_uncovered="${wide_uncovered/cargo_macos=true/cargo_macos=false}"
 missing_record="$(printf '%s\n' "$patch_record" | sed '/^macos_shards=/d')
 macos_shards=$(jq -c 'map(select(. != "rest"))' <<<"$PRICE_QUEUE")"
@@ -732,7 +818,7 @@ advanced_expected="$(measured both true true false '["guards-tools","guards-tool
 advanced_expected="${advanced_expected/cargo_macos=true/cargo_macos=false}"
 check "new base reader retains its untested macOS shard" "$advanced_expected" \
   "$(SELECT_IN="$ADVANCED_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$prior_record" selection micro false "$advanced_path")"
-needle='          patch_was="linux=false macos=$r_macos ui=false bot_instructions=false cargo_linux=false cargo_macos=$r_cargo cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$r_shards"'
+needle='          patch_was="linux=false macos=$r_macos ui=false bot_instructions=false cargo_linux=false cargo_macos=$r_cargo cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=$r_shards"'
 [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
 replacement='          patch_was="$(select_row "$(patch_line change_class)" "$(patch_line docs_only)" "$(patch_line changed_path)" pull_request)"'
 NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"

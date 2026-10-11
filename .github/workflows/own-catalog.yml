@@ -7,7 +7,6 @@ name: own-catalog
 on:
   push:
     branches: [main]
-  pull_request:
 
 env:
   APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30

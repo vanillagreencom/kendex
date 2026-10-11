@@ -119,16 +119,16 @@ QUEUE_ALL="$(macos_shards "$ROSTER")"
 LINUX='["ubuntu-latest"]'
 MACOS='["macos-latest"]'
 BOTH='["ubuntu-latest","macos-latest"]'
-ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[] queue_macos_shards=[]"
-ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL"
+ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[]"
+ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[] queue_macos_shards=[]"
+VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[]"
 # Every measured class runs cargo_linux and bot_instructions. The shell
 # shards run per package, on the runners LEGS names: none, linux, both, or
 # macos alone where a proof stood the Linux legs down; the platform lanes
 # stand down only on an all-prose diff, the macOS legs also where no shard
 # runs, the compile lanes where no build input changed, and ui off ui/.
-lanes() { # LEGS UI PLATFORM BUILD — a measured row's lanes
+lanes() { # LEGS UI PLATFORM BUILD [CATALOG] — a measured row's lanes
   local shell=true os
   case "$1" in
     none) shell=false os='[]' ;;
@@ -137,11 +137,11 @@ lanes() { # LEGS UI PLATFORM BUILD — a measured row's lanes
     macos) os="$MACOS" ;;
     *) echo "no legs named $1" >&2; exit 1 ;;
   esac
-  printf 'shell_shards=%s shell_os=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s' \
-    "$shell" "$os" "$2" "$3" "$4" "$3" "$4"
+  printf 'shell_shards=%s shell_os=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s catalog=%s smoke=%s' \
+    "$shell" "$os" "$2" "$3" "$4" "$3" "$4" "${5:-$4}" "${5:-$4}"
 }
-measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE — one measured row
-  printf '%s shards=%s queue_macos_shards=%s' "$(lanes "$1" "$2" "$3" "$4")" "$5" "$6"
+measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE [CATALOG] — one measured row
+  printf '%s shards=%s queue_macos_shards=%s' "$(lanes "$1" "$2" "$3" "$4" "${7:-$4}")" "$5" "$6"
 }
 # The selections tools/tests/ci-aggregate.test.sh evaluates the workflow
 # against, on either event.
@@ -149,7 +149,7 @@ PROSE_ROW="$(measured none false false false '[]' '[]')"
 CODE_ROW="$(measured none false true false '[]' '[]')"
 UI_ROW="$(measured none true true false '[]' '[]')"
 ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
-ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" "$(macos_shards "$ORCH_SHARDS")")"
+ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" "$(macos_shards "$ORCH_SHARDS")" true)"
 # Two proof selections over this tree: a merge group of an orch code diff
 # whose tree proof is a pull request run over orch's prose alone, and one
 # of a .github prose diff whose pull request ran over the same paths.

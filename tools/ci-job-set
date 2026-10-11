@@ -112,11 +112,15 @@
 #     tools/rust-reads or tools/lib/skill-requirements.awk, runs every
 #     lane, so a change to a lane or to its selection runs on the pull
 #     request that makes it. Any path under .github/ selects every shard.
-#   - A `render` or `trivial` diff runs bot_instructions alone, the one
+#   - A `render` or `trivial` diff runs bot_instructions, the one
 #     seconds-long verify job, whose steps its lane entry below lists. The
 #     classifier proved a `render` diff by re-rendering it, and a `trivial`
 #     one is inside the docs path set and its line ceiling, or a plan of any
 #     size.
+#   - catalog and smoke take the union of the explicit catalog inputs and
+#     the compiled inputs rust-reads derives. A compiled include counts even
+#     when it is prose; a run-time manifest read alone does not. Both lanes
+#     run on either event and accept no tree proof for external releases.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
 #     include or manifest row names, or a path under a directory it names,
 #     takes the measured row its paths select, so the cargo lane runs on a
@@ -143,6 +147,8 @@
 #   cargo_windows       the Windows test run.
 #   cargo_windows_check the Windows compile check of the core and CLI targets.
 #   ui                  the vitest, tsc and biome lane.
+#   catalog             the released engine's strict check and catalog render.
+#   smoke               the rendered sample trees read by real harness CLIs.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false or group patch proof covers it.
@@ -168,7 +174,7 @@ TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 # emitted lines are shell_shards and shell_os in place of the legs, then the
 # jobs, the shards and queue_macos_shards.
 LEGS="linux macos"
-JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
+JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check catalog smoke"
 LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
@@ -247,6 +253,11 @@ PROSE='\.(md|markdown)$'
 # What defines the lanes: the workflows and actions that run them, and the
 # scripts that select them.
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$|tools/lib/skill-requirements\.awk$)'
+# kendex.toml uses the explicit default layout in source/config.rs and
+# source/layout.rs. The release check also reads Git ignore rules. Smoke
+# builds its own catalog in cli_smoke.rs; its compiled inputs come from
+# rust-reads below. Both jobs use this union, including catalog prose.
+CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What selects every shell shard: the lane sources and the rest of .github/.
@@ -270,10 +281,11 @@ reads() {
           if (path == "" || read[r] == "." || (path != read[r] && index(path, read[r] "/") != 1)) continue
           if (kind[r] != "build") named = 1
           if (kind[r] != "manifest" && path !~ ENVIRON["PROSE"]) build = 1
+          if (kind[r] == "include" || (kind[r] == "build" && path !~ ENVIRON["PROSE"])) compiled = 1
           printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
         }
       }
-      printf "named=%d\nbuild=%d\n", named, build
+      printf "named=%d\nbuild=%d\ncompiled=%d\n", named, build, compiled
     }
   ' <<<"$rows"
 }
@@ -521,7 +533,7 @@ macos_shard() { # SHARDS
 # refusals included. Run it in a subshell: the readers above take the paths
 # from `paths`, which it sets, and the shard search starts empty each time.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards shell macos known=false each
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards shell macos catalog=false known=false each
   paths="$3"
   want=" " reached=" " pending=""
   case "$docs" in
@@ -553,9 +565,11 @@ select_row() { # CLASS DOCS PATHS EVENT
         "no lane selection is declared for this class"
       ;;
   esac
+  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
+  case "$read_lines" in *compiled=1*) catalog=true ;; esac
   case "$row" in
     render | trivial)
-      printf '%s' "linux=false macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[]"
+      printf '%s' "linux=false macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[]"
       ;;
     micro | small | standard | trivial-read)
       platform=false
@@ -576,7 +590,7 @@ select_row() { # CLASS DOCS PATHS EVENT
       macos=$platform
       # The runner arithmetic uses the main-push macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
-      printf '%s' "linux=$shell macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build shards=$shards"
+      printf '%s' "linux=$shell macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards"
       ;;
   esac
 }
@@ -623,7 +637,7 @@ if [ "$EVENT" = merge_group ] && [ -n "$patch_record" ]; then
     case "$r_macos:$r_cargo" in
       true:true | true:false | false:true | false:false)
         if r_shards="$(jq -cse 'select(length == 1) | .[0] | select(type == "array" and all(.[]; type == "string"))' <<<"$r_shards")"; then
-          patch_was="linux=false macos=$r_macos ui=false bot_instructions=false cargo_linux=false cargo_macos=$r_cargo cargo_lint=false cargo_windows=false cargo_windows_check=false shards=$r_shards"
+          patch_was="linux=false macos=$r_macos ui=false bot_instructions=false cargo_linux=false cargo_macos=$r_cargo cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=$r_shards"
         fi ;;
     esac
     if [ -z "$patch_was" ]; then
@@ -678,7 +692,9 @@ for lane in $LEGS $JOBS; do
     case "$lane" in macos | cargo_macos) ;; *) ran=false ;; esac
   fi
   # The changelog step's verdict reads the base, which the record lacks.
-  case "$lane" in bot_instructions) ran=false ;; esac
+  # Catalog and smoke also read the latest released engine or harness CLIs;
+  # a tree record cannot prove those external inputs stayed unchanged.
+  case "$lane" in bot_instructions | catalog | smoke) ran=false ;; esac
   if [ "$value:$ran" = true:true ]; then
     value=false
     printf 'ci-job-set: proof=reused lane=%s\n' "$lane" >&2
