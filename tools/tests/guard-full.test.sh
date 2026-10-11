@@ -851,44 +851,511 @@ mkdir -p "$R/pi-extensions/peers"
 printf '{"scripts":{"test":"node test.mjs"}}\n' >"$R/pi-extensions/peers/package.json"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$PEER_SUITE_OUTPUT"\nexit 1\n' >"$R/fake-bin/npm"
 chmod +x "$R/fake-bin/npm"
-# Producer excerpts: Bun module loading in pi-tool-renderer and
-# pi-agents-tmux, and pi-qol/runtime-copy-peers.test.ts assertion reports.
-BUN_PEER="error: Cannot find module '@earendil-works/pi-tui' from '/package/extensions/subagent/__tests__/trace-layout.test.ts'"
+# Complete shipped Bun producers: pi-qol npm test, renderer code-blocks,
+# and tmux trace-layout. Checkout roots and trailing spaces are normalized.
+BUN_PEER=$(cat <<'OUTPUT'
+bun test v1.4.2 (744846f84)
+
+extensions/__tests__/code-blocks.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find module '@earendil-works/pi-tui' from '/package/extensions/__tests__/code-blocks.test.ts'
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [7.00ms]
+OUTPUT
+)
+TMUX_PEER=$(cat <<'OUTPUT'
+bun test v1.4.2 (744846f84)
+
+pi-extensions/pi-agents-tmux/tests/trace-layout.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find module '@earendil-works/pi-tui' from '/package/tests/trace-layout.test.ts'
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [23.00ms]
+OUTPUT
+)
 QOL_PEER=$(cat <<'OUTPUT'
+
+> @vanillagreen/pi-qol@2.4.0 test
+> bun test ./tests
+
+bun test v1.4.2 (744846f84)
+
+tests/retention.test.ts:
+(pass) a headless session loads no session-search index at startup, and shutdown releases a loaded one [31.26ms]
+(pass) only the latest queued resume action stays pending, and session_shutdown drops it [7.01ms]
+(pass) the loaded index and parsed prompts are released after the default TTL and on release [6.82ms]
+(pass) opening session search after the index was released shows the overlay before the reload finishes [2.17ms]
+(pass) notification cooldowns: a key inside its cooldown stays suppressed after another key is sent [1.84ms]
+(pass) notification cooldowns: session_shutdown forgets every cooldown [0.44ms]
+(pass) the index keeps each session's text to the per-session cap and the sum to the index cap, newest first [59.41ms]
+(pass) parsed prompts are kept for a bounded number of sessions [5.63ms]
+(pass) thinking durations are bounded and finished labels are released at agent_end, running ones kept [12.95ms]
+
+tests/transcript-risk-math.test.ts:
+(pass) evaluateTranscriptRisk: no characters [0.04ms]
+(pass) evaluateTranscriptRisk: below the threshold
+(pass) evaluateTranscriptRisk: at the threshold
+(pass) evaluateTranscriptRisk: above the threshold
+(pass) evaluateTranscriptRisk: disabled threshold
+(pass) evaluateTranscriptRisk: no messages
+(pass) evaluateTranscriptRisk: error from the serializer
+
+tests/chunked-summary.test.ts:
+(pass) orchestrateChunkedSummary: single short summary keeps the seed and instructions [0.70ms]
+(pass) orchestrateChunkedSummary: every summarize request fits the input cap [1.09ms]
+(pass) orchestrateChunkedSummary: large partial summaries require repeated reduction [0.70ms]
+(pass) orchestrateChunkedSummary: already aborted signal refuses before a request [0.29ms]
+(pass) orchestrateChunkedSummary: empty chunk summary refuses further requests [0.13ms]
+(pass) orchestrateChunkedSummary: previous summary advances across chunks and seeds final reduction [0.13ms]
+
+tests/session-search-async-jsonl.test.ts:
+(pass) async JSONL keeps split UTF-8 records, skips oversized lines and closes on cancellation [185.33ms]
+
+tests/notifications.test.ts:
+(pass) audible terminal bell [0.30ms]
+(pass) muted terminal bell [0.08ms]
+(pass) default OSC BEL terminator [0.14ms]
+(pass) muted OSC ST terminator [0.10ms]
+(pass) every tmux call carries a deadline, and a stalled tmux leaves the caller free [0.44ms]
+(pass) the bell goes to the source pane tty and the OSC notification to the pane's session's client tty [32.04ms]
+(pass) a tmux answer its deadline killed counts as no answer [3.32ms]
+(pass) the window mark renames the pane's window as tmux reports it at each notification, and clearing names it back [0.45ms]
+(pass) a window mark cleared while its notification is in flight is not set [0.33ms]
+(pass) the window mark and the tmux message do not wait on the terminal writes [51.72ms]
+(pass) a pane tty that never drains leaves later notifications' OSC and tmux messages free [12.16ms]
+(pass) a client tty that never drains leaves later notifications' OSC and tmux messages free [4.57ms]
+
+tests/session-search-index-budget.test.ts:
+(pass) async index bounds per-session prompt text [16.23ms]
+(pass) async index bounds aggregate prompt text [59.84ms]
+
+tests/statusline-account.test.ts:
+(pass) a confirmed login is shown [1.31ms]
+(pass) showAccount off hides a confirmed login [0.30ms]
+(pass) an unconfirmed login shows nothing [0.29ms]
+(pass) no bridge shows nothing [0.25ms]
+(pass) a non-bridge provider hides the account [0.91ms]
+(pass) no model hides the account [0.30ms]
+(pass) the account reader selects the visible Pi session [0.33ms]
+(pass) a v1 store with the reader is accepted [0.26ms]
+(pass) a later version is refused [0.17ms]
+(pass) a store with no version is refused [0.28ms]
+(pass) a store with no reader is refused [0.19ms]
+(pass) a non-callable reader is refused [0.19ms]
+(pass) a non-object is refused [0.16ms]
+(pass) an absent publisher is refused [0.17ms]
+
+tests/session-search-regex.test.ts:
+QOL_REGEX_DEADLINE {"bytes":1048577,"elapsedMs":58.77463799999998}
+QOL_REGEX_DEADLINE {"bytes":1048577,"elapsedMs":1035.361798}
+(pass) a pathological user regex over 1 MiB returns a deadline error without blocking input [3903.84ms]
+(pass) regex hit snippets use worker match positions and cancelled workers return no hits [40.27ms]
+
+tests/pi-ai-compat.test.ts:
+(pass) complete falls back to the compatibility entrypoint [0.15ms]
+(pass) complete prefers the root export [0.01ms]
+(pass) retry helper receives the standard policy [0.14ms]
+(pass) absent retry helper calls the producer once [0.05ms]
+(pass) retry helper receives signal and callbacks [0.14ms]
+(pass) retry helper success is returned [0.08ms]
+(pass) retry helper aborted result is preserved [0.04ms]
+
+tests/chunk-conversation.test.ts:
+(pass) chunkConversationText: under the cap [0.02ms]
+(pass) chunkConversationText: disabled cap
+(pass) chunkConversationText: paragraph boundaries preserve the complete conversation
+(pass) chunkConversationText: hard split without paragraph boundaries
+
+tests/session-search-actions.test.ts:
+(pass) Copy and Fork own delayed complete prompts across shortcuts, menus and pending commands [177.28ms]
+
+tests/provider-headers.test.ts:
+(pass) null deletion marker [0.18ms]
+(pass) empty header value
+(pass) numeric header value
+(pass) absent headers
+(pass) array headers
+(pass) empty header record
+
+tests/statusline-toggle.test.ts:
+(pass) default statusline installation [1.66ms]
+(pass) disabled statusline retains editor helpers [0.46ms]
+(pass) working indicator routing: compact=true, statusline=true, mode=animated [5.31ms]
+(pass) working indicator routing: compact=true, statusline=true, mode=static [1.32ms]
+(pass) working indicator routing: compact=true, statusline=true, mode=unset [0.60ms]
+(pass) working indicator routing: compact=true, statusline=false, mode=animated [1.04ms]
+(pass) working indicator routing: compact=true, statusline=false, mode=static [0.62ms]
+(pass) working indicator routing: compact=true, statusline=false, mode=unset [0.58ms]
+(pass) working indicator routing: compact=false, statusline=true, mode=animated [0.61ms]
+(pass) working indicator routing: compact=false, statusline=true, mode=static [1.10ms]
+(pass) working indicator routing: compact=false, statusline=true, mode=unset [0.55ms]
+(pass) working indicator routing: compact=false, statusline=false, mode=animated [0.40ms]
+(pass) working indicator routing: compact=false, statusline=false, mode=static [0.63ms]
+(pass) working indicator routing: compact=false, statusline=false, mode=unset [0.57ms]
+(pass) session_info_changed refreshes the UI title [2.68ms]
+(pass) session_info_changed is inert without a UI [0.35ms]
+
+tests/qol-agent-end.test.ts:
+(pass) qol event wiring: registers end, settled and compact handlers [1.59ms]
+(pass) qol event wiring: settlement waits for compaction completion [1.71ms]
+(pass) qol event wiring: settlement waits for compaction error [0.58ms]
+(pass) qol event wiring: below-threshold usage does not dispatch [0.50ms]
+(pass) qol event wiring: repeated end and settled events deduplicate pending and in-flight work [0.49ms]
+(pass) qol event wiring: session_compact suppresses the same trigger after completion [0.58ms]
+(pass) qol event wiring: Pi auto-compaction between end and settled suppresses dispatch and the next cycle [0.46ms]
+(pass) qol event wiring: missing compact function warns and allows retry [0.53ms]
+(pass) qol event wiring: late old-session compact event cannot consume a new-session trigger [0.59ms]
+(pass) qol event wiring: late old-session compact event cannot suppress retry after Already compacted [0.56ms]
+(pass) qol event wiring: budgetGuard with Pi compaction.enabled user=false project=undefined and QOL {} [7.95ms]
+(pass) qol event wiring: budgetGuard with Pi compaction.enabled user=true project=undefined and QOL {} [1.06ms]
+(pass) qol event wiring: budgetGuard with Pi compaction.enabled user=undefined project=undefined and QOL {} [0.87ms]
+(pass) qol event wiring: budgetGuard with Pi compaction.enabled user=true project=undefined and QOL {"compaction.budgetGuardEnabled":false} [0.63ms]
+(pass) qol event wiring: budgetGuard with Pi compaction.enabled user=true project=false and QOL {} [0.67ms]
+(pass) qol event wiring: budgetGuard with Pi compaction.enabled user=false project=true and QOL {} [0.60ms]
+(pass) qol event wiring: idle with Pi compaction.enabled user=false project=undefined and QOL {"compaction.idleEnabled":true} [0.60ms]
+(pass) qol event wiring: idle with Pi compaction.enabled user=true project=undefined and QOL {"compaction.idleEnabled":true} [7.45ms]
+(pass) qol event wiring: idle with Pi compaction.enabled user=undefined project=undefined and QOL {"compaction.idleEnabled":true} [0.67ms]
+(pass) qol event wiring: idle with Pi compaction.enabled user=true project=undefined and QOL {} [0.68ms]
+
+tests/session-search-jsonl.test.ts:
+(pass) session JSONL line reader streams across small chunks [0.49ms]
+
+tests/schedule.test.ts:
+(pass) parseDurationMs: 20 [0.21ms]
+(pass) parseDurationMs: 20m [0.11ms]
+(pass) parseDurationMs: 90s
+(pass) parseDurationMs: 500ms
+(pass) parseDurationMs: 1.5h
+(pass) parseDurationMs: 1h45m
+(pass) parseDurationMs: 1h30s
+(pass) parseDurationMs: 45m10s
+(pass) parseDurationMs: 1h45m30s
+(pass) parseDurationMs: 2d3h4m5s6ms
+(pass) parseDurationMs: 0m
+(pass) parseDurationMs: forever
+(pass) parseDurationMs: 1h2h
+(pass) parseDurationMs: 30s1h
+(pass) parseDurationMs: 1h30
+(pass) parseDurationMs: 1h30xs
+(pass) parseDurationMs: 31d [0.02ms]
+(pass) parseScheduleCommandArgs: 20m this is my message [0.06ms]
+(pass) parseScheduleCommandArgs: 1h45m do thing later
+(pass) parseScheduleCommandArgs: 1h30s do thing later
+(pass) parseScheduleCommandArgs: 45m10s do thing later
+(pass) parseScheduleCommandArgs: list
+(pass) parseScheduleCommandArgs: cancel all
+(pass) parseScheduleCommandArgs: cancel abc
+(pass) schedule lifecycle: idle delivery waits for the timer and records session events [23.95ms]
+(pass) schedule lifecycle: preview keeps queued style, hides ids and caps visible messages [0.54ms]
+(pass) schedule lifecycle: busy delivery uses followUp [0.13ms]
+(pass) schedule lifecycle: cancel all clears timers and pending state [0.23ms]
+(pass) schedule lifecycle: branch restore rearms and delivers the pending message [0.16ms]
+
+tests/statusline-thinking.test.ts:
+(pass) max thinking level [0.05ms]
+(pass) unknown thinking level
+(pass) max thinking theme token [0.08ms]
+
+tests/runtime-copy-peers.test.ts:
+50 |
+51 | describe("copied runtime against the installed Pi peers", () => {
+52 | 	test("the copy imports and runs through the package's installed peers and is removed on success and failure", () => {
+53 | 		const pin = process.env[PIN_ENV];
+54 | 		const run = probe(packageDir, pin);
+55 | 		expect(run.stderr).toBe("");
+                          ^
 error: expect(received).toBe(expected)
+
 - ""
 + "runtime-copy-peers: peer-unresolved peer=@earendil-works/pi-agent-core cause=[Cannot find package '@earendil-works/pi-agent-core' imported from /package/tests/runtime-copy-peers.probe.ts]
 + "
-(fail) copied runtime against the installed Pi peers > the copy imports and runs through the package's installed peers and is removed on success and failure [79.81ms]
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (/package/tests/runtime-copy-peers.test.ts:55:22)
+(fail) copied runtime against the installed Pi peers > the copy imports and runs through the package's installed peers and is removed on success and failure [25.45ms]
+83 | 			const dir = packageContext(row.parent, row.peers);
+84 | 			try {
+85 | 				if (row.patch) patchFile(join(dir, row.patch.file), row.patch.from, row.patch.to);
+86 | 				const run = probe(dir, row.pin, row.preload);
+87 | 				if (row.refusal === null) expect({ rule: row.rule, exitCode: run.exitCode, stdout: run.stdout, stderr: run.stderr }).toMatchObject({ rule: row.rule, exitCode: 0, stdout: expect.stringMatching(/^runtime-copy-peers: proved /), stderr: "" });
+88 | 				else expect({ rule: row.rule, exitCode: run.exitCode, refused: run.stderr.startsWith(`runtime-copy-peers: ${row.refusal}`), stderr: run.stderr }).toMatchObject({ rule: row.rule, exitCode: 1, refused: true });
+                                                                                                                                                           ^
 error: expect(received).toMatchObject(expected)
-+ "runtime-copy-peers: peer-unresolved peer=@earendil-works/pi-agent-core cause=[Cannot find package '@earendil-works/pi-agent-core' imported from /package/tmp/context/tests/runtime-copy-peers.probe.ts]
+
+  {
+    "exitCode": 1,
+-   "refused": true,
++   "refused": false,
+    "rule": "inside the package",
++   "stderr":
++ "runtime-copy-peers: peer-unresolved peer=@earendil-works/pi-agent-core cause=[Cannot find package '@earendil-works/pi-agent-core' imported from /package/tmp/qol-search-test-YuJHKx/tests/runtime-copy-peers.probe.ts]
 + "
-(fail) copied runtime against the installed Pi peers > each precondition rule and teardown refuses its planted defect [339.94ms]
++ ,
+  }
+
+- Expected  - 1
++ Received  + 5
+
+      at <anonymous> (/package/tests/runtime-copy-peers.test.ts:88:151)
+(fail) copied runtime against the installed Pi peers > each precondition rule and teardown refuses its planted defect [90.83ms]
+
+tests/budget-guard-runtime.test.ts:
+(pass) dispatch fires once per crossing key [0.31ms]
+(pass) dispatch deduplicates a repeated trigger after completion within the same bucket [0.13ms]
+(pass) session_compact satisfies the current crossing key [0.10ms]
+(pass) session_compact clears suppression after usage falls below the trigger [0.09ms]
+(pass) session_compact allows a genuinely new trigger key [0.09ms]
+(pass) Already compacted is benign only after a later session_compact [0.21ms]
+(pass) Already compacted remains an error without a later session_compact [0.11ms]
+(pass) a delayed unrelated error stays visible without clearing a session-satisfied key [0.09ms]
+(pass) dispatch refuses a new bucket while the first crossing is in flight [0.04ms]
+(pass) dispatch with no trigger clears the crossing key [0.08ms]
+(pass) dispatch refuses when ctx.compact is missing and notifies the user [0.07ms]
+(pass) dispatch propagates the sentinel in customInstructions [0.04ms]
+(pass) dispatch exposes persistent status until compaction callback finishes [0.06ms]
+(pass) dispatch clears persistent status on async compact failure [0.07ms]
+(pass) dispatch clears state and notifies on synchronous compact throw [0.16ms]
+(pass) dispatch onError clears the crossing key so the next agent_end retries [0.11ms]
+(pass) dispatch respects a stale-context callback by ignoring the call [0.05ms]
+(pass) reset clears in-flight and key state [0.06ms]
+(pass) session_compact from an old reset generation cannot satisfy the current trigger [0.12ms]
+(pass) reset invalidates delayed callbacks without mutating the next dispatch [7.73ms]
+
+tests/handle-qol-compaction.test.ts:
+(pass) handleQolCompaction: disabled custom compaction without sentinel [1.13ms]
+(pass) handleQolCompaction: sentinel bypass writes the bounded summary and handoff [2.07ms]
+(pass) handleQolCompaction: handoff filesystem failure warns while retaining the summary [2.54ms]
+(pass) handleQolCompaction: summarizer failure cancels when fallback is disabled [1.03ms]
+(pass) handleQolCompaction: summarizer failure falls back to Pi by default [0.86ms]
+(pass) handleQolCompaction: empty messages skip custom compaction [0.17ms]
+
+tests/images-submit.test.ts:
+(pass) input refuses a 50 MiB image without reading it and restores only an empty editor [485.49ms]
+(pass) headless input reports image refusal on stderr and stays handled [26.61ms]
+(pass) image budget adds every file and existing clipboard image before any read [306.23ms]
+(pass) a file that grows after stat is refused before encoding [17.29ms]
+(pass) image reads are asynchronous and valid bytes retain MIME type; directories refuse [18.29ms]
+
+tests/session-user-messages.test.ts:
+(pass) session user messages retain prompt text and timestamp [0.45ms]
+
+tests/transcript-risk.test.ts:
+(pass) below the character budget [3.05ms]
+(pass) above the character budget [0.09ms]
+(pass) empty messages
+(pass) disabled character budget
+(pass) serializer dependency throws [0.07ms]
+
+tests/session-search-component.benchmark.test.ts:
+QOL_COMPONENT_BENCHMARK {"sessions":500,"keys":20,"coldMs":563.8044060000002,"coldCalls":{"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},"maxMs":27.118390000000545,"steps":[{"ms":27.118390000000545,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":24.77361800000017,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.755973999999696,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.49308999999994,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":22.599161000000095,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.341981999999916,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":22.070826999999554,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":24.096419999999853,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.278636999999435,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":20.923423000000184,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.147800000000643,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.00580700000046,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.333740000000034,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.75001499999962,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.22045900000012,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.689784999999574,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":21.639288999999735,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":23.633786000000327,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":23.023568999999952,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0},{"ms":22.665831000000253,"realpathSync":0,"readSync":0,"wholeLogReadFileSync":0}]}
+(pass) component benchmark: 500 sessions, 20 completed keystrokes, bounded hot calls [1084.31ms]
+
+tests/compaction-handoff.test.ts:
+(pass) piUserDir honors PI_CODING_AGENT_DIR [0.22ms]
+(pass) safeFileName: safe segment [0.13ms]
+(pass) safeFileName: traversal separators [0.08ms]
+(pass) safeFileName: mixed separators [0.06ms]
+(pass) sessionIdFromManager: session id [0.10ms]
+(pass) sessionIdFromManager: file basename [0.08ms]
+(pass) sessionIdFromManager: process fallback [0.07ms]
+(pass) sessionIdFromManager: stale accessors [0.12ms]
+(pass) findLatestTaskState: latest tool result state [0.12ms]
+(pass) findLatestTaskState: empty branch [0.10ms]
+(pass) findLatestTaskState: no tool result [0.06ms]
+(pass) collectArtifactRefs: recent file paths [0.35ms]
+(pass) collectArtifactRefs: bounded recent paths [0.08ms]
+(pass) buildBudgetHandoff captures preparation and session state [0.21ms]
+(pass) writeBudgetHandoffArtifact: stamped and latest files [3.24ms]
+(pass) writeBudgetHandoffArtifact: disabled writer [0.13ms]
+(pass) writeBudgetHandoffArtifact: filesystem error is forwarded [0.15ms]
+(pass) writeBudgetHandoffArtifact: session id remains inside the supplied root [0.56ms]
+(pass) budget handoff: session_start prunes gone lanes or files, including latest.json [1.80ms]
+(pass) budget handoff: session_start prunes old lanes or files, including latest.json [4.95ms]
+(pass) budget handoff: session_start prunes fresh lanes or files, including latest.json [1.06ms]
+
+tests/compaction-length-stop.test.ts:
+(pass) generateQolSummary rejects a summary with stopReason length [0.58ms]
+(pass) generateQolSummary accepts a summary with stopReason stop [0.28ms]
+
+tests/budget-trigger.test.ts:
+(pass) computeBudgetTrigger: disabled above the percent threshold [0.04ms]
+(pass) computeBudgetTrigger: percent threshold [0.01ms]
+(pass) computeBudgetTrigger: percent threshold numeric closeness [0.03ms]
+(pass) computeBudgetTrigger: token threshold without a context window [0.02ms]
+(pass) computeBudgetTrigger: same bucket at 172000 tokens
+(pass) computeBudgetTrigger: same bucket at 175000 tokens
+(pass) computeBudgetTrigger: first bucket at 120000 tokens
+(pass) computeBudgetTrigger: second bucket at 220000 tokens
+(pass) computeBudgetTrigger: zero token count
+(pass) computeBudgetTrigger: non-finite token count
+(pass) isBudgetGuardCompaction: budget guard marker [0.02ms]
+(pass) isBudgetGuardCompaction: user request
+(pass) isBudgetGuardCompaction: absent instructions
+
+tests/compaction-model-resolution.test.ts:
+(pass) compaction model resolution strips max thinking suffix [0.11ms]
+
+tests/rate-limit-auto-resume.test.ts:
+(pass) parseDurationLikeMs: 6m0s [0.45ms]
+(pass) extractResetAtFromHeaders: retry-after [0.33ms]
+(pass) extractResetAtFromHeaders: retry-after-ms [0.14ms]
+(pass) extractResetAtFromHeaders: x-ratelimit-reset-requests [0.18ms]
+(pass) extractResetAtFromHeaders: anthropic-ratelimit-requests-reset [0.12ms]
+(pass) looksLikeRateLimitText: Error: 429 Too Many Requests [0.20ms]
+(pass) looksLikeRateLimitText: normal tool failure [0.12ms]
+(pass) extractResetAtFromText: Rate limited. Try again in 2 minutes [0.32ms]
+(pass) rate-limit lifecycle: external rate-limit event schedules the configured message after reset plus buffer [1.83ms]
+(pass) rate-limit lifecycle: external reset retained through message_end without a reset schedules the configured message after reset plus buffer [6.82ms]
+(pass) rate-limit lifecycle: provider response headers schedules the configured message after reset plus buffer [0.55ms]
+(pass) rate-limit lifecycle: message_end text schedules the configured message after reset plus buffer [0.45ms]
+(pass) rate-limit lifecycle: agent_end text schedules the configured message after reset plus buffer [0.49ms]
+(pass) rate-limit lifecycle: disabled setting creates no timer [0.31ms]
+(pass) rate-limit lifecycle: successful assistant turn ignores a transient provider 429 [0.34ms]
+(pass) rate-limit lifecycle: setting disabled before delivery [0.59ms]
+(pass) rate-limit lifecycle: new turn before delivery [0.38ms]
+
+tests/session-search-async.test.ts:
+(pass) async index streams prompts and resolves a shared project once without sync reads [15.40ms]
+(pass) shutdown cancels a load and a late result cannot replace the next load [28.70ms]
+(pass) scope uses prepared canonical paths, including symlinked projects [15.94ms]
+(pass) typing is debounced and closing cancels the pending query and late index publication [44.18ms]
+(pass) query cancellation stops before matching and preserves prompt ranking and snippet text [58.49ms]
+
+tests/context-usage.test.ts:
+(pass) absent transcript risk [2.42ms]
+(pass) payload below the warning budget [0.21ms]
+(pass) payload above the warning budget [0.21ms]
+(pass) serializer error stays on one line [0.12ms]
+
+tests/auto-rename-max-tokens.test.ts:
+(pass) auto-rename output-token cap: unset reads the shipped default [2.06ms]
+(pass) auto-rename output-token cap: a configured value is sent as set [1.05ms]
+
+tests/pending-queue.test.ts:
+(pass) a restored-queue status line renders with no side padding [0.48ms]
+(pass) an empty-queue status line renders with no side padding [0.15ms]
+(pass) any other text keeps its padding [0.13ms]
+(pass) an unchanged Text is scanned once, and again only when its text changes [0.34ms]
+(pass) restore puts pi-tui's own render back, and a later install patches again [0.17ms]
+(pass) a marker this module did not write keeps its render through install, restore and install [0.18ms]
+(pass) a session without a UI leaves Text unpatched [0.14ms]
+(pass) the session installs the patch at start and removes it at shutdown [26.81ms]
+
+tests/statusline-provider.test.ts:
+(pass) provider label: github-copilot [0.57ms]
+(pass) provider label: openai [0.77ms]
+(pass) provider label: openai-codex [0.25ms]
+(pass) provider label: pi-claude [0.30ms]
+(pass) provider label: anthropic [1.79ms]
+(pass) provider label: google-vertex [2.30ms]
+(pass) provider label: amazon-bedrock [0.49ms]
+(pass) provider label: openrouter [1.96ms]
+(pass) provider label: xai [0.80ms]
+(pass) provider label: team_proxy-east [0.40ms]
+(pass) provider label: MyProxy [0.56ms]
+(pass) provider label: constructor [0.59ms]
+(pass) persisted provider toggle: undefined [0.32ms]
+(pass) persisted provider toggle: false [0.57ms]
+(pass) persisted provider toggle: true [0.28ms]
+(pass) provider follows model selection and persisted settings without reload [0.44ms]
+(pass) no selected model has no dangling provider separator [0.38ms]
+(pass) spinner prefix and provider fit width 0 [0.32ms]
+(pass) spinner prefix and provider fit width 1 [0.23ms]
+(pass) spinner prefix and provider fit width 12 [0.33ms]
+(pass) spinner prefix and provider fit width 40 [0.25ms]
+(pass) spinner prefix and provider fit width 120 [0.27ms]
+
+2 tests failed:
+(fail) copied runtime against the installed Pi peers > the copy imports and runs through the package's installed peers and is removed on success and failure [25.45ms]
+(fail) copied runtime against the installed Pi peers > each precondition rule and teardown refuses its planted defect [90.83ms]
+
+ 273 pass
+ 2 fail
+ 810 expect() calls
+Ran 275 tests across 34 files. [7.16s]
 OUTPUT
 )
 INDEPENDENT=$'error: expect(received).toBe(expected)\nExpected: true\nReceived: false\n(fail) an independent behavior check'
+UNKNOWN=$'# Unhandled error between tests\n-------------------------------\nTypeError: undefined is not an object\n-------------------------------'
+# The producer reports its own outcome. Summary rows can repeat it or expose
+# an unexplained failure, but cannot invent a different diagnostic outcome.
+QOL_MIXED=${QOL_PEER%$'\n2 tests failed:'*}
+QOL_MIXED="$QOL_MIXED
+$INDEPENDENT
+
+3 tests failed:
+(fail) copied runtime against the installed Pi peers > the copy imports and runs through the package's installed peers and is removed on success and failure [25.45ms]
+(fail) copied runtime against the installed Pi peers > each precondition rule and teardown refuses its planted defect [90.83ms]
+(fail) an independent behavior check
+
+ 273 pass
+ 3 fail
+ 811 expect() calls
+Ran 276 tests across 34 files. [7.16s]"
+BUN_MIXED=${BUN_PEER%$'\n 0 pass'*}
+BUN_UNKNOWN="$BUN_MIXED
+$UNKNOWN
+
+ 0 pass
+ 2 fail
+ 2 error
+Ran 2 tests across 2 files. [7.00ms]"
+BUN_MIXED="$BUN_MIXED
+$INDEPENDENT
+
+1 tests failed:
+(fail) an independent behavior check
+
+ 0 pass
+ 2 fail
+ 1 error
+Ran 2 tests across 2 files. [7.00ms]"
 PEER_ROWS=(
-  'Node missing peer|Error [ERR_MODULE_NOT_FOUND]: Cannot find package @earendil-works/pi-ai|3|no-verdict'
-  "Bun missing module|$BUN_PEER|3|no-verdict"
-  "Bun missing module beside an assertion|$BUN_PEER
-$INDEPENDENT
- 1 fail|1|suite"
-  "Pi probe assertions caused by absent peers|$QOL_PEER
- 2 fail|3|no-verdict"
-  "Pi probe beside an independent assertion|$QOL_PEER
-$INDEPENDENT
- 3 fail|1|suite"
-  'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|suite'
+  'Node missing peer|Error [ERR_MODULE_NOT_FOUND]: Cannot find package @earendil-works/pi-ai|3|no-verdict|absent'
+  "renderer unhandled missing peer|$BUN_PEER|3|no-verdict|absent"
+  "tmux unhandled missing peer|$TMUX_PEER|3|no-verdict|absent"
+  "unhandled missing peer beside an assertion|$BUN_MIXED|1|suite|absent"
+  "unhandled missing peer beside an unknown error|$BUN_UNKNOWN|1|suite|absent"
+  "Pi probe failures repeated in Bun summary|$QOL_PEER|3|no-verdict|absent"
+  "Pi probe beside an independent assertion|$QOL_MIXED|1|suite|absent"
+  "unexplained summary failure|$BUN_PEER
+ 2 fail|1|suite|absent"
+  "unknown failure in repeated summary|$QOL_PEER
+(fail) a case with no diagnostic report|1|suite|absent"
+  "peers installed but module missing|$BUN_PEER|1|suite|present"
+  'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|suite|absent'
 )
-for row in "${PEER_ROWS[@]}"; do
-  # Read the fields without read consuming only the first output line.
-  label=${row%%|*}; row=${row#*|}
-  output=${row%|*|*}; expected=${row#"$output"|}; key=${expected#*|}; expected=${expected%%|*}
-  diagnostic='guard: suite=pi-extensions/peers'
-  [ "$key" != no-verdict ] || diagnostic='guard-note: no-verdict=missing-peers=pi-extensions/peers'
-  run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$output"
-  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
-    && ok "$label" || bad "$label" "rc=$RC out=$OUT"
+for script in test test:ci; do
+  printf '{"scripts":{"%s":"bun test ./tests"}}\n' "$script" >"$R/pi-extensions/peers/package.json"
+  for row in "${PEER_ROWS[@]}"; do
+    # Read the fields without read consuming only the first output line.
+    label=${row%%|*}; row=${row#*|}
+    peers=${row##*|}; row=${row%|*}
+    output=${row%|*|*}; expected=${row#"$output"|}; key=${expected#*|}; expected=${expected%%|*}
+    if [ "$peers" = present ]; then mkdir "$R/pi-extensions/peers/node_modules"; fi
+    diagnostic='guard: suite=pi-extensions/peers'
+    [ "$key" != no-verdict ] || diagnostic='guard-note: no-verdict=missing-peers=pi-extensions/peers'
+    run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$output"
+    [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
+      && ok "$script: $label" || bad "$script: $label" "rc=$RC out=$OUT"
+    if [ "$peers" = present ]; then rmdir "$R/pi-extensions/peers/node_modules"; fi
+  done
 done
 if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then
   GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_PEER"
@@ -897,13 +1364,23 @@ if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then
     || bad 'missing-peer control' "rc=$RC out=$OUT"
 else bad 'missing-peer control changed nothing'; fi
 if mutant_guard 's/exit !(missing \&\& !behavior)/exit !missing/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_PEER
-$INDEPENDENT
- 3 fail"
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_MIXED"
   [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-peers=pi-extensions/peers'* ]] \
-    && ok 'control: ignoring independent assertions turns the mixed-peer row red' \
-    || bad 'independent assertion control' "rc=$RC out=$OUT"
-else bad 'independent assertion control changed nothing'; fi
+    && ok 'control: ignoring independent failures turns the mixed-peer row red' \
+    || bad 'independent failure control' "rc=$RC out=$OUT"
+else bad 'independent failure control changed nothing'; fi
+if mutant_guard 's/if (summary)/if (0)/'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_PEER"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
+    && ok 'control: recounting summary rows turns the repeated-peer row red' \
+    || bad 'summary outcome control' "rc=$RC out=$OUT"
+else bad 'summary outcome control changed nothing'; fi
+if mutant_guard 's/unavailable_errors++/unavailable_errors += 0/'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_PEER"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
+    && ok 'control: omitting loader outcomes turns the unhandled-peer row red' \
+    || bad 'unhandled outcome control' "rc=$RC out=$OUT"
+else bad 'unhandled outcome control changed nothing'; fi
 rm -- "$R/fake-bin/npm"
 rm -r -- "$R/pi-extensions/peers"
 

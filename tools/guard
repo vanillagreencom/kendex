@@ -1302,23 +1302,43 @@ fi
 # A Pi package's suite can import peers that CI installs before the suite.
 # A missing dependency gives no test verdict; an assertion still fails.
 pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
-  # Bun prints pi-qol's peer probe inside the assertion report, before (fail).
-  # A missing peer in one report must not hide an independent failed case.
+  # Diagnostic reports own outcomes. Bun repeats their names in its summary
+  # and includes unhandled loader errors in its fail count, without test rows.
   if [ ! -d "$1/node_modules" ] && awk '
+    /^# Unhandled error between tests/ {
+      if (unhandled || report == "assertion") behavior = 1
+      unhandled = 1; report = "unknown"; next
+    }
+    /^-+$/ && unhandled && report != "unknown" {
+      if (report == "missing") unavailable_errors++
+      else behavior = 1
+      unhandled = 0; report = ""; next
+    }
     /^(Error \[ERR_MODULE_NOT_FOUND\]|Error: Cannot find module |error: Cannot find (package|module) |sh: .*: (command )?not found)/ ||
     /^(\+ ")?runtime-copy-peers: peer-unresolved peer=/ {
-      missing = block_missing = 1; next
+      missing = 1
+      if (report != "failure") report = "missing"
+      next
     }
-    /^AssertionError/ { behavior = 1 }
-    /^error:/ && !/^error: expect\(/ { behavior = 1 }
-    /^error: expect\(/ { assertion = 1; block_missing = 0 }
+    /^error: expect\(/ { report = "assertion"; next }
+    /^([A-Za-z]*Error|error:)/ { behavior = 1; report = "failure"; next }
+    /^[0-9]+ tests? failed:/ { summary = 1; next }
     /^\(fail\)/ {
-      if (!block_missing) behavior = 1
-      failures++; block_missing = assertion = 0
+      name = $0
+      sub(/[[:space:]]+\[[0-9.]+ms\]$/, "", name)
+      if (summary) {
+        if (!(name in outcomes) || outcomes[name] != "missing") behavior = 1
+        next
+      }
+      outcomes[name] = report
+      if (report != "missing") behavior = 1
+      failures++; report = ""; next
     }
     /^[[:space:]]*[0-9]+ fail$/ { reported = $1 }
+    /^[[:space:]]*[0-9]+ error$/ { reported_errors = $1 }
     END {
-      if ((assertion && !block_missing) || reported > failures) behavior = 1
+      if (unhandled || report == "assertion" || reported > failures + unavailable_errors ||
+          reported_errors > unavailable_errors) behavior = 1
       exit !(missing && !behavior)
     }
   ' <<<"$2"; then
