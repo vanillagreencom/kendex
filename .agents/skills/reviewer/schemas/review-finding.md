@@ -101,6 +101,18 @@ Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A revi
 
 `.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Your mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing) belongs in `.summary`; the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`. An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
 
+Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`, `values` (an object of numbers) and `samples` (how many samples produced them). It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number; a zero value is a result and stays valid. Record it under its true name and unit, never outside `perf_qa` or as a failed measurement:
+
+```json
+{"metric_kind": "measure", "name": "tui_emitted_bytes", "unit": "bytes/min",
+ "values": {"animations_on": 2584784, "animations_off": 24543}, "samples": 2}
+```
+
+```json
+{"metric_kind": "measure", "name": "order_book_apply", "unit": "ns mean",
+ "values": {"baseline": 412.7, "changed": 398.1}, "samples": 10000}
+```
+
 Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the `blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
 
 When YOUR OWN instrument produced nothing, keep the evidence and set the **top-level** `measurement_failed` to a string naming the instrument and what it did:
@@ -117,5 +129,5 @@ Example per-agent payloads:
 | Agent | qa_metadata key | Required fields |
 |-------|-----------------|-----------------|
 | safety audit | `safety` | `tool_results`, `unsafe_block_count`, `violations[]` |
-| performance QA | `perf_qa` | `percentiles` (or `metric_kind: "instruction_count"` with `instruction_counts`, or `metric_kind: "process_count"` with `process_counts`), `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
+| performance QA | `perf_qa` | `percentiles` (or `metric_kind: "instruction_count"` with `instruction_counts`, or `metric_kind: "process_count"` with `process_counts`, or `metric_kind: "measure"` with `name`, `unit`, `values`, `samples`), `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
 | architecture review | `arch_review` | `dimension_scores`, `overall_score`, `pass` |

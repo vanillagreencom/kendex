@@ -75,7 +75,10 @@ measurement_declaration() {
 # instrument measures no latency distribution: its counts are its samples,
 # and percentiles demanded of it
 # could only be fabricated or excused by declaring a successful instrument
-# failed. A kind this gate cannot judge is refused, never waved through.
+# failed. Any other real figure (bytes per minute, a Criterion mean) is a
+# "measure": a named metric whose own `samples` count is its evidence, so
+# its values may be zero. A kind this gate cannot judge is refused, never
+# waved through.
 #
 # CARRIERS: `.summary` and `.qa_metadata` only — the places an artifact states
 # its OWN evidence. blockers[]/suggestions[]/questions[] describe the code under
@@ -121,6 +124,16 @@ zero_sample_detail() {
           then ["\($at) positive_values=0\nThe \($name) must contain a measured value above zero."]
         else [] end ;
 
+    def measure_zero($pq):
+      "review-artifact-check: perf_evidence field=qa_metadata.perf_qa" as $at
+      | [ ("name", "unit") as $f
+          | select((($pq[$f] | type) == "string" and ($pq[$f] | test("\\S"))) | not)
+          | "\($at).\($f) value=\($pq[$f] | @json)\nA measure names its \($f) in a non-blank string." ]
+        + if (($pq.samples | type) == "number" and $pq.samples > 0) then []
+          else ["\($at).samples value=\($pq.samples | @json)\nA measure records how many samples produced its values, above zero."] end
+        + if ([$pq.values | objects | .[] | numbers] | length) > 0 then []
+          else ["\($at).values numeric_values=0\nA measure records its result as an object of numbers."] end ;
+
     def perf_zero:
       ((.qa_metadata? // {}) | if type == "object" then (.perf_qa? // null) else null end) as $pq
       | if ($pq == null) then []
@@ -133,9 +146,11 @@ zero_sample_detail() {
               then evidence_zero("instruction_counts"; $pq.instruction_counts?; "instruction counts")
             elif $kind == "process_count"
               then evidence_zero("process_counts"; $pq.process_counts?; "process counts")
+            elif $kind == "measure"
+              then measure_zero($pq)
             elif ($kind | type) != "string"
-              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind type=\($kind | type)\nmetric_kind must be \"latency\", \"instruction_count\" or \"process_count\"."]
-            else ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind value=\($kind | @json)\nmetric_kind must be \"latency\", \"instruction_count\" or \"process_count\"."]
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind type=\($kind | type)\nmetric_kind must be \"latency\", \"instruction_count\", \"process_count\" or \"measure\"."]
+            else ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind value=\($kind | @json)\nmetric_kind must be \"latency\", \"instruction_count\", \"process_count\" or \"measure\"."]
             end
         end ;
 

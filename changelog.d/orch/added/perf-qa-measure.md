@@ -1,0 +1,1 @@
+- `review-artifact-check` accepts a `perf_qa` `metric_kind: "measure"` with a `name`, a free-text `unit`, numeric `values` and a `samples` count above zero, so byte rates and Criterion means are recorded under their true name and unit instead of outside the block or as a failed measurement.

@@ -263,6 +263,43 @@ assert_eq "$(observe 'rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.m
   'rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.metric_kind=true detail~value:"process_count"=true' \
   "control: removing process-count dispatch rejects measured process counts" "$ERR"
 
+echo "=== perf payload: a measure metric is judged on its samples ==="
+# Any real figure that is no latency distribution and no count: FLT-1168's
+# emitted terminal bytes per minute and HT-1935's Criterion means. Its own
+# sample count is its evidence, so a zero value is a result, not a zero sample.
+MEASURE_TEMPLATE='{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":{"metric_kind":"measure","percentiles":{},"regressions":[],"platform":"linux","baseline_sha":"abc",%s}}}'
+MEASURE_ZERO_SAMPLES='"name":"order_book_apply","unit":"ns mean","values":{"baseline":412.7},"samples":0'
+wrapped_table "$MEASURE_TEMPLATE" \
+  "FLT-1168 bytes per minute are valid without a declaration^\"name\":\"codex_tui_emitted_bytes\",\"unit\":\"bytes/min\",\"values\":{\"animations_on\":2584784.2,\"animations_off\":24542.8},\"samples\":2^rc=0 ok=true reason=valid measurement_failed=ABSENT measurement_suppressed=ABSENT" \
+  "HT-1935 Criterion means with empty percentiles are valid^\"name\":\"order_book_apply\",\"unit\":\"ns mean\",\"values\":{\"baseline\":412.7,\"changed\":398.1},\"samples\":10000^rc=0 ok=true reason=valid measurement_failed=ABSENT measurement_suppressed=ABSENT" \
+  "a measured zero result is valid^\"name\":\"dropped_frames\",\"unit\":\"frames\",\"values\":{\"changed\":0},\"samples\":10^rc=0 ok=true reason=valid" \
+  "samples zero^$MEASURE_ZERO_SAMPLES^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.samples=true detail~value:0=true" \
+  "samples missing^\"name\":\"order_book_apply\",\"unit\":\"ns mean\",\"values\":{\"baseline\":412.7}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.samples=true detail~value:null=true" \
+  "samples a string^\"name\":\"order_book_apply\",\"unit\":\"ns mean\",\"values\":{\"baseline\":412.7},\"samples\":\"10000\"^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.samples=true" \
+  "no numeric value^\"name\":\"codex_tui_emitted_bytes\",\"unit\":\"bytes/min\",\"values\":{\"animations_on\":\"2.5 MB\"},\"samples\":2^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.values=true detail~numeric_values:0=true" \
+  "values not an object^\"name\":\"codex_tui_emitted_bytes\",\"unit\":\"bytes/min\",\"values\":2584784.2,\"samples\":2^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.values=true detail~numeric_values:0=true" \
+  "name missing^\"unit\":\"bytes/min\",\"values\":{\"animations_on\":2584784.2},\"samples\":2^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.name=true detail~value:null=true" \
+  "unit missing^\"name\":\"codex_tui_emitted_bytes\",\"values\":{\"animations_on\":2584784.2},\"samples\":2^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.unit=true detail~value:null=true" \
+  "unit blank^\"name\":\"codex_tui_emitted_bytes\",\"unit\":\"\",\"values\":{\"animations_on\":2584784.2},\"samples\":2^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.unit=true"
+
+# Must-fail control: a copy without the samples check must accept the
+# zero-samples row the table refuses, or that row proves nothing about it.
+MEASURE_CONTROL="$TMP_ROOT/measure-control"
+mkdir -p "$MEASURE_CONTROL"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MEASURE_CONTROL/scripts"
+MEASURE_CONTROL_LIB="$MEASURE_CONTROL/scripts/lib/review-artifact-measurement.sh"
+check='if (($pq.samples | type) == "number" and $pq.samples > 0) then []'
+[[ "$(grep -cF -- "$check" "$MEASURE_CONTROL_LIB")" == 1 ]] || { echo "control: the samples check is not in the copied lib once" >&2; exit 1; }
+before="$(cksum < "$MEASURE_CONTROL_LIB")"
+CHECK_TEXT="$check" perl -0pi -e 's/\Q$ENV{CHECK_TEXT}\E/if true then []/' "$MEASURE_CONTROL_LIB"
+[[ "$(cksum < "$MEASURE_CONTROL_LIB")" != "$before" ]] || { echo "control: the copied measure lib did not change" >&2; exit 1; }
+fresh_run
+# shellcheck disable=SC2059
+printf "$MEASURE_TEMPLATE" "$MEASURE_ZERO_SAMPLES" > "$F"
+CHECK="$MEASURE_CONTROL/scripts/review-artifact-check" run_check --file %F
+assert_eq "$(observe 'rc=0 reason=valid')" 'rc=0 reason=valid' \
+  "control: dropping the samples check accepts a zero-sample measure" "$ERR"
+
 # Must-fail control: a disposable copy of the validator with the metric
 # dispatch removed is today's validator, which required percentiles of every
 # metric. It must reject the measured instruction-count artifact the table

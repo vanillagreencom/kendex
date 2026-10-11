@@ -123,8 +123,18 @@ reason meanings when ok=false:
              thread count is zero, or a perf_qa payload whose metric's evidence
              carries no numeric value above zero: `percentiles` for a latency
              metric (`metric_kind` absent or "latency"), `instruction_counts`
-             for "instruction_count", `process_counts` for "process_count";
-             any other `metric_kind` is refused. A
+             for "instruction_count", `process_counts` for "process_count".
+             Any other real figure is a "measure": `name`, `unit` (free
+             text), `values` (an object of numbers, at least one) and
+             `samples` above zero, judged on `samples`, so a zero value is
+             valid. Bytes per minute and a Criterion mean:
+               {"metric_kind":"measure","name":"tui_emitted_bytes",
+                "unit":"bytes/min","values":{"on":2584784,"off":24543},
+                "samples":2}
+               {"metric_kind":"measure","name":"order_book_apply",
+                "unit":"ns mean","values":{"baseline":412.7,"changed":398.1},
+                "samples":10000}
+             Any other `metric_kind` is refused. A
              zero RESULT is not a zero sample: `stability: 0/10` is ten
              measured runs that all failed and stays valid. Only `.summary` and `.qa_metadata` are scanned — see
              CARRIERS below. `detail` names the offending citation.
