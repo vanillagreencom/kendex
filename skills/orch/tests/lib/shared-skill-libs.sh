@@ -22,4 +22,7 @@ orch_fixture_shared_libs() {
   dest="$(dirname -- "$fixture_root")/github/scripts/lib"
   mkdir -p "$dest"
   cp "$_ORCH_TEST_REPO_ROOT"/skills/github/scripts/lib/*.sh "$dest/"
+  dest="$(dirname -- "$fixture_root")/mailbox/scripts"
+  mkdir -p "$dest"
+  cp -R "$_ORCH_TEST_REPO_ROOT/skills/mailbox/scripts/." "$dest/"
 }

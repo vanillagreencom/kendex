@@ -126,7 +126,7 @@ source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/file-lock.sh
-source "$SCRIPT_DIR/lib/file-lock.sh"
+source "$SCRIPT_DIR/../../mailbox/scripts/lib/file-lock.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/pane-write.sh
@@ -1534,10 +1534,10 @@ merged_commit_for() ( # WT_ID
 relaunch_continuation() { # MAIL_ID HARNESS
   local rearm=""
   case "$2" in
-    claude) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $1 through your harness background wake" ;;
-    copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item $1 as a background command" ;;
+    claude) rearm=", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --item $1 through your harness background wake" ;;
+    copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --once --item $1 as a background command" ;;
   esac
-  printf '%s\n' "Resume the orch workflow for $1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $1 first and act on every envelope it prints, answers and directives alike, as its text directs$rearm. $LAUNCH_UNATTENDED_TEXT"
+  printf '%s\n' "Resume the orch workflow for $1 from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item $1 first and act on every envelope it prints, answers and directives alike, as its text directs$rearm. $LAUNCH_UNATTENDED_TEXT"
 }
 start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
   # MAIL_ID is the worktree id, which is what every line rendered here must
@@ -1612,7 +1612,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
   # argument parsing. A relaunch that matched no session renders the normal
   # brief below, which already says what to do.
   if [[ -n "$wake_dir" ]]; then
-    line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id and act on every envelope it prints, answers and directives alike, as its text directs.$unattended'"
+    line=" 'Run .agents/skills/mailbox/scripts/lane-mail inbox --item $mail_id and act on every envelope it prints, answers and directives alike, as its text directs.$unattended'"
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then

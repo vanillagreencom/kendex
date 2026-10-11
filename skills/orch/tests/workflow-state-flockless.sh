@@ -89,9 +89,9 @@ count="$(PATH="$NOFLOCK" "$WS" --state-dir "$RACE_SD" get KEN-RACE '.fixed_items
 BROKEN="$(mutant_scripts broken lib/file-lock.sh)" || exit 1
 mutate_file "$BROKEN/lib/file-lock.sh" 'if command -v flock >/dev/null 2>&1; then' 'if true; then'
 BSD="$TMP_ROOT/broken-state"
-PATH="$NOFLOCK" "$BROKEN/workflow-state" --state-dir "$BSD" init KEN-BROKEN --worktree "$REPO_ROOT" --branch ken-broken >/dev/null 2>&1 || true
+PATH="$NOFLOCK" "$BROKEN/../../orch/scripts/workflow-state" --state-dir "$BSD" init KEN-BROKEN --worktree "$REPO_ROOT" --branch ken-broken >/dev/null 2>&1 || true
 rc=0
-PATH="$NOFLOCK" "$BROKEN/workflow-state" --state-dir "$BSD" set KEN-BROKEN phase implementing >/dev/null 2>&1 || rc=$?
+PATH="$NOFLOCK" "$BROKEN/../../orch/scripts/workflow-state" --state-dir "$BSD" set KEN-BROKEN phase implementing >/dev/null 2>&1 || rc=$?
 [[ "$rc" -ne 0 ]] && pass "control: with only the flock arm every write refuses on this PATH" \
   || fail "control: with only the flock arm every write refuses on this PATH" "rc=$rc"
 

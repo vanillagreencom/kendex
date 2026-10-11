@@ -13,7 +13,7 @@ export PYTHONDONTWRITEBYTECODE=1
 SK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)"
 SK_RUN_FROM=""
 SK_FAKE="$SK_ROOT/skills/slack/tests/lib/fake_slack.py"
-SK_LANE_MAIL="$SK_ROOT/skills/orch/scripts/lane-mail"
+SK_LANE_MAIL="$SK_ROOT/skills/mailbox/scripts/lane-mail"
 SK_TOKEN="test-token-$$"
 SK_APP_TOKEN="test-app-token-$$"
 OWNER="brad@example.test"
@@ -127,6 +127,8 @@ sk_new_root() {
   git -C "$root" config gc.auto 0
   git -C "$root" config maintenance.auto false
   ln -sfn "$SK_ROOT/skills/orch/scripts" "$root/.agents/skills/orch/scripts"
+  mkdir -p "$root/.agents/skills/mailbox"
+  ln -sfn "$SK_ROOT/skills/mailbox/scripts" "$root/.agents/skills/mailbox/scripts"
   mkdir -p "$root/tmp"
   printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
   # Ordinary Slack cases have a working tracker that matches none of their ids.
@@ -185,7 +187,7 @@ for arg in "$@"; do
 done
 exec ''' + shlex.quote(jq) + ' "$@"\n')
 fault.chmod(0o755)
-scripts = root / ".agents/skills/orch/scripts"
+scripts = root / ".agents/skills/mailbox/scripts"
 scripts.unlink()
 scripts.mkdir()
 entry = scripts / "lane-mail"
@@ -196,9 +198,9 @@ PY
 }
 # sk_event_filter ROOT JQ — a lane-mail producer with changed event fields.
 sk_event_filter() {
-  rm -- "$1/.agents/skills/orch/scripts"
-  mkdir -p "$1/.agents/skills/orch/scripts"
-  python3 - "$1/.agents/skills/orch/scripts/lane-mail" "$SK_LANE_MAIL" "$2" <<'PY'
+  rm -- "$1/.agents/skills/mailbox/scripts"
+  mkdir -p "$1/.agents/skills/mailbox/scripts"
+  python3 - "$1/.agents/skills/mailbox/scripts/lane-mail" "$SK_LANE_MAIL" "$2" <<'PY'
 import pathlib, shlex, sys
 path, mail, expression = pathlib.Path(sys.argv[1]), shlex.quote(sys.argv[2]), shlex.quote(sys.argv[3])
 path.write_text(f'#!/usr/bin/env bash\nset -o pipefail\nif [ "$1" = events ]; then\n  {mail} "$@" | jq -c {expression}\nelse\n  exec {mail} "$@"\nfi\n')
@@ -349,6 +351,7 @@ sk_copy() {
   cp -R "$SK_ROOT/skills/slack/scripts" "$dir/skills/slack/scripts"
   cp -R "$SK_ROOT/skills/slack/systemd" "$dir/skills/slack/systemd"
   ln -sfn "$SK_ROOT/skills/orch" "$dir/skills/orch"
+  ln -sfn "$SK_ROOT/skills/mailbox" "$dir/skills/mailbox"
   ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
   SK_BIN="$dir/skills/slack/scripts/slack"
 }
@@ -379,6 +382,7 @@ sk_tracker_fixture() {
   cp -R "$SK_ROOT/skills/slack/scripts" "$SK_TMP/tracker/skills/slack/scripts"
   cp -R "$SK_ROOT/skills/slack/systemd" "$SK_TMP/tracker/skills/slack/systemd"
   ln -s "$SK_ROOT/skills/orch" "$SK_TMP/tracker/skills/orch"
+  ln -s "$SK_ROOT/skills/mailbox" "$SK_TMP/tracker/skills/mailbox"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/tracker/skills/linear/scripts/linear.sh"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/bin/gh"
   chmod +x "$SK_TMP/tracker/skills/linear/scripts/linear.sh" "$SK_TMP/bin/gh"

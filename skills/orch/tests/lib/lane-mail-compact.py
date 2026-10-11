@@ -13,7 +13,7 @@ import unittest
 
 ROOT, SCRATCH = map(Path, sys.argv[1:3])
 sys.argv[1:] = []
-SCRIPTS = ROOT / "skills/orch/scripts"
+SCRIPTS = ROOT / "skills/mailbox/scripts"
 OLD = "2000-01-01T00:00:00Z"
 FRESH = "2026-10-01T00:00:00Z"
 
@@ -135,9 +135,11 @@ class Compaction(unittest.TestCase):
                          [row for row in events if row["box"] == "to-overseer"])
 
     def mutant(self, name, relative, old, new):
-        scripts = self.home / name / "scripts"
+        scripts = self.home / name / "mailbox/scripts"
         shutil.copytree(SCRIPTS, scripts)
-        path = scripts / relative
+        orch = scripts.parent.parent / "orch/scripts"
+        shutil.copytree(ROOT / "skills/orch/scripts", orch)
+        path = (scripts if (SCRIPTS / relative).is_file() else orch) / relative
         content = path.read_text()
         self.assertEqual(content.count(old), 1, f"mutation target: {old}")
         changed = content.replace(old, new)
@@ -396,7 +398,7 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
             "session_rows": str(files[1]), "pending": {"session_rows": str(files[2])}}}))
         self.rows(box, "to-overseer", [{"id": "expired", "kind": "notice", "at": OLD}])
         args = [word for path in keeps for word in ("--keep", str(repo / path) if absolute else path)]
-        result = subprocess.run([str(scripts / "workflow-state"), "--state-dir", str(repo / "tmp"), "prune", *args],
+        result = subprocess.run([str(scripts / "../../orch/scripts/workflow-state"), "--state-dir", str(repo / "tmp"), "prune", *args],
                                 cwd=repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         judged = [ordinary, files[0], neighbor]

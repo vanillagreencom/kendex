@@ -13,6 +13,8 @@ copilot_context_flow() { # ROOT HOME COPILOT_HOME SCRIPTS [ENV=VALUE...]
     git -C "$root" config maintenance.auto false
   fi
   ln -sfn "$scripts" "$root/.agents/skills/orch/scripts"
+  mkdir -p "$root/.agents/skills/mailbox"
+  ln -sfn "$scripts/../../mailbox/scripts" "$root/.agents/skills/mailbox/scripts"
   for name in lane-mail-check lane-mail-start lane-mail-compact; do
     local source="$TEST_DIR/../../../hooks/$name.sh"
     [[ "$name" != lane-mail-check || -z "${FLOW_JUDGE:-}" ]] || source="$FLOW_JUDGE"

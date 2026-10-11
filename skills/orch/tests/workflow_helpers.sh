@@ -183,8 +183,12 @@ deep_link="$TMP_ROOT/deep-link"
 ln -s "$deep_repo/sub/deeper" "$deep_link"
 assert_eq "$("$GC" common-root "$deep_link")" "$deep_top" \
   "and resolves a symlink to a nested directory to the checkout it is inside"
-relative_gc="$TMP_ROOT/git-context-relative"
-python3 - "$GC" "$relative_gc" <<'PY_MUTATE'
+source "$TEST_DIR/lib/growth-state.sh"
+common_root_lib="$SKILL_DIR/../mailbox/scripts/lib/common-root.sh"
+relative_scripts="$(mutant_scripts common-root-relative lib/common-root.sh)"
+relative_lib="$relative_scripts/lib/common-root.sh"
+relative_gc="$relative_scripts/../../orch/scripts/git-context"
+python3 - "$common_root_lib" "$relative_lib" <<'PY_MUTATE'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -193,7 +197,7 @@ assert text.count(old) == 1
 Path(sys.argv[2]).write_text(text.replace(old, '*/.git) dirname "$git_common_dir" ;;'))
 PY_MUTATE
 chmod +x "$relative_gc"
-assert_eq "$(cmp -s "$relative_gc" "$GC" && echo same || echo differs)" "differs" \
+assert_eq "$(cmp -s "$relative_lib" "$common_root_lib" && echo same || echo differs)" "differs" \
   "control: the relative mutant really restores the unresolved answer"
 assert_eq "$("$relative_gc" common-root "$deep_repo/sub/deeper")" "../.." \
   "control: unresolved, the answer is a path against the caller's own directory"
@@ -267,18 +271,17 @@ PY_COMMON_ROOT
 
 # The existing private-copy helper keeps the mutant beside the real reader
 # and its dependencies. Removing only the fallback must break the same check.
-source "$TEST_DIR/lib/growth-state.sh"
-common_mutant="$(mutant_scripts common-root-mutant git-context)"
-mutate_file "$common_mutant/git-context" \
+common_mutant="$(mutant_scripts common-root-mutant lib/common-root.sh)"
+mutate_file "$common_mutant/lib/common-root.sh" \
   "        if [[ \"\$git_context\" == *\$'\\n'*\$'\\n'* ]]; then" \
   '        if false; then'
-assert_eq "$(cmp -s "$common_mutant/git-context" "$GC" && echo same || echo differs)" "differs" \
+assert_eq "$(cmp -s "$common_mutant/lib/common-root.sh" "$common_root_lib" && echo same || echo differs)" "differs" \
   "control: the common-root mutant removes the newline fallback"
-bash -n "$common_mutant/git-context"
+bash -n "$common_mutant/lib/common-root.sh"
 for common_round in before-1 before-2 before-3 before-4 before-5 control \
                     after-1 after-2 after-3 after-4 after-5; do
   common_scripts="$SKILL_DIR/scripts"
-  [[ "$common_round" != control ]] || common_scripts="$common_mutant"
+  [[ "$common_round" != control ]] || common_scripts="$common_mutant/../../orch/scripts"
   common_rc=0
   common_root_paths "$common_scripts" "$TMP_ROOT/common-root-$common_round" \
     >"$TMP_ROOT/common-root-$common_round.log" 2>&1 || common_rc=$?

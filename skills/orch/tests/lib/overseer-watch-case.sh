@@ -243,7 +243,7 @@ run() { # ENV=VAL... -- ARGS...
 }
 
 # The real lane-mail, which the stubs below hand every call to.
-REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+REAL_LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 # A lane-mail that lands a notice in KEN-5's mailbox on its NOTE_AT-th drain,
 # so a run under an unchanging overseer screen ends on that lane's news.
 cat > "$TMP_ROOT/bin/lane-mail-note-at.sh" <<'EOF'

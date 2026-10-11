@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_HOST ORCH_STATE_DIR
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-session: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-session: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-session: scratch=resolve-failed" >&2; exit 1; }
@@ -130,22 +130,23 @@ echo "=== every session send records its result and the account's credit ==="
 # STUB_STATE_UPDATE_RC on an update where that is set. Its path lands in
 # LANE_MAIL_BIN.
 credit_scripts() { # NAME [OLD NEW]
-  local dir
+  local dir orch
   dir="$(mutant_scripts "$1" lane-mail)" || exit 1
   [[ $# -lt 3 ]] || mutate_file "$dir/lane-mail" "$2" "$3"
-  rm -- "${dir:?}/lanes" "${dir:?}/workflow-state"
-  cat > "$dir/lanes" <<'EOF'
+  orch="$dir/../../orch/scripts"
+  rm -- "${orch:?}/lanes" "${orch:?}/workflow-state"
+  cat > "$orch/lanes" <<'EOF'
 #!/usr/bin/env bash
 printf 'dirs=%s argv=%s\n' "${ORCH_LANE_DIRS:-}" "$*" >> "$STUB_LANES_LOG"
 printf '%s\n' "${STUB_LANES_OUT:-[]}"
 exit "${STUB_LANES_RC:-0}"
 EOF
-  cat > "$dir/workflow-state" <<EOF
+  cat > "$orch/workflow-state" <<EOF
 #!/usr/bin/env bash
 [[ -z "\${STUB_STATE_UPDATE_RC:-}" || " \$* " != *" update "* ]] || exit "\$STUB_STATE_UPDATE_RC"
 exec "$REPO_ROOT/skills/orch/scripts/workflow-state" "\$@"
 EOF
-  chmod +x "$dir/lanes" "$dir/workflow-state"
+  chmod +x "$orch/lanes" "$orch/workflow-state"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
 ACCOUNT="$TMP_ROOT/.eclaude"

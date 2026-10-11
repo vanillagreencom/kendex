@@ -45,7 +45,7 @@ class SshHostTests(unittest.TestCase):
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.git_env = {key: self.env[key] for key in ("HOME", "PATH", "REAL_GIT")}
         self.account = self.root / "local account"
-        self.script = self.root / "lane-host-ssh"
+        self.script = self.root / "orch/scripts/lane-host-ssh"
         # The neutral fixture is captured before any test changes it. Only bytes
         # and metadata are shared; writable files and Git objects belong to cases.
         if type(self)._base_inputs is None:
@@ -152,6 +152,7 @@ esac
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         # append takes its lock through the clone's own installed lock library.
         self.copy_tree(PACKAGE / "scripts/lib", scripts / "lib")
+        self.copy_tree(PACKAGE.parent / "mailbox/scripts", self.source / ".agents/skills/mailbox/scripts")
         self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
 exec git "$@"
 ''')
@@ -239,6 +240,7 @@ exec git "$@"
         if path.name == "lane-host-ssh":
             library = path.parent / "lib"
             self.copy_tree(PACKAGE / "scripts/lib", library, dirs_exist_ok=True)
+            self.copy_tree(PACKAGE.parent / "mailbox/scripts", path.parent.parent.parent / "mailbox/scripts", dirs_exist_ok=True)
             for name in ("orch-env", "workflow-state", "git-context"):
                 self.copy_file(PACKAGE / "scripts" / name, path.parent / name)
 
@@ -274,7 +276,7 @@ exec git "$@"
         self.assertFalse((peer.source / "case-only").exists())
         self.assertEqual(subprocess.check_output([self.env["REAL_GIT"], "-C", str(peer.source), "rev-parse", "HEAD"]), peer_head)
         paths = (".git/config", "source/.git/config", "source/kendex.toml", "local account/auth.json",
-                 "inventory.json", "bin/ssh", "lane-host-ssh", "lib/lane-gitfile.sh")
+                 "inventory.json", "bin/ssh", "orch/scripts/lane-host-ssh", "orch/scripts/lib/lane-gitfile.sh")
         expected = {relative: (peer.root / relative).read_bytes() for relative in paths}
         for relative in paths:
             with self.subTest(path=relative):
@@ -292,7 +294,7 @@ exec git "$@"
             if relative != "inventory.json":
                 self.assertEqual((later.root / relative).read_bytes(), expected[relative])
 
-        controls = [self.root / name / "lane-host-ssh" for name in ("first-control", "second-control")]
+        controls = [self.root / name / "orch/scripts/lane-host-ssh" for name in ("first-control", "second-control")]
         for path in controls:
             self.executable(path, provider)
         controls[0].write_text("private mutant\n")
@@ -301,7 +303,7 @@ exec git "$@"
         original = libraries[1].read_bytes()
         libraries[0].write_bytes(b"private library mutation\n")
         self.assertEqual(libraries[1].read_bytes(), original)
-        self.assertEqual((peer.root / "lib/lane-gitfile.sh").read_bytes(), original)
+        self.assertEqual((peer.root / "orch/scripts/lib/lane-gitfile.sh").read_bytes(), original)
         # A shared inode is the defect this isolation assertion must detect.
         libraries[0].write_bytes(original)
         libraries[1].unlink()
@@ -390,7 +392,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         rule = '"ControlMaster=auto"'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(rule, '"ControlMaster=no"'))
             log, _, _ = self.connection_reuse()
         self.assertEqual(log.read_text().splitlines(), ["exchange", "exchange"])
@@ -682,7 +684,7 @@ rc=0
         export = 'prefix = "exec env " + shlex.quote("ORCH_STATE_DIR=" + path + "/tmp") + " " + prefix'
         self.assertEqual(original.count(export), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(export, 'prefix = "exec " + prefix'))
             fields, path, run = self.hosted_state_launch()
             with self.assertRaises(AssertionError):
@@ -760,7 +762,7 @@ rc=0
         rule = 'state="$2/tmp/workflow-state-$3.json"'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(rule, 'state="$1/tmp/workflow-state-$3.json"'))
             closed = self.call("close", "--item", "TEST-1")
             self.assertEqual(closed.returncode, 0, closed.stderr)
@@ -850,7 +852,7 @@ rc=0
     def test_put_keeps_the_target_when_a_transfer_is_cut(self):
         """A put whose stream dies mid-feed leaves the previous bytes standing."""
         self.assertEqual(self.create().returncode, 0)
-        target = self.root / "mailbox"
+        target = self.root / "mailbox-file"
         self.assertEqual(self.call("put", "--item", "TEST-1", "--", str(target),
                                    data=b"first answer\n").returncode, 0)
         longer = b"a much longer second answer\n"
@@ -858,7 +860,7 @@ rc=0
         self.assertEqual(cut.returncode, 1, cut.stderr)
         self.assertIn(f"lane-host-ssh: put-short expected={len(longer)} arrived=5".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b"first answer\n")
-        self.assertEqual(list(target.parent.glob("mailbox.kendex-put.*")), [])
+        self.assertEqual(list(target.parent.glob("mailbox-file.kendex-put.*")), [])
         # put's control: a provider that renames whatever arrived. The staged
         # write and the rename stay, so only the count check is removed.
         original = self.script.read_text()
@@ -974,7 +976,7 @@ rc=0
     def test_append_compares_sender_stamps_on_a_lagging_host(self):
         """Sequential UTC envelopes repeat even when the provider clock lags."""
         self.assertEqual(self.create().returncode, 0)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         original = library.read_text()
         self.addCleanup(library.write_text, original)
         rule = '| ($candidate.at | at_epoch) as $now'
@@ -1014,14 +1016,15 @@ rc=0
         target.write_bytes(b"")
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=(json.dumps(envelope) + "\n").encode())
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={library} repeat-check=skipped\n".encode())
+        remote_library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
 
     def test_append_names_its_failure_in_a_word(self):
         """The library's number is decoded where it is printed, not passed on."""
         self.assertEqual(self.create().returncode, 0)
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
         target.parent.mkdir(parents=True)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         original = library.read_text()
         opened = 'exec 9>>"$1" || return 2'
         self.assertEqual(original.count(opened), 1)
@@ -1109,7 +1112,7 @@ exec "$REAL_CAT" "$@"
     def test_append_delivers_to_an_old_but_present_library(self):
         """An existing host clone can retain append without the repeat guard."""
         self.assertEqual(self.create().returncode, 0)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         old = library.read_text()
         # Model the old library: it accepts surplus arguments without judging them.
         for rule, replacement in (("mailbox_duplicate_id()", "legacy_duplicate_id()"),
@@ -1123,7 +1126,8 @@ exec "$REAL_CAT" "$@"
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"nowhere"}\n')
-        self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={library} repeat-check=skipped\n".encode())
+        remote_library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
         self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
         # Restoring the refusal loses delivery to the old host clone.
         original = self.script.read_text()
@@ -1207,7 +1211,7 @@ sys.exit(subprocess.run([os.environ["REAL_BASH"], "-c", words[-1]],
                 self.assertEqual(original.count(rule), 1)
                 changed = original.replace(rule, replacement)
                 self.assertNotEqual(changed, original)
-                self.script = Path(control) / "lane-host-ssh"
+                self.script = Path(control) / "orch/scripts/lane-host-ssh"
                 self.executable(self.script, changed)
                 with self.assertRaises(AssertionError):
                     assert_reply(target, failure)
@@ -1313,7 +1317,7 @@ touch node_modules/dep
         self.assertEqual(original.count(fragment), 1)
         # Mutate only a disposable executable outside the worktree.
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, 'if false && { test -e "$path" || test -L "$path"; }; then'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1491,7 +1495,7 @@ touch node_modules/dep
         fragment = '      target=$(readlink -- "$path") || return 1'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, '      return 0'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1502,7 +1506,7 @@ touch node_modules/dep
         fragment = 'if test "$copy_root/$copy" -ef "$path"; then'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, 'if false; then'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1513,7 +1517,7 @@ touch node_modules/dep
         fragment = '    copy=$(normalize_worktree_config_path WORKTREE_COPIES "$entry") || exit 1'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, '    copy="$entry"'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1578,7 +1582,7 @@ touch node_modules/dep
         fragment = 'load_copy_support || exit 1'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, ':'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1609,7 +1613,7 @@ touch node_modules/dep
         fragment = '    copy=$(normalize_worktree_config_path WORKTREE_COPIES "$entry") || exit 1'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, '    copy="$entry"'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1647,7 +1651,7 @@ touch node_modules/dep
         fragment = 'if test "$contained" != true; then'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, 'if false; then'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1682,7 +1686,7 @@ touch node_modules/dep
                 fragment = f"cause={cause}\\\\n' \"$path\" >&2\n{indent}return 1"
                 self.assertEqual(original.count(fragment), 1)
                 with tempfile.TemporaryDirectory() as control:
-                    mutant = Path(control) / "lane-host-ssh"
+                    mutant = Path(control) / "orch/scripts/lane-host-ssh"
                     self.executable(mutant, original.replace(fragment, fragment.replace("return 1", "return 0")))
                     self.assertNotEqual(mutant.read_text(), original)
                     script = self.script
@@ -1705,7 +1709,7 @@ touch node_modules/dep
         fragment = 'if test -e "$path" || test -L "$path"; then'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment,
                 'if [[ "$path" == */.env.local ]] && { test -e "$path" || test -L "$path"; }; then'))
             self.assertNotEqual(self.script.read_text(), original)
@@ -1719,7 +1723,7 @@ touch node_modules/dep
         fragment = '  roots+=("$tree")'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, ': # ' + fragment.strip()))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1733,7 +1737,7 @@ touch node_modules/dep
         fragment = '  private_names+=("${selected[1]}")'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, ': # ' + fragment.strip()))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -1787,7 +1791,7 @@ touch node_modules/dep
      ! kendex_project_env_supports selected-private-path; then'''
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(fragment, 'if false; then'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -2877,7 +2881,7 @@ sys.exit(255 if closed.is_set() else code)
         rule = '    if "session" in row:\n        result = row["session"].request(script, args, data or b"")'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(rule, rule.replace('if "session" in row:', 'if False:')))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
@@ -2943,7 +2947,7 @@ fi'''))
         rule = 'return self.process.wait(timeout=5)'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(rule, 'return self.process.wait()'))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(subprocess.TimeoutExpired):
@@ -2958,7 +2962,7 @@ fi'''))
             self.assertEqual(original.count(rule), 1)
             for control in (False, True):
                 with self.subTest(field=field, control=control), tempfile.TemporaryDirectory() as scratch:
-                    script = Path(scratch) / "lane-host-ssh"
+                    script = Path(scratch) / "orch/scripts/lane-host-ssh"
                     self.executable(script, original.replace(rule, "  :") if control else original)
                     module = runpy.run_path(str(script))
                     with mock.patch.dict(os.environ, self.env, clear=True):
@@ -3009,7 +3013,7 @@ fi'''))
         rule = 'if args.verb in ("create", "status", "stop", "close"):'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "lane-host-ssh"
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
             self.executable(self.script, original.replace(rule, "if False:"))
             self.assertNotEqual(self.script.read_text(), original)
             results = self.creation_overlap(expect_busy=False)

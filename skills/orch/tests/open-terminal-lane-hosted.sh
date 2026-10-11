@@ -330,7 +330,7 @@ CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disal
 # relaunch, the continuation line and the start brief each closing on the
 # unattended words.
 hosted_resume() { printf "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=%s/srv/lane%s && export KENDEX_USER_EMAIL=%s%s && { claude %s --continue %s%s %s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s %s%s; }'" "$Q" "$Q" "$Q" "$Q" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$UNATTENDED_TEXT" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$UNATTENDED_TEXT" "$Q"; }
-hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every envelope it prints, answers and directives alike, as its text directs, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
+hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item %s first and act on every envelope it prints, answers and directives alike, as its text directs, then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line KEN-41)"
 run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch KEN-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume KEN-41 KEN-41 '/orch start KEN-41')")" \
@@ -339,7 +339,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
 assert_eq "$(cd_guard_result 0)" 'rc=0 cd=attempted harness=started' \
   'the hosted resume group starts its harness after a successful cd'
 assert_failed_cd "$(cd_guard_result 1)"
-HOSTED_LINE='Resume the orch workflow for KEN-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item KEN-48 first and act on every envelope it prints, answers and directives alike, as its text directs.'
+HOSTED_LINE='Resume the orch workflow for KEN-48 from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-48 first and act on every envelope it prints, answers and directives alike, as its text directs.'
 PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
 run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r --relaunch KEN-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1

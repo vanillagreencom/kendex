@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 LANE_HOST="$SCRIPT_DIR/lane-host"
-LANE_MAIL="$SCRIPT_DIR/lane-mail"
+LANE_MAIL="$SCRIPT_DIR/../../mailbox/scripts/lane-mail"
 DEV_VALIDATE_RUN="$SCRIPT_DIR/dev-validate-run"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"

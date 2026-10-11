@@ -12,7 +12,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
 
@@ -493,6 +493,7 @@ git -C "$CASE_REPO_ROOT" -c user.email=t@t -c user.name=t commit -q --allow-empt
 git -C "$CASE_REPO_ROOT" worktree add -q --detach "$TMP_ROOT/watch-worktree"
 mkdir -p "$TMP_ROOT/watch-worktree/.agents/skills"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/watch-worktree/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/watch-worktree/.agents/skills/mailbox"
 worktree_fleet() {
   local cwd out
   mail_reset overseer
@@ -607,6 +608,7 @@ SHARED_BETA="$TMP_ROOT/shared-beta"
 for root in "$SHARED_ALPHA" "$SHARED_BETA"; do
   mkdir -p "$root/.agents/skills"
   ln -s "$REPO_ROOT/skills/orch" "$root/.agents/skills/orch"
+  ln -sfn "$REPO_ROOT/skills/mailbox" "$root/.agents/skills/mailbox"
   git -C "$root" init -q
 done
 shared_fleet() {
@@ -2077,7 +2079,7 @@ real_tracker_close() { # BODY CLI
   (cd "$REAL_TRACKER_ROOT" && env -i HOME="$REAL_TRACKER_ROOT" PATH="$REAL_TRACKER_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=fixture-token LINEAR_TEAM= KENDEX_ENV_FILE=absent.env \
     CLOSE_ROOT="$REAL_TRACKER_ROOT" CLOSE_CLI="$cli" \
-    CLOSE_LIB="$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh" \
+    CLOSE_LIB="$REPO_ROOT/skills/mailbox/scripts/lib/mailbox-append.sh" \
     CLOSE_STATE="$REAL_TRACKER_ROOT/issue.json" CLOSE_LOG="$REAL_TRACKER_ROOT/payloads.jsonl" \
     bash "$REAL_TRACKER_ROOT/close-driver") >"$REAL_TRACKER_ROOT/close.out" 2>"$REAL_TRACKER_ROOT/close.err" || REAL_CLOSE_RC=$?
 }

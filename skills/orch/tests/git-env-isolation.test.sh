@@ -73,6 +73,8 @@ assert_eq "$(fingerprint "$sandbox")" \
 mutant="$TMP/mutant/skills/orch"
 mkdir -p "$mutant/tests/lib"
 ln -s "$REPO_ROOT/skills/orch/scripts" "$mutant/scripts"
+mkdir -p "$mutant/../mailbox"
+ln -s "$REPO_ROOT/skills/mailbox/scripts" "$mutant/../mailbox/scripts"
 ln -s "$TEST_DIR/$SUBJECT" "$mutant/tests/$SUBJECT"
 for lib in "$TEST_DIR"/lib/*; do
   [[ "${lib##*/}" == git-env.sh ]] || ln -s "$lib" "$mutant/tests/lib/${lib##*/}"
@@ -110,7 +112,7 @@ run_prune_suite() { # SUITE ; no git redirects, scratch inside a worktree
 
 prune_status=0
 run_prune_suite "$TEST_DIR/workflow-state-prune.sh" || prune_status=$?
-assert_eq "$prune_status" "0" "the prune suite passes with scratch inside a linked worktree"
+assert_eq "$prune_status" "0" "the prune suite passes with scratch inside a linked worktree" "$TMP/prune.out"
 if [[ ! -e "$shared_state" ]]; then
   pass "scratch fixtures leave the main checkout's fleet state absent"
 else

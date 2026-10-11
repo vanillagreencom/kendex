@@ -120,7 +120,7 @@ OPEN_TERMINAL="$SHIPPED"
 owner_email="$(cd "$SANDBOX" && env -i HOME="$SANDBOX" PATH="$PATH" \
   KENDEX_USER_EMAIL=owner@example.com ORCH_OWNER_EMAIL= \
   ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=CC \
-  "$BASH" -c 'source "$1/lib/mailbox-append.sh"; owner_tracker_settings "$1"; printf "%s" "$OWNER_TRACKER_EMAIL"' \
+  "$BASH" -c 'source "$1/../../mailbox/scripts/lib/mailbox-append.sh"; ROOT="$PWD"; owner_tracker_settings "$1/../../mailbox/scripts"; printf "%s" "$OWNER_TRACKER_EMAIL"' \
   owner-settings "$SCRIPTS_DIR")" || exit 1
 assert_eq "$owner_email" owner@example.com "the overseer still resolves its owner email"
 

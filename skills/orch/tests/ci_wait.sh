@@ -30,6 +30,7 @@ source "$TEST_DIR/lib/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
@@ -890,6 +891,7 @@ for row in "${control_rows[@]}"; do
   assert_eq "$control_rc" 1 "the pending assertion rejects the $label control"
   rm "$TMP_ROOT/repo/.agents/skills/orch"
   ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+  ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 done
 
 echo "=== controls reject progress carry-over and false Actions conclusions ==="
@@ -962,6 +964,7 @@ for row in "${control_rows[@]}"; do
   assert_eq "$control_rc" 1 "the contract assertion rejects the $label control" "$TMP_ROOT/control/assertion.log"
   rm "$TMP_ROOT/repo/.agents/skills/orch"
   ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+  ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 done
 
 echo "=== a settled failure attributable only to superseded runs is correlated against the head's Actions runs ==="

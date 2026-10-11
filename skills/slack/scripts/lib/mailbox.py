@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from refusals import Refusal, keyed
 from store import parse_at
 
-LANE_MAIL = Path(".agents/skills/orch/scripts/lane-mail")
+LANE_MAIL = Path(".agents/skills/mailbox/scripts/lane-mail")
 LANE_MAIL_TIMEOUT_SECONDS = 30
 LANE_MAIL_CLEANUP_SECONDS = 5
 FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution")}

@@ -890,7 +890,7 @@ cat > "$PEER" <<'STUB'
 # argv: <credentials path> <held marker path>
 set -uo pipefail
 # shellcheck source=/dev/null
-source "$SCRIPTS_DIR/lib/file-lock.sh"
+source "$SCRIPTS_DIR/../../mailbox/scripts/lib/file-lock.sh"
 creds="$1"; held="$2"; lock="$(dirname "$creds")/.lanes-refresh.lock"
 exec 9>"$lock" || exit 1
 orch_take_lock 9 "$lock" 30 || exit 1

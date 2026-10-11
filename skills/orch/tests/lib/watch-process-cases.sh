@@ -44,7 +44,7 @@ mail_cost() { # NAME LANES WATCH READER
 }
 
 WATCH="$REPO_ROOT/skills/orch/scripts/oversee-watch"
-READER="$REPO_ROOT/skills/orch/scripts/lane-mail"
+READER="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 previous=0; previous_lanes=0
 for lanes in 2 4 8; do
   mail_cost "mail-$lanes" "$lanes" "$WATCH" "$READER"

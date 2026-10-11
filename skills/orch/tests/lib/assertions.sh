@@ -125,7 +125,7 @@ assert_file_not_contains() {
 # before releasing it leaves no process spinning behind the suite.
 hold_lock() { # FILE NAME
   local waited=0
-  . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
+  . "$REPO_ROOT/skills/mailbox/scripts/lib/file-lock.sh"
   exec 9>>"$1"
   orch_take_lock 9 "$1" 30 || return 1
   : > "$TMP_ROOT/$2.taken"

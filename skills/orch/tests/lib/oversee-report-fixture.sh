@@ -120,7 +120,7 @@ EOF
 # --attach PATH --file PATH` is the report notice: its argv is appended to
 # mail.calls, and notice-fail makes it fail. A claude-cloud lane's call is
 # the real lane-mail's, which refuses its mailbox read as host-unreachable.
-export OVERSEE_REPORT_REAL_LANE_MAIL="$TEST_DIR/../scripts/lane-mail"
+export OVERSEE_REPORT_REAL_LANE_MAIL="$TEST_DIR/../../mailbox/scripts/lane-mail"
 cat > "$TMP_ROOT/bin/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 [[ "${ORCH_LANE_HOST:-}" != claude-cloud ]] || exec "$OVERSEE_REPORT_REAL_LANE_MAIL" "$@"

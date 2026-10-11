@@ -50,7 +50,7 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -linear -linear-controls-a -linear-controls-b -worktree -rest -slack -node -pi-claude-bridge"
+NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -linear -linear-controls-a -linear-controls-b -worktree -rest -slack -mailbox -node -pi-claude-bridge"
 ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-watch +orch-oversee-succeed +orch-dev +orch-state +orch-rest"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
@@ -122,7 +122,7 @@ micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools 
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
-micro|false|skills/orch/scripts/lane-mail|$SHARD_CODE|+guards-tools
+micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox $ORCH_ALL +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b
 micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b +guards-tools
 micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls-a -linear-controls-b +guards-commit
@@ -596,6 +596,7 @@ s/0) want_shard guards-tools-tail ;;/0) ;;/@docs/cite.md
 s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail ;;/@hooks/block-bare-cd.sh
 s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail node ;;/@hooks/block-bare-cd.sh
 s/skills\/commit-guards) want_shard guards-commit guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
+s/skills\/mailbox) want_shard mailbox ;;/skills\/mailbox) : ;;/@skills/mailbox/tests/alone.sh
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x

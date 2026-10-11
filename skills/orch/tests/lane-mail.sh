@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_ARCHIVE_ROOT
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 TMP_ROOT="$(mktemp -d)" || { echo "lane-mail: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -42,6 +42,8 @@ new_lane() { # NAME
     mkdir -p "$LANE"; git -C "$LANE" init -q; git -C "$LANE" checkout -q -b ken-1
   }
   ln -sfn "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
+  mkdir -p "$LANE/.agents/skills/mailbox"
+  ln -sfn "$REPO_ROOT/skills/mailbox/scripts" "$LANE/.agents/skills/mailbox/scripts"
   mkdir -p "$LANE/tmp"
   printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
 }
@@ -1282,8 +1284,8 @@ rm -f -- "${TMP_ROOT:?}/libcode.taken" "${TMP_ROOT:?}/libcode.release"
 hold_lock "$LIB_BOX" libcode &
 LIB_RC=0
 if await_marker "$TMP_ROOT/libcode.taken"; then
-  ( . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
-    . "$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh"
+  ( . "$REPO_ROOT/skills/mailbox/scripts/lib/file-lock.sh"
+    . "$REPO_ROOT/skills/mailbox/scripts/lib/mailbox-append.sh"
     mailbox_append_locked "$LIB_BOX" 1 <<<'{"id":"blocked"}' ) 2>/dev/null || LIB_RC=$?
 else
   LIB_RC=holder-never-took-the-lock
@@ -1296,8 +1298,8 @@ assert_eq "$LIB_RC=$(awk 'END { print NR + 0 }' < "$LIB_BOX")" "3=0" \
 mkdir -p -- "$LANE/sealed"
 chmod 500 "$LANE/sealed"
 LIB_RC=0
-( . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
-  . "$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh"
+( . "$REPO_ROOT/skills/mailbox/scripts/lib/file-lock.sh"
+  . "$REPO_ROOT/skills/mailbox/scripts/lib/mailbox-append.sh"
   mailbox_append_locked "$LANE/sealed/box.jsonl" 1 <<<'{"id":"nowhere"}' ) 2>/dev/null || LIB_RC=$?
 chmod 700 "$LANE/sealed"
 assert_eq "$LIB_RC" "2" "the library reports 2 for a mailbox it could not open"

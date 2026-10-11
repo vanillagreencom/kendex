@@ -13,10 +13,10 @@ for variant in normal no-timeout; do
   HUNG="$(sk_new_root "timeout-$variant")"
   sk_bind "$HUNG"
   sk_poll "$HUNG"
-  rm -- "${HUNG:?}/.agents/skills/orch/scripts"
-  mkdir -p "$HUNG/.agents/skills/orch/scripts"
-  printf '#!/usr/bin/env python3\nimport time\ntime.sleep(31)\n' > "$HUNG/.agents/skills/orch/scripts/lane-mail"
-  chmod +x "$HUNG/.agents/skills/orch/scripts/lane-mail"
+  rm -- "${HUNG:?}/.agents/skills/mailbox/scripts"
+  mkdir -p "$HUNG/.agents/skills/mailbox/scripts"
+  printf '#!/usr/bin/env python3\nimport time\ntime.sleep(31)\n' > "$HUNG/.agents/skills/mailbox/scripts/lane-mail"
+  chmod +x "$HUNG/.agents/skills/mailbox/scripts/lane-mail"
   if [ "$variant" = no-timeout ]; then
     sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS\)' 'timeout=None)'
   fi
@@ -77,7 +77,7 @@ root, jq, mail = pathlib.Path(sys.argv[1]), shlex.quote(sys.argv[2]), shlex.quot
 fault = root / "tmp/fault-bin/jq"
 fault.write_text('#!/usr/bin/env bash\nset -euo pipefail\nfor arg in "$@"; do\ncase "$arg" in\n*\'select(overseer_mail_class == "close"\'*) printf "jq-fault=closure\\n" >&2; exit 5 ;;\nesac\ndone\nexec ' + jq + ' "$@"\n')
 fault.chmod(0o755)
-scripts = root / ".agents/skills/orch/scripts"
+scripts = root / ".agents/skills/mailbox/scripts"
 scripts.unlink()
 scripts.mkdir()
 entry = scripts / "lane-mail"
@@ -177,10 +177,10 @@ sk_bin_reset
 BROKEN="$(sk_new_root broken-events)"
 sk_bind "$BROKEN"
 sk_poll "$BROKEN"
-rm -- "$BROKEN/.agents/skills/orch/scripts"
-mkdir -p "$BROKEN/.agents/skills/orch/scripts"
-printf '#!/usr/bin/env bash\nprintf "\\377\\n"\n' > "$BROKEN/.agents/skills/orch/scripts/lane-mail"
-chmod +x "$BROKEN/.agents/skills/orch/scripts/lane-mail"
+rm -- "$BROKEN/.agents/skills/mailbox/scripts"
+mkdir -p "$BROKEN/.agents/skills/mailbox/scripts"
+printf '#!/usr/bin/env bash\nprintf "\\377\\n"\n' > "$BROKEN/.agents/skills/mailbox/scripts/lane-mail"
+chmod +x "$BROKEN/.agents/skills/mailbox/scripts/lane-mail"
 rm -- "$BROKEN/tmp/slack/status.json"
 mkdir "$BROKEN/tmp/slack/status.json"
 sk_lm "$HEALTHY" notice --item overseer --to owner --file "$(sk_text root-error 'Healthy after root error.')" >/dev/null

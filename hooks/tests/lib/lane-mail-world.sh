@@ -17,7 +17,7 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd -P)"
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 # Canonical from the start: the hook resolves its own directory with pwd -P,
 # and on a host whose temp root is a symlink — every macOS one, /var pointing
 # at /private/var — a path this suite composed would name the link where the
@@ -109,7 +109,10 @@ new_worktree_lane() { # NAME BRANCH
 lay_out_lane() { # BRANCH
   mkdir -p "$LANE/.agents/skills/orch" "$LANE/.claude/hooks" "$LANE/.claude/skills"
   ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
+  mkdir -p "$LANE/.agents/skills/mailbox"
+  ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts" "$LANE/.agents/skills/mailbox/scripts"
   ln -s -f -n ../../.agents/skills/orch "$LANE/.claude/skills/orch"
+  ln -s -f -n ../../.agents/skills/mailbox "$LANE/.claude/skills/mailbox"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
   mark_lane "$1"
 }
@@ -288,6 +291,10 @@ append_transcript() { # PATH TOKENS
 # its own reader plants the whole neighbourhood the way an install has it. The
 # reader is the caller's to plant, and SKIP is the one script a case holes.
 plant_siblings() { # SCRIPTS_DIR [SKIP]
+  local mailbox="${1%/orch/scripts}/mailbox/scripts"
+  mkdir -p "$mailbox"
+  [ -e "$mailbox/lib" ] || ln -s "$REPO_ROOT/skills/mailbox/scripts/lib" "$mailbox/lib"
+  [ -e "$mailbox/lane-mail" ] || ln -s "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$mailbox/lane-mail"
   local entry name
   for entry in "$REPO_ROOT/skills/orch/scripts"/*; do
     name="${entry##*/}"
@@ -305,7 +312,10 @@ plant_install() { # [SKIP]
   # planted, so a case can plant twice.
   rm -rf -- "${LANE:?}/.claude/skills/orch"
   mkdir -p "$LANE/.claude/skills/orch/scripts"
-  ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$LANE/.claude/skills/orch/scripts/lane-mail"
+  rm -rf -- "${LANE:?}/.claude/skills/mailbox"
+  mkdir -p "$LANE/.claude/skills/mailbox/scripts"
+  ln -s "$REPO_ROOT/skills/mailbox/scripts/lib" "$LANE/.claude/skills/mailbox/scripts/lib"
+  ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$LANE/.claude/skills/mailbox/scripts/lane-mail"
   plant_siblings "$LANE/.claude/skills/orch/scripts" "${1:-}"
 }
 
@@ -316,7 +326,6 @@ hole_install() { # SKIP
   local dir="$LANE/.agents/skills/orch/scripts" entry
   rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
   mkdir -p "$dir"
-  ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$dir/lane-mail"
   case "$1" in
     lib/*)
       plant_siblings "$dir" lib
@@ -333,20 +342,21 @@ hole_install() { # SKIP
 # The repository's own reader: it touches MARKER, so a run of it is visible.
 plant_reader() { # MARKER
   rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+  rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
   mkdir -p "$LANE/.agents/skills/orch/scripts"
-  printf '#!/bin/sh\ntouch %s\n' "$1" > "$LANE/.agents/skills/orch/scripts/lane-mail"
-  chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
+  mkdir -p "$LANE/.agents/skills/mailbox/scripts"
+  printf '#!/bin/sh\ntouch %s\n' "$1" > "$LANE/.agents/skills/mailbox/scripts/lane-mail"
+  chmod +x "$LANE/.agents/skills/mailbox/scripts/lane-mail"
   plant_siblings "$LANE/.agents/skills/orch/scripts"
 }
 
 # The real reader behind one planted shell line that runs first, so a case can
 # break one verb and keep every other one: the line decides on "$1".
 wrap_reader() { # LINE
-  rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
-  mkdir -p "$LANE/.agents/skills/orch/scripts"
-  plant_siblings "$LANE/.agents/skills/orch/scripts"
-  printf '#!/usr/bin/env bash\n%s\nexec %q "$@"\n' "$1" "$LANE_MAIL" > "$LANE/.agents/skills/orch/scripts/lane-mail"
-  chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
+  rm -f -- "${LANE:?}/.agents/skills/mailbox/scripts"
+  mkdir -p "$LANE/.agents/skills/mailbox/scripts"
+  printf '#!/usr/bin/env bash\n%s\nexec %q "$@"\n' "$1" "$LANE_MAIL" > "$LANE/.agents/skills/mailbox/scripts/lane-mail"
+  chmod +x "$LANE/.agents/skills/mailbox/scripts/lane-mail"
 }
 
 send() { # ITEM TEXT [--re MSGID]
@@ -574,6 +584,7 @@ wake_overseer() { # NAME HARNESS [HOOK]
   if [ "$dir" != .claude ]; then
     mkdir -p "$LANE/$dir/skills"
     ln -s "$LANE/.claude/skills/orch" "$LANE/$dir/skills/orch"
+    ln -s "$LANE/.claude/skills/mailbox" "$LANE/$dir/skills/mailbox"
   fi
   if [ "$2" = pi ]; then dir="$dir/kendex"; fi
   install_hook "${3:-$HOOK}" "$LANE/$dir/hooks/lane-mail-check.sh"

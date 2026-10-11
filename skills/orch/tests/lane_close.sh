@@ -242,7 +242,8 @@ printf 'kept=/fleet/archive/item.tgz\n'
 EOF
 chmod +x "$SCRIPTS/lane-host"
 
-cat >"$SCRIPTS/lane-mail" <<'EOF'
+mkdir -p "$FIXTURE/skills/mailbox/scripts"
+cat >"$FIXTURE/skills/mailbox/scripts/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s host=%s\n' "$*" "${ORCH_LANE_HOST-unset}" >>"$LANE_CLOSE_MAIL_CALLS"
@@ -252,7 +253,7 @@ if [[ "${LANE_CLOSE_MAIL_STATUS:-0}" -ne 0 ]]; then
 fi
 [[ -z "${LANE_CLOSE_MAIL_PENDING:-}" ]] || printf '%s\n' "$LANE_CLOSE_MAIL_PENDING"
 EOF
-chmod +x "$SCRIPTS/lane-mail"
+chmod +x "$FIXTURE/skills/mailbox/scripts/lane-mail"
 
 # One unanswered ask, minted the way lane-mail mints one: the id opens with the
 # epoch second the ask was made, which is where lane-close reads the wait from.
@@ -552,7 +553,8 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   local name="$1" old="$2" new="$3" dir sibling
   dir="$TMP_ROOT/libmut-$name"
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
-  for sibling in lane-close workflow-state lane-host lane-mail dev-validate-run lanes lib/date-ladder.sh lib/usage-reset.sh; do
+  ln -s "$FIXTURE/skills/mailbox" "$dir/skills/mailbox"
+  for sibling in lane-close workflow-state lane-host dev-validate-run lanes lib/date-ladder.sh lib/usage-reset.sh; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
@@ -2367,7 +2369,8 @@ echo '=== a cloud close deletes the item branch its default branch contains ==='
 real_worktree_tree() { # NAME [LANE_CLOSE] — prints the tree's lane-close
   local dir="$TMP_ROOT/realwt-$1" sibling entry
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
-  for sibling in workflow-state lane-host lane-mail dev-validate-run lanes; do
+  ln -s "$FIXTURE/skills/mailbox" "$dir/skills/mailbox"
+  for sibling in workflow-state lane-host dev-validate-run lanes; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   for entry in "$SCRIPTS"/lib/*; do

@@ -25,6 +25,7 @@ source "$TEST_DIR/lib/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/runs"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/repo/.agents/skills/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/repo/.agents/skills/review-gate"
 git -C "$TMP_ROOT/repo" init -q
@@ -913,6 +914,7 @@ echo "=== must-fail controls: each resolution rule and the route's two orderings
 MUTANT_REPO="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_REPO/.agents/skills/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_REPO/.agents/skills/orch/scripts"
+ln -s "$REPO_ROOT/skills/mailbox" "$MUTANT_REPO/.agents/skills/mailbox"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_REPO/.agents/skills/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$MUTANT_REPO/.agents/skills/review-gate"
 git -C "$MUTANT_REPO" init -q

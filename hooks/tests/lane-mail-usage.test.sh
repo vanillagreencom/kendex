@@ -212,6 +212,8 @@ rm -rf -- "${LANE:?}/.github/hooks"
 GLOBAL_HOME="$TMP_ROOT/copilot-home"
 mkdir -p "$GLOBAL_HOME/skills/orch"
 ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$GLOBAL_HOME/skills/orch/scripts"
+  mkdir -p "$GLOBAL_HOME/skills/mailbox"
+ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts" "$GLOBAL_HOME/skills/mailbox/scripts"
 install_copilot_hooks "$GLOBAL_HOME/hooks"
 JUDGE="$GLOBAL_HOME/hooks/lane-mail-check.sh"
 usage 150000 272000

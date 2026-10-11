@@ -22,6 +22,7 @@ cp -R "$SK_ROOT/skills/slack/tests" "$MUTANT/skills/slack/tests"
 cp -R "$SK_ROOT/skills/slack/scripts" "$MUTANT/skills/slack/scripts"
 cp -R "$SK_ROOT/skills/slack/systemd" "$MUTANT/skills/slack/systemd"
 ln -s "$SK_ROOT/skills/orch" "$MUTANT/skills/orch"
+ln -s "$SK_ROOT/skills/mailbox" "$MUTANT/skills/mailbox"
 python3 - "$MUTANT/skills/slack/tests/lib/harness.sh" <<'PY' || exit 1
 from pathlib import Path
 import sys

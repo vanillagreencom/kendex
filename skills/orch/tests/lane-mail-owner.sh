@@ -18,7 +18,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 # Canonical at creation: lane-mail records an attachment at its physical path,
 # so every expectation built from LANE or BOX must name the same one.
 TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-owner: scratch=mktemp-failed" >&2; exit 1; }
@@ -44,6 +44,8 @@ new_repo() { # NAME
   git -C "$LANE" config gc.auto 0
   git -C "$LANE" config maintenance.auto false
   ln -sfn "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
+  mkdir -p "$LANE/.agents/skills/mailbox"
+  ln -sfn "$REPO_ROOT/skills/mailbox/scripts" "$LANE/.agents/skills/mailbox/scripts"
   BOX="$LANE/tmp/lane-mail/overseer"
   mkdir -p "$LANE/tmp"
   printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"

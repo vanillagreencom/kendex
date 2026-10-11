@@ -77,10 +77,12 @@ killed_stop() { # NAME ITEM N [HOOK]
   [ -z "${4:-}" ] || install_hook "$4" "$LANE/.claude/hooks/lane-mail-check.sh"
   send "$2" 'Survive the budget.'
   rm -f "$LANE/.claude/skills/orch"
+  rm -f "$LANE/.claude/skills/mailbox"
   mkdir -p "$LANE/.claude/skills/orch/scripts"
+  mkdir -p "$LANE/.claude/skills/mailbox/scripts"
   printf '#!/usr/bin/env bash\nrc=0\n"%s" "$@" || rc=$?\nn=$(( $(cat "%s" 2>/dev/null || echo 0) + 1 ))\necho "$n" > "%s"\n[ "$n" -ne %s ] || kill -9 "$PPID"\nexit "$rc"\n' \
-    "$LANE_MAIL" "$calls" "$calls" "$3" > "$LANE/.claude/skills/orch/scripts/lane-mail"
-  chmod +x "$LANE/.claude/skills/orch/scripts/lane-mail"
+    "$LANE_MAIL" "$calls" "$calls" "$3" > "$LANE/.claude/skills/mailbox/scripts/lane-mail"
+  chmod +x "$LANE/.claude/skills/mailbox/scripts/lane-mail"
   plant_siblings "$LANE/.claude/skills/orch/scripts"
   KILLED=lost
   stop
@@ -158,8 +160,9 @@ fi
 new_lane noreader ken-8
 send KEN-8 'unreachable'
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
 stop
-expect 2 "lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
+expect 2 "lane-mail-check: reader=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "a mailbox with no reader beside it is refused, never passed"
 
 # The repository supplies a reader and the hook is installed nowhere near it.
@@ -171,7 +174,7 @@ MARKER="$TMP_ROOT/planted-ran"
 plant_reader "$MARKER"
 install_hook "$HOOK" "$TMP_ROOT/elsewhere/hooks/lane-mail-check.sh"
 stop
-expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
+expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "a reader the open repository supplies is refused where the hook is installed outside it"
 assert_eq "$([ -e "$MARKER" ] && echo ran || echo not-run)" "not-run" "the repository's own script never runs"
 
@@ -205,7 +208,8 @@ expect 0 "$GAP" "the turn the harness already continued is not blocked again"
 new_lane continued_reader ken-61
 send KEN-61 'unreachable'
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
-NO_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
+NO_READER="$LANE/.agents/skills/mailbox/scripts/lane-mail"
 stop
 expect 2 "lane-mail-check: reader=$NO_READER" "a fresh turn refuses a mailbox it has no reader for"
 stop_active
@@ -236,12 +240,15 @@ global_home() { # NAME — a fake home with the shared reader in it
   GLOBAL_HOME="$TMP_ROOT/$1"
   mkdir -p "$GLOBAL_HOME/.agents/skills/orch"
   ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$GLOBAL_HOME/.agents/skills/orch/scripts"
+  mkdir -p "$GLOBAL_HOME/.agents/skills/mailbox"
+  ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts" "$GLOBAL_HOME/.agents/skills/mailbox/scripts"
 }
 
 for hookdir in .claude/hooks .pi/agent/kendex/hooks; do
   new_lane "global-${hookdir%%/*}" ken-14
   send KEN-14 'Reached the global install.'
   rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+  rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
   global_home "home-${hookdir%%/*}"
   install_hook "$HOOK" "$GLOBAL_HOME/$hookdir/lane-mail-check.sh"
   stop "HOME=$GLOBAL_HOME"
@@ -254,6 +261,7 @@ done
 new_lane relocated ken-16
 send KEN-16 'Reached the relocated root.'
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
 global_home home-relocated
 install_hook "$HOOK" "$TMP_ROOT/opt/codex/hooks/lane-mail-check.sh"
 stop "HOME=$GLOBAL_HOME"
@@ -743,7 +751,7 @@ done <<<"$PI_ACCOUNT_ROWS"
 PI_INSTALL="$LANE/.pi/kendex/skills/orch/scripts"
 LANES_ASKED="$TMP_ROOT/pi-lanes-asked"
 mkdir -p "$PI_INSTALL"
-ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$PI_INSTALL/lane-mail"
+ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$PI_INSTALL/lane-mail"
 plant_siblings "$PI_INSTALL" lanes
 printf '#!/bin/sh\ntouch %s\nexit 1\n' "$LANES_ASKED" > "$PI_INSTALL/lanes"
 chmod +x "$PI_INSTALL/lanes"
@@ -1060,6 +1068,7 @@ new_pi_lane() { # NAME ITEM [HOOK]
   new_handoff_lane "$1" "$2"
   mkdir -p "$LANE/.pi/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+  ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
   install_hook "${3:-$HOOK}" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
   PI_ROWS="$LANE/tmp/lane-mail/$2/session-rows.jsonl"
 }
@@ -1338,6 +1347,7 @@ for row in codex:.codex/hooks:KEN-70 pi:.pi/kendex/hooks:KEN-71; do
   REPORT_ITEM=""
   mkdir -p "$LANE/${IDLE_DIR%/hooks}/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/${IDLE_DIR%/hooks}/skills/orch"
+  ln -s "$LANE/.claude/skills/mailbox" "$LANE/${IDLE_DIR%/hooks}/skills/mailbox"
   install_hook "$HOOK" "$LANE/$IDLE_DIR/lane-mail-check.sh"
   stop
   assert_eq "RC=$RC idle=$(grep -c "^lane-mail-check: idle=$IDLE_ITEM\$" "$ERR_FILE" || true)" "RC=2 idle=1" \
@@ -1368,6 +1378,7 @@ while IFS=: read -r WORDS_HARNESS WORDS_DIR WORDS_ITEM WORDS_SENDS WORDS_RC WORD
   REPORT_ITEM=""
   mkdir -p "$LANE/${WORDS_DIR%/hooks}/skills"
   [ -e "$LANE/${WORDS_DIR%/hooks}/skills/orch" ] || ln -s "$LANE/.claude/skills/orch" "$LANE/${WORDS_DIR%/hooks}/skills/orch"
+  [ -e "$LANE/${WORDS_DIR%/hooks}/skills/mailbox" ] || ln -s "$LANE/.claude/skills/mailbox" "$LANE/${WORDS_DIR%/hooks}/skills/mailbox"
   install_hook "$HOOK" "$LANE/$WORDS_DIR/lane-mail-check.sh"
   usage_line "$WORDS_HARNESS" 1000 | jq -c --arg w "$WORDS" '.message.content = [{type: "text", text: $w}]' \
     > "$TMP_ROOT/words.jsonl"
@@ -1713,6 +1724,7 @@ new_overseer overseer_pi
 # judge is offered where that walk looks, as the codex block below does.
 mkdir -p "$LANE/.pi/skills"
 ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 PI_TRANSCRIPT="$TMP_ROOT/pi-overseer.jsonl"
 usage_line pi 180000 > "$PI_TRANSCRIPT"
@@ -1956,6 +1968,7 @@ REALTMUX
   # hook can act on.
   mkdir -p "$LANE/.codex/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/.codex/skills/orch"
+  ln -s "$LANE/.claude/skills/mailbox" "$LANE/.codex/skills/mailbox"
   install_hook "$VARIANT_PATH" "$LANE/.codex/hooks/lane-mail-check.sh"
   # This block runs the codex hook, so the ownership gate holds the payload's
   # transcript to a codex rollout under the recorded codex launch home. The
@@ -2193,7 +2206,7 @@ assert_eq "$KILLED" "lost" "control: acknowledged before its refusal, a killed h
 
 # The containment rule's control: its refusal arm replaced by the assignment
 # it guards, so the repository's script runs and leaves its marker.
-mutant no-containment -e 's@^        return 2$@        READER="$ROOT/.agents/skills/orch/scripts/lane-mail"@'
+mutant no-containment -e 's@^        return 2$@        READER="$ROOT/.agents/skills/mailbox/scripts/lane-mail"@'
 OPEN_MUTANT="$MUTANT_PATH"
 new_lane control_open ken-13
 send KEN-13 'run me'
@@ -2207,20 +2220,21 @@ assert_eq "$([ -e "$OPEN_MARKER" ] && echo ran || echo not-run)" "ran" \
 # The shared tree is one rule offered at two sites, the walk and the home, so
 # the mutant removes both; either site alone still answers the other's world.
 mutant no-shared-tree \
-  -e 's@ "\$AT/.agents/skills/orch/scripts/lane-mail"; do$@; do@' \
+  -e 's@ "\$AT/.agents/skills/mailbox/scripts/lane-mail"; do$@; do@' \
   -e 's@^    \[ ! -x "\$CANDIDATE" \] || READER="\$CANDIDATE"$@    :@'
 SHARED_MUTANT="$MUTANT_PATH"
 new_lane control_shared ken-15
 send KEN-15 'Reached the global install.'
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
 global_home home-control
 install_hook "$SHARED_MUTANT" "$GLOBAL_HOME/.claude/hooks/lane-mail-check.sh"
 stop "HOME=$GLOBAL_HOME"
-expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
+expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "control: without the shared tree the global install finds no reader"
 install_hook "$SHARED_MUTANT" "$TMP_ROOT/opt-control/codex/hooks/lane-mail-check.sh"
 stop "HOME=$GLOBAL_HOME"
-expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
+expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "control: without it a relocated harness root finds none either"
 
 # The tool a call names, Bash unless a case names the harness question tool;
@@ -2241,7 +2255,8 @@ new_lane noreader_empty ken-60
 mkdir -p "$LANE/tmp/lane-mail/KEN-60"
 install_arms
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
-EMPTY_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
+EMPTY_READER="$LANE/.agents/skills/mailbox/scripts/lane-mail"
 stop
 expect 0 "lane-mail-check: handoff-skipped=$EMPTY_READER" \
   "a launched lane with an empty mailbox and no reader ends its turn, reporting the gap"
@@ -2257,7 +2272,7 @@ expect 0 - "the same lane's next tool call runs"
 # installed inside the repository would look for a fault that is not there.
 new_lane outside_empty ken-64
 mkdir -p "$LANE/tmp/lane-mail/KEN-64"
-OUTSIDE_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+OUTSIDE_READER="$LANE/.agents/skills/mailbox/scripts/lane-mail"
 plant_reader "$TMP_ROOT/outside-empty-ran"
 install_hook "$HOOK" "$TMP_ROOT/outside-empty/hooks/lane-mail-check.sh"
 stop
@@ -2281,7 +2296,7 @@ assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "a finished tool cal
 
 send KEN-30 'Stop pushing.' --halt
 HALT_ID=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-30/to-lane.jsonl")
-printf -v READ_HALT '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-30 "$LANE"
+printf -v READ_HALT '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-30 "$LANE"
 tool halt
 expect 2 "lane-mail-check: halt=$HALT_ID" "an unread halt refuses the next tool call"
 assert_eq "directive=$(grep -cF 'Stop pushing.' "$ERR_FILE") command=$(grep -cxF -- "$READ_HALT" "$ERR_FILE")" \
@@ -2392,7 +2407,7 @@ for row in agent_id:KEN-36 agent_type:KEN-37; do
     "a subagent's call marked by $field leaves the directive unread for the lead's next call"
   send "$item" 'Stop again.' --halt
   SUB_HALT=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/$item/to-lane.jsonl")
-  printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" "$item" "$LANE"
+  printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" "$item" "$LANE"
   tool halt "$SUB_READ" "$field"
   expect 2 "lane-mail-check: halt=$SUB_HALT" \
     "a subagent's call marked by $field carrying the acknowledging command is refused while a halt stands"
@@ -2437,7 +2452,7 @@ done
 CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
 tool halt
 ACK_95=$(sed -n 3p "$ERR_FILE")
-printf -v READ_95 '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-95 "$LANE"
+printf -v READ_95 '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-95 "$LANE"
 assert_eq "$ACK_95" "$READ_95" "the halt refusal names the lane's root in the command that reads it"
 (cd "$MAIN" && env -u CLAUDE_PROJECT_DIR bash -c "$ACK_95" >/dev/null)
 tool halt
@@ -2600,7 +2615,7 @@ mutant lead-halt -e 's@^      lead | unknown) ! call_runs "\$ACK_COMMAND" || exi
 new_lane control_sub_halt ken-35
 install_arms "$MUTANT_PATH"
 send KEN-35 'Halt the lead.' --halt
-printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-35 "$LANE"
+printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-35 "$LANE"
 tool halt "$SUB_READ" agent_id
 expect 0 - "control: without the halt check a subagent's call carrying the acknowledging command passes"
 
@@ -2617,7 +2632,7 @@ tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
   "control: without the agent_type read a subagent's call consumes the lead's directive"
 send KEN-38 'Halt the lead.' --halt
-printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-38 "$LANE"
+printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-38 "$LANE"
 tool halt "$SUB_READ" agent_type
 expect 0 - "control: without the agent_type read a subagent's call carrying the acknowledging command passes"
 
@@ -2636,27 +2651,26 @@ mutant no-ack-command -e 's@"\$ACK_COMMAND" "\$HALT_TEXT"@"" "$HALT_TEXT"@'
 new_lane control_ack_command ken-41
 install_arms "$MUTANT_PATH"
 send KEN-41 'Stop pushing.' --halt
-printf -v ACK_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-41 "$LANE"
+printf -v ACK_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-41 "$LANE"
 tool halt
 assert_eq "key=$(first_line | cut -d= -f1) command=$(grep -cxF -- "$ACK_READ" "$ERR_FILE")" \
   "key=lane-mail-check: halt command=0" \
   "control: without the command the halt refusal keeps its key and loses the one read that clears it"
 
 # The reader's acknowledgement clamp removed: a deliver run consumes the halt it showed.
-CLAMPLESS="$TMP_ROOT/clampless"
-mkdir -p "$CLAMPLESS"
+CLAMPLESS="$TMP_ROOT/clampless/mailbox/scripts"
 mkdir -p "$CLAMPLESS/lib"
-plant_siblings "$CLAMPLESS" lib
-for CLAMP_LIB in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
+ln -s "$REPO_ROOT/skills/orch" "$CLAMPLESS/../../orch"
+for CLAMP_LIB in "$REPO_ROOT/skills/mailbox/scripts/lib"/*; do
   [ "${CLAMP_LIB##*/}" = lane-mail-store.py ] || ln -s "$CLAMP_LIB" "$CLAMPLESS/lib/"
 done
 ln -s "$LANE_MAIL" "$CLAMPLESS/lane-mail"
-MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-mail-store.py" mutant no-clamp \
+MUTANT_SOURCE="$REPO_ROOT/skills/mailbox/scripts/lib/lane-mail-store.py" mutant no-clamp \
   -e 's@\[\$bound, \$halt\] | min else \$bound@\$bound else \$bound@'
 mv "$MUTANT_PATH" "$CLAMPLESS/lib/lane-mail-store.py"
 new_lane control_clamp ken-32
 install_arms
-ln -s -f -n "$CLAMPLESS" "$LANE/.agents/skills/orch/scripts"
+ln -s -f -n "$CLAMPLESS" "$LANE/.agents/skills/mailbox/scripts"
 send KEN-32 'Stop.' --halt
 tool deliver
 tool halt
@@ -2834,6 +2848,7 @@ mutant owned-unlisted-reported -e 's/^    0 | 3) return 0 ;;$/    0) return 0 ;;
 new_overseer control_owned_unlisted
 mkdir -p "$LANE/.pi/skills"
 ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
 install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
@@ -2907,7 +2922,8 @@ expect 2 "lane-mail-check: context=" \
 new_lane control_not_a_lane main
 unmark_lanes
 rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
-SILENT_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+rm -f -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
+SILENT_READER="$LANE/.agents/skills/mailbox/scripts/lane-mail"
 # shellcheck disable=SC2046
 stop $(overseer_env "%3")
 expect 0 - "a session that is no lane and no overseer says nothing about an install it has not got"
@@ -3352,6 +3368,7 @@ assert_eq "$(overseer_unread 'Not for the lane.')" "1" "which stays unread in th
 named_session peer_noreader
 peer_send 'No reader here.'
 rm -rf -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+rm -rf -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
 stop "${SESSION_ENV[@]}"
 expect 0 - "a session with a peer note standing and no reader beside the hook is handed and refused nothing"
 
@@ -3465,8 +3482,9 @@ mutant peer-reader-refuses -e 's@^    resolve_reader || return 0$@    resolve_re
 named_session control_peer_noreader "$MUTANT_PATH"
 peer_send 'No reader.'
 rm -rf -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+rm -rf -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
 stop "${OTHER_ENV[@]}"
-expect 2 "lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
+expect 2 "lane-mail-check: reader=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "control: refusing where no reader resolves holds every session in the checkout on mail none of them reads"
 
 mutant peer-path-passes -e 's@^    refuse fleet-state "\$SCRIPTS/workflow-state" @    return 0 # @' -e 's/input_filename/""/'

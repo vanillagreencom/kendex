@@ -14,7 +14,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 SANDBOX="$TMP_ROOT/repo"
-mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$TMP_ROOT/bin"
+mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$SANDBOX/skills/mailbox" "$TMP_ROOT/bin"
+cp -R "$REPO_ROOT/skills/mailbox/scripts" "$SANDBOX/skills/mailbox/scripts"
 cp "$REPO_ROOT/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/container-close"
 cp "$REPO_ROOT/skills/orch/scripts/git-context" "$SANDBOX/skills/orch/scripts/git-context"
 chmod +x "$SANDBOX/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/git-context"

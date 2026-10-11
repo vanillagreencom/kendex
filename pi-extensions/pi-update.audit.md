@@ -92,6 +92,6 @@ Provider, catalog and host behaviour (our overrides are `openai-codex` in `pi-co
 ## Run notes
 
 - The step 4 install used the form KEN-2244 records (`install-target.sh` in the run directory): it removes `peerDependencies` and the Pi `devDependencies` from the copy's `package.json` for the install, installs every Pi package the manifest names at 1.0.0, then restores the file.
-- The pi-hooks suite reads files outside `pi-extensions`: `crates/core/src`, `hooks/`, `.pi/kendex/hooks/`, `kendex.toml`, and `skills/orch/scripts/lane-mail`. A copy of `pi-extensions` alone fails 52 of its tests on the missing files. The run copied those paths beside `pi-extensions` in `work.rzroka`.
+- The pi-hooks suite reads files outside `pi-extensions`: `crates/core/src`, `hooks/`, `.pi/kendex/hooks/`, `kendex.toml`, and `skills/mailbox/scripts/lane-mail`. A copy of `pi-extensions` alone fails 52 of its tests on the missing files. The run copied those paths beside `pi-extensions` in `work.rzroka`.
 - Suites that call `os.tmpdir()` wrote their fixtures under `/tmp`; the pi-update checks keep theirs under the work copy.
 - `openai-codex` request shape, outside the range: on models with `supportsAdditionalTools`, Pi's own provider declares tools in an `additional_tools` input item; the shim declares them in the top-level `tools`. Pi 0.99.1 already does this. No check measured what the difference changes.

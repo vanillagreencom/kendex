@@ -79,7 +79,7 @@ The template carries outcomes only. A question in the set names no mechanism the
 An overseer's question to the owner is one owner ask: the template above for the mode, written to a file, sent with its form and its deadline as fields, never as prose. The template's recommendation is the option the ask records as `recommend`, the relay's Recommended line, and a question whose ask records none leaves it out. The chat shows one line naming the ask. `--wait` names one ask's minutes, and an ask without it takes `ORCH_ASK_WAIT_MINUTES`. Which forms record a recommendation, and what the deadline does for each, is the [lane-mail owner-channel contract](../scripts/lane-mail)'s.
 
 ```bash
-.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH] --issue [ITEM] --do [ACTION_AND_CLOSING_EVIDENCE]
+.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH] --issue [ITEM] --do [ACTION_AND_CLOSING_EVIDENCE]
 ```
 
 For an item ask, set `ORCH_OWNER_ASK_LABEL` and `LINEAR_TEAM` to enable the Linear route. `ORCH_OWNER_EMAIL` names the person and defaults to `KENDEX_USER_EMAIL`. The overseer assigns that person, adds the label without replacing other labels, and posts the question with its options, recommendation, deadline and `ask=` id. Linear sends the assignment notification. After the complete tracker question is confirmed, Slack posts one line with the question's first line and the item link. A failed tracker write keeps the full chat question, options and deadline. It retains the item binding for cleanup and uses the chat deadline route. An ask with no item stays on the chat route and creates no issue.
@@ -98,7 +98,7 @@ The owner can answer more than once. Each answer lands through `send --item over
 A decision the owner's authority rule reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, anything sent as the owner, and an x.0 release of kendex or an app. A send as the owner on Slack or by email is a draft ask, below; every other send as the owner, such as a GitHub or Linear comment, is a reserved ask. It takes `--reserved` in place of `--recommend`. The overseer closes it once it holds the owner's answer. Past its deadline and unanswered, "Waiting on you" marks it overdue and the Slack relay posts it once more in its thread; an answered one reads as awaiting close.
 
 ```bash
-.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --reserved --file [PATH]
+.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --reserved --file [PATH]
 ```
 
 An ask for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`. The [lane-mail owner-channel contract](../scripts/lane-mail) states the draft's fields and its `text_hash`. Send only when the approval for that ask id names the `text_hash` that `pending --item overseer --to owner` prints. An edited draft is a new ask.
@@ -112,7 +112,7 @@ For a delivered owner request, `--ref` binds the reply to that request's deliver
 A session that starts with no item to work, no handoff file, no owner note and no pending owner ask (`lane-mail pending --item overseer --to owner`) asks this as an owner ask:
 
 ```bash
-.agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options idle,tracker --recommend idle --file [PATH]
+.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options idle,tracker --recommend idle --file [PATH]
 ```
 
 ```text

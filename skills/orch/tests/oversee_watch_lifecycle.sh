@@ -547,7 +547,7 @@ mid_read_case() { # NAME
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
   printf 'Owner ruling.\n' > "$TMP_ROOT/note.txt"
-  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send --item overseer --directive \
+  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/mailbox/scripts/lane-mail" send --item overseer --directive \
     --file "$TMP_ROOT/note.txt" >/dev/null)
   flock "$box/to-lane.cursor.lock" "$REAL_SLEEP" 2 &
   LIVE_PIDS+=" $!"
@@ -565,7 +565,7 @@ mid_read_case() { # NAME
   MID_READ="read=${read:+found} pass=$STATES note=lost"
   if grep -q '^EVENT owner-note ' "$TMP_ROOT/o-$1"; then
     MID_READ="${MID_READ% note=*} note=printed"
-  elif (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" pending --item overseer) \
+  elif (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/mailbox/scripts/lane-mail" pending --item overseer) \
     | grep -q 'Owner ruling'; then
     MID_READ="${MID_READ% note=*} note=unread"
   fi
@@ -583,10 +583,10 @@ ack_stop_case() { # NAME
   local ack pass held
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
-  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send --item overseer --directive \
+  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/mailbox/scripts/lane-mail" send --item overseer --directive \
     --file "$TMP_ROOT/note.txt" >/dev/null)
   printf '#!/usr/bin/env bash\ncase " $* " in *" --ack "*) "%s" 30 ;; esac\nexec "%s" "$@"\n' \
-    "$REAL_SLEEP" "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-held"
+    "$REAL_SLEEP" "$REPO_ROOT/skills/mailbox/scripts/lane-mail" > "$STUB_DIR/lane-mail-held"
   chmod +x "$STUB_DIR/lane-mail-held"
   ( run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-held" -- --max-loops 1 \
       >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
@@ -618,7 +618,7 @@ lane_stop_case() { # NAME [WATCH_BIN]
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
   mkdir -p -- "$CASE_REPO_ROOT/tmp/lane-mail/KEN-7" "$STUB_DIR/bin"
-  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" notice --item KEN-7 \
+  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/mailbox/scripts/lane-mail" notice --item KEN-7 \
     --file "$TMP_ROOT/note.txt" >/dev/null)
   cat > "$STUB_DIR/notice-before-commit" <<'EOF'
 printf() {

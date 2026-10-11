@@ -72,7 +72,7 @@ class LifecycleSession:
     def __init__(self, row):
         self.row = row
         self.output = bytearray()
-        library = Path(__file__).with_name("lib").joinpath("file-lock.sh").read_text()
+        library = Path(__file__).parent.joinpath("../../mailbox/scripts/lib/file-lock.sh").read_text()
         script = library + '\n' + '''mkdir -p -- "$(dirname -- "$1")"
 exec 9>>"$1"
 orch_take_lock 9 "$1" 0 || exit 75

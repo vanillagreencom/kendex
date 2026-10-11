@@ -590,7 +590,7 @@ fleet_log_refusal() { # KEY FIELD=VALUE...
       message fleet-log-unwritten "key=$key" step=append >&2
       [[ ! -s "$dir/err" ]] || cat -- "$dir/err" >&2
     fi
-    if ! "$SCRIPT_DIR/lane-mail" notice --item overseer --to owner --file "$dir/notice" >/dev/null 2>"$dir/err"; then
+    if ! "$SCRIPT_DIR/../../mailbox/scripts/lane-mail" notice --item overseer --to owner --file "$dir/notice" >/dev/null 2>"$dir/err"; then
       IFS= read -r refusal < "$dir/err" || refusal=""
       # lane-mail refuses text the owner already received within its day window.
       case "$refusal" in

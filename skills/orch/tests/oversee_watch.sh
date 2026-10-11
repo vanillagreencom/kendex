@@ -1008,7 +1008,7 @@ EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-flaky.sh"
 failure_lifts() {
   local -a flaky=(OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-flaky.sh"
-    REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail")
+    REAL_LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail")
   new_case handoff_after_lift
   handoff_record KEN-1
   run_watch "${flaky[@]}" FLAKY_ALWAYS=1 -- --item KEN-1 >/dev/null 2>&1 || true
@@ -1079,7 +1079,7 @@ start_clock_case() { # NAME
   new_case "$1"
   printf '1790000000\n' > "$STUB_DIR/now.epoch"
   printf '#!/usr/bin/env bash\nprintf "1790000500\\n" > "$STUB_DIR/now.epoch"\nexec "%s" "$@"\n' \
-    "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-slow"
+    "$REPO_ROOT/skills/mailbox/scripts/lane-mail" > "$STUB_DIR/lane-mail-slow"
   chmod +x "$STUB_DIR/lane-mail-slow"
   run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-slow" -- --max-loops 1 \
     >/dev/null 2>"$TMP_ROOT/e-$1" || true

@@ -3725,7 +3725,7 @@ export PROJECT_ROOT
 # shellcheck source=lib/copilot-credits.sh
 source "$SCRIPT_DIR/lib/copilot-credits.sh"
 # shellcheck source=lib/file-lock.sh
-source "$SCRIPT_DIR/lib/file-lock.sh"
+source "$SCRIPT_DIR/../../mailbox/scripts/lib/file-lock.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 # This script runs without errexit, so the loader's refusal must be checked

@@ -336,7 +336,7 @@ source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 TRACKER="${OVERSEE_REPORT_TRACKER:-$SCRIPT_DIR/../../linear/scripts/linear.sh}"
 GITHUB="${OVERSEE_REPORT_GITHUB:-$SCRIPT_DIR/../../github/scripts/github.sh}"
-LANE_MAIL="${OVERSEE_REPORT_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
+LANE_MAIL="${OVERSEE_REPORT_LANE_MAIL:-$SCRIPT_DIR/../../mailbox/scripts/lane-mail}"
 LANE_HOST="${OVERSEE_REPORT_LANE_HOST:-$SCRIPT_DIR/lane-host}"
 WORKFLOW_STATE="${OVERSEE_REPORT_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 # Relative to a clone's root on a lane's host, as workflow-state joins it.

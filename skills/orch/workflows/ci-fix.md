@@ -147,7 +147,7 @@ Report findings for a user decision.
 
 ## 5. Verify
 
-Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection. Either wait exiting `5` with `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then re-run the same wait.
+Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection. Either wait exiting `5` with `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then re-run the same wait.
 
 Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing).
 

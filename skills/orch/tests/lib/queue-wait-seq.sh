@@ -25,6 +25,7 @@
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash

@@ -43,7 +43,7 @@ MAIL_LOG_BIN="$TMP_ROOT/mail-log"
 cat > "$MAIL_LOG_BIN" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$STUB_DIR/mail.calls"
-exec "$REPO_ROOT/skills/orch/scripts/lane-mail" "\$@"
+exec "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "\$@"
 EOF
 chmod +x "$MAIL_LOG_BIN"
 # The cloud close as lane-close answers it for a stop=none record: it logs

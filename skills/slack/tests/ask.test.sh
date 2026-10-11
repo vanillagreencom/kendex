@@ -103,7 +103,7 @@ tracker_ask() { # NAME FAILURE
   local root scripts phase="${2:-}" deadline ask_rc=0
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
-  scripts="$root/.agents/skills/orch/scripts"
+  scripts="$root/.agents/skills/mailbox/scripts"
   rm -- "${scripts:?}"
   cp -R "${SK_LANE_MAIL%/*}" "$scripts"
   mkdir -p "$root/.agents/skills/linear/scripts"

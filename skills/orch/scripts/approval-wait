@@ -1301,7 +1301,7 @@ copilot_fallback_notice() {
     [ -e "$notice" ] || approval_message copilot-fallback-unsent "$1" "$notice" >&2
     return 0
   fi
-  if ! "$SCRIPT_DIR/lane-mail" notice --item "$ITEM" --file "$notice" >&2; then
+  if ! "$SCRIPT_DIR/../../mailbox/scripts/lane-mail" notice --item "$ITEM" --file "$notice" >&2; then
     rm -f -- "${notice:?}"
     approval_message copilot-fallback-unsent "$1" "$notice" >&2
   fi

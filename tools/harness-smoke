@@ -835,7 +835,7 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
     return
   fi
   MAIL_BOX="$PROJECT/tmp/lane-mail/$MAIL_ITEM"
-  MAIL_READER="$PROJECT/.agents/skills/orch/scripts/lane-mail"
+  MAIL_READER="$PROJECT/.agents/skills/mailbox/scripts/lane-mail"
   if ! (cd "$PROJECT" && kendex add "$SELF" --hook lane-mail-check --skill orch --harness "$harness" -y) \
     >"$LOGS/$harness-kendex-add-mail.log" 2>&1; then
     refused add "$harness" "$LOGS/$harness-kendex-add-mail.log"
@@ -974,7 +974,7 @@ no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
 # that wake instead. A lane on an older pi-hooks arms the watch under bg_task.
 WAKE_ITEM=SMOKE-2
 WAKE_DELAY=30
-WAKE_READER="$SELF/skills/orch/scripts/lane-mail"
+WAKE_READER="$SELF/skills/mailbox/scripts/lane-mail"
 WAKE_SKIPPED='Codex starts no turn for output that arrives after a turn ended; a Codex lane is reached by open-terminal --wake'
 WAKE_PI_SKIPPED='a Pi lane on the pi-hooks this tree carries arms no monitor: its mailbox wake starts the turn, and pi-extensions/pi-hooks/tests/lane-mail-wake.test.ts runs a Pi session through it'
 WAKE_ANNOUNCED="lane-mail: mail=$WAKE_ITEM new=1"

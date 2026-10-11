@@ -18,6 +18,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # fails.
 mkdir -p "$TMP_ROOT/project/.agents/skills" "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/project/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/project/.agents/skills/mailbox"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/project/.agents/skills/github"
 git -C "$TMP_ROOT/project" init -q
 GH_CALLS="$TMP_ROOT/gh.calls"

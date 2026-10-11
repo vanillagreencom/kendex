@@ -1038,7 +1038,7 @@ echo "=== a cloud claim has no source checkout and accepts a session directive =
 # A real worktree and push, with network calls mapped to a local bare remote.
 # The cloud CLI, tmux, account picker and GitHub reads are stubs.
 REAL_WORKTREE="$TEST_DIR/../../worktree/scripts/worktree"
-CLAIM_MAIL="$SCRIPTS_DIR/lane-mail"
+CLAIM_MAIL="$SCRIPTS_DIR/../../mailbox/scripts/lane-mail"
 git -C "$REPO" symbolic-ref HEAD refs/heads/main
 git -C "$REPO" config user.name Test
 git -C "$REPO" config user.email test@example.com

@@ -27,6 +27,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
@@ -580,6 +581,7 @@ set -e
 assert_eq "$CONTROL_RC" 1 'the quota row rejects the deadline-guard-removed control'
 rm "$TMP_ROOT/repo/.agents/skills/orch"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 
 # The same once-then-success row must fail when the retry is disabled in the
 # real helper. Keep the helper's matched text in the disposable copy.
@@ -602,6 +604,7 @@ set -e
 assert_eq "$CONTROL_RC" 1 'the retry row rejects the retry-removed control'
 rm "$TMP_ROOT/repo/.agents/skills/orch"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 
 echo "=== the late-findings guard: any unresolved thread while queued or armed ==="
 # Disarm first (a bare dequeue can be raced back in by the arming), then

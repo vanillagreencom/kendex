@@ -30,10 +30,10 @@ EXPLAIN = {
         " addresses."
     ),
     "orch-missing": (
-        "The orch skill is not where the value names it: a root with no"
+        "The mailbox or orch skill is not where the value names it: a root with no"
         " lane-mail to read or write its mailbox through, or a package run"
         " without its launcher, which names the orch install the secret-value"
-        " pattern is read from. Install kendex's orch skill there, and run"
+        " pattern is read from. Install kendex's mailbox and orch skills there, and run"
         " the package through scripts/slack."
     ),
     "channel-changed": (

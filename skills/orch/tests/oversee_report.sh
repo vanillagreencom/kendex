@@ -935,7 +935,7 @@ for mode in live unguarded missing-id; do
   git -C "$CASE" config maintenance.auto false
   fleet ''
   printf 'Work continues.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
-  MAIL_UNDER_TEST="$TEST_DIR/../scripts/lane-mail"; REPORT_UNDER_TEST="$REPORT_BIN"
+  MAIL_UNDER_TEST="$TEST_DIR/../../mailbox/scripts/lane-mail"; REPORT_UNDER_TEST="$REPORT_BIN"
   [[ "$mode" != unguarded ]] || MAIL_UNDER_TEST="$NOTICE_MUTANT"
   [[ "$mode" != missing-id ]] || REPORT_UNDER_TEST="$RECEIPT_MUTANT"
   run OVERSEE_REPORT_LANE_MAIL="$MAIL_UNDER_TEST" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
@@ -974,7 +974,7 @@ MAILBOX="$CASE/tmp/lane-mail/overseer/to-overseer.jsonl"
 mkdir -p "${MAILBOX%/*}"
 jq -cn --arg at "$(at -210)" --rawfile text "$CASE/summary.txt" \
   '{id: "by-hand", kind: "notice", at: $at, from: "overseer", to: "owner", text: ($text | sub("\n$"; ""))}' > "$MAILBOX"
-run OVERSEE_REPORT_LANE_MAIL="$TEST_DIR/../scripts/lane-mail" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+run OVERSEE_REPORT_LANE_MAIL="$TEST_DIR/../../mailbox/scripts/lane-mail" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 FILE="$CASE/progress-reports/$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M).md"
 assert_eq "$RC|$(sed -n '1p;3p' "$CASE/err" | paste -sd '|' -)|$([[ -n "$OUT" && "$OUT" == "$(cat "$FILE")" ]] && echo printed)|$(wc -l < "$MAILBOX" | tr -d ' ')" \
   "2|oversee-report: notice=$FILE|lane-mail: owner-notice-repeated=overseer id=by-hand|printed|1" \

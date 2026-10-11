@@ -6,6 +6,10 @@
 * -text
 skills/orch/scripts/open-terminal text eol=lf
 skills/orch/scripts/lanes text eol=lf
+skills/mailbox/scripts/lane-mail text eol=lf
+skills/mailbox/scripts/lib/mailbox-append.sh text eol=lf
+skills/mailbox/scripts/lib/file-lock.sh text eol=lf
+skills/mailbox/scripts/lib/lane-mail-store.py text eol=lf
 skills/orch/scripts/refresh-ci-proof text eol=lf
 skills/orch/scripts/oversee-watch text eol=lf
 skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf

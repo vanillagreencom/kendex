@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd -P)"
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 # mktemp alone, so set -e stops the suite on its failure: nested in the cd,
@@ -345,7 +345,7 @@ send 'Startless.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
   "control: a reader that asks no ol_unstarted reads a record carrying no start as naming nobody"
 
-mutant sources-peer '"$SCRIPT_DIR/workflow-state" --no-private-env "$@"' '"$SCRIPT_DIR/workflow-state" "$@"'
+mutant sources-peer '"$ORCH_SCRIPTS/workflow-state" --no-private-env "$@"' '"$ORCH_SCRIPTS/workflow-state" "$@"'
 live_record
 send 'Sourced.'
 assert_eq "$(sourced)" "sourced" "control: a reader loading the peer's full ladder runs its private env file"
@@ -370,14 +370,14 @@ for mode in process private; do
 done
 (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
 
-mutant own-state-cleared '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" "$@")' '(cd -- "$root" && env -u ORCH_STATE_DIR "$SCRIPT_DIR/workflow-state" "$@")'
+mutant own-state-cleared '(cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" "$@")' '(cd -- "$root" && env -u ORCH_STATE_DIR "$ORCH_SCRIPTS/workflow-state" "$@")'
 own_state_send process
 error="$(first_err)"
 assert_eq "$RC ${error%% no overseer*} lines=$OWN_LINES" \
   "2 lane-mail: overseer-absent=$TMP_ROOT/sender lines=0" \
   "control: clearing own ORCH_STATE_DIR loses the writer's record" "$TMP_ROOT/err"
 
-mutant own-private-skipped '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" "$@")' '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" --no-private-env "$@")'
+mutant own-private-skipped '(cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" "$@")' '(cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" --no-private-env "$@")'
 own_state_send private
 error="$(first_err)"
 assert_eq "$RC ${error%% no overseer*} lines=$OWN_LINES" \

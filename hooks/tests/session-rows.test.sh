@@ -71,7 +71,10 @@ new_checkout() { # NAME [HOOK_HOME]
   mkdir -p "$CHECKOUT/.agents/skills/orch" "$CHECKOUT/$HOOK_HOME" "$CHECKOUT/.claude/skills" \
     "$CHECKOUT/tmp/lane-mail/overseer"
   ln -s "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+  mkdir -p "$CHECKOUT/.agents/skills/mailbox"
+  ln -s "$REPO_ROOT/skills/mailbox/scripts" "$CHECKOUT/.agents/skills/mailbox/scripts"
   ln -s ../../.agents/skills/orch "$CHECKOUT/.claude/skills/orch"
+  ln -s ../../.agents/skills/mailbox "$CHECKOUT/.claude/skills/mailbox"
   cp "$HOOK" "$CHECKOUT/$HOOK_HOME/lane-mail-check.sh"
   # Each hook by its own path, which is how tools/guard --range finds this
   # suite for a change to one of them.
@@ -250,7 +253,6 @@ ROWSTABLE
 new_checkout no_library
 rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
 mkdir -p "$CHECKOUT/.agents/skills/orch/scripts/lib"
-ln -s "$REPO_ROOT/skills/orch/scripts/lane-mail" "$CHECKOUT/.agents/skills/orch/scripts/lane-mail"
 run session-start-row "$START"
 assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" \
   "RC=0 first=lane-mail-check: rows-skipped=$CHECKOUT/.claude/skills/orch/scripts/lib/session-rows.sh rows=0" \

@@ -1,0 +1,1 @@
+- Session mail checks use the mailbox skill beside orchestration.

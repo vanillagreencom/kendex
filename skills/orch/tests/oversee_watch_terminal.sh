@@ -11,7 +11,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/oversee-watch-harness.sh"
 
-CLOSE_SCRIPTS="$(mutant_scripts terminal-close/orch lane-mail)" || exit 1
+CLOSE_MAILBOX="$(mutant_scripts terminal-close/orch lane-mail)" || exit 1
+CLOSE_SCRIPTS="$CLOSE_MAILBOX/../../orch/scripts"
 TERMINAL_WATCH="$(mutant_scripts terminal-watch/orch oversee-watch)/oversee-watch" || exit 1
 mkdir -p "$TMP_ROOT/terminal-watch/github/scripts"
 cp -R "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/terminal-watch/github/scripts/lib"
@@ -61,7 +62,7 @@ fi
 exec "${0%/*}/gh-watch" "$@"
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
-cat > "$CLOSE_SCRIPTS/lane-mail" <<'EOF'
+cat > "$CLOSE_MAILBOX/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/terminal-mail"

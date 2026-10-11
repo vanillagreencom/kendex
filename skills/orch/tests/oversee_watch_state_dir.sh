@@ -5,8 +5,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/oversee-watch-harness.sh"
 
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-CLOSE_SCRIPTS="$(mutant_scripts close/orch lane-mail)" || exit 1
-cat > "$CLOSE_SCRIPTS/lane-mail" <<'EOF'
+CLOSE_MAILBOX="$(mutant_scripts close/orch lane-mail)" || exit 1
+CLOSE_SCRIPTS="$CLOSE_MAILBOX/../../orch/scripts"
+cat > "$CLOSE_MAILBOX/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 exit 0

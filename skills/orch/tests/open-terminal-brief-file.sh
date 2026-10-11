@@ -282,7 +282,7 @@ git -C "$TMP_ROOT/brief-pi-append" config gc.auto 0
 git -C "$TMP_ROOT/brief-pi-append" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/brief-pi-append"
 mutate_file "$APPEND_OT" 'printf '\''%s'\'' "$BRIEF_TEXT" > "$brief_prompt_file"' \
-  'printf '\''%s'\'' "$BRIEF_TEXT As your first step, arm the mailbox monitor .agents/skills/orch/scripts/lane-mail watch --item $wt_id through bg_task per watch-delivery.md." > "$brief_prompt_file"'
+  'printf '\''%s'\'' "$BRIEF_TEXT As your first step, arm the mailbox monitor .agents/skills/mailbox/scripts/lane-mail watch --item $wt_id through bg_task per watch-delivery.md." > "$brief_prompt_file"'
 ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" || exit 1
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \

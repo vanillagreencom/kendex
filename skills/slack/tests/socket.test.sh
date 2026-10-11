@@ -134,16 +134,16 @@ while read -r failure mutant tries want_count; do
   RETRY_CH="$(sk_channel "$RETRY_ROOT")"
   RETRY_PARENT="$(sk_inject "$RETRY_CH" U001 'Old retry topic.' '' "\"ts\": \"$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')\"")"
   if [ "$failure" = mail ]; then
-    rm -- "${RETRY_ROOT:?}/.agents/skills/orch/scripts"
-    mkdir -p "$RETRY_ROOT/.agents/skills/orch/scripts"
-    cat > "$RETRY_ROOT/.agents/skills/orch/scripts/lane-mail" <<EOF
+    rm -- "${RETRY_ROOT:?}/.agents/skills/mailbox/scripts"
+    mkdir -p "$RETRY_ROOT/.agents/skills/mailbox/scripts"
+    cat > "$RETRY_ROOT/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "$RETRY_ROOT/tmp/send-refused" ]; then
   case " \$* " in *" send "*) echo 'lane-mail: send-refused' >&2; exit 2 ;; esac
 fi
 exec "$SK_LANE_MAIL" "\$@"
 EOF
-    chmod +x "$RETRY_ROOT/.agents/skills/orch/scripts/lane-mail"
+    chmod +x "$RETRY_ROOT/.agents/skills/mailbox/scripts/lane-mail"
   fi
   if [ "$mutant" = retry ]; then
     sk_mutant old-live-retry relay.py 'for message in list\(self\.pending_live\.values\(\)\):' 'for message in []:'
@@ -193,9 +193,9 @@ while read -r mode tries want; do
   STATUS_CH="$(sk_channel "$STATUS_ROOT")"
   STATUS_HC="$(sk_channel "$STATUS_HEALTHY")"
   STATUS_PARENT="$(sk_inject "$STATUS_CH" U001 'Old status topic.' '' "\"ts\": \"$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')\"")"
-  rm -- "$STATUS_ROOT/.agents/skills/orch/scripts"
-  mkdir -p "$STATUS_ROOT/.agents/skills/orch/scripts"
-  cat > "$STATUS_ROOT/.agents/skills/orch/scripts/lane-mail" <<EOF
+  rm -- "$STATUS_ROOT/.agents/skills/mailbox/scripts"
+  mkdir -p "$STATUS_ROOT/.agents/skills/mailbox/scripts"
+  cat > "$STATUS_ROOT/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "$STATUS_ROOT/tmp/send-refused" ]; then
   case " \$* " in *" send "*)
@@ -206,7 +206,7 @@ if [ -e "$STATUS_ROOT/tmp/send-refused" ]; then
 fi
 exec "$SK_LANE_MAIL" "\$@"
 EOF
-  chmod +x "$STATUS_ROOT/.agents/skills/orch/scripts/lane-mail"
+  chmod +x "$STATUS_ROOT/.agents/skills/mailbox/scripts/lane-mail"
   if [ "$mode" = control ]; then
     sk_mutant secondary-status relay.py 'except Exception as status_err:' 'except RuntimeError as status_err:'
   fi
@@ -265,16 +265,16 @@ sk_relay_stop
 # THETA's lane-mail refuses one `send` while tmp/send-refused stands, and
 # removes the file as it refuses.
 THETA="$(sk_new_root theta)"
-rm -- "${THETA:?}/.agents/skills/orch/scripts"
-mkdir -p "$THETA/.agents/skills/orch/scripts"
-cat > "$THETA/.agents/skills/orch/scripts/lane-mail" <<EOF
+rm -- "${THETA:?}/.agents/skills/mailbox/scripts"
+mkdir -p "$THETA/.agents/skills/mailbox/scripts"
+cat > "$THETA/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "${THETA:?}/tmp/send-refused" ]; then
   case " \$* " in *" send "*) rm -- "${THETA:?}/tmp/send-refused"; echo 'lane-mail: send-refused' >&2; exit 2 ;; esac
 fi
 exec "$SK_LANE_MAIL" "\$@"
 EOF
-chmod +x "$THETA/.agents/skills/orch/scripts/lane-mail"
+chmod +x "$THETA/.agents/skills/mailbox/scripts/lane-mail"
 sk_bind "$THETA"
 TC="$(sk_channel "$THETA")"
 relay "$THETA"
@@ -380,9 +380,9 @@ for variant in normal late-ack worker-ack no-mark no-notice; do
   SLOW="$(sk_new_root "delivery-$variant")"
   sk_bind "$SLOW"
   SC="$(sk_channel "$SLOW")"
-  rm -- "${SLOW:?}/.agents/skills/orch/scripts"
-  mkdir -p "$SLOW/.agents/skills/orch/scripts"
-  cat > "$SLOW/.agents/skills/orch/scripts/lane-mail" <<EOF
+  rm -- "${SLOW:?}/.agents/skills/mailbox/scripts"
+  mkdir -p "$SLOW/.agents/skills/mailbox/scripts"
+  cat > "$SLOW/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env python3
 import json, os, pathlib, sys, time, urllib.request
 if sys.argv[1] == "send" and not pathlib.Path("tmp/send-start").exists():
@@ -392,7 +392,7 @@ if sys.argv[1] == "send" and not pathlib.Path("tmp/send-start").exists():
     time.sleep(4)  # Real wait: the next envelope must be acked during mailbox work.
 os.execv("$SK_LANE_MAIL", ["$SK_LANE_MAIL", *sys.argv[1:]])
 EOF
-  chmod +x "$SLOW/.agents/skills/orch/scripts/lane-mail"
+  chmod +x "$SLOW/.agents/skills/mailbox/scripts/lane-mail"
   relay "$SLOW" SLACK_POLL_SECONDS=60
   SA="$(sk_inject "$SC" U001 'Slow A')"
   START="$(awaited cat "$SLOW/tmp/send-start" 2>/dev/null)"

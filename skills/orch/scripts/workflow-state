@@ -1410,7 +1410,7 @@ cmd_prune() {
     # Its rows and session files have owners independent of state_units.
     root=$(project_root) || return 1
     local compacted to_lane to_overseer mailbox_archive sessions=0
-    compacted=$("$SCRIPT_DIR/lane-mail" compact --item overseer --root "$root" 2>&1) || {
+    compacted=$("$SCRIPT_DIR/../../mailbox/scripts/lane-mail" compact --item overseer --root "$root" 2>&1) || {
         printf '%s\n' "$compacted" >&2; return 1;
     }
     to_lane=$(awk '/^compacted / { sub(/^to-lane=/, "", $3); print $3 }' <<<"$compacted") || return 1
@@ -1867,7 +1867,7 @@ parse_rc=0
 # shellcheck source=lib/date-ladder.sh
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 # shellcheck source=lib/file-lock.sh
-source "$SCRIPT_DIR/lib/file-lock.sh"
+source "$SCRIPT_DIR/../../mailbox/scripts/lib/file-lock.sh"
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 # shellcheck source=lib/session-rows.sh

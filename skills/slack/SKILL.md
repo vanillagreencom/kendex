@@ -5,7 +5,7 @@ summary: "Relays one checkout's overseer mailbox to one private Slack channel an
 license: MIT
 user-invocable: true
 dependencies:
-  required: [orch]
+  required: [mailbox, orch]
   optional: [linear]
 metadata:
   author: vanillagreen

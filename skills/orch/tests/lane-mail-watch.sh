@@ -16,7 +16,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 TMP_ROOT="$(mktemp -d)"
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 # mutant_scripts and mutate_file, the two halves of the controls at the end.

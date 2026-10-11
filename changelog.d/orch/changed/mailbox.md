@@ -1,0 +1,1 @@
+- Orchestration uses the mailbox skill for message delivery and keeps the former mailbox paths working during consumer migration.

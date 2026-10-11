@@ -716,16 +716,16 @@ done 3<<<"$(stop_rows)"
 
 # --- a receipts read lane-mail refuses: printed, the mark waits, the poll goes on -------
 MU="$(sk_new_root mu)"
-rm -- "${MU:?}/.agents/skills/orch/scripts"
-mkdir -p "$MU/.agents/skills/orch/scripts"
-cat > "$MU/.agents/skills/orch/scripts/lane-mail" <<EOF
+rm -- "${MU:?}/.agents/skills/mailbox/scripts"
+mkdir -p "$MU/.agents/skills/mailbox/scripts"
+cat > "$MU/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "$MU/tmp/drain-refused" ]; then
   case " \$* " in *" --receipts "*) echo 'lane-mail: drain-refused' >&2; exit 2 ;; esac
 fi
 exec "$SK_LANE_MAIL" "\$@"
 EOF
-chmod +x "$MU/.agents/skills/orch/scripts/lane-mail"
+chmod +x "$MU/.agents/skills/mailbox/scripts/lane-mail"
 sk_bind "$MU"
 MU_CH="$(sk_channel "$MU")"
 MU1="$(swap_due "$MU" "$MU_CH" 'read me')"

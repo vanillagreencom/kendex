@@ -24,10 +24,22 @@ mutant_scripts() {
   local src dir="$TMP_ROOT/$1/scripts" entry inventory
   src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)" \
     || _mutant_scripts_refuse no-scripts-dir "${BASH_SOURCE[0]}"
+  local orch_src="$src" sibling="${dir%/scripts}/../mailbox" moved=0
+  case "${2:-}" in
+    lane-mail | lib/file-lock.sh | lib/mailbox-append.sh | lib/lane-mail-store.py | lib/common-root.sh)
+      moved=1
+      src="$src/../../mailbox/scripts"
+      case "$1" in
+        */orch) dir="$TMP_ROOT/${1%/orch}/mailbox/scripts" ;;
+        *) dir="$TMP_ROOT/$1/mailbox/scripts" ;;
+      esac
+      sibling="${dir%/scripts}/../orch"
+      ;;
+  esac
   inventory="$(cd "$src" && find . -mindepth 1 | sed 's|^\./||')" \
     || _mutant_scripts_refuse inventory-failed "$src"
   [[ -n "$inventory" ]] || _mutant_scripts_refuse inventory-empty "$src"
-  rm -rf "${TMP_ROOT:?}/$1" || _mutant_scripts_refuse clear-failed "$TMP_ROOT/$1"
+  rm -rf "${dir%/scripts}" || _mutant_scripts_refuse clear-failed "$dir"
   mkdir -p "$dir" || _mutant_scripts_refuse mkdir-failed "$dir"
   while IFS= read -r entry; do
     if [[ -d "$src/$entry" ]]; then
@@ -40,6 +52,27 @@ mutant_scripts() {
     [[ -f "$src/$2" ]] || _mutant_scripts_refuse no-such-script "$2"
     rm -- "$dir/$2" || _mutant_scripts_refuse unlink-failed "$dir/$2"
     cp -p -- "$src/$2" "$dir/$2" || _mutant_scripts_refuse copy-failed "$dir/$2"
+  fi
+  if [[ ! -e "$sibling" ]]; then
+    mkdir -p "$sibling/scripts" || _mutant_scripts_refuse mkdir-failed "$sibling"
+    if [[ "$moved" -eq 1 ]]; then
+      cp -R "$orch_src/." "$sibling/scripts/" || _mutant_scripts_refuse copy-failed "$sibling"
+      ln -s "$orch_src/../schemas" "$sibling/schemas" || _mutant_scripts_refuse link-failed "$sibling"
+      [ -e "$sibling/../github" ] || ln -s "$orch_src/../../github" "$sibling/../github" || _mutant_scripts_refuse link-failed "$sibling"
+    else
+      cp -R "$orch_src/../../mailbox/scripts/." "$sibling/scripts/" || _mutant_scripts_refuse copy-failed "$sibling"
+    fi
+  fi
+  if [[ "$moved" -eq 0 ]]; then
+    # Keep NAME/scripts for its callers. The copied mailbox also needs an
+    # orch package beside it when compact or a lane arm reaches orch helpers.
+    local paired_orch="${sibling%/mailbox}/orch"
+    if [[ ! -e "$paired_orch" ]]; then
+      mkdir -p "$paired_orch/scripts" || _mutant_scripts_refuse mkdir-failed "$paired_orch"
+      cp -R "$orch_src/." "$paired_orch/scripts/" || _mutant_scripts_refuse copy-failed "$paired_orch"
+      ln -s "$orch_src/../schemas" "$paired_orch/schemas" || _mutant_scripts_refuse link-failed "$paired_orch"
+      [ -e "$paired_orch/../github" ] || ln -s "$orch_src/../../github" "$paired_orch/../github" || _mutant_scripts_refuse link-failed "$paired_orch"
+    fi
   fi
   printf '%s\n' "$dir"
 }

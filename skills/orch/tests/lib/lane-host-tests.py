@@ -69,11 +69,12 @@ class LaneHostTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
-        self.script = self.root / "scripts/lane-host"
-        self.script.parent.mkdir()
+        self.script = self.root / "orch/scripts/lane-host"
+        self.script.parent.mkdir(parents=True)
         shutil.copy2(PACKAGE / "scripts/lane-host", self.script)
         shutil.copy2(PACKAGE / "scripts/lane-host-ssh", self.script.parent / "lane-host-ssh")
         shutil.copytree(PACKAGE / "scripts/lib", self.script.parent / "lib")
+        shutil.copytree(PACKAGE.parent / "mailbox/scripts", self.root / "mailbox/scripts")
         self.stub = self.root / "provider with space"
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
@@ -456,7 +457,7 @@ class LaneHostCallersTests(unittest.TestCase):
     COMMAND = re.compile(r'^(?:\s|!|(?:if|then|elif|do|while|until)\b|[A-Za-z_]\w*=(?:"[^"]*"|[^\s"]*(?=\s))'
                          r'|\$\{\w+\[@\]\+"\$\{\w+\[@\]\}"\}|"\$\{\w+\[@\]\}"(?=\s))*("\$[^"]*")\s+("[^"]*"|[^\s;|&)]+)')
     FUNCTION = re.compile(r"^([A-Za-z_]\w*)\(\) *\{")
-    SCRIPT = re.compile(r'^(?:\$\{\w+:-)?\$(?:SCRIPT_DIR|SKILLS_DIR)/([\w./-]+?)\}?$')
+    SCRIPT = re.compile(r'^(?:\$\{\w+:-)?\$(?:SCRIPT_DIR|SKILLS_DIR|ORCH_SCRIPTS)/([\w./-]+?)\}?$')
 
     def sites(self, scripts):
         """(file, line number, command word, enclosing function) per site."""
@@ -519,12 +520,13 @@ class LaneHostCallersTests(unittest.TestCase):
                 if self.target(scripts, path, word, function) in (None, "provider")]
 
     def test_every_provider_call_runs_the_wrapper(self):
-        scripts = PACKAGE / "scripts"
-        self.assertEqual(self.unbounded(scripts), [])
-        wrapper = {(path, word) for path, _, word, function in self.sites(scripts)
-                   if self.target(scripts, path, word, function) == "wrapper"}
+        wrapper = set()
+        for scripts in (PACKAGE / "scripts", PACKAGE.parent / "mailbox/scripts"):
+            self.assertEqual(self.unbounded(scripts), [])
+            wrapper.update((path, word) for path, _, word, function in self.sites(scripts)
+                           if self.target(scripts, path, word, function) == "wrapper")
         # Members the extractor must reach, or it is the extractor that broke.
-        for member in (("lane-mail", '"$SCRIPT_DIR/lane-host"'), ("lane-close", '"$LANE_HOST"'),
+        for member in (("lane-mail", '"$ORCH_SCRIPTS/lane-host"'), ("lane-close", '"$LANE_HOST"'),
                        ("lib/lane-gitfile.sh", '"$1"'), ("open-terminal", '"$SCRIPT_DIR/lane-host"')):
             self.assertIn(member, wrapper, "the site extractor no longer reaches a known wrapper call")
 
@@ -542,7 +544,8 @@ class LaneHostCallersTests(unittest.TestCase):
                 scratch.mkdir(exist_ok=True)
                 with tempfile.TemporaryDirectory(dir=scratch) as temp:
                     scripts = Path(temp) / "scripts"
-                    shutil.copytree(PACKAGE / "scripts", scripts)
+                    source = PACKAGE.parent / "mailbox/scripts" if path == "lane-mail" else PACKAGE / "scripts"
+                    shutil.copytree(source, scripts)
                     with open(scripts / path, "a") as script:
                         script.write(planted)
                     self.assertEqual({site[0] for site in self.unbounded(scripts)}, {named} - {None}, planted)

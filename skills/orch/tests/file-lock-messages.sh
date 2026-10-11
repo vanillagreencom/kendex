@@ -16,7 +16,7 @@ ln -s "$(command -v mkdir)" "$SCRATCH/bin/mkdir"
 ln -s "$(command -v rmdir)" "$SCRATCH/bin/rmdir"
 rc=0
 PATH="$SCRATCH/bin" /bin/bash -c 'source "$1"; orch_take_lock 200 "$2" 0' bash \
-  "$ROOT/skills/orch/scripts/lib/file-lock.sh" "$SCRATCH/held.lock" >"$SCRATCH/out" 2>"$SCRATCH/err" || rc=$?
+  "$ROOT/skills/mailbox/scripts/lib/file-lock.sh" "$SCRATCH/held.lock" >"$SCRATCH/out" 2>"$SCRATCH/err" || rc=$?
 assert_eq "$rc" "1" "a held lock times out" "$SCRATCH/err"
 assert_eq "$(wc -c <"$SCRATCH/out" | tr -d ' ')" "0" "and prints nothing on stdout"
 assert_eq "$(sed -n '1p' "$SCRATCH/err")" "file-lock: lock-timeout lock-file=$SCRATCH/held.lock wait-s=0" \
@@ -59,7 +59,7 @@ if command -v timeout > /dev/null 2>&1; then
     local lock="$SCRATCH/$1.lock"
     cat > "$SCRATCH/$1.sh" << EOF
 set -uo pipefail
-. "$ROOT/skills/orch/scripts/lib/file-lock.sh"
+. "$ROOT/skills/mailbox/scripts/lib/file-lock.sh"
 renew() {
   exec 9> "$lock"
   orch_take_lock 9 "$lock" 30 || exit 1

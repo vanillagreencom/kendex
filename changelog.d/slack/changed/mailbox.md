@@ -1,0 +1,1 @@
+- The Slack relay reads and writes through the mailbox skill.

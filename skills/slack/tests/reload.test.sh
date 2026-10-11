@@ -63,8 +63,8 @@ fresh() {
   sk_bind "$ROOT"
   OC="$(sk_channel "$ROOT")"
   OLD="$(sk_inject "$OC" U001 'an old topic' '' "\"ts\": \"$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')\"")"
-  rm -- "${ROOT:?}/.agents/skills/orch/scripts"
-  mkdir -p "$ROOT/.agents/skills/orch/scripts"
+  rm -- "${ROOT:?}/.agents/skills/mailbox/scripts"
+  mkdir -p "$ROOT/.agents/skills/mailbox/scripts"
 }
 # mailer — ROOT's lane-mail for the package copy in use: `send` refused while
 # tmp/send-refused stands. While tmp/race holds a count, each `events` call,
@@ -72,7 +72,7 @@ fresh() {
 # next poll reads and the one after settles, and the third holds that
 # settling poll after writing tmp/held.
 mailer() {
-  cat > "$ROOT/.agents/skills/orch/scripts/lane-mail" <<EOF
+  cat > "$ROOT/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
   send) [ ! -e "$ROOT/tmp/send-refused" ] || { echo 'lane-mail: send-refused' >&2; exit 2; } ;;
@@ -90,7 +90,7 @@ case "\$1" in
 esac
 exec "$SK_LANE_MAIL" "\$@"
 EOF
-  chmod +x "$ROOT/.agents/skills/orch/scripts/lane-mail"
+  chmod +x "$ROOT/.agents/skills/mailbox/scripts/lane-mail"
 }
 # held — a reply under OLD whose delivery lane-mail refuses; RT is its ts
 held() {

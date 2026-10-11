@@ -35,7 +35,7 @@ agents = [
   "reviewer-test",
 ]
 skills = [
-  "orch",
+  "orch", "mailbox",
   "dev",
   "github",
   "worktree",
@@ -84,7 +84,7 @@ hooks = [
 [bundles.orchestration]
 description = "Multi-agent workflow orchestration and the skills it drives"
 skills = [
-  "orch",
+  "orch", "mailbox",
   "dev",
   "github",
   "worktree",

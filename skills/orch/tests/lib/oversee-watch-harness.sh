@@ -46,6 +46,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/repo/.agents/skills/linear"
 # Load-bearing on the caller: these `git -C` calls, and `run_watch`'s child
 # below, are only sandboxed because the suite sourcing this harness sourced
@@ -689,7 +690,7 @@ EOF
 # workflow-state.args. Its lock library is this tree's, written into the stub:
 # a case points REAL_WORKFLOW_STATE at a reader fixture with no library beside it.
 {
-printf '#!/usr/bin/env bash\nFILE_LOCK_LIB=%q\n' "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
+printf '#!/usr/bin/env bash\nFILE_LOCK_LIB=%q\n' "$REPO_ROOT/skills/mailbox/scripts/lib/file-lock.sh"
 cat <<'EOF'
 set -uo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/workflow-state.args"

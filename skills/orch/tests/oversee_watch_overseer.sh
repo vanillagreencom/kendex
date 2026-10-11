@@ -124,7 +124,7 @@ assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" "rc=0 first=EVENT heartbeat loop
   "one exited reading is a poll, not news" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched on it" "$ERR"
 printf 'Retain this event for the next live overseer.\n' > "$TMP_ROOT/held-event.txt"
-(cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send \
+(cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/mailbox/scripts/lane-mail" send \
   --item overseer --directive --file "$TMP_ROOT/held-event.txt" >/dev/null)
 HELD_EVENT="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
 run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
@@ -475,6 +475,7 @@ assert_eq "line=$(recorded launch_line) notice=$(grep -c "^oversee-succeed: reco
 NOTICE_MUTANT="$TMP_ROOT/notice-mutant"
 mkdir -p "$NOTICE_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$NOTICE_MUTANT/orch/scripts"
+cp -R "$REPO_ROOT/skills/mailbox" "$NOTICE_MUTANT/mailbox"
 ln -s "$REPO_ROOT/skills/github" "$NOTICE_MUTANT/github"
 FROM='  line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>"$errf")" || rc=$?'
 assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
@@ -563,6 +564,7 @@ assert_eq "home=$(recorded home)" "home=none" "a home-less codex record keeps no
 HOME_MUTANT="$TMP_ROOT/home-mutant"
 mkdir -p "$HOME_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$HOME_MUTANT/orch/scripts"
+cp -R "$REPO_ROOT/skills/mailbox" "$HOME_MUTANT/mailbox"
 ln -s "$REPO_ROOT/skills/github" "$HOME_MUTANT/github"
 FROM='then .home = .account else . end'
 assert_eq "$(grep -cF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
@@ -647,6 +649,7 @@ assert_eq "generation=$(recorded generation)" "generation=none" \
 RECORD_MUTANT="$TMP_ROOT/record-mutant"
 mkdir -p "$RECORD_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$RECORD_MUTANT/orch/scripts"
+cp -R "$REPO_ROOT/skills/mailbox" "$RECORD_MUTANT/mailbox"
 ln -s "$REPO_ROOT/skills/github" "$RECORD_MUTANT/github"
 FROM='        | if ol_owns($server; $start; $pane) then . else {} end)'
 assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \

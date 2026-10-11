@@ -117,8 +117,10 @@ stdout_field() { # JQ
 # nothing a Copilot lane runs.
 plant_copilot_install() { # [SKIP]
   rm -rf -- "${LANE:?}/.github/skills/orch"
+  rm -rf -- "${LANE:?}/.github/skills/mailbox"
   mkdir -p "$LANE/.github/skills/orch/scripts"
-  ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$LANE/.github/skills/orch/scripts/lane-mail"
+  mkdir -p "$LANE/.github/skills/mailbox/scripts"
+  ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$LANE/.github/skills/mailbox/scripts/lane-mail"
   plant_siblings "$LANE/.github/skills/orch/scripts" "${1:-}"
 }
 
@@ -176,7 +178,7 @@ assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=$(cop_gap KEN-201)" \
 new_copilot_lane copilot_halt ken-202
 send KEN-202 'Stop pushing.' --halt
 HALT_202=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-202/to-lane.jsonl")
-printf -v READ_HALT_202 '%q inbox --item %q --root %q' "$LANE/.agents/skills/orch/scripts/lane-mail" KEN-202 "$LANE"
+printf -v READ_HALT_202 '%q inbox --item %q --root %q' "$LANE/.agents/skills/mailbox/scripts/lane-mail" KEN-202 "$LANE"
 copilot_tool halt
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .permissionDecision)" \
   "RC=2 first=lane-mail-check: halt=$HALT_202 decision=deny" \
@@ -345,9 +347,10 @@ assert_eq "RC=$RC first=$(first_line) recorded=$(cop_recorded)" \
 new_copilot_lane copilot_deliver_refuse ken-209
 send KEN-209 'Unreachable.'
 rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+rm -f -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
 copilot_tool deliver
 assert_eq "RC=$RC first=$(first_line) context=$(stdout_field '.additionalContext' | head -n 1)" \
-  "RC=0 first=lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail context=lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
+  "RC=0 first=lane-mail-check: reader=$LANE/.agents/skills/mailbox/scripts/lane-mail context=lane-mail-check: reader=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "a Copilot deliver run with no reader hands the keyed refusal over as additionalContext"
 
 # The start and prompt arms, one row set per arm: at a Copilot session start
@@ -429,7 +432,8 @@ new_copilot_lane copilot_marker ken-207
 send KEN-207 'Read from the account install.'
 COP_ACCOUNT="$TMP_ROOT/cop-home/.copilot-work"
 mkdir -p "$COP_ACCOUNT/skills/orch/scripts"
-ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$COP_ACCOUNT/skills/orch/scripts/lane-mail"
+mkdir -p "$COP_ACCOUNT/skills/mailbox/scripts"
+ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$COP_ACCOUNT/skills/mailbox/scripts/lane-mail"
 plant_siblings "$COP_ACCOUNT/skills/orch/scripts"
 install_hook "$HOOK" "$COP_ACCOUNT/hooks/lane-mail-check.sh"
 printf '{"version":1,"hooks":{}}\n' > "$COP_ACCOUNT/hooks/lane-mail-check.json"
@@ -956,7 +960,7 @@ assert_eq "RC=$RC stderr=$(first_line)" "RC=0 stderr=-" \
 mutant copilot-halt-shown -e 's@^          unknown)$@          unknown-shown)@' -e 's@^          lead)$@          lead | unknown)@'
 new_copilot_lane control_cop_halt_shown ken-225 "$MUTANT_PATH"
 send KEN-225 'Stop.' --halt
-printf -v READ_HALT_225 '%q inbox --item %q --root %q' "$LANE/.agents/skills/orch/scripts/lane-mail" KEN-225 "$LANE"
+printf -v READ_HALT_225 '%q inbox --item %q --root %q' "$LANE/.agents/skills/mailbox/scripts/lane-mail" KEN-225 "$LANE"
 copilot_tool halt
 assert_eq "RC=$RC command=$(stdout_field .permissionDecisionReason | grep -cxF -- "$READ_HALT_225")" "RC=2 command=1" \
   "control: with the command shown to an unknown caller, a Copilot deny carries it"
@@ -967,7 +971,7 @@ mutant copilot-halt-no-pass -e 's@^      lead | unknown) ! call_runs "\$ACK_COMM
 new_copilot_lane control_cop_halt_pass ken-229 "$MUTANT_PATH"
 send KEN-229 'Stop.' --halt
 HALT_229=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-229/to-lane.jsonl")
-printf -v READ_HALT_229 '%q inbox --item %q --root %q' "$LANE/.agents/skills/orch/scripts/lane-mail" KEN-229 "$LANE"
+printf -v READ_HALT_229 '%q inbox --item %q --root %q' "$LANE/.agents/skills/mailbox/scripts/lane-mail" KEN-229 "$LANE"
 copilot_tool halt "$READ_HALT_229" object
 expect 2 "lane-mail-check: halt=$HALT_229" \
   "control: without the pass for an unknown caller, the Copilot call running the reading command is refused"
@@ -977,7 +981,7 @@ expect 2 "lane-mail-check: halt=$HALT_229" \
 mutant notice-no-command -e 's@^        if \[ "\$CALLER" = lead \] && \[ -n "\$ACK_COMMAND" \]; then$@        if false; then@'
 new_copilot_lane control_cop_notice ken-230 "$MUTANT_PATH"
 send KEN-230 'Stop.' --halt
-printf -v READ_HALT_230 '%q inbox --item %q --root %q' "$LANE/.agents/skills/orch/scripts/lane-mail" KEN-230 "$LANE"
+printf -v READ_HALT_230 '%q inbox --item %q --root %q' "$LANE/.agents/skills/mailbox/scripts/lane-mail" KEN-230 "$LANE"
 copilot_stop "$COP_TRANSCRIPT"
 assert_eq "RC=$RC decision=$(stdout_field .decision) command=$(stdout_field .reason | grep -cxF -- "$READ_HALT_230")" \
   "RC=0 decision=block command=0" \
@@ -989,6 +993,7 @@ mutant copilot-no-deliver-answer -e "s@^      deliver) printf '{\"additionalCont
 new_copilot_lane control_cop_deliver_answer ken-226 "$MUTANT_PATH"
 send KEN-226 'Unreachable.'
 rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+rm -f -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
 copilot_tool deliver
 assert_eq "RC=$RC context=$(stdout_field '.additionalContext')" "RC=0 context=" \
   "control: without the deliver answer a Copilot refusal after a tool call reaches no model"
