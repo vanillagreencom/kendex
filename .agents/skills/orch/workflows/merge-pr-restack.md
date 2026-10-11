@@ -36,7 +36,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
      PR_ORDER=pr-order=review-first
    fi
    [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH] "${RESTACK_MODE_ARGS[@]}"
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
    ```
 
    A non-zero exit from `resolve-base-branch`, `--resolve-mode`, or the `--record` read below hands back with that command's stderr and pushes nothing.

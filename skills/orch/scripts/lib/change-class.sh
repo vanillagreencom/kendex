@@ -14,7 +14,9 @@
 #   stdout is one change_class=<class> line and nothing else; any other shape is
 #   not a class. Sets CHANGE_CLASS_MEASURED to the `measured=` value of the
 #   last `class:` line in STDERR_FILE, empty where it carries none: `false` is
-#   the classifier's fallback to standard, not a measured class. Returns 1 on
+#   the classifier's fallback to standard, not a measured class. Also sets
+#   CHANGE_CLASS_QUEUE_ONLY from the last queue-only line, empty when absent.
+#   Only false proves pull-request CI covers the queue's work. Returns 1 on
 #   failure with CHANGE_CLASS_CAUSE set to classifier-absent,
 #   classifier-exit-N or classifier-unreadable.
 #
@@ -39,6 +41,7 @@ CHANGE_CLASS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHANGE_CLASS=""
 CHANGE_CLASS_CAUSE=""
 CHANGE_CLASS_MEASURED=""
+CHANGE_CLASS_QUEUE_ONLY=""
 CHANGE_CLASS_DOCS_ONLY=""
 CHANGE_CLASS_SCRIPTS=""
 
@@ -60,6 +63,7 @@ change_class_read() { # BASE HEAD REPO STDERR_FILE
   CHANGE_CLASS=""
   CHANGE_CLASS_CAUSE=""
   CHANGE_CLASS_MEASURED=""
+  CHANGE_CLASS_QUEUE_ONLY=""
   classifier="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/change-class"
   if [[ ! -x "$classifier" ]]; then
     classifier="$(command -v change-class 2>/dev/null)" || classifier=""
@@ -86,6 +90,15 @@ change_class_read() { # BASE HEAD REPO STDERR_FILE
   CHANGE_CLASS_MEASURED="$(sed -n 's/^class: class=[^ ]* measured=\([^ ]*\).*/\1/p' "$4")" \
     || { CHANGE_CLASS_CAUSE=classifier-unreadable; return 1; }
   CHANGE_CLASS_MEASURED="${CHANGE_CLASS_MEASURED##*$'\n'}"
+  CHANGE_CLASS_QUEUE_ONLY="$(sed -n '/^queue-only:/p' "$4")" \
+    || { CHANGE_CLASS_CAUSE=classifier-unreadable; return 1; }
+  CHANGE_CLASS_QUEUE_ONLY="${CHANGE_CLASS_QUEUE_ONLY##*$'\n'}"
+  case "$CHANGE_CLASS_QUEUE_ONLY" in
+    'queue-only: queue_only='*)
+      CHANGE_CLASS_QUEUE_ONLY="${CHANGE_CLASS_QUEUE_ONLY#queue-only: queue_only=}"
+      CHANGE_CLASS_QUEUE_ONLY="${CHANGE_CLASS_QUEUE_ONLY%% *}" ;;
+    *) CHANGE_CLASS_QUEUE_ONLY="" ;;
+  esac
 }
 
 change_class_docs() { # BASE HEAD REPO PATHS_FILE STDERR_FILE

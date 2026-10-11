@@ -152,7 +152,7 @@ live() {
   [[ "$2" != "$RANGE" ]] || line="$line --poll 1"
   (cd "$3" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH \
-    -u ORCH_STATE_DIR -u ORCH_PR_ORDER ORCH_WORKTREE_BIN="$NETWORK_PUSH" "$BASH" -c "$line")
+    -u ORCH_STATE_DIR -u ORCH_PR_ORDER ORCH_WORKTREE_BIN="$NETWORK_PUSH" "$BASH" -c "set -u; $line")
 }
 
 fixture_failed() { echo "merge-pr-restack-wiring: fixture=failed step=$1" >&2; exit 1; }
@@ -281,6 +281,15 @@ assert_eq "$(cat "$WT/tmp/network-pushes")" $'push\npush' 'control: dropping the
 # The restack's real mode read and CI command use the same required-context
 # owner. This branch changes shell source so the classifier covers it.
 CI_WT="$(make_worktree ci-restack)" || fixture_failed ci-worktree
+# A declared queue path lets the real classifier prove this shell change has
+# no queue work. Undeclared queue paths cannot prove PR coverage.
+printf 'HARNESS_CI_QUEUE_PATHS = "queued/**"\n' >> "$CI_WT/kendex.settings.toml"
+git -C "$CI_WT" add -f kendex.settings.toml
+git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m coverage
+git -C "$CI_WT" update-ref refs/remotes/origin/main HEAD
+# Policy variations exercise the workflow order without adding a settings
+# change to the classifier's snapshot.
+git -C "$CI_WT" update-index --skip-worktree kendex.settings.toml
 printf '#!/bin/sh\nprintf changed\\n\n' > "$CI_WT/check.sh"
 git -C "$CI_WT" add check.sh
 git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m source
@@ -329,6 +338,34 @@ mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
 printf 'ORCH_PR_ORDER = "review-first"\n' >> "$CI_WT/kendex.settings.toml"
 CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-order-mutant.md" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-control
 assert_eq "$CI_RESOLVED" validate-mode=ci 'control: applying the opt-in base to every order breaks review-first restack validation'
+
+cp "$RESTACK_DOC" "$TMP_ROOT/restack-array-mutant.md"
+mutate_file "$TMP_ROOT/restack-array-mutant.md" '${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}' '"${RESTACK_MODE_ARGS[@]}"'
+if (( BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2 )); then
+  array_rc=0
+  PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-array-mutant.md" "$RESOLVE" "$CI_WT" main - > "$TMP_ROOT/array-control.out" 2> "$TMP_ROOT/array-control.err" || array_rc=$?
+  assert_eq "$array_rc" 1 'control: bare empty-array expansion fails review-first under Bash 3.2 nounset'
+else
+  printf 'control: bare-array requires Bash 3.2; current=%s\n' "$BASH_VERSION"
+fi
+
+# A pending restack receipt relies on submit's required-CI proof. Execute its
+# no-CI check from the workflow; a ci receipt cannot pass with verdict=none.
+submit_none_check() { # DOC
+  local block
+  block="$(awk '/^```bash/ {inside=1; block=""; next} /^```/ && inside {if (index(block, "submit-pr: ci-uncovered")) {printf "%s", block; exit} inside=0} inside {block=block $0 ORS}' "$1")"
+  [[ -n "$block" ]] || return 2
+  RECEIPT_VALIDATE_MODE=ci "$BASH" -uc "$block"
+}
+SUBMIT_DOC="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
+none_rc=0
+submit_none_check "$SUBMIT_DOC" > "$TMP_ROOT/submit-none.out" 2> "$TMP_ROOT/submit-none.err" || none_rc=$?
+assert_eq "$none_rc" 1 'a pending ci receipt blocks submit when the live CI wait has verdict=none'
+cp "$SUBMIT_DOC" "$TMP_ROOT/submit-none-mutant.md"
+mutate_file "$TMP_ROOT/submit-none-mutant.md" '[[ "$RECEIPT_VALIDATE_MODE" == ci ]]' '[[ "$RECEIPT_VALIDATE_MODE" == full ]]'
+none_rc=0
+submit_none_check "$TMP_ROOT/submit-none-mutant.md" > "$TMP_ROOT/submit-none-control.out" 2> "$TMP_ROOT/submit-none-control.err" || none_rc=$?
+assert_eq "$none_rc" 0 'control: dropping the ci receipt check permits an uncovered submit'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

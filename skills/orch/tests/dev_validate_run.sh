@@ -702,6 +702,15 @@ esac
 # The classifier's own measured marker, where the row names one.
 [[ -z "${STUB_MEASURED:-}" ]] \
   || printf 'class: class=%s measured=%s cause=stub\n' "${STUB_ANSWER#change_class=}" "$STUB_MEASURED" >&2
+# PR coverage reads this machine line. The branch-only row gives the round
+# base a different queue answer, as a fix after earlier queue work does.
+queue="${STUB_QUEUE:-queue_only=false cause=no-queue-path}"
+if [[ "$queue" == branch-only ]]; then
+  base="$(sed -n '/^--base$/{n;p;}' "$STUB_ARGS")"
+  queue='queue_only=false cause=no-queue-path'
+  [[ "$base" != origin/main ]] || queue='queue_only=true cause=queue-lane'
+fi
+[[ "$queue" == absent ]] || printf 'queue-only: %s\n' "$queue" >&2
 SH
 cat > "$LAYOUT/harness-ci/scripts/harness-only" <<'SH'
 #!/usr/bin/env bash
@@ -1066,7 +1075,11 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW [EXPECT]
   cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
   mutate_file "$CI_SCRIPT.mutant" "$2" "$3"
   got_line="$(ci_rows "$CI_SCRIPT.mutant" "$4")"
-  IFS=$'\t' read -r _ _ got <<<"$got_line"
+  if [[ -n "$got_line" ]]; then
+    IFS=$'\t' read -r _ _ got <<<"$got_line"
+  else
+    got="$(push_rows "$CI_SCRIPT.mutant" "$4")"
+  fi
   assert_eq "$got" "${5:-state=done guard-exit=0 validate=pass |ci|}" "control: with $1, '$4' fails"
 }
 # shellcheck disable=SC2016 # the script's own text, not expansions
@@ -1139,11 +1152,16 @@ PUSH_ROWS=(
   'invalid PR under push-first|push-first|pr-invalid|standard|CI|full|none|full|base-unresolved|pass'
   'closed PR under push-first|push-first|pr-closed|standard|CI|full|none|full|pr-not-open|pass'
   'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
+  'queue work before PR|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=true cause=queue-lane'
+  'absent queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||absent'
+  'malformed queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=unknown'
+  'queue range subset|review-first|rules|standard|CI|range|subset|range|class-uncovered|pass|||queue_only=true cause=queue-lane'
+  'branch queue work before fix|push-first|pr-no-pr|standard|CI|range|subset|range|class-uncovered|pass|||branch-only'
 )
 push_rows() { # SCRIPT [LABEL]
-  local row label order world class context request selector want_mode fallback verdict local_range want_resolve resolved proj args dir head n=0
+  local row label order world class context request selector want_mode fallback verdict local_range want_resolve queue resolved proj args dir head n=0
   for row in "${PUSH_ROWS[@]}"; do
-    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve <<<"$row"
+    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve queue <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "push-${label// /-}-${1##*/}-${3:-live}" "$context")"
@@ -1173,7 +1191,7 @@ push_rows() { # SCRIPT [LABEL]
     args=(--worktree "$proj" --poll 1 --validate-mode "$request")
     [[ "$request" == full ]] || args+=(--base HEAD)
     : > "$TMP_ROOT/push-rule-reads"
-    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_CI_LOG="$TMP_ROOT/push-rule-reads" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true run_script "$1" "${args[@]}"
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_CI_LOG="$TMP_ROOT/push-rule-reads" STUB_QUEUE="$queue" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true run_script "$1" "${args[@]}"
     dir="$(run_dir_of "$OUT")"
     run_script "$1" --record --run-dir "$dir"
     if [[ -z "${2:-}" ]]; then
@@ -1198,6 +1216,14 @@ push_rows() { # SCRIPT [LABEL]
   done
 }
 push_rows "$CI_SCRIPT"
+# shellcheck disable=SC2016 # production guard mutations
+{
+for queue_row in 'queue work before PR' 'absent queue line' 'malformed queue line' 'queue range subset'; do
+  ci_control 'the queue result unread' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || return 1' ':' "$queue_row" 'ci||pending'
+done
+ci_control 'admission classified over the round' $'    ci_admission_attempted=true\n    classify ""' $'    ci_admission_attempted=true\n    classify "$class_base"' \
+  'branch queue work before fix' 'ci||pending'
+}
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" 'ci_admission_attempted=true' $'ci_admission_attempted=true\n    ci_runs_validation || :'
 assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'fix unrequired full fallback' rule-reads)" \
@@ -2234,8 +2260,8 @@ selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
-  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n        if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then' \
-  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n        if [[ "$ci_admission_attempted" == false ]] && ci_runs_validation; then # ci_class_covered' \
+  'if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then' \
+  'if [[ "$ci_admission_attempted" == false ]] && ci_runs_validation; then # ci_class_covered' \
   'an all selection CI does not cover retains local execution'
 selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \

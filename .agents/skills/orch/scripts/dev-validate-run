@@ -516,6 +516,7 @@ classify() { # [ROUND_BASE] — a commit; the origin base branch where empty
     : > "$class_scratch/class.log"
   fi
   class=standard docs_only=false class_fallback="" snapshot_tree=""
+  : > "$class_scratch/class.log"
   : > "$class_scratch/paths"
   if [[ -z "$base" ]]; then
     base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
@@ -680,6 +681,7 @@ CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((
 # fallback runs CI's conservative lanes, so it does not need a measured size.
 # This is a local coverage check, not a change to the classifier's policy.
 ci_class_covered() {
+  [[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || return 1
   [[ -z "$class_fallback" && "$docs_only" == false ]] || return 1
   case "$class" in
     standard) return 0 ;;
@@ -803,6 +805,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   # --help's ci mode names when.
   if [[ "$validate_mode" == ci || "$pr_order" == push-first ]]; then
     ci_admission_attempted=true
+    classify ""
     [[ "$requested_mode" == full ]] || validate_mode=range
     ci_fallback=class-uncovered
     if ci_class_covered && ci_runs_validation; then
@@ -825,6 +828,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         fi
       fi
     fi
+    [[ "$validate_mode" == ci ]] || classify "$class_base"
   fi
   if [[ "$validate_mode" != full ]]; then
     [[ "$validate_mode" == ci ]] || resolve_range_mode
@@ -850,10 +854,16 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
       if preview_selection && { [[ "$selection" == selection=all ]] \
           || [[ "$requested_mode" == range && "$selection" == selection=subset ]]; }; then
         [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered
+        if [[ "$ci_admission_attempted" == false ]]; then
+          classify ""
+        fi
         if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then
           validate_mode=ci
           class_base=""
-        elif [[ "$ci_fallback" == pr-not-open && "$selection" == selection=all ]]; then
+        else
+          classify "$class_base"
+        fi
+        if [[ "$ci_fallback" == pr-not-open && "$selection" == selection=all ]]; then
           # The selector owns scoped execution too; no second suite map
           # or project-specific command lives in this runner.
           scoped=true

@@ -347,11 +347,20 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 | Result | Action |
 |--------|--------|
 | `status=complete`, `verdict=pass` | → § 6 |
-| `status=complete`, `verdict=none` | Repo has no CI configured. Record `ci: none` in workflow state and → § 6 |
+| `status=complete`, `verdict=none` | Run the receipt check below. Only exit 0 permits recording `ci: none` in workflow state and → § 6 |
 | `status=complete`, `verdict=fail` | → § 5.1 |
 | `status=timeout` or `status=error` | Re-run once. If it repeats, `auto-recommended` records `ci-status-unconfirmed`; `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended |
 
 A PR already green when the wait started reaches the first row, never this one: `ci-wait --help` pairs `verdict=pass` with `status=complete` alone.
+
+For `verdict=none`, bind `RECEIPT_VALIDATE_MODE` to the accepted receipt's `validate_mode` from § 1.1, or empty when no receipt exists. A pending `ci` receipt requires CI proof. With no required CI, stop before § 6:
+
+```bash
+if [[ "$RECEIPT_VALIDATE_MODE" == ci ]]; then
+  printf 'submit-pr: ci-uncovered cause=no-required-ci\n' >&2
+  exit 1
+fi
+```
 
 ### 5.1 CI Failure Recovery
 
@@ -376,7 +385,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 | # | Gate | Check |
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
-| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` (satisfied with a `CI: none configured` note in the summary) |
+| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` after its receipt check passes (satisfied with a `CI: none configured` note in the summary) |
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) AND `check-review-replies` exits 0 |
 | 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets it. `off`: not applicable |
 
