@@ -12,7 +12,7 @@ export MSYS=winsymlinks:nativestrict
 SELECTED=""
 if [ "${1:-}" = --wake-row ]; then SELECTED=$2; fi
 REARM='sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]'
-MASTER_START='run-master-wake --resume'
+JARVIS_START='run-jarvis-wake --resume'
 
 # CASE|HARNESS|EXIT|STDERR-KEY|DECISION|CONTEXT-KEY|COMMAND-COUNT[|WAKE-NOTICE]
 # Stop, Codex Stop and Copilot agentStop are held. Pi's carrier can make only
@@ -51,31 +51,31 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       start_wake_watch repeat
       ;;
     single) start_wake_watch single ;;
-    master-live | master-dead | master-continuation | incomplete-master)
-      command=$MASTER_START
-      if [ "$scenario" = master-live ]; then
-        wake_process "$TMP_ROOT/master-wake" --fleet "$LANE"
-        CALL_ENV+=("ORCH_WAKE_PROCESS=master-wake --fleet $LANE")
+    jarvis-live | jarvis-dead | jarvis-continuation | incomplete-jarvis)
+      command=$JARVIS_START
+      if [ "$scenario" = jarvis-live ]; then
+        wake_process "$TMP_ROOT/jarvis-wake" --fleet "$LANE"
+        CALL_ENV+=("ORCH_WAKE_PROCESS=jarvis-wake --fleet $LANE")
       else
-        CALL_ENV+=("ORCH_WAKE_PROCESS=master-wake --fleet $LANE")
+        CALL_ENV+=("ORCH_WAKE_PROCESS=jarvis-wake --fleet $LANE")
       fi
-      CALL_ENV+=("ORCH_WAKE_START=$MASTER_START")
+      CALL_ENV+=("ORCH_WAKE_START=$JARVIS_START")
       ;;
     empty-keys | absent-keys) command="" ;;
     no-record)
       command=""
       (cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer null >/dev/null)
-      CALL_ENV+=(ORCH_WAKE_PROCESS=never-matched "ORCH_WAKE_START=$MASTER_START")
+      CALL_ENV+=(ORCH_WAKE_PROCESS=never-matched "ORCH_WAKE_START=$JARVIS_START")
       ;;
     *) echo "wake-suite: case=unknown value=$scenario" >&2; exit 1 ;;
   esac
   case "$scenario" in
     no-follow)
-      # A matched master setting cannot replace a repeat follow. The live
+      # A matched Jarvis session setting cannot replace a repeat follow. The live
       # watch is also deliberately left running throughout the refusal.
-      CALL_ENV+=("ORCH_WAKE_PROCESS=oversee-watc[h]" "ORCH_WAKE_START=$MASTER_START")
+      CALL_ENV+=("ORCH_WAKE_PROCESS=oversee-watc[h]" "ORCH_WAKE_START=$JARVIS_START")
       ;;
-    continuation | continuation-mark | master-continuation) payload=$(jq -c '. + {stop_hook_active:true}' <<< "$payload") || exit 1 ;;
+    continuation | continuation-mark | jarvis-continuation) payload=$(jq -c '. + {stop_hook_active:true}' <<< "$payload") || exit 1 ;;
     agent-id) payload=$(jq -c '. + {agent_id:"child"}' <<< "$payload") || exit 1 ;;
     agent-type) payload=$(jq -c '. + {agent_type:"worker"}' <<< "$payload") || exit 1 ;;
     subagent-stop) payload=$(jq -c '. + {hook_event_name:"SubagentStop"}' <<< "$payload") || exit 1 ;;
@@ -110,7 +110,7 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       mkdir -- "${WAKE_STATE%/*}/oversee-watch.pid"
       ;;
     empty-keys) CALL_ENV+=(ORCH_WAKE_PROCESS= ORCH_WAKE_START=) ;;
-    incomplete-master) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
+    incomplete-jarvis) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
   esac
   if [ -n "$wake_notice" ]; then
     # An unarmed continuation or failed wake probe coincides with a handoff
@@ -201,9 +201,9 @@ agent-type|codex|0|-|-|-|0
 subagent-stop|claude|0|-|-|-|0
 other-session|claude|0|-|-|-|0
 single|claude|0|-|-|-|0
-master-live|claude|0|-|-|-|0
-master-dead|claude|2|wake=unarmed|-|-|1
-master-continuation|claude|0|wake=unarmed|-|-|1
+jarvis-live|claude|0|-|-|-|0
+jarvis-dead|claude|2|wake=unarmed|-|-|1
+jarvis-continuation|claude|0|wake=unarmed|-|-|1
 empty-keys|claude|0|-|-|-|0
 absent-keys|claude|0|-|-|-|0
 no-record|claude|0|-|-|-|0
@@ -214,7 +214,7 @@ record-cwd|claude|2|wake=unarmed|-|-|1
 record-armed|claude|0|-|-|-|0
 missing-cwd|claude|0|record|-|-|0
 unreadable-record|claude|0|record|-|-|0
-incomplete-master|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
+incomplete-jarvis|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
 ROWS
 
 # Copilot's custom subagent names its own session and the lead's transcript.
