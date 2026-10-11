@@ -274,6 +274,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   terminal-close<TAB><item><TAB><terminal state>|<lane record JSON>
 #   lane-idle<TAB><lane><TAB><pane key>|<copilot note>|<screen cksum>[|reported]
+#   lane-idle<TAB><lane><TAB>pi-merged-gone[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
 #   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>|<branch heads>|<last observed progress epoch>

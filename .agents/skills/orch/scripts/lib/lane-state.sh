@@ -905,8 +905,8 @@ lane_pane_observe() { # WINDOW
 #   asking    a dialog is up and waiting on an answer
 #   idle      the harness is at its input prompt with nothing in flight
 #   working   a turn is in flight
-#   unjudged  nothing observed settles it — NOT a synonym for idle, and every
-#             caller that acts on a lane must refuse on it
+#   unjudged  nothing observed settles it; this is not idle. lane-close owns
+#             admission from independent completion evidence.
 #
 # Inputs, each the raw observation and none of them a verdict:
 #
