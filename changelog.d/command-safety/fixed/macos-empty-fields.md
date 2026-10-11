@@ -1,1 +1,0 @@
-- Pass empty shell commands without an error on macOS, and use the caller's directory when the payload omits it.

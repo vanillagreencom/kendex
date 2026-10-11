@@ -1,1 +1,0 @@
-- Pi sessions on any provider resolve model classes from each model's family. Gateway and bridge helpers can select their requested class. Providers that list both Claude and GPT models prefer the session model's vendor.

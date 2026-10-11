@@ -1,1 +1,0 @@
-- Read one mailbox with `lane-mail events --box` and filter envelopes after a logical line number with `--after`, including after compaction.

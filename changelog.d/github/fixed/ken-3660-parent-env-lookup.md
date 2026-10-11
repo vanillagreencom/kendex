@@ -1,1 +1,0 @@
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.

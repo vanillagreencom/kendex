@@ -1,1 +1,0 @@
-- The Copilot request job uses `CI_RUNNER_2V` where it resolves and falls back to `ubuntu-latest`.

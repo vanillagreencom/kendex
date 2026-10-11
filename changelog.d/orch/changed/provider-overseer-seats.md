@@ -1,1 +1,0 @@
-- `lanes pick` judges an account the host provider marks `seat=1` as an overseer seat, including a seat held on another machine.

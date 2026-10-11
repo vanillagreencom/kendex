@@ -1,1 +1,0 @@
-- A queued pull request keeps its queue position when a lane runs the direct merge attempt while GitHub still computes mergeability or cannot read it.

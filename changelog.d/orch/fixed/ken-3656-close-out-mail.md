@@ -1,1 +1,0 @@
-- Keep a local lane's close-out notices readable from its main checkout after worktree removal. Require close-out notices after removal so deletion cannot erase unread mail.

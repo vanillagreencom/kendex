@@ -1,1 +1,0 @@
-- Review-body findings use the same triage and recurring defect class checks as review threads.

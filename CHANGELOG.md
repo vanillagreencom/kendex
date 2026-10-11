@@ -6,6 +6,213 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-10-10
+
+### Added
+
+- Bind agent model classes to native models on Codex and Copilot with `[model-bindings.<harness>]` in `kendex.toml`. This requires manifest format 7. kendex rewrites a schema 6 personal or project `kendex.toml` to `schema = 7` on apply, refresh and install, with comments kept.
+
+  You do: nothing (migrated on apply)
+
+### Changed
+
+- `kendex update` prints the release notes link after it installs.
+- Older supported personal and project manifests are rewritten to the current schema on apply, refresh, install and any write. Comments, layout and line endings stay in place. CLI apply, refresh, install and update, and app apply and editor save, show a note for each migrated file with the schema change and the changelog link. Other writes also migrate the file and may show no note. Read-only commands and plan preview leave the file unchanged.
+- Pi sessions on any provider resolve model classes from each model's family. Gateway and bridge helpers can select their requested class. Providers that list both Claude and GPT models prefer the session model's vendor.
+
+### Fixed
+
+- Refuse project refreshes from marked lanes after they change directory into the main checkout; `--lane-refresh` still permits refresh lanes.
+
+### Packages
+
+#### command-safety
+
+- Command safety reads the command and working directory together, which reduces process starts per shell call.
+- Pass empty shell commands without an error on macOS, and use the caller's directory when the payload omits it.
+
+#### decider
+
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+
+#### frontend
+
+- The frontend agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.frontend]` in the consumer manifest. This override wins over the source.
+
+#### github
+
+- A queued pull request keeps its queue position when a lane runs the direct merge attempt while GitHub still computes mergeability or cannot read it.
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+
+#### harness-ci
+
+- Clarify that proof reuse excludes runner utilities whose versions cannot change a check's verdict, such as `timeout` or a container runtime running a tree-pinned image, from mutable tool inputs; tools whose output the check judges remain mutable inputs.
+
+#### iced
+
+- The iced agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.iced]` in the consumer manifest. This override wins over the source.
+
+#### jarvis
+
+- Add Jarvis with a standing persona, task references for delegated decisions, result checks and user communication, and a guide to personal skills and memory.
+- Jarvis adds task references for long sessions, memory, computer use, browser work, accounts, secrets and research.
+- Jarvis setup distinguishes a plain folder from an app-managed home and prevents a persona paste that would load the text twice.
+
+#### lane-mail-check
+
+- Mailbox discovery starts no process for each mailbox directory. Overseer delivery reuses the state path from its identity read.
+- Keep the mailbox check working on macOS when the identity read returns an empty state path.
+
+#### lane-mail-deliver
+
+- The delivery hook uses Bash to find its companion hook directory, which reduces process starts per tool call.
+
+#### lane-mail-halt
+
+- The halt hook uses Bash to find its companion hook directory, which reduces process starts per tool call.
+
+#### linear
+
+- Comment reads include the author's email. Issue lists accept an assignee email, and issue updates can remove the assignee.
+- A leaf issue can wait on an issue in another bundle. Blocking relations still refuse ancestor pairs and cross-bundle blocked containers. Structural repair keeps a completed leaf wait.
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+- Completion help explains that release verification in the item's merge repository waits for a release that contains its latest merge commit.
+
+#### maintainer
+
+- The maintainer agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.maintainer]` in the consumer manifest. This override wins over the source.
+
+#### orch
+
+- Read one mailbox with `lane-mail events --box` and filter envelopes after a logical line number with `--after`, including after compaction.
+- Owner asks can assign and label their Linear item. The watch reads the person's comment once, and closure clears the assignment and label. Reports link the items that wait on the person.
+- `oversee-succeed --print-launch-line --entry harness:model:effort` prints a chosen successor's launch command with account selection, flag translation and folder trust. It refuses when that entry cannot run, without falling back to the caller's harness.
+- `oversee-succeed --print-launch-line --brief-file PATH` puts a caller's one-line brief in the launch command for Claude, Codex, Copilot, or Pi, including a named `--entry`. Briefs that start with `-` or `=` keep their text.
+- A ceo question to the owner shows each option as a bold line with Gains, Costs and Odds bullets, so a phone reader of the Slack post can tell the options apart.
+- A Claude cloud lane applies the repository formatter safe fixes to the files it changed before each commit.
+- Sequencing guidance uses the Linear blocking rule for cross-bundle waits. Bundle launches check current external blockers on pending child work.
+- Control-host subagent briefs forbid busy waits and assign private scratch directories for extraction and cleanup.
+- Owner reports put each item and figure on its own line. The summary limit counts item lines and defaults to 20. Long items and excess item lines produce an advisory notice after sending the report.
+- `lanes pick` judges an account the host provider marks `seat=1` as an overseer seat, including a seat held on another machine.
+- The fleet watch closes merged hosted lanes after two idle passes when their worktrees are gone, so finished lanes release their sandboxes.
+- The CI wait after a fix push counts only required checks, so an optional check failure does not start another fix round.
+- Fleet log writes through `workflow-state append` now refuse before changing state and direct callers to `append-file`, which stamps the record time.
+- Keep a local lane's close-out notices readable from its main checkout after worktree removal. Require close-out notices after removal so deletion cannot erase unread mail.
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+- Let waiting lanes use overseer accounts above a configurable capacity reserve, return those accounts last, and hand running lanes off when they reach the reserve.
+- Direct missing-overseer mail refusals to `oversee register` and the remote host's checkout.
+- A successor launch starts the fleet watch when its stopped predecessor left a pre-1.0 or missing retained command, instead of failing with `watch-restart-failed step=argv`.
+- Accept measured process counts in performance QA without a false instrument-failure declaration.
+- Queue waits report `pr-view-failed` when the budget expires without a successful pull request read. A transient GitHub failure no longer reports the pull request as never armed.
+- Release verification in the item's merge repository starts at the first matching release that contains its latest merge commit.
+- Review-body findings use the same triage and recurring defect class checks as review threads.
+- Round checks record start, end and validation times automatically. `oversee-cycle stages ITEM` shows running lanes, resumed rounds and pushed restack validation runs.
+
+#### planner
+
+- The planner agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.planner]` in the consumer manifest. This override wins over the source.
+
+#### preflight
+
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+
+#### project-management
+
+- Planners and audits use the Linear blocking rule. Roadmap output and issue creation keep a leaf's cross-bundle wait on that leaf.
+- Admit post-merge checks only for deployment, live use over time or a person's check, with readable evidence and a sample that occurs within the verification window.
+- Keep container parents in triage and backlog audits when they state one outcome for their children and hold no requirements or pull request of their own.
+- Release verification requirements start at a release that contains the item's latest merge commit when the release uses its merge repository.
+
+#### researcher
+
+- The researcher agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.researcher]` in the consumer manifest. This override wins over the source.
+
+#### review-gate
+
+- The Copilot request job uses `CI_RUNNER_2V` where it resolves and falls back to `ubuntu-latest`.
+- Consumer refresh pull requests carry the root manifest schema edit before refresh when the engine's schema is one above the committed value.
+- Skip the automatic Copilot request job on merge groups and draft pull requests before allocating a runner.
+- Consumer refresh uses the fetched default-branch tip when the branch advances after checkout, instead of stopping with `refresh-error=default-moved`.
+- Consumer refresh merges a clean pull request on its pushed head when GitHub refuses the auto-merge request.
+- The Copilot review request job skips lanes-app consumer refresh pull requests without allocating a runner.
+
+#### reviewer-arch
+
+- The reviewer-arch agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-arch]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-correctness
+
+- The reviewer-correctness agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-correctness]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-doc
+
+- The reviewer-doc agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-doc]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-error
+
+- The reviewer-error agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-error]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-perf
+
+- The reviewer-perf agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-perf]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-quality
+
+- The reviewer-quality agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-quality]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-safety
+
+- The reviewer-safety agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-safety]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-security
+
+- The reviewer-security agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-security]` in the consumer manifest. This override wins over the source.
+
+#### reviewer-test
+
+- The reviewer-test agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-test]` in the consumer manifest. This override wins over the source.
+
+#### reviewer
+
+- **Breaking:** Linux mutation checks now require process-handle support. Upgrade your environment as described in [reviewer Setup](https://github.com/vanillagreencom/kendex/blob/main/skills/reviewer/README.md#setup). Mutation checks stop detached Linux processes before they remove the scratch workspace. They report cleanup failure and keep the workspace if safe cleanup is unavailable.
+- Document process-count evidence for performance QA without requiring latency measurements or an instrument-failure declaration.
+- Review findings can identify review-body sources by file and line.
+
+#### runtime
+
+- The runtime agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.runtime]` in the consumer manifest. This override wins over the source.
+
+#### rust
+
+- The rust agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.rust]` in the consumer manifest. This override wins over the source.
+
+#### scout
+
+- The scout agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.scout]` in the consumer manifest. This override wins over the source.
+
+#### second-opinion
+
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+
+#### slack
+
+- Replies to messages the owner sends in the bound Slack channel post in their threads while the master hold is active; other mailbox posts stay held.
+- An owner ask on a tracker item posts one Slack line with the question and item link.
+- A running Slack relay takes changed master hold settings on its next poll without a restart. A failed settings read keeps that root's posts held while other roots continue.
+- Link Linear issue ids in Slack posts and relayed notices when workspace keys are available, including roots with no configured team.
+
+#### swift
+
+- The swift agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.swift]` in the consumer manifest. This override wins over the source.
+
+#### tpm
+
+- The tpm agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.tpm]` in the consumer manifest. This override wins over the source.
+
+#### worktree
+
+- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+
 ## [1.14.4] - 2026-10-10
 
 ### Fixed
@@ -2424,7 +2631,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.14.4..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.15.0..HEAD
+[1.15.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.15.0
 [1.14.4]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.4
 [1.14.3]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.3
 [1.14.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.2

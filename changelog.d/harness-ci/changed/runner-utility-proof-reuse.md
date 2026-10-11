@@ -1,1 +1,0 @@
-- Clarify that proof reuse excludes runner utilities whose versions cannot change a check's verdict, such as `timeout` or a container runtime running a tree-pinned image, from mutable tool inputs; tools whose output the check judges remain mutable inputs.
