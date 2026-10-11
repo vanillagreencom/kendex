@@ -416,7 +416,7 @@ cp "$TEST_DIR/lib/git-env.sh" "$POOL/skills/orch/tests/lib/git-env.sh"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$POOL/skills/orch/scripts/lib/lane-state.sh"
 cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$POOL/skills/github/scripts/lib/group-leader.sh"
 cp "$ROOT/tools/tests/run-all.sh" "$POOL/tools/tests/run-all.sh"
-for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh; do
+for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh "$ROOT"/hooks/tests/*.sh "$ROOT"/refresh/tests/*.test.sh; do
   [[ "${f##*/}" != run-all.sh ]] || continue
   path="${f#"$ROOT"/}"
   mkdir -p "$POOL/${path%/*}"
@@ -658,9 +658,9 @@ wf_hook_noop="$TMP/wf-hook-tail-noop.yml"
 awk '
   index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 1 }
   tail && substr($0, 1, 8) == "      - " && !index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 0 }
-  tail && /if ! bash "\$t"; then/ { sub(/if ! bash/, "if ! :"); hits++ }
+  tail && /bash skills\/orch\/tests\/run-all.sh --battery/ { sub(/bash skills\/orch\/tests\/run-all.sh/, ":"); hits++ }
   { print }
-  END { exit hits != 1 }
+  END { exit hits != 2 }
 ' "$WORKFLOW" > "$wf_hook_noop"
 edited "$WORKFLOW" "$wf_hook_noop" hook-tail-noop
 claims_file "$wf_hook_noop" "$TMP/claims-hook-noop"
@@ -767,10 +767,11 @@ check "must-fail: Slack's wrong battery leaves its suites claimed by none" \
 # A roster claimed twice.
 wf_twice="$TMP/wf-roster-repeated.yml"
 awk '{
-  if (index($0, "for t in skills/review-gate/tests/*.test.sh refresh/tests/*.test.sh; do"))
-    sub(/; do/, " skills/worktree/tests/*.sh; do")
+  if (index($0, "bash skills/orch/tests/run-all.sh --battery skills/review-gate/tests")) {
+    print "          bash skills/orch/tests/run-all.sh --battery skills/worktree/tests"; hits++
+  }
   print
-}' "$WORKFLOW" > "$wf_twice"
+} END { exit hits != 1 }' "$WORKFLOW" > "$wf_twice"
 edited "$WORKFLOW" "$wf_twice" roster-repeated
 claims_file "$wf_twice" "$TMP/claims-twice"
 if [[ -n "$(uniq -d "$TMP/claims-twice")" ]]; then
@@ -1101,6 +1102,81 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
     done
   } | awk -F '\t' -v mode="$mode" 'mode == "files" { print; next } { d = $2; sub(/\/[^\/]*$/, "", d) } !seen[$1 "\t" d]++'
 }
+
+# The migrated steps retain the same claim reader. Each table row supplies a
+# required suite independent of the selector arrays built by the workflow.
+# Missing and repeated calls must name that suite, and an assertion failure
+# must cross the real pool runner and the workflow block's exit status.
+while IFS='|' read -r shard step battery stem; do
+  path="$battery/$stem.sh"
+  grep -qxF "$path" "$UNIV" || [[ "$battery" == skills/linear/tests ]] ||
+    { bad "pooled control names no suite: $path"; continue; }
+  for fault in omitted duplicated; do
+    mutant="$TMP/wf-pooled-$fault.yml"
+    awk -v step="$step" -v battery="$battery" -v stem="$stem" -v fault="$fault" '
+      index($0, "- name: " step) { active = 1 }
+      active && substr($0, 1, 8) == "      - " && !index($0, "- name: " step) { active = 0 }
+      active && index($0, "bash skills/orch/tests/run-all.sh --battery " battery " ") {
+        if (fault == "omitted") sub("--battery " battery, "--battery " battery " !=" stem)
+        else print "          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
+        hits++
+      }
+      { print }
+      END { exit hits != 1 }
+    ' "$WORKFLOW" > "$mutant" || { bad "pooled $fault control matched other than once: $step $battery"; continue; }
+    edited "$WORKFLOW" "$mutant" "pooled-$fault $step $battery"
+    if [[ "$battery" == skills/linear/tests ]]; then
+      # Unlike claims_file, shard_owners includes the shell-version roster.
+      suite_owners "$mutant" files > "$TMP/pooled-owner-claims"
+      cut -f 2 "$TMP/pooled-owner-claims" | sort > "$TMP/pooled-fault-claims"
+      suite_owners "$WORKFLOW" files > "$TMP/pooled-head-owners"
+      cut -f 2 "$TMP/pooled-head-owners" | sort > "$TMP/pooled-head-claims"
+    else
+      claims_file "$mutant" "$TMP/pooled-fault-claims"
+      cp "$HEAD_CLAIMS" "$TMP/pooled-head-claims"
+    fi
+    case "$fault" in
+      omitted) got="$(comm -23 "$TMP/pooled-head-claims" "$TMP/pooled-fault-claims")" ;;
+      duplicated) got="$(comm -13 <(uniq -d "$TMP/pooled-head-claims") <(uniq -d "$TMP/pooled-fault-claims"))" ;;
+    esac
+    check "must-fail: pooled $fault names its suite: $step $battery" "$path" "$got"
+  done
+
+  bad_pool="$TMP/assertion-pool"
+  rm -rf -- "${bad_pool:?}"
+  cp -R "$POOL" "$bad_pool"
+  printf '#!/usr/bin/env bash\ntest green = red\n' > "$bad_pool/$path"
+  bad_cache="$TMP/assertion-claims"
+  rm -rf -- "${bad_cache:?}"
+  mkdir -p "$bad_cache"
+  split_run_blocks "$WORKFLOW" "$TMP/assertion-blocks"
+  cp "$WORKFLOW" "$PART/.github/workflows/skill-tests.yml"
+  result=not-run
+  for block in "$TMP/assertion-blocks"/*.sh; do
+    [[ "$(one_shard "$(cat "${block%.sh}.cond")")" == "$shard" ]] || continue
+    grep -qF -- "--battery $battery " "$block" || continue
+    rc=0
+    (cd "$PART" && PARTITION_POOL="$bad_pool" PARTITION_POOL_CLAIMS="$bad_cache" \
+      PATH="$SHIM:$PATH" "$BASH" "$block") > "$TMP/assertion-step.log" 2>&1 || rc=$?
+    if [[ "$rc" -ne 0 ]] && grep -qxF -- "  - $stem" "$bad_cache"/*.out; then
+      result=failed
+      break
+    fi
+  done
+  check "must-fail: a pooled assertion fails its owning step: $step $battery" failed "$result"
+done <<'POOLED'
+review-gate|review-gate suites|skills/review-gate/tests|validate-standard.test
+review-gate|review-gate suites|refresh/tests|refresh-report.test
+guards-commit|commit-guards suites|skills/commit-guards/tests|atomic-install.test
+guards-hooks|hook and moved commit-guards suites|hooks/tests|dev-stop-check.test
+guards-hooks|hook and moved commit-guards suites|skills/commit-guards/tests|install-git-hooks.test
+guards-hooks-tail|lane-mail, reviewer and md-refs suites|hooks/tests|lane-mail-check.test
+guards-hooks-tail|lane-mail, reviewer and md-refs suites|skills/commit-guards/tests|md-refs.test
+linear|linear, bot-instructions and preflight suites|skills/linear/tests|bash4-runtime-contract.test
+linear|linear, bot-instructions and preflight suites|skills/bot-instructions/tests|bounds.test
+linear|linear, bot-instructions and preflight suites|skills/preflight/tests|precision.test
+worktree|worktree suites|skills/worktree/tests|worktree_output_prune
+POOLED
 
 unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<tab>path` the selection misses
   local job_set="$1" shard path out="$TMP/owner-selection"
