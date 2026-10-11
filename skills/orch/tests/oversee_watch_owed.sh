@@ -729,7 +729,7 @@ behind_then_ahead|behind|ahead|due|2026-10-03T00:00:00Z|2
 behind_then_identical|behind|identical|due|2026-10-03T00:00:00Z|2
 first_ahead|ahead|behind|due|2026-10-02T12:00:00Z|1
 first_identical|identical|behind|due|2026-10-02T12:00:00Z|1
-behind_and_diverged|behind|diverged|waiting|2026-10-04T00:00:00Z|2
+behind_and_diverged|behind|diverged|waiting|-|2
 ROWS
 while IFS='|' read -r name setup; do
   own_release_world "release_compare_unread_$name" behind ahead
