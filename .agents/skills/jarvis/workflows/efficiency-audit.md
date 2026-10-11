@@ -42,7 +42,7 @@ Run each read over every sampled transcript or lane and its linked transcript. M
 ## Findings
 
 - Write only findings the evidence establishes. Give each finding four fields: root problem, goal it blocks, one targeted fix, and state. Put the path and record evidence in the root-problem field. State the observed effect and the conditions under which it occurs.
-- Use state `applied` only when existing evidence confirms a prior fix and its acceptance check. Otherwise use `sent to its owner`, naming that owner and the proposed fix. Prepare the referral in the report and handoff; deliver it only through an authorized channel under [Decisions: Authority](../references/decisions.md#authority).
+- Use state `applied` only when existing evidence confirms a prior fix and its acceptance check. For a referral, name its owner and proposed fix. Prepare the referral in the report and handoff with state `prepared for owner`. Use state `sent to its owner` only when evidence confirms the owner's approval of the exact text and recipient under [Decisions: Authority](../references/decisions.md#authority) and the sending tool confirms delivery under [Verification: Tools and records](../references/verification.md#tools-and-records). Keep state `prepared for owner` while approval or confirmed delivery is pending.
 - Apply [Decisions: Authority](../references/decisions.md#authority) to any later, separately delegated fix. This audit writes only its report and the existing handoff. It changes no audited record or running process. Process handling follows [Computer use: Desktop and terminal](../references/computer-use.md#desktop-and-terminal).
 
 ## Report and next run
