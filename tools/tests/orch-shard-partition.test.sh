@@ -1249,11 +1249,18 @@ os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   awk -F '\t' -v excluded="$excluded" '
     BEGIN { n = split(excluded, names, " "); for (i = 1; i <= n; i++) skip[names[i]] = 1 }
     NR == FNR { universe[$0] = 1; next }
-    # The shared linear runner owns two disjoint control sets, proved above.
-    $2 == "skills/linear/tests/must-fail-controls.sh" && driver_seen[$2]++ { next }
+    # Only the two control halves share a runner claim. Other shards repeat it.
+    ($1 == "linear-controls-a" || $1 == "linear-controls-b") &&
+      $2 == "skills/linear/tests/must-fail-controls.sh" && driver_seen[$2]++ { next }
     !skip[$1] && $2 in universe { print $2 }
   ' "$TMP/os-universe" "$owners" | sort
 }
+
+awk '$0 == "            case \"$t\" in skills/linear/tests/must-fail-controls.sh) continue ;; esac" {
+       sub(/continue/, ":"); n++
+     }
+     { print } END { exit n != 1 }' "$WORKFLOW" > "$TMP/linear-unskipped.yml" ||
+  bad "must-fail: the linear loop skip is no longer one line in the workflow"
 
 for os in ubuntu-latest macos-latest; do
   major=4
@@ -1275,6 +1282,15 @@ for os in ubuntu-latest macos-latest; do
   os_claims "$wf_twice" "$os" "$major" > "$TMP/os-twice"
   [[ -n "$(uniq -d "$TMP/os-twice")" ]] &&
     ok "must-fail: a duplicated roster repeats suites on $os" || bad "duplication control named no suite on $os"
+  if [[ "$os" == ubuntu-latest ]]; then
+    os_claims "$TMP/linear-unskipped.yml" "$os" "$major" > "$TMP/linear-unskipped"
+    if cmp -s "$TMP/os-universe" "$TMP/linear-unskipped"; then
+      bad "must-fail: Linux exactly-once coverage accepted an extra linear battery run"
+    else
+      check "must-fail: Linux exactly-once coverage names the extra linear battery run" \
+        skills/linear/tests/must-fail-controls.sh "$(uniq -d "$TMP/linear-unskipped")"
+    fi
+  fi
 done
 
 fi
