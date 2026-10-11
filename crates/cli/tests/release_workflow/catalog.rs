@@ -46,8 +46,8 @@ fn check_options(
         .unwrap()
 }
 
-// Only an anonymous release API read may be unavailable on a hosted lane.
-// CI supplies GITHUB_TOKEN; an authenticated failure must still fail CI.
+// curl reports DNS and connection failures even when CI supplies GITHUB_TOKEN.
+// Only the release read may skip; later install stages must still fail CI.
 fn require_install(install: &Output, token: Option<&OsStr>) -> Result<(), String> {
     if install.status.success() {
         return Ok(());
@@ -58,41 +58,68 @@ fn require_install(install: &Output, token: Option<&OsStr>) -> Result<(), String
         String::from_utf8_lossy(&install.stdout),
         String::from_utf8_lossy(&install.stderr),
     );
-    if token.is_none()
-        && String::from_utf8_lossy(&install.stderr)
-            .lines()
-            .any(|line| line == "kendex-install: cause=release-read")
+    let stderr = String::from_utf8_lossy(&install.stderr);
+    if stderr
+        .lines()
+        .any(|line| line == "kendex-install: cause=release-read")
+        && (token.is_none()
+            || stderr
+                .lines()
+                .any(|line| line.starts_with("curl: (6) ") || line.starts_with("curl: (7) ")))
     {
-        return Err(format!(
-            "anonymous GitHub release read unavailable; GITHUB_TOKEN is unset\n{diagnostic}"
-        ));
+        return Err(format!("GitHub release read unavailable\n{diagnostic}"));
     }
     panic!("{diagnostic}");
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn install_failures_keep_both_streams_and_only_anonymous_release_reads_skip() {
+fn install_failures_keep_both_streams_and_only_unavailable_release_reads_skip() {
     // This holds the test's handling of the installer's report protocol, not
     // shipped behavior. Dropping either stream from require_install makes
     // the failure assertion red; accepting installer-run makes it red too.
-    for (cause, token) in [
-        ("release-read", None),
-        ("release-read", Some(OsStr::new("read-only"))),
-        ("installer-run", None),
+    for (cause, curl, token, skip) in [
+        ("release-read", "", None, true),
+        ("release-read", "", Some(OsStr::new("read-only")), false),
+        (
+            "release-read",
+            "curl: (6) Could not resolve host: api.github.com",
+            Some(OsStr::new("read-only")),
+            true,
+        ),
+        (
+            "release-read",
+            "curl: (7) Failed to connect to api.github.com",
+            Some(OsStr::new("read-only")),
+            true,
+        ),
+        (
+            "release-read",
+            "curl: (22) The requested URL returned error: 401",
+            Some(OsStr::new("read-only")),
+            false,
+        ),
+        ("installer-run", "", None, false),
+        (
+            "installer-run",
+            "curl: (6) Could not resolve host: api.github.com",
+            Some(OsStr::new("read-only")),
+            false,
+        ),
     ] {
         let output = Command::new("/bin/sh")
             .args([
                 "-c",
-                "printf 'installer-stdout'; printf 'kendex-install: cause=%s\\ninstaller-stderr' \"$1\" >&2; exit 1",
+                "printf 'installer-stdout'; printf '%s\\nkendex-install: cause=%s\\ninstaller-stderr' \"$2\" \"$1\" >&2; exit 1",
                 "installer-fixture",
                 cause,
+                curl,
             ])
             .env_clear()
             .output()
             .unwrap();
         let result = std::panic::catch_unwind(|| require_install(&output, token));
-        let diagnostic = if cause == "release-read" && token.is_none() {
+        let diagnostic = if skip {
             result.unwrap().unwrap_err()
         } else {
             *result.unwrap_err().downcast::<String>().unwrap()
