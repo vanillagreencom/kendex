@@ -202,7 +202,8 @@
 # docs verdict, paths and base as validation, plus DEV_VALIDATE_MODE, the
 # requested mode. All attempts the existing ci route. A range subset also
 # attempts it: the selector reports no cost, so a subset can exceed the local
-# time target. Full subsets keep local execution. Unset, failed or
+# time target. Full subsets keep local execution outside push-first, where a
+# full request takes CI under the coverage checks above. Unset, failed or
 # unreported selection keeps full and range requests local. For an explicit
 # ci request, an unset selector preserves the existing CI route. A configured
 # selector must report all or subset before CI can skip local work.
