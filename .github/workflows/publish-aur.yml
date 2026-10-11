@@ -50,6 +50,10 @@ jobs:
     # Reads this repository and writes only to the AUR, over SSH with its own key.
     permissions:
       contents: read
+    # AUR_SSH_PRIVATE_KEY lives only in the kendex environment, which admits
+    # main and v*.*.* tags, the ref of a published release. A plain dry run
+    # reads no secret and takes no environment, so it still runs from any ref.
+    environment: ${{ (inputs.dry_run != true || inputs.check_key == true) && 'kendex' || '' }}
     # CI_RUNNER_2V is unset on this public repository, so this is ubuntu-latest.
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 20

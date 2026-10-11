@@ -58,6 +58,10 @@ jobs:
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+    # The Apple and Tauri signing secrets live only in the kendex
+    # environment, which admits main and v*.*.* tags, so a pull request
+    # branch's edited workflow cannot read them.
+    environment: kendex
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
