@@ -1,1 +1,1 @@
-- A review raises a post-merge Done-when box that the pull request's own tests, CI or diff already prove, or whose reason after merge is none of the three admitted classes, as a fix: tick it at completion or make it a pre-merge test.
+- A review raises a post-merge Done-when box that the pull request already proves or whose reason does not qualify for a post-merge check. Completion ticks require cited proof. Unproved checks need a pre-merge test or a correction to their post-merge admission under the existing Disposition rule.

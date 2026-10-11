@@ -1,0 +1,28 @@
+{
+  "issue": {
+    "identifier": "OPS-RETRY",
+    "title": "Stop retries when the configured attempt limit is reached",
+    "description": "A worker schedules an extra attempt when its completed-attempt count equals its configured limit. Reached by: a failed job reaches its configured attempt limit.\n\n## Done-when\n\n- [x] The retry decision rejects a completed-attempt count at or above the configured limit and accepts a count below it, including a zero limit.\n- [ ] Post-merge: The retry decision rejects a completed-attempt count at or above the configured limit and accepts a count below it, including a zero limit; Where: tests/retry.rs::retry_budget_boundaries and the pull request's test log; Why after merge: check again after merge; Trigger: merge; Deadline: 2026-10-12T12:00:00Z\n- [ ] Post-merge: After the merged worker is installed, the normal production shift records no job with an attempt count above its configured limit; Where: Operations dashboard, Retry limit report, archived shift ending 2026-10-12T00:00:00Z; Why after merge: deployment and live use over time are required to observe the installed worker under normal production traffic; Trigger: merge; Deadline: 2026-10-12T12:00:00Z"
+  },
+  "pull_request": {
+    "title": "Reject retries at the attempt limit",
+    "state": "open",
+    "planned_merge_at": "2026-10-11T12:00:00Z",
+    "diff": "diff --git a/src/retry.rs b/src/retry.rs\n--- a/src/retry.rs\n+++ b/src/retry.rs\n@@ -1,3 +1,3 @@\n pub fn has_retry_budget(completed_attempts: u32, attempt_limit: u32) -> bool {\n-    completed_attempts <= attempt_limit\n+    completed_attempts < attempt_limit\n }\n",
+    "completion": "The boundary tests pass on this branch. The worker installation and normal production shift have not occurred."
+  },
+  "repository_context": {
+    "src/retry.rs": "pub fn has_retry_budget(completed_attempts: u32, attempt_limit: u32) -> bool {\n    completed_attempts < attempt_limit\n}\n",
+    "src/worker.rs": "use crate::retry::has_retry_budget;\n\npub fn should_schedule_retry(completed_attempts: u32, attempt_limit: u32) -> bool {\n    has_retry_budget(completed_attempts, attempt_limit)\n}\n",
+    "tests/retry.rs": "use worker::retry::has_retry_budget;\n\n#[test]\nfn retry_budget_boundaries() {\n    for (completed_attempts, attempt_limit, expected) in [\n        (0, 0, false),\n        (0, 1, true),\n        (1, 1, false),\n        (2, 1, false),\n        (u32::MAX, u32::MAX, false),\n    ] {\n        assert_eq!(has_retry_budget(completed_attempts, attempt_limit), expected);\n    }\n}\n",
+    "test_status": "tests/retry.rs already exists on the base branch and is unchanged by this pull request. The worker calls the retry decision before scheduling an attempt.",
+    "operations": "The worker is installed from main after merge. The existing Retry limit report compares completed-attempt counts with each job's configured limit. It archives every normal shift. Normal job traffic produces this report during the stated window. The report for the merged worker is unavailable before installation and that shift."
+  },
+  "test_evidence": {
+    "kind": "synthetic fixture records",
+    "command": "cargo test --test retry retry_budget_boundaries",
+    "head_log": "running 1 test\ntest retry_budget_boundaries ... ok\ntest result: ok. 1 passed; 0 failed",
+    "base_log": "running 1 test\ntest retry_budget_boundaries ... FAILED\nassertion failed: left == right\nleft: true\nright: false\ntest result: FAILED. 0 passed; 1 failed",
+    "control": "The unchanged test runs against the supplied base implementation with <= and fails on its zero-limit row. The supplied head implementation with < passes the same test."
+  }
+}
