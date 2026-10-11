@@ -1008,9 +1008,9 @@ case "$path" in
     status=0
     ;;
   'repos/{owner}/{repo}/rules/branches/main')
-    payload="$(jq -cn --argjson req "$(list "${STUB_RULES:-}")" --argjson other "$(list "${STUB_OTHER:-}")" '
+    payload="$(jq -cn --argjson req "$(list "${STUB_RULES:-}")" --argjson other "$(list "${STUB_OTHER:-}")" --argjson queue "${STUB_MERGE_QUEUE:-false}" '
       [{type: "required_status_checks", parameters: {required_status_checks: ($req | map({context: ., integration_id: 15368}))}},
-       {type: "workflows", parameters: {required_status_checks: ($other | map({context: .}))}}]')"
+       {type: "workflows", parameters: {required_status_checks: ($other | map({context: .}))}}] + (if $queue then [{type: "merge_queue"}] else [] end)')"
     status="${STUB_RULES_EXIT:-0}"
     [[ -z "${STUB_RULES_STDERR:-}" ]] || printf '%s\n' "$STUB_RULES_STDERR" >&2
     ;;
@@ -1048,8 +1048,10 @@ chmod +x "$GH_STUB_BIN/gh"
 #   pr-invalid/state/empty/uri  the response or base encoding cannot be read
 ci_world() {
   export STUB_RULES=Lint STUB_PARENT_RULES="" STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0 \
-    STUB_PR_BASE=main STUB_PR_STATE=OPEN STUB_PR_EXIT=0 STUB_PR_PAYLOAD="" STUB_PR_STDERR="" STUB_URI_EXIT=0
+    STUB_PR_BASE=main STUB_PR_STATE=OPEN STUB_PR_EXIT=0 STUB_PR_PAYLOAD="" STUB_PR_STDERR="" STUB_URI_EXIT=0 STUB_MERGE_QUEUE=false
   case "$1" in
+    queue-required) STUB_RULES=Lint,CI STUB_MERGE_QUEUE=true ;;
+    queue-unrequired) STUB_MERGE_QUEUE=true ;;
     rules) STUB_RULES=Lint,CI ;;
     classic) STUB_CLASSIC=CI ;;
     classic-check) STUB_CLASSIC_CHECKS=CI ;;
@@ -1117,31 +1119,38 @@ CI_ROWS=(
   "a standard fallback under required CI is left to CI|yes|rules|change_class=standard|false|false|state=done guard-exit=0 validate=pass |ci|"
   "a class with no measured marker runs the range command|yes|rules|change_class=micro|false||state=done guard-exit=0 validate=pass range|range|class-uncovered"
   "a docs verdict that did not read runs the range command|yes|rules|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range|class-uncovered"
+  "queue-only work under required merge-group CI starts no local command|yes|queue-required|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci||queue_only=true cause=queue-lane|merge_group"
+  "queue-only work without the context keeps range|yes|queue-unrequired|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered|queue_only=true cause=queue-lane|"
+  "queue-only work without a merge queue keeps range|yes|rules|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range|class-uncovered|queue_only=true cause=queue-lane|"
+  "non-queue-only work keeps required PR CI|yes|queue-required|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci|||pull_request"
 )
 # ci_rows SCRIPT [LABEL] — one line per row: its label, its stderr file, then
 # the verdict, what the command printed, the recorded mode and the recorded
 # ci-fallback, tab-separated. LABEL runs that one row alone, which is all a
 # control reads.
 ci_rows() {
-  local row label named world answer docs measured proj ci_dir
+  local row label named world answer docs measured proj ci_dir queue event
   for row in "${CI_ROWS[@]}"; do
-    IFS='|' read -r label named world answer docs measured _ _ _ <<<"$row"
+    IFS='|' read -r label named world answer docs measured _ _ _ queue event <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     proj="$proj_ci"
     [[ "$named" == yes ]] || proj="$proj_ci_unset"
     ci_world "$world"
-    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE="$queue" STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
       run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD
     ci_dir="$(run_dir_of "$OUT")"
-    printf '%s\t%s\t%s %s|%s|%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
-      "$(start_line "$ci_dir" validate-mode 2>/dev/null)" "$(start_line "$ci_dir" ci-fallback 2>/dev/null)"
+    event=""
+    [[ -z "$queue" && "$world" != queue-required ]] || event="|$(start_line "$ci_dir" ci-event)"
+    printf '%s\t%s\t%s %s|%s|%s%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
+      "$(start_line "$ci_dir" validate-mode 2>/dev/null)" "$(start_line "$ci_dir" ci-fallback 2>/dev/null)" "$event"
   done
 }
 CI_GOT="$(ci_rows "$CI_SCRIPT")"
 for row in "${CI_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ _ want_out want_mode want_fallback <<<"$row"
+  IFS='|' read -r label _ world _ _ _ want_out want_mode want_fallback queue event <<<"$row"
   got_line="$(awk -F'\t' -v want="$label" '$1 == want' <<<"$CI_GOT")"
   IFS=$'\t' read -r _ err got <<<"$got_line"
+  [[ -z "$queue" && "$world" != queue-required ]] || want_fallback="$want_fallback|$event"
   assert_eq "$got" "$want_out|$want_mode|$want_fallback" "$label" "$err"
 done
 # A failed read's own stderr is kept beside the run, never discarded.
@@ -1212,6 +1221,12 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW [EXPECT]
 {
 ci_control 'the setting defaulting to CI' 'DEV_VALIDATE_CI_CONTEXT "")"' 'DEV_VALIDATE_CI_CONTEXT CI)"' \
   'a project that names no context runs the range command'
+ci_control 'the original queue-only exclusion' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false || "${1:-false}" == true ]]' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]]' \
+  'queue-only work under required merge-group CI starts no local command' \
+  'state=done guard-exit=0 validate=pass range|range|class-uncovered|'
+ci_control 'the merge queue requirement unread' 'ci_class_covered "$queue"' 'ci_class_covered true' \
+  'queue-only work without a merge queue keeps range' \
+  'state=done guard-exit=0 validate=pass |ci||merge_group'
 ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$rules"$'"'"'\n'"'"'"$classic"' 'true' \
   'a context the base does not require runs the range command'
 ci_control 'every rule type read' 'select(.type == "required_status_checks") | ' '' \
@@ -1345,7 +1360,7 @@ push_rows "$CI_SCRIPT"
 # shellcheck disable=SC2016 # production guard mutations
 {
 for queue_row in 'queue work before PR' 'absent queue line' 'malformed queue line' 'queue range subset'; do
-  ci_control 'the queue result unread' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || return 1' ':' "$queue_row" 'ci||pending'
+  ci_control 'the queue result unread' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false || "${1:-false}" == true ]] || return 1' ':' "$queue_row" 'ci||pending'
 done
 ci_control 'admission classified over the round' $'    ci_admission_attempted=true\n    classify ""' $'    ci_admission_attempted=true\n    classify "$class_base"' \
   'branch queue work before fix' 'ci||pending'
@@ -1536,7 +1551,7 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 }
 # shellcheck disable=SC2016 # private production mutations
 {
-ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if true; then'  \
+ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if true; then'  \
   'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
 ci_extension_control $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify "$class_base"' $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify ""' \
   'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'

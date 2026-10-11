@@ -154,14 +154,17 @@
 #          the lanes the round's changes need, and stands for the round, never
 #          for the branch, unless its command reports selection=battery: every
 #          lane it has, none stood down for that class.
-#   ci     a round deferred to required PR CI on the published head.
+#   ci     a round deferred to required CI on the published head.
 #          It runs no command and completes the local round at once, with
 #          a zero-second wall time, only where the project names the status
 #          check context that runs its validation in DEV_VALIDATE_CI_CONTEXT
 #          and the base branch requires that context. Under push-first,
 #          pr-order permits this before publication, when no PR exists and
 #          resolve-base-branch names the base. Every order uses an open PR's
-#          own base. Both rule reads must succeed: its rulesets and classic branch
+#          own base.
+#          For a queue-only change, an open PR's base must also require the
+#          merge queue. Its required context runs on the merge group instead.
+#          Both rule reads must succeed: its rulesets and classic branch
 #          protection, as GitHub reports them for the repository gh resolves
 #          (GH_REPO, else the worktree). The base is the pull request's own,
 #          which a stacked pull request sets to a branch other than the
@@ -185,6 +188,8 @@
 #            class-uncovered     a class other than micro, small or
 #                                standard, a docs-only diff, failed class
 #                                evidence, or an unmeasured narrow class,
+#                                or queue-only work without an open PR whose
+#                                base requires the merge queue and context,
 #                                since harness-ci may stand CI's checks down
 #                                for it
 #            selection-unread    the selector or the round evidence failed
@@ -681,7 +686,7 @@ CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((
 # fallback runs CI's conservative lanes, so it does not need a measured size.
 # This is a local coverage check, not a change to the classifier's policy.
 ci_class_covered() {
-  [[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || return 1
+  [[ "$CHANGE_CLASS_QUEUE_ONLY" == false || "${1:-false}" == true ]] || return 1
   [[ -z "$class_fallback" && "$docs_only" == false ]] || return 1
   case "$class" in
     standard) return 0 ;;
@@ -699,8 +704,9 @@ ci_class_covered() {
 # goes to ci.log in the class scratch directory, which the run directory
 # keeps.
 ci_fallback=""
+ci_event=pull_request
 ci_runs_validation() {
-  local context base_branch uri rules classic pr_json pr_state unread=false log="$class_scratch/ci.log"
+  local context base_branch uri rules classic pr_json pr_state queue=false unread=false log="$class_scratch/ci.log"
   context="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CI_CONTEXT "")" \
     || die unreadable-setting setting=DEV_VALIDATE_CI_CONTEXT
   if [[ -z "$context" ]]; then
@@ -713,6 +719,10 @@ ci_runs_validation() {
   fi
   if ! pr_state="$(jq -er 'if .status == "no_pr" then "NO_PR" else .state | select(. == "OPEN" or . == "CLOSED" or . == "MERGED") end' <<<"$pr_json" 2>>"$log")"; then
     ci_fallback=base-unresolved
+    return 1
+  fi
+  if [[ "$pr_state" != OPEN ]] && ! ci_class_covered; then
+    ci_fallback=class-uncovered
     return 1
   fi
   if [[ "$pr_state" == NO_PR && "$pr_order" == push-first ]]; then
@@ -733,13 +743,17 @@ ci_runs_validation() {
     ci_fallback=base-unresolved
     return 1
   fi
-  if ! rules="$(gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate --jq "$CI_RULES_JQ" 2>>"$log")"; then
+  if ! rules="$(gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate --jq '.' 2>>"$log")"; then
     unread=true
   fi
+  [[ "$pr_state" != OPEN ]] || queue="$(jq -sr 'any(.[][]; .type == "merge_queue")' <<<"$rules" 2>>"$log")" || unread=true
+  rules="$(jq -r "$CI_RULES_JQ" <<<"$rules" 2>>"$log")" || unread=true
   if ! classic="$(gh api "repos/{owner}/{repo}/branches/$uri" --jq "$CI_CLASSIC_JQ" 2>>"$log")"; then
     unread=true
   fi
   if [[ "$unread" == false ]] && grep -Fxq -- "$context" <<<"$rules"$'\n'"$classic"; then
+    ci_class_covered "$queue" || { ci_fallback=class-uncovered; return 1; }
+    [[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || ci_event=merge_group
     ci_fallback=""
     return 0
   fi
@@ -747,6 +761,7 @@ ci_runs_validation() {
     ci_fallback=rules-unread
   else
     ci_fallback=context-unrequired
+    [[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || ci_fallback=class-uncovered
   fi
   return 1
 }
@@ -808,7 +823,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     classify ""
     [[ "$requested_mode" == full ]] || validate_mode=range
     ci_fallback=class-uncovered
-    if ci_class_covered && ci_runs_validation; then
+    if ci_class_covered true && ci_runs_validation; then
       if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then
         validate_mode=ci
       else
@@ -857,7 +872,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         if [[ "$ci_admission_attempted" == false ]]; then
           classify ""
         fi
-        if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then
+        if [[ "$ci_admission_attempted" == false ]] && ci_class_covered true && ci_runs_validation; then
           validate_mode=ci
           class_base=""
         else
@@ -963,7 +978,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     # The local round can finish before publication. CI remains pending;
     # submit-pr's existing exact-head wait supplies the validation proof.
     ci_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    printf 'runner=none class=%s: the pull request CI on the pushed head validates this change\n' "$class" > "$run_dir/log"
+    printf 'ci-event=%s\n' "$ci_event" >> "$run_dir/start"
+    printf 'runner=none class=%s ci-event=%s: required CI validates this change\n' "$class" "$ci_event" > "$run_dir/log"
     write_verdict "$ci_at" "$ci_at" 0 "guard-exit=0 at=$ci_at"
   elif [[ "$bound_ended" == true ]]; then
     # An earlier run already reached the bound over every path this one
