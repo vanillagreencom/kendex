@@ -809,7 +809,7 @@ relay.record_status(True, "", listener.code, "disconnected", listener.since, "")
 fixture("fault", method="reactions.add", status=429, times=1, retry_after=60)
 assert listener.poll_once()
 # The final hold survives until this owner exits. Age the current file so the
-# shell's next post can only regain mentions through OS release at exit.
+# The next shell post can only regain mentions through OS release at exit.
 presence(new, False)
 print("retry-rows=" + json.dumps(rows, separators=(",", ":")))
 PY
