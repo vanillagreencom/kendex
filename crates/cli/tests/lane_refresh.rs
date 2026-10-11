@@ -367,9 +367,15 @@ fn cross_checkout_refusal(output: &Output, caller: &Path, target: &Path) -> bool
     reason = "one writer table shares its refusal and own/global controls"
 )]
 fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_controls_pass() {
+    use std::collections::BTreeMap;
     use std::io::Write as _;
+    use std::path::PathBuf;
     use std::time::Instant;
     use test_util::lane::Entry;
+
+    type World = BTreeMap<PathBuf, Entry>;
+    // A recorded write is a file with its mode, or a directory.
+    type Writes = Vec<(PathBuf, Option<fs::Permissions>)>;
 
     // Direct stderr bypasses libtest capture so CI retains completed rows
     // even if a later row reaches the job's timeout.
@@ -465,7 +471,7 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
     // home state. Restore the whole owned fixture before its next
     // control so no nearer project or prior write can mask refusal.
     let baseline = snapshot(&fixture.root);
-    let permissions: std::collections::BTreeMap<_, _> = baseline
+    let permissions: BTreeMap<_, _> = baseline
         .iter()
         .filter(|(_, entry)| matches!(entry, Entry::File(_)))
         .map(|(path, _)| {
@@ -515,6 +521,9 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
         }
         assert_eq!(snapshot(&fixture.root), baseline, "control state leaked");
     };
+    // The own install is fixture work, not the control. A world it already
+    // ran in replays its recorded bytes, directories and modes instead.
+    let mut installs: Vec<(World, World, Writes)> = Vec::new();
     report("table", "", "setup", table_started);
 
     for verb in [
@@ -676,12 +685,48 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                     for name in ["kendex.toml", ".kendex-lock.json"] {
                         fs::copy(fixture.main.join(name), cwd.join(name)).expect("own declaration");
                     }
-                    let install = kendex(
-                        &fixture,
-                        cwd,
-                        &["apply", "--scope", "project", "--yes", "--leave"],
-                    );
-                    assert!(install.status.success(), "own setup: {install:?}");
+                    let world = snapshot(&fixture.root);
+                    if let Some((_, installed, writes)) =
+                        installs.iter().find(|(before, ..)| *before == world)
+                    {
+                        for (relative, mode) in writes {
+                            let path = fixture.root.join(relative);
+                            match (&installed[relative], mode) {
+                                (Entry::File(bytes), Some(mode)) => {
+                                    fs::write(&path, bytes).expect("replay install file");
+                                    fs::set_permissions(&path, mode.clone())
+                                        .expect("replay install mode");
+                                }
+                                _ => fs::create_dir_all(&path).expect("replay install directory"),
+                            }
+                        }
+                        assert_eq!(&snapshot(&fixture.root), installed, "install replay");
+                    } else {
+                        let install = kendex(
+                            &fixture,
+                            cwd,
+                            &["apply", "--scope", "project", "--yes", "--leave"],
+                        );
+                        assert!(install.status.success(), "own setup: {install:?}");
+                        let installed = snapshot(&fixture.root);
+                        let writes: Vec<_> = installed
+                            .iter()
+                            .filter(|(relative, entry)| world.get(*relative) != Some(*entry))
+                            .map(|(relative, entry)| match entry {
+                                Entry::File(_) => (
+                                    relative.clone(),
+                                    Some(
+                                        fs::metadata(fixture.root.join(relative))
+                                            .expect("install file metadata")
+                                            .permissions(),
+                                    ),
+                                ),
+                                Entry::Directory => (relative.clone(), None),
+                                Entry::Link(_) => unreachable!("the copy install writes no link"),
+                            })
+                            .collect();
+                        installs.push((world, installed, writes));
+                    }
                     let borrowed = cwd.join(".claude/skills/borrowed");
                     fs::create_dir_all(&borrowed).expect("own adopt fixture");
                     fs::write(
