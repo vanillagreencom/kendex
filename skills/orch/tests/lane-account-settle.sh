@@ -122,22 +122,23 @@ if lane_process_env_readable; then
     "control: a bound counted in pauses rather than seconds ends the reading early"
 fi
 
-echo "=== helpers do not select the harness account ==="
+echo "=== the deepest harness process selects the account ==="
 if lane_process_env_readable; then
-  # Both executables retain their command names while waiting. The helper sends
+  # The executables retain their command names while waiting. The child sends
   # readiness through a pipe after exec, so the check reads the whole tree.
   cp "$BASH" "$BIN/codex"
   cp "$BASH" "$BIN/node_repl"
-  CODEX_STUB='env -i PATH="$PATH" CODEX_HOME="$OTHER_HOME" "$BIN/node_repl" -c '\''printf "ready\n" >&8; read -r -t 30 hold <&9 || true'\'' &
+  cp "$BASH" "$BIN/codex-code-mode"
+  CODEX_STUB='env -i PATH="$PATH" CODEX_HOME="$OTHER_HOME" "$BIN/$CHILD_COMMAND" -c '\''printf "ready\n" >&8; read -r -t 30 hold <&9 || true'\'' &
 child=$!
 trap '\''kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true'\'' EXIT
 wait "$child"'
-  account_row() { # LIB
+  account_row() { # LIB CHILD_COMMAND
     (
       source "$1"
       mkfifo "$TMP_ROOT/ready" "$TMP_ROOT/hold"
       exec 8<> "$TMP_ROOT/ready" 9<> "$TMP_ROOT/hold"
-      env -i PATH="$PATH" CODEX_HOME="$TMP_ROOT/picked" OTHER_HOME="$TMP_ROOT/default" BIN="$BIN" \
+      env -i PATH="$PATH" CODEX_HOME="$TMP_ROOT/picked" OTHER_HOME="$TMP_ROOT/default" BIN="$BIN" CHILD_COMMAND="$2" \
         "$BASH" -c '"$1" -c "$2" & child=$!; trap '\''kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true'\'' EXIT; wait "$child"' \
         pane "$BIN/codex" "$CODEX_STUB" &
       pane_pid=$!
@@ -150,11 +151,17 @@ wait "$child"'
       printf '%s' "$LANE_ACCOUNT_RESULT"
     )
   }
-  assert_eq "$(account_row "$LIB")" verified \
-    "a codex process on the picked home ignores a node_repl child on another home"
+  # child command|result|label
+  for row in \
+    'node_repl|verified|a codex process on the picked home ignores a node_repl child on another home' \
+    'codex-code-mode|verified|a codex process on the picked home ignores a codex-code-mode child on another home' \
+    'codex|mismatch|a codex wrapper on the picked home cannot hide a deeper codex process on another home'; do
+    IFS='|' read -r child_command expect label <<<"$row"
+    assert_eq "$(account_row "$LIB" "$child_command")" "$expect" "$label"
+  done
   ACCOUNT_CONTROL="$(mutant_scripts helper-account lib/lane-launch.sh)" || exit 1
   mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" '[[ "$command" == "$harness" ]] || continue' ':'
-  assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh")" mismatch \
+  assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh" node_repl)" mismatch \
     "control: reading every descendant lets node_repl replace the picked harness account"
 fi
 
