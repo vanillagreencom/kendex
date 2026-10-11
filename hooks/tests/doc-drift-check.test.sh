@@ -15,15 +15,27 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# Padding exceeds a pipe buffer so an early close always rejects the old writer.
+printf -v PAYLOAD '%s%131072s' '{"session_id":"s","stop_hook_active":false}' ''
+trap '' PIPE
+
 observe() { # HOOK -> "rc=N out=<stdout> err=<stderr>"
   local rc=0 out
-  out="$(printf '%s' '{"session_id":"s","stop_hook_active":false}' |
-    bash "$1" 2>"$TMP_ROOT/err")" || rc=$?
+  out="$(bash "$1" 2>"$TMP_ROOT/err" <<<"$PAYLOAD")" || rc=$?
   printf 'rc=%s out=%s err=%s' "$rc" "$out" "$(cat "$TMP_ROOT/err")"
 }
 
 echo "=== doc-drift-check: retired stub ==="
 assert_eq "$(observe "$HOOK")" "rc=0 out= err=" "a stop passes silently"
+
+legacy_rc=0
+legacy_out="$( { printf '%s' "$PAYLOAD" | bash "$HOOK" 2>"$TMP_ROOT/err"; } \
+  2>"$TMP_ROOT/writer-err")" || legacy_rc=$?
+assert_eq "rc=$legacy_rc out=$legacy_out err=$(cat "$TMP_ROOT/err")" "rc=1 out= err=" \
+  "control: the old payload writer fails the silent stop observation"
+assert_eq "$(case "$(cat "$TMP_ROOT/writer-err")" in
+  *'printf: write error: Broken pipe'*) echo broken-pipe ;; *) echo missing ;; esac)" broken-pipe \
+  "control: the old writer reports its broken pipe"
 
 PLANTED="$TMP_ROOT/doc-drift-check.sh"
 sed 's/^exit 0$/echo held; echo held >\&2; exit 2/' "$HOOK" >"$PLANTED"
