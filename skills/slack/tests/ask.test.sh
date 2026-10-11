@@ -100,7 +100,7 @@ sk_bin_reset
 # The tracker carries the detail. Slack posts the first question line and
 # the issue identifier, which outbound markup expands into its link.
 tracker_ask() { # NAME FAILURE
-  local root scripts phase="${2:-}" deadline
+  local root scripts phase="${2:-}" deadline ask_rc=0
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
   scripts="$root/.agents/skills/orch/scripts"
@@ -114,6 +114,7 @@ case "${TRACKER_FAILURE:-}:$1:$2:${4:-}" in
   assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
 esac
 case "$1:$2" in
+  users:list) echo '[{"id":"87654321-4321-4321-4321-cba987654321","name":"Riley Other","email":"other@example.test"},{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com"}]' ;;
   issues:get) echo '{"labels":["skills"]}' ;;
   issues:update|comments:create) echo '{}' ;;
   *) exit 1 ;;
@@ -122,9 +123,22 @@ STUB
   chmod +x "$root/.agents/skills/linear/scripts/linear.sh"
   ASK="$(cd "$root" && env ORCH_OWNER_EMAIL=owner@example.com ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=KEN \
     TRACKER_FAILURE="$phase" "$scripts/lane-mail" ask --item overseer --to owner \
-    --issue KEN-1 --file "$(sk_text "$1" 'Approve action?
-Details on the item.')" --options approve,hold --recommend approve --wait 60)"
+    --issue KEN-1 --do 'Approve the action. Your reply closes this ask.' --file "$(sk_text "$1" 'Approve action?
+Details on the item.')" --options approve,hold --recommend approve --wait 60 2>"$root/tracker.err")" || ask_rc=$?
+  assert_eq "$ask_rc" 0 "$1 creates the owner ask"
+  case "$ASK" in
+    id=?*) ok "$1 returns its owner ask id" ;;
+    *) bad "$1 returns its owner ask id" "$ASK"; TRACKER_POST=""; FALLBACK_FACTS=false; return ;;
+  esac
   ASK="${ASK#id=}"
+  if [ -n "$phase" ]; then
+    assert_eq "$(sed -n '1p' "$root/tracker.err")" "lane-mail: tracker-unwritten issue=KEN-1 cause=$phase" \
+      "$1 reaches its selected tracker failure"
+  fi
+  local posted=false
+  [ -n "$phase" ] || posted=true
+  assert_eq "$(jq -s --arg id "$ASK" 'any(.[]; .kind == "tracker-posted" and .re == $id)' \
+    "$(sk_box "$root")/to-overseer.jsonl")" "$posted" "$1 records the intended tracker posting result"
   deadline="$(jq -r 'select(.kind == "ask") | .deadline | fromdateiso8601' "$(sk_box "$root")/to-overseer.jsonl")"
   sk_poll "$root"
   TRACKER_POST="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
