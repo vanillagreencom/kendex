@@ -23,6 +23,12 @@ PACKAGE = Path(__file__).resolve().parents[2]
 
 
 class SshHostTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._base_inputs = None
+        cls._tree_inputs = {}
+        cls._file_inputs = {}
+
     def setUp(self):
         scratch = Path.cwd() / "tmp"
         scratch.mkdir(exist_ok=True)
@@ -30,9 +36,7 @@ class SshHostTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.source = self.root / "source"
-        self.source.mkdir()
         self.bin = self.root / "bin"
-        self.bin.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_")) and k != "ORCH_ARCHIVE_ROOT"}
         self.env.update(REAL_GIT=shutil.which("git"), REAL_CHMOD=shutil.which("chmod"),
                         REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
@@ -40,6 +44,24 @@ class SshHostTests(unittest.TestCase):
                         HOME=str(self.root),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.git_env = {key: self.env[key] for key in ("HOME", "PATH", "REAL_GIT")}
+        self.account = self.root / "local account"
+        self.script = self.root / "lane-host-ssh"
+        # The neutral fixture is captured before any test changes it. Only bytes
+        # and metadata are shared; writable files and Git objects belong to cases.
+        if type(self)._base_inputs is None:
+            self.prepare_inputs()
+            type(self)._base_inputs = self.capture_inputs(self.root)
+        else:
+            self.install_inputs(self._base_inputs, self.root)
+        self.row = dict(repo="owner/repo", item="TEST-1", target="lane.example",
+                        clone=str(self.root / "remote clone's"), account=str(self.root / "remote account's"))
+        self.inventory = self.root / "inventory.json"
+        self.inventory.write_text(json.dumps([self.row]))
+        self.env.update(LANE_HOST_SSH_INVENTORY=str(self.inventory), LANE_HOST_SSH_SOURCE=str(self.source))
+
+    def prepare_inputs(self):
+        self.source.mkdir()
+        self.bin.mkdir()
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
@@ -123,13 +145,13 @@ esac
         # create reads the clone's settings through the worktree command's own loader.
         (wt.parent / "lib").mkdir()
         for name in ("kendex-env.sh", "messages.sh", "links.sh"):
-            shutil.copy2(PACKAGE.parent / f"worktree/scripts/lib/{name}", wt.parent / "lib" / name)
+            self.copy_file(PACKAGE.parent / f"worktree/scripts/lib/{name}", wt.parent / "lib" / name)
         scripts = self.source / ".agents/skills/orch/scripts"
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base", "lane-marker"):
-            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         # append takes its lock through the clone's own installed lock library.
-        shutil.copytree(PACKAGE / "scripts/lib", scripts / "lib")
+        self.copy_tree(PACKAGE / "scripts/lib", scripts / "lib")
         self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
 exec git "$@"
 ''')
@@ -155,17 +177,60 @@ exec git "$@"
         machine_half = self.source / ".cache/kendex/lock-local.json"
         machine_half.parent.mkdir(parents=True)
         machine_half.write_text("this host's half of the install record")
-        self.account = self.root / "local account"
         self.account.mkdir()
         (self.account / "setup-token").write_text("claude-secret-fixture")
         (self.account / "auth.json").write_bytes(b'{"seed":"private"}\n')
-        self.row = dict(repo="owner/repo", item="TEST-1", target="lane.example",
-                        clone=str(self.root / "remote clone's"), account=str(self.root / "remote account's"))
-        self.inventory = self.root / "inventory.json"
-        self.inventory.write_text(json.dumps([self.row]))
-        self.env.update(LANE_HOST_SSH_INVENTORY=str(self.inventory), LANE_HOST_SSH_SOURCE=str(self.source))
-        self.script = self.root / "lane-host-ssh"
         self.executable(self.script, (PACKAGE / "scripts/lane-host-ssh").read_text())
+
+    @staticmethod
+    def read_input(path):
+        metadata = path.stat()
+        return path.read_bytes(), metadata.st_mode & 0o7777, metadata.st_atime_ns, metadata.st_mtime_ns
+
+    @classmethod
+    def capture_inputs(cls, root):
+        def refuse(error):
+            raise error
+
+        entries = []
+        for directory, _, files in os.walk(root, followlinks=True, onerror=refuse):
+            directory = Path(directory)
+            metadata = directory.stat()
+            entries.append((directory.relative_to(root), None, metadata.st_mode & 0o7777,
+                            metadata.st_atime_ns, metadata.st_mtime_ns))
+            for name in files:
+                path = directory / name
+                entries.append((path.relative_to(root), *cls.read_input(path)))
+        return tuple(entries)
+
+    @staticmethod
+    def install_inputs(entries, root):
+        directories = []
+        for relative, data, mode, atime, mtime in entries:
+            path = root / relative
+            if data is None:
+                path.mkdir(parents=True, exist_ok=True)
+                directories.append((path, mode, atime, mtime))
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                path.chmod(mode)
+                os.utime(path, ns=(atime, mtime))
+        for path, mode, atime, mtime in reversed(directories):
+            path.chmod(mode)
+            os.utime(path, ns=(atime, mtime))
+
+    def copy_tree(self, source, target, dirs_exist_ok=False):
+        if target.exists() and not dirs_exist_ok:
+            raise FileExistsError(target)
+        if source not in self._tree_inputs:
+            self._tree_inputs[source] = self.capture_inputs(source)
+        self.install_inputs(self._tree_inputs[source], target)
+
+    def copy_file(self, source, target):
+        if source not in self._file_inputs:
+            self._file_inputs[source] = self.read_input(source)
+        self.install_inputs(((Path(target.name), *self._file_inputs[source]),), target.parent)
 
     def executable(self, path, text):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,9 +238,9 @@ exec git "$@"
         path.chmod(0o755)
         if path.name == "lane-host-ssh":
             library = path.parent / "lib"
-            shutil.copytree(PACKAGE / "scripts/lib", library, dirs_exist_ok=True)
+            self.copy_tree(PACKAGE / "scripts/lib", library, dirs_exist_ok=True)
             for name in ("orch-env", "workflow-state", "git-context"):
-                shutil.copy2(PACKAGE / "scripts" / name, path.parent / name)
+                self.copy_file(PACKAGE / "scripts" / name, path.parent / name)
 
     def call(self, *args, data=b"", **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=data, capture_output=True)
@@ -194,6 +259,56 @@ exec git "$@"
                       "commit", "-qm", "seed render")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
                            check=True, capture_output=True)
+
+    def test_fixture_mutations_stay_in_their_case(self):
+        def fresh_case():
+            case = type(self)()
+            self.addCleanup(case.doCleanups)
+            case.setUp()
+            return case
+
+        peer = fresh_case()
+        provider = self.script.read_text()
+        peer_head = subprocess.check_output([self.env["REAL_GIT"], "-C", str(peer.source), "rev-parse", "HEAD"])
+        self.seed_source("case-only", "private source change\n")
+        self.assertFalse((peer.source / "case-only").exists())
+        self.assertEqual(subprocess.check_output([self.env["REAL_GIT"], "-C", str(peer.source), "rev-parse", "HEAD"]), peer_head)
+        paths = (".git/config", "source/.git/config", "source/kendex.toml", "local account/auth.json",
+                 "inventory.json", "bin/ssh", "lane-host-ssh", "lib/lane-gitfile.sh")
+        expected = {relative: (peer.root / relative).read_bytes() for relative in paths}
+        for relative in paths:
+            with self.subTest(path=relative):
+                (self.root / relative).write_bytes(b"private case mutation\n")
+                self.assertEqual((peer.root / relative).read_bytes(), expected[relative])
+        self.script.chmod(0o600)
+        self.assertEqual(peer.script.stat().st_mode & 0o777, 0o755)
+        (self.root / "calls").write_text("private command log\n")
+        self.assertFalse((peer.root / "calls").exists())
+        later = fresh_case()
+        self.assertFalse((later.source / "case-only").exists())
+        self.assertFalse((later.root / "calls").exists())
+        self.assertEqual(json.loads(later.inventory.read_text()), [later.row])
+        for relative in paths:
+            if relative != "inventory.json":
+                self.assertEqual((later.root / relative).read_bytes(), expected[relative])
+
+        controls = [self.root / name / "lane-host-ssh" for name in ("first-control", "second-control")]
+        for path in controls:
+            self.executable(path, provider)
+        controls[0].write_text("private mutant\n")
+        self.assertEqual(controls[1].read_text(), provider)
+        libraries = [path.parent / "lib/lane-gitfile.sh" for path in controls]
+        original = libraries[1].read_bytes()
+        libraries[0].write_bytes(b"private library mutation\n")
+        self.assertEqual(libraries[1].read_bytes(), original)
+        self.assertEqual((peer.root / "lib/lane-gitfile.sh").read_bytes(), original)
+        # A shared inode is the defect this isolation assertion must detect.
+        libraries[0].write_bytes(original)
+        libraries[1].unlink()
+        os.link(libraries[0], libraries[1])
+        libraries[0].write_bytes(b"shared library mutation\n")
+        with self.assertRaises(AssertionError):
+            self.assertEqual(libraries[1].read_bytes(), original)
 
     def test_source_commits_keep_objects_available_to_local_clones(self):
         """A commit must not repack objects a local clone already enumerated."""
@@ -386,7 +501,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         fields = self.copilot_create()
         clearing = "printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS"
         lib = self.root / "policy-copy"
-        shutil.copytree(PACKAGE / "scripts/lib", lib)
+        self.copy_tree(PACKAGE / "scripts/lib", lib)
         library = lib / "lane-launch.sh"
         original = library.read_text()
         self.assertEqual(original.count(clearing), 1)
@@ -480,8 +595,8 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         """Run delegation and recovery through create's actual hosted prefix."""
         scripts = self.source / ".agents/skills/orch/scripts"
         for name in ("workflow-state", "git-context", "round-recover", "round-prune", "orch-env"):
-            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
-        shutil.copytree(PACKAGE.parent / "github/scripts/lib",
+            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
+        self.copy_tree(PACKAGE.parent / "github/scripts/lib",
                         self.source / ".agents/skills/github/scripts/lib", dirs_exist_ok=True)
         for args in (("config", "gc.auto", "0"), ("config", "maintenance.auto", "false"),
                      ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org",
@@ -602,8 +717,8 @@ rc=0
                     if state_key:
                         with tempfile.TemporaryDirectory() as control:
                             lib = Path(control) / "orch/scripts/lib"
-                            shutil.copytree(PACKAGE / "scripts/lib", lib)
-                            shutil.copytree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
+                            self.copy_tree(PACKAGE / "scripts/lib", lib)
+                            self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
                             library = lib / "lane-gitfile.sh"
                             text = library.read_text()
                             rule = 'state_key="${5:-$2}"'
@@ -628,8 +743,8 @@ rc=0
         self.assert_hosted_state(fields, path, run)
         with tempfile.TemporaryDirectory() as control:
             lib = Path(control) / "orch/scripts/lib"
-            shutil.copytree(PACKAGE / "scripts/lib", lib)
-            shutil.copytree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
+            self.copy_tree(PACKAGE / "scripts/lib", lib)
+            self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
             library = lib / "lane-gitfile.sh"
             original = library.read_text()
             rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$state_key"'
@@ -1722,8 +1837,8 @@ touch node_modules/dep
     def test_relaunch_opens_origin_only_landing_branch(self):
         """A cloud handoff pushes its branch before a static host has a tree."""
         scripts = self.source / ".agents/skills/worktree/scripts"
-        shutil.copytree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
-        shutil.copytree(PACKAGE.parent / "github/scripts", self.source / ".agents/skills/github/scripts",
+        self.copy_tree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
+        self.copy_tree(PACKAGE.parent / "github/scripts", self.source / ".agents/skills/github/scripts",
                         dirs_exist_ok=True)
         # The installed helper must admit each GitHub network operation. The
         # Git stub supplies a local transport only after its HTTPS auth config.
@@ -2254,7 +2369,7 @@ fi
         state_dir = self.root / "lane-state"
         scripts = self.source / ".agents/skills/orch/scripts"
         for name in ("workflow-state", "git-context"):
-            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         (self.source / "kendex.settings.toml").write_text(f'[env]\nORCH_STATE_DIR = "{state_dir}"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2280,7 +2395,7 @@ fi
         # of the kept= row relies on.
         scripts = self.source / ".agents/skills/orch/scripts"
         for name in ("workflow-state", "git-context"):
-            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "../lane-state"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2304,7 +2419,7 @@ fi
         # name a file that is not the lane's state.
         scripts = self.source / ".agents/skills/orch/scripts"
         for name in ("workflow-state", "git-context"):
-            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "tmp/link/../lane-state"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2331,7 +2446,7 @@ fi
         # settings; close resolves the state the way the lane does.
         scripts = self.source / ".agents/skills/orch/scripts"
         for name in ("workflow-state", "git-context"):
-            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state reader")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
         created = self.create()
@@ -2506,7 +2621,7 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
 
     def test_existing_clone_finishes_real_worktree_setup(self):
         scripts = self.source / ".agents/skills/worktree/scripts"
-        shutil.copytree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
+        self.copy_tree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
         (self.source / "kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config"\n')
         with (self.source / ".gitignore").open("a") as ignore:
             ignore.write("copy-config\ncopy-added\n")
