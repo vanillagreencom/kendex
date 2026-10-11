@@ -221,7 +221,7 @@ Hand each lane one issue.
 """
 ```
 
-Each skill's `SKILL.md` carries the full paragraph, because a skill is read alone; only the manifest's copy is single, so editing it changes every skill that places it. The token works in `all` and `*` too. A shared text cannot place another, and a token naming no `[shared-text]` entry is refused when the manifest loads. kendex writes the token back as written; a template carries the paragraph itself.
+Each skill's `SKILL.md` carries the full paragraph, because a skill is read alone; only the manifest's copy is single, so editing it changes every skill that places it. The token works in `all` and `*` too. A shared text cannot place another, and a token naming no `[shared-text]` entry is refused when the manifest loads. kendex writes the token back as written. A template saved with package customizations expands tokens in the selected packages' own `[skill-instructions]` entries. It excludes the shared `all` and `*` entries.
 
 ## Settings
 
