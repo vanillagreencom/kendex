@@ -11,7 +11,7 @@ import { startSession } from "./pi-session.ts";
 /**
  * An overseer's mail reaches a Pi lane through the lane's own Pi session, run
  * here in process on the Pi this package's test script installs: this package
- * loaded from its manifest, a scripted model, orch's `lane-mail` doing every
+ * loaded from its manifest, a scripted model, mailbox's `lane-mail` doing every
  * read and write, and the lane-mail hooks kendex renders for Pi, whose judge
  * the wake runs. The model runs a command only where a row's opening prompt
  * names one, and answers everything else at once.
@@ -27,7 +27,8 @@ const PACKAGE = join(import.meta.dir, "..");
 const REPO = join(PACKAGE, "../..");
 // Spelled whole, so the CI selection that searches for `skills/orch` finds this suite.
 const ORCH_SCRIPTS = join(PACKAGE, "../../skills/orch/scripts");
-const LANE_MAIL = join(ORCH_SCRIPTS, "lane-mail");
+const MAILBOX_SCRIPTS = join(PACKAGE, "../../skills/mailbox/scripts");
+const LANE_MAIL = join(MAILBOX_SCRIPTS, "lane-mail");
 const ITEM = "KEN-7";
 const WORK = "Work the item, then wait for your overseer.";
 const NEXT = "Continue.";
@@ -59,6 +60,8 @@ function laneWorld(name: string, stands: Stands, enabled: boolean): { lane: stri
 	runGit(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"], lane);
 	mkdirSync(join(lane, ".agents", "skills", "orch"), { recursive: true });
 	symlinkSync(ORCH_SCRIPTS, join(lane, ".agents", "skills", "orch", "scripts"));
+	mkdirSync(join(lane, ".agents", "skills", "mailbox"), { recursive: true });
+	symlinkSync(MAILBOX_SCRIPTS, join(lane, ".agents", "skills", "mailbox", "scripts"));
 	if (stands === "mailbox") mkdirSync(join(lane, "tmp", "lane-mail", ITEM), { recursive: true });
 	if (stands === "tmp") mkdirSync(join(lane, "tmp"));
 	mkdirSync(join(lane, ".git", "lane-mail"), { recursive: true });

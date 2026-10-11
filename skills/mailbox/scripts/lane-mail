@@ -273,6 +273,12 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               Local only: a hosted append passes through a provider that
               judges no key
 
+Optional orch package:
+  Lane sends, --host, --state-dir, compact and notice --attach need orch
+  installed beside mailbox. A missing helper refuses orch-missing before
+  writing. Without --host or --state-dir, an overseer send or peer call
+  without orch keeps overseer-absent because no registered session reads it.
+
 Peer side, one other repository's overseer mailbox per call:
   peer ask --repo REPO --file PATH [--options a,b]
               append one ask, one id, to this repository's own overseer
@@ -471,7 +477,7 @@ recommend-invalid, recommend-missing, recommend-required, draft-field,
 draft-medium, attach-outside,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
 overseer-only,
-command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
+command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,

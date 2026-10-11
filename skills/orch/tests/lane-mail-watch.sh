@@ -119,6 +119,69 @@ await_polls() { # N
   done
 }
 
+# A long interval makes a delayed TERM observable. Keep the child unreaped
+# until cleanup: its process-group identity then cannot be reused while a
+# no-exec forwarder leaves its watch child alive.
+TERM_RUN=0
+term_row() { # BIN — TERMED records process exit and liveness withdrawal
+  TERM_RUN=$((TERM_RUN + 1))
+  new_lane "term-$TERM_RUN"
+  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$STUB_BIN:$PATH" "$WATCH_OUT" "$WATCH_ERR" <<'PY_TERM'
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+bash, script, lane, box, path, stdout, stderr = sys.argv[1:]
+env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
+env["PATH"] = path
+ps = shutil.which("ps", path=path)
+assert ps is not None, "watch process reader is absent"
+marker = Path(box) / "to-lane.watch"
+with open(stdout, "wb") as out, open(stderr, "wb") as err:
+    child = subprocess.Popen([bash, script, "watch", "--item", "KEN-1", "--interval", "30"],
+                             cwd=lane, env=env, stdout=out, stderr=err, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert marker.exists(), "watch did not publish its liveness record"
+        os.kill(child.pid, signal.SIGTERM)
+        deadline = time.monotonic() + 3
+        state = "running"
+        while time.monotonic() < deadline:
+            probe = subprocess.run([ps, "-o", "stat=", "-p", str(child.pid)], env=env,
+                                   capture_output=True, check=True, timeout=5)
+            status = probe.stdout.strip()
+            assert status, "owned watch has no process state"
+            if status.startswith(b"Z"):
+                state = "exited"
+                break
+            time.sleep(.02)
+        record = "record-kept" if marker.exists() else "record-withdrawn"
+        print(state + ":" + record)
+    finally:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=5)
+PY_TERM
+)"
+}
+term_assertion() {
+  assert_eq "$TERMED" "exited:record-withdrawn" \
+    "a TERM ends a watch mid-wait within three seconds and withdraws its liveness record"
+}
+if [ "${1:-}" = --term-row ]; then
+  term_row "${2:-$LANE_MAIL}"
+  printf 'term=%s\n' "$TERMED"
+  term_assertion
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+
 echo "=== lane-mail watch ==="
 
 new_lane standing
@@ -335,27 +398,10 @@ WATCH_PID=""
 assert_eq "$RC=$(head -n 1 "$WATCH_ERR")" "2=lane-mail: mailbox-missing=$BOX" \
   "a watch whose mailbox is removed exits within two intervals"
 
-# A long interval, so a stop that waited out the sleep would be seen. TERM ends
-# the wait at once and the EXIT trap withdraws the liveness record.
-term_row() { # sets TERMED to how the watch ended
-  local tries=0
-  new_lane term
-  start_watch "$LANE_MAIL" --item KEN-1 --interval 30
-  while [ ! -e "$BOX/to-lane.watch" ] && [ "$tries" -lt 25 ]; do sleep 0.2; tries=$((tries + 1)); done
-  kill -TERM "$WATCH_PID"
-  tries=0
-  while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt 15 ]; do sleep 0.2; tries=$((tries + 1)); done
-  if kill -0 "$WATCH_PID" 2>/dev/null; then TERMED=running; else TERMED=exited; fi
-  # A KILL, not a second TERM: one still waiting would run its trap and blur
-  # the record half of the verdict.
-  kill -KILL "$WATCH_PID" 2>/dev/null || :
-  wait "$WATCH_PID" 2>/dev/null || :
-  WATCH_PID=""
-  TERMED="$TERMED:$([ -e "$BOX/to-lane.watch" ] && echo record-kept || echo record-withdrawn)"
-}
-term_row
-assert_eq "$TERMED" "exited:record-withdrawn" \
-  "a TERM ends a watch mid-wait within three seconds and withdraws its liveness record"
+for term_entry in "$LANE_MAIL" "$REPO_ROOT/skills/orch/scripts/lane-mail"; do
+  term_row "$term_entry"
+  term_assertion
+done
 
 # A KILL runs no trap, so what the lane's messages leave behind is what the
 # poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.

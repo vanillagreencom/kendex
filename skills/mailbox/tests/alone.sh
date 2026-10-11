@@ -91,17 +91,21 @@ notice|overseer|--attach|$TMP_ROOT/message
 ROWS
 
 if [ -z "${MAILBOX_UNDER_TEST:-}" ]; then
-  for control in startup reader; do
+  for control in startup reader require; do
     mkdir -p "$TMP_ROOT/$control"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/$control/scripts"
     if [ "$control" = startup ]; then
       mutate_file "$TMP_ROOT/$control/scripts/lane-mail" '. "$SCRIPT_DIR/lib/common-root.sh"' \
         '. "$SCRIPT_DIR/lib/common-root.sh"; . "$ORCH_SCRIPTS/lib/lane-host-read.sh"'
       row=()
-    else
+    elif [ "$control" = reader ]; then
       mutate_file "$TMP_ROOT/$control/scripts/lane-mail" 'if [ ! -f "$ORCH_SCRIPTS/workflow-state" ]; then' \
         'if [ ! -f "$ORCH_SCRIPTS/workflow-state" ]; then return 0;'
       row=(--reader-row)
+    else
+      mutate_file "$TMP_ROOT/$control/scripts/lane-mail" 'lm_require_orch() { # FILE...' \
+        'lm_require_orch() { return 0; # FILE...'
+      row=()
     fi
     rc=0
     env MAILBOX_UNDER_TEST="$TMP_ROOT/$control" "$BASH" "$ROOT/skills/mailbox/tests/alone.sh" \

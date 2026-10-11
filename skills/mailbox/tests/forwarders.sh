@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: old orch mailbox paths. Inputs: mailbox/scripts/**, orch forwarding scripts.
+# Surface: old orch mailbox paths. Inputs: mailbox/scripts/**, orch forwarding scripts, orch/tests/lane-mail-watch.sh.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
@@ -51,13 +51,21 @@ for library in file-lock mailbox-append; do
   assert_eq "$out" "$function" "$library forwarder defines its function"
   assert_eq "$(cat "$TMP_ROOT/err")" '' "$library forwarder writes no nonterminal warning"
 done
+rc=0
+"$BASH" "$REPO_ROOT/skills/orch/tests/lane-mail-watch.sh" --term-row "$OLD" \
+  >"$TMP_ROOT/term.log" 2>&1 || rc=$?
+assert_eq "$rc" 0 'TERM through the forwarder stops the watch and withdraws its record' "$TMP_ROOT/term.log"
 if [ -z "${FORWARDERS_UNDER_TEST:-}" ]; then
   # Fleet reads the first keyed stderr line. An unconditional warning breaks it.
-  for control in lane-mail file-lock mailbox-append; do
+  for control in lane-mail file-lock mailbox-append no-exec; do
     mkdir -p "$TMP_ROOT/$control/skills"
     cp -R "$PROJECT/.agents/skills/." "$TMP_ROOT/$control/skills/"
     if [ "$control" = lane-mail ]; then
       mutate_file "$TMP_ROOT/$control/skills/orch/scripts/lane-mail" 'if [ -t 2 ]; then' 'if :; then'
+    elif [ "$control" = no-exec ]; then
+      mutate_file "$TMP_ROOT/$control/skills/orch/scripts/lane-mail" \
+        'exec "${BASH_SOURCE[0]%/*}/../../mailbox/scripts/lane-mail" "$@"' \
+        '"${BASH_SOURCE[0]%/*}/../../mailbox/scripts/lane-mail" "$@"'
     else
       mutate_file "$TMP_ROOT/$control/skills/orch/scripts/lib/$control.sh" \
         '. "${BASH_SOURCE[0]%/*}/../../../mailbox/scripts/lib/'"$control"'.sh"' ':'
@@ -66,6 +74,14 @@ if [ -z "${FORWARDERS_UNDER_TEST:-}" ]; then
     env FORWARDERS_UNDER_TEST="$TMP_ROOT/$control/skills" "$BASH" "$REPO_ROOT/skills/mailbox/tests/forwarders.sh" \
       >"$TMP_ROOT/$control.log" 2>&1 || rc=$?
     assert_eq "$rc" 1 "$control mutant fails the same assertions"
+    if [ "$control" = no-exec ]; then
+      if grep -Eq 'term=(running|exited):record-kept' "$TMP_ROOT/$control.log"; then
+        pass 'the no-exec control reaches the retained watch record'
+      else
+        fail 'the no-exec control reaches the retained watch record'
+        dump_stderr "$TMP_ROOT/$control.log"
+      fi
+    fi
   done
 fi
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
