@@ -1547,7 +1547,7 @@ case "$1:$2" in
       case "$1" in
         --description) jq --arg body "$2" '.description = $body' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
         --labels) jq --arg labels "$2" '.labels = ($labels | split(","))' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
-        --assignee) jq --slurpfile user "$TRACKER_CASE_DIR/user" '.assignee = $user[0][0].name' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
+        --assignee) jq -e --arg id "$2" --slurpfile user "$TRACKER_CASE_DIR/user" '.assignee = ($user[0][] | select(.id == $id) | .name)' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
         --clear-assignee) jq '.assignee = ""' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift ;;
         --clear-labels) jq '.labels = []' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift ;;
         *) exit 1 ;;
@@ -1583,7 +1583,9 @@ tracker_case() { # ROW WATCH
   mail_reset overseer
   : >"$STUB_DIR/calls"
   printf 'Engineering body.\n\nKeep these bytes.\n\n' >"$STUB_DIR/old-description"
-  printf '[{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com"}]\n' >"$STUB_DIR/user"
+  printf '{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com"}\n' >"$STUB_DIR/owner"
+  # The shipped users list --max route returns all workspace users.
+  jq -n --slurpfile owner "$STUB_DIR/owner" '[{id:"87654321-4321-4321-4321-cba987654321",name:"Riley Other",email:"other@example.test"},$owner[0]]' >"$STUB_DIR/user"
   jq -n --rawfile body "$STUB_DIR/old-description" '{id:"KEN-7",labels:["skills","feature"],description:$body,assignee:"",url:"https://linear.app/test/issue/KEN-7"}' >"$STUB_DIR/item"
   TRACKER_LABEL=owner-gated
   TRACKER_EMAIL=owner@example.com
@@ -1619,9 +1621,9 @@ tracker_case() { # ROW WATCH
     --options approve,hold --recommend approve ${extra[@]+"${extra[@]}"} 2>"$STUB_DIR/write.err")"
   id="${id#id=}"
   TRACKER_ASK="$id"
-  ACTION_CORRECT="$(jq --rawfile body "$STUB_DIR/old-description" --slurpfile user "$STUB_DIR/user" --arg action "$action" '
+  ACTION_CORRECT="$(jq --rawfile body "$STUB_DIR/old-description" --slurpfile owner "$STUB_DIR/owner" --arg action "$action" '
     .description | test("^\\*\\*[^*]+, what you do:\\*\\* ")
-    and . == ("**" + ($user[0][0].name | split(" ")[0]) + ", what you do:** " + $action + "\n\n" + $body)' "$STUB_DIR/item")"
+    and . == ("**" + ($owner[0].name | split(" ")[0]) + ", what you do:** " + $action + "\n\n" + $body)' "$STUB_DIR/item")"
   if [[ "$row" == enabled || "$row" == replacement || "$row" == restored || "$row" == close ]]; then
     assert_eq "$ACTION_CORRECT" true "$row opens with the resolved first name, action and unchanged body"
   fi
@@ -1634,7 +1636,7 @@ tracker_case() { # ROW WATCH
     assert_eq "$(jq -s '[.[] | select(.[1] == "update" or .[1] == "create")] | length' "$STUB_DIR/calls")" \
       3 'tracker ask makes the assignment, label and comment writes'
     assert_eq "$(jq -s -r '.[] | select(index("--assignee")) | .[4]' "$STUB_DIR/calls")" \
-      "$(jq -r '.[0].id' "$STUB_DIR/user")" 'tracker ask assigns the configured person'
+      "$(jq -r '.id' "$STUB_DIR/owner")" 'tracker ask assigns the configured person'
     assert_eq "$(jq -s -r '.[] | select(index("--labels")) | .[4]' "$STUB_DIR/calls")" \
       feature,owner-gated,skills 'tracker ask preserves the existing labels'
     assert_contains "$(cat "$STUB_DIR/posted")" "ask=$id" 'tracker comment carries the machine-read ask marker'
@@ -1751,6 +1753,21 @@ done <<<"$TRACKER_CASES"
 assert_eq "$TRACKER_ROWS" "$(awk 'END {print NR}' <<<"$TRACKER_CASES")" 'all tracker table rows completed'
 
 NORMAL_TRACKER_MAIL="$TRACKER_MAIL"
+OWNER_SCRIPTS="$(mutant_scripts tracker-owner/orch lib/mailbox-append.sh)"
+ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-owner/linear"
+mutate_file "$OWNER_SCRIPTS/lib/mailbox-append.sh" 'select((.email | ascii_downcase) == ($email | ascii_downcase))' 'select(true)'
+owner_control_rc=0
+(
+  FAIL=0
+  TRACKER_MAIL="$OWNER_SCRIPTS/lane-mail"
+  tracker_case enabled "$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  [[ "$FAIL" -eq 0 ]]
+) >"$TMP_ROOT/tracker-owner-control.out" 2>&1 || owner_control_rc=$?
+assert_eq "$owner_control_rc" 1 'control: removing email selection fails the enabled row'
+assert_contains "$(cat "$TMP_ROOT/tracker-owner-control.out")" \
+  'FAIL  enabled opens with the resolved first name, action and unchanged body' \
+  'control: the enabled owner-line assertion detects the missing email filter'
+
 ACTION_MAIL="$(mutant_scripts tracker-action/orch lib/mailbox-append.sh)/lane-mail"
 ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-action/linear"
 mutate_file "${ACTION_MAIL%/*}/lib/mailbox-append.sh" '--labels "$labels" --description "$description"' '--labels "$labels"'
