@@ -80,6 +80,39 @@ else
   assert_file_contains "$TMP_ROOT/cycle-report.out" '  FAIL  ' 'the report rejects a missing lane median'
 fi
 
+echo "=== write: formatter failure refuses before report publication ==="
+REAL_AWK="$(command -v awk)"
+export CYCLE_REAL_AWK="$REAL_AWK"
+cat > "$TMP_ROOT/bin/awk" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == '/^rollup / '* && -f "$CASE/format-fail" ]]; then
+  echo 'cycle formatter failed' >&2
+  exit 23
+fi
+exec "$CYCLE_REAL_AWK" "$@"
+STUB
+chmod +x "$TMP_ROOT/bin/awk"
+formatter_write() {
+  new_case "formatter-$1"
+  fleet '' '{"item":"KEN-1","status":"done","cycle":{"class":"micro","lane_secs":1200,"open":3437}}'
+  printf 'Cycle times measured.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+  touch "$CASE/format-fail"
+  run "CYCLE_REAL_AWK=$REAL_AWK" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  assert_eq "$RC|$(first_err)|$OUT|$(find "$CASE/progress-reports" -type f 2>/dev/null | wc -l | tr -d ' ')|$([[ -s "$CASE/mail.calls" ]] && echo sent || echo absent)" \
+    "2|oversee-report: cycle-format=$CASE/state.json||0|absent" 'formatter failure refuses without printing, publishing or sending an incomplete report'
+  assert_file_contains "$CASE/err" 'cycle formatter failed' 'formatter refusal preserves the producer error'
+}
+formatter_write shipped
+FORMAT_REPORT="$(mutant_scripts formatter-report/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/formatter-report/github"
+mutate_file "$FORMAT_REPORT" '|| refuse cycle-format "$STATE" "$(cat "$WORK_DIR/cycle-format.err")"' '|| :'
+if (FAIL=0; REPORT_UNDER_TEST="$FORMAT_REPORT" formatter_write swallowed; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/formatter-report.out"; then
+  fail 'swallowing the formatter failure did not redden publication refusal'
+else
+  assert_file_contains "$TMP_ROOT/formatter-report.out" '  FAIL  ' 'write refuses the swallowed formatter failure'
+fi
+rm -f -- "${TMP_ROOT:?}/bin/awk"
+
 echo "=== render: the rows from a fleet ==="
 seed_fleet render_fleet
 run -- render --state "$CASE/state.json" --repo owner/repo

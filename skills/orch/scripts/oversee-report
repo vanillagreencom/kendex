@@ -44,6 +44,7 @@ message() { # KEY VALUE [CAUSE]
       setting) echo "The setting holds a value it does not take. oversee-report --help lists the values." ;;
       setting-read) echo "orch-env could not read the setting, so which repositories the report reads is unknown. Its own words are below." ;;
       clock) echo "The current UTC time, a file time or a scratch file could not be had." ;;
+      cycle-format) echo "The cycle rows could not be formatted, so no complete report can be published:" ;;
       sort) echo "sort failed over the landed rows, so their order is unknown." ;;
       auth-helper) echo "The shared GitHub auth helper could not be loaded, so no GitHub credential can be chosen:" ;;
       auth-failed) echo "No configured GitHub credential works: not the env token, the keyring or the project's GH_BOT_TOKEN. Run gh auth login." ;;
@@ -897,7 +898,8 @@ render() {
     for (i = 2; i <= NF; i++)
       if ($i ~ /^(class|lane_median|open_median|miss_share)=/) printf " %s", $i
     print ""
-  }' <<<"$list"
+  }' <<<"$list" 2>"$WORK_DIR/cycle-format.err" \
+    || refuse cycle-format "$STATE" "$(cat "$WORK_DIR/cycle-format.err")"
   escapes_row
   echo
 
