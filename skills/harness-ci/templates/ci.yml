@@ -95,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ github.token }}
-        # Use the latest released engine, not a build older than the refresh.
+        # Use the release on the trusted refresh caller's major-tag commit.
         # The trusted helper selects a release and its exact installer commit.
         run: classifier/.agents/skills/review-gate/scripts/install-latest.sh
       - id: mirror

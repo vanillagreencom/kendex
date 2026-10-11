@@ -46,9 +46,19 @@ INSTALL
 esac
 CURL
 chmod +x "$TMP/bin/curl"
+cat >"$TMP/bin/git" <<'GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$1 $2" = 'ls-remote --tags' ] && [ "$#" -eq 3 ] || exit 2
+printf '%s\n' "$3" >>"$CALLS"
+printf '%s||%s|%s\n' "$3" "${GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" >>"$TRANSPORT_LOG"
+printf '%b\n' "$TAGS"
+[ "$FAIL_AT" != tags ] || exit 22
+GIT
+chmod +x "$TMP/bin/git"
 installer="$SKILL_DIR/scripts/install-latest.sh"
-while IFS='|' read -r name release commit fail_at install_rc expected key github_env gh_env authorization; do
-  run_install_latest "$installer" "$release" "$commit" "$fail_at" "$install_rc" "$github_env" "$gh_env"
+while IFS='|' read -r name release commit fail_at install_rc expected key github_env gh_env authorization pin tags selected; do
+  run_install_latest "$installer" "$release" "$commit" "$fail_at" "$install_rc" "$github_env" "$gh_env" "$pin" "$tags"
   if [ "$RC" = "$expected" ] && grep -qF -- "$key" <<<"$OUT"; then
     ok "$name"
   else
@@ -56,8 +66,9 @@ while IFS='|' read -r name release commit fail_at install_rc expected key github
   fi
   if [ "$expected" = 0 ]; then
     version="$(jq -r .tag_name <<<"$release")" || { bad "$name: unreadable tag fixture"; continue; }
+    version="${selected:-$version}"
     sha="$(jq -r .sha <<<"$commit")" || { bad "$name: unreadable commit fixture"; continue; }
-    if install_latest_matches "$version" "$sha" "$authorization"; then
+    if install_latest_matches "$version" "$sha" "$authorization" "$pin"; then
       ok "$name: release selection, API authorization and installer isolation"
     else
       bad "$name: API transport, installer record or output differs"
@@ -66,7 +77,7 @@ while IFS='|' read -r name release commit fail_at install_rc expected key github
     bad "$name: a failed dependency still executed the installer"
   fi
 done <<'CASES'
-latest release|{"tag_name":"v7.8.9","target_commitish":"main"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v7.8.9 commit=0123456789abcdef0123456789abcdef01234567
+no refresh caller uses latest release|{"tag_name":"v7.8.9","target_commitish":"main"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v7.8.9 commit=0123456789abcdef0123456789abcdef01234567
 empty workflow token|{"tag_name":"v7.8.9"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v7.8.9|GITHUB_TOKEN=||
 app token alone is ignored|{"tag_name":"v7.8.9"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v7.8.9||GH_TOKEN=fixture-app-token|
 workflow token authorizes both API reads|{"tag_name":"v7.8.9"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v7.8.9|GITHUB_TOKEN=fixture-read-token||Authorization: Bearer fixture-read-token
@@ -80,7 +91,46 @@ commit SHA missing|{"tag_name":"v7.8.9"}|{}||0|1|kendex-install: cause=commit-sh
 commit SHA malformed|{"tag_name":"v7.8.9"}|{"sha":"main"}||0|1|kendex-install: cause=commit-sha
 installer read fails|{"tag_name":"v7.8.9"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|installer|0|1|kendex-install: cause=installer-read
 installer exits nonzero|{"tag_name":"v7.8.9"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|run|3|1|kendex-install: cause=installer-run
+caller before major tag moves|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v1.15.0|GITHUB_TOKEN=fixture-read-token|GH_TOKEN=fixture-app-token|Authorization: Bearer fixture-read-token|v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0\nabcdef0123456789abcdef0123456789abcdef01 refs/tags/v1.16.0|v1.15.0
+annotated stable tag with peeled commit first|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v1.15.0||||v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0^{}\nabcdef0123456789abcdef0123456789abcdef01 refs/tags/v1.15.0|v1.15.0
+annotated stable tag with object first|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|0|kendex-install: version=v1.15.0||||v1|abcdef0123456789abcdef0123456789abcdef01 refs/tags/v1.15.0\n0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0^{}|v1.15.0
+no stable tag on caller commit|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|1|kendex-install: cause=release-tags||||v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0-rc.1\n0123456789abcdef0123456789abcdef01234567 refs/tags/v2.15.0
+multiple stable tags on caller commit|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|1|kendex-install: cause=release-tags||||v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0\n0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.1
+caller tag read fails|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|tags|0|1|kendex-install: cause=tags-read||||v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0
+caller needs major tag|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|1|kendex-install: cause=caller-ref||||main|
 CASES
+
+# Keep both selection branches but bypass the caller, as the base did.
+sandbox
+file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 2 '^if \[ -e "\$caller" \]; then' \
+  's/; then/ \&\& false; then/'
+run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v1.16.0"}' \
+  '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0 '' '' v1 \
+  '0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0'
+if [ "$RC" = 0 ] && [ "$(cat "$TMP/install-log")" = '--version v1.16.0 --cli-only' ] &&
+    ! install_latest_matches v1.15.0 0123456789abcdef0123456789abcdef01234567 '' v1; then
+  ok 'control: latest selects v1.16.0 and fails the caller-selected release assertion'
+else
+  bad 'control: the latest-release defect was not detected' "$OUT"
+fi
+
+# Preserve selection while bypassing one rule at a time.
+while IFS='|' read -r name pin tags fail_at match edit; do
+  sandbox
+  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "$match" "$edit"
+  run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v1.16.0"}' \
+    '{"sha":"0123456789abcdef0123456789abcdef01234567"}' "$fail_at" 0 '' '' "$pin" "$tags"
+  if [ "$RC" = 0 ]; then
+    ok "control: bypassed $name fails its refusal row assertion"
+  else
+    bad "control: $name did not reach the incorrect success" "$OUT"
+  fi
+done <<'CALLER_CONTROLS'
+major tag rule|main|0123456789abcdef0123456789abcdef01234567 refs/tags/v.15.0||^  \[\[ \$pin |s/\^v\[0-9\]+\$/^.*$/
+tag transfer status|v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0|tags|^    fail tags-read |s/^    fail /    : fail /
+exactly one stable tag|v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0\n0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.1||^      if \(count == 1\)|s/count == 1/count > 0/
+matching major stable grammar|v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v2.15.0||^      if \(name !~|s/if (name !~/if (0 \&\& name !~/
+CALLER_CONTROLS
 
 # Control: keep the install command text but pass a different version. The
 # success row's installer arguments must detect this production defect.
@@ -99,8 +149,8 @@ fi
 # still a failed read, even when its body happens to contain valid JSON.
 while IFS='|' read -r key fail_at install_rc; do
   sandbox
-  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "^  fail $key " \
-    "s/^  fail $key /  : fail $key /"
+  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "^ *fail $key " \
+    "s/^ *fail $key /  : fail $key /"
   run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
     '{"sha":"0123456789abcdef0123456789abcdef01234567"}' "$fail_at" "$install_rc"
   if [ "$RC" = 0 ]; then
@@ -128,7 +178,7 @@ while IFS='|' read -r field release commit match; do
     bad "control: $field grammar did not reach the incorrect success" "$OUT"
   fi
 done <<'GRAMMARS'
-tag|{"tag_name":"../main"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|^version=
+tag|{"tag_name":"../main"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|^  version=.*jq
 commit|{"tag_name":"v7.8.9"}|{"sha":"main"}|^sha=
 GRAMMARS
 sandbox

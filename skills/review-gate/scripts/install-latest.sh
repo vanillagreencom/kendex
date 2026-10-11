@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The refresh and catalog-check workflows install one released engine. GitHub's
-# releases/latest response selects the tag; the commits API resolves that tag
-# to a commit, including annotated tags. target_commitish can name a branch.
+# Consumer CI uses the stable release on its refresh caller's major tag.
+# A checkout with no refresh caller uses releases/latest. The commits API
+# resolves tags, including annotated tags. target_commitish can name a branch.
 # Report protocol: kendex-install: version=TAG commit=SHA on success, or
 # kendex-install: cause=KEY on failure. The following English is not parsed.
 set -euo pipefail
@@ -20,14 +20,45 @@ github_api() { # repository-relative API path
   fi
   env -u GH_TOKEN -u GITHUB_TOKEN curl "${args[@]}" "https://api.github.com/repos/$repo/$1"
 }
-release="$(github_api releases/latest)" ||
-  fail release-read 'Could not read the latest release.'
-version="$(jq -er '.tag_name | select(type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$release")" ||
-  fail release-version 'The latest release has no stable version tag.'
-commit="$(github_api "commits/$version")" ||
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" ||
+  fail checkout-read 'Could not find the trusted installer checkout.'
+skills_dir="$(cd "$script_dir/../.." && pwd)" ||
+  fail checkout-read 'Could not find the installed skills directory.'
+checkout="${skills_dir%/skills}"
+checkout="${checkout%/.agents}"
+[ -r "$skills_dir/harness-ci/scripts/lib/change-class.sh" ] ||
+  fail caller-library 'The required harness-ci path library is unavailable.'
+. "$skills_dir/harness-ci/scripts/lib/change-class.sh"
+caller="$checkout/$HARNESS_CI_REFRESH_CALLER"
+if [ -e "$caller" ]; then
+  pin="$(sed -n 's|^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@\(v[0-9][0-9]*\)$|\1|p' "$caller")" ||
+    fail caller-read 'Could not read the trusted refresh caller.'
+  [[ $pin =~ ^v[0-9]+$ ]] ||
+    fail caller-ref 'The refresh caller must name one major tag.'
+else
+  release="$(github_api releases/latest)" ||
+    fail release-read 'Could not read the latest release.'
+  version="$(jq -er '.tag_name | select(type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$release")" ||
+    fail release-version 'The latest release has no stable version tag.'
+  pin="$version"
+fi
+commit="$(github_api "commits/$pin")" ||
   fail commit-read 'Could not resolve the released tag to its commit.'
 sha="$(jq -er '.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$commit")" ||
   fail commit-sha 'The released tag has no commit SHA.'
+if [ -e "$caller" ]; then
+  tags="$(env -u GH_TOKEN -u GITHUB_TOKEN git ls-remote --tags "https://github.com/$repo.git")" ||
+    fail tags-read 'Could not list the kendex tags.'
+  # refresh-consumer.yml owns installation in its workflow. This standalone
+  # installer uses the same rule: prefer peeled commits and require one tag.
+  version="$(awk -v major="${pin#v}" -v sha="$sha" '
+    { name = $2; sub(/^refs\/tags\//, "", name); peeled = sub(/\^\{\}$/, "", name)
+      if (name !~ ("^v" major "\\.[0-9]+\\.[0-9]+$")) next
+      if (peeled || !(name in commit)) commit[name] = $1 }
+    END { for (name in commit) if (commit[name] == sha) { tag = name; count++ }
+      if (count == 1) print tag; else exit 1 }' <<<"$tags")" ||
+    fail release-tags 'The refresh commit must carry exactly one stable tag for its major version.'
+fi
 TMP="$(mktemp -d)" || fail scratch 'Could not create the installer directory.'
 trap 'rm -rf -- "${TMP:?}"' EXIT
 # Save the complete download before execution. A failed transfer must never

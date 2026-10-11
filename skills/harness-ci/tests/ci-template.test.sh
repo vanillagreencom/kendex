@@ -680,6 +680,8 @@ assert_eq "must-fail: a fixed old installer loses release selection" \
 install_root="$SANDBOX/release-selection"
 mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/review-gate/scripts" "$install_root/home"
 cp "$TEST_DIR/../../review-gate/scripts/install-latest.sh" "$install_root/classifier/.agents/skills/review-gate/scripts/"
+mkdir -p "$install_root/classifier/.agents/skills/harness-ci/scripts/lib"
+cp "$TEST_DIR/../scripts/lib/change-class.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/lib/"
 cat >"$install_root/bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail
