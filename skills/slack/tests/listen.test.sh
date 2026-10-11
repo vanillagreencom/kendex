@@ -1064,7 +1064,7 @@ assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text | contains(\"Zulu d
   "control: the deadline as its raw stamp, the ask posts with no date token"
 sk_bin_reset
 
-sk_mutant swallow relay.py 'if self\.post_failed is not None:\n            raise self\.post_failed' 'if self.post_failed is not None:\n            self.post_failed = None'
+sk_mutant swallow relay.py 'if self\.post_failed is not None:\n            raise self\.post_failed(?=\n        self\.last_ok = self\.clock\(\))' 'if self.post_failed is not None:\n            self.post_failed = None'
 sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q9 'Swallowed?')" --options a,b --recommend a >/dev/null
 sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null
 sk_poll "$ZETA"
