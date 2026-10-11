@@ -75,6 +75,7 @@ class PublishTests(unittest.TestCase):
 
     def approval(self, draft):
         return {"id": "fixture-approval", "user_email": FIXTURE["user_email"],
+                "created_at": "2026-10-11T10:00:00.000Z", "updated_at": "2026-10-11T10:00:00.000Z",
                 "body": json.dumps(draft["approval_record"])}
 
     def run_send(self, module, draft, comments, api):
@@ -119,10 +120,22 @@ class PublishTests(unittest.TestCase):
                     self.assertEqual(api.requests[2][0], "PUT")
                     self.assertEqual(api.requests[2][2], bytes.fromhex(FIXTURE["video_hex"]))
                     self.assertEqual(result["privacy_status"], "private")
+                yes = self.approval(draft)
+                no = copy.deepcopy(yes)
+                no.update(id="fixture-old-refusal", created_at="2026-10-11T09:00:00.000Z",
+                          updated_at="2026-10-11T09:00:00.000Z")
+                record = json.loads(no["body"])
+                record["youtube_publish"]["decision"] = "no"
+                no["body"] = json.dumps(record)
+                for comments in ([yes, no], [no, yes]):
+                    api = RecordedAPI(operation)
+                    result = self.run_send(self.module, draft, comments, api)
+                    self.assertEqual(result["approval_comment_id"], "fixture-approval")
+                    self.assertEqual(result["resource_id"], FIXTURE[operation + "_response"]["id"])
 
     def test_approval_identity_and_exact_request(self):
         draft = self.draft("comment")
-        for change in ("user", "decision", "issue", "digest", "malformed"):
+        for change in ("user", "decision", "issue", "digest", "malformed", "timezone"):
             with self.subTest(change=change):
                 comment = self.approval(draft)
                 record = json.loads(comment["body"])
@@ -130,6 +143,8 @@ class PublishTests(unittest.TestCase):
                     comment["user_email"] = "agent@example.invalid"
                 elif change == "malformed":
                     comment["body"] = "not JSON"
+                elif change == "timezone":
+                    comment.update(created_at="2026-10-11T10:00:00", updated_at="2026-10-11T10:00:00")
                 else:
                     key = {"decision": "decision", "issue": "issue", "digest": "request_sha256"}[change]
                     record["youtube_publish"][key] = "different"
@@ -148,21 +163,41 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "tracker-read-failed")
         self.assertEqual(api.requests, [])
 
+    def assert_latest_decision_required(self, module):
+        rows = (
+            ("later", "2026-10-11T11:00:00.000Z", "2026-10-11T11:00:00.000Z"),
+            ("edited", "2026-10-11T09:00:00.000Z", "2026-10-11T11:00:00.000Z"),
+            ("tie", "2026-10-11T10:00:00.000Z", "2026-10-11T10:00:00.000Z"),
+            ("missing", None, "2026-10-11T11:00:00.000Z"),
+            ("invalid", "invalid", "2026-10-11T11:00:00.000Z"),
+            ("timezone missing", "2026-10-11T11:00:00", "2026-10-11T11:00:00"),
+        )
+        for operation in ("upload", "comment", "reply"):
+            for name, created, updated in rows:
+                draft = self.draft(operation, module)
+                yes = self.approval(draft)
+                no = copy.deepcopy(yes)
+                no.update(id="fixture-refusal", created_at=created, updated_at=updated)
+                record = json.loads(no["body"])
+                record["youtube_publish"]["decision"] = "no"
+                no["body"] = json.dumps(record)
+                for comments in ([yes, no], [no, yes]):
+                    api = RecordedAPI(operation)
+                    self.assert_refused(module, draft, comments, api, "approval-required")
+                    self.assertEqual(api.requests, [], (operation, name))
+
     def test_later_denial_supersedes_approval(self):
-        draft = self.draft("comment")
-        yes = self.approval(draft)
-        no = copy.deepcopy(yes)
-        record = json.loads(no["body"])
-        record["youtube_publish"]["decision"] = "no"
-        no["body"] = json.dumps(record)
-        api = RecordedAPI("comment")
-        self.assert_refused(self.module, draft, [yes, no], api, "approval-required")
-        self.assertEqual(api.requests, [])
+        self.assert_latest_decision_required(self.module)
 
     def test_guards_and_their_must_fail_controls(self):
         # Each mutation keeps the matched code in a disposable source copy outside the worktree.
         rows = (
             ("approval-required", 'approval = require_approval(draft)', 'approval = "bypassed"'),
+            ("approval-order", 'latest_time = max(decision[0] for decision in decisions)', 'latest_time = decisions[0][0]'),
+            ("approval-ambiguity", 'len(latest) != 1', 'False'),
+            ("approval-timestamp", 'except (KeyError, TypeError, ValueError, AttributeError):\n                raise Refusal("approval-required") from None',
+             'except (KeyError, TypeError, ValueError, AttributeError):\n                continue'),
+            ("approval-timezone", 'if any(value.utcoffset() is None for value in times):', 'if False:'),
             ("channel-mismatch", 'if draft["channel_id"] != setting("YOUTUBE_CHANNEL_ID"):', 'if False:'),
             ("draft-changed", 'if draft["request_sha256"] != request_digest(draft):', 'if False:'),
             ("disclosure-required", 'if operation == "upload" and draft["body"]["status"].get("containsSyntheticMedia") is not True:', 'if False:'),
@@ -180,6 +215,17 @@ class PublishTests(unittest.TestCase):
                 if code == "approval-required":
                     with self.assertRaises(AssertionError):
                         self.assert_no_approval_no_write(mutant)
+                    continue
+                if code in ("approval-order", "approval-ambiguity", "approval-timestamp"):
+                    with self.assertRaises(AssertionError):
+                        self.assert_latest_decision_required(mutant)
+                    continue
+                if code == "approval-timezone":
+                    draft = self.draft("comment")
+                    comment = self.approval(draft)
+                    comment.update(created_at="2026-10-11T10:00:00", updated_at="2026-10-11T10:00:00")
+                    with self.assertRaises(AssertionError):
+                        self.assert_refused(mutant, draft, [comment], RecordedAPI("comment"), "approval-required")
                     continue
                 draft = self.draft("upload")
                 api = RecordedAPI("upload")

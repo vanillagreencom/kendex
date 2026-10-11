@@ -2,6 +2,7 @@
 """Draft and send a user-approved request through the YouTube Data API."""
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -92,7 +93,8 @@ def require_approval(draft):
     owner = setting("YOUTUBE_APPROVER_EMAIL").casefold()
     expected = {"youtube_publish": {"issue": draft["issue"], "decision": "yes",
                                     "request_sha256": request_digest(draft)}}
-    for comment in reversed(tracker_read("comments", draft["issue"])):
+    decisions = []
+    for comment in tracker_read("comments", draft["issue"]):
         if str(comment.get("user_email", "")).casefold() != owner or not comment.get("id"):
             continue
         try:
@@ -102,10 +104,22 @@ def require_approval(draft):
         decision = record.get("youtube_publish", {}) if isinstance(record, dict) else {}
         if (isinstance(decision, dict) and decision.get("issue") == draft["issue"]
                 and decision.get("request_sha256") == expected["youtube_publish"]["request_sha256"]):
-            if record == expected:
-                return comment["id"]
-            raise Refusal("approval-required")
-    raise Refusal("approval-required")
+            # Linear emits both timestamps. Edits change the decision's time, not its array position.
+            try:
+                times = [datetime.fromisoformat(comment[key].replace("Z", "+00:00"))
+                         for key in ("updated_at", "created_at")]
+                if any(value.utcoffset() is None for value in times):
+                    raise ValueError("timezone missing")
+                decisions.append((max(times), record, comment["id"]))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                raise Refusal("approval-required") from None
+    if not decisions:
+        raise Refusal("approval-required")
+    latest_time = max(decision[0] for decision in decisions)
+    latest = [decision for decision in decisions if decision[0] == latest_time]
+    if len(latest) != 1 or latest[0][1] != expected:
+        raise Refusal("approval-required")
+    return latest[0][2]
 
 
 class NoRedirect(HTTPRedirectHandler):
