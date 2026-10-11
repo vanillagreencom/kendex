@@ -428,8 +428,8 @@ KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
 # executable stops the launch with that path named.
 WORKTREE_CLI = ""
 
-# A file a master session touches while it answers the overseer. While it is
-# younger than SLACK_MASTER_MAX_AGE, `slack listen --status` shows held-by=master.
-# skills/slack/README.md defines the master hold and resume. Empty: no hold.
+# A file a Jarvis session touches while it answers the overseer. While it is
+# younger than SLACK_MASTER_MAX_AGE, `slack listen --status` shows held-by=jarvis.
+# skills/slack/README.md § The Jarvis session hold defines the hold and resume. Empty: no hold.
 SLACK_MASTER_FILE = "~/.fleet/master-live"
 SLACK_MASTER_MAX_AGE = "1800"
