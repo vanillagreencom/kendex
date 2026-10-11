@@ -612,8 +612,10 @@ jobs:
       - name: Install kendex for change classification
         env:
           # The installer runs in the writer job, before the credentialed step
-          # below. It never sees the writer token. install-latest.sh resolves
-          # the release tag to an immutable installer commit before execution.
+          # below. It never sees the writer token. install-latest.sh selects the
+          # stable release on the refresh caller's major-tag commit. With no
+          # refresh caller, it uses the latest stable release. It fetches the
+          # installer at the selected commit before execution.
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ github.token }}
           # Only the optional main-build installer uses this fixed commit.
@@ -625,7 +627,7 @@ jobs:
         # directory of its own and handed to change-class as
         # HARNESS_CI_LOCK_KENDEX. A repository that records .kendex-lock.json
         # with a kendex built from its own tree writes a registration shape
-        # the latest release may not know yet, and that release refuses the
+        # the selected release may not know yet, and that release refuses the
         # record. In kendex's own repository that build is the default
         # branch's code, lagging it until the next main build publishes; a
         # failed main build leaves the rolling-main pointer, and the lag,
@@ -636,10 +638,10 @@ jobs:
         # names often has no published build. The main build is a release
         # asset kendex's own release workflow published, fetched by the same
         # fixed-commit installer with no writer credential in reach, so it takes no trust
-        # the latest release does not. Every other diff keeps the latest
+        # the selected release does not. Every other diff keeps the selected
         # release, and so does every diff where the setting is empty. A main
         # build that fails to install is a warning, never a step failure: the
-        # lock-only diff falls back to the latest release, which refuses a
+        # lock-only diff falls back to the selected release, which refuses a
         # record it cannot read, and every other pull request converges.
         run: |
           set -euo pipefail
@@ -656,7 +658,7 @@ jobs:
                 if [ "$lock_rc" -eq 0 ]; then
                   printf 'HARNESS_CI_LOCK_KENDEX=%s\n' "$lock_home/.local/bin/kendex" >>"$GITHUB_ENV"
                 else
-                  echo "::warning::lock-kendex-install exit=$lock_rc: kendex's main build did not install, so a pull request whose only change is .kendex-lock.json is judged by the latest release"
+                  echo "::warning::lock-kendex-install exit=$lock_rc: kendex's main build did not install, so a pull request whose only change is .kendex-lock.json is judged by the selected release"
                 fi
                 ;;
               *)
