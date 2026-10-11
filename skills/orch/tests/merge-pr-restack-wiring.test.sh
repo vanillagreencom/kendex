@@ -343,8 +343,11 @@ cp "$RESTACK_DOC" "$TMP_ROOT/restack-array-mutant.md"
 mutate_file "$TMP_ROOT/restack-array-mutant.md" '${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}' '"${RESTACK_MODE_ARGS[@]}"'
 if (( BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2 )); then
   array_rc=0
-  PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-array-mutant.md" "$RESOLVE" "$CI_WT" main - > "$TMP_ROOT/array-control.out" 2> "$TMP_ROOT/array-control.err" || array_rc=$?
-  assert_eq "$array_rc" 1 'control: bare empty-array expansion fails review-first under Bash 3.2 nounset'
+  LC_ALL=C PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-array-mutant.md" "$RESOLVE" "$CI_WT" main - > "$TMP_ROOT/array-control.out" 2> "$TMP_ROOT/array-control.err" || array_rc=$?
+  array_error="$(sed 's/^[^:]*: line [0-9][0-9]*: //' "$TMP_ROOT/array-control.err")"
+  printf 'control: bare-array diagnostic=%s\n' "$array_error"
+  assert_eq "$array_rc" 127 'control: bare empty-array expansion fails review-first under Bash 3.2 nounset' "$TMP_ROOT/array-control.err"
+  assert_eq "$array_error" 'RESTACK_MODE_ARGS[@]: unbound variable' 'control: bare empty-array failure names the target array' "$TMP_ROOT/array-control.err"
 else
   printf 'control: bare-array requires Bash 3.2; current=%s\n' "$BASH_VERSION"
 fi
