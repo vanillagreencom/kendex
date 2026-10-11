@@ -332,7 +332,7 @@ assert_first "command-safety: cwd=$scratch/gone" 'and the value is the path the 
 # cannot find its own directory, and the refusal must still open with the key.
 nodirname="$scratch/nodirname"
 mkdir -p "$nodirname"
-for tool in jq git grep cat; do
+for tool in jq git grep cat mktemp rm; do
   ln -sf "$(command -v "$tool")" "$nodirname/$tool"
 done
 # And a world holding none of them: the value is the whole list, in check
@@ -340,31 +340,24 @@ done
 # overwrites instead of appending.
 notools="$scratch/notools"
 mkdir -p "$notools"
-status=0
-out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
-  | env -i HOME="$HOME" PATH="$notools" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
-keyed="${out%%$'\n'*}"
-if [ "$status" -eq 0 ] && [ "$keyed" = 'command-safety: missing-tools=jq,git,grep,cat,dirname' ] &&
-  [ "$(grep -c '^command-safety: ' <<<"$out")" -eq 1 ]; then
-  printf 'PASS with none of them the value is the whole list, in check order\n'
-  passed=$((passed + 1))
-else
-  printf 'FAIL with none of them the value is the whole list: exit %s, keyed line %s\n' "$status" "$keyed"
-  failed=$((failed + 1))
-fi
-
-status=0
-out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
-  | env -i HOME="$HOME" PATH="$nodirname" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
-keyed="${out%%$'\n'*}"
-if [ "$status" -eq 0 ] && [ "$keyed" = 'command-safety: missing-tools=dirname' ] &&
-  [ "$(grep -c '^command-safety: ' <<<"$out")" -eq 1 ]; then
-  printf 'PASS without dirname the warning names it\n'
-  passed=$((passed + 1))
-else
-  printf 'FAIL without dirname the warning names it: exit %s, keyed line %s\n' "$status" "$keyed"
-  failed=$((failed + 1))
-fi
+# These rows share the file-backed stdin owner with the other hook suites.
+. "$ROOT/hooks/tests/lib/payload-rows.sh"
+PAYLOAD_ROOT="$scratch/missing-tool-payload"
+mkdir -p "$PAYLOAD_ROOT"
+PAYLOAD_PREFIX='command-safety: '
+PAYLOAD_BASH="$BASH"
+payload=$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}')
+while IFS='|' read -r label path key; do
+  got=$(payload_run "$hook" "$repo" "$path" "$payload")
+  if [ "$got" = "rc=0 first=$key" ] && [ "$(grep -c '^command-safety: ' "$PAYLOAD_ROOT/stderr")" -eq 1 ]; then
+    printf 'PASS %s\n' "$label"; passed=$((passed + 1))
+  else
+    printf 'FAIL %s: %s\n' "$label" "$got"; failed=$((failed + 1))
+  fi
+done <<ROWS
+with none of them the value is the whole list, in check order|$notools|missing-tools=jq,git,grep,cat,dirname,mktemp,rm
+without dirname the warning names it|$nodirname|missing-tools=dirname
+ROWS
 
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^other-command$"\n' >"$repo/kendex.settings.toml"
 check 0 'qs -c vshell' 'policy is configured, not tied to Quickshell'
@@ -403,7 +396,7 @@ check 2 'qs -c vshell' 'copy delivery finds the installed dependency'
 check 0 'scripts/validate qml' 'copy delivery allows validation'
 printf 'return 1\n' >"$repo/.claude/skills/commit-guards/scripts/lib/common.sh"
 check 0 'scripts/validate qml' 'a failed settings loader warns and allows the call'
-assert_first 'command-safety: settings=unreadable' 'and the settings key names the failed support load'
+assert_first 'command-safety: support=unreadable' 'and the support key names the failed installed load'
 mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 0 'scripts/validate qml' 'missing settings support warns'
 
@@ -490,6 +483,15 @@ prefixed shell body|command|2|command-safety: refused=policy|true; bash <<EOF\nq
 pipeline shell body|command|2|command-safety: refused=policy|cat <<EOF | bash\nqs -c vshell\nEOF
 prefixed data body|command|0|-|true; cat <<EOF\nqs -c vshell\nEOF
 pipeline data body|command|0|-|cat <<EOF | cat\nqs -c vshell\nEOF
+last shell body|command|2|command-safety: refused=policy|bash <<FIRST <<SECOND\ntrue\nFIRST\nqs -c vshell\nSECOND
+grouped shell body|command|2|command-safety: refused=policy|cat <<EOF | (bash)\nqs -c vshell\nEOF
+redirection-first shell body|command|2|command-safety: refused=policy|<<EOF bash\nqs -c vshell\nEOF
+source-stdin shell body|command|2|command-safety: refused=policy|bash -c "source /dev/stdin" <<EOF\nqs -c vshell\nEOF
+remote shell body|command|2|command-safety: refused=policy|ssh host "bash -s" <<EOF\nqs -c vshell\nEOF
+later find action|command|2|command-safety: refused=policy|find . -exec echo {} + -exec sh -c "qs -c vshell" sh {} +
+later find data|command|0|-|find . -exec echo {} + -exec echo "qs -c vshell" {} +
+multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nqs -c vshell\nFIRST\nqs -c vshell\nSECOND
+grouped data body|command|0|-|cat <<EOF | (cat)\nqs -c vshell\nEOF
 '
 }
 command_position_rows
@@ -526,7 +528,7 @@ global_reader_rows() {
     case "$state" in
       syntax) printf 'if (\n' >"$home/$library/commit-guards/scripts/lib/command-position.sh" ;;
       return-two) printf 'return 2\n' >"$home/$library/commit-guards/scripts/lib/settings.sh" ;;
-      exit-two) printf 'exit 2\n' >"$home/$library/commit-guards/scripts/lib/common.sh" ;;
+      exit-two) printf '%s\n' 'echo support-cause=installed-error >&2' 'exit 2' >"$home/$library/commit-guards/scripts/lib/common.sh" ;;
       nested-absent) rm "$home/$library/commit-guards/scripts/lib/paths.sh" ;;
     esac
     if [ "$state" = bad-setting ]; then
@@ -537,6 +539,9 @@ global_reader_rows() {
     env HOME="$home" "$BASH" "$installed" <<<"$payload" >/dev/null 2>"$ERR_FILE" || status=$?
     assert_eq "rc=$status first=$(first_line "$ERR_FILE")" "rc=$expected first=command-safety: $key" "$label installed reader"
     assert_eq "$([ -e "$marker" ] && echo ran || echo untouched)" untouched "$label project loader boundary"
+    if [ "$state" = exit-two ]; then
+      assert_eq "$(grep -c '^  support-cause=installed-error$' "$ERR_FILE")" 1 "$label replays cause"
+    fi
     case "$state" in syntax | return-two | exit-two | nested-absent)
       assert_eq "$(grep -c '^command-safety: ' "$ERR_FILE")" 1 "$label warns once" ;;
     esac
@@ -557,10 +562,10 @@ copilot-relocated-shared|relocated/copilot/hooks|.agents/skills|present|2|refuse
 partial-native|.codex/hooks|.agents/skills|partial|2|refused=default-policy
 absent-global|.codex/hooks|.agents/skills|absent|0|settings=no-loader
 bad-setting|.codex/hooks|.agents/skills|bad-setting|0|settings=unreadable
-reader-syntax|.codex/hooks|.agents/skills|syntax|0|settings=unreadable
-settings-return|.codex/hooks|.agents/skills|return-two|0|settings=unreadable
-common-exit|.codex/hooks|.agents/skills|exit-two|0|settings=unreadable
-nested-absent|.codex/hooks|.agents/skills|nested-absent|0|settings=unreadable
+reader-syntax|.codex/hooks|.agents/skills|syntax|0|support=unreadable
+settings-return|.codex/hooks|.agents/skills|return-two|0|support=unreadable
+common-exit|.codex/hooks|.agents/skills|exit-two|0|support=unreadable
+nested-absent|.codex/hooks|.agents/skills|nested-absent|0|support=unreadable
 LAYOUTS
 }
 global_reader_rows
@@ -569,7 +574,9 @@ skill_load_control global-reader "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/c
 skill_load_control loader-boundary "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
   'lib="$root/.agents/skills/commit-guards/scripts/lib"' HOOK global_reader_rows 'absent-global project loader boundary'
 skill_load_control support-state "$HOOK" 'loading="$lib/common.sh"' 'loading=""' HOOK global_reader_rows 'common-exit installed reader' 'common-exit warns once'
-skill_load_control support-diagnostics "$HOOK" 'loading="$lib/command-position.sh"' 'source "$lib/command-position.sh" || refuse settings unreadable "$loading"' HOOK global_reader_rows 'reader-syntax installed reader'
+skill_load_control support-diagnostics "$HOOK" 'loading="$lib/command-position.sh"' 'source "$lib/command-position.sh" || refuse support unreadable "$loading"' HOOK global_reader_rows 'reader-syntax installed reader'
+skill_load_control support-cause "$HOOK" 'cause="$cause
+  $detail"' 'cause=$loading' HOOK global_reader_rows 'common-exit replays cause'
 failed=$((failed + FAIL))
 passed=$((passed + PASS))
 printf '%s passed, %s failed\n' "$passed" "$failed"

@@ -284,6 +284,15 @@ prefixed shell body|command|2|block-unsafe-rm: refused=recursive-rm|true; bash <
 pipeline shell body|command|2|block-unsafe-rm: refused=recursive-rm|cat <<EOF | bash\nrm -rf $X/sub\nEOF
 prefixed data body|command|0|-|true; cat <<EOF\nrm -rf $X/sub\nEOF
 pipeline data body|command|0|-|cat <<EOF | cat\nrm -rf $X/sub\nEOF
+last shell body|command|2|block-unsafe-rm: refused=shared-root|bash <<FIRST <<SECOND\ntrue\nFIRST\nrm -rf $HOME\nSECOND
+grouped shell body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (bash)\nrm -rf $HOME\nEOF
+redirection-first shell body|command|2|block-unsafe-rm: refused=shared-root|<<EOF bash\nrm -rf $HOME\nEOF
+source-stdin shell body|command|2|block-unsafe-rm: refused=shared-root|bash -c "source /dev/stdin" <<EOF\nrm -rf $HOME\nEOF
+remote shell body|command|2|block-unsafe-rm: refused=shared-root|ssh host "bash -s" <<EOF\nrm -rf $HOME\nEOF
+later find action|command|2|block-unsafe-rm: refused=shared-root|find . -exec echo {} + -exec sh -c "rm -rf $HOME" sh {} +
+later find data|command|0|-|find . -exec echo {} + -exec echo "rm -rf $HOME" {} +
+multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nrm -rf $HOME\nFIRST\nrm -rf $HOME\nSECOND
+grouped data body|command|0|-|cat <<EOF | (cat)\nrm -rf $HOME\nEOF
 '
 }
 command_position_rows

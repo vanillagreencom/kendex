@@ -60,7 +60,7 @@ nested launchers|pkill||timeout 5 nice -n 5 pkill x
 launcher shell text|bash,pkill||timeout 5 bash -c 'pkill x'
 find executable|pkill||find . -exec pkill x \\;
 find directory executable|pkill||find . -execdir pkill x \\;
-find shell text|sh,rm,{}||find . -exec sh -c 'rm -rf $X' {} \\;
+find shell text|sh,rm||find . -exec sh -c 'rm -rf $X' {} \\;
 find quoted data|find||find . -name 'sh pkill' -print
 launcher quoted data|echo||echo 'timeout 5 pkill x'
 command query|command||command -v pkill
@@ -68,10 +68,28 @@ prefixed shell heredoc|true,bash,pkill||true; bash <<EOF\npkill x\nEOF
 prefixed data heredoc|true,cat||true; cat <<EOF\npkill x\nEOF
 pipeline shell heredoc|cat,bash,pkill||cat <<EOF | bash\npkill x\nEOF
 pipeline data heredoc|cat,cat||cat <<EOF | cat\npkill x\nEOF
-independent shell after data|cat,bash||cat <<EOF && bash -c true\npkill x\nEOF
-independent or shell after data|cat,bash||cat <<EOF || bash -c true\npkill x\nEOF
+independent shell after data|cat,bash,true||cat <<EOF && bash -c true\npkill x\nEOF
+independent or shell after data|cat,bash,true||cat <<EOF || bash -c true\npkill x\nEOF
 pipeline receiver group|tar|pipes|tar -cf - repo/.git | (cd /tmp/x && tar -xf -)
 pipeline brace receiver|tar|pipes|tar -cf - repo/.git | { cd /tmp/x; tar -xf -; }
+last shell heredoc|bash,true,pkill||bash <<'FIRST' <<'SECOND'\ntrue\nFIRST\npkill x\nSECOND
+grouped shell heredoc|cat,bash,pkill||cat <<'EOF' | (bash)\npkill x\nEOF
+grouped data heredoc|cat,cat||cat <<'EOF' | (cat)\npkill x\nEOF
+redirection-first shell heredoc|bash,pkill||<<EOF bash\npkill x\nEOF
+program-prefixed heredoc|bash,pkill,source||bash -c 'source /dev/stdin' <<EOF\npkill x\nEOF
+remote shell heredoc|ssh,pkill,bash||ssh host 'bash -s' <<EOF\npkill x\nEOF
+multiple find semicolon actions|echo,pkill||find . -exec echo {} \\; -execdir pkill x {} \\;
+escaped separator data|echo||echo x\\;pkill
+even slash separator|echo,pkill||echo x\\\\;pkill
+multiple find actions|echo,pkill||find . -exec echo {} + -exec pkill x {} +
+multiple find shell actions|echo,sh,pkill,rm||find . -exec echo {} + -exec sh -c 'rm -rf $HOME' sh {} + -exec pkill x {} +
+find action argument data|echo||find . -exec echo '-exec pkill x' {} +
+find later argument data|sh,true,echo||find . -exec sh -c true {} + -exec echo 'pkill x' {} +
+literal shell program|sh,pkill||sh -c pkill x
+literal shell program data|sh,true||sh -c true "pkill x"
+shell script positional data|bash||bash script -c pkill
+or receiver group|true,cd,cp|pipes|true || (cd /srv; cp -r .git /tmp/x)
+or brace group|true,echo,cp|pipes|true || { echo x; cp -r .git /tmp/x; }
 ROWS
 if [ -z "${READER_UNDER_TEST:-}" ]; then
   while IFS='|' read -r defect row; do
@@ -81,10 +99,10 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
         print; print "    COMMAND_TEXTS=$COMMAND_TEXTS${rest#*[[:space:]]}$NL"; changed++; next
       }
       /^      owner=/ && defect == "heredoc-owner" {
-        print; print "      owner=$BARE"; changed++; next
+        print; print "      owner=\"cat \""; changed++; next
       }
-      /if runs_shell_text "\$\{receiver%%/ && defect == "heredoc-pipe" {
-        print; print "        executable_body=\"\""; changed++; next
+      /receiver_segments=\$SEGMENTS/ && defect == "heredoc-pipe" {
+        print; print "        receiver_segments=\"\""; changed++; next
       }
       /^    executable=\$word/ && defect == "control-words" {
         print; print "    case $word in else | \\{) COMMAND_TEXTS=$rest$NL; return 0 ;; esac"; changed++; next
@@ -98,13 +116,20 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
       /\[ "\$launcher" != timeout \]/ && defect == "duration" {
         print; print "        duration=\"\""; changed++; next
       }
-      /if \[ -n "\$found" \]/ && defect == "find-exec" {
-        print "        found=\"\""; changed++
+      /if \[ -n "\$actions" \]/ && defect == "find-exec" {
+        print "        actions=\"\""; changed++
+      }
+      index($0, "cut=${cut//\\|\\|/$NL}") && defect == "or-group" { changed++; next }
+      /^    cut=\$semicolon_cut/ && defect == "escaped-separator" {
+        print; print "    cut=${cut//$MASK_SEMI/$NL}"; changed++; next
+      }
+      /local shell_c=/ && defect == "shell-program" {
+        print; print "    shell_c=\"a^\""; changed++; next
       }
       /local pipe_group=/ && defect == "pipe-group" {
         print; print "      pipe_group=\"a^\""; changed++; next
       }
-      { print } END { if (changed != 1) exit 1 }
+      { print } END { if (changed != (defect == "or-group" ? 2 : 1)) exit 1 }
     ' "$READER" >"$mutant" || exit 1
     cmp -s -- "$READER" "$mutant" && exit 1
     rc=0
@@ -114,14 +139,17 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
     else cat "$TMP/$defect.log"; failed=$((failed + 1)); fi
   done <<'CONTROLS'
 arguments|ordinary argument
-heredoc-owner|prefixed shell heredoc
+heredoc-owner|last shell heredoc
 heredoc-pipe|pipeline shell heredoc
 control-words|else arm
 launchers|timeout duration
 option-value|nice option value
 duration|timeout duration
-find-exec|find shell text
+find-exec|multiple find actions
 pipe-group|pipeline receiver group
+or-group|or receiver group
+shell-program|literal shell program
+escaped-separator|escaped separator data
 CONTROLS
 fi
 [ "$failed" = 0 ]

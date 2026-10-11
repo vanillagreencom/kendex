@@ -12,15 +12,16 @@
 # masked out before the cut: whitespace and separators inside a quoted span
 # become control bytes, so no word inside a span reaches a caller's
 # pattern and no character inside one starts or ends a segment, and a heredoc
-# body its command reads as data is dropped. A span or a body that a
-# shell, `eval`, `source` or `.` word runs is kept as the command text it is,
+# body that a known data reader consumes is dropped. Other bodies remain
+# command text. A quoted program that a shell, `eval`, `source` or `.` word
+# runs is appended as an independent command position,
 # and a command substitution is kept wherever it stands. A quote or a
 # substitution that cannot be paired leaves the whole text to be cut unmasked,
 # so a command the reader could not take apart is read with its full reach.
 #
 # `command_text SEGMENT` leaves COMMAND_TEXTS holding, one per line, that
-# segment from the selected executable word, for a caller judging what a
-# command is rather than what it mentions.
+# segment from each selected executable word, including every find action
+# and a known literal shell -c program. Later positional arguments stay data.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
 # DATA and COMMAND_TEXTS, so a caller does not use those names for its own state.
@@ -70,7 +71,8 @@ runs_shell_text() { # TEXT -> 0 when its executable runs shell text
   done
   local saved=${COMMAND_TEXTS-}
   command_text "$bare"
-  local selected=$COMMAND_TEXTS
+  local selected=${COMMAND_TEXTS%"$NL"}
+  selected=${selected##*"$NL"}
   COMMAND_TEXTS=$saved
   [[ $selected =~ ^([^[:space:]]*sh|eval|source|\.)([[:space:]]|$) ]]
 }
@@ -192,9 +194,9 @@ mask_data() { # TEXT -> DATA
 # quote that still does not pair is a span the reader could not read, and the
 # caller is told.
 mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
-  local rest=$1 head quote span before out=""
+  local rest=$1 head quote span before out="" programs=""
   while :; do
-    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; return 0; }
+    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest$programs; return 0; }
     head=$UPTO
     rest=${rest#"$head"}
     quote=${rest:0:1}
@@ -213,7 +215,7 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     rest=${rest#"$span$quote"}
     out=$out$head
     before=${out##*$SEP}
-    if [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
+    if [ "${2:-}" = context ] || [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
@@ -225,13 +227,16 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
         out=$out$quote$DATA$quote$SUBS
       fi
     else
-      out=$out$NL$span$NL
+      # Keep the outer command intact, including later find actions. Program
+      # spans are independent command positions after ordinary data is masked.
+      out=$out$quote$MASK$quote
+      programs=$programs$NL$span$NL
     fi
   done
 }
-# The heredoc bodies. The shell feeds a body to a command rather than running
-# it, so the body goes, unless that command is one that runs shell text and the
-# body is the command text it runs. The `<<` is read off the line with its
+# The heredoc bodies. Drop a body only when the owning command and all
+# pipeline receivers are known data readers. Retain unproven executable input
+# instead of enumerating the commands that might run it. The `<<` is read off the line with its
 # comment dropped and its quoted spans masked, so a `<<` only written down does
 # not arm one. A body is dropped only once its terminator line is found: an
 # unterminated body is text the reader could not read, and dropping it would
@@ -252,27 +257,44 @@ EOF
     judged=$judged$line$NL
     index=$((index + 1))
     uncommented "$line"
-    if mask_spans "$BARE"; then
+    if mask_spans "$BARE" context; then
       BARE=$MASKED
     fi
-    local openings=$BARE strip_tabs match before owner receiver pipeline executable_body
+    local openings=$BARE prior="" prefix strip_tabs match before owner receiver pipeline executable_body context segment receiver_segments
     local heredoc_open='(^|[^<])<<(-?)[[:blank:]]*([^[:space:]<][^[:space:]]*)'
     while [[ $openings =~ $heredoc_open ]]; do
       match=${BASH_REMATCH[0]}
       strip_tabs=${BASH_REMATCH[2]}
       delim=${BASH_REMATCH[3]}
-      before=${openings%%"$match"*}${BASH_REMATCH[1]}
-      owner=${before##*$SEP}
+      prefix=${openings%%"$match"*}
+      before=$prior$prefix${BASH_REMATCH[1]}
+      prior=$prior$prefix$match
       openings=${openings#*"$match"}
-      executable_body=""
-      if runs_shell_text "$owner"; then executable_body=1; fi
-      # A shell receiving this pipeline also executes its stdin. Stop at a
-      # list or group boundary; a later independent shell owns no such input.
-      pipeline=${openings%%[&;\(\)\`$NL]*}
+      # Preserve this simple command's context across every redirection. The
+      # context mask keeps program arguments on the opening line; its synthetic
+      # newlines cannot become list boundaries. The current redirection is
+      # removed, and later command words remain visible (<<EOF bash).
+      owner=${before##*$SEP}" "${openings%%$SEP*}
+      context=$owner
+      while [[ $context =~ $heredoc_open ]]; do
+        context=${context/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]} "}
+      done
+      command_text "$context"
+      # Only a proven data reader loses its body. Unknown executable consumers
+      # retain their input, rather than using an incomplete shell-name list.
+      executable_body=1
+      case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) executable_body="" ;; esac
+      pipeline=${openings%%[&;\`$NL]*}
       pipeline=${pipeline%%'||'*}
       while [[ $pipeline == *"|"* ]]; do
         receiver=${pipeline#*|}
-        if runs_shell_text "${receiver%%|*}"; then executable_body=1; fi
+        command_segments "${receiver%%|*}"
+        receiver_segments=$SEGMENTS
+        while IFS= read -r segment; do
+          command_text "$segment"
+          [ -n "$COMMAND_TEXTS" ] || continue
+          case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) ;; *) executable_body=1 ;; esac
+        done <<<"$receiver_segments"
         pipeline=$receiver
       done
       # Quoted delimiters stop expansion, but a shell still executes the body
@@ -325,6 +347,8 @@ EOF
     cut=${cut//<\&/<$MASK_AMP}
     cut=${cut//>\|/>$MASK_PIPE}
     if [ "${2:-}" = pipes ]; then
+      # A list fallback is not a pipeline receiver.
+      cut=${cut//\|\|/$NL}
       # A tar receiver can change directory inside a subshell or brace group.
       # Keep that pipe receiver together; its caller selects the commands in
       # it with this same reader before judging a destination.
@@ -341,7 +365,16 @@ EOF
         cut=${cut/"$group"/"$kept"}
       done
     fi
-    cut=${cut//;/$NL}
+    # Reuse the escape reader: only unescaped semicolons end commands.
+    # A literal semicolon stays available as a find action terminator.
+    local semicolon_tail=$cut semicolon_cut="" semicolon_head
+    while upto_unescaped "$semicolon_tail" ';'; do
+      semicolon_head=$UPTO
+      semicolon_tail=${semicolon_tail#"$semicolon_head"}
+      semicolon_tail=${semicolon_tail:1}
+      semicolon_cut=$semicolon_cut${semicolon_head//\\;/$MASK_SEMI}$NL
+    done
+    cut=$semicolon_cut${semicolon_tail//\\;/$MASK_SEMI}
     cut=${cut//&/$NL}
     if [ "${2:-}" = pipes ]; then
       cut=${cut//\|\|/$NL}
@@ -370,11 +403,13 @@ EOF
 # arguments remain data. Assembled names and unknown option arities remain
 # outside this lexical reader's contract.
 command_text() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word name executable launcher="" takes_value="" duration="" find_rest found
+  local rest=$1 word name executable launcher="" takes_value="" duration="" find_rest
   COMMAND_TEXTS=""
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0
+    local redirect_prefix="^$REDIRECT_RE"
+    if [[ $rest =~ $redirect_prefix ]]; then rest=${rest#"${BASH_REMATCH[0]}"}; continue; fi
     case "$rest" in
       \(* | "$MASK_OPEN"*) rest=${rest:1}; continue ;;
     esac
@@ -423,14 +458,27 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
         continue ;;
       find)
         find_rest=${rest#"$word"}
-        found=""
+        local actions="" action="" active=""
         while [ -n "$find_rest" ]; do
           find_rest=${find_rest#"${find_rest%%[![:space:]]*}"}
+          [ -n "$find_rest" ] || break
           name=${find_rest%%[[:space:]]*}
           find_rest=${find_rest#"$name"}
-          case "$name" in -exec | -execdir) found=1; break ;; esac
+          if [ -z "$active" ]; then
+            case "$name" in -exec | -execdir) active=1 ;; esac
+          elif [ "$name" = + ] || [ "$name" = '\;' ] || [ "$name" = ";" ] || [ "$name" = "$MASK_SEMI" ]; then
+            command_text "$action"
+            actions=$actions$COMMAND_TEXTS
+            active=""; action=""
+          else
+            action=$action" "$name
+          fi
         done
-        if [ -n "$found" ]; then rest=$find_rest; launcher=""; continue; fi
+        if [ -n "$active" ]; then
+          command_text "$action"
+          actions=$actions$COMMAND_TEXTS
+        fi
+        if [ -n "$actions" ]; then COMMAND_TEXTS=$actions; return 0; fi
         ;;
     esac
     rest=$executable${rest#"$word"}
@@ -442,6 +490,17 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
     rest=${rest//$MASK_CLOSE/)}
     rest=${rest//$MASK_TICK/\`}
     COMMAND_TEXTS=$rest$NL
+    # The known literal -c argument is program text. Positional arguments
+    # after that one remain data; no expansion or option grammar is performed.
+    local shell_c='^[^[:space:]]+[[:space:]]+-c[[:space:]]+([^[:space:]]+)' program selected_text
+    if [[ $executable == *sh && $rest =~ $shell_c ]]; then
+      program=${BASH_REMATCH[1]}
+      case "$program" in \'* | \"*) ;; *)
+        selected_text=$COMMAND_TEXTS
+        command_text "$program"
+        COMMAND_TEXTS=$selected_text$COMMAND_TEXTS
+        ;; esac
+    fi
     return 0
   done
 }

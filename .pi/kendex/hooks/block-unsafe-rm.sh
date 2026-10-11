@@ -139,23 +139,24 @@ SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"
 command_segments "$COMMAND"
 while IFS= read -r segment; do
   command_text "$segment"
-  selected=${COMMAND_TEXTS%"$NL"}
-  [[ $selected == rm[[:space:]]* ]] || continue
-  [[ ! $selected =~ $SHARED_RE ]] || refuse refused shared-root
-for root_name in TMPDIR TMP TEMP AGENT_TMPDIR HOME; do
-  root_value=${!root_name-}
-  [ -n "$root_value" ] || continue
-  while [[ $root_value == */ && $root_value != / ]]; do root_value=${root_value%/}; done
-  literal_root=${root_value//[[:space:]]/$MASK}
-  literal_end=$SHARED_END
-  if [ "$root_value" = / ]; then literal_root=''; literal_end="${SHARED_SLASH}${SHARED_BOUNDARY}"; fi
-  for metachar in '\' '.' '[' ']' '(' ')' '{' '}' '*' '+' '?' '^' '$' '|'; do
-    literal_root=${literal_root//"$metachar"/\\"$metachar"}
+  while IFS= read -r selected; do
+    [[ $selected == rm[[:space:]]* ]] || continue
+    [[ ! $selected =~ $SHARED_RE ]] || refuse refused shared-root
+  for root_name in TMPDIR TMP TEMP AGENT_TMPDIR HOME; do
+    root_value=${!root_name-}
+    [ -n "$root_value" ] || continue
+    while [[ $root_value == */ && $root_value != / ]]; do root_value=${root_value%/}; done
+    literal_root=${root_value//[[:space:]]/$MASK}
+    literal_end=$SHARED_END
+    if [ "$root_value" = / ]; then literal_root=''; literal_end="${SHARED_SLASH}${SHARED_BOUNDARY}"; fi
+    for metachar in '\' '.' '[' ']' '(' ')' '{' '}' '*' '+' '?' '^' '$' '|'; do
+      literal_root=${literal_root//"$metachar"/\\"$metachar"}
+    done
+    LITERAL_RE="${RM_EDGE}rm${SKIP}${GAP}+[\"']*${literal_root}${literal_end}"
+    [[ ! $selected =~ $LITERAL_RE ]] || refuse refused shared-root
   done
-  LITERAL_RE="${RM_EDGE}rm${SKIP}${GAP}+[\"']*${literal_root}${literal_end}"
-  [[ ! $selected =~ $LITERAL_RE ]] || refuse refused shared-root
-done
 
-  [[ ! $selected =~ $UNSAFE_RE ]] || refuse refused recursive-rm
+    [[ ! $selected =~ $UNSAFE_RE ]] || refuse refused recursive-rm
+  done <<<"$COMMAND_TEXTS"
 done <<<"$SEGMENTS"
 exit 0

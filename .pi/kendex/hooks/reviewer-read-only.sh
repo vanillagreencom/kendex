@@ -161,11 +161,12 @@ source "$reader" 2>/dev/null || refuse reader unreadable
     command_segments "$COMMAND"
     while IFS= read -r segment; do
       command_text "$segment"
-      selected=${COMMAND_TEXTS%"$NL"}
-      [ -n "$selected" ] || continue
-      [[ ! $selected =~ $STASH_READ ]] || continue
-      if [[ $selected =~ $GIT_WRITE ]]; then refuse refused git-write; fi
-      if [[ $selected =~ $GIT_DISCARD ]]; then refuse refused git-discard; fi
+      while IFS= read -r selected; do
+        [ -n "$selected" ] || continue
+        [[ ! $selected =~ $STASH_READ ]] || continue
+        if [[ $selected =~ $GIT_WRITE ]]; then refuse refused git-write; fi
+        if [[ $selected =~ $GIT_DISCARD ]]; then refuse refused git-discard; fi
+      done <<<"$COMMAND_TEXTS"
     done <<<"$SEGMENTS"
     exit 0
     ;;

@@ -267,6 +267,15 @@ prefixed shell body|command|2|reviewer-read-only: refused=git-discard|true; bash
 pipeline shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | bash\ngit reset --hard\nEOF
 prefixed data body|command|0|-|true; cat <<EOF\ngit reset --hard\nEOF
 pipeline data body|command|0|-|cat <<EOF | cat\ngit reset --hard\nEOF
+last shell body|command|2|reviewer-read-only: refused=git-discard|bash <<FIRST <<SECOND\ntrue\nFIRST\ngit reset --hard\nSECOND
+grouped shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (bash)\ngit reset --hard\nEOF
+redirection-first shell body|command|2|reviewer-read-only: refused=git-discard|<<EOF bash\ngit reset --hard\nEOF
+source-stdin shell body|command|2|reviewer-read-only: refused=git-discard|bash -c "source /dev/stdin" <<EOF\ngit reset --hard\nEOF
+remote shell body|command|2|reviewer-read-only: refused=git-discard|ssh host "bash -s" <<EOF\ngit reset --hard\nEOF
+later find action|command|2|reviewer-read-only: refused=git-discard|find . -exec echo {} + -exec sh -c "git reset --hard" sh {} +
+later find data|command|0|-|find . -exec echo {} + -exec echo "git reset --hard" {} +
+multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ngit reset --hard\nFIRST\ngit reset --hard\nSECOND
+grouped data body|command|0|-|cat <<EOF | (cat)\ngit reset --hard\nEOF
 '
 }
 command_position_rows

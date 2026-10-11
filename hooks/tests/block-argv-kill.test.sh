@@ -134,6 +134,18 @@ prefixed shell body|command|2|block-argv-kill: refused=pkill|true; bash <<EOF\np
 pipeline shell body|command|2|block-argv-kill: refused=pkill|cat <<EOF | bash\npkill -f x\nEOF
 prefixed data body|command|0|-|true; cat <<EOF\npkill -f x\nEOF
 pipeline data body|command|0|-|cat <<EOF | cat\npkill -f x\nEOF
+last shell body|command|2|block-argv-kill: refused=pkill|bash <<FIRST <<SECOND\ntrue\nFIRST\npkill -f x\nSECOND
+grouped shell body|command|2|block-argv-kill: refused=pkill|cat <<EOF | (bash)\npkill -f x\nEOF
+redirection-first shell body|command|2|block-argv-kill: refused=pkill|<<EOF bash\npkill -f x\nEOF
+source-stdin shell body|command|2|block-argv-kill: refused=pkill|bash -c "source /dev/stdin" <<EOF\npkill -f x\nEOF
+remote shell body|command|2|block-argv-kill: refused=pkill|ssh host "bash -s" <<EOF\npkill -f x\nEOF
+later find semicolon action|command|2|block-argv-kill: refused=pkill|find . -exec echo {} \\; -execdir pkill -f x {} \\;
+later find action|command|2|block-argv-kill: refused=pkill|find . -exec echo {} + -exec sh -c "pkill -f x" sh {} +
+later find data|command|0|-|find . -exec echo {} + -exec echo "pkill -f x" {} +
+multiple data bodies|command|0|-|cat <<FIRST <<SECOND\npkill -f x\nFIRST\npkill -f x\nSECOND
+grouped data body|command|0|-|cat <<EOF | (cat)\npkill -f x\nEOF
+literal shell program|command|2|block-argv-kill: refused=pkill|find . -exec echo {} + -exec sh -c pkill {} +
+literal shell data|command|0|-|find . -exec sh -c true "pkill x" {} +
 '
 }
 command_position_rows

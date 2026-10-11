@@ -2,13 +2,13 @@
 
 The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` renders this file from each hook's frontmatter, and fails when the committed file differs. The tools a hook does not run on, each with its reason, are on its package page and in `kendex show hook <name>` and `kendex index --json`.
 
-- `block-argv-kill`: Stops executable pkill and killall commands. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
-- `block-bare-cd`: Stops a standalone cd on a shell that persists across calls. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
-- `block-repo-copy`: Stops executable copies of .git or target into temporary folders. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+- `block-argv-kill`: Stops executable pkill and killall commands. Ordinary quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+- `block-bare-cd`: Stops a standalone cd on a shell that persists across calls. Ordinary quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+- `block-repo-copy`: Stops executable copies of .git or target into temporary folders. Ordinary quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
 - `block-unsafe-rm`: Stops executable rm commands on shared roots or paths rooted at a possibly empty variable. Quoted arguments of other commands and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
 - `block-worktree-refresh`: Requires installed CLI project-write protection before a plain bare worktree advisory or silent non-plain text naming the kendex word or path basename in a linked or unknown checkout. Other path and file names do not trigger the check. Other plain project writers refuse.
 - `cloud-git-hooks`: Arms the repository's git checks when a Claude Code cloud session starts or resumes. Local sessions do nothing; an installation gap is reported to the agent.
-- `command-safety`: Applies the project deny pattern at executable command positions. Quoted arguments and here-document data pass. Unreadable settings, tools or input produce one warning and allow the call.
+- `command-safety`: Applies the project deny pattern at executable command positions. Ordinary quoted arguments and here-document data pass. Unreadable settings, tools or input produce one warning and allow the call.
 - `critical-path-deny`: In an unattended orch lane, denies the remaining critical-path removal prompts at once and gives rewrites for variable targets and unresolved paths. The launch environment removes prompts for inline shell scripts and targets from command substitution.
 - `dev-stop-check`: Stops a coding agent from finishing while the validation run it started is still going, and hands it the command that waits for the verdict.
 - `doc-drift-check`: Retired. Runs no check; `kendex remove doc-drift-check --scope project --sweep` removes it and its files.

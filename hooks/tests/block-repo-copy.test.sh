@@ -274,9 +274,25 @@ tar receiver data|command|0|-|tar -cf - /repo/.git | (echo /tmp/x && tar -xf - -
 tar command data|command|0|-|tar -cf - /repo/.git | (cd /tmp/x && echo tar -xf -)
 tar ordinary receiver|command|0|-|tar -cf - /repo/.git | (cd /srv/x && tar -xf -)
 copy receiver group|command|2|block-repo-copy: refused=cp|echo x | (cd /srv; cp -r /repo/.git /tmp/x)
+last shell body|command|2|block-repo-copy: refused=cp|bash <<FIRST <<SECOND\ntrue\nFIRST\ncp -r /repo/.git /tmp/copy\nSECOND
+grouped shell body|command|2|block-repo-copy: refused=cp|cat <<EOF | (bash)\ncp -r /repo/.git /tmp/copy\nEOF
+redirection-first shell body|command|2|block-repo-copy: refused=cp|<<EOF bash\ncp -r /repo/.git /tmp/copy\nEOF
+source-stdin shell body|command|2|block-repo-copy: refused=cp|bash -c "source /dev/stdin" <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
+remote shell body|command|2|block-repo-copy: refused=cp|ssh host "bash -s" <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
+later find action|command|2|block-repo-copy: refused=cp|find . -exec echo {} + -exec sh -c "cp -r /repo/.git /tmp/copy" sh {} +
+later find data|command|0|-|find . -exec echo {} + -exec echo "cp -r /repo/.git /tmp/copy" {} +
+multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ncp -r /repo/.git /tmp/copy\nFIRST\ncp -r /repo/.git /tmp/copy\nSECOND
+grouped data body|command|0|-|cat <<EOF | (cat)\ncp -r /repo/.git /tmp/copy\nEOF
+or subshell copy|command|2|block-repo-copy: refused=cp|true || (cd /srv; cp -r /repo/.git /tmp/x)
+or brace copy|command|2|block-repo-copy: refused=cp|true || { echo x; cp -r /repo/.git /tmp/x; }
+tar receiver option|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (tar -xf - -C /tmp/x)
+tar receiver option after cd|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (cd /srv && tar -xf - -C /tmp/x)
+tar receiver ordinary option|command|0|-|tar -cf - /repo/.git | (tar -xf - -C /srv/x)
+tar receiver option data|command|0|-|tar -cf - /repo/.git | (echo "tar -xf - -C /tmp/x")
 '
 }
 command_position_rows
+skill_load_control tar-receiver-context "$HOOK" 'if [[ $selected == tar[[:space:]]* ]]; then' 'selected=""' HOOK command_position_rows 'tar receiver option' 'tar receiver option after cd'
 skill_load_control executable-selection "$HOOK" 'command_text "${remaining%%|*}"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real cp'
 delivered_reader_rows() {
   reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"cp -r /repo/.git /tmp/copy"}}' 'block-repo-copy: refused=cp'

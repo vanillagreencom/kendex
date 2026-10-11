@@ -1352,7 +1352,7 @@ name = "hooks"
 globs = ["hooks/**"]
 reviewer_only = true
 instructions = '''
-`hooks/command-safety.sh` uses `COMMAND_SAFETY_DENY_PATTERN` to reject matches at executable command positions. Quoted arguments and here-document data pass. An absent setting applies the hook's default, which refuses a `systemd-run` memory cap in kilobytes or megabytes; the value `^$` turns matching off. An explicitly empty or invalid pattern, missing tools, or unreadable input or settings produces one keyed warning and allows the call.
+`hooks/command-safety.sh` uses `COMMAND_SAFETY_DENY_PATTERN` to reject matches at executable command positions. Ordinary quoted arguments and here-document data pass. An absent setting applies the hook's default, which refuses a `systemd-run` memory cap in kilobytes or megabytes; the value `^$` turns matching off. An explicitly empty or invalid pattern, missing tools, or unreadable input or settings produces one keyed warning and allows the call.
 '''
 
 [[bot-instructions.surface]]

@@ -117,6 +117,8 @@ KILL_RE='^(pkill|killall)($|[[:space:]])'
 command_segments "$COMMAND"
 while IFS= read -r segment; do
   command_text "$segment"
-  if [[ $COMMAND_TEXTS =~ $KILL_RE ]]; then refuse refused "${BASH_REMATCH[1]}"; fi
+  while IFS= read -r selected; do
+    if [[ $selected =~ $KILL_RE ]]; then refuse refused "${BASH_REMATCH[1]}"; fi
+  done <<<"$COMMAND_TEXTS"
 done <<<"$SEGMENTS"
 exit 0

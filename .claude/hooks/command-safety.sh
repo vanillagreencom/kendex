@@ -36,6 +36,7 @@ refuse() { # KEY VALUE [CAUSE]
         git=unreadable) echo "the Git working directory could not be resolved" ;;
       hook=unlocatable) echo "this hook's own directory could not be read, so its installed dependencies cannot be found" ;;
       settings=no-loader) echo "the command-safety bundle requires the installed commit-guards settings loader" ;;
+      support=unreadable) echo "the installed commit-guards support could not be loaded; repair that installation; its diagnostic follows" ;;
       settings=unreadable) echo "the project settings could not be read, so COMMAND_SAFETY_DENY_PATTERN is unknown; the loader's line below names what to fix" ;;
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
@@ -65,9 +66,20 @@ refuse() { # KEY VALUE [CAUSE]
 # Support can explicitly exit with a guard's verdict status. While sourcing,
 # that status is a support failure, not an executable-command refusal.
 loading=""
-trap 'rc=$?; [ -z "$loading" ] || refuse settings unreadable "$loading" 2>&3; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
+trap '
+  rc=$?
+  if [ -n "$loading" ]; then
+    cause=$loading
+    while IFS= read -r detail <&5 || [ -n "$detail" ]; do
+      cause="$cause
+  $detail"
+    done
+    refuse support unreadable "$cause" 2>&3
+  fi
+  case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac
+' EXIT
 MISSING=""
-for dependency in jq git grep cat dirname; do
+for dependency in jq git grep cat dirname mktemp rm; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
@@ -156,17 +168,23 @@ GG_CHECK=command-safety
 # continue past a failed nested import. EXIT owns the advisory outcome, and
 # its saved stderr survives the source command's diagnostic redirection.
 exec 3>&2
+# Capture installed support's stderr in an owned file. Open separate write and
+# read descriptions before unlinking it; EXIT can read from the beginning even
+# while source's stderr redirection remains active. Process exit owns teardown.
+support_capture=$(mktemp 2>&1) || refuse support unreadable "$support_capture"
+exec 4>"$support_capture" 5<"$support_capture"
+capture_err=$(rm -- "$support_capture" 2>&1) || refuse support unreadable "$capture_err"
 loading="$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/common.sh
-source "$lib/common.sh" 2>/dev/null
+source "$lib/common.sh" 2>&4
 loading="$lib/settings.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
-source "$lib/settings.sh" 2>/dev/null
+source "$lib/settings.sh" 2>&4
 loading="$lib/command-position.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
-source "$lib/command-position.sh" 2>/dev/null
+source "$lib/command-position.sh" 2>&4
 loading=""
-exec 3>&-
+exec 3>&- 4>&- 5<&-
 # cd runs twice on purpose: a substitution cannot move this shell, so the
 # probe is what carries the cause into the refusal and the second one is the
 # move. The second failure is unreachable in practice — the probe just

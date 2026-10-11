@@ -151,13 +151,15 @@ while IFS= read -r segment; do
         while IFS= read -r receiving; do
           command_text "$receiving"
           selections=$selections$COMMAND_TEXTS
-          case "$COMMAND_TEXTS" in
-            cd[[:space:]]*) directory=${COMMAND_TEXTS%"$NL"} ;;
-            tar[[:space:]]*)
-              if [[ $selected == tar[[:space:]]* ]] && [ -n "$directory" ]; then
-                selections=$selections$selected" "$directory$NL
-              fi ;;
-          esac
+          while IFS= read -r receiving_command; do
+            case "$receiving_command" in
+              cd[[:space:]]*) directory=$receiving_command ;;
+              tar[[:space:]]*)
+                if [[ $selected == tar[[:space:]]* ]]; then
+                  selections=$selections$selected" "$receiving_command" "$directory$NL
+                fi ;;
+            esac
+          done <<<"$COMMAND_TEXTS"
         done <<<"$SEGMENTS"
       elif [[ $selected == tar[[:space:]]* && $COMMAND_TEXTS == tar[[:space:]]* ]]; then
         # A direct tar receiver carries its own destination argument.
