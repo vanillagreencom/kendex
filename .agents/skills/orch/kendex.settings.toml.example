@@ -229,7 +229,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Lanes never listed, measured or picked, and lanes retired from a date.
 # Each is named by its own name or its alias, never by a path.
 # ORCH_LANE_EXCLUDE = "sclaude"
-# ORCH_LANE_RETIRE = "nclaude=YYYY-MM-DD"
+# ORCH_LANE_RETIRE = "oldclaude=YYYY-MM-DD"
 
 # The override for each Copilot pool a Pi lane on a github-copilot/ model
 # spends, as account-dir=credits-used/credits-granted pairs, the account dir

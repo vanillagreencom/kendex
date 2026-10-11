@@ -521,7 +521,7 @@
 #                      never listed, measured or picked: nothing inside an
 #                      excluded directory is read, not even to tell its harness.
 #   ORCH_LANE_RETIRE   Comma-separated `<name>=<YYYY-MM-DD>` pairs
-#                      (`nclaude=YYYY-MM-DD`). The lane is picked until that
+#                      (`oldclaude=YYYY-MM-DD`). The lane is picked until that
 #                      UTC date; from it on, `list` shows it as `retired` and
 #                      nothing inside it is read. A malformed pair, or a date
 #                      naming no calendar day, is refused.

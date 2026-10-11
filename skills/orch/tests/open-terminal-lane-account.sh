@@ -22,10 +22,12 @@ if [[ "${1:-}" == --case ]]; then
     codex) VAR=CODEX_HOME; CHOICE='--model gpt-6-astra -c model_reasoning_effort=high'; SCREEN='› ' ;;
     copilot) VAR=COPILOT_HOME; CHOICE='--model claude-opus-5.5 --reasoning-effort high'; SCREEN='› ' ;;
   esac
-  mkdir -p "$ROOT/bin" "$ROOT/home/.n$HARNESS" "$ROOT/home/.e$HARNESS" "$ROOT/home/.$HARNESS" "$ROOT/real-bin"
+  ACCOUNT="n$HARNESS"
+  [[ "$HARNESS" != claude ]] || ACCOUNT=neutralclaude
+  mkdir -p "$ROOT/bin" "$ROOT/home/.$ACCOUNT" "$ROOT/home/.e$HARNESS" "$ROOT/home/.$HARNESS" "$ROOT/real-bin"
   ot_stub_bin "$ROOT/bin"
   printf '#!%s\ncase "${1:-}" in check) exit 0 ;; list) echo "[]" ;; pick) echo %q ;; esac\n' \
-    "$BASH" "$(jq -cn --arg dir "$ROOT/home/.n$HARNESS" '{config_dir:$dir}')" > "$ROOT/bin/lanes"
+    "$BASH" "$(jq -cn --arg dir "$ROOT/home/.$ACCOUNT" '{config_dir:$dir}')" > "$ROOT/bin/lanes"
   chmod +x "$ROOT/bin/lanes"
   printf '#!%s\nif [[ "${1:-}" == kill-window && -f %q ]]; then exit 1; fi\nexec %q -S %q "$@"\n' \
     "$BASH" "$ROOT/close-fails" "$REAL_TMUX" "$ROOT/s" > "$ROOT/real-bin/tmux"
@@ -71,7 +73,7 @@ if [[ "${1:-}" == --case ]]; then
       --cmd "$HARNESS $CHOICE $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$@" "$item" > "$log" 2>&1 || RC=$?
   }
   [[ "$MODE" != wrong && "$MODE" != auto-wrong ]] || touch "$ROOT/wrong-account"
-  launch "$ROOT/launch.log" "$ROOT/home/.n$HARNESS" KEN-1
+  launch "$ROOT/launch.log" "$ROOT/home/.$ACCOUNT" KEN-1
   if [[ "$MODE" == relaunch || "$MODE" == close-fails ]]; then
     [[ "$RC" -eq 0 ]] || exit 72
     "$SCRIPTS_DIR/workflow-state" --state-dir "$ROOT/state" get oversee \
@@ -98,7 +100,7 @@ if [[ "${1:-}" == --case ]]; then
         mail_root: ($record.mail_root == $prior[0].mail_root), record_unchanged: ($record == $prior[0])}')"
     refused_rc="$RC"
     rm -- "$ROOT/wrong-account"
-    launch "$ROOT/next-launch.log" "$ROOT/home/.nclaude" KEN-2
+    launch "$ROOT/next-launch.log" "$ROOT/home/.neutralclaude" KEN-2
     next_record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$ROOT/state" get oversee \
       '[.lanes[]? | select(.item == "KEN-2") | .status] | first // "none"')"
     panes="$(tm list-panes -a -F '#{window_name}')"
@@ -139,12 +141,12 @@ run_case() { # NAME SCRIPT MODE EXPECT [HARNESS]
   assert_eq "child=$rc $actual" "child=0 $want" "$name: real account, pane, record and fleet admission" "$RUN/log"
 }
 
-run_case preserved "$SCRIPTS_DIR/open-terminal" preserved '{"rc":0,"account":".nclaude","pane":true,"record":"running"}'
+run_case preserved "$SCRIPTS_DIR/open-terminal" preserved '{"rc":0,"account":".neutralclaude","pane":true,"record":"running"}'
 while IFS='|' read -r harness account; do
   run_case "auto-$harness-preserved" "$SCRIPTS_DIR/open-terminal" auto-preserved \
     "{\"rc\":0,\"account\":\"$account\",\"pane\":true,\"record\":\"running\"}" "$harness"
 done <<'ROWS'
-claude|.nclaude
+claude|.neutralclaude
 codex|.ncodex
 copilot|.ncopilot
 ROWS
