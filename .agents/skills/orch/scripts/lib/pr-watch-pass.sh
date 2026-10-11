@@ -66,8 +66,8 @@ pw_discard_temps() {
 }
 
 # The repo a reducer line came from, ahead of the line's own tab-separated
-# columns: one context block reads across the fleet, and the reader can tell
-# which repo a `<pr> <kind>` belongs to.
+# columns: rising-key event lines and the full heartbeat context both span
+# the fleet, so the reader must know which repo a `<pr> <kind>` belongs to.
 pw_prefix() { awk -v repo="$1" '{ print repo "\t" $0 }' <<<"$2"; }
 
 # One baseline file per repo, loaded before the first pass.

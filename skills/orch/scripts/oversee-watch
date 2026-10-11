@@ -11,12 +11,14 @@
 # --interval. A check that finds an event records it and the pass runs on to
 # the next check, so no kind starves another: a reducer line on every pass or
 # a lane parked on its limit banner would otherwise be the only thing the watch
-# ever said. The block carries the latest pr-watch context once. Live tracker and pane reads remain
+# ever said. Events carry only reducer lines whose keys rose; the heartbeat
+# carries the full pr-watch context. Live tracker and pane reads remain
 # authoritative; persisted state holds only edge keys. Usage, event details,
 # configuration, and failure contracts live in usage(), which lib/oversee-watch-text.sh
 # holds beside the message catalog.
 # Stdout is the overseer protocol: the EVENT records documented in usage(),
-# their record or pane payloads, and the optional `pr-watch rc=N` context block.
+# their record or pane payloads, and at heartbeat the optional `pr-watch rc=N`
+# context block.
 # Consumers handle every EVENT in order. Those records are not prose messages.
 
 set -euo pipefail
@@ -4896,8 +4898,8 @@ mail_turn() { # [overseer]
 # row exists without the clock that earned it.
 PASS_NOW=""
 # Set by any check that printed an event this run, mail or long. Every check
-# runs on either way; the run ends once, with the pr-watch context closing the
-# block, when no long pass is left in flight.
+# runs on either way; the run ends once when no long pass is left in flight.
+# The full pr-watch context prints only at heartbeat.
 PASS_EVENT=0
 PASS_FAILED=0
 PASS_FAILED_ITEMS=""
@@ -4942,11 +4944,15 @@ run_end() {
     PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
     mail_turn
   fi
+  if [[ "$PASS_EVENT" -eq 1 || "$PASS_FAILED" -eq 1 ]]; then
+    # The deadline rows already advanced. A failed pass must deliver their
+    # selected instructions too, or later event passes would omit them.
+    [[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"
+  fi
   if [[ "$PASS_FAILED" -eq 1 ]]; then
     exit 2
   fi
   if [[ "$PASS_EVENT" -eq 1 ]]; then
-    [[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"
     exit 0
   fi
   [[ "$LONG_PASSES" -lt "$MAX_LOOPS" ]] || heartbeat

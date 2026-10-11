@@ -93,6 +93,56 @@ printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-
 output_pass
 assert_not_contains "$OUT" 'verifying KEN-1' 'a standing no-due row stays out of other event blocks'
 
+# oversee-report due reads owner reports through lane-mail events. An
+# unreachable mailbox is a shipped failure after verification rows advance.
+DELIVERY_ROWS=$'due|merge|due\nwaiting|2026-10-02T12:00:00Z|waiting\ncompletion|merge|boxes=0'
+delivery_sequence() {
+  DELIVERY_PREFIX="$1"
+  local kind trigger status failed_rc
+  while IFS='|' read -r kind trigger status; do
+    output_world "$DELIVERY_PREFIX-$kind" "$trigger"
+    if [[ "$kind" == completion ]]; then
+      jq -nc '[{id:"KEN-1",state:"Verifying",priority:2,description:"## Done when\n- [x] branch proof"}]' > "$STUB_DIR/tracker.out"
+    fi
+    printf '0\n' > "$STUB_DIR/prwatch.rc"
+    cat > "$STUB_DIR/report-mail" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$STUB_DIR/report-mail.args"
+printf 'lane-mail: host-unreachable=overseer\n' >&2
+exit 2
+EOF
+    chmod +x "$STUB_DIR/report-mail"
+    failed_rc=0
+    run_watch ORCH_REPORT=on OVERSEE_REPORT_LANE_MAIL="$STUB_DIR/report-mail" \
+      -- --state "$STUB_DIR/fleet.json" --max-loops 1 gh-1 \
+      > "$STUB_DIR/failed.out" 2> "$STUB_DIR/failed.err" || failed_rc=$?
+    cp "$STATE_DIR/owner_repo__none" "$STUB_DIR/failed.state"
+    printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-1.txt"
+    output_pass
+    printf '%s:%s\n' "$failed_rc" "$RC" > "$STUB_DIR/delivery.rc"
+  done <<<"$DELIVERY_ROWS"
+}
+delivery_contract() {
+  local kind trigger status dir rows
+  while IFS='|' read -r kind trigger status; do
+    dir="$TMP_ROOT/cases/$DELIVERY_PREFIX-$kind"
+    assert_eq "$(cat "$dir/report-mail.args")" 'events --item overseer' "$kind reaches the owner report mailbox read"
+    assert_eq "$(cat "$dir/delivery.rc")" 2:0 "$kind preserves the failed pass and healthy retry statuses" "$dir/failed.err"
+    rows="$(grep '^verifying KEN-1 ' "$dir/failed.out" || true)"
+    assert_eq "$(grep -c '^verifying KEN-1 ' "$dir/failed.out" || true)" 1 "$kind delivers its selected row on the failed pass"
+    if [[ "$status" == boxes=0 ]]; then
+      assert_eq "$rows" 'verifying KEN-1 boxes=0' 'failed completion delivers the completion row'
+    else
+      assert_contains "$rows" " status=$status " "failed $kind delivers its judged verification row"
+    fi
+    assert_contains "$(cat "$dir/failed.state")" $'verifying-deadline\tKEN-1\t' "$kind retains its existing deadline row"
+    assert_contains "$(cat "$dir/out")" 'EVENT lane-asking gh-1' "$kind retries under a healthy event block"
+    assert_not_contains "$(cat "$dir/out")" 'verifying KEN-1' "$kind does not repeat the delivered row on retry"
+  done <<<"$DELIVERY_ROWS"
+}
+delivery_sequence failed_delivery
+delivery_contract
+
 heartbeat_sequence() {
   output_world "$1"
   output_pass
@@ -122,6 +172,7 @@ done <<'ROWS'
 verifying_repeat@oversee-watch@[[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"@event
 pr_repeat@lib/pr-watch-pass.sh@[[ -z "$event_out" ]] || printf '%s' "$event_out"@[[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"@event
 completion_repeat@oversee-watch@[[ "$prior" != "$key" ]] || continue@[[ "$prior" != "$key" || "$key" == boxes=0 ]] || continue@completion
+failed_delivery@oversee-watch@if [[ "$PASS_EVENT" -eq 1 || "$PASS_FAILED" -eq 1 ]]; then@if [[ "$PASS_EVENT" -eq 1 && "$PASS_FAILED" -eq 0 ]]; then@delivery
 verifying_heartbeat@oversee-watch@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' ""@heartbeat
 pr_heartbeat@lib/pr-watch-pass.sh@[[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"@[[ -z "$PW_OUT" ]] || printf '%s\n' ""@heartbeat
 ROWS
