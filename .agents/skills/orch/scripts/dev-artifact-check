@@ -457,7 +457,7 @@ emit() {
   #   retry  — an artifact exists but is not accepted
   # A validate value other than "pass" or "no-verdict" downgrades accept to
   # retry: the agent finished its tail but the round's validation is failing.
-  # no-verdict is a battery the timeout cut off, which is neither pass nor
+  # no-verdict reports a timeout or unavailable host check, neither pass nor
   # failing: the scoped suites were the round's result and CI is the full
   # record.
   local verdict

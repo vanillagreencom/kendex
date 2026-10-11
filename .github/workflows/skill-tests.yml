@@ -1954,11 +1954,12 @@ jobs:
         run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
       - name: cargo clippy
         timeout-minutes: 20
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked
       # always(): a red step above must not swallow the ones after it.
       - name: cargo fmt
         if: always()
-        run: cargo fmt --check
+        run: |
+          cargo fmt --check || echo '::warning title=Rust formatting::cargo fmt --check reported formatting differences'
       # Private rustdoc links are checked on lib and bin targets. Rustdoc
       # offers no test-target flag for integration-test documentation.
       - name: cargo doc

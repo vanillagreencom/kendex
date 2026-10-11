@@ -851,19 +851,59 @@ mkdir -p "$R/pi-extensions/peers"
 printf '{"scripts":{"test":"node test.mjs"}}\n' >"$R/pi-extensions/peers/package.json"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$PEER_SUITE_OUTPUT"\nexit 1\n' >"$R/fake-bin/npm"
 chmod +x "$R/fake-bin/npm"
-for row in 'missing peers|Error [ERR_MODULE_NOT_FOUND]: Cannot find package pi-ai|3|guard-note: no-verdict=missing-peers=pi-extensions/peers' \
-  'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|guard: suite=pi-extensions/peers'; do
-  IFS='|' read -r label output expected key <<<"$row"
+# Producer excerpts: Bun module loading in pi-tool-renderer and
+# pi-agents-tmux, and pi-qol/runtime-copy-peers.test.ts assertion reports.
+BUN_PEER="error: Cannot find module '@earendil-works/pi-tui' from '/package/extensions/subagent/__tests__/trace-layout.test.ts'"
+QOL_PEER=$(cat <<'OUTPUT'
+error: expect(received).toBe(expected)
+- ""
++ "runtime-copy-peers: peer-unresolved peer=@earendil-works/pi-agent-core cause=[Cannot find package '@earendil-works/pi-agent-core' imported from /package/tests/runtime-copy-peers.probe.ts]
++ "
+(fail) copied runtime against the installed Pi peers > the copy imports and runs through the package's installed peers and is removed on success and failure [79.81ms]
+error: expect(received).toMatchObject(expected)
++ "runtime-copy-peers: peer-unresolved peer=@earendil-works/pi-agent-core cause=[Cannot find package '@earendil-works/pi-agent-core' imported from /package/tmp/context/tests/runtime-copy-peers.probe.ts]
++ "
+(fail) copied runtime against the installed Pi peers > each precondition rule and teardown refuses its planted defect [339.94ms]
+OUTPUT
+)
+INDEPENDENT=$'error: expect(received).toBe(expected)\nExpected: true\nReceived: false\n(fail) an independent behavior check'
+PEER_ROWS=(
+  'Node missing peer|Error [ERR_MODULE_NOT_FOUND]: Cannot find package @earendil-works/pi-ai|3|no-verdict'
+  "Bun missing module|$BUN_PEER|3|no-verdict"
+  "Bun missing module beside an assertion|$BUN_PEER
+$INDEPENDENT
+ 1 fail|1|suite"
+  "Pi probe assertions caused by absent peers|$QOL_PEER
+ 2 fail|3|no-verdict"
+  "Pi probe beside an independent assertion|$QOL_PEER
+$INDEPENDENT
+ 3 fail|1|suite"
+  'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|suite'
+)
+for row in "${PEER_ROWS[@]}"; do
+  # Read the fields without read consuming only the first output line.
+  label=${row%%|*}; row=${row#*|}
+  output=${row%|*|*}; expected=${row#"$output"|}; key=${expected#*|}; expected=${expected%%|*}
+  diagnostic='guard: suite=pi-extensions/peers'
+  [ "$key" != no-verdict ] || diagnostic='guard-note: no-verdict=missing-peers=pi-extensions/peers'
   run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$output"
-  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$key"* ]] \
+  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
     && ok "$label" || bad "$label" "rc=$RC out=$OUT"
 done
 if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT='Error [ERR_MODULE_NOT_FOUND]: Cannot find package pi-ai'
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_PEER"
   [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
     && ok 'control: losing missing-peer classification turns its row red' \
     || bad 'missing-peer control' "rc=$RC out=$OUT"
 else bad 'missing-peer control changed nothing'; fi
+if mutant_guard 's/exit !(missing \&\& !behavior)/exit !missing/'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_PEER
+$INDEPENDENT
+ 3 fail"
+  [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-peers=pi-extensions/peers'* ]] \
+    && ok 'control: ignoring independent assertions turns the mixed-peer row red' \
+    || bad 'independent assertion control' "rc=$RC out=$OUT"
+else bad 'independent assertion control changed nothing'; fi
 rm -- "$R/fake-bin/npm"
 rm -r -- "$R/pi-extensions/peers"
 

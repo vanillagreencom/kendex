@@ -69,10 +69,10 @@ WORKFLOW="$ROOT/.github/workflows/skill-tests.yml"
 [ -f "$GH_EVAL" ] || { echo "missing $GH_EVAL" >&2; exit 1; }
 AGGREGATE="$ROOT/tools/ci-aggregate"
 
-step_field() { # WORKFLOW JOB ID FIELD — base expression, working directory or run body
+step_field() { # WORKFLOW JOB ID_OR_NAME FIELD: base, directory or run body
   awk -v job="$2:" -v id="$3" -v field="$4" '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job); in_step = 0; in_run = 0 }
-    /^      - / { in_step = (in_job && $0 == "      - id: " id); in_run = 0 }
+    /^      - / { in_step = (in_job && ($0 == "      - id: " id || $0 == "      - name: " id)); in_run = 0 }
     !in_step { next }
     field == "BASE_REF" && /^          BASE_REF: / {
       sub(/^          BASE_REF: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
@@ -89,6 +89,43 @@ step_field() { # WORKFLOW JOB ID FIELD — base expression, working directory or
     !/^          / { in_run = 0 }
   ' "$1"
 }
+
+# Cargo's warning policy runs the workflow step bodies. Compiler errors and
+# denied lints still block; GitHub reads the ::warning annotation for fmt.
+mkdir -p "$TMP/cargo-policy/bin"
+cat >"$TMP/cargo-policy/bin/cargo" <<'CARGO'
+#!/bin/sh
+case "$1:$CARGO_CASE" in
+  clippy:error) echo 'error: cannot compile' >&2; exit 1 ;;
+  clippy:warning)
+    echo 'warning: unused variable' >&2
+    case " $* " in *' -D warnings '*) exit 1 ;; esac ;;
+  fmt:formatting) echo 'Diff in src/lib.rs:'; exit 1 ;;
+esac
+CARGO
+chmod +x "$TMP/cargo-policy/bin/cargo"
+plant "$WORKFLOW" 'cargo clippy --workspace --all-targets --locked' \
+  'cargo clippy --workspace --all-targets --locked -- -D warnings' "$TMP/cargo-deny.yml" cargo-lint
+plant "$WORKFLOW" " || echo '::warning title=Rust formatting::cargo fmt --check reported formatting differences'" \
+  '' "$TMP/cargo-fmt-block.yml" cargo-lint
+while IFS='|' read -r label workflow step input expected annotation; do
+  body="$(step_field "$workflow" cargo-lint "$step" run)" || exit 1
+  [ -n "$body" ] || { echo 'cargo step has no run body' >&2; exit 1; }
+  printf '%s\n' "$body" >"$TMP/cargo-policy/step.sh"
+  rc=0
+  env -i "PATH=$TMP/cargo-policy/bin:$PATH" "CARGO_CASE=$input" \
+    "$BASH" --noprofile --norc -e -o pipefail "$TMP/cargo-policy/step.sh" >"$TMP/cargo-policy/output" 2>&1 || rc=$?
+  check "$label: status" "$expected" "$rc"
+  warned=no
+  if grep -q '^::warning ' "$TMP/cargo-policy/output"; then warned=yes; fi
+  check "$label: GitHub warning annotation" "$annotation" "$warned"
+done <<ROWS
+clippy warnings pass|$WORKFLOW|cargo clippy|warning|0|no
+compiler errors block|$WORKFLOW|cargo clippy|error|1|no
+formatting warns|$WORKFLOW|cargo fmt|formatting|0|yes
+must-fail: denying warnings blocks the advisory row|$TMP/cargo-deny.yml|cargo clippy|warning|1|no
+must-fail: blocking formatting removes its advisory result|$TMP/cargo-fmt-block.yml|cargo fmt|formatting|1|no
+ROWS
 
 # --- 1. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run

@@ -275,15 +275,18 @@
 # for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
 # unfinished where no sentinel exists: a run still going, past its cap or lost.
 # Only pass is a passing validation. The timing fields follow every verdict a
-# sentinel carries, a no-verdict run's included, since the bound's end is
-# still an end, and never an unfinished one, which has none; a sentinel with
+# sentinel carries, a no-verdict run's included, since a host or timeout result
+# also ends the run, and never an unfinished one, which has none; a sentinel with
 # no readable timing file is refused as timing-unreadable.
 #
-# A run the bound ended is no verdict, neither pass nor FAILING: the command
-# was cut off, not refuted. The child records verdict=no-verdict only for
-# timeout's own exit, 124 or 137, with no own-exit marker: the command writes
-# that marker when it returns by itself, so a command that exits 124 or 137 on
-# its own is a failing command.
+# DEV_VALIDATE_CMD and DEV_VALIDATE_RANGE_CMD reserve exit 3 for unavailable
+# host checks. The command reports the cause and must return another nonzero
+# status for a code defect. Wrap a test runner that returns a failure count so
+# three failed tests cannot become a host result. Exit 3 records
+# verdict=no-verdict cause=host and never supplies a timeout reuse proof.
+# A run the bound ended records verdict=no-verdict for timeout's own 124 or
+# 137, with no own-exit marker. A command returning 124 or 137 itself fails.
+# Both no-verdict causes take dev-implement.md section 5's scoped-suite route.
 #
 # state=lost is the detached child gone with no verdict recorded: a host or
 # low-memory kill, an agent warden's reap
@@ -294,17 +297,17 @@
 # only where that file exists, so no reader is sent to a path nothing created.
 #
 # The sentinel file holds exactly one line, `guard-exit=N at=TIME`, with
-# ` verdict=no-verdict` after it for a run the bound ended, written by the
-# detached child, or for a ci run, or a run an earlier run's bound ended, by
-# the start path. A harness that kills the
-# launching shell or drops its completion notice changes neither the verdict
+# ` verdict=no-verdict` after it for a timeout, or
+# ` verdict=no-verdict cause=host` for command exit 3. The detached child writes
+# both. The start path writes a timeout reuse result or a ci pending result.
+# A harness that kills the launching shell or drops its completion notice changes neither the verdict
 # nor where it is recorded.
 #
 # Exit: 0 the command passed, a ci run left its validation to the pull request
 # CI, --stop left nothing running, --live found a run going, or --last-pass
 # found a pass; 1 it failed, the bound ended it, it was lost, or the cap elapsed
-# with no verdict, a --stop could not end a run, --live found no run going, or
-# --last-pass found no pass that still speaks for the worktree; 2 usage or
+# with no verdict, a host check could not run, a --stop could not end a run,
+# --live found no run going, or --last-pass found no pass that still speaks for the worktree; 2 usage or
 # configuration error, or a start refused as
 # run-live; 3 --wait's budget elapsed while the run was still going, so poll
 # again.
@@ -1174,7 +1177,7 @@ if [[ "$mode" == last-pass ]]; then
     if [[ -s "$run_dir/exit" ]]; then
       verdict="$(read_sentinel 2>/dev/null; printf '%s' "$SENTINEL_VERDICT")" || verdict=unreadable
     fi
-    # A run the bound ended with no finding refuted nothing.
+    # A timeout or host no-verdict with no finding refuted nothing.
     if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then
       continue
     fi

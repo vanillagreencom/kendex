@@ -12,8 +12,9 @@
 # commit time so their configuration, doctrine and outputs agree.
 # Every finding opens with `guard: <key>=<value>` and explains itself below
 # that line; say() and finding_text() hold the shape and the text. A notice,
-# a check left unrun on purpose or a probe that could not answer, opens with
-# `guard-note: <key>=<value>` from note() and leaves the verdict alone.
+# a check left unrun on purpose, opens with `guard-note: <key>=<value>` from
+# note() and leaves the verdict alone. An unavailable host check uses unrun()
+# and `guard-note: no-verdict=<cause>`; it sets exit 3 unless a code finding won.
 #
 # The compilers, linters and suites this script runs write their own streams
 # and this script forwards them: that passthrough is its own contract and is
@@ -1300,8 +1301,27 @@ fi
 # Of skill, hook and tools tests, mapped_suites below states which run.
 # A Pi package's suite can import peers that CI installs before the suite.
 # A missing dependency gives no test verdict; an assertion still fails.
-pi_suite_failed() { # DIR OUTPUT: Node and shell dependency errors, not assertions
-  if [ ! -d "$1/node_modules" ] && grep -qE '^(Error \[ERR_MODULE_NOT_FOUND\]|Error: Cannot find module |error: Cannot find package |sh: .*: not found)' <<<"$2"; then
+pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
+  # Bun prints pi-qol's peer probe inside the assertion report, before (fail).
+  # A missing peer in one report must not hide an independent failed case.
+  if [ ! -d "$1/node_modules" ] && awk '
+    /^(Error \[ERR_MODULE_NOT_FOUND\]|Error: Cannot find module |error: Cannot find (package|module) |sh: .*: (command )?not found)/ ||
+    /^(\+ ")?runtime-copy-peers: peer-unresolved peer=/ {
+      missing = block_missing = 1; next
+    }
+    /^AssertionError/ { behavior = 1 }
+    /^error:/ && !/^error: expect\(/ { behavior = 1 }
+    /^error: expect\(/ { assertion = 1; block_missing = 0 }
+    /^\(fail\)/ {
+      if (!block_missing) behavior = 1
+      failures++; block_missing = assertion = 0
+    }
+    /^[[:space:]]*[0-9]+ fail$/ { reported = $1 }
+    END {
+      if ((assertion && !block_missing) || reported > failures) behavior = 1
+      exit !(missing && !behavior)
+    }
+  ' <<<"$2"; then
     unrun missing-peers "$1"
   else
     say suite "$1"
