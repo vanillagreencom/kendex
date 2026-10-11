@@ -571,16 +571,21 @@ The long pass's events, checked and reported in this order:
                              to the owner as an ask on the same item, naming
                              box, check, Where and deadline. The overseer
                              records the person's reading and closes the ask.
-  verifying <item> box=<N> trigger=<JSON> status=<due|overdue|blocked|waiting> deadline=<UTC|+Nh> reading=<JSON> where=<JSON> why=<JSON>
+  verifying <item> box=<N> trigger=<JSON> status=<due|overdue|blocked|waiting> deadline=<UTC> blocked_by=<ids|-> reading=<JSON> where=<JSON> why=<JSON>
                              every open post-merge box on every long pass,
-                             before active/queued lane filtering. Due means
-                             its trigger fired with no open blocker; overdue
-                             means due past deadline; blocked means an open
-                             blocker; waiting means the trigger has not fired.
+                             before active/queued lane filtering. Overdue
+                             takes priority at or past the deadline,
+                             even with a blocker or an unfired trigger.
+                             Otherwise blocked means an open blocker, waiting
+                             means an unfired trigger, and due means ready.
+                             blocked_by names open blockers, or - for none.
                              A missing Trigger means merge. Release triggers
                              use the first matching publication after merge.
                              In a repository where the item merged, that
                              release must contain its latest merge commit.
+                             An unfired release has a UTC deadline at merge
+                             plus 72 hours. Invalid items report their parser
+                             error on stderr; the pass reads the next item.
                              Printed with the event block or heartbeat. An item
                              with none prints verifying <item> boxes=0.
   EVENT heartbeat            --max-loops long passes with no event, after

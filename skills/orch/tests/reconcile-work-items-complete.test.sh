@@ -147,10 +147,21 @@ for id in T-7 T-8; do
     "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/$id.json"
 done
 
-# Release publication is read by the watch. Reconciliation cannot date an
-# unfired release trigger and must not report its relative deadline overdue.
+# Both readers resolve release publication. This release has not fired.
+# Its merge bound is still ahead of the fixture clock.
 jq --arg d '## Done when
 - [ ] Post-merge: Read health; Where: service; Why after merge: release; Trigger: release owner/repo v*; Deadline: +24h' '.identifier = "T-9" | .id = "uuid-T-9" | .description = $d' "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-9.json"
+
+cat >"$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+  'pr list') echo '[{"state":"MERGED","mergedAt":"2026-10-01T00:00:00Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"}]' ;;
+  'release list') echo '[]' ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$TMP_ROOT/bin/gh"
 
 OUT=""
 RC=0
@@ -159,37 +170,79 @@ OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH
 assert_eq "$RC" 1 "the sweep reports a finding"
 assert_not_contains "$OUT" "issue=T-1" "a fully met completion leaves no done-unchecked finding"
 assert_contains "$OUT" "done-unchecked issue=T-2" "a partly met completion is still done-unchecked"
-assert_contains "$OUT" "verifying-overdue issue=T-3 box=2 deadline=2026-10-02T00:00:00Z" "past-deadline Verifying is reported"
+assert_contains "$OUT" 'verifying T-3 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=-' "past-deadline Verifying is reported"
 assert_contains "$OUT" "verifying-empty issue=T-4" "Verifying with no open box is reported"
 assert_not_contains "$OUT" "issue=T-5" "future Verifying has no stale development finding"
 assert_not_contains "$OUT" "issue=T-6" "completed verification has no finding"
-assert_not_contains "$OUT" "issue=T-9" "an undated release deadline is not overdue"
+assert_contains "$OUT" 'verifying T-9 box=1 trigger="release owner/repo v*" status=waiting deadline=2026-10-04T00:00:00Z blocked_by=-' "an unfired release carries its merge bound"
+assert_contains "$OUT" 'verifying-counts due=1 overdue=1 blocked=0 waiting=1 items=6' "the count line reports every fixture status"
 assert_contains "$OUT" "verifying-invalid issue=T-7" "missing post-merge metadata is reported"
 assert_contains "$OUT" "verifying-invalid issue=T-8" "open branch work in Verifying is reported"
 # Controls mutate only disposable scripts outside the item worktree.
 source "$TEST_DIR/lib/growth-state.sh"
-for control in overdue empty stale fields branch release; do
+for control in overdue empty stale fields branch; do
   MUTANT_DIR="$TMP_ROOT/reconcile-$control"
   MUTANT_RW="$(mutant_scripts "reconcile-$control/orch" reconcile-work-items)/reconcile-work-items" || exit 1
   ln -s "$LINEAR_SKILL" "$MUTANT_DIR/linear"
   case "$control" in
-    release) mutate_file "$MUTANT_RW" 'and .deadline_epoch != null' 'and true'; expected='verifying-overdue issue=T-9' ;;
-    overdue) mutate_file "$MUTANT_RW" 'and .deadline_epoch <= $now' 'and false'; expected='verifying-overdue issue=T-3' ;;
+    overdue)
+      mutant_lib="${MUTANT_RW%/*}/lib/verifying.sh"
+      rm -- "${mutant_lib:?}"
+      cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
+      mutate_file "$mutant_lib" '.deadline_epoch <= $now' 'false'
+      expected='status=overdue'
+      ;;
     empty) mutate_file "$MUTANT_RW" 'if [ "$open_count" -eq 0 ]; then' 'if false; then'; expected='verifying-empty issue=T-4' ;;
     stale) mutate_file "$MUTANT_RW" 'and .state.name != "Verifying"' 'and true'; expected='started-stale issue=T-5' ;;
-    fields) mutate_file "$MUTANT_RW" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'all(.boxes[]; .checked or .post_merge)'"; expected='verifying-invalid issue=T-7' ;;
-    branch) mutate_file "$MUTANT_RW" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'(.errors | length) == 0'"; expected='verifying-invalid issue=T-8' ;;
+    fields)
+      mutant_lib="${MUTANT_RW%/*}/lib/verifying.sh"
+      rm -- "${mutant_lib:?}"
+      cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
+      mutate_file "$mutant_lib" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'all(.boxes[]; .checked or .post_merge)'"; expected='verifying-invalid issue=T-7' ;;
+    branch)
+      mutant_lib="${MUTANT_RW%/*}/lib/verifying.sh"
+      rm -- "${mutant_lib:?}"
+      cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
+      mutate_file "$mutant_lib" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'(.errors | length) == 0'"; expected='verifying-invalid issue=T-8' ;;
   esac
   CONTROL_RC=0
   CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
     REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" RECONCILE_STALE_HOURS=0 "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
   assert_eq "$CONTROL_RC" 1 "control: $control reaches findings"
-  if [[ "$control" == stale || "$control" == release ]]; then
+  if [[ "$control" == stale ]]; then
     assert_contains "$CONTROL_OUT" "$expected" "control: removing the exclusion makes Verifying stale development"
   else
     assert_not_contains "$CONTROL_OUT" "$expected" "control: $control removes the required finding"
   fi
 done
+
+# An overdue box alone must cause exit 1, without another finding to hide
+# a missing increment. Linear supplies the same T-3 row as the main fixture.
+mkdir -p "$TMP_ROOT/overdue-state"
+cp "$TMP_ROOT/state/T-3.json" "$TMP_ROOT/overdue-state/T-3.json"
+OVERDUE_RC=0
+OVERDUE_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
+  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/overdue-state" "$RW" 2>&1)" || OVERDUE_RC=$?
+assert_eq "$OVERDUE_RC" 1 "an overdue box alone exits 1"
+assert_contains "$OVERDUE_OUT" 'verifying-counts due=0 overdue=1 blocked=0 waiting=0 items=1' "the overdue-only fixture has no other finding"
+MUTANT_DIR="$TMP_ROOT/reconcile-exit"
+MUTANT_RW="$(mutant_scripts reconcile-exit/orch reconcile-work-items)/reconcile-work-items" || exit 1
+ln -s "$LINEAR_SKILL" "$MUTANT_DIR/linear"
+mutate_file "$MUTANT_RW" 'findings=$((findings + overdue_count))' 'findings=$((findings + 0))'
+CONTROL_RC=0
+CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
+  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/overdue-state" "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 0 "control: dropping the overdue finding violates exit 1"
+
+# The zero line also prints when the live tracker holds no Verifying item.
+for file in "$TMP_ROOT/state/"*.json; do
+  jq 'if .state.name == "Verifying" then .state = {name:"Done",type:"completed"} else . end' "$file" >"$TMP_ROOT/zero.json"
+  mv -- "$TMP_ROOT/zero.json" "$file"
+done
+ZERO_RC=0
+ZERO_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
+  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || ZERO_RC=$?
+assert_contains "$ZERO_OUT" 'verifying-counts due=0 overdue=0 blocked=0 waiting=0 items=0' "no Verifying item reports a zero count"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

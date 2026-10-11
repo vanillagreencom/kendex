@@ -667,6 +667,7 @@
   ".agents/skills/orch/scripts/lib/tmux-server.sh",
   ".agents/skills/orch/scripts/lib/toml.sh",
   ".agents/skills/orch/scripts/lib/usage-reset.sh",
+  ".agents/skills/orch/scripts/lib/verifying.sh",
   ".agents/skills/orch/scripts/lib/watch-handover.sh",
   ".agents/skills/orch/scripts/lib/watch-host-kinds.sh",
   ".agents/skills/orch/scripts/lib/watch-overseer-record.sh",
