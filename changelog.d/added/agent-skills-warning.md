@@ -1,0 +1,1 @@
+- Install and apply warn when an agent requires a skill the scope does not install. The warning names the agent and skill and explains how to install the skill or remove the assignment.

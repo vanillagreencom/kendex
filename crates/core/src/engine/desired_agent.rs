@@ -140,6 +140,7 @@ pub(super) fn desired_agent(
     }
     let skills =
         super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed)?;
+    super::agent_skills::warn_uninstalled(ctx, state, &skills);
     let mut hash_manifest = ctx.manifest.clone();
     hash_manifest.model_classes = ctx.model_classes.clone();
     hash_manifest.model_bindings = ctx.model_bindings.clone();

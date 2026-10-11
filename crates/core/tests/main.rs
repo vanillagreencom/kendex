@@ -15,6 +15,7 @@ mod adopt_many_tools;
 mod adopt_pinned;
 mod agent_aliases;
 mod agent_skill_roots;
+mod agent_skills_not_installed;
 mod allowance;
 mod antigravity;
 mod app_update;

@@ -97,6 +97,27 @@ Refresh reads the dependency lists again. A removed skill's dependencies leave w
 
 A required skill or agent the catalog does not offer produces a warning with its name and a remedy. The parent skill still installs.
 
+## Agent skills
+
+Declare an agent's required skills once in the catalog manifest. Use one row per agent in `[agent-skills]`. Use `[role-skills]` to add skills for agents with the named `role:`.
+
+```toml
+[agent-skills]
+scout = ["recon"]
+rust = ["dev", "code-quality"]
+
+[role-skills]
+reviewer = ["dev"]
+```
+
+An agent with no row of its own can match skills by name prefix. For example, `rust` matches `rust` and `rust-perf`. An explicit catalog row replaces those prefix matches. Role skills are added to either list. A `reviewer-` agent with no exact row reads its base agent's row: `reviewer-rust` reads `rust`.
+
+The consumer can replace an assignment in its own `[agent-skills]` table. Skills removed there stay removed. Refresh adds skills that the catalog newly assigns since the recorded installation. Skill names in a consumer assignment can come from another subscribed catalog.
+
+The list renders into every harness that installs the agent. Claude Code receives `skills:` frontmatter for preload. Other harnesses receive a `## Required Skills` section with paths to the skills.
+
+Adding an agent normally installs its available assigned skills. A bundle or `--no-auto-skills` can leave them out. Install and apply warn once per agent and missing skill when the scope has no install declaration for it. A skill installed through a bundle or dependency satisfies the assignment. Install the skill, or remove it from the agent's `[agent-skills]` row. An unresolved consumer assignment warns and the agent still renders with its available skills. A recorded fork with an unavailable skill refuses the operation.
+
 ## Agent models
 
 An agent requests a portable model class through its `model:` field. Consumer settings select models for that class at run time or in a native agent file. These settings belong in the personal or project manifest, not the catalog manifest. Project values replace personal values per class, and bindings replace them per harness and class.

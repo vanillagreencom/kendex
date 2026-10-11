@@ -9,7 +9,7 @@ use crate::model::ItemKind;
 use crate::render::agent::Role;
 use crate::source::list_items;
 
-use super::desired::ItemCtx;
+use super::desired::{DesiredState, ItemCtx};
 
 /// The agent's skill list, merging anything upstream gained since the last
 /// sync back into the manifest so the declaration keeps saying what the
@@ -23,8 +23,8 @@ use super::desired::ItemCtx;
 /// stops being read, so it resolves against the scope, and the scope
 /// losing the skill has to be said out loud rather than taking the agent's
 /// `## Required Skills` section off in silence. Nothing else refuses — an
-/// agent still reading its own catalog is a project that renders today,
-/// and what its unreachable names should do is a separate question.
+/// agent still reading its own catalog keeps rendering and warns for
+/// skills its scope does not install.
 pub(super) fn assigned_skills(
     ctx: &ItemCtx,
     role: Option<Role>,
@@ -74,4 +74,34 @@ pub(super) fn assigned_skills(
     }
     *manifest_changed = true;
     Ok(skills)
+}
+
+/// The expanded declarations include bundle members and dependencies.
+/// Offered catalog content alone does not mean the scope installs it.
+pub(super) fn warn_uninstalled(ctx: &ItemCtx, state: &mut DesiredState, skills: &EffectiveSkills) {
+    let installed = ctx.expansion.of(ItemKind::Skill);
+    let missing: std::collections::BTreeSet<_> = skills
+        .effective
+        .iter()
+        .chain(&skills.unresolved)
+        .filter(|skill| !installed.iter().any(|(name, _)| *name == *skill))
+        .collect();
+    for skill in missing {
+        state.warnings.push(super::ItemWarning {
+            kind: ItemKind::Agent,
+            name: ctx.name.to_owned(),
+            harness: None,
+            message: format!(
+                "kendex-agent-skill-not-installed: agent={} skill={}\nThe agent requires a skill this scope does not install.",
+                crate::names::shown(ctx.name),
+                crate::names::shown(skill),
+            ),
+            remediation: Some(format!(
+                "Install skill {}, or remove it from agent {} in [agent-skills].",
+                crate::names::shown(skill),
+                crate::names::shown(ctx.name),
+            )),
+            detail: None,
+        });
+    }
 }
