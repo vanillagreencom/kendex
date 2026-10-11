@@ -44,8 +44,8 @@ pub(super) fn declared(
     })
 }
 
-/// Why a hook will not run on a tool at this scope, or `None` where the plan
-/// writes it armed. One answer for the planner that writes hooks
+/// Why an item will not run on a tool at this scope, or `None` where the plan
+/// writes it enabled. One answer for the planner that writes hooks
 /// ([`desired_hook`]) and for the dependency walk that withholds a hook
 /// whose required companion will not run beside it (`deps`), so the two
 /// cannot disagree about what lands. Every reason planning writes nothing
@@ -67,7 +67,8 @@ pub(super) fn declared(
 /// - its own harnesses line leaves the tool out (`HookSpec::applies_to`),
 ///   and whether the person's own declaration names that tool, which is
 ///   the one case the two lines disagree;
-/// - undeliverable: `hook::delivery` answers `NotInstallable`, which is an
+/// - undeliverable: the capability table excludes the kind at this scope,
+///   or `hook::delivery` answers `NotInstallable`, which is an
 ///   event the tool never fires (`codex_event`, `pi_listener`, the Gemini,
 ///   Copilot and Antigravity event maps), a tool that holds no hooks at
 ///   this scope or takes none, a by-name-only tool the header does not
@@ -146,7 +147,7 @@ impl NotWritten {
     }
 }
 
-/// [`NotWritten`] for one hook on one tool. `header` is the hook's own
+/// [`NotWritten`] for one item on one tool. `header` is a hook's own
 /// header as the catalog of the declaration the plan writes holds it:
 /// `Ok(None)` for a kind with no header, or why it will not read.
 #[allow(clippy::too_many_arguments)]
@@ -235,6 +236,15 @@ fn past_pin(
         {
             return Some(NotWritten::Undeliverable(reason));
         }
+    }
+    // Companions inherit their parent's tools, which can hold a different
+    // kind at this scope. The same capability owner filters declarations.
+    if !crate::harness::installs_here(harness, kind, scope) {
+        return Some(NotWritten::Undeliverable(format!(
+            "{} does not install {} items at this scope",
+            harness.display_name(),
+            kind.name(),
+        )));
     }
     if state.rev_conflicts.contains(&(kind, name.to_owned())) {
         return Some(

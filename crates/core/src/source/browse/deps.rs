@@ -25,6 +25,7 @@ use super::opened::{Browsed, Records};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageDependency {
+    pub kind: ItemKind,
     /// The bare name its parent declares, unescaped: the spelling an
     /// install's optional choice is matched with, because
     /// [`crate::engine::ops`] matches a choice against the declared list.
@@ -74,15 +75,24 @@ pub(super) fn dependencies(
         return PackageDependencies::default();
     };
     let declared = crate::engine::deps::declared_in(text);
-    let rows = |names: &[String]| {
-        names
-            .iter()
-            .filter_map(|dep| row(browsed, offered, landing, name, dep))
-            .collect()
-    };
+    let dependency = |kind, dep: &String| row(browsed, offered, landing, kind, name, dep);
     PackageDependencies {
-        required: rows(&declared.required),
-        optional: rows(&declared.optional),
+        required: declared
+            .required
+            .iter()
+            .filter_map(|dep| dependency(ItemKind::Skill, dep))
+            .chain(
+                declared
+                    .required_agents
+                    .iter()
+                    .filter_map(|dep| dependency(ItemKind::Agent, dep)),
+            )
+            .collect(),
+        optional: declared
+            .optional
+            .iter()
+            .filter_map(|dep| dependency(ItemKind::Skill, dep))
+            .collect(),
     }
 }
 
@@ -96,15 +106,22 @@ fn row(
     browsed: &Browsed,
     offered: &OfferedSkills,
     landing: &Records,
+    kind: ItemKind,
     package: &str,
     declared: &str,
 ) -> Option<PackageDependency> {
-    let kind = ItemKind::Skill;
-    let resolved = offered.resolve(&browsed.sealed, &browsed.config, declared);
-    if resolved.as_deref().ok() == Some(package) {
+    let resolved = if kind == ItemKind::Skill {
+        offered.resolve(&browsed.sealed, &browsed.config, declared)
+    } else {
+        crate::source::find_item(&browsed.sealed, &browsed.config, kind, declared)
+            .map(|_| declared.to_owned())
+            .ok_or_else(Vec::new)
+    };
+    if kind == ItemKind::Skill && resolved.as_deref().ok() == Some(package) {
         return None;
     }
     Some(PackageDependency {
+        kind,
         state: match &resolved {
             // A removal the person recorded keeps the dependency out of
             // every plan (`Manifest::is_held_back`), so the row says it was

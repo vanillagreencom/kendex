@@ -3701,6 +3701,7 @@ export type PackageDependencies = {
 
 /**  One declared dependency, with where it stands in this scope. */
 export type PackageDependency = {
+	kind: ItemKind,
 	/**
 	 *  The bare name its parent declares, unescaped: the spelling an
 	 *  install's optional choice is matched with, because
