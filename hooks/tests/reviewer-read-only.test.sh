@@ -275,7 +275,9 @@ remote shell body|command|2|reviewer-read-only: refused=git-discard|ssh host "ba
 later find action|command|2|reviewer-read-only: refused=git-discard|find . -exec echo {} + -exec sh -c "git reset --hard" sh {} +
 later find data|command|0|-|find . -exec echo {} + -exec echo "git reset --hard" {} +
 multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ngit reset --hard\nFIRST\ngit reset --hard\nSECOND
-grouped data body|command|0|-|cat <<EOF | (cat)\ngit reset --hard\nEOF
+grouped later shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (echo x; bash)\ngit reset --hard\nEOF
+grouped later brace body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | { echo x; bash; }\ngit reset --hard\nEOF
+grouped data guarded text|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (cat)\ngit reset --hard\nEOF
 '
 }
 command_position_rows

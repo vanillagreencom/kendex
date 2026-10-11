@@ -143,7 +143,9 @@ later find semicolon action|command|2|block-argv-kill: refused=pkill|find . -exe
 later find action|command|2|block-argv-kill: refused=pkill|find . -exec echo {} + -exec sh -c "pkill -f x" sh {} +
 later find data|command|0|-|find . -exec echo {} + -exec echo "pkill -f x" {} +
 multiple data bodies|command|0|-|cat <<FIRST <<SECOND\npkill -f x\nFIRST\npkill -f x\nSECOND
-grouped data body|command|0|-|cat <<EOF | (cat)\npkill -f x\nEOF
+grouped later shell body|command|2|block-argv-kill: refused=pkill|cat <<EOF | (echo x; bash)\npkill -f x\nEOF
+grouped later brace body|command|2|block-argv-kill: refused=pkill|cat <<EOF | { echo x; bash; }\npkill -f x\nEOF
+grouped data guarded text|command|2|block-argv-kill: refused=pkill|cat <<EOF | (cat)\npkill -f x\nEOF
 literal shell program|command|2|block-argv-kill: refused=pkill|find . -exec echo {} + -exec sh -c pkill {} +
 literal shell data|command|0|-|find . -exec sh -c true "pkill x" {} +
 '

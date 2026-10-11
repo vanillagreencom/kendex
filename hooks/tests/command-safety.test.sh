@@ -491,7 +491,9 @@ remote shell body|command|2|command-safety: refused=policy|ssh host "bash -s" <<
 later find action|command|2|command-safety: refused=policy|find . -exec echo {} + -exec sh -c "qs -c vshell" sh {} +
 later find data|command|0|-|find . -exec echo {} + -exec echo "qs -c vshell" {} +
 multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nqs -c vshell\nFIRST\nqs -c vshell\nSECOND
-grouped data body|command|0|-|cat <<EOF | (cat)\nqs -c vshell\nEOF
+grouped later shell body|command|2|command-safety: refused=policy|cat <<EOF | (echo x; bash)\nqs -c vshell\nEOF
+grouped later brace body|command|2|command-safety: refused=policy|cat <<EOF | { echo x; bash; }\nqs -c vshell\nEOF
+grouped data guarded text|command|2|command-safety: refused=policy|cat <<EOF | (cat)\nqs -c vshell\nEOF
 '
 }
 command_position_rows

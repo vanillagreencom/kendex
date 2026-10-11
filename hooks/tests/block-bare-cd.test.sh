@@ -132,6 +132,7 @@ ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
 command_position_rows() {
   first_table 'real cd|command|2|block-bare-cd: refused=bare-cd|cd /tmp
 quoted cd text|command|0|-|echo '\''cd /tmp'\''
+grouped data guarded text|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | (cat)\ncd /tmp\nEOF
 cd heredoc data|command|0|-|cat <<'\''EOF'\''\ncd /tmp\nEOF
 '
 }

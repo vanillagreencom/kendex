@@ -282,7 +282,9 @@ remote shell body|command|2|block-repo-copy: refused=cp|ssh host "bash -s" <<EOF
 later find action|command|2|block-repo-copy: refused=cp|find . -exec echo {} + -exec sh -c "cp -r /repo/.git /tmp/copy" sh {} +
 later find data|command|0|-|find . -exec echo {} + -exec echo "cp -r /repo/.git /tmp/copy" {} +
 multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ncp -r /repo/.git /tmp/copy\nFIRST\ncp -r /repo/.git /tmp/copy\nSECOND
-grouped data body|command|0|-|cat <<EOF | (cat)\ncp -r /repo/.git /tmp/copy\nEOF
+grouped later shell body|command|2|block-repo-copy: refused=cp|cat <<EOF | (echo x; bash)\ncp -r /repo/.git /tmp/copy\nEOF
+grouped later brace body|command|2|block-repo-copy: refused=cp|cat <<EOF | { echo x; bash; }\ncp -r /repo/.git /tmp/copy\nEOF
+grouped data guarded text|command|2|block-repo-copy: refused=cp|cat <<EOF | (cat)\ncp -r /repo/.git /tmp/copy\nEOF
 or subshell copy|command|2|block-repo-copy: refused=cp|true || (cd /srv; cp -r /repo/.git /tmp/x)
 or brace copy|command|2|block-repo-copy: refused=cp|true || { echo x; cp -r /repo/.git /tmp/x; }
 tar receiver option|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (tar -xf - -C /tmp/x)

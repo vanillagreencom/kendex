@@ -12,7 +12,8 @@
 # masked out before the cut: whitespace and separators inside a quoted span
 # become control bytes, so no word inside a span reaches a caller's
 # pattern and no character inside one starts or ends a segment, and a heredoc
-# body that a known data reader consumes is dropped. Other bodies remain
+# body that a proven simple data reader consumes is dropped. Grouped receiver
+# input remains unproven and can warn or refuse on guarded text. Other bodies remain
 # command text. A quoted program that a shell, `eval`, `source` or `.` word
 # runs is appended as an independent command position,
 # and a command substitution is kept wherever it stands. A quote or a
@@ -235,7 +236,8 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
   done
 }
 # The heredoc bodies. Drop a body only when the owning command and all
-# pipeline receivers are known data readers. Retain unproven executable input
+# pipeline receivers are proven simple data readers. Grouped data can warn or
+# refuse when its body holds guarded text. Retain unproven executable input
 # instead of enumerating the commands that might run it. The `<<` is read off the line with its
 # comment dropped and its quoted spans masked, so a `<<` only written down does
 # not arm one. A body is dropped only once its terminator line is found: an
@@ -260,7 +262,7 @@ EOF
     if mask_spans "$BARE" context; then
       BARE=$MASKED
     fi
-    local openings=$BARE prior="" prefix strip_tabs match before owner receiver pipeline executable_body context segment receiver_segments
+    local openings=$BARE prior="" prefix strip_tabs match before owner receiver pipeline executable_body context
     local heredoc_open='(^|[^<])<<(-?)[[:blank:]]*([^[:space:]<][^[:space:]]*)'
     while [[ $openings =~ $heredoc_open ]]; do
       match=${BASH_REMATCH[0]}
@@ -288,13 +290,16 @@ EOF
       pipeline=${pipeline%%'||'*}
       while [[ $pipeline == *"|"* ]]; do
         receiver=${pipeline#*|}
-        command_segments "${receiver%%|*}"
-        receiver_segments=$SEGMENTS
-        while IFS= read -r segment; do
-          command_text "$segment"
-          [ -n "$COMMAND_TEXTS" ] || continue
-          case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) ;; *) executable_body=1 ;; esac
-        done <<<"$receiver_segments"
+        receiver=${receiver#"${receiver%%[![:space:]]*}"}
+        # A grouped receiver's prefix cannot prove its whole input is data.
+        # Retain that input without interpreting the group's commands.
+        case "$receiver" in
+          \(* | \{*) executable_body=1 ;;
+          *)
+            command_text "${receiver%%|*}"
+            case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) ;; *) executable_body=1 ;; esac
+            ;;
+        esac
         pipeline=$receiver
       done
       # Quoted delimiters stop expansion, but a shell still executes the body

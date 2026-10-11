@@ -74,7 +74,9 @@ pipeline receiver group|tar|pipes|tar -cf - repo/.git | (cd /tmp/x && tar -xf -)
 pipeline brace receiver|tar|pipes|tar -cf - repo/.git | { cd /tmp/x; tar -xf -; }
 last shell heredoc|bash,true,pkill||bash <<'FIRST' <<'SECOND'\ntrue\nFIRST\npkill x\nSECOND
 grouped shell heredoc|cat,bash,pkill||cat <<'EOF' | (bash)\npkill x\nEOF
-grouped data heredoc|cat,cat||cat <<'EOF' | (cat)\npkill x\nEOF
+grouped later shell receiver|cat,echo,bash,pkill||cat <<'EOF' | (echo x; bash)\npkill x\nEOF
+grouped later brace receiver|cat,echo,bash,pkill||cat <<'EOF' | { echo x; bash; }\npkill x\nEOF
+grouped data guarded text|cat,cat,pkill||cat <<'EOF' | (cat)\npkill x\nEOF
 redirection-first shell heredoc|bash,pkill||<<EOF bash\npkill x\nEOF
 program-prefixed heredoc|bash,pkill,source||bash -c 'source /dev/stdin' <<EOF\npkill x\nEOF
 remote shell heredoc|ssh,pkill,bash||ssh host 'bash -s' <<EOF\npkill x\nEOF
@@ -101,8 +103,11 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
       /^      owner=/ && defect == "heredoc-owner" {
         print; print "      owner=\"cat \""; changed++; next
       }
-      /receiver_segments=\$SEGMENTS/ && defect == "heredoc-pipe" {
-        print; print "        receiver_segments=\"\""; changed++; next
+      index($0, "command_text \"${receiver%%|*}\"") && defect == "heredoc-simple-pipe" {
+        print; print "            COMMAND_TEXTS=\"cat \"$NL"; changed++; next
+      }
+      index($0, "\\(* | \\{*) executable_body=1 ;;") && defect == "heredoc-pipe" {
+        sub(/executable_body=1 ;;/, "executable_body=1; executable_body=\"\" ;;"); changed++
       }
       /^    executable=\$word/ && defect == "control-words" {
         print; print "    case $word in else | \\{) COMMAND_TEXTS=$rest$NL; return 0 ;; esac"; changed++; next
@@ -140,7 +145,8 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
   done <<'CONTROLS'
 arguments|ordinary argument
 heredoc-owner|last shell heredoc
-heredoc-pipe|pipeline shell heredoc
+heredoc-pipe|grouped later shell receiver
+heredoc-simple-pipe|pipeline shell heredoc
 control-words|else arm
 launchers|timeout duration
 option-value|nice option value

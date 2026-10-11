@@ -292,7 +292,9 @@ remote shell body|command|2|block-unsafe-rm: refused=shared-root|ssh host "bash 
 later find action|command|2|block-unsafe-rm: refused=shared-root|find . -exec echo {} + -exec sh -c "rm -rf $HOME" sh {} +
 later find data|command|0|-|find . -exec echo {} + -exec echo "rm -rf $HOME" {} +
 multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nrm -rf $HOME\nFIRST\nrm -rf $HOME\nSECOND
-grouped data body|command|0|-|cat <<EOF | (cat)\nrm -rf $HOME\nEOF
+grouped later shell body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (echo x; bash)\nrm -rf $HOME\nEOF
+grouped later brace body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | { echo x; bash; }\nrm -rf $HOME\nEOF
+grouped data guarded text|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (cat)\nrm -rf $HOME\nEOF
 '
 }
 command_position_rows
