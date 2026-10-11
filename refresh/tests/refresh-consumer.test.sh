@@ -439,10 +439,10 @@ for row in \
   'unprotected|matched|armed|pass|0|direct|1|skip-rules|empty|false' \
   'unprotected-delayed|delayed|armed|pass|0|direct|2||empty|false' \
   'unprotected-unseen|never|armed|pass|0|unseen|5||empty|false' \
-  'ruled|matched|armed|pass|0|armed|1||rule|false' \
-  'protected|matched|armed|pass|0|armed|1||empty|true' \
-  'rules-read|matched|armed|pass|0|armed|1||fail|false' \
-  'protection-read|matched|armed|pass|0|armed|1||empty|fail' \
+  'ruled|matched|armed|pass|0|armed|1|ignore-rules|rule|false' \
+  'protected|matched|armed|pass|0|armed|1|ignore-protection|empty|true' \
+  'rules-read|matched|armed|pass|0|armed|1|ignore-rules|fail|false' \
+  'protection-read|matched|armed|pass|0|armed|1|ignore-protection|empty|fail' \
   'merge-refused|matched|merge-refused|pass|74|merge-failed|1||empty|false' \
   'delayed|delayed|armed|pass|0|armed|2|direct no-pauses' \
   'never|never|armed|pass|0|unseen|5|direct no-pauses' \
@@ -516,6 +516,25 @@ if sys.argv[2] == 'direct':
 elif sys.argv[2] == 'skip-rules':
     old = 'if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&'
     new = 'if false && # ' + old
+elif sys.argv[2] in ('ignore-rules', 'ignore-protection'):
+    old = '''if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&
+    branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" &&
+    [ "$branch_protected" = false ] &&
+    jq -e 'type == "array" and length == 0' <<<"$branch_rules" >/dev/null; then'''
+    if sys.argv[2] == 'ignore-rules':
+        new = old.replace(
+            'if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&',
+            'if { branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" || :; } &&',
+        ).replace(
+            'jq -e \'type == "array" and length == 0\' <<<"$branch_rules" >/dev/null; then',
+            ':; then',
+        )
+    else:
+        new = old.replace(
+            'branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" &&',
+            '{ branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" || :; } &&',
+        ).replace('[ "$branch_protected" = false ] &&', ': &&')
+    new = '# ' + old.replace('\n', '\n# ') + '\n' + new
 else:
     old = '  exit "$arm_status"\nfi'
     new = '  exit 0 # ' + old.strip()
@@ -582,6 +601,14 @@ ARM_CONTROL
           ! grep -qxF 'api repos/acme/test/rules/branches/main' "$TMP/state/calls"; then
         ok 'control: skipping the rules read turns the unprotected merge assertion red'
       else bad "$name skipped rules control" "$OUT"; fi
+    elif [ "$mutation" = ignore-rules ] || [ "$mutation" = ignore-protection ]; then
+      head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+      if [ "$RC" -eq 0 ] && [ "$arm_matches" = false ] && [ -f "$TMP/state/merged" ] &&
+          grep -qxF 'refresh-state=merged pr=1 class=render' <<<"$OUT" &&
+          grep -qxF "pr merge 1 --repo acme/test --squash --match-head-commit $head" "$TMP/state/calls" &&
+          ! grep -qF -- '--auto' "$TMP/state/calls"; then
+        ok "control: $name $mutation directly merges and turns the refusal assertion red"
+      else bad "$name $mutation refusal control" "$OUT"; fi
     elif [ "$name" = delayed ] || [ "$name" = never ]; then
       if [ "$RC" -eq 1 ] && grep -qF 'expected head oid does not match' <<<"$OUT" &&
           ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
