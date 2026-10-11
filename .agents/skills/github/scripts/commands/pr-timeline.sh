@@ -102,9 +102,12 @@ authoritative run of each workflow, as lib/ci-run-correlation.sh scopes a
 GitHub's own rollup does.
 ci_head_clean_secs groups by workflow run, keeping each run's latest
 attempt. A failed distinct run keeps it null even when a later run passed.
-Success, neutral and skipped count as passed. An Actions rerun reads the
-REST attempt jobs endpoint because a partial rerun's check suite retains
-successful jobs from the earlier attempt.
+Success, neutral and skipped count as passed. An Actions rerun reads its
+REST attempt metadata and all job pages. The clean span counts only jobs
+that start at or after that attempt's run_started_at and have no end before
+their start. A partial rerun retains earlier successful jobs and can give
+copied skipped jobs a new start with an old end. Those executions do not
+extend the clean span. The attempt itself must also have passed.
 
 Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
 page (more than 100 commits, reviews, comments per review or marked timeline events) refuses as
@@ -336,24 +339,30 @@ def rounds($reviews; $pushed):
     }
   end'
 
-# A partial Actions rerun retains successful jobs from its earlier attempt
-# in the suite's LATEST rollup. The attempt jobs endpoint isolates the jobs
-# that actually ran this time, without deduplicating their display names.
+# GitHub copies prior jobs into the attempt endpoint and labels every job
+# with the new attempt number. The attempt start and coherent job times
+# identify executions to time; the attempt status still judges the whole run.
 latest_attempt_checks() { # OWNER NAME
-    local owner="$1" name="$2" checks attempts id attempt pages jobs
+    local owner="$1" name="$2" checks attempts id attempt latest pages jobs
     checks=$(cat) || return 1
     attempts=$(jq -r "$CI_RUN_JQ_DEFS"'
         map(select(runid != null and .attempt > 1)) | group_by(runid)
         | .[] | [ (.[0] | runid), (map(.attempt) | max) ] | @tsv' <<<"$checks") || return 1
     while IFS=$'\t' read -r id attempt; do
         [ -n "$id" ] || continue
+        latest=$(gh_rest "repos/$owner/$name/actions/runs/$id/attempts/$attempt") || return 1
         pages=$(gh_rest "repos/$owner/$name/actions/runs/$id/attempts/$attempt/jobs?per_page=100" --paginate) || return 1
-        jobs=$(jq -ces "$CI_RUN_JQ_DEFS"'
+        jobs=$(jq -ces --argjson latest "$latest" "$CI_RUN_JQ_DEFS"'
+            def rest_check: {name, state: (if .status != "completed" then (.status | ascii_upcase)
+                elif .conclusion == "neutral" then "SKIPPED" else (.conclusion | ascii_upcase) end),
+                startedAt: .started_at, completedAt: .completed_at};
             [.[] | .jobs[]?] as $jobs
             | if length > 0 and all(.[]; (.jobs | type) == "array" and .total_count == ($jobs | length))
-              then $jobs | map(select(is_review_check | not) | {name, state: (if .status != "completed" then (.status | ascii_upcase)
-                 elif .conclusion == "neutral" then "SKIPPED" else (.conclusion | ascii_upcase) end),
-                 startedAt: .started_at, completedAt: .completed_at})
+              then ($latest.run_started_at | if . == null then null else fromdate end) as $start
+                | $jobs | map(select((is_review_check | not) and $start != null and .started_at != null
+                    and (.started_at | fromdate) >= $start
+                    and (.completed_at == null or (.completed_at | fromdate) >= (.started_at | fromdate))))
+                | if length == 0 then [] else map(rest_check) + [($latest | rest_check)] end
               else error("attempt jobs are incomplete") end' <<<"$pages") || return 1
         checks=$(jq -c --argjson id "$id" --argjson jobs "$jobs" "$CI_RUN_JQ_DEFS"'
             map(select(runid != $id)) + $jobs' <<<"$checks") || return 1

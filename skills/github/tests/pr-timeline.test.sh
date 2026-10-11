@@ -359,7 +359,11 @@ echo "=== clean CI uses each workflow run's latest attempt ==="
 # Only the failed test is rerun. The suite keeps the earlier lint job.
 RERUN_HEAD="$HEAD_PATH.checkSuites.nodes |= [.[0]] | $HEAD_PATH.checkSuites.nodes[0] |= (.workflowRun.runAttempt = 2 | .checkRuns.nodes[1] |= (.startedAt = t(\"10:50\") | .completedAt = t(\"11:05\")))"
 ATTEMPT_PAGES='{"total_count":1,"jobs":[{"name":"test","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}'
-stage_attempts() { gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"; }
+ATTEMPT_META='{"run_started_at":"2026-09-20T10:47:00Z","status":"completed","conclusion":"success"}'
+stage_attempts() {
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"
+}
 PR_SELECTOR='event url runAttempt'
 while IFS='@' read -r label edit pages_edit want; do
   [[ -n "$label" ]] || continue
@@ -375,7 +379,35 @@ an attempt with no jobs yet has no clean span@.@.total_count = 0 | .jobs = []@[2
 the later review check stays out of the clean rerun span@$COPILOT_CHECK@.@[2700,900]
 an earlier failed distinct run keeps the clean span null@$STALE_HEAD@.@[2700,null]
 ROWS
+# The live GitHub partial-rerun response labels copied jobs with attempt 2.
+# The skipped copy has a new start but retains an end from the earlier run.
+PARTIAL_ATTEMPT='{"total_count":4,"jobs":[
+  {"name":"lint","run_attempt":2,"status":"completed","conclusion":"success","started_at":"2026-09-20T10:20:00Z","completed_at":"2026-09-20T10:40:00Z"},
+  {"name":"test","run_attempt":2,"status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"},
+  {"name":"skipped","run_attempt":2,"status":"completed","conclusion":"skipped","started_at":"2026-09-20T10:47:01Z","completed_at":"2026-09-20T10:40:00Z"},
+  {"name":"copilot-pull-request-reviewer","run_attempt":2,"status":"completed","conclusion":"success","started_at":"2026-09-20T10:47:00Z","completed_at":"2026-09-20T11:30:00Z"}]}'
+while IFS='@' read -r label jobs_edit meta_edit want; do
+  [[ -n "$label" ]] || continue
+  ATTEMPT_PAGES="$(jq -c "$jobs_edit" <<<"$PARTIAL_ATTEMPT")"
+  ATTEMPT_META="$(jq -c "$meta_edit" <<<'{"run_started_at":"2026-09-20T10:47:00Z","created_at":"2026-09-20T10:48:00Z","status":"completed","conclusion":"success"}')"
+  assert_eq "$(run "$RERUN_HEAD") $(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" "rc=0 $want" "$label"
+done <<'ROWS'
+copied success and inverted skipped times stay out of the latest attempt span@.@.@900
+a current job starts at the attempt boundary before metadata creation@.jobs[1].started_at = "2026-09-20T10:47:00Z"@.@1080
+a failed executed job still refuses clean CI@.jobs[1].conclusion = "failure"@.@null
+a pending executed job still refuses clean CI@.jobs[1] |= (.status = "in_progress" | .conclusion = null | .completed_at = null)@.status = "in_progress" | .conclusion = null@null
+a pending attempt refuses clean CI even when its jobs have passed@.@.status = "in_progress" | .conclusion = null@null
+a failed attempt refuses clean CI even when its executed jobs passed@.@.conclusion = "failure"@null
+a queued attempt without a start cannot time copied jobs@.@.status = "queued" | .conclusion = null | .run_started_at = null@null
+an attempt containing only copied jobs has no span@.total_count = 2 | .jobs = [.jobs[0], .jobs[2]]@.@null
+a neutral completed attempt preserves passed job timing@.@.conclusion = "neutral"@900
+a skipped completed attempt preserves passed job timing@.@.conclusion = "skipped"@900
+ROWS
+ATTEMPT_META='{"run_started_at":"2026-09-20T10:47:00Z","status":"completed","conclusion":"success"}'
+ATTEMPT_PAGES='{"total_count":1,"jobs":[{"name":"test","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}'
+run "$RERUN_HEAD" >/dev/null
 PR_SELECTOR='pullRequest(number'
+assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2$')" "1" "the latest attempt metadata is read once"
 assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2/jobs?per_page=100 --paginate')" "1" "the latest attempt's jobs are read once through all pages"
 ATTEMPT_PAGES='{"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}
 {"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:48:00Z","completed_at":"2026-09-20T11:10:00Z"}]}'
@@ -383,8 +415,13 @@ run "$RERUN_HEAD" >/dev/null
 assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '1320' "all job pages count, including jobs with the same display name"
 ATTEMPT_PAGES='{"total_count":2,"jobs":[]}'
 assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "an incomplete attempt jobs response prints no timeline"
-stage_attempts() { gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' 1 'HTTP 404'; }
+stage_attempts() {
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
+  gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' 1 'HTTP 404'
+}
 assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "an unreadable attempt jobs response prints no timeline"
+stage_attempts() { gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2' 1 'HTTP 404'; }
+assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "unreadable attempt metadata prints no timeline"
 stage_attempts() { :; }
 
 echo "=== a connection longer than its page refuses ==="
@@ -595,9 +632,31 @@ run "$RERUN_HEAD" >/dev/null
 assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '2700' \
   "control: timing the suite rollup keeps the earlier lint in the clean span"
 
+stage_attempts() {
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"
+}
+ATTEMPT_PAGES="$PARTIAL_ATTEMPT"
+mutate 'and (.started_at | fromdate) >= $start' 'and true'
+run "$RERUN_HEAD" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '2700' \
+  "control: without the attempt boundary copied success extends the clean span"
+mutate 'and (.completed_at == null or (.completed_at | fromdate) >= (.started_at | fromdate))' 'and true'
+run "$RERUN_HEAD" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '1079' \
+  "control: without coherent job times a copied skipped job extends the clean span"
+mutate 'map(rest_check) + [($latest | rest_check)]' 'map(rest_check)'
+ATTEMPT_META='{"run_started_at":"2026-09-20T10:47:00Z","status":"completed","conclusion":"failure"}'
+run "$RERUN_HEAD" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '900' \
+  "control: without attempt status passed jobs hide a failed attempt"
+ATTEMPT_META='{"run_started_at":"2026-09-20T10:47:00Z","status":"completed","conclusion":"success"}'
 mutate 'and .total_count == ($jobs | length)' 'and true'
 ATTEMPT_PAGES='{"total_count":2,"jobs":[]}'
-stage_attempts() { gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"; }
+stage_attempts() {
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"
+}
 assert_eq "$(run "$RERUN_HEAD") $(jq -c .pr "$TMP_ROOT/stdout")" 'rc=0 42' \
   "control: without the count check an incomplete jobs response prints a timeline"
 stage_attempts() { :; }
