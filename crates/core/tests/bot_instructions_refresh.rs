@@ -413,7 +413,7 @@ fn trusted_verification_without_configuration_grants_no_positions() {
         &test_util::checkout_root().join("skills/bot-instructions"),
     )
     .unwrap();
-    assert!(verified.is_none());
+    assert!(verified.is_some_and(|positions| positions.is_empty()));
 }
 
 /// A caller can select an older or incompatible trusted checker. Its report
