@@ -573,6 +573,115 @@ pool_control mutant-provider-claude lib/lane-launch.sh 'pi-claude\/\*) printf' -
 pool_control mutant-provider-any lib/lane-launch.sh ' unmeasured ;;$' ' pi ;;' \
   "control: a provider nothing measures read as the pool is judged on a pool it does not spend|$POOL=1/10|pick --harness pi --model sonnet|rc=0"
 
+echo "=== Pi API credit: provider balance, expiry and separate pools ==="
+new_home api-credit
+API_ROWS="$TMP_ROOT/api-credit.tsv"
+API_HOST="$TEST_DIR/fixtures/lane-host"
+API_ENV="ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_LOG=$TMP_ROOT/api-host.log;LANE_HOST_STUB_ACCOUNTS=$API_ROWS;ORCH_LANE_CLOUD_CREDIT_FLOOR=5"
+API_PICK='pick --harness pi --model anthropic/claude-opus-5-5 --json'
+API_EXPIRES_SOON="$(jq -nr 'now + 5 * 86400 | todateiso8601')"
+API_EXPIRES_LATE="$(jq -nr 'now + 10 * 86400 | todateiso8601')"
+api_rows() { # REMAINING EXPIRY [STATUS [DETAIL]]
+  printf 'account=%s\tharness=pi\tstatus=%s\tcredit-limit=200.00\tcredit-spent=37.52\tcredit-remaining=%s\tcredit-expires=%s\tdetail=%s\n' \
+    "$H/.eclaude" "${3:-ok}" "$1" "$2" "${4:-}" > "$API_ROWS"
+}
+api_case() { # LABEL ENV ARGS FILTER EXPECT
+  # shellcheck disable=SC2086
+  run_lanes "$2" $3
+  assert_eq "$RC:$(jq -c "$4" <<<"$OUT" 2>/dev/null || printf unreadable)" "$5" "$1" "$ERR"
+  assert_eq "$(observe 'keyed.cloud-credit-unread=none')" 'keyed.cloud-credit-unread=none' "$1 has no unread credit candidate"
+}
+api_rows 150 "$API_EXPIRES_SOON"
+api_case 'a credit-only provider row keeps its own balance and spent figure' "$API_ENV" "$API_PICK" \
+  '[.config_dir, .status, .credits.unit, .credits.remaining_dollars, .credits.used_dollars]' \
+  "0:[\"$H/.eclaude\",\"ok\",\"usd\",150,37.52]"
+table "the plain pick uses Pi's account prefix|$API_ENV|pick --harness pi --model anthropic/claude-opus-5-5|rc=0 out=PI_CODING_AGENT_DIR=$H/.eclaude"
+printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=0\tcredit-remaining=150\tcredit-expires=%s\n' "$H/.lateclaude" "$API_EXPIRES_LATE" >> "$API_ROWS"
+api_case 'equal balances spend the grant with the earlier expiry' "$API_ENV" "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
+api_rows 20 "$API_EXPIRES_SOON"
+printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=0\tcredit-remaining=190\tcredit-expires=%s\n' "$H/.lateclaude" "$API_EXPIRES_LATE" >> "$API_ROWS"
+api_case 'an earlier expiry wins even with a lower balance share' "$API_ENV" "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
+API_RANK_ROWS="$(cat "$API_ROWS")"
+for expiry in "$API_EXPIRES_SOON" 2000-01-01T00:00:00Z; do
+  api_rows 5 "$expiry"
+  api_case 'the floor and expired grant refuse without a retry time' "$API_ENV" "$API_PICK" \
+    '[.refusals[0].refusal.cause, .refusals[0].refusal.retry_at]' '3:["api-credit",null]'
+  api_case 'the named form keeps the credit refusal' "$API_ENV" "$API_PICK --lane $H/.eclaude" \
+    '[.refusal.cause, .refusal.retry_at]' '3:["api-credit",null]'
+  assert_eq "$(observe 'key=cloud-credit-refused')" \
+    "key=cloud-credit-refused,account=$H/.eclaude,cause=api-credit,retry-at=none" 'the named refusal uses the machine-read credit key'
+done
+api_rows 150 2000-01-01T00:00:00Z expired
+api_case 'an expired provider grant is a credit refusal' "$API_ENV" "$API_PICK" '[.refusals[0].refusal.cause, .refusals[0].refusal.retry_at]' '3:["api-credit",null]'
+for bad in 'monthly-pct=10' 'credit-expires=' 'credit-remaining=1.234' 'credit-expires=invalid' 'credit-limit=0'; do
+  api_rows 150 "$API_EXPIRES_SOON"
+  printf '%s\t%s\n' "$(cat "$API_ROWS")" "$bad" > "$API_ROWS"
+  table "invalid API credit is dropped|$API_ENV|$API_PICK|rc=5 key=host-account-invalid,account=$H/.eclaude,field=credit-fields"
+done
+api_rows 150 "$API_EXPIRES_SOON"
+printf 'account=%s\tharness=pi\tmonthly-pct=1\n' "$H/.pi-copilot" >> "$API_ROWS"
+api_case 'a Copilot row is not an API-credit candidate' "$API_ENV" "$API_PICK" '[.config_dir, .qualifying_count]' "0:[\"$H/.eclaude\",1]"
+api_case 'an API-credit row is not a Copilot candidate' "$API_ENV" 'pick --harness pi --model github-copilot/opus --json' \
+  '[.config_dir, .qualifying_count]' "0:[\"$H/.pi-copilot\",1]"
+table \
+  "an unsupported provider stays unmeasured|$API_ENV|pick --harness pi --model openai/gpt-6|rc=5 key=pick-provider-unmeasured,harness=pi,model=openai/gpt-6" \
+  "a local host measures no API credit even with a Copilot override|ORCH_LANE_HOST=local;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10|$API_PICK|rc=5 key=pick-provider-unmeasured,harness=pi,model=anthropic/claude-opus-5-5"
+api_control() { # NAME FILE OLD NEW ARGS FILTER EXPECT
+  local shipped="$LANES" mutant saved="$FAIL" got
+  mutant="$(mutant_scripts "$1" "$2")" || exit 1
+  mutate_file "$mutant/$2" "$3" "$4"
+  LANES="$mutant/lanes"
+  FAIL=0
+  api_case "$1" "$API_ENV" "$5" "$6" "$7" > "$TMP_ROOT/$1.out"
+  got="$FAIL"; FAIL="$saved"; LANES="$shipped"
+  assert_eq "$got" 1 "control: $1 turns the unchanged API assertion red"
+}
+printf '%s\n' "$API_RANK_ROWS" > "$API_ROWS"
+api_control api-expiry lib/lane-model.sh \
+  '._expires, (._score | neg)' '0, (._score | neg)' "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
+api_rows 5 "$API_EXPIRES_SOON"
+api_control api-cause lib/lane-model.sh 'refusal: {cause: $pool, retry_at: null}' \
+  'refusal: {cause: "cloud-credit", retry_at: null}' "$API_PICK" '[.refusals[0].refusal.cause, .refusals[0].refusal.retry_at]' '3:["api-credit",null]'
+api_rows 150 "$API_EXPIRES_SOON"
+printf 'account=%s\tharness=pi\tmonthly-pct=1\n' "$H/.pi-copilot" >> "$API_ROWS"
+api_control api-pool-filter lanes 'then api_credit else (api_credit | not) end' \
+  'then true else (api_credit | not) end' "$API_PICK" '[.config_dir, .qualifying_count]' "0:[\"$H/.eclaude\",1]"
+api_rows 150 "$API_EXPIRES_SOON"
+api_control api-provider lib/lane-launch.sh 'github-copilot/* | anthropic/*)' 'github-copilot/*)' \
+  "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
+api_control api-credit-only lanes 'and $b.credits.unit != "usd"' 'and true' \
+  "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
+api_rows 150 "$API_EXPIRES_SOON"
+printf '%s\tmonthly-pct=1\n' "$(cat "$API_ROWS")" > "$API_ROWS"
+api_control api-mixed-fields lanes '"$harness" == pi && -z "$monthly_field"' '"$harness" == pi' \
+  'host-accounts --harness pi --json' '.' '0:[]'
+api_rows 1.234 "$API_EXPIRES_SOON"
+api_control api-dollar-shape lanes \
+  '[[ "$value" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-fields}"' ':' \
+  'host-accounts --harness pi --json' '.' '0:[]'
+api_rows 150 invalid
+api_control api-expiry-shape lanes 'and ($e | fromdateiso8601) != null' 'and true' \
+  'host-accounts --harness pi --json' '.' '0:[]'
+api_rows 150 "$API_EXPIRES_SOON"
+printf '%s\tcredit-limit=0\n' "$(cat "$API_ROWS")" > "$API_ROWS"
+api_control api-positive-grant lanes '($l | tonumber) > 0 and' '($l | tonumber) >= 0 and' \
+  'host-accounts --harness pi --json' '.' '0:[]'
+api_rows 150 "$API_EXPIRES_SOON"
+printf '%s\tcredit-spent=\n' "$(cat "$API_ROWS")" > "$API_ROWS"
+api_case 'a partial grant with no spent figure is dropped' "$API_ENV" 'host-accounts --harness pi --json' '.' '0:[]'
+api_control api-spent-shape lanes \
+  '[[ "$credit_spent" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-spent}"' ':' \
+  'host-accounts --harness pi --json' '.' '0:[]'
+for detail in api-credit-tokens-unreadable api-credit-tokens-undated api-credit-model-unpriced api-credit-reading-unavailable; do
+  printf 'account=%s\tharness=pi\tstatus=unreachable\tdetail=%s\n' "$H/.eclaude" "$detail" > "$API_ROWS"
+  run_lanes "$API_ENV" pick --lane "$H/.eclaude" --harness pi --model anthropic/claude-opus-5-5 --json
+  assert_eq "$RC:$(jq -c '[.status, .detail, .refusal.cause]' <<<"$OUT")" \
+    "5:[\"unreachable\",\"$detail\",\"api-credit\"]" 'an unread provider token record keeps its detail and refuses'
+  run_lanes "$API_ENV" pick --harness pi --model anthropic/claude-opus-5-5 --json
+  assert_eq "$RC:$(jq -c '[.unmeasured, .refusals[0].refusal.cause]' <<<"$OUT")" '5:[1,"api-credit"]' 'the chooser refuses an unread API account'
+  assert_eq "$(grep -c '^lanes: copilot-pool-' "$ERR" || true)" 0 'an API-credit refusal names no Copilot setting'
+done
+
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the
 # consumer windows (a real enterprise plan), and an unreachable API each report
@@ -2533,10 +2642,21 @@ table \
 lanes_mutant mutant-accounts-nobound lanes 'for _accounts_timeout in timeout gtimeout; do' 'for _accounts_timeout in; do'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-accounts-nobound/scripts/lanes"
+ACCOUNTS_UNBOUNDED_ROW="with no timeout command the uncached probe is refused, naming the bound it could not apply|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=1 lines=0 key=host-accounts-unbounded,host=$HOST_FIXTURE,bound-s=30"
 table \
   "with no timeout command a cached listing still asks the provider and answers|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|rc=0 through=claude:local,claude:host length=2 key=none" \
-  "with no timeout command the uncached probe is refused, naming the bound it could not apply|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=1 lines=0 key=host-accounts-unbounded,host=$HOST_FIXTURE,bound-s=10" \
+  "$ACCOUNTS_UNBOUNDED_ROW" \
   "a bound of 0 asks for no bound at all, so the same uncached probe answers|$HOST_ENV;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=0 lines=1 key=none"
+ACCOUNTS_DEFAULT_CONTROL="$(mutant_scripts mutant-accounts-default lanes)" || exit 1
+cp -- "$LANES" "$ACCOUNTS_DEFAULT_CONTROL/lanes" || exit 1
+mutate_file "$ACCOUNTS_DEFAULT_CONTROL/lanes" \
+  'ACCOUNTS_TIMEOUT_S="${ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S:-30}"' \
+  'ACCOUNTS_TIMEOUT_S="${ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S:-10}"'
+LANES="$ACCOUNTS_DEFAULT_CONTROL/lanes"
+ACCOUNTS_SAVED_FAIL="$FAIL"; FAIL=0
+table "$ACCOUNTS_UNBOUNDED_ROW" > "$TMP_ROOT/accounts-default-control.out"
+ACCOUNTS_CONTROL_FAIL="$FAIL"; FAIL="$ACCOUNTS_SAVED_FAIL"
+assert_eq "$ACCOUNTS_CONTROL_FAIL" 1 'control: the prior default fails the unchanged accounts-bound diagnostic'
 LANES="$LANES_PATCHED"
 
 # `host-accounts` is the one reader of the verb: it prints what it validated and
@@ -2608,7 +2728,7 @@ table \
   "control: without the host rows the token-only folder is listed local and never picked|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=3 considered.tclaude=local"
 LANES="$LANES_PATCHED"
 # Control: a table that drops the column prints no candidate's refusal.
-lanes_mutant mutant-table-detail-dropped lanes '(\.detail ' '("-" '
+lanes_mutant mutant-table-detail-dropped lanes '(\.detail \/\/ "-")' '("-")'
 LANES="$TMP_ROOT/mutant-table-detail-dropped/scripts/lanes"
 table \
   "control: without the column the refusal's table names neither the 429 nor the 403|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-refusals.tsv|$PICK|rc=3 tabled.tclaude=unreachable:- tabled.hostonly=refused:-"

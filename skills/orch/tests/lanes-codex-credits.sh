@@ -95,7 +95,7 @@ cloud_body() {
 # fclaude a credit of 5 dollars; lclaude a locked credit; uclaude a spent week
 # and no credit reading at all, and mclaude one whose credit names no
 # remaining_dollars.
-for spec in "aclaude|10|" "gclaude|10|1:250:2099-09-01T00_00_00Z" "bclaude|100|241:250:2099-06-01T07_59_00Z" "cclaude|100|200:250:2099-03-01T00_00_00Z" \
+for spec in "aclaude|10|" "gclaude|10|20:250:2099-09-01T00_00_00Z" "bclaude|100|241:250:2099-06-01T07_59_00Z" "cclaude|100|200:250:2099-03-01T00_00_00Z" \
   "dclaude|100|200:250:2099-06-01T00_00_00Z" "eclaude|10|241:250:2020-01-01T00_00_00Z" "fclaude|10|5:250:2099-06-01T00_00_00Z" \
   "lclaude|10|241:250:2099-06-01T00_00_00Z:overage" "uclaude|100|" "mclaude|10|241:250:2099-06-01T00_00_00Z"; do
   IFS='|' read -r name week credit <<<"$spec"
@@ -412,7 +412,7 @@ cloud_control mutant-cloud-lock lib/lane-model.sh ' and $c.locked_reason == null
 cloud_control mutant-cloud-expiry lib/lane-model.sh ' and $e > $now' '' \
   "control: without the expiry test an expired credit is picked|$CLOUD;$(dirs eclaude);$(repos eclaude)|$CPICK|rc=0 config_dir=$H/.eclaude"
 # shellcheck disable=SC2016
-cloud_control mutant-cloud-pool lib/lane-model.sh 'if $pool == "cloud-credit" and $read' 'if $read' \
+cloud_control mutant-cloud-pool lib/lane-model.sh 'if $credit_pool and $read' 'if $read' \
   "control: without the pool test a local kind spends the credit first|$(dirs gclaude bclaude)|$CPICK|rc=0 config_dir=$H/.bclaude"
 cloud_control mutant-cloud-repo lib/lane-model.sh 'else . + {verdict: "cloud-repo-unset"} end;' 'else . end;' \
   "control: without cloud-repo-unset an account with no entry is picked|$CLOUD;$(dirs gclaude bclaude);$(repos gclaude)|$CPICK|rc=0 config_dir=$H/.bclaude"
@@ -431,7 +431,7 @@ cloud_control mutant-cloud-partial lib/lane-model.sh '($read | not)' '(.credits 
 # The same optional grant body occurs with plan room. Borrowing that plan
 # must turn both the automatic and named missing-grant assertions red.
 CTRL="$(cloud_mutant mutant-cloud-credit-only lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'elif $pool == "cloud-credit" then' 'elif false then'
+mutate_file "$CTRL/lib/lane-model.sh" 'elif $credit_pool then' 'elif false then'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: plan borrowing admits a missing grant in the automatic pick|$CLOUD;$(dirs aclaude);$(repos aclaude)|$CPICK|rc=0 config_dir=$H/.aclaude" \
   "control: plan borrowing admits a missing grant in the named pick|$CLOUD;$(dirs aclaude);$(repos aclaude)|pick --lane $H/.aclaude --harness claude --json|rc=0 config_dir=$H/.aclaude" \

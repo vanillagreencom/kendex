@@ -382,8 +382,8 @@ def with_lane_verdict($wall; $max; $credit_floor):
 # applies the expires-first rule, `lanes --help` § pick, whose one statement
 # that is. It adds the fields of the key, which lane_public drops as they order
 # the pick and are no record of it: _tier, _expires (E, 0 outside tier 0) and
-# _score (S); and _credit_unread, a measured Claude account of a
-# pool=cloud-credit kind whose usage body forms no tier 0 credit to judge.
+# _score (S); and _credit_unread, a credit account whose reading supplies
+# no grant to judge. API grants keep unread provider rows unmeasured.
 def with_lane_tier($pool; $cloud_floor; $retire; $now):
   (.credits // {}) as $c
   | ([($c.resets_at | utc_stamp | reset_epoch),
@@ -391,17 +391,19 @@ def with_lane_tier($pool; $cloud_floor; $retire; $now):
      | map(select(. != null)) | min) as $e
   | ($c.unit == "usd" and ($c.remaining_dollars | type) == "number" and ($c.limit_dollars | type) == "number"
      and $e != null) as $read
-  | . + {_credit_unread: ($pool == "cloud-credit" and ($read | not) and .harness == "claude"
-                          and (.status == "ok" or .status == "rate_limited") and .headroom_pct != null)}
-  | if $pool == "cloud-credit" and $read and $c.remaining_dollars > $cloud_floor and $c.locked_reason == null
+  | ($pool == "cloud-credit" or $pool == "api-credit") as $credit_pool
+  | . + {_credit_unread: (($read | not) and
+       (($pool == "cloud-credit" and .harness == "claude" and lane_measured and .headroom_pct != null)
+        or ($pool == "api-credit" and .harness == "pi")))}
+  | if $credit_pool and $read and ($pool != "api-credit" or lane_measured) and $c.remaining_dollars > $cloud_floor and $c.locked_reason == null
        and $c.limit_dollars > 0 and $e > $now
     then . + {verdict: "room", _tier: 0, _expires: $e,
               _score: (100 * $c.remaining_dollars / $c.limit_dollars * (1 + 1 / (1 + ($e - $now) / 3600)))}
-    elif $pool == "cloud-credit" then
+    elif $credit_pool then
       # An expiry ends the grant; it does not refill it. No plan reset can
       # reopen a spent, locked, expired or unread grant.
-      . + {verdict: (if $read then "walled" else "unmeasured" end),
-           refusal: {cause: "cloud-credit", retry_at: null}, _tier: 0, _expires: ($e // 0), _score: 0}
+      . + {verdict: (if ($pool == "api-credit" and .status == "expired") or ($read and ($pool != "api-credit" or lane_measured)) then "walled" else "unmeasured" end),
+           refusal: {cause: $pool, retry_at: null}, _tier: 0, _expires: ($e // 0), _score: 0}
     elif .binding_bucket == "credits" then . + {_tier: 2, _expires: 0, _score: .credits.balance}
     else . + {_tier: 1, _expires: 0, _score: .selection_score} end;
 

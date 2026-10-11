@@ -438,7 +438,7 @@ for control in host floor locked expired no-repo credit-only grammar; do
     locked) mutate_file "$root/$file" ' and $c.locked_reason == null' ''; row=locked; want="$SSH_WANT" ;;
     expired) mutate_file "$root/$file" ' and $e > $now' ''; row=expired; want="$SSH_WANT" ;;
     no-repo) mutate_file "$root/$file" 'else . + {verdict: "cloud-repo-unset"} end;' 'else . end;'; row=no-repo; want="$SSH_WANT" ;;
-    credit-only) mutate_file "$root/$file" 'elif $pool == "cloud-credit" then' 'elif false then'; row=floor; want="$SSH_WANT" ;;
+    credit-only) mutate_file "$root/$file" 'elif $credit_pool then' 'elif false then'; row=floor; want="$SSH_WANT" ;;
     grammar) mutate_file "$root/$file" '"${2:-}" != lane ||' 'true ||'; row=room; want="$CLOUD_WANT" ;;
   esac
   cloud_observe "$row" "$root"

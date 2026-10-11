@@ -121,15 +121,16 @@
 #         `spend_control_reached` are false. Expires first, the rule's one
 #         statement: the pick spends the allowance that expires first,
 #         sorting room candidates on [tier, E, -S, claims,
-#         -projected_headroom_pct, wall]. Tier 0 is the Claude cloud credit,
-#         a grant that expires and does not refill, where `lane-host
-#         capabilities` declares pool=cloud-credit (claude-cloud):
+#         -projected_headroom_pct, wall]. Tier 0 is the Claude cloud credit
+#         or a Pi anthropic/ API grant from a provider accounts row,
+#         a grant that expires and does not refill. Cloud credit uses the
+#         host's pool=cloud-credit; API credit uses the launch model's pool:
 #         `remaining_dollars` above ORCH_LANE_CLOUD_CREDIT_FLOOR,
 #         `limit_dollars` above 0, `locked_reason` null and E ahead, E the
 #         earlier of the credit's `resets_at` and the account's
 #         ORCH_LANE_RETIRE date. It is `room` whatever its plan windows read;
 #         spent, locked or expired credit is walled, and unread credit is
-#         unmeasured. Each refusal carries refusal={cause:"cloud-credit",
+#         unmeasured. Each refusal carries refusal={cause:"cloud-credit" or "api-credit",
 #         retry_at:null}; the grant expiry is not a refill time. A cloud-credit
 #         host spends no plan window. Tier 1 is every
 #         refilling window; tier 2 a balance with no expiry, the Codex credits
@@ -396,7 +397,15 @@
 #                    a stated pool that is walled stays walled until the owner
 #                    states a new reading. The printed prefix is
 #                    PI_CODING_AGENT_DIR, and `list` does not show them. Any
-#                    other provider, and a Pi pick naming no model, exits 5 as
+#                    anthropic/ model spends API credit instead, read only
+#                    from a provider harness=pi accounts row with credit-limit,
+#                    credit-spent, credit-remaining and credit-expires. Its
+#                    account is the Claude home create receives; the provider
+#                    maps that account to the remote Pi root. API and Copilot
+#                    rows are separate candidates. No local host or Copilot
+#                    override measures API credit. An unread API row names
+#                    its detail and exits 5 as pick-provider-unmeasured.
+#                    Any other provider, and a Pi pick naming no model, exits 5 as
 #                    `pick-provider-unmeasured` in both forms, before any lane
 #                    is read: nothing measures what it spends.
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
@@ -553,8 +562,8 @@
 #                      account past the threshold must exceed (default 5000,
 #                      provisional; see `pick`). Refused, before any lane is
 #                      measured, when it is not a whole number 0 or more.
-#   ORCH_LANE_CLOUD_CREDIT_FLOOR  Dollars, never a percentage, a Claude
-#                      cloud credit must exceed to rank as tier 0 (default 0,
+#   ORCH_LANE_CLOUD_CREDIT_FLOOR  Dollars, never a percentage, a Claude cloud
+#                      or Pi Anthropic API credit must exceed (default 10,
 #                      provisional; see `pick`). Refused, before any lane is
 #                      measured, when it is not a whole number 0 or more.
 #   ORCH_LANE_CLOUD_REPOS  Comma-separated `<name>=<owner>/<repo>` pairs, one
@@ -578,7 +587,7 @@
 #                      A pass longer than the TTL serves its last figure until
 #                      that age limit or a consumed bucket reset arrives.
 #   ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S  Seconds the provider's `accounts` verb
-#                      may take (default 10; 0 asks for no bound). Applied
+#                      may take (default 30; 0 asks for no bound). Applied
 #                      where `timeout` or `gtimeout` is installed. A bound
 #                      reached is the verb failing, reported as
 #                      `host-accounts-unreadable`. A bounded call waits for a
@@ -891,7 +900,7 @@ message() {
       ;;
     pick-provider-unmeasured)
       printf 'lanes: pick-provider-unmeasured harness=%s model=%s\n' "$1" "$2"
-      printf '%s\n' "a Pi launch spends the account its model's provider bills, a Claude seat for pi-claude/ and the Copilot pool for github-copilot/; nothing here measures what this model spends, so the launch is unmeasured, and an unmeasured account is not one with room"
+      printf '%s\n' "Pi reads a Claude seat for pi-claude/, a Copilot pool for github-copilot/, and provider API credit for anthropic/. Repair the provider harness=pi accounts row for an unread Anthropic grant. A local host measures no API credit."
       ;;
     copilot-pool-unstated)
       printf 'lanes: copilot-pool-unstated model=%s setting=%s read=%s\n' "$1" "ORCH_LANE_COPILOT_POOL" "$2"
@@ -1006,7 +1015,7 @@ message() {
       ;;
     cloud-credit-unread)
       printf 'lanes: cloud-credit-unread account=%s\n' "$1"
-      printf '%s\n' "the account's usage body carries no iguana_necktie credit with numeric dollars and an expiry, so this cloud-credit host cannot select it"
+      printf '%s\n' "the account has no readable dollar credit and expiry, so this credit pool cannot select it; a provider API row's status and detail name its failed reading"
       ;;
     cloud-credit-refused)
       printf 'lanes: cloud-credit-refused account=%s cause=%s retry-at=%s\n' "$1" "$2" "$3"
@@ -2426,7 +2435,7 @@ emit_lane() {
 		--argjson pb "$prior" --argjson elapsed "$elapsed" --argjson sample_claims "$sample_claims" "$LANE_MODEL_JQ"'
 		($b // {} | utc_resets) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct, $b.monthly_pct] | map(select(. != null)) as $known
-		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
+		| (if ($status == "ok" and ($known | length) == 0 and $b.credits.unit != "usd") then "no_usage_data" else $status end) as $st
 		| ({status: $st} | lane_measured) as $measured
 		| ([{k: "monthly", p: $b.monthly_pct}, {k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
@@ -2551,6 +2560,7 @@ collect_lanes() {
 		# asked for by name alone.
 		for h in claude codex copilot pi; do
 			[[ "$harness_filter" == "$h" || ( "$harness_filter" == "all" && "$h" != pi ) ]] || continue
+			[[ "$(lane_pick_pool "$h" "$model")" != api-credit ]] || continue
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
 				if [[ -n "$excluded" || -n "$held" ]]; then
@@ -2660,16 +2670,18 @@ host_lane_rows() { # HARNESS [READINGS]
 # Fields: `account` and `harness`, plus the optional `seat`, `status`, `detail`,
 # `session-5h-pct`, `weekly-pct`, `model-pct`, `monthly-pct`, `model-label`,
 # `session-resets`, `weekly-resets`, `model-resets` and `monthly-resets`. A
-# `harness=pi` row names a Pi root and carries that root's Copilot pool as
-# `monthly-pct`; `all` leaves it out, as it leaves Pi out of collect_lanes,
+# `harness=pi` row names a Pi root for a Copilot pool as `monthly-pct`, or
+# a Claude home for an API grant as the four `credit-*` fields.
+# `all` leaves it out, as it leaves Pi out of collect_lanes,
 # and only a caller naming `pi` gets it. A percentage the row
 # omits is a window the provider did not measure, which emit_lane reports as
 # no_usage_data rather than as an idle account. `detail` is the provider's own
 # words for the row's status, carried into the record's `detail` as written,
 # so the refusal it names (`http-429-rate_limit_error`,
 # `http-403-permission_error`) reaches a reader of the record whatever status
-# word the provider chose. It judges nothing: the status alone decides the
-# row. Only seat=1 marks a seat; any other seat value keeps the row unmarked.
+# word the provider chose. An api-credit- detail identifies an unread API
+# grant; the status decides its measurement. Only seat=1 marks a seat;
+# any other seat value keeps the row unmarked.
 # A usage field this script cannot read drops the whole row with a notice: a
 # percentage nobody can parse must not be judged as room.
 #
@@ -2703,12 +2715,13 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said rest alias
 	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
-	local buckets
+	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		account=""; harness=""; status="ok"; detail=""; seat=""; bad=""; said=""
 		s_pct=null; w_pct=null; m_pct=null; mo_pct=null
 		m_label=""; s_reset=""; w_reset=""; m_reset=""; mo_reset=""
+		credit_limit=""; credit_spent=""; credit_remaining=""; credit_expires=""; credit_fields=""; monthly_field=""
 		rest="$line"$'\t'
 		while [[ -n "$rest" ]]; do
 			field="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
@@ -2726,7 +2739,17 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 				weekly-resets) w_reset="$value" ;;
 				model-resets) m_reset="$value" ;;
 				monthly-resets) mo_reset="$value" ;;
+				credit-limit|credit-spent|credit-remaining|credit-expires)
+					credit_fields=yes; said="$key"
+					case "$key" in
+						credit-limit) credit_limit="$value" ;;
+						credit-spent) credit_spent="$value" ;;
+						credit-remaining) credit_remaining="$value" ;;
+						credit-expires) credit_expires="$value" ;;
+					esac
+					;;
 				session-5h-pct|weekly-pct|model-pct|monthly-pct)
+					[[ "$key" != monthly-pct ]] || monthly_field=yes
 					if [[ -z "$value" ]]; then continue; fi
 					if [[ "$value" =~ ^[0-9]{1,3}$ ]] && (( 10#$value <= 100 )); then
 						case "$key" in
@@ -2745,6 +2768,15 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 		done
 		[[ -n "$account" ]] || bad="${bad:-account}"
 		[[ "$harness" =~ ^(claude|codex|copilot|pi)$ ]] || bad="${bad:-harness}"
+		if [[ -n "$credit_fields" ]]; then
+			[[ "$harness" == pi && -z "$monthly_field" ]] || bad="${bad:-credit-fields}"
+			for value in "$credit_limit" "$credit_remaining"; do
+				[[ "$value" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-fields}"
+			done
+			[[ "$credit_spent" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-spent}"
+			jq -en --arg l "$credit_limit" --arg e "$credit_expires" \
+				'($l | tonumber) > 0 and ($e | fromdateiso8601) != null' >/dev/null 2>&1 || bad="${bad:-credit-fields}"
+		fi
 		if [[ -n "$bad" ]]; then
 			message host-account-invalid "${account:-<unnamed>}" "$bad" >&2
 			continue
@@ -2793,9 +2825,13 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 			continue
 		fi
 		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" --argjson mo "$mo_pct" \
-			--arg ml "$m_label" --arg sr "$s_reset" --arg wr "$w_reset" --arg mr "$m_reset" --arg mor "$mo_reset" '
+			--arg ml "$m_label" --arg sr "$s_reset" --arg wr "$w_reset" --arg mr "$m_reset" --arg mor "$mo_reset" \
+			--arg credit "$credit_fields" --arg cl "$credit_limit" --arg cs "$credit_spent" --arg cr "$credit_remaining" --arg ce "$credit_expires" '
 			def nz($v): if $v == "" then null else $v end;
 			{ session_5h_pct: $s, weekly_pct: $w, model_pct: $m, monthly_pct: $mo,
+			  credits: (if $credit == "" then null else {unit: "usd", limit_dollars: ($cl | tonumber),
+			    used_dollars: (if $cs == "" then null else ($cs | tonumber) end), remaining_dollars: ($cr | tonumber),
+			    resets_at: $ce, locked_reason: null} end),
 			  model_label: nz($ml),
 			  model_buckets: (if $m == null then [] else [{label: nz($ml), pct: $m,
 			                                                    resets_at: nz($mr)}] end),
@@ -3121,10 +3157,15 @@ render_table() {
 # copy on another host may still be live.
 # The provider rows both pick forms judge HARNESS on, host_lane_rows' readings,
 # in HOSTED_ROWS and HOSTED_READ. For a Pi pick these are the provider's
-# harness=pi rows, each a Pi root's Copilot pool, which host_row_or_local sets
-# against the stated override.
-pick_host_rows() { # HARNESS
+# harness=pi rows for the selected model's pool. Copilot rows can use the
+# stated override; API grants use only the provider's reading.
+pick_host_rows() { # HARNESS [MODEL]
 	host_lane_rows "$1" readings
+	if [[ "$1" == pi ]]; then
+		HOSTED_ROWS="$(jq -c --arg pool "$(lane_pick_pool "$1" "${2:-}")" \
+			'def api_credit: .credits != null or ((.detail // "") | startswith("api-credit-"));
+			 map(select(if $pool == "api-credit" then api_credit else (api_credit | not) end))' <<<"$HOSTED_ROWS")" || return 1
+	fi
 }
 
 # The fix= line for each unmeasured pool record in RECORDS, a JSON array: a
@@ -3146,9 +3187,11 @@ copilot_pool_records_fix() { # RECORDS
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9" for_overseer="${10}"
 	local target found="" d record="" wall bucket verdict hosted projected credits refusal cause retry seat_harness=""
+	local pick_pool
+	pick_pool="$(lane_pick_pool "$harness" "$model")" || return 1
 	# A malformed override refuses this form as it refuses the chooser, before a
 	# provider row could stand in for an entry nobody can parse.
-	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi
+	if [[ "$harness" == pi && "$pick_pool" != api-credit ]]; then copilot_pool_entries >/dev/null || return 1; fi
 	# The same claim load `list` does, for the same reason: the record this form
 	# hands back carries `claims` and the projection beside it, which the
 	# verdict judges under --projected. Without the
@@ -3186,11 +3229,12 @@ cmd_pick_lane() {
 			SEATS=""
 		fi
 	else
-		pick_host_rows "$harness"
+		pick_host_rows "$harness" "$model" || return 1
 	fi
 	lane_canon "$dir" || return 1; target="$LANE_CANON"
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.
+	if [[ "$pick_pool" != api-credit ]]; then
 	while IFS= read -r d; do
 		[[ -n "$d" ]] || continue
 		lane_canon "$d" || return 1
@@ -3198,6 +3242,7 @@ cmd_pick_lane() {
 		found="$d"
 		break
 	done < <(lane_dirs "$harness")
+	fi
 	# The chooser's rule for one account, host_row_or_local, with its
 	# `lanes: pick-local-reading` line. A dir the provider holds and discovery
 	# does not reach is judged on the provider's row alone, which is then no
@@ -3206,7 +3251,7 @@ cmd_pick_lane() {
 	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
-	elif [[ -n "$record" ]]; then
+	elif [[ -n "$record" && "$pick_pool" != api-credit ]]; then
 		record="$(host_row_or_local "$harness" "$found" "$record" "$model")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
 	fi
 	# Every directory is a Pi account the Copilot pool reading can be asked
@@ -3217,7 +3262,11 @@ cmd_pick_lane() {
 		message pick-lane-unlisted "$dir" "$harness" >&2
 		return 4
 	fi
-	[[ -n "$record" ]] || record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
+	if [[ -z "$record" && "$pick_pool" == api-credit ]]; then
+		record="$(emit_lane "$found" "$harness" "$found" no_usage_data "no provider API-credit row" "" '{}')" || return 1
+	else
+		[[ -n "$record" ]] || record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
+	fi
 	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
 	# definition of room, walled and unmeasured, so this form cannot answer a
 	# question the chooser answers differently. The reading by default, which
@@ -3225,7 +3274,7 @@ cmd_pick_lane() {
 	# lane's own claim is among the ones charged, so a projection would send
 	# every lane on a busy account to hand off with room left. --projected is
 	# the launch question, the chooser's own wall.
-	lane_tier_inputs "[$record]" || return 1
+	lane_tier_inputs "[$record]" "$pick_pool" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
 	record="$(jq -c "$LANE_MODEL_JQ"' if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public' <<<"$record")" || return 1
@@ -3358,12 +3407,14 @@ overseer_seats() { # [HARNESS]
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8" credit_floor="$9"
 	local lanes hosted judged chosen walled unmeasured resets omitted="" seats=0 seat room refusals refusal_lines cause retry
+	local pick_pool
+	pick_pool="$(lane_pick_pool "$harness" "$model")" || return 1
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
 	# harness=pi row for or the override names. The override is refused here
 	# when nobody can parse it, before anything is read; its Copilot CLI
 	# entries are no Pi root, so pool_roots holds only its Pi roots.
 	local pool_roots=""
-	if [[ "$harness" == pi ]]; then
+	if [[ "$harness" == pi && "$pick_pool" != api-credit ]]; then
 		copilot_pool_entries >/dev/null || return 1
 		pool_roots="$(lane_dirs pi all)"
 	fi
@@ -3373,26 +3424,30 @@ cmd_pick() {
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
 	# After the claim load: emit_lane counts claims on every host row it writes.
-	pick_host_rows "$harness"
+	pick_host_rows "$harness" "$model" || return 1
 	SEATS=""
 	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	hosted="$HOSTED_ROWS"
+	if [[ "$pick_pool" == api-credit && "$hosted" == "[]" ]]; then
+		message pick-provider-unmeasured "$harness" "${model:-none}" >&2
+		return 5
+	fi
 	# With neither a provider row nor an override entry nothing measures this
 	# Pi launch: exit 1 where the accounts read failed, which a retry can
 	# answer, and otherwise exit 5, a read to repair and never a window to wait
 	# out. Entries that exclusion removed are a pick with no candidate, answered
 	# as one below.
-	if [[ "$harness" == pi && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then
+	if [[ "$harness" == pi && "$pick_pool" != api-credit && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then
 		message copilot-pool-unread "$ORCH_LANE_HOST" "${model:-none}" >&2
 		return 1
-	elif [[ "$harness" == pi && -z "$pool_roots" && "$hosted" == "[]" ]]; then
+	elif [[ "$harness" == pi && "$pick_pool" != api-credit && -z "$pool_roots" && "$hosted" == "[]" ]]; then
 		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
 	lanes="$(collect_lanes "$harness" "$exclude" "$hosted" "$model")"
-	lane_tier_inputs "$lanes" || return 1
+	lane_tier_inputs "$lanes" "$pick_pool" || return 1
 	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" "$TIER_POOL" "$CLOUD_CREDIT_FLOOR" "$TIER_RETIRE" "$TIER_CLOUD_REPO" "$SEATS" "$SEAT_RESERVE" <<<"$lanes")" || return 1
 	while read -r dir; do message cloud-credit-unread "$dir" >&2; done < <(jq -r '.cloud_credit_unread[]' <<<"$judged")
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
@@ -3409,7 +3464,7 @@ cmd_pick() {
 		# A Pi pick where no candidate carries a pool reading and none is walled
 		# is the unstated refusal, each unread provider row named on its fix=
 		# line: a pool nobody read is never one to wait out.
-		if [[ "$harness" == pi && "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
+		if [[ "$harness" == pi && "$pick_pool" != api-credit && "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
 			{
 				message copilot-pool-unstated "${model:-none}" row
 				copilot_pool_records_fix "$(jq -c '.unread' <<<"$judged")"
@@ -3453,6 +3508,10 @@ cmd_pick() {
 		[[ "$as_json" != "true" ]] || jq -nc --argjson w "$walled" --argjson u "$unmeasured" --argjson s "$seats" \
 			--argjson r "$resets" --argjson refusals "$refusals" \
 			'{walled: $w, unmeasured: $u, seats: $s, qualifying_count: 0, walled_resets_at: $r, refusals: $refusals}'
+		if [[ "$pick_pool" == api-credit && "$walled" -eq 0 && "$unmeasured" -gt 0 ]]; then
+			message pick-provider-unmeasured "$harness" "${model:-none}" >&2
+			return 5
+		fi
 		return 3
 	fi
 	if [[ "$as_json" == "true" ]]; then
@@ -3588,7 +3647,7 @@ parse_argv() {
 	CREDIT_FLOOR=$((10#$CREDIT_FLOOR))
 	# Read and refused on the terms the Codex floor is. The default is
 	# provisional: the acceptance run's spend for one lane sets it.
-	CLOUD_CREDIT_FLOOR="${ORCH_LANE_CLOUD_CREDIT_FLOOR:-0}"
+	CLOUD_CREDIT_FLOOR="${ORCH_LANE_CLOUD_CREDIT_FLOOR:-10}"
 	[[ "$CLOUD_CREDIT_FLOOR" =~ ^[0-9]+$ ]] || die invalid-lane-cloud-credit-floor "$CLOUD_CREDIT_FLOOR"
 	CLOUD_CREDIT_FLOOR=$((10#$CLOUD_CREDIT_FLOOR))
 
@@ -3706,8 +3765,9 @@ USAGE_REFUSAL_WINDOW_S=300
 CLAUDE_TOKEN_UA=""
 # Seconds the provider's `accounts` verb may take. It can cross a network, and
 # this listing runs on every overseer cycle, so an unbounded call makes the fleet
-# inventory wait on one host. 0 asks for no bound.
-ACCOUNTS_TIMEOUT_S="${ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S:-10}"
+# inventory wait on one host. The default is 30 seconds for the provider's
+# account and API-credit listings. 0 asks for no bound.
+ACCOUNTS_TIMEOUT_S="${ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S:-30}"
 # `timeout`, or the coreutils spelling a Homebrew install carries, empty where
 # neither is installed. Feature-detected: without it the call is unbounded, and
 # the cache below holds the cost to one call per age window, plus reset refreshes.

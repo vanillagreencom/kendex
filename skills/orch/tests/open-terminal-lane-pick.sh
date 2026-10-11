@@ -312,6 +312,8 @@ assert_eq "$(observe "launched=2 copilot_home=copilot1,copilot2 statusline=none"
 rm -rf -- "${H:?}/.copilot1" "${H:?}/.copilot2"
 rm -f -- "${OT_STUB_BIN:?}/kendex"
 
+table "a local Anthropic launch has no provider credit reading|cmd=true --model anthropic/claude-opus-5-5 --thinking high|--harness pi --lane auto KEN-3747|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=anthropic/claude-opus-5-5"
+
 echo "=== a Pi launch on a pi-claude model is judged on the Claude seat it spends ==="
 # pi-claude-bridge runs Claude Code on the Claude seat CLAUDE_CONFIG_DIR names,
 # so `auto` picks such a launch a seat with room as a claude launch on that

@@ -71,7 +71,8 @@ lane_env_prefix() { # HARNESS DIR [MODEL]
 # spend their own accounts' windows, whatever the model: a Copilot account's
 # monthly pool is one for every model. A Pi launch spends the account its
 # model's provider bills: `pi-claude/` is pi-claude-bridge on a Claude seat,
-# judged as claude on MODEL; `github-copilot/` is the Copilot pool, which
+# judged as claude on MODEL; `github-copilot/` is the Copilot pool and
+# `anthropic/` is the provider's expiring API credit grant, which
 # `lanes pick --harness pi` reads. Every other Pi provider, and a Pi model naming
 # none, answers `unmeasured`: nothing reads what it spends, which is never room.
 # Empty is a harness `lanes` judges no launch of at all.
@@ -88,10 +89,18 @@ lane_pick_harness() { # HARNESS MODEL
     pi)
       case "$2" in
         pi-claude/*) printf '%s\n' claude ;;
-        github-copilot/*) printf '%s\n' pi ;;
+        github-copilot/* | anthropic/*) printf '%s\n' pi ;;
         *) printf '%s\n' unmeasured ;;
       esac
       ;;
+  esac
+}
+
+# The launch model owns its pool even where a host also carries plan accounts.
+lane_pick_pool() { # HARNESS MODEL
+  case "$1:$2" in
+    pi:anthropic/*) printf '%s\n' api-credit ;;
+    *) printf '%s\n' plan ;;
   esac
 }
 

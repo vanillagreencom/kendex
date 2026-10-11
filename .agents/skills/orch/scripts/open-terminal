@@ -1013,6 +1013,14 @@ pi_lane_root_apply() {
 auto_pick_refusal() { # RC [FIELD...]
   local rc="$1"
   shift
+  if [[ "$(lane_pick_pool "$LANE_HARNESS" "$LAUNCH_MODEL")" == api-credit ]]; then
+    case "$rc" in
+      3) ot_message lane-credit-refused cause=api-credit retry-at=none "$@" ;;
+      5) ot_message lane-provider-unmeasured "harness=$LANE_HARNESS" "model=${LAUNCH_MODEL:-none}" "$@" ;;
+      *) ot_message lane-resolution-failed "exit=$rc" "$@" ;;
+    esac >&2
+    return
+  fi
   case "$rc:$(lane_pick_harness "$LANE_HARNESS" "$LAUNCH_MODEL")" in
     3:pi) ot_message copilot-pool-walled "setting=ORCH_LANE_COPILOT_POOL" "$@" ;;
     3:*) ot_message lane-unavailable "harness=$LANE_HARNESS" "$@" ;;
@@ -1078,13 +1086,18 @@ named_lane_judge() {
     --model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
   if [[ "$lane_rc" == 3 || "$lane_rc" == 5 ]]; then
     lane_refusal="$(jq -r 'if .refusal == null then empty
-      elif .refusal.cause == "cloud-credit" then [.refusal.cause, (.refusal.retry_at // "none")] | @tsv
+      elif .refusal.cause == "cloud-credit" or .refusal.cause == "api-credit" then [.refusal.cause, (.refusal.retry_at // "none")] | @tsv
       else error("unknown allowance refusal") end' <<<"$lane_record")" || {
       ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-refusal" >&2; return 1;
     }
     if [[ -n "$lane_refusal" ]]; then
       IFS=$'\t' read -r lane_cause lane_retry <<<"$lane_refusal"
-      ot_message lane-credit-refused "lane=${LANE_ENV#*=}" "cause=$lane_cause" "retry-at=$lane_retry" >&2
+      if [[ "$lane_rc:$lane_cause" == 5:api-credit ]]; then
+        lane_detail="$(jq -r '.detail // "none"' <<<"$lane_record")" || return 1
+        ot_message lane-provider-unmeasured "harness=$LAUNCH_HARNESS" "model=$LAUNCH_MODEL" "lane=${LANE_ENV#*=}" "detail=$lane_detail" >&2
+      else
+        ot_message lane-credit-refused "lane=${LANE_ENV#*=}" "cause=$lane_cause" "retry-at=$lane_retry" >&2
+      fi
       return 1
     fi
   fi

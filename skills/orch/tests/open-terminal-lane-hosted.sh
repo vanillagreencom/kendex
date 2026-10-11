@@ -374,6 +374,63 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking h
 assert_eq "$(observe "hostseat=none") called=$([[ "$(host_call)" == nolog ]] && echo no || echo yes)" "hostseat=none called=yes" \
   "control: without the refusal a hosted Pi launch on a pi-claude model goes on to the provider"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
+echo "=== a hosted Anthropic Pi launch spends the selected account grant ==="
+API_ROWS="$TMP_ROOT/hosted-api-credit.tsv"
+api_hosted_rows() { # REMAINING [STATUS [DETAIL]]
+  if [[ "${2:-ok}" == unreachable ]]; then
+    printf 'account=%s\tharness=pi\tstatus=unreachable\tdetail=%s\n' "$H/.eclaude" "$3" > "$API_ROWS"
+  else
+    printf 'account=%s\tharness=pi\tstatus=%s\tcredit-limit=200.00\tcredit-spent=0.00\tcredit-remaining=%s\tcredit-expires=2099-10-06T00:00:00Z\n' \
+      "$H/.eclaude" "${2:-ok}" "$1" > "$API_ROWS"
+  fi
+}
+API_FLAGS='flags=--model anthropic/claude-opus-5-5 --thinking high'
+API_ENV="$HARNESS_UP;LANE_HOST_STUB_ACCOUNTS=$API_ROWS;ORCH_LANE_CLOUD_CREDIT_FLOOR=5;$API_FLAGS"
+api_launch_result() { # no host create is accepted on a refused credit
+  printf 'rc=%s creates=%s launched=%s cause=%s' "$RC" \
+    "$(grep -c '^create ' "$RUN/host.log" 2>/dev/null || true)" "$(typed "clear; ssh 'lane.example'")" \
+    "$(awk '$2 == "lane-credit-refused" {for(i=3;i<=NF;i++) if($i ~ /^cause=/ || $i ~ /^retry-at=/) printf "%s,", $i}' <<<"$OUT")"
+}
+api_launch_room() {
+  run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-3747
+  assert_eq "rc=$RC account=$(awk '/^create / { for(i=1;i<=NF;i++) if($i == "--account") print $(i+1) }' "$RUN/host.log") launched=$(typed "clear; ssh 'lane.example'")" \
+    "rc=0 account=$H/.eclaude launched=1" 'the API-credit pick passes its Claude home to the provider create route'
+}
+api_hosted_rows 150
+api_launch_room
+for lane in auto "$H/.eclaude"; do
+  api_hosted_rows 5
+  run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane "$lane" --repo o/r KEN-3747
+  assert_eq "$(api_launch_result)" 'rc=1 creates=0 launched= cause=cause=api-credit,retry-at=none,' 'credit at the floor creates no hosted lane'
+done
+api_hosted_rows 150 expired
+run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-3747
+assert_eq "$(api_launch_result)" 'rc=1 creates=0 launched= cause=cause=api-credit,retry-at=none,' 'a provider-expired grant creates no lane'
+for detail in api-credit-tokens-unreadable api-credit-tokens-undated api-credit-model-unpriced api-credit-reading-unavailable; do
+  api_hosted_rows '' unreachable "$detail"
+  run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r KEN-3747
+  assert_eq "rc=$RC calls=$(host_call) detail=$(awk '$2 == "lane-provider-unmeasured" {for(i=3;i<=NF;i++) if($i ~ /^detail=/) print $i}' <<<"$OUT")" \
+    "rc=1 calls=accounts detail=detail=$detail" 'an unread provider API row names its detail and creates nothing'
+done
+api_hosted_rows 150
+API_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-api-unmeasured/orch lib/lane-launch.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-unmeasured/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" 'github-copilot/* | anthropic/*)' 'github-copilot/*)'
+API_SAVED_FAIL="$FAIL"; FAIL=0
+api_launch_room > "$TMP_ROOT/api-unmeasured-control.out"
+API_CONTROL="$FAIL"; FAIL="$API_SAVED_FAIL"; OPEN_TERMINAL="$API_OT_SHIPPED"
+assert_eq "$API_CONTROL" 1 'control: the prior unmeasured Anthropic mapping fails the unchanged hosted launch row'
+# The refusal cause must reach the launcher even when the chooser works.
+OPEN_TERMINAL="$(mutant_scripts ctl-api-refusal/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-refusal/orch"
+mutate_file "$OPEN_TERMINAL" '3) ot_message lane-credit-refused cause=api-credit retry-at=none' \
+  '3) ot_message lane-credit-refused cause=cloud-credit retry-at=none'
+api_hosted_rows 5
+run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-3747
+assert_eq "$(api_launch_result)" 'rc=1 creates=0 launched= cause=cause=cloud-credit,retry-at=none,' 'control: the wrong pool cause reaches the launcher refusal'
+OPEN_TERMINAL="$API_OT_SHIPPED"
+
 # A hosted Pi relaunch on a Copilot model whose pool neither the provider's
 # harness=pi row nor the override reads is refused as unmeasured, with the fix
 # naming the provider's accounts read, and open-terminal does not ask whether

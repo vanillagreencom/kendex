@@ -1,0 +1,1 @@
+- Hosted Pi lanes on Anthropic models spend the provider account's API grant with the earliest expiry. Cloud and API grants share the credit floor. Spent, expired and unread grants refuse launch. Provider account reads have a 30-second default limit to allow the account and API-credit listings to finish.

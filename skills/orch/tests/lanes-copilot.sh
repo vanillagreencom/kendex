@@ -656,7 +656,7 @@ echo "=== must-fail controls: the Pi pool read ==="
 lanes_control ctl-pi-rows lanes '[[ "$harness" =~ ^(claude|codex|copilot|pi)$ ]]' '[[ "$harness" =~ ^(claude|codex|copilot)$ ]]'
 pi_run room - pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC" rc=5 "control: without harness=pi admitted the provider row is dropped and the pick is unstated"
-lanes_control ctl-pi-unstated lanes '[[ "$harness" == pi && -z "$pool_roots" && "$hosted" == "[]" ]]' '[[ "$harness" == pi && -z "$pool_roots" ]]'
+lanes_control ctl-pi-unstated lanes '[[ "$harness" == pi && "$pick_pool" != api-credit && -z "$pool_roots" && "$hosted" == "[]" ]]' '[[ "$harness" == pi && -z "$pool_roots" ]]'
 pi_run room - pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC" rc=5 "control: an unstated check that skips the provider rows refuses a pool the provider read"
 lanes_control ctl-pi-replace lib/lane-model.sh 'if $h == "pi" then (if .headroom_pct == null then "local" else "host" end)' 'if $h == "pi" then "local"'
@@ -677,7 +677,7 @@ lanes_control ctl-pi-stated lib/lane-model.sh 'if [[ "$age" == stated ]]; then' 
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC local=$(grep -c '^lanes: pick-local-reading' <<<"$ERR")" "rc=0 local=1" \
   "control: without the stated arm a stated override is reported as a local reading the provider never made"
-lanes_control ctl-pi-unread-rows lanes 'if [[ "$harness" == pi && "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then' 'if false; then'
+lanes_control ctl-pi-unread-rows lanes 'if [[ "$harness" == pi && "$pick_pool" != api-credit && "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then' 'if false; then'
 pi_run refused - pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=3 key=no-candidate-unmeasured fix=none" \
   "control: without the unread-rows arm a refused row is a pick with no candidate and no repair"
@@ -692,7 +692,7 @@ lanes_control ctl-cli-fix lib/lane-launch.sh '"$root" "${4:-none}" "${5:-none}" 
 run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
 assert_eq "rc=$RC $(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 status=none" \
   "control: dropping the record fields loses the Copilot CLI refusal's status"
-lanes_control ctl-pi-unread lanes 'if [[ "$harness" == pi && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then' 'if false; then'
+lanes_control ctl-pi-unread lanes 'if [[ "$harness" == pi && "$pick_pool" != api-credit && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then' 'if false; then'
 PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=69 pi_run room - pick "${PI_MODEL[@]}"
 assert_eq "rc=$RC" "rc=5" "control: without the failed-read arm a busy host is refused as unstated"
 lanes_control ctl-pi-unread-named lanes 'if [[ "$harness" == pi && "$HOSTED_READ" == failed ]]; then' 'if false; then'
@@ -701,7 +701,7 @@ assert_eq "$(pi_verdict)" "rc=1 key=pick-lane-unmeasured fix=none" "control: wit
 lanes_control ctl-pi-absent lanes '		2) HOSTED_READ=absent; return 0 ;;' '		2) HOSTED_READ=answered; return 0 ;;'
 PI_STUB=LANE_HOST_STUB_NO_ACCOUNTS=1 pi_run room - pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=5 key=copilot-pool-unstated fix=answered" "control: an absent verb read as an answer sends the operator to a row no verb can carry"
-lanes_control ctl-pi-named-pool lanes '	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi' ''
+lanes_control ctl-pi-named-pool lanes '	if [[ "$harness" == pi && "$pick_pool" != api-credit ]]; then copilot_pool_entries >/dev/null || return 1; fi' ''
 pi_run room garbage pick --lane "$H/.pi1" "${PI_MODEL[@]}"
 assert_eq "rc=$RC" "rc=0" "control: without the named override check a malformed override is judged past on the provider row"
 lanes_control ctl-pi-roots lanes '		pool_roots="$(lane_dirs pi all)"' '		pool_roots="$(copilot_pool_entries)"'
