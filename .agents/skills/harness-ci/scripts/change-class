@@ -97,8 +97,8 @@
 # the judged package supplies doctrine data only.
 # The classes, first match winning:
 #
-#   render   every changed path has trusted render ownership, `kendex verify`
-#            reports files checked and none failed. Each changed path needs a
+#   render   every surviving changed path has trusted render ownership, `kendex verify`
+#            reports files checked and none failed. Each surviving path needs a
 #            passing verifier position or the caller proof below. A position
 #            owns a file whole, a tree whole, or keys inside a shared file whose
 #            rest that run says did not move since the range's base.
@@ -181,7 +181,8 @@
 # render: those files decide what is rendered and what each judgement below
 # reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
 # A hand edit counts the same as the engine's: that line decides no render or
-# classifier input, and the proof still runs kendex verify on the head.
+# classifier input. The render path still verifies the head. Product paths
+# use the existing size rules without render verification.
 # A harness's own registry files refuse every narrow class but
 # render, the files it executes as configuration: its hooks, its permissions,
 # and the MCP servers it may run. kendex writes keys in those and never the
@@ -771,8 +772,8 @@ queue_selection() { # CLASS
 # The changed paths harness-only read, and the queue-only class judged on
 # them, ahead of every refusal below: a refusal raised after the paths were
 # read carries the class those paths earn. An empty diff is its own cause and
-# stays queue-only; any other empty set is a refusal that read no path, and
-# keeps cause=paths-unread.
+# stays queue-only, as does a successfully filtered schema-only step. An
+# unread path set keeps cause=paths-unread.
 if [ -s "$paths_file" ]; then
   changed="$(cat -- "$paths_file")"
   queue_only_of_paths
@@ -816,7 +817,7 @@ case "$harness_note" in
   *) answer standard "$harness_note" ;;
 esac
 
-if [ ! -s "$paths_file" ]; then
+if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then
   answer standard "${harness_note:-cause=no-changed-paths}"
 fi
 

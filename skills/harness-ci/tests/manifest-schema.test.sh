@@ -22,7 +22,12 @@ check_case() { # NAME PATH BASE_TEXT HEAD_TEXT EXTRA EXPECTED LISTED
   # A mode-only change keeps the same schema bytes on git's changed-path list.
   if [ "$extra" = mode ]; then chmod +x "$repo/$path"; fi
   if [ "$extra" = product ]; then printf 'product\n' >"$repo/app.conf"; fi
-  commit_paths "$repo" head .agents/skills/orch/SKILL.md
+  if [ "$extra" = schema-only ]; then
+    git -C "$repo" add -A
+    git -C "$repo" commit -q -m head
+  else
+    commit_paths "$repo" head .agents/skills/orch/SKILL.md
+  fi
   for mode in harness render-candidate; do
     key=harness_only
     [ "$mode" != render-candidate ] || key=render_candidate
@@ -37,6 +42,11 @@ check_case() { # NAME PATH BASE_TEXT HEAD_TEXT EXTRA EXPECTED LISTED
     actual_listed=false
     if grep -qxF -- "changed-path: path=$path" "$log"; then actual_listed=true; fi
     assert_eq "$name: $mode changed-path log" "$listed" "$actual_listed"
+    if [ "$extra" = schema-only ]; then
+      assert_eq "$name: $mode filtered paths are empty" '' "$(cat -- "$paths")"
+      assert_eq "$name: $mode changed-path log is empty" '' \
+        "$(sed -n '/^changed-path: /p' "$log")"
+    fi
     if [ "$listed" = false ]; then
       assert_eq "$name: $mode schema-step log" 'schema-bump: path=kendex.toml from=6 to=7' \
         "$(sed -n '/^schema-bump: /p' "$log")"
@@ -54,6 +64,7 @@ while IFS='|' read -r name path before after extra expected listed; do
   check_case "$name" "$path" "$before" "$after" "$extra" "$expected" "$listed"
 done <<'ROWS'
 step|kendex.toml|schema = 6\n\n[bot-instructions]\nschema = 1\n|schema = 7\n\n[bot-instructions]\nschema = 1\n||true|false
+schema-only|kendex.toml|schema = 6\n\n[bot-instructions]\nschema = 1\n|schema = 7\n\n[bot-instructions]\nschema = 1\n|schema-only|true|false
 second-line|kendex.toml|schema = 6\n\n[bot-instructions]\nschema = 1\n|schema = 7\n\n[bot-instructions]\nschema = 2\n||false|true
 downgrade|kendex.toml|schema = 6\n\n[bot-instructions]\nschema = 1\n|schema = 5\n\n[bot-instructions]\nschema = 1\n||false|true
 jump|kendex.toml|schema = 6\n\n[bot-instructions]\nschema = 1\n|schema = 8\n\n[bot-instructions]\nschema = 1\n||false|true
@@ -76,11 +87,26 @@ indented-table|kendex.toml|  [bot-instructions]\nschema = 6\n|  [bot-instruction
 ROWS
 require_rows manifest-schema "$rows"
 
+# The original empty diff comes from identical resolved endpoints, not filtering.
+repo="$(new_repo empty-diff)"
+commit_paths "$repo" base .agents/skills/orch/SKILL.md
+for mode in harness render-candidate; do
+  key=harness_only
+  [ "$mode" != render-candidate ] || key=render_candidate
+  log="$SANDBOX/empty-$mode.log"
+  assert_eq "empty diff: $mode remains refused" "$key=false" \
+    "$("$HARNESS_ONLY" --mode "$mode" --repo "$repo" --event pull_request \
+      --base HEAD --head HEAD 2>"$log")"
+  assert_eq "empty diff: $mode retains its cause" cause=empty-diff \
+    "$(sed -n 's/^fallback: \(cause=[^ ]*\).*/\1/p' "$log")"
+done
+
 # Each control runs the same case assertions against a private production copy.
-control() { # NAME SCRIPT CASE BASE HEAD
+control() { # NAME SCRIPT CASE BASE HEAD [EXTRA EXPECTED LISTED]
   local name="$1" script="$2" case_name="$3" before="$4" after="$5" status=0
   (PASS=0; FAIL=0; HARNESS_ONLY="${script%/*}/harness-only"
-    check_case "control-$name-$case_name" kendex.toml "$before" "$after" '' false true
+    check_case "control-$name-$case_name" kendex.toml "$before" "$after" \
+      "${6:-}" "${7:-false}" "${8:-true}"
     report "control-$name") >"$SANDBOX/control-$name-$case_name.log" 2>&1 || status=$?
   assert_eq "control $name: $case_name turns the case red" 1 "$status"
 }
@@ -94,5 +120,10 @@ control any-step "$mutant_class" downgrade "$manifest" 'schema = 5\n\n[bot-instr
 control any-step "$mutant_class" jump "$manifest" 'schema = 8\n\n[bot-instructions]\nschema = 1\n'
 mutant_class="$(mutant schema-past-table harness-only '        break' '        continue')"
 control past-table "$mutant_class" table-schema "$manifest" 'schema = 6\n\n[bot-instructions]\nschema = 2\n'
+mutant_class="$(mutant schema-empty-refusal harness-only \
+  '  changed="$schema_paths"' \
+  $'  changed="$schema_paths"\n  [ -n "$changed" ] || verdict false "cause=empty-diff" "the filtered path set is empty"')"
+control empty-refusal "$mutant_class" schema-only "$manifest" \
+  'schema = 7\n\n[bot-instructions]\nschema = 1\n' schema-only true false
 
 report manifest-schema

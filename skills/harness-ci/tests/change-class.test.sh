@@ -2213,7 +2213,7 @@ TOML
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
   # The previous engine left schema 6; the next real refresh must persist 7.
-  git -C "$consumer" checkout -q -B schema-base "$consumer_base"
+  git -C "$consumer" checkout -q -B schema-base refreshed
   python3 - "$consumer/kendex.toml" <<'OLD_SCHEMA'
 from pathlib import Path
 import sys
@@ -2230,8 +2230,13 @@ OLD_SCHEMA
   kendex_here "$consumer" refresh --scope project -y --leave
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m 'kendex refresh migrates the schema'
+  schema_head="$(git -C "$consumer" rev-parse HEAD)"
+  assert_eq "a real schema-only refresh changes only the root manifest" kendex.toml \
+    "$(git -C "$consumer" diff --name-only "$schema_base" "$schema_head")"
+  assert_verdict "a real schema-only refresh passes harness mode" true \
+    --repo "$consumer" --event pull_request --base "$schema_base" --head "$schema_head"
   schema_refresh_err="$(classify_stderr --repo "$consumer" --event pull_request \
-    --base "$schema_base" --head HEAD)"
+    --base "$schema_base" --head "$schema_head")"
   assert_eq "a real refresh from schema 6 keeps its render class" \
     'class=render measured=true cause=renders-match-their-sources' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n 's/^class: //p')"
@@ -2241,6 +2246,38 @@ OLD_SCHEMA
   assert_eq "the real refresh reports its schema step" \
     'schema-bump: path=kendex.toml from=6 to=7' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^schema-bump: /p')"
+  assert_eq "the schema-only refresh keeps its conservative queue answer" \
+    'queue-only: queue_only=true cause=no-changed-paths' \
+    "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^queue-only: /p')"
+  assert_eq "the schema-only proof weighs the resolved head" "head-rev: $schema_head" \
+    "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^head-rev: /p')"
+  assert_eq "the schema-only refresh runs a populated clean head proof" true \
+    "$(printf '%s\n' "$schema_refresh_err" | grep -E '^render-proof: checked=[1-9][0-9]* failed=0$' >/dev/null && echo true || echo false)"
+  # A dirty render must not replace the committed head during schema-only proof.
+  printf '\nAn uncommitted render edit.\n' >>"$rendered"
+  classify_here "the schema-only proof ignores an uncommitted render" render \
+    --repo "$consumer" --event pull_request --base "$schema_base" --head "$schema_head"
+  git -C "$consumer" restore -- .claude/skills/demo/SKILL.md
+  for gate in filtered-refusal render-gate; do
+    if [ "$gate" = filtered-refusal ]; then
+      schema_gate_mutant="$(mutant schema-filtered-refusal harness-only \
+        '  changed="$schema_paths"' \
+        $'  changed="$schema_paths"\n  [ -n "$changed" ] || verdict false "cause=empty-diff" "the filtered path set is empty"')"
+    else
+      schema_gate_mutant="$(mutant schema-render-gate change-class \
+        'if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then' \
+        'if [ ! -s "$paths_file" ]; then')"
+    fi
+    schema_gate_err="$(CHANGE_CLASS="$schema_gate_mutant" classify_stderr --repo "$consumer" \
+      --event pull_request --base "$schema_base" --head "$schema_head")"
+    schema_gate_status=0
+    (PASS=0; FAIL=0
+      assert_eq 'a real schema-only refresh keeps its render class' \
+        'class=render measured=true cause=renders-match-their-sources' \
+        "$(printf '%s\n' "$schema_gate_err" | sed -n 's/^class: //p')"
+      report "schema-$gate-control") >"$SANDBOX/schema-$gate-control.log" 2>&1 || schema_gate_status=$?
+    assert_eq "must-fail: restoring $gate turns the schema-only assertion red" 1 "$schema_gate_status"
+  done
   schema_log_mutant="$(mutant schema-step-hidden change-class \
     'sed -n '\''/^schema-bump: /p'\'' "$harness_err" >&2' ':')"
   schema_hidden_err="$(CHANGE_CLASS="$schema_log_mutant" classify_stderr --repo "$consumer" \

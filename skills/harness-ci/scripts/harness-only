@@ -7,8 +7,8 @@
 # sources stay outside that inventory and always run product checks.
 # In harness and render-candidate modes, a byte-exact top-level kendex.toml
 # schema step is removed from the path set. A hand edit counts the same as
-# the engine's: that line decides no render or classifier input, and the
-# render proof still runs kendex verify on the head.
+# the engine's. The render path still verifies the head. Product paths use
+# the existing size rules without render verification.
 # `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
 # `--mode render-candidate` permits new head-owned paths and the adopted refresh
 # caller without an inventory entry to gate render-proof prerequisites. It
@@ -376,9 +376,6 @@ if grep -qxF kendex.toml <<<"$changed" && schema_bump="$(schema_step 2>/dev/null
     && schema_paths="$(sed '/^kendex\.toml$/d' <<<"$changed")"; then
   changed="$schema_paths"
   printf '%s\n' "$schema_bump" >&2
-  [ -n "$changed" ] || verdict false \
-    "cause=empty-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
-    "the diff contains no changed paths after the schema step"
 fi
 
 # A base older than the render that first wrote the inventory holds none,
