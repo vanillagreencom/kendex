@@ -31,7 +31,9 @@ Rules (each fails on its own):
   suppressed-findings A review at the head lists findings in its body under
                       `Suppressed comments (N)` or `Previously missed (N)`
                       (a markdown heading or a <details> summary), and no
-                      counted reply answers each one.
+                      counted reply answers each one. A ccr-overview-v2
+                      `Changes recommended` verdict also counts as one
+                      body finding, keyed by `review:<REST review id>`.
 
 Whose words count:
   A finding source, a review body, counts when its author is a bot or has
@@ -53,11 +55,13 @@ unreasoned-decline. What a decline must say is reviewer conduct:
 A body finding is answered by a counted PR-level comment whose first
 non-blank line opens `Dispositions at <sha>`, <sha> being 7 to 40 hex
 characters the current head starts with, and a line per finding opening
-with its `file:line` token, bare, bold or backticked, then the reply:
+with its `file:line` or `review:<ID>` token, bare, bold or backticked,
+then the reply:
 
   Dispositions at 1a2b3c4:
   `src/a.ts:12` - Declined: the caller rejects the empty case first.
   `src/b.ts:40` - Tracked: KEN-123
+  review:123456789 - Fixed in 1a2b3c4
 
 The reply is read by the thread grammar, so a label-only decline or a
 tracking claim naming no issue answers nothing. A comment bound to an
@@ -76,7 +80,7 @@ finding one line per entry:
   suppressed-findings count=<n>
   suppressed-findings state=unparsed
   suppressed-findings state=mismatch sections=<n>
-  suppressed-entry <file:line>        (one per unanswered finding)
+  suppressed-entry <file:line|review:ID> (one per unanswered finding)
 `sections` counts the findings sections, across every review body read,
 whose own count differs from the entries parsed under that section.
 stderr explains each line. On `suppressed-findings count=<n>`, stderr
@@ -354,8 +358,19 @@ SUPP_SCAN_DEF='
           | select(($l | startswith($d)) and ($l | endswith($d)))
           | $l[$dn:(($l | length) - $dn)]
           | select(test("^[^*`]+:[0-9]+$")));
-    def suppressed_scan:
-      reduce (((. // "") | display_strip) | split("\n"))[] as $l
+    # Copilot uses a status symbol on overview verdicts. Older overview
+    # headings such as "Needs a closer look" introduce counted sections,
+    # rather than a verdict. Generic headings must not become verdicts.
+    def overview_verdict:
+      if contains("<!-- ccr-overview-v2 -->") then
+        [split("\n")[] | block_title
+          | select(test("^(\\p{So}\\p{M}*[ \t]+|Approved$|Changes recommended$)"))
+          | sub("^[^\\p{L}\\p{N}]+"; "")][0] // ""
+      else "" end;
+    def suppressed_scan($id):
+      ((. // "") | display_strip) as $body
+      | ($body | overview_verdict) as $verdict
+      | reduce ($body | split("\n"))[] as $l
         ({entries: 0, unparsed: 0, mismatched: 0, section: null, inblock: false, depth: 0, fchar: "", flen: 0, list: []};
           ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
           | ($l | block_title) as $title
@@ -384,7 +399,11 @@ SUPP_SCAN_DEF='
             .entries += 1 | .list += [$entry]
             | if .section != null then .section.parsed += 1 else . end
           else . end)
-        | close_section;
+        | close_section
+        | if $verdict == "Changes recommended" then
+            .entries += 1 | .list += ["review:\($id)"]
+          elif $verdict == "" or $verdict == "Approved" then .
+          else .unparsed += 1 end;
 '
 # The scan reads every submitted review at the head from a finding source:
 # `entries unparsed mismatched`, then one entry token per line. A dismissed
@@ -393,7 +412,7 @@ SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF$AUTHOR_TRUST_DEF"
     [ .[]
       | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")
       | select(rest_actor | finding_source($author))
-      | (.body // "") | suppressed_scan
+      | .id as $id | (.body // "") | suppressed_scan($id)
     ] as $rows
     | (([$rows[] | .entries] | add) // 0) as $entries
     | (([$rows[] | .unparsed] | add) // 0) as $unparsed
@@ -593,7 +612,7 @@ lines=()
 case "$supp_state" in
   unparsed)
     lines+=("suppressed-findings state=unparsed")
-    echo "suppressed-findings: a review body titles a findings section with no readable count; read it in the review" >&2
+    echo "suppressed-findings: a review body has an unreadable findings count or overview verdict; read it in the review" >&2
     ;;
   mismatch)
     lines+=("suppressed-findings state=mismatch sections=$supp_mismatched")
