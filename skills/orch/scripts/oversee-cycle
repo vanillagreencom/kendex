@@ -13,6 +13,7 @@
 # stages reads a running lane without writing a cycle. It reads the item key,
 # then pr-N from the lane record when the item has no state. Rows sort by start:
 #   stage item=ITEM kind=K round_id=RID start=EPOCH end=EPOCH|-
+# Superseded rounds carry superseded=1 after end=.
 # Restack validation rows also carry reason=restack. workflow-state new-round-id
 # writes dev and review starts. dev-artifact-check closes implement/fix rounds
 # and writes validate stages. review-artifact-check closes accepted review
@@ -277,6 +278,7 @@ read_lane_state() {
 print_stages() {
   jq -r --arg item "$1" 'sort_by(.start)[]
     | "stage item=\($item) kind=\(.kind) round_id=\(.round_id) start=\(.start) end=\(.end // "-")"
+      + (if .superseded == true then " superseded=1" else "" end)
       + (if .reason == null then "" else " reason=\(.reason)" end)'
 }
 

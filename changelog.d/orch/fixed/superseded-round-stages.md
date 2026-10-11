@@ -1,0 +1,1 @@
+- Starting a new dev or review round closes every earlier open stage of the same kind as superseded. `oversee-cycle stages` marks those rows with `superseded=1`.
