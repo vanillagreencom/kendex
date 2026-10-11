@@ -1341,17 +1341,14 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 # launching environment, not a settings env block. The inline switch needs
 # v2.1.288. Subagents inherit them from the launched session.
 lane_launch_rm_prompt_env() { # CMD HARNESS
-  local spellings i
+  local rc=0
   [[ "$2" == claude ]] || return 0
-  spellings="$(launch_choice_transfer_permission_spellings claude)" || return 1
-  launch_choice_shell_words "$1" || return 1
-  for ((i = 0; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
-    [[ "${LAUNCH_CHOICE_ARGV[i]}" != -- ]] || break
-    launch_choice_permission_match "$spellings" "${LAUNCH_CHOICE_ARGV[i]}" "${LAUNCH_CHOICE_ARGV[i+1]:-}"
-    (( LAUNCH_CHOICE_PERMISSION_SPAN > 0 )) || continue
-    printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'
-    return 0
-  done
+  lane_copilot_allows_all "$1" "$2" || rc=$?
+  case "$rc" in
+    0) printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1' ;;
+    1) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # The launch line for a command that must run on a chosen account, under the
@@ -1446,14 +1443,15 @@ lane_copilot_env() { # CMD SKILLS
   printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS=%s %s\n' "$2" "$allow"
 }
 
-# Whether CMD carries one of the copilot row's transferable permission
-# spellings, the full allow-all ones, as a word the shell hands copilot. The
-# tools-only `--allow-all-tools` is not one: it leaves paths and URLs asking.
-lane_copilot_allows_all() { # CMD
-  local spellings i
-  spellings="$(launch_choice_transfer_permission_spellings copilot)"
-  launch_choice_shell_words "$1"
+# Whether CMD carries a transferable full-bypass permission word. Existing
+# Copilot callers omit HARNESS; tools-only --allow-all-tools is not full bypass.
+# Claude stops reading options at --. Return 2 when the command cannot be read.
+lane_copilot_allows_all() { # CMD [HARNESS]
+  local harness="${2:-copilot}" spellings i
+  spellings="$(launch_choice_transfer_permission_spellings "$harness")" || return 2
+  launch_choice_shell_words "$1" || return 2
   for ((i = 0; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
+    [[ "$harness" != claude || "${LAUNCH_CHOICE_ARGV[i]}" != -- ]] || break
     launch_choice_permission_match "$spellings" "${LAUNCH_CHOICE_ARGV[i]}" "${LAUNCH_CHOICE_ARGV[i+1]:-}"
     (( LAUNCH_CHOICE_PERMISSION_SPAN == 0 )) || return 0
   done

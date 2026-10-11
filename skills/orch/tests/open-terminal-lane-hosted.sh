@@ -133,6 +133,7 @@ assert_eq "$(ot_hosted_relaunch_text "$RUN/tmux.log")" \
 assert_eq "$(cd_guard_result 0)" 'rc=0 cd=attempted harness=started' \
   'the hosted exec starts its harness after a successful cd'
 assert_failed_cd "$(cd_guard_result 1)"
+
 # The refresh record belongs to the hosted worktree's git directory, not its
 # root. Without --lane-refresh the drift hook must read an empty record.
 hosted_refresh() { local f="$RUN/remote/srv/clone/.git/worktrees/lane/lane-refresh"; [[ -f "$f" ]] && printf '[%s]' "$(cat "$f")" || printf none; }
@@ -252,6 +253,66 @@ assert_eq "rc=$RC refresh=$(hosted_refresh)" "rc=0 refresh=[/srv/lane]" "a hoste
 Q="'\\''"
 printf 'Working (esc to interrupt)\n' > "$TMP_ROOT/harness-screen"
 HARNESS_UP="OT_HARNESS_SCREEN=$TMP_ROOT/harness-screen"
+
+# Read the actual child environment on the provider's fresh and relaunch
+# routes. A status-1 continuation starts a second, fresh Claude process.
+RM_PROBE_BIN="$TMP_ROOT/rm-probe-bin"
+mkdir -p "$RM_PROBE_BIN"
+cat > "$RM_PROBE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+route=fresh
+for arg in "$@"; do [[ "$arg" != --continue ]] || route=resume; done
+printf '%s|%s|%s\n' "$route" "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
+  "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" >> "$RM_PROBE_LOG"
+[[ "$route" != resume ]] || exit "$RM_RESUME_STATUS"
+STUB
+chmod +x "$RM_PROBE_BIN/claude"
+ln -s "$RM_PROBE_BIN/claude" "$RM_PROBE_BIN/codex"
+hosted_rm_env() { # HARNESS FLAGS ROUTE RESUME_STATUS; sets HOSTED_RM_ENV
+  local harness="$1" flags="$2" route="$3" resume_status="$4" args=() line
+  [[ "$route" != relaunch ]] || args+=(--relaunch)
+  run_ot "$HARNESS_UP;flags=$flags" --host "$HOST_STUB" --harness "$harness" \
+    --lane "$H/.eclaude" --repo o/r ${args[@]+"${args[@]}"} KEN-41
+  [[ "$RC" == 0 ]] || { HOSTED_RM_ENV=launch-failed; return; }
+  line="$(grep -m1 '^exec bash -lc ' "$RUN/tmux.log")" || { HOSTED_RM_ENV=unrendered; return; }
+  # Let the shell decode the provider's quoted argument. Execute that same
+  # argument in its login shell with PATH set after the profile, as above.
+  eval "set -- ${line#exec }"
+  : > "$RUN/rm-env"
+  env -i PATH="$PATH" HOME="$TMP_ROOT" RM_PROBE_BIN="$RM_PROBE_BIN" \
+    RM_PROBE_LOG="$RUN/rm-env" RM_RESUME_STATUS="$resume_status" \
+    "$BASH" -lc 'PATH="$RM_PROBE_BIN:$PATH"; cd() { return 0; }; eval "$1"' \
+    rm-probe "$3" > "$RUN/rm-replay.out" 2> "$RUN/rm-replay.err" || true
+  HOSTED_RM_ENV="$(paste -sd';' "$RUN/rm-env")"
+}
+while IFS='|' read -r harness flags route resume_status expected; do
+  hosted_rm_env "$harness" "$flags" "$route" "$resume_status"
+  assert_eq "$HOSTED_RM_ENV" "$expected" \
+    "the hosted $harness $route child receives removal switches only for Claude bypass: $flags" "$RUN/rm-replay.err"
+done <<'ROWS'
+claude|--model opus --effort high --dangerously-skip-permissions|fresh|0|fresh|1|1
+claude|--model opus --effort high --permission-mode bypassPermissions|relaunch|0|resume|1|1
+claude|--model opus --effort high --dangerously-skip-permissions|relaunch|1|resume|1|1;fresh|1|1
+claude|--model opus --effort high --permission-mode dontAsk|fresh|0|fresh|unset|unset
+claude|--model opus --effort high --permission-mode dontAsk|relaunch|1|resume|unset|unset;fresh|unset|unset
+codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|0|fresh|unset|unset
+ROWS
+RM_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts hosted-rm-env-removed/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/hosted-rm-env-removed/orch"
+mutate_file "$OPEN_TERMINAL" '    [[ -z "$rm_prompt_env" ]] || run="export $rm_prompt_env && $run"' \
+  '    : '\''[[ -z "$rm_prompt_env" ]] || run="export $rm_prompt_env && $run"'\'
+SAVED_FAIL="$FAIL"
+FAIL=0
+hosted_rm_env claude '--model opus --effort high --dangerously-skip-permissions' relaunch 1
+assert_eq "$HOSTED_RM_ENV" 'resume|1|1;fresh|1|1' \
+  'control: dropping the hosted environment words loses the switches in both processes' > "$TMP_ROOT/hosted-rm-control.out"
+RM_CONTROL="$FAIL"
+FAIL="$SAVED_FAIL"
+assert_eq "$HOSTED_RM_ENV" 'resume|unset|unset;fresh|unset|unset' \
+  'control: the hosted mutant reaches both Claude processes with neither switch'
+assert_eq "$RM_CONTROL" 1 'control: the hosted resume and fallback children detect the missing environment words'
+OPEN_TERMINAL="$RM_OT_SHIPPED"
 # The flags a hosted claude command leads with, as the remote command quotes them.
 CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
 # The unattended words every brief and continuation line closes on, the text

@@ -387,7 +387,7 @@ launch_table \
   "the portable apostrophe spelling stays balanced and reaches the pane shell|custom-portable|-|-|-|rc=0 creates=1 log~new-window=true stderr~open-terminal:+cmd-unbalanced-quote=false" \
   "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
 
-# The suite's one must-fail control: a copy of open-terminal, beside links to
+# The quote guard control: a copy of open-terminal, beside links to
 # its helpers in a git repo of its own so PROJECT_ROOT still resolves
 # hermetically, with the command quote guard removed.
 QUOTE_OT="$(mutant_scripts quote-guard-removed open-terminal)/open-terminal" || exit 1
@@ -409,7 +409,12 @@ if wait_capture; then
   globbait="$TMP_ROOT/globbait"
   mkdir -p "$globbait"
   : > "$globbait/opus1"
-  printf '#!/usr/bin/env bash\nprintf '"'"'%%s\\n'"'"' "$@" > "$OT_ARGV_CAPTURE"\n' > "$BIN/claude"
+  cat > "$BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$OT_ARGV_CAPTURE"
+printf '%s|%s\n' "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
+  "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" > "$OT_ENV_CAPTURE"
+STUB
   chmod +x "$BIN/claude"
   cmd="$(cat "$CAP")"
   # PATH is set INSIDE the login shell, not only inherited by it: macOS
@@ -418,13 +423,58 @@ if wait_capture; then
   # $BIN prefix does not survive `bash -lc` and a real claude on the host's
   # login PATH would answer instead of the stub. The launcher still runs the
   # rendered line through a login shell, which is the shape under test.
-  (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" bash -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
-  rm -f "$BIN/claude"
+  (cd "$globbait" && env -u CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT \
+    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
+    OT_ENV_CAPTURE="$TMP_ROOT/child-env" "$BASH" -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
   assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $PROMPT " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
+  assert_eq "$(cat "$TMP_ROOT/child-env")" '1|1' \
+    'the no-account bypass launch gives both removal switches to Claude'
 else
   fail "the bracketed model id row never invoked the terminal stub, so its argv cannot be read"
 fi
+
+# Explicit model flags suppress lane preference. Execute that no-account
+# launch, as the terminal does, and read its child environment, not its text.
+ln -s "$BIN/claude" "$BIN/codex"
+local_rm_env() { # MODE FLAGS; sets LOCAL_RM_ENV
+  local cmd
+  run "$1" - "$2" -
+  [[ "$RC" == 0 ]] && wait_capture || { LOCAL_RM_ENV=launch-failed; return; }
+  cmd="$(cat "$CAP")"
+  rm -f "$TMP_ROOT/child-env"
+  env -u CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT \
+    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
+    OT_ENV_CAPTURE="$TMP_ROOT/child-env" "$BASH" -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }" \
+    > "$RUN/child.out" 2> "$RUN/child.err" || true
+  LOCAL_RM_ENV="$(cat "$TMP_ROOT/child-env" 2>/dev/null || printf 'unrun\n')"
+}
+while IFS='|' read -r mode flags expected; do
+  local_rm_env "$mode" "$flags"
+  assert_eq "$LOCAL_RM_ENV" "$expected" \
+    "the local $mode child receives removal switches only for Claude bypass: $flags"
+done <<'ROWS'
+gui|--model opus --permission-mode bypassPermissions|1|1
+gui|--model opus --permission-mode dontAsk|unset|unset
+gui-codex|-m gpt-6-astra --dangerously-bypass-approvals-and-sandbox|unset|unset
+ROWS
+RM_OT="$(mutant_scripts local-rm-env-removed open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/local-rm-env-removed" init -q
+orch_fixture_shared_libs "$TMP_ROOT/local-rm-env-removed"
+mutate_file "$RM_OT" '    cmd="${rm_prompt_env:+env $rm_prompt_env }$cmd"' \
+  '    : '\''cmd="${rm_prompt_env:+env $rm_prompt_env }$cmd"'\'
+OT_UNDER_TEST="$RM_OT"
+SAVED_FAIL="$FAIL"
+FAIL=0
+local_rm_env gui '--model opus --dangerously-skip-permissions'
+assert_eq "$LOCAL_RM_ENV" '1|1' \
+  'control: dropping the local environment words loses both removal switches' > "$TMP_ROOT/local-rm-control.out"
+RM_CONTROL="$FAIL"
+FAIL="$SAVED_FAIL"
+assert_eq "$LOCAL_RM_ENV" 'unset|unset' 'control: the local mutant reaches Claude with neither switch'
+assert_eq "$RM_CONTROL" 1 'control: the actual local child detects the missing environment words'
+OT_UNDER_TEST="$OT"
+rm -f "$BIN/claude" "$BIN/codex"
 
 echo "=== open-terminal claude handoff: tmux brief delivery ==="
 # The brief visible in the transcript on the first verification pass is
