@@ -7,6 +7,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use super::permission::PermissionIntent;
 
 pub mod antigravity;
+mod body;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -17,6 +18,8 @@ pub mod pi;
 mod role_policy;
 mod source;
 
+pub use body::BodyPaths;
+pub(crate) use body::rebase;
 pub(crate) use role_policy::role_rule;
 pub use role_policy::{RolePolicy, RoleRule};
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
@@ -309,7 +312,28 @@ pub struct RenderedAgent {
 /// `Err` is a refusal: the harness cannot express the agent's permission
 /// intent and rendering anyway would widen access. The caller surfaces the
 /// reason and produces no artifact for that harness.
-pub fn generate(agent: &EffectiveAgent) -> Result<RenderedAgent, String> {
+pub fn generate(
+    agent: &EffectiveAgent,
+    paths: Option<BodyPaths<'_>>,
+) -> Result<RenderedAgent, String> {
+    let (body, warnings) = paths.map_or_else(
+        || (agent.source.body.clone(), Vec::new()),
+        |paths| rebase(&agent.source.body, paths),
+    );
+    let source = SourceAgent {
+        body,
+        ..agent.source.clone()
+    };
+    let agent = EffectiveAgent {
+        source: &source,
+        ..agent.clone()
+    };
+    let mut rendered = generate_native(&agent)?;
+    rendered.warnings.extend(warnings);
+    Ok(rendered)
+}
+
+fn generate_native(agent: &EffectiveAgent) -> Result<RenderedAgent, String> {
     match agent.harness {
         HarnessId::Claude => Ok(claude::generate(agent)),
         HarnessId::Codex => Ok(codex::generate(agent)),
@@ -510,7 +534,7 @@ mod tests {
             custom_hooks: vec![],
             role_policy: None,
         };
-        let text = generate(&agent).unwrap().text;
+        let text = generate(&agent, None).unwrap().text;
         assert!(text.ends_with("\n\n  rust rule\n"), "{text:?}");
         assert!(!text.ends_with("\n\n"), "{text:?}");
     }
@@ -547,7 +571,7 @@ mod tests {
                     custom_hooks: vec![],
                     role_policy: None,
                 };
-                let text = generate(&agent).unwrap().text;
+                let text = generate(&agent, None).unwrap().text;
                 let model_lines: Vec<_> = text
                     .lines()
                     .filter(|line| line.starts_with("model:") || line.starts_with("model ="))
@@ -592,7 +616,7 @@ mod tests {
                 custom_hooks: vec![],
                 role_policy: None,
             };
-            generate(&agent).unwrap().text
+            generate(&agent, None).unwrap().text
         };
         let keyed = [
             (HarnessId::Claude, "effort: low\n"),
@@ -647,7 +671,7 @@ mod tests {
                 custom_hooks: vec![],
                 role_policy: None,
             };
-            generate(&agent).unwrap().text
+            generate(&agent, None).unwrap().text
         };
         for harness in [HarnessId::Pi, HarnessId::Opencode] {
             let text = rendered(harness);

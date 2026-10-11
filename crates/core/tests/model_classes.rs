@@ -31,7 +31,7 @@ fn native_bindings_select_only_the_requested_harness_and_class() {
             custom_hooks: vec![],
             role_policy: None,
         };
-        let unbound = generate(&agent).unwrap().text;
+        let unbound = generate(&agent, None).unwrap().text;
         let other_harness = if harness == HarnessId::Codex {
             "copilot"
         } else {
@@ -42,7 +42,7 @@ fn native_bindings_select_only_the_requested_harness_and_class() {
             BTreeMap::from([("standard".into(), "gpt-6.1-sol".into())]),
         )]);
         assert_eq!(
-            generate(&agent).unwrap().text,
+            generate(&agent, None).unwrap().text,
             unbound,
             "another harness's binding"
         );
@@ -58,7 +58,7 @@ fn native_bindings_select_only_the_requested_harness_and_class() {
                 harness.name().into(),
                 BTreeMap::from([(class.into(), selector.into())]),
             )]);
-            let rendered = generate(&agent).unwrap();
+            let rendered = generate(&agent, None).unwrap();
             if changes {
                 match harness {
                     HarnessId::Codex => assert_eq!(
@@ -85,7 +85,7 @@ fn native_bindings_select_only_the_requested_harness_and_class() {
         }
         if harness == HarnessId::Codex {
             agent.overrides.model = Some("gpt-6-astra".into());
-            let rendered = generate(&agent).unwrap();
+            let rendered = generate(&agent, None).unwrap();
             assert_eq!(
                 rendered.text.parse::<toml::Table>().unwrap()["model"].as_str(),
                 Some("gpt-6-astra")
@@ -450,7 +450,7 @@ fn every_native_renderer_keeps_valid_class_representation() {
                 custom_hooks: vec![],
                 role_policy: None,
             };
-            let rendered = generate(&agent).unwrap();
+            let rendered = generate(&agent, None).unwrap();
             let findings =
                 kendex_core::render::validate::validate_agent(harness, "worker", &rendered.text);
             assert!(

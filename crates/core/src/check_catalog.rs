@@ -30,7 +30,7 @@ use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
 
-mod links;
+pub(crate) mod links;
 mod settings;
 pub use links::LINKS_PASS;
 pub use settings::SETTINGS_PASS;

@@ -166,7 +166,7 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
         custom_hooks: vec![],
         role_policy: None,
     };
-    let legacy = generate(&effective).unwrap().text;
+    let legacy = generate(&effective, None).unwrap().text;
     let legacy = if crlf {
         legacy.replace('\n', "\r\n")
     } else {
@@ -174,6 +174,65 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
     };
     fs::write(instruction_file(&w, harness, "rev", disabled), legacy).unwrap();
     w
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_keeps_relative_link_targets_after_capture_and_apply() {
+    for harness in [HarnessId::Claude, HarnessId::Gemini, HarnessId::Pi] {
+        for beside in [false, true] {
+            let w = agent_world(
+                &format!("\"{}\"", harness.name()),
+                "---\nname: rev\ndescription: Agent\n---\nUpstream body.\n\n[skill](../.agents/skills/s/workflows/w.md#part)\n`../.agents/skills/s/workflows/w.md § Part`\n",
+                "",
+                "",
+            );
+            let file = rendered(&w, harness, "rev");
+            let before = fs::read_to_string(&file).unwrap();
+            assert!(before.contains("[skill](../../.agents/skills/s/workflows/w.md#part)"));
+            assert!(before.contains("`../../.agents/skills/s/workflows/w.md § Part`"));
+            edit_body(&file);
+            let edited = fs::read_to_string(&file).unwrap();
+            let name = if beside { "rev-mine" } else { "rev" };
+            let plan = if beside {
+                fork::fork_beside(
+                    &w.env,
+                    &w.scope,
+                    ItemKind::Agent,
+                    "rev",
+                    harness,
+                    name,
+                    None,
+                )
+            } else {
+                fork::fork(&w.env, &w.scope, ItemKind::Agent, name, harness)
+            }
+            .unwrap();
+            apply::execute(&w.env, &plan).unwrap();
+            resettle(&w);
+            let source = fs::read_to_string(captured(&w, name)).unwrap();
+            assert!(
+                source.contains("[skill](../.agents/skills/s/workflows/w.md#part)"),
+                "{source}"
+            );
+            assert!(
+                source.contains("`../.agents/skills/s/workflows/w.md § Part`"),
+                "{source}"
+            );
+            let after = fs::read_to_string(rendered(&w, harness, name)).unwrap();
+            assert!(
+                after.contains("[skill](../../.agents/skills/s/workflows/w.md#part)"),
+                "{after}"
+            );
+            assert!(
+                after.contains("`../../.agents/skills/s/workflows/w.md § Part`"),
+                "{after}"
+            );
+            if !beside {
+                assert_eq!(after, edited);
+            }
+        }
+    }
 }
 
 #[allow(clippy::unwrap_used)]

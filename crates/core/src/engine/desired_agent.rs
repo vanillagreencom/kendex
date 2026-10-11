@@ -5,8 +5,8 @@ use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest, Me
 use crate::mapping::EffectiveSkills;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::agent::{
-    EffectiveAgent, RenderedAgent, RequiredSkill, Selects, SourceAgent, file_name, generate,
-    hooks_for_agent, merge_overrides, merged_instructions, parse_source_agent, selects,
+    BodyPaths, EffectiveAgent, RenderedAgent, RequiredSkill, Selects, SourceAgent, file_name,
+    generate, hooks_for_agent, merge_overrides, merged_instructions, parse_source_agent, selects,
 };
 use crate::render::validate::validate_agent;
 
@@ -154,14 +154,15 @@ pub(super) fn desired_agent(
         notice_overrides(ctx, state, harness, source_agent, &parsed, &skills);
         let project = gathered(ctx, &parsed, harness, &skills.effective);
         let effective = effective_agent(ctx, source_agent, harness, &skills.upstream_now, project);
-        let Some(rendered) = render_or_refuse(ctx, state, harness, &effective) else {
+        let path = written_at(&native, harness, ctx.name, enabled);
+        let Some(rendered) = render_or_refuse(ctx, state, harness, &effective, &path) else {
             continue;
         };
         if !loadable(ctx, state, harness, &installed, &rendered) {
             continue;
         }
         let artifact = Artifact::File {
-            path: written_at(&native, harness, ctx.name, enabled),
+            path,
             bytes: rendered.text.into_bytes(),
         };
         state.items.push(Desired {
@@ -240,8 +241,21 @@ fn render_or_refuse(
     state: &mut DesiredState,
     harness: crate::model::HarnessId,
     effective: &EffectiveAgent,
+    rendered_path: &std::path::Path,
 ) -> Option<RenderedAgent> {
-    match generate(effective) {
+    let install_root = match ctx.scope {
+        Scope::Project { root } => root,
+        Scope::Global => &ctx.env.home,
+    };
+    match generate(
+        effective,
+        Some(BodyPaths {
+            source: ctx.item_path,
+            source_root: ctx.sealed.root(),
+            rendered: rendered_path,
+            install_root,
+        }),
+    ) {
         Ok(rendered) => Some(rendered),
         Err(refusal) => {
             state.refused.push(super::desired::Refused {

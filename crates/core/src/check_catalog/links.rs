@@ -9,9 +9,10 @@
 //! name a heading. Every other remote URL is left unread; nothing here goes
 //! to the network.
 
+use std::ops::Range;
 use std::path::{Component, Path};
 
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{CowStr, Event, LinkType, Parser, Tag, TagEnd};
 use unicode_normalization::char::is_combining_mark;
 
 use super::CheckFinding;
@@ -203,10 +204,13 @@ fn broken_links(
             });
         };
         if let Some(from) = in_skill.filter(|from| is_markdown(from)) {
-            for (line, target) in relative_links(text) {
-                let path = decoded(&target, '/').unwrap_or_else(|| target.clone());
+            for link in relative_links(text)
+                .into_iter()
+                .filter(|link| !link.citation)
+            {
+                let path = decoded(&link.path, '/').unwrap_or_else(|| link.path.clone());
                 if let Some(entry) = dropped_entry(from, &path) {
-                    push(line, target, Broken::Dropped(entry));
+                    push(link.line, link.path, Broken::Dropped(entry));
                 }
             }
         }
@@ -250,7 +254,7 @@ fn broken_links(
 }
 
 /// `written` percent-decoded one `separator`-delimited segment at a time.
-fn decoded(written: &str, separator: char) -> Option<String> {
+pub(crate) fn decoded(written: &str, separator: char) -> Option<String> {
     written
         .split(separator)
         .map(|segment| crate::source_ref::decode_segment(written, segment).ok())
@@ -263,22 +267,165 @@ fn is_markdown(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
 }
 
-/// Each link and image destination in `text` that is a path, with its
-/// 1-based line, the anchor and query cut off.
-fn relative_links(text: &str) -> Vec<(u32, String)> {
-    Parser::new_ext(text, crate::render::blocks::EXTENSIONS)
-        .into_offset_iter()
-        .filter_map(|(event, span)| {
-            let (Event::Start(Tag::Link { dest_url, .. })
-            | Event::Start(Tag::Image { dest_url, .. })) = event
-            else {
+/// A relative link or citation and the source bytes that carry its target.
+pub(crate) struct RelativeLink {
+    pub line: u32,
+    pub path: String,
+    pub target: String,
+    pub range: Option<Range<usize>>,
+    pub citation: bool,
+}
+
+/// Markdown destinations and md-refs citations. The catalog checker reads
+/// only destinations; the agent renderer also rebases citations.
+pub(crate) fn relative_links(text: &str) -> Vec<RelativeLink> {
+    let mut parser = Parser::new_ext(text, crate::render::blocks::EXTENSIONS).into_offset_iter();
+    let mut links = Vec::new();
+    while let Some((event, span)) = parser.next() {
+        match event {
+            Event::Start(Tag::Link {
+                dest_url,
+                link_type,
+                id,
+                ..
+            })
+            | Event::Start(Tag::Image {
+                dest_url,
+                link_type,
+                id,
+                ..
+            }) => {
+                let path = dest_url.split(['#', '?']).next().unwrap_or_default();
+                if path.is_empty() || path.contains(':') || path.starts_with(['/', '~']) {
+                    continue;
+                }
+                let (at, reference) = match link_type {
+                    LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => (
+                        parser
+                            .reference_definitions()
+                            .get(&id)
+                            .map(|definition| definition.span.clone())
+                            .unwrap_or(span.clone()),
+                        true,
+                    ),
+                    _ => (span.clone(), false),
+                };
+                links.push(RelativeLink {
+                    line: line_at(text, span.start),
+                    path: path.to_owned(),
+                    range: destination(text, &dest_url, at, reference),
+                    target: dest_url.to_string(),
+                    citation: false,
+                });
+            }
+            Event::Code(_) | Event::Text(_) => {
+                let code = matches!(event, Event::Code(_));
+                let raw = &text[span.clone()];
+                for (at, _) in raw
+                    .match_indices(" § ")
+                    .chain(raw.match_indices("::"))
+                    .chain(raw.match_indices('#'))
+                    .filter(|(at, _)| code || raw[*at..].starts_with(" § "))
+                {
+                    let start = raw[..at]
+                        .char_indices()
+                        .rfind(|(_, ch)| !ch.is_ascii_alphanumeric() && !"._/-".contains(*ch))
+                        .map_or(0, |(at, ch)| at + ch.len_utf8());
+                    let path = &raw[start..at];
+                    if path != ".md"
+                        && !path.ends_with("/.md")
+                        && (path.ends_with(".md")
+                            || (raw[at..].starts_with("::") && path.contains('/')))
+                        && !path.starts_with('/')
+                    {
+                        links.push(RelativeLink {
+                            line: line_at(text, span.start),
+                            path: path.to_owned(),
+                            target: path.to_owned(),
+                            range: Some(span.start + start..span.start + at),
+                            citation: true,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
+fn destination(
+    text: &str,
+    target: &CowStr<'_>,
+    span: Range<usize>,
+    reference: bool,
+) -> Option<Range<usize>> {
+    if target.is_empty() {
+        return None;
+    }
+    if let CowStr::Borrowed(raw) = target {
+        let start = (raw.as_ptr() as usize).checked_sub(text.as_ptr() as usize)?;
+        return (start + raw.len() <= text.len()).then_some(start..start + raw.len());
+    }
+    // Escaped destinations are allocated by the parser. Its span still
+    // bounds the destination and keeps the label and title out of the edit.
+    let raw = &text[span.clone()];
+    let marker = if reference { "]:" } else { "](" };
+    let start = raw.match_indices(marker).find_map(|(at, _)| {
+        let candidate = format!("[x]{}", &raw[at + 1..]);
+        let parser = Parser::new_ext(&candidate, crate::render::blocks::EXTENSIONS);
+        let matches = if reference {
+            parser.reference_definitions().get("x").is_some_and(|definition| definition.dest == *target)
+        } else {
+            parser.into_offset_iter().any(|(event, span)| matches!(event,
+                Event::Start(Tag::Link { dest_url, .. }) if dest_url == *target && span.end == candidate.len()))
+        };
+        matches.then_some(at + marker.len())
+    })?;
+    let rest = &raw[start..];
+    let trimmed = rest.trim_start();
+    let start = span.start + start + rest.len() - trimmed.len();
+    if let Some(angle) = trimmed.strip_prefix('<') {
+        let mut escaped = false;
+        let end = angle.char_indices().find_map(|(at, ch)| {
+            if escaped {
+                escaped = false;
                 return None;
-            };
-            let path = dest_url.split(['#', '?']).next().unwrap_or_default();
-            let remote = path.contains(':') || path.starts_with('/');
-            (!remote && !path.is_empty()).then(|| (line_at(text, span.start), path.to_owned()))
+            }
+            if ch == '\\' {
+                escaped = true;
+                return None;
+            }
+            (ch == '>').then_some(at)
+        })?;
+        return Some(start + 1..start + 1 + end);
+    }
+    let mut depth = 0;
+    let mut escaped = false;
+    let end = trimmed
+        .char_indices()
+        .find_map(|(at, ch)| {
+            if escaped {
+                escaped = false;
+                return None;
+            }
+            if ch == '\\' {
+                escaped = true;
+                return None;
+            }
+            if ch == '(' {
+                depth += 1;
+            }
+            if ch == ')' {
+                if depth == 0 {
+                    return Some(at);
+                }
+                depth -= 1;
+            }
+            ch.is_whitespace().then_some(at)
         })
-        .collect()
+        .unwrap_or(trimmed.len());
+    Some(start..start + end)
 }
 
 /// The [`NOT_RENDERED`] entry a link from the skill file at `from` to

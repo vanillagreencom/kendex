@@ -1,4 +1,4 @@
-//! Capture an edited agent as publisher frontmatter plus the rendered body.
+//! Capture an edited agent as publisher frontmatter plus a source-relative body.
 //! Catalog settings outside the file move into the manifest with the fork.
 
 use std::path::Path;
@@ -8,7 +8,7 @@ use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use crate::render::agent::{
-    EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
+    BodyPaths, EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
     merged_instructions_with, parse_source_agent,
 };
 
@@ -103,7 +103,10 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     };
     let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
     let wrappers = capture_wrappers(of, &publisher, &around).map_err(&render_refused)?;
-    let bytes = source_form(&published, &edited_text, name, &wrappers)?;
+    let local_root = crate::source::local_source_root(env, scope);
+    let local_path = super::local_item(env, scope, ItemKind::Agent, name);
+    let paths = local_body_paths(of, &local_root, &local_path, edited);
+    let bytes = source_form(&published, &edited_text, name, &wrappers, paths)?;
     let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
         .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let on_disk = stated(harness, &edited_text).map_err(|problem| {
@@ -116,7 +119,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         name: installed_as.to_owned(),
         ..captured.clone()
     };
-    let rendering = render(scope, &named, harness, &around).map_err(render_refused)?;
+    let rendering = render(scope, &named, harness, &around, Some(paths)).map_err(render_refused)?;
     let after = stated(harness, &rendering)
         .map_err(|problem| refused(format!("its own rendering reads back as {problem}")))?;
     if let Some(problem) = dropped(&on_disk, &after, harness) {
@@ -141,6 +144,23 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         read_at,
         rendering,
     })
+}
+
+fn local_body_paths<'a>(
+    of: &'a ForkOf,
+    local_root: &'a Path,
+    local_path: &'a Path,
+    edited: &'a Path,
+) -> BodyPaths<'a> {
+    BodyPaths {
+        source: local_path,
+        source_root: local_root,
+        rendered: edited,
+        install_root: match of.scope {
+            Scope::Project { root } => root,
+            Scope::Global => &of.env.home,
+        },
+    }
 }
 
 struct Published {
@@ -210,6 +230,7 @@ fn source_form(
     edited: &str,
     name: &str,
     wrappers: &[Option<(String, String)>],
+    paths: BodyPaths<'_>,
 ) -> Result<Vec<u8>> {
     let refused = |problem: String| CoreError::ForkNameUnusable {
         name: crate::names::shown(name),
@@ -222,6 +243,15 @@ fn source_form(
         .map(|(_, body)| body)
         .unwrap_or(edited);
     let prose = prose(body, wrappers);
+    let (prose, _) = crate::render::agent::rebase(
+        &prose,
+        BodyPaths {
+            source: paths.rendered,
+            source_root: paths.install_root,
+            rendered: paths.source,
+            install_root: paths.source_root,
+        },
+    );
     Ok(format!("---\n{frontmatter}---\n\n{prose}").into_bytes())
 }
 
@@ -311,7 +341,7 @@ fn wrapper(
         body: STAND_IN.to_owned(),
         ..publisher.clone()
     };
-    let text = render(scope, &source, harness, around)?;
+    let text = render(scope, &source, harness, around, None)?;
     let Some((_, body)) = crate::frontmatter::split(&text).ok() else {
         return Ok(None);
     };
@@ -326,6 +356,7 @@ fn render(
     source: &SourceAgent,
     harness: HarnessId,
     around: &Around,
+    paths: Option<BodyPaths<'_>>,
 ) -> std::result::Result<String, String> {
     let permissions = EffectiveAgent::intent(source, &around.overrides);
     let effective = EffectiveAgent {
@@ -342,5 +373,5 @@ fn render(
         custom_hooks: around.hooks.clone(),
         role_policy: None,
     };
-    crate::render::agent::generate(&effective).map(|rendered| rendered.text)
+    crate::render::agent::generate(&effective, paths).map(|rendered| rendered.text)
 }
