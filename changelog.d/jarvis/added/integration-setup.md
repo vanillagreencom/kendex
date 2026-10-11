@@ -1,0 +1,1 @@
+- Setup workflows guide the assistant and user through connecting Slack, Linear, GitHub and a fleet machine, with protected credentials and a checked connection result.
