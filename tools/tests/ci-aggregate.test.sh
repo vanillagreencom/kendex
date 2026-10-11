@@ -17,7 +17,8 @@
 #      name, and each aggregate, on its own, holds every job it needs to the
 #      lane or event condition that job's own `if:` reads; and the changes
 #      job grants the `actions: read` the action's proof reads with and
-#      calls tools/ci-job-set with --event-parity.
+#      calls tools/ci-job-set with --event-parity. Its installer command runs
+#      the trusted checkout's installer with rolling-main and CLI-only flags.
 #   2. the job set: each gated job's own `if:` and the shard matrix's `os:`
 #      and `shard:` expressions, read out of the workflow and EVALUATED
 #      against a selection and an event, with GitHub's implicit success() where a
@@ -68,6 +69,27 @@ WORKFLOW="$ROOT/.github/workflows/skill-tests.yml"
 [ -f "$GH_EVAL" ] || { echo "missing $GH_EVAL" >&2; exit 1; }
 AGGREGATE="$ROOT/tools/ci-aggregate"
 
+step_field() { # WORKFLOW JOB ID FIELD — base expression, working directory or run body
+  awk -v job="$2:" -v id="$3" -v field="$4" '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job); in_step = 0; in_run = 0 }
+    /^      - / { in_step = (in_job && $0 == "      - id: " id); in_run = 0 }
+    !in_step { next }
+    field == "BASE_REF" && /^          BASE_REF: / {
+      sub(/^          BASE_REF: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
+    }
+    field == "working-directory" && /^        working-directory: / {
+      sub(/^        working-directory: /, ""); print
+    }
+    field == "run" && /^        run: / {
+      sub(/^        run: /, "")
+      if ($0 ~ /^\|-?$/) { in_run = 1; next }
+      print; next
+    }
+    field == "run" && in_run && /^          / { sub(/^          /, ""); print; next }
+    !/^          / { in_run = 0 }
+  ' "$1"
+}
+
 # --- 1. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run
 # of name characters after `needs.changes.outputs.`, so a misspelt name is a
@@ -100,6 +122,46 @@ check "the changes job asks tools/ci-job-set for the event-parity check" \
 plant "$WORKFLOW" "run: tools/ci-job-set --event-parity" "run: tools/ci-job-set" "$TMP/no-parity.yml" changes
 check "must-fail: a changes job calling tools/ci-job-set without --event-parity is named" \
   "tools/ci-job-set" "$(job_set_calls "$TMP/no-parity.yml")"
+
+# The workflow supplies the flags; these fixtures only record the call.
+# Match the real installer's file mode so direct execution fails here too.
+INSTALL_WORLD="$TMP/installer"
+mkdir -p "$INSTALL_WORLD/classifier"
+for origin in subject trusted; do
+  install_dir="$INSTALL_WORLD"
+  [ "$origin" != trusted ] || install_dir="$INSTALL_WORLD/classifier"
+  printf '#!/bin/sh\nprintf "source=%%s\\n" "%s" >> "$RECORD"\nprintf "arg=%%s\\n" "$@" >> "$RECORD"\n' \
+    "$origin" >"$install_dir/install.sh"
+  chmod 644 "$install_dir/install.sh"
+done
+plant "$WORKFLOW" '--git' '--version stale-build' "$TMP/wf-fixed-installer.yml" changes
+plant "$WORKFLOW" '--cli-only' '' "$TMP/wf-desktop-installer.yml" changes
+plant "$WORKFLOW" 'classifier/install.sh' 'install.sh' "$TMP/wf-subject-installer.yml" changes
+plant "$WORKFLOW" 'classifier/install.sh' 'install.sh --git --cli-only; sh classifier/install.sh' "$TMP/wf-subject-then-trusted.yml" changes
+INSTALL_EXPECTED='arg=--cli-only
+arg=--git
+source=trusted'
+while IFS='|' read -r row workflow verdict; do
+  body="$(step_field "$workflow" changes kendex run)" || exit 1
+  [ -n "$body" ] || { echo "installer step has no run body" >&2; exit 1; }
+  printf '%s\n' "$body" >"$INSTALL_WORLD/step.sh"
+  : >"$INSTALL_WORLD/record"
+  rc=0
+  (cd "$INSTALL_WORLD" && env -i "PATH=$PATH" "RECORD=$INSTALL_WORLD/record" \
+    "$BASH" --noprofile --norc -e -o pipefail step.sh >out 2>&1) || rc=$?
+  check "$row invokes the installer" 0 "$rc"
+  [ -s "$INSTALL_WORLD/record" ] || { bad "$row recorded no installer call"; continue; }
+  actual="$(LC_ALL=C sort "$INSTALL_WORLD/record")" || exit 1
+  matched=no
+  [ "$actual" != "$INSTALL_EXPECTED" ] || matched=yes
+  check "$row selects the trusted rolling-main CLI installer" "$verdict" "$matched"
+done <<ROWS
+workflow|$WORKFLOW|yes
+must-fail: restored fixed version|$TMP/wf-fixed-installer.yml|no
+must-fail: desktop installation|$TMP/wf-desktop-installer.yml|no
+must-fail: subject installer|$TMP/wf-subject-installer.yml|no
+must-fail: subject then trusted installer|$TMP/wf-subject-then-trusted.yml|no
+ROWS
 
 # Only the action's accepted macOS record reaches the coverage selector.
 selection_proof_input() { # WORKFLOW [KEY] — the select step's input expression
@@ -728,21 +790,6 @@ check "must-fail: a content-scan checkout without fetch-depth 0 is named" "none"
 # branches before either lands. Here the remote's release branch advances
 # after the candidate clones; main stays behind, so a hard-coded default
 # branch or a stale clone cannot answer for the event's actual base.
-decision_step_field() { # WORKFLOW FIELD — the base expression, working directory or run body
-  awk -v field="$2" '
-    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "bot-instructions:") }
-    /^      - / { in_step = (in_job && $0 == "      - id: decision-ids"); in_run = 0 }
-    !in_step { next }
-    field == "BASE_REF" && /^          BASE_REF: / {
-      sub(/^          BASE_REF: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
-    }
-    field == "working-directory" && /^        working-directory: / {
-      sub(/^        working-directory: /, ""); print
-    }
-    field == "run" && /^        run: \|$/ { in_run = 1; next }
-    field == "run" && in_run && /^          / { sub(/^          /, ""); print }
-  ' "$1"
-}
 decision_fixture_index() { # REPO [D035_FILENAME]
   mkdir -p "$1/docs/decisions"
   {
@@ -794,12 +841,12 @@ decision_ci_row_ok() { # WORKFLOW EVENT KIND STATUS ERROR_KEY — sets DECISION_
       (if $kind == "empty-base" then {}
        elif $event == "pull_request" then {pull_request: {base: {ref: "release", sha: $seed}}}
        else {merge_group: {base_ref: "refs/heads/release", base_sha: $seed}} end)}}')" || return 1
-  expr="$(decision_step_field "$wf" BASE_REF)" || return 1
+  expr="$(step_field "$wf" bot-instructions decision-ids BASE_REF)" || return 1
   [ -n "$expr" ] || { DECISION_GOT=missing-base-expression; return 1; }
   base_ref="$(gh_eval value "$context" "$expr" | jq -r '. // ""')" || return 1
-  body="$(decision_step_field "$wf" run)" || return 1
+  body="$(step_field "$wf" bot-instructions decision-ids run)" || return 1
   [ -n "$body" ] || { DECISION_GOT=missing-run-body; return 1; }
-  work_dir="$(decision_step_field "$wf" working-directory)" || return 1
+  work_dir="$(step_field "$wf" bot-instructions decision-ids working-directory)" || return 1
   printf '%s\n' "$body" >"$dir/step.sh" || return 1
   mkdir -p "$dir/work/skills/decider" || return 1
   cp -R "$ROOT/skills/decider/scripts" "$dir/work/skills/decider/" || return 1
