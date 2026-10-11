@@ -1,0 +1,1 @@
+- Fix items that name an owner cover that owner's states in one table.

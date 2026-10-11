@@ -48,7 +48,7 @@ For an item spanning domains, split the delegation by domain. If the selected ag
   - a defect the change introduces or arms is in scope by definition, unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
 - Every behavior change ships with a test that runs against the script or program enforcing it, at the smallest surface that fails. A workflow sentence ships no test. A test that drives a second implementation or stubs the function under test does not count. Message assertions follow [code-quality § Tests](../code-quality/SKILL.md#tests).
 - A review finding adds a case only when it names a behaviour no existing case reaches. Otherwise it tightens the existing case's assertion, and the item reasoning names that case.
-- A second fix round on the same function's guard is recurrence: redesign the rule under test so the class is unrepresentable, and fold the family of cases into one table.
+- A second fix round on the same function's guard is recurrence: redesign the rule under test so the class is unrepresentable, and fold the family of cases into one table. Fix an item with an `Owner:` line at that owner, with one table whose rows cover every state the owner can be in.
 - A test whose premise died is deleted whole in the commit that kills the premise, and the PR body names the deletion.
 - Test shape is [code-quality § Tests](../code-quality/SKILL.md#tests) and [§ Prove Your Guards](../code-quality/SKILL.md#prove-your-guards).
 - A refusal, a validator, a lock, a retry, or a test exists only for an input a real producer emits, this project's code or anything it calls or serves; name that producer beside it, or do not write it.

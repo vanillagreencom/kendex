@@ -319,7 +319,7 @@ It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cy
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_fix_round true
 ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (the `fix set` above, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), and `source: pr-review`.
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (the `fix set` above, each formatted per [dev-round.md § Item text](../schemas/dev-round.md#item-text)), and `source: pr-review`.
 
 ### Bounded Re-Review
 

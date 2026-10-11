@@ -240,19 +240,18 @@ lane_state_rounds() { # STATE_JSON [ERRF]
   LANE_RESTACKS=unread
   LANE_REPEATED_CLASS_ROUNDS=unread
   [[ -n "$1" ]] || return 0
-  if ! counts="$(jq -r '
+  if ! counts="$(jq -L "$LANE_GITFILE_LIB" -r '
+    include "cause-keys";
     ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0) + (.pr_comment_review.iterations // 0)) as $rounds
     | (if .stages == null then "unread" else [.stages[] | select(.kind == "fix")] | length end) as $fixes
     | ([ (.validate_rounds // [])[] | select(.kind == "implement" or .kind == "fix")] | length) as $validations
     | (([ (.validate_rounds // [])[] | select(.kind == "restack")] | length) + (.restack_skips // [] | length)) as $restacks
     | (.pr_comment_review.patched_causes // []) as $patches
     | (reduce $patches[] as $patch ({seen: [], repeated: []};
-        ($patch.location // "" | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")) as $location
-        | if any(.seen[]; .commit != $patch.commit and
-            (.cause == $patch.cause or
-             ($location != "" and $location != "TBD" and $location != "general" and .location == $location)))
+        if any(.seen[]; .commit != $patch.commit and
+            (.cause == $patch.cause or ([shared_cause_key(.; $patch)] | length > 0)))
           then .repeated += [$patch.commit] else . end
-        | .seen += [($patch + {location: $location})])) as $history
+        | .seen += [$patch])) as $history
     | [$rounds, $fixes, $validations, $restacks,
         (if ($patches | length) == 0 then "unread" else ($history.repeated | unique | length) end)] | @tsv
   ' <<<"$1" 2>"${2:-/dev/stderr}")"; then

@@ -243,6 +243,7 @@ rounds_case() { # NAME STATE [WATCH_BIN] [MODE]
 }
 REPEATED_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}'
 LOCATION_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111","location":" src/x.rs (`f`) "},{"cause":"stale count","commit":"bbb222","location":"src/x.rs (`f`)"}]}}'
+OWNER_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"cancel leaves intent","commit":"aaa111","location":"src/dialog.rs (`close_retry`)","owner":"src/alert.rs (`AlertRow`)"},{"cause":"send leaves intent","commit":"bbb222","location":"src/send.rs (`on_failed_send`)","owner":"src/alert.rs (`AlertRow`)"}]}}'
 COUNTS_STATE='{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}]}'
 NO_STAGES_STATE="$(jq -c 'del(.stages)' <<<"$COUNTS_STATE")"
 # NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED
@@ -255,6 +256,10 @@ for row in \
   'absent_state||unread|unread|unread|unread|unread' \
   "two_bot_rounds|$REPEATED_STATE|2|unread|0|0|1" \
   "different_causes_one_location|$LOCATION_STATE|2|unread|0|0|1" \
+  "one_owner_two_commits|$OWNER_STATE|2|unread|0|0|1" \
+  "one_owner_one_commit|$(jq -c '.pr_comment_review.patched_causes[1].commit = "aaa111"' <<<"$OWNER_STATE")|2|unread|0|0|0" \
+  "one_owner_three_commits|$(jq -c '.pr_comment_review.patched_causes += [{cause:"third",commit:"ccc333",location:"src/third.rs (`third`)",owner:"src/alert.rs (`AlertRow`)"}]' <<<"$OWNER_STATE")|2|unread|0|0|2" \
+  "owner_equals_location|$(jq -c '.pr_comment_review.patched_causes[1] |= (.location = .owner | del(.owner))' <<<"$OWNER_STATE")|2|unread|0|0|1" \
   'one_location_one_commit|{"pr_comment_review":{"iterations":1,"patched_causes":[{"cause":"a","commit":"aaa111","location":"src/x.rs (`f`)"},{"cause":"b","commit":"aaa111","location":"src/x.rs (`f`)"}]}}|1|unread|0|0|0' \
   'ht_2098|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"8f27054b","location":"src/x.rs (`f`)"},{"cause":"b","commit":"e4ed9beb","location":"src/x.rs (`f`)"},{"cause":"c","commit":"70110a24","location":"src/x.rs (`f`)"},{"cause":"d","commit":"d48cc623","location":"src/x.rs (`f`)"}]}}|2|unread|0|0|3' \
   'unknown_locations|{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"a","commit":"aaa111","location":"general"},{"cause":"b","commit":"bbb222","location":"general"}]}}|2|unread|0|0|0' \
@@ -398,10 +403,10 @@ else
   assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=0' \
     "control: removing repeated rounds reddens their event row"
 fi
-LOCATION_WATCH="$(mutant_scripts lane-long-location/orch lib/lane-gitfile.sh)/oversee-watch" || exit 1
+LOCATION_WATCH="$(mutant_scripts lane-long-location/orch lib/cause-keys.jq)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-long-location/github"
 # shellcheck disable=SC2016
-mutate_file "${LOCATION_WATCH%/*}/lib/lane-gitfile.sh" 'and .location == $location' 'and false'
+mutate_file "${LOCATION_WATCH%/*}/lib/cause-keys.jq" '(.location, .owner)' '(empty, .owner)'
 rounds_case lane_long_location_mutant "$LOCATION_STATE" "$LOCATION_WATCH"
 if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=1 stage=dev round 1" location-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
   fail "control: removing location matches did not redden their event row"
@@ -409,6 +414,22 @@ else
   assert_file_contains "$STUB_DIR/control.out" 'got:      events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=0' \
     "control: removing location matches reddens their event row"
 fi
+for control in baseline owner; do
+  if [[ "$control" == baseline ]]; then
+    OWNER_WATCH="$(mutant_scripts lane-long-baseline/orch lib/lane-gitfile.sh)/oversee-watch" || exit 1
+    mutate_file "${OWNER_WATCH%/*}/lib/lane-gitfile.sh" '[shared_cause_key(.; $patch)] | length > 0' '((.location | cause_key) == ($patch.location | cause_key))'
+  else
+    OWNER_WATCH="$(mutant_scripts lane-long-owner/orch lib/cause-keys.jq)/oversee-watch" || exit 1
+    mutate_file "${OWNER_WATCH%/*}/lib/cause-keys.jq" '(.location, .owner)' '(.location)'
+  fi
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-long-$control/github"
+  rounds_case "lane_long_${control}_mutant" "$OWNER_STATE" "$OWNER_WATCH"
+  if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=1 stage=dev round 1" "$control: shared owner counts" "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
+    fail "$control: removing owner matches did not redden their event row"
+  else
+    assert_file_contains "$STUB_DIR/control.out" 'repeated_class_rounds=0' "$control: the planted defect omits the owner round"
+  fi
+done
 # Each mutation changes the shared reader the event consumes.
 for name in fixes skips unread; do
   case "$name" in

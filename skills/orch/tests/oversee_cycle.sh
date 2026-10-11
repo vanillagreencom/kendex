@@ -208,7 +208,7 @@ RECORD_ARGS=(--commit "$MERGE")
 pushes "300:$BASE" "1200:$MERGE"
 got="$(record KEN-1 '')"
 assert_eq "$got" \
-  "rc=0 cycle item=KEN-1 commit=$MERGE class=small tier=micro target=1800 merge_group=- actual=1200 open=- verdict=unmeasured phase=- phase_secs=- cause=- bot_wait=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
+  "rc=0 cycle item=KEN-1 commit=$MERGE class=small tier=micro target=1800 merge_group=- actual=1200 open=- verdict=unmeasured phase=- phase_secs=- cause=- bot_wait=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=- refusals=-" \
   "direct push prints the commit, elapsed time to its push, escape and absent PR fields"
 assert_eq "$(state '.lanes[0].cycle | [.commit, has("pr"), .class, .tier, .actual, .escaped, .stamps]')" \
   "[\"$MERGE\",false,\"small\",\"micro\",1200,true,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 1200)\"}]" \
@@ -329,7 +329,7 @@ echo "=== a class the classifier did not give is unclassified, never judged ==="
 new_case unclassified
 timeline 5401
 assert_eq "$(record KEN-1 standard)" \
-  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- merge_group=- actual=5401 open=5281 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=0 escaped=- tier_inputs=- class_reason=- escape_cause=- refixed=false" \
+  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- merge_group=- actual=5401 open=5281 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=0 escaped=- tier_inputs=- class_reason=- escape_cause=- refixed=false refusals=-" \
   "the classifier's refusal records no class and no target"
 assert_eq "$(grep '^oversee-cycle: class-unread' "$CASE/err")" "oversee-cycle: class-unread cause=classifier-exit-2" "and names the cause on stderr"
 
@@ -369,7 +369,7 @@ PR_ROUNDS="$PR_ROUNDS" timeline 1500 300 500
 jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true refusals=0" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
   "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
@@ -380,6 +380,43 @@ assert_eq "$(state '[.lanes[] | select(.item != "KEN-2") | has("cycle")] | any')
 assert_eq "$(state '.fleet_log | map(.kind + ":" + .item) | join(",")')" '"cycle:KEN-2"' "one cycle row joins the fleet log"
 assert_eq "$(state '.fleet_log[0].text')" "\"$(sed 's/^rc=0 //' <<<"$(record KEN-2 micro)")\"" \
   "and its text is the printed line"
+
+control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's oversee-cycle
+  local dir
+  dir="$(mutant_scripts "skills/$1" "$2")" || exit 1
+  ln -sf -- "$LAYOUT/orch/scripts/lane-host" "$dir/lane-host" || exit 1
+  mutate_file "$dir/$2" "$3" "$4"
+  RUN_BIN="$dir/oversee-cycle"
+}
+
+echo "=== merged cycles keep refusal rows for the fleet audit ==="
+REFUSALS='[{"item":1,"round_id":"r1","location":"src/alert.rs (`AlertRow`)","at":"2026-01-01T00:00:00Z","next_fix_elsewhere":false},{"item":2,"round_id":"r2","location":"src/other.rs (`OtherRow`)","at":"2026-01-01T00:00:01Z"}]'
+refusal_cycle_case() {
+  new_case "$1"
+  printf micro > "$CASE/class"
+  timeline 1000
+  jq -n --argjson rows "$REFUSALS" '{repeat_refusals:$rows}' > "$REPO/tmp/workflow-state-KEN-2.json"
+  got="$(record KEN-2 micro)"
+}
+assert_refusal_cycle() {
+  assert_eq "$(field refusals "$got")" 'refusals=2' 'cycle line counts refusals for the fleet audit'
+  assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle.repeat_refusals')" "$REFUSALS" 'cycle object copies refusal rows unchanged'
+}
+refusal_cycle_case refusals
+assert_refusal_cycle
+for mutation in copy count; do
+  case "$mutation" in
+    copy) control "m-refusal-$mutation" oversee-cycle 'repeat_refusals: $refusals,' 'repeat_refusals: [],' ;;
+    count) control "m-refusal-$mutation" oversee-cycle '.repeat_refusals | length end | n)' '.repeat_refusals | 0 end | n)' ;;
+  esac
+  refusal_cycle_case "refusals-$mutation"
+  if (FAIL=0; assert_refusal_cycle; [[ "$FAIL" -eq 0 ]]) > "$CASE/control.out"; then
+    fail "$mutation: mutation did not redden refusal cycle rows"
+  else
+    assert_contains "$(cat "$CASE/control.out")" '  FAIL  ' "$mutation: refusal rows reject the planted defect"
+  fi
+done
+RUN_BIN=""
 
 echo "=== a negative round interval is refused at write ==="
 # negative_write NAME: a case for a met micro whose review round reads -40 s,
@@ -616,7 +653,7 @@ jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate 
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
     gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, open_secs: 140, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=- refusals=-" \
   "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
 
 echo "=== armed time starts after both CI and the gate are green ==="
@@ -937,13 +974,7 @@ Review rounds per pull request: micro 1, small 1, standard 2; seconds per round:
 # lane_item_state it reads rounds through, each in a private copy of that one
 # file among links to the shipped scripts, beside the same stubs, the
 # lane-host fake among them.
-control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's oversee-cycle
-  local dir
-  dir="$(mutant_scripts "skills/$1" "$2")" || exit 1
-  ln -sf -- "$LAYOUT/orch/scripts/lane-host" "$dir/lane-host" || exit 1
-  mutate_file "$dir/$2" "$3" "$4"
-  RUN_BIN="$dir/oversee-cycle"
-}
+
 
 echo "=== controls ==="
 # Each independent refusal is disabled alone. The mutant must get past the

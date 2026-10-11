@@ -414,6 +414,9 @@ The long pass's events, checked and reported in this order:
                              relaunch; a late pass reports the current interval
                              The counts are review_rounds, fix_receipts,
                              validation_runs, restacks, repeated_class_rounds.
+                             A later distinct patch commit repeats an equal
+                             cause or a shared location/owner key, once per
+                             commit. Owner comes from the item's Owner: line.
                              Unavailable counts read unread. Definitions are
                              in references/oversee-events.md, lane-long.
                              A parked lane reads none of its stopped disk

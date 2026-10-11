@@ -235,13 +235,16 @@ before the round is delegated. TEXT is the item's full formatted block verbatim
 file-write tool (mutually exclusive with --item, same rules). An optional
 recurrence is one non-blank line, preserved in the record; other extra keys
 are dropped. The location is the text after the second | on text's first line.
+The owner is the text after Owner: on the first later line that begins with it.
 Before writing, workflow-state get reads this issue's patched_causes once.
-A location equal to a recorded location after trimming blanks requires
+A shared location/owner key after trimming blanks requires
 recurrence: structural-close or why this finding has a different cause.
-Empty, TBD and general locations match nothing; an older entry without
-location matches nothing. --item has no recurrence field: a repeat uses
+Empty, TBD and general values are not keys. An entry without owner still
+matches by location. --item has no recurrence field: a repeat uses
 --items-file. An unanswered repeat exits 2 with repeat-location and writes
-nothing. Unreadable state exits 2 with patched-state. --cut skips this check.
+no round record. It appends repeat_refusals rows; the next written round
+sets next_fix_elsewhere false for recurrence or a shared key, true otherwise.
+Unreadable state exits 2 with patched-state. --cut skips this check.
 A round's record is immutable: an identical re-invocation is an idempotent
 success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
@@ -455,20 +458,25 @@ else
   )"
 fi
 
-# Every fix source stamps here; the workflows append locations from these headers.
+# Every fix source stamps here; the workflows append keys from these headers.
 if [[ "$cut" == false ]]; then
   patched_causes="$("$SCRIPT_DIR/workflow-state" get "$issue" '.pr_comment_review.patched_causes // []' 2>/dev/null)" \
     || die patched-state
-  repeats="$(jq -c --argjson patches "$patched_causes" '
-    def location: if type == "string" then sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "") | select(. != "" and . != "TBD" and . != "general") else empty end;
+  repeats="$(jq -L "$SCRIPT_DIR/lib" -c --argjson patches "$patched_causes" '
+    include "cause-keys";
     .[] | select(has("recurrence") | not) as $item
-    | ($item.text | split("\n")[0] | split("|") | .[2:] | join("|") | location) as $location
-    | $patches[] | select((.location | location) == $location)
-    | {n: $item.n, location: $location, commit}
+    | first($patches[] | . as $patch | shared_cause_key($item; $patch) as $key
+        | {n: $item.n, location: $key, commit}) // empty
   ' <<<"$items_json")" || die patched-state
   if [[ -n "$repeats" ]]; then
     repeat="${repeats%%$'\n'*}"
-    die repeat-location "$(jq -r '.n' <<<"$repeat")" "$(jq -r '.location' <<<"$repeat")" "$(jq -r '.commit' <<<"$repeat")"
+    # Keep the existing stamp diagnostic first, including if the audit write fails.
+    message repeat-location "$(jq -r '.n' <<<"$repeat")" "$(jq -r '.location' <<<"$repeat")" "$(jq -r '.commit' <<<"$repeat")" >&2
+    refused_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || die patched-state
+    "$SCRIPT_DIR/workflow-state" update "$issue" --argjson repeats "$(jq -s . <<<"$repeats")" --arg round "$round_id" --arg at "$refused_at" '
+      .repeat_refusals = ((.repeat_refusals // []) + [$repeats[] | {item: .n, round_id: $round, location, at: $at}])
+    ' >/dev/null || die patched-state
+    exit 2
   fi
 fi
 
@@ -556,12 +564,31 @@ same_record() {
 # ln(2) fails with EEXIST atomically, so exactly one contender places the
 # record; every other lands in the comparison branch below, where an
 # identical retry is idempotent and a divergent one refuses.
+placed=false
 if [[ "$out_exists" == "true" ]]; then
   same_record "$tmp" "$out" \
     || die record-conflict "$@"
 elif ! ln "$tmp" "$out" 2>/dev/null; then
   same_record "$tmp" "$out" \
     || die record-race "$@"
+else
+  placed=true
+fi
+
+audit_exists=false
+if [[ "$placed" == true ]]; then
+  audit_exists="$("$SCRIPT_DIR/workflow-state" exists --json "$issue" | jq -r '.exists')" || die patched-state
+fi
+if [[ "$audit_exists" == true ]]; then
+  cause_defs="$(cat "$SCRIPT_DIR/lib/cause-keys.jq")" || die patched-state
+  "$SCRIPT_DIR/workflow-state" update "$issue" --argjson items "$items_json" "$cause_defs"'
+  if .repeat_refusals == null then . else
+    .repeat_refusals |= map(if has("next_fix_elsewhere") then . else
+      . as $refusal | .next_fix_elsewhere = (any($items[];
+        has("recurrence") or ([shared_cause_key(.; $refusal)] | length > 0)) | not)
+    end)
+  end
+' >/dev/null || die patched-state
 fi
 
 rm -f "$tmp"

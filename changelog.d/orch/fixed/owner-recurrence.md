@@ -1,0 +1,1 @@
+- Fix rounds detect a repeated rule across sites through its optional owner. Refused rounds leave audit rows that merged cycle records retain.

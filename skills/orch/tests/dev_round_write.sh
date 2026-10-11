@@ -205,7 +205,10 @@ echo "=== recurrence candidates require an item answer ==="
 # state exercises the real workflow-state reader, not a stand-in for it.
 repeat_case() { # NAME PATCHES LOCATION ANSWER MODE EXPECT_RC [WRITER]
   local name="$1" patches="$2" location="$3" answer="$4" mode="$5" expected="$6" writer="${7:-$WRITE_BIN}" rid="repeat-$1" issue=i
-  local text="#1 | reviewer-error | $location" first="" record
+  local text="#1 | reviewer-error | $location" first="" record key='src/x.rs (`f`)' owner="${9-ABSENT}"
+  key="${8:-$key}"
+  [[ "$owner" == ABSENT ]] || text+=$'\nOwner: '"$owner"
+  "$STATE" --state-dir "$WT/tmp" update i 'del(.repeat_refusals)' >/dev/null
   "$STATE" --state-dir "$WT/tmp" set i pr_comment_review.patched_causes "$patches" >/dev/null
   [[ "$mode" != no-history ]] || "$STATE" --state-dir "$WT/tmp" update i 'del(.pr_comment_review.patched_causes)' >/dev/null
   jq -n --arg text "$text" --arg reach "$OK_REACH" --arg answer "$answer" \
@@ -225,7 +228,10 @@ repeat_case() { # NAME PATCHES LOCATION ANSWER MODE EXPECT_RC [WRITER]
   elif [[ "$expected" == 2 ]]; then
     case "$mode:$answer" in
       unread:*) assert_eq "$first" 'dev-round-write: patched-state issue=missing' "$name: unread state has a keyed refusal first" "$ERR" ;;
-      *:ABSENT) assert_eq "$first" 'dev-round-write: repeat-location n=1 location=src/x.rs (`f`) commit=aaa111' "$name: repeat has a keyed refusal first" "$ERR" ;;
+      *:ABSENT)
+        assert_eq "$first" "dev-round-write: repeat-location n=1 location=$key commit=aaa111" "$name: repeat has a keyed refusal first" "$ERR"
+        assert_eq "$("$STATE" --state-dir "$WT/tmp" get i '.repeat_refusals // [] | map(del(.at))' | jq -c .)" "[{\"item\":1,\"round_id\":\"$rid\",\"location\":\"$key\"}]" "$name: refusal row has its finding, round and key"
+        assert_eq "$("$STATE" --state-dir "$WT/tmp" get i '(.repeat_refusals[0].at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")')" true "$name: refusal row has UTC time" ;;
       *) assert_file_contains "$ERR" 'dev-round-write: invalid-items' "$name: invalid recurrence is refused" ;;
     esac
   fi
@@ -254,6 +260,81 @@ for row in \
   [[ "$answer" != MULTILINE ]] || answer=$'first\nsecond'
   repeat_case "$name" "$patches" "$location" "$answer" "$mode" "$expected"
 done
+OWNER_PATCH='[{"cause":"prior intent must remain","commit":"aaa111","location":"src/dialog.rs (`close_retry`)","owner":"src/alert.rs (`AlertRow`)"}]'
+OWNER_KEY='src/alert.rs (`AlertRow`)'
+SEND='src/send.rs (`on_failed_send`)'
+# NAME^PATCHES^LOCATION^ANSWER^MODE^RC^KEY^OWNER
+for row in \
+  "owner_same^$OWNER_PATCH^$SEND^ABSENT^file^2^$OWNER_KEY^$OWNER_KEY" \
+  "owner_close^$OWNER_PATCH^$SEND^structural-close^file^0^$OWNER_KEY^$OWNER_KEY" \
+  "owner_other^$OWNER_PATCH^$SEND^ABSENT^file^0^$OWNER_KEY^src/other.rs (\`OtherRow\`)" \
+  "owner_absent^$OWNER_PATCH^$SEND^ABSENT^file^0^$OWNER_KEY^ABSENT" \
+  "owner_tbd^$OWNER_PATCH^$SEND^ABSENT^file^0^$OWNER_KEY^TBD" \
+  "owner_general^$OWNER_PATCH^$SEND^ABSENT^file^0^$OWNER_KEY^general" \
+  "owner_empty^$OWNER_PATCH^$SEND^ABSENT^file^0^$OWNER_KEY^" \
+  "owner_trim^$OWNER_PATCH^$SEND^ABSENT^file^2^$OWNER_KEY^  $OWNER_KEY  " \
+  'owner_old^[{"cause":"prior intent","commit":"aaa111","location":"src/dialog.rs (`close_retry`)"}]^src/send.rs (`on_failed_send`)^ABSENT^file^0^src/alert.rs (`AlertRow`)^src/alert.rs (`AlertRow`)' \
+  "owner_location^$OWNER_PATCH^$SEND^ABSENT^file^2^src/dialog.rs (\`close_retry\`)^src/dialog.rs (\`close_retry\`)" \
+  "owner_inline^$OWNER_PATCH^$SEND^ABSENT^inline^2^$OWNER_KEY^$OWNER_KEY" \
+  "owner_cut^$OWNER_PATCH^$OWNER_KEY^ABSENT^cut^0^$OWNER_KEY^$OWNER_KEY" \
+  'serialization^[{"cause":"shared serialization owner","commit":"aaa111","location":"crates/core/src/manifest/file.rs (`parse_text`, `save`)","owner":"crates/core/src/manifest/file.rs (`serialization`)"}]^crates/core/src/manifest/fold.rs (`serialized`)^ABSENT^file^2^crates/core/src/manifest/file.rs (`serialization`)^crates/core/src/manifest/file.rs (`serialization`)'; do
+  IFS='^' read -r name patches location answer mode expected key owner <<<"$row"
+  repeat_case "$name" "$patches" "$location" "$answer" "$mode" "$expected" "$WRITE_BIN" "$key" "$owner"
+done
+
+# The actual old comparison and an owner-dropping module must both redden this row.
+for control in baseline owner; do
+  if [[ "$control" == baseline ]]; then
+    MUTANT="$(mutant_scripts repeat-baseline dev-round-write)/dev-round-write" || exit 1
+    mutate_file "$MUTANT" 'shared_cause_key($item; $patch)' '($item.text | split("\n")[0] | split("|") | .[2:] | join("|") | cause_key) as $location | select(($patch.location | cause_key) == $location) | $location'
+  else
+    MUTANT="$(mutant_scripts repeat-owner lib/cause-keys.jq)/dev-round-write" || exit 1
+    mutate_file "${MUTANT%/*}/lib/cause-keys.jq" '(.location, .owner)' '(.location)'
+  fi
+  if (FAIL=0; repeat_case "control-$control" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$MUTANT" "$OWNER_KEY" "$OWNER_KEY"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/control-$control.out"; then
+    fail "$control: mutation did not redden the owner row"
+  else
+    assert_file_contains "$TMP_ROOT/control-$control.out" 'got:      0' "$control: owner repeat is accepted by the planted defect"
+  fi
+done
+
+# Resolve only pending refusals when a new round is placed.
+for resolution in recurrence same_key elsewhere; do
+  repeat_case "resolve-$resolution" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$WRITE_BIN" "$OWNER_KEY" "$OWNER_KEY"
+  "$STATE" --state-dir "$WT/tmp" update i '.repeat_refusals += [{item: 7, round_id: "older", location: "old", at: "2026-01-01T00:00:00Z", next_fix_elsewhere: true}]' >/dev/null
+  next_text="#1 | reviewer-error | $SEND"; answer=ABSENT; want=false
+  case "$resolution" in
+    recurrence) answer=structural-close ;;
+    same_key) next_text+=$'\nOwner: '"$OWNER_KEY" ;;
+    elsewhere) want=true ;;
+  esac
+  jq -n --arg text "$next_text" --arg reach "$OK_REACH" --arg answer "$answer" '[{n:1,text:$text,reach:$reach} + (if $answer == "ABSENT" then {} else {recurrence:$answer} end)]' > "$ITEMS"
+  run_write --worktree "$WT" --issue i --round-id "resolved-$resolution" --items-file "$ITEMS" --cut
+  assert_eq "$RC" 0 "$resolution: next round writes" "$ERR"
+  assert_eq "$("$STATE" --state-dir "$WT/tmp" get i '.repeat_refusals | map(.next_fix_elsewhere)' | jq -c .)" "[$want,true]" "$resolution: pending row resolves, old row stays unchanged"
+done
+for control in append resolve; do
+  MUTANT="$(mutant_scripts "refusal-$control" dev-round-write)/dev-round-write" || exit 1
+  case "$control" in
+    append) mutate_file "$MUTANT" '.repeat_refusals = ((.repeat_refusals // []) + [$repeats[] | {item: .n, round_id: $round, location, at: $at}])' '.repeat_refusals = (.repeat_refusals // [])' ;;
+    resolve) mutate_file "$MUTANT" 'if .repeat_refusals == null then . else' 'if true then . else' ;;
+  esac
+  if (FAIL=0
+    repeat_case "refusal-$control" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$MUTANT" "$OWNER_KEY" "$OWNER_KEY"
+    if [[ "$control" == resolve ]]; then
+      jq -n --arg text "#1 | reviewer-error | $SEND" --arg reach "$OK_REACH" '[{n:1,text:$text,reach:$reach,recurrence:"structural-close"}]' > "$ITEMS"
+      local_writer="$WRITE_BIN"; WRITE_BIN="$MUTANT"
+      run_write --worktree "$WT" --issue i --round-id "refusal-resolved" --items-file "$ITEMS"
+      WRITE_BIN="$local_writer"
+      assert_eq "$("$STATE" --state-dir "$WT/tmp" get i '.repeat_refusals[0].next_fix_elsewhere')" false 'control: next round resolves refusal'
+    fi
+    [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/control-refusal-$control.out"; then
+    fail "$control: mutation did not redden refusal rows"
+  else
+    assert_file_contains "$TMP_ROOT/control-refusal-$control.out" '  FAIL  ' "$control: refusal rows reject the planted defect"
+  fi
+done
+
 # A refused stamp placed no record, so the corrected file keeps its token.
 repeat_case same "$PATCH" 'src/x.rs (`f`)' structural-close file 0
 for control in comparison state blank multiline; do
