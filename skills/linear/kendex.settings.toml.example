@@ -23,7 +23,9 @@ LINEAR_AGENT_LABELS = ""
 
 # Whether a new issue must say who runs into the problem. Any value turns it
 # on: a description with no "Reached by" line is refused, and a
-# high-priority issue born from a review also needs a "Symptom" line. Empty
+# high-priority issue born from a review also needs a "Symptom" line. A
+# description written on create or update must also open with its outcome,
+# not a header line, and keep each header line to 500 characters. Empty
 # turns it off.
 LINEAR_REQUIRE_REACH = "1"
 

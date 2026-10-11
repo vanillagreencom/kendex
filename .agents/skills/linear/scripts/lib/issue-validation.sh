@@ -239,6 +239,36 @@ require_issue_reach() {
 	return 0
 }
 
+# require_issue_header_shape DESCRIPTION — 0 to proceed, 1 + a JSON error on
+# stderr naming the line and its length. The issue template puts the outcome
+# first and keeps each `**Key**:` or `Reached by:` header to one short
+# sentence; a body opening with a header, or carrying one over
+# ISSUE_HEADER_MAX characters, is refused. It is held by the reach guard's
+# setting so one key turns the filing bar on or off.
+ISSUE_HEADER_MAX=500
+require_issue_header_shape() {
+	[[ -n ${LINEAR_REQUIRE_REACH-1} ]] || return 0
+
+	local refusal
+	refusal=$(jq -cn --arg desc "$1" --argjson max "$ISSUE_HEADER_MAX" '
+		def header: test("^(\\*\\*[^*]+(\\*\\*:|:\\*\\*)|[Rr]eached [Bb]y:)");
+		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
+			| {line: (.key + 1), length: (.value | length), text: .value}] as $lines
+		| ([$lines[] | select(.text | test("\\S"))] | first) as $first
+		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long
+		| if $first != null and ($first.text | header) then
+			{error: "issue-header-opening line=\($first.line) length=\($first.length)\nRefusing an issue body that opens with a header line. Open with the outcome sentence; the **Key**: and Reached by: headers follow it.",
+			 rule: "issue-header-opening", line: $first.line, length: $first.length}
+		  elif $long != null then
+			{error: "issue-header-length line=\($long.line) length=\($long.length) max=\($max)\nRefusing an issue body with a header line over \($max) characters. Keep each header to one short sentence and move the detail under a section.",
+			 rule: "issue-header-length", line: $long.line, length: $long.length}
+		  else empty end') || return 1
+	if [ -n "$refusal" ]; then
+		printf '%s\n' "$refusal" >&2
+		return 1
+	fi
+}
+
 # One parser owns checklist numbering, ticking, triggers, and post-merge deadlines.
 # merge-pr supplies GitHub's mergedAt; watch and reconcile consume the same
 # per-box deadline in the description without a second tracker field.
