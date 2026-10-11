@@ -144,22 +144,22 @@ A post-merge box that only a person can read goes to that person as an owner ask
 
 ## Owner messages
 
-This standard holds for the master and every overseer: each post the relay makes for a `to=owner` envelope, each `slack post`, and each notice or ask for the owner. A message only a session reads, such as a `lane-mail send` to a lane, keeps its full detail.
+This standard holds for the Jarvis session and every overseer: each post the relay makes for a `to=owner` envelope, each `slack post`, and each notice or ask for the owner. A message only a session reads, such as a `lane-mail send` to a lane, keeps its full detail.
 
 ### Routing
 
-For the master and every overseer, a conversation stays in the medium where it takes place. A voice call's replies go to the call only. Progress reports and scheduled messages go to every open text medium (Slack and terminal), never the phone.
+For the Jarvis session and every overseer, a conversation stays in the medium where it takes place. A voice call's replies go to the call only. Progress reports and scheduled messages go to every open text medium (Slack and terminal), never the phone.
 
 | Message | Where | When | Mention |
 |---|---|---|---|
 | Decision needed | Slack and chat | At the moment the question exists: one question per message, with the options, in the ceo template. A question only in the chat has not been asked. | Yes |
 | Critical notice | Slack and chat | A failure that stops work, loses data or money, or needs the owner within the hour. | Yes |
-| Progress report | Slack and chat | The master every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([Settings](../README.md#setup)), while the session runs, and before a succession. `oversee-report` still writes and prints during `ORCH_REPORT_QUIET_HOURS` (default midnight to 7 am in `ORCH_OWNER_TIME_ZONE`, default `America/Los_Angeles`), but sends no owner notice. Empty quiet hours turns suppression off. The first due report after the window sends the morning brief: **Landed**, **Running**, **Blocked** and **Waiting on you** cover the work since the last report sent to the owner, including overnight merges. Decisions needed and critical notices remain immediate. | No |
+| Progress report | Slack and chat | The Jarvis session every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([Settings](../README.md#setup)), while the session runs, and before a succession. `oversee-report` still writes and prints during `ORCH_REPORT_QUIET_HOURS` (default midnight to 7 am in `ORCH_OWNER_TIME_ZONE`, default `America/Los_Angeles`), but sends no owner notice. Empty quiet hours turns suppression off. The first due report after the window sends the morning brief: **Landed**, **Running**, **Blocked** and **Waiting on you** cover the work since the last report sent to the owner, including overnight merges. Decisions needed and critical notices remain immediate. | No |
 | Reply | Where the owner's message arrived | An answer to an owner message. A reply on Slack shows in the chat as at most one line naming the post. | No |
 
 - Nothing else goes to Slack: no acknowledgement, no mechanism, no history. The same routing holds for every overseer.
 - Threads: a reply goes in the thread of the owner message it answers, or of the thread that message sits in; later posts on the same topic stay in that thread until the owner moves to another topic. A new topic, a decision needed, a critical notice and the progress report start at the top level. One topic per post, so the owner can answer each in its own thread. Thread replies stay in their threads.
-- An owner message that arrives with a thread pointer is read with that thread only; the master reads the thread's history on demand, never the channel's.
+- An owner message that arrives with a thread pointer is read with that thread only; the Jarvis session reads the thread's history on demand, never the channel's.
 
 ### Thread rule
 
@@ -236,7 +236,7 @@ Every hold in the handoff, the report's Next row or lane state names its items a
 
 ```text
 Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
-Instructions in force: [TEMPORARY OWNER OR MASTER INSTRUCTION, WHO GAVE IT, WHEN, AND WHEN IT ENDS]
+Instructions in force: [TEMPORARY OWNER OR JARVIS SESSION INSTRUCTION, WHO GAVE IT, WHEN, AND WHEN IT ENDS]
 Standing rulings: [EACH STANDING RULING AND WHO MADE IT]
 In flight: [ITEM, ITS PULL REQUEST, ITS NEXT STEP]
 Open asks and directives: [EACH OPEN OWNER OR PEER ANSWER, WITH ITS LANE-MAIL ID]

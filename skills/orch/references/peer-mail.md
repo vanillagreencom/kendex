@@ -18,7 +18,7 @@ An overseer running the § 4 watch reads a peer's reply there, as the `kind=answ
 
 ## Addressing
 
-Launch only this repository's items and send prioritized foreign tracker issues with `lane-mail peer send --repo [REPO]`; with no live repository overseer, ask a live registered master, else the owner, with a recommendation to launch that repository's overseer in its repository-named tmux session with `overseer` at the base index.
+Launch only this repository's items and send prioritized foreign tracker issues with `lane-mail peer send --repo [REPO]`; with no live repository overseer, ask the live registered Jarvis session, else the owner, with a recommendation to launch that repository's overseer in its repository-named tmux session with `overseer` at the base index.
 
 - `--repo` names ANOTHER repository's checkout: a value holding `/` is a path, a bare name is a checkout beside this one. It resolves to that repository's main checkout, so a path inside the peer reaches the same mailbox; a path that is no checkout is refused as `repo-unresolved`, and one resolving to this checkout as `repo-self`, since both sides of an exchange in one mailbox would make this repository its own peer. A note to this overseer is `lane-mail send --item overseer`.
 - Add `--host` for a peer on another host, `--repo` naming its path there.
