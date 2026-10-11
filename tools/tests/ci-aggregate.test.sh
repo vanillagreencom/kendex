@@ -536,7 +536,7 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
 open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
 open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
 orch_proof_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$ORCH_PROOF_ROW")")"
-linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls"]' '[]')"
+linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b"]' '[]')"
 check "the portability row selects orch-rest" true \
   "$(jq -c 'index("orch-rest") != null' <<<"$open_terminal_queue")"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"

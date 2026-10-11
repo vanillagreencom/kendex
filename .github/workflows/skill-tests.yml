@@ -470,7 +470,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -1117,15 +1117,19 @@ jobs:
           fi
           exit "$fail"
 
-      # ---- shard: linear-controls — the linear skill's must-fail control
-      # battery, which the step above skips. It reruns each linear suite once
-      # from a copy and once per mutation of its control, 388 suite runs, and
-      # took 587s and 606s of the linear shard on runs 37293196678 and
-      # 37306284963, which ran 14m41s and hit the 15-minute ceiling. Like the
-      # linear CLI it needs Bash 4, so the macOS leg excludes it.
+      # ---- shards: linear-controls-a, linear-controls-b: the linear control
+      # battery, which the step above skips. KEN-3762 measured 74 controls
+      # across 506 preparation and mutation jobs with four worker slots:
+      # 868.848s wall time. Stem checksum parity assigns 1592.633s of job
+      # time to a and 1830.015s to b. The halves have 33 and 41 controls:
+      # work time determines the split, rather than equal file counts.
+      # Both need Bash 4, so the macOS leg excludes them.
       - name: linear must-fail controls
-        if: matrix.shard == 'linear-controls'
-        run: bash skills/linear/tests/must-fail-controls.sh
+        if: matrix.shard == 'linear-controls-a'
+        run: bash skills/linear/tests/must-fail-controls.sh --shard 0
+      - name: linear must-fail controls
+        if: matrix.shard == 'linear-controls-b'
+        run: bash skills/linear/tests/must-fail-controls.sh --shard 1
 
       # ---- shard: worktree — the roster that held half of `rest`'s time.
       # `rest` ran 735-845s on the macOS leg over 79 files, 780s of it on run
@@ -1511,14 +1515,16 @@ jobs:
         shard: *skill-suite-shards
         os: [macos-latest]
         # node and pi-claude-bridge contain no shell suites, and
-        # linear-controls runs the linear suites, which need Bash 4.
+        # Both linear control halves run the linear suites, which need Bash 4.
         exclude:
           - os: macos-latest
             shard: node
           - os: macos-latest
             shard: pi-claude-bridge
           - os: macos-latest
-            shard: linear-controls
+            shard: linear-controls-a
+          - os: macos-latest
+            shard: linear-controls-b
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env

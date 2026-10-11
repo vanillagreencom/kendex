@@ -48,6 +48,9 @@
 #      queue's fallback equals the main-push roster less those exclusions.
 #      The must-fail arms drop one exclude row and plant a Linux-only
 #      queue shard.
+#   4e. the linear controls — the workflow's actual shard arguments run the
+#      real must-fail-controls.sh over lightweight copies of every control
+#      stem. Missing and repeated halves fail complete, unique coverage.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
 #      target and integration test name. The legs are the combinations the
 #      matrix expands rather than its raw list. Each target other than the
@@ -957,6 +960,96 @@ else
   bad "must-fail: the scan did not read a fabricated shard name, so a stale citation would pass"
 fi
 
+# --- 4e. The linear control halves cover every discovered stem once -------
+# GitHub invokes both selectors. These fixtures replace the suites and their
+# mutations, but keep the production runner's discovery and selection intact.
+# Bash 3 cannot run linear's battery; the workflow excludes it on macOS.
+if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+  LINEAR_RUNNER=skills/linear/tests/must-fail-controls.sh
+  LINEAR_FIXTURE="$TMP/linear"
+  mkdir -p "$LINEAR_FIXTURE/tests/controls" "$LINEAR_FIXTURE/scripts" "$TMP/linear-claims"
+  cp "$ROOT/$LINEAR_RUNNER" "$LINEAR_FIXTURE/tests/must-fail-controls.sh"
+  printf 'VALUE=green\n' >"$LINEAR_FIXTURE/scripts/value.sh"
+  for f in "$ROOT"/skills/linear/tests/controls/*.control.sh; do
+    [[ -f "$f" ]] || { bad "linear control discovery found no files"; break; }
+    stem="${f##*/}"
+    stem="${stem%.control.sh}"
+    printf '%s\n' "$stem"
+  done | LC_ALL=C sort >"$TMP/linear-universe"
+  grep -qx mutation-isolation "$TMP/linear-universe" || bad "linear discovery lost the runner control"
+  # A future suite/control pair must join one half without a roster edit.
+  printf 'zz-partition-new\n' >>"$TMP/linear-universe"
+  LC_ALL=C sort -o "$TMP/linear-universe" "$TMP/linear-universe"
+  while IFS= read -r stem; do
+    cat >"$LINEAR_FIXTURE/tests/$stem.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$D/../scripts/value.sh"
+if [[ "$VALUE" != green ]]; then
+  printf 'FAIL: fixture value is green\n'
+  exit 1
+fi
+SUITE
+    cat >"$LINEAR_FIXTURE/tests/controls/$stem.control.sh" <<'CONTROL'
+control_expect 'fixture value is green'
+control_replace scripts/value.sh 1 'VALUE=green' 'VALUE=red'
+CONTROL
+  done <"$TMP/linear-universe"
+
+  linear_commands() { # WORKFLOW: arguments from each actual control step
+    local job cond wd run
+    while IFS=$'\037' read -r job cond wd run; do
+      [[ "$run" == "bash $LINEAR_RUNNER"* ]] || continue
+      printf '%s\n' "${run#"bash $LINEAR_RUNNER"}"
+    done < <(one_line_steps "$1")
+  }
+  linear_selected() { # ARGUMENT STRING: real runner's selected control stems
+    local key cache
+    key="$(printf '%s' "$1" | cksum | tr ' ' '-')" || return
+    cache="$TMP/linear-claims/$key"
+    if [[ ! -f "$cache" ]]; then
+      (
+        set -f
+        # Workflow arguments are unquoted shard numbers or stem names.
+        # shellcheck disable=SC2086
+        set -- $1
+        CONTROL_JOBS=4 "$BASH" "$LINEAR_FIXTURE/tests/must-fail-controls.sh" "$@"
+      ) >"$cache.out" 2>&1 || { cat "$cache.out" >&2; return 1; }
+      # The runner's ok line is the machine-read completion for a control.
+      sed -n 's/^ok  *\(.*\)\.test\.sh$/\1/p' "$cache.out" >"$cache"
+    fi
+    cat "$cache"
+  }
+  linear_claims() { # WORKFLOW: all stems selected, including repeats
+    local args
+    while IFS= read -r args; do
+      linear_selected "$args" || return
+    done < <(linear_commands "$1")
+  }
+  linear_claims "$WORKFLOW" | LC_ALL=C sort >"$TMP/linear-selected"
+  check "both linear control halves cover every current and future stem once" \
+    "$(cat "$TMP/linear-universe")" "$(cat "$TMP/linear-selected")"
+  check "explicit linear control stems preserve their selection" \
+    mutation-isolation "$(linear_selected mutation-isolation)"
+
+  awk '/^        run: bash skills\/linear\/tests\/must-fail-controls.sh --shard 1$/ { n++; next }
+       { print } END { exit n != 1 }' "$WORKFLOW" >"$TMP/linear-missing.yml" ||
+    bad "linear omission control changed no step"
+  linear_claims "$TMP/linear-missing.yml" | LC_ALL=C sort >"$TMP/linear-missing"
+  [[ -n "$(comm -23 "$TMP/linear-universe" "$TMP/linear-missing")" ]] &&
+    ok "must-fail: a dropped linear half names controls belonging to neither half" ||
+    bad "linear omission control left no missing control"
+
+  awk '/^        run: bash skills\/linear\/tests\/must-fail-controls.sh --shard 1$/ { sub(/--shard 1$/, "--shard 0"); n++ }
+       { print } END { exit n != 1 }' "$WORKFLOW" >"$TMP/linear-repeated.yml" ||
+    bad "linear duplication control changed no step"
+  linear_claims "$TMP/linear-repeated.yml" | LC_ALL=C sort >"$TMP/linear-repeated"
+  [[ -n "$(uniq -d "$TMP/linear-repeated")" ]] &&
+    ok "must-fail: repeated linear selectors name controls belonging to both halves" ||
+    bad "linear duplication control left no repeated control"
+fi
+
 # --- 4b. The shard selection reaches every suite a shard runs -------------
 # tools/ci-job-set chooses which shards a diff runs from a package table of
 # its own, and the steps above are what run each package's suites. A package
@@ -1103,10 +1196,10 @@ check "the queue fallback equals the main-push roster less its macOS exclusions"
   "$(comm -23 <(sed -n "s/^        shard: &skill-suite-shards .*'\[\([^]]*\)\]'.*/\1/p" "$WORKFLOW" | tr -d ' "' | tr ',' '\n' | sort -u) <(printf '%s\n' "$excluded"))" "$queue_shards"
 check "no queue macOS shard is Linux-only" "" \
   "$(comm -12 <(printf '%s\n' "$queue_shards") <(linux_only_shards "$JOB_SET"))"
-sed "s/'\[\"review-gate\", /'[\"linear-controls\", \"review-gate\", /" "$WORKFLOW" > "$TMP/queue-linux.yml"
+sed "s/'\[\"review-gate\", /'[\"linear-controls-a\", \"review-gate\", /" "$WORKFLOW" > "$TMP/queue-linux.yml"
 cmp -s "$WORKFLOW" "$TMP/queue-linux.yml" &&
   bad "must-fail: the queue fallback list is no longer one line in $WORKFLOW"
-check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-controls" \
+check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-controls-a" \
   "$(comm -12 <(queue_fallback_shards "$TMP/queue-linux.yml") <(linux_only_shards "$JOB_SET"))"
 
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
@@ -1156,6 +1249,8 @@ os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   awk -F '\t' -v excluded="$excluded" '
     BEGIN { n = split(excluded, names, " "); for (i = 1; i <= n; i++) skip[names[i]] = 1 }
     NR == FNR { universe[$0] = 1; next }
+    # The shared linear runner owns two disjoint control sets, proved above.
+    $2 == "skills/linear/tests/must-fail-controls.sh" && driver_seen[$2]++ { next }
     !skip[$1] && $2 in universe { print $2 }
   ' "$TMP/os-universe" "$owners" | sort
 }
