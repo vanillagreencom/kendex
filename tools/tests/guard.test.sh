@@ -478,11 +478,27 @@ fi
 exec "$GUARD_REAL_GREP" "$@"
 SH
 chmod +x "$MUTANT_TOOLS/grep"
-run_guard PATH="$MUTANT_TOOLS:$PATH" GUARD_REAL_GREP="$REAL_GREP"
-[ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=scan=ui/src/style.ts status=2'* ]] \
-  && [[ "$OUT" != *'guard-note: ui-color-literal='* ]] \
-  && ok 'a failed read reports no-verdict and discards partial matches' \
-  || bad 'failed source read' "rc=$RC out=$OUT"
+while IFS='|' read -r label path expected; do
+  if [ -n "$path" ]; then
+    printf 'import { invoke } from "@tauri-apps/api/core";\n' >"$R/$path"
+    git -C "$R" add -- "$path"
+  fi
+  run_guard PATH="$MUTANT_TOOLS:$PATH" GUARD_REAL_GREP="$REAL_GREP"
+  finding=0
+  [[ "$OUT" != *'guard: ui-tauri-import=1'* ]] || finding=1
+  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *'guard-note: no-verdict=scan=ui/src/style.ts status=2'* ]] \
+    && [[ "$OUT" != *'partial match'* && "$OUT" != *'guard-note: ui-color-literal='* ]] \
+    && { [ -z "$path" ] || [ "$finding" -eq 1 ]; } \
+    && ok "$label" || bad "$label" "rc=$RC out=$OUT"
+  if [ -n "$path" ]; then
+    git -C "$R" reset -q HEAD -- "$path"
+    rm -- "$R/$path"
+  fi
+done <<'ROWS'
+an unreadable file has no verdict and discards its partial matches||3
+a prior confirmed finding stays blocking|ui/src/a-import.ts|1
+a later confirmed finding stays blocking|ui/src/z-import.ts|1
+ROWS
 if mutant_guard 's/unrun scan "\$f status=\$rc"/:/'; then
   GUARD_TEST_ENV=("PATH=$MUTANT_TOOLS:$PATH" "GUARD_REAL_GREP=$REAL_GREP")
   run_mutant
@@ -491,6 +507,27 @@ if mutant_guard 's/unrun scan "\$f status=\$rc"/:/'; then
     || bad 'failed source read control' "rc=$RC out=$OUT"
   unset GUARD_TEST_ENV
 else bad 'failed source read control changed nothing'; fi
+for defect in clear stop; do
+  if [ "$defect" = clear ]; then
+    path=ui/src/a-import.ts
+    edit='s/unrun scan "\$f status=\$rc"/hits=""; unrun scan "$f status=$rc"/'
+  else
+    path=ui/src/z-import.ts
+    edit='s/unrun scan "\$f status=\$rc"/unrun scan "$f status=$rc"; return/'
+  fi
+  printf 'import { invoke } from "@tauri-apps/api/core";\n' >"$R/$path"
+  git -C "$R" add -- "$path"
+  if mutant_guard "$edit"; then
+    GUARD_TEST_ENV=("PATH=$MUTANT_TOOLS:$PATH" "GUARD_REAL_GREP=$REAL_GREP")
+    run_mutant
+    [ "$RC" -eq 3 ] && [[ "$OUT" != *'guard: ui-tauri-import='* ]] \
+      && ok "control: $defect loses confirmed findings after a read failure" \
+      || bad "confirmed finding control: $defect" "rc=$RC out=$OUT"
+    unset GUARD_TEST_ENV
+  else bad "confirmed finding control changed nothing: $defect"; fi
+  git -C "$R" reset -q HEAD -- "$path"
+  rm -- "$R/$path"
+done
 rm -- "$MUTANT_TOOLS/grep"
 git -C "$R" reset -q HEAD -- ui/src/style.ts
 rm -- "$R/ui/src/style.ts"
@@ -506,6 +543,11 @@ cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >>"$COMPILE_LOG"
+# rustup minimal installs Cargo without these optional component commands.
+if [ "${1:-}" = "${MISSING_COMPONENT:-}" ]; then
+  printf "error: 'cargo-%s' is not installed for the toolchain\n" "$1" >&2
+  exit 1
+fi
 if [ "${WARN_CLIPPY:-0}" = 1 ] && [ "${1:-}" = clippy ]; then
   printf 'warning: unused variable\n' >&2
   case "$*" in *'-D warnings'*) exit 1 ;; esac
@@ -541,13 +583,15 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
 # `guard: <key>=<value>`, the value naming what was checked. The table counts
 # its own rows: an emptied row list is a red, never a green.
 before=$((PASS + FAIL))
-while IFS='|' read -r command clause; do
-  run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: $clause"* ]] \
-    && ok "the $command failure blocks, naming it" \
-    || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
+while IFS='|' read -r label command component expected diagnostic; do
+  run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command" MISSING_COMPONENT="$component"
+  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
+    && ok "$label" || bad "$label" "rc=$RC out=$OUT"
 done <<'ROWS'
-clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet|clippy=crates/core/Cargo.toml
+a compiler error blocks|clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet||1|guard: clippy=crates/core/Cargo.toml
+missing Clippy has no verdict||clippy|3|guard-note: no-verdict=missing-tool=cargo-clippy
+missing rustfmt has no verdict||fmt|3|guard-note: no-verdict=missing-tool=cargo-fmt
+a compiler error blocks beside missing rustfmt|clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet|fmt|1|guard: clippy=crates/core/Cargo.toml
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the compiler failures" >&2; exit 2; }
 run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" WARN_CLIPPY=1

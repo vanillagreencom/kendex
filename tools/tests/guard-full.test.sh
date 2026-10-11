@@ -217,6 +217,11 @@ cat >"$R/fake-bin/cargo" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
 [ -z "${CARGO_ENV_LOG:-}" ] || printf '%s|incremental=%s\n' "$*" "${CARGO_INCREMENTAL:-unset}" >>"$CARGO_ENV_LOG"
+# Cargo may be installed without its optional Clippy or rustfmt component.
+if [ "${1:-}" = "${MISSING_COMPONENT:-}" ]; then
+  printf "error: 'cargo-%s' is not installed for the toolchain\n" "$1" >&2
+  exit 1
+fi
 # rustfmt's status: 1 for a diff it wrote, 0 when that write failed. A write
 # straight to the guard's own stream, FMT_FULL_STREAM, lands on a full device.
 if [ "$*" = "fmt --check" ] && [ -n "${FMT_FULL_STREAM:-}" ]; then
@@ -354,6 +359,25 @@ done <<'EDITS'
 12|s/\[ "\$fail" -eq 1 \] || fail=3/fail=3/
 EDITS
 git -C "$R" checkout -q -- skills/demo/tests/demo.test.sh
+
+for component in clippy fmt; do
+  : >"$DF_CALL_LOG"
+  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" RUSTUP_INSTALLED_TARGETS="$BOTH" MISSING_COMPONENT="$component"
+  [ "$RC" -eq 3 ] && [[ "$OUT" == *"guard-note: no-verdict=missing-tool=cargo-$component"* ]] \
+    && ok "workspace: missing $component has no verdict" \
+    || bad "workspace component availability: $component" "rc=$RC out=$OUT"
+  if mutant_guard "s/if ! cargo $component --version >\/dev\/null 2>\&1/if false/"; then
+    : >"$DF_CALL_LOG"
+    GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+      DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" RUSTUP_INSTALLED_TARGETS="$BOTH" MISSING_COMPONENT="$component"
+    expected=1; diagnostic='guard: clippy=workspace'
+    if [ "$component" = fmt ]; then expected=0; diagnostic='guard-note: cargo-fmt=workspace'; fi
+    [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
+      && ok "control: removing $component availability turns its host row red" \
+      || bad "component availability control: $component" "rc=$RC out=$OUT"
+  else bad "component availability control changed nothing: $component"; fi
+done
 
 # Every other lane fails its own write on a full stream too, so only fmt's
 # write straight to the guard's stream lands on the device.

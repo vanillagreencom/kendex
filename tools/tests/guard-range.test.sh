@@ -86,10 +86,14 @@ back_to_base
 
 echo "=== what a range compiles is what it touched since its base ==="
 CORE_CALLS="cargo tree -p kendex-core -e normal
+cargo clippy --version
 cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet
+cargo fmt --version
 cargo fmt --check"
 WORKSPACE_CALLS="cargo tree -p kendex-core -e normal
+cargo clippy --version
 cargo clippy --workspace --all-targets --quiet
+cargo fmt --version
 cargo fmt --check"
 UI_CALLS="npm run --prefix ui check:types
 npm run --prefix ui check:lint

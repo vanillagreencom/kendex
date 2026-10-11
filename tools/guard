@@ -532,7 +532,8 @@ scan() {
       0) hits="${hits:+$hits
 }$out" ;;
       1) ;;
-      *) hits=""; unrun scan "$f status=$rc"; return ;;
+      # A failed read cannot erase findings from other successfully read files.
+      *) unrun scan "$f status=$rc" ;;
     esac
   done <<<"$files"
 }
@@ -1276,7 +1277,11 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   # packages and targets. Warnings remain advisory. A cargo check first would
   # build the workspace's check metadata a
   # second time, under a fingerprint clippy does not reuse.
-  if [ "$rust_all" -eq 1 ]; then
+  # Cargo alone is present in rustup minimal profiles. These version commands
+  # exercise the selected components without compiling or formatting source.
+  if ! cargo clippy --version >/dev/null 2>&1; then
+    unrun missing-tool cargo-clippy
+  elif [ "$rust_all" -eq 1 ]; then
     cargo clippy --workspace --all-targets --quiet || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
@@ -1285,8 +1290,12 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   fi
   # rustfmt exits 0 when writing its diff fails, so the diff goes through a
   # pipe this script reads, never straight to a stream that may be full.
-  fmt_out=$(cargo fmt --check 2>&1) || note cargo-fmt workspace
-  [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
+  if ! cargo fmt --version >/dev/null 2>&1; then
+    unrun missing-tool cargo-fmt
+  else
+    fmt_out=$(cargo fmt --check 2>&1) || note cargo-fmt workspace
+    [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
+  fi
 fi
 
 fi
@@ -1302,6 +1311,13 @@ fi
 # A Pi package's suite can import peers that CI installs before the suite.
 # A missing dependency gives no test verdict; an assertion still fails.
 pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
+  # These declared npm scripts return Bun default console, Node or shell
+  # diagnostics. https://bun.com/docs/test/reporters documents alternatives:
+  # JUnit needs Bun-specific flags and omits per-test stdout/stderr; Inspector
+  # test/exception events need a custom reporter connection. The scripts
+  # provide neither. Peer-probe assertions still need their diagnostic cause.
+  # The observed console boundaries and repeated lists are the fallback,
+  # covered by complete producer outputs. Unexplained rows or totals block.
   # Diagnostic reports own outcomes. Bun repeats their names in its summary
   # and includes unhandled loader errors in its fail count, without test rows.
   if [ ! -d "$1/node_modules" ] && awk '
