@@ -34,7 +34,7 @@ legacy_out="$( { printf '%s' "$PAYLOAD" | bash "$HOOK" 2>"$TMP_ROOT/err"; } \
 assert_eq "rc=$legacy_rc out=$legacy_out err=$(cat "$TMP_ROOT/err")" "rc=1 out= err=" \
   "control: the old payload writer fails the silent stop observation"
 assert_eq "$(case "$(cat "$TMP_ROOT/writer-err")" in
-  *'printf: write error: Broken pipe'*) echo broken-pipe ;; *) echo missing ;; esac)" broken-pipe \
+  (*'printf: write error: Broken pipe'*) echo broken-pipe ;; (*) echo missing ;; esac)" broken-pipe \
   "control: the old writer reports its broken pipe"
 
 PLANTED="$TMP_ROOT/doc-drift-check.sh"
