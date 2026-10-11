@@ -607,7 +607,7 @@ assert_eq "harness=$(orec harness) home=$(orec home) model=$(orec model) effort=
 # later dead-overseer relaunch replays. The pending line written before the
 # window opened is oversee_succeed_record.sh's row.
 assert_eq "$(recorded_line)" \
-  "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
+  "env CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "a succession records the line it launched, for a later dead-overseer relaunch"
 # The succession's context arm, run from outside the caller's pane on the
 # reading the turn-end hook hands it: a caller past the context mark on an

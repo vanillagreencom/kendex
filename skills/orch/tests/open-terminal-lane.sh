@@ -267,8 +267,8 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - 
 ACCOUNT_FORM_CONTROL="$(mutant_scripts account-form lib/lane-launch.sh)" || exit 1
 orch_fixture_shared_libs "${ACCOUNT_FORM_CONTROL%/scripts}"
 mutate_file "$ACCOUNT_FORM_CONTROL/lib/lane-launch.sh" \
-  '"${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }"' \
-  '"${compaction:+env $compaction }" "$(lane_single_quote "${form##*/}")" "${cmd#"$harness" }"'
+  '"${launch_env:+env $launch_env }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }"' \
+  '"${launch_env:+env $launch_env }" "$(lane_single_quote "${form##*/}")" "${cmd#"$harness" }"'
 ACCOUNT_FORM_OBS="$(lane_launch "$ACCOUNT_FORM_CONTROL/open-terminal" account-form-control claude "$LNLANE" "$LNLANE" - "rc form bare" clock=virtual)"
 assert_eq "$ACCOUNT_FORM_OBS" "rc=0 form=none bare=1" \
   "control: an unresolved launcher is read as bare instead of the account's absolute path"

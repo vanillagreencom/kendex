@@ -576,7 +576,7 @@ assert_eq "$(compaction_child "$MUTANT_CUSTOM" custom 'codex -c model_auto_compa
 
 # Removing transport leaves the stub with only its inherited, invalid value.
 MUTANT_COMPACTION="$(mutant_scripts lane-launch-compaction lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
-mutate_file "$MUTANT_COMPACTION" '"${compaction:+$compaction }"' '""'
+mutate_file "$MUTANT_COMPACTION" '"${launch_env:+$launch_env }"' '""'
 assert_eq "$(compaction_child "$MUTANT_COMPACTION" prefix 'codex -c model_auto_compact_token_limit=300000' | jq -c '.evidence')" \
   null 'control: the child loses evidence when the launch line omits transport'
 

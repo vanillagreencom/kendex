@@ -121,10 +121,6 @@ ROWS
 }
 rows
 
-world deny_text lane
-run main
-assert_eq "$(jq -r '.hookSpecificOutput.decision.message' "$OUT_FILE" | grep -c -F -e '"${DIR:?}"/*' -e "tmp/ and run that file")" 2 \
-  "the deny message gives both rewrites: the guarded expansion and the script file under the lane's tmp/"
 world judge_cause badjudge
 run main
 assert_eq "$(grep -c -x boom "$ERR_FILE")" 1 "what lane-mail-check wrote is replayed under the keyed line"

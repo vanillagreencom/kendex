@@ -1335,6 +1335,25 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
   printf 'ORCH_COMPACTION_OVERRIDES=%s' "$(lane_single_quote "$overrides")"
 }
 
+# Claude's critical-path prompts survive bypassPermissions. The provider's
+# https://code.claude.com/docs/en/permission-modes#critical-paths and
+# https://code.claude.com/docs/en/env-vars require these switches in the
+# launching environment, not a settings env block. The inline switch needs
+# v2.1.288. Subagents inherit them from the launched session.
+lane_launch_rm_prompt_env() { # CMD HARNESS
+  local spellings i
+  [[ "$2" == claude ]] || return 0
+  spellings="$(launch_choice_transfer_permission_spellings claude)" || return 1
+  launch_choice_shell_words "$1" || return 1
+  for ((i = 0; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
+    [[ "${LAUNCH_CHOICE_ARGV[i]}" != -- ]] || break
+    launch_choice_permission_match "$spellings" "${LAUNCH_CHOICE_ARGV[i]}" "${LAUNCH_CHOICE_ARGV[i+1]:-}"
+    (( LAUNCH_CHOICE_PERMISSION_SPAN > 0 )) || continue
+    printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'
+    return 0
+  done
+}
+
 # The launch line for a command that must run on a chosen account, under the
 # form lane_launch_form picked for it.
 #
@@ -1359,15 +1378,16 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true env_words
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words
+  launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex ]]; then
     [[ "$form" != unchecked && "$form" != custom ]] || verified=false
-    compaction=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
+    launch_env=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
   fi
   if [[ "$harness" != copilot ]]; then
     case "$form" in
-      launcher:*) printf '%s%s %s\n' "${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-      *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${compaction:+$compaction }" "$cmd" ;;
+      launcher:*) printf '%s%s %s\n' "${launch_env:+env $launch_env }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+      *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${launch_env:+$launch_env }" "$cmd" ;;
     esac
     return
   fi
