@@ -3,7 +3,7 @@
 # check, the decision-ID check, the cross-target compile of core and the CLI, the Rust inputs that
 # decide whether it and cargo doc run, the suites of the trees the branch
 # touched, and a test binary's death by a signal named apart from a failing
-# test. Every compiler and toolchain call is a stub in fake-bin.
+# test.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GUARD_FULL_CROSS_DOC
 
