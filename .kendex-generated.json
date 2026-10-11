@@ -526,6 +526,7 @@
   ".agents/skills/jarvis/references/memory.md",
   ".agents/skills/jarvis/references/research.md",
   ".agents/skills/jarvis/references/verification.md",
+  ".agents/skills/jarvis/workflows/session.md",
   ".agents/skills/jarvis/workflows/setup-fleet-machine.md",
   ".agents/skills/jarvis/workflows/setup-github.md",
   ".agents/skills/jarvis/workflows/setup-linear.md",

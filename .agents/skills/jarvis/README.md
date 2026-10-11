@@ -8,7 +8,8 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 - [Decision guidance](references/decisions.md) defines which actions need your approval.
 - [Result checks](references/verification.md) keep completion claims tied to evidence.
 - [Communication guidance](references/communication.md) covers replies, decision requests and progress reports.
-- [Session guidance](references/long-session.md) keeps open work available when another assistant takes control.
+- The [session workflow](workflows/session.md) keeps open work available when another assistant takes control.
+- The [home layout](#home-layout) keeps instructions, memory and handoffs available across machines.
 - [Memory guidance](references/memory.md) keeps checked facts and preferences apart from unfinished work.
 - [Computer guidance](references/computer-use.md) covers desktop control, recovery and scratch files.
 - [Browser guidance](references/browser.md) covers forms, private profiles and bot checks.
@@ -38,17 +39,28 @@ Your assistant reads the Jarvis skill when you delegate a task. It follows the r
 
 ## Customise
 
-Keep your own instructions in the folder's `AGENTS.md`. Name your decision owners, permitted work, reporting cadence and quiet hours there.
+Use the [home layout](#home-layout) for your files. Name your decision owners, permitted work, reporting cadence and quiet hours in your standing instructions.
 
-For a skill you write, create `skills/my-task/SKILL.md` in your own catalog folder. Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Install it beside Jarvis for the assistant you use:
+For a skill you write, create a `my-task/SKILL.md` under the own-skills path in the [home layout](#home-layout). Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Run the command in the own-skills row below from your assistant home. Select the harnesses you use with `--harness`.
 
-```sh
-kendex add /path/to/your-catalog --skill my-task --harness codex --yes
-```
+Follow [Memory](references/memory.md) for personal facts and preferences. Put reading routes for those notes in your standing instructions. Follow the [session workflow](workflows/session.md) for unfinished work. Store secrets in a password manager rather than memory notes.
 
-Use your actual catalog path for a personal skill. Select the harnesses you use with `--harness`.
+## Home layout
 
-Keep personal facts and preferences in a private `memory/` folder in your assistant's home. Record where a fact came from and when you checked it. Put reading routes for those notes in your `AGENTS.md`, so the assistant can find the context for a task. Keep unfinished work in a separate handoff note. Store secrets in a password manager rather than memory notes.
+Use a private Git repository for your assistant home. Committed files travel with its commits. Local files stay on one machine.
+
+| Path | Git status | Reason |
+|---|---|---|
+| `AGENTS.md` | Committed | Your standing instructions travel with you. |
+| `skills/own/` | Committed | You are the source; `kendex add ./skills/own/my-task --skill my-task --harness codex --yes` makes your skill available to the harness. |
+| `memory/` | Committed | Durable facts and rulings travel with you under [Memory](references/memory.md). |
+| `state/`, with `state/handoff.md` and `state/archive/` | Committed | Current and archived handoffs travel with you without secrets under [Handoff](references/long-session.md#handoff); an app-managed home permits model file and shell writes only here. |
+| `.agents/skills/` and each harness's skill directory, such as `.claude/skills/` | Committed | kendex renders or links installed skills here so a clone has them; VGS reads the Jarvis render when present. |
+| `skills/base/` | Local | VGS supplies this package copy only without kendex; it removes the copy when the kendex render is present. |
+| `tmp/` | Local | Scratch files stay on this machine under [Scratch files](references/computer-use.md#scratch-files). |
+| `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
+
+`kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. These lines keep scratch and secrets out of Git. You do not need to add them yourself.
 
 ## Licence
 

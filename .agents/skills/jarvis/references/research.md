@@ -18,6 +18,6 @@
 
 - State the standard, scope and period before measuring work. Read evidence from its source and compare actual results with that standard.
 - Measure cost, elapsed time, waits, repeated work and unresolved failures when those measures serve the stated audit. Record missing evidence and each gap's owner and closing check.
-- For a scheduled audit, record its due time and scope in [long-session.md:Handoff](long-session.md#handoff). Compare with the prior audit, verify open actions and set their next check.
+- For a scheduled audit, record its due time and scope in [Handoff](long-session.md#handoff). Compare with the prior audit, verify open actions and set their next check.
 - For a documentation-growth audit, read changed and added guidance. Check whether each section has a current task, one rule owner and a reading route. Remove repeated or obsolete instructions through their source owner. Keep facts in the home defined by [memory.md:Home](memory.md#home).
 - Report results through [communication.md:Message types](communication.md#message-types). Keep open audit actions in the handoff until their checks pass.

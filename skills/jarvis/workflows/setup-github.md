@@ -4,6 +4,8 @@ Run when the user asks to connect GitHub.
 
 Read [Secret transfer](../references/accounts-and-secrets.md#secret-transfer), [Message types](../references/communication.md#message-types) and [Authority](../references/decisions.md#authority) before acting.
 
+Use the [home layout](../README.md#home-layout) for home paths.
+
 ## Steps
 
 1. **Jarvis**: Read the user's instructions and [Account ledger](../references/accounts-and-secrets.md#account-ledger) for the intended GitHub account and local tool home. Resolve missing values with a decision request.

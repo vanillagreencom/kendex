@@ -26,6 +26,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## Setup
 
+Use the [home layout](README.md#home-layout) for the assistant home.
+
 kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`.
 
 ### Plain folder
@@ -38,14 +40,14 @@ The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.m
 
 ## Reading routes
 
-Read the reference for the task before acting.
+Read the linked workflow or reference for the task before acting.
 
 | Task | Read first |
 |---|---|
 | Choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [references/communication.md](references/communication.md) |
-| Start a continuing session, reconcile open work or transfer control | [references/long-session.md](references/long-session.md) |
+| Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
 | Use an automation browser, fill a form or handle a bot check | [references/browser.md](references/browser.md) |
