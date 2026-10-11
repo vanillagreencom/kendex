@@ -64,7 +64,7 @@ LNCODEXSELF="$TMP_ROOT/.codex"; mkdir -p "$LNCODEXSELF"
 # lands inside the window where only the picked value is on the tree.
 cat > "$TMP_ROOT/lane-tree" <<'STUBEOF'
 #!/usr/bin/env bash
-OT_VAR="$1" OT_LEAF="$3" OT_TRIGGER="${4:-}" OT_GATE="${5:-}" env "$1=$2" bash -c '
+OT_VAR="$1" OT_LEAF="$3" OT_TRIGGER="${4:-}" OT_GATE="${5:-}" OT_HARNESS="$6" env "$1=$2" bash -c '
   if [[ -n "$OT_TRIGGER" ]]; then
     while [[ ! -e "$OT_TRIGGER" ]]; do sleep 0.1; done
     sleep 0.3
@@ -73,12 +73,16 @@ OT_VAR="$1" OT_LEAF="$3" OT_TRIGGER="${4:-}" OT_GATE="${5:-}" env "$1=$2" bash -
   # taken before the launch is verified settles on it, then hands over and only
   # then lets the pane look launched.
   [[ -z "$OT_GATE" ]] || sleep 2
-  env "$OT_VAR=$OT_LEAF" sleep 30 &
+  env "$OT_VAR=$OT_LEAF" "$OT_HARNESS" 30 &
   [[ -z "$OT_GATE" ]] || : > "$OT_GATE"
   wait' &
 wait
 STUBEOF
 chmod +x "$TMP_ROOT/lane-tree"
+# The account read selects a harness by process name. These live leaves keep
+# the sleep lifetime while carrying the command name the launch promises.
+cp "$(command -v sleep)" "$TMP_ROOT/claude"
+cp "$(command -v sleep)" "$TMP_ROOT/codex"
 # Depth first, so a parent is never killed before the children it would orphan.
 kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tree "$p"; done; kill "$1" 2>/dev/null || true; }
 
@@ -185,7 +189,7 @@ lane_launch() {
   local gate=""
   [[ "$late" != late ]] || trigger="$runs/trigger"
   [[ "$late" != gated ]] || gate="$runs/gate"
-  "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" & tree=$!
+  "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" "$TMP_ROOT/$harness" & tree=$!
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \

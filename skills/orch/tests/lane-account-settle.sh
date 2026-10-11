@@ -122,5 +122,41 @@ if lane_process_env_readable; then
     "control: a bound counted in pauses rather than seconds ends the reading early"
 fi
 
+echo "=== helpers do not select the harness account ==="
+if lane_process_env_readable; then
+  # Both executables retain their command names while waiting. The helper sends
+  # readiness through a pipe after exec, so the check reads the whole tree.
+  cp "$BASH" "$BIN/codex"
+  cp "$BASH" "$BIN/node_repl"
+  CODEX_STUB='env -i PATH="$PATH" CODEX_HOME="$OTHER_HOME" "$BIN/node_repl" -c '\''printf "ready\n" >&8; read -r -t 30 hold <&9 || true'\'' &
+child=$!
+trap '\''kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true'\'' EXIT
+wait "$child"'
+  account_row() { # LIB
+    (
+      source "$1"
+      mkfifo "$TMP_ROOT/ready" "$TMP_ROOT/hold"
+      exec 8<> "$TMP_ROOT/ready" 9<> "$TMP_ROOT/hold"
+      env -i PATH="$PATH" CODEX_HOME="$TMP_ROOT/picked" OTHER_HOME="$TMP_ROOT/default" BIN="$BIN" \
+        "$BASH" -c '"$1" -c "$2" & child=$!; trap '\''kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true'\'' EXIT; wait "$child"' \
+        pane "$BIN/codex" "$CODEX_STUB" &
+      pane_pid=$!
+      trap 'kill "$pane_pid" 2>/dev/null || true; wait "$pane_pid" 2>/dev/null || true; rm -- "$TMP_ROOT/ready" "$TMP_ROOT/hold"' EXIT
+      read -r -t 5 ready <&8
+      [[ "$ready" == ready ]]
+      tmux() { printf '%s\n' "$pane_pid"; }
+      PATH="$BIN:$PATH"
+      lane_account_check %1 CODEX_HOME "$TMP_ROOT/picked" prefix 1 || true
+      printf '%s' "$LANE_ACCOUNT_RESULT"
+    )
+  }
+  assert_eq "$(account_row "$LIB")" verified \
+    "a codex process on the picked home ignores a node_repl child on another home"
+  ACCOUNT_CONTROL="$(mutant_scripts helper-account lib/lane-launch.sh)" || exit 1
+  mutate_file "$ACCOUNT_CONTROL/lib/lane-launch.sh" '[[ "$command" == "$harness" ]] || continue' ':'
+  assert_eq "$(account_row "$ACCOUNT_CONTROL/lib/lane-launch.sh")" mismatch \
+    "control: reading every descendant lets node_repl replace the picked harness account"
+fi
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

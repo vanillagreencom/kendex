@@ -1477,8 +1477,8 @@ lane_copilot_allows_all() { # CMD [HARNESS]
   return 1
 }
 
-# The lane variable's value in the DEEPEST process under pane pid $1 that
-# carries it, empty when none does. Breadth first, so no carrier found later is
+# The lane variable's value in the DEEPEST harness process under pane pid $1,
+# empty when none does. Breadth first, so no harness found later is
 # shallower than one found earlier.
 #
 # Deepest, not first: under `env VAR=<picked> claude` the env process carries
@@ -1489,13 +1489,22 @@ lane_copilot_allows_all() { # CMD [HARNESS]
 # pgrep's 0 and 1 are its two answers and anything else is the probe breaking.
 # pgrep, not `ps --ppid`, which is procps-only and rejected by BSD ps.
 lane_observed_dir() { # PANE_PID NAME
-  local name="$2" frontier next pid kids value rc found=""
+  local name="$2" frontier next pid kids value rc found="" harness command
+  case "$name" in
+    CODEX_HOME) harness=codex ;;
+    COPILOT_HOME) harness=copilot ;;
+    PI_CODING_AGENT_DIR) harness=pi ;;
+    *) harness=claude ;;
+  esac
   frontier="$(pgrep -P "$1" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; frontier=""; }
   while [[ -n "$frontier" ]]; do
     next=""
     for pid in $frontier; do
       kids="$(pgrep -P "$pid" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; kids=""; }
       [[ -z "$kids" ]] || next+="$kids"$'\n'
+      # Helpers can carry a different home without changing the harness account.
+      read -r command 2>/dev/null < "/proc/$pid/comm" || continue
+      [[ "$command" == "$harness" ]] || continue
       # A process that exits mid-walk takes its /proc entry with it; that is an
       # absent value, not a broken probe.
       # 2> BEFORE <: redirections apply left to right, so a suppression written
@@ -1503,7 +1512,7 @@ lane_observed_dir() { # PANE_PID NAME
       # stderr — a shell error in the launch output for the very case the
       # comment above calls an absent value.
       value="$(tr '\0' '\n' 2>/dev/null < "/proc/$pid/environ" | sed -n "s/^$name=//p" | tail -1)" || value=""
-      [[ -z "$value" ]] || found="$value"
+      found="$value"
     done
     frontier="$next"
   done
