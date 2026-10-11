@@ -1,1 +1,0 @@
-- Round acceptance treats a failing validation artifact as final after the dev workflow's permitted in-round correction and rerun.

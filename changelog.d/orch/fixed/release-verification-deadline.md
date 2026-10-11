@@ -1,1 +1,0 @@
-- Release-triggered verification waits with no deadline until a matching release exists. Its line shows the merge date. The deadline starts at release publication. Merge-triggered deadlines keep their clock from merge.

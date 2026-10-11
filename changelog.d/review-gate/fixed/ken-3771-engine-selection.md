@@ -1,1 +1,0 @@
-- Consumer CI installs the release selected by its refresh caller. The refresh engine and verifier use the same version while a newer release waits for the major tag move.

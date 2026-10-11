@@ -1,1 +1,0 @@
-- CI setup documentation describes how the trusted refresh caller selects the engine release.

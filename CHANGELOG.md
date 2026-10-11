@@ -6,6 +6,59 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-10-11
+
+### Added
+
+- A run can select the default catalog's revision with `KENDEX_CATALOG_REV`. A source's declared revision takes precedence.
+
+### Packages
+
+#### dev
+
+- Fix items that name an owner cover that owner's states in one table.
+- Dev agents keep the validation mode and base for the permitted in-round correction and rerun, without an overseer ask.
+
+#### github
+
+- Pull request timelines exclude reply-only bot reviews and Copilot review checks from CI time. They report a clean CI span from each workflow run's latest attempt on the final head. Partial reruns exclude copied job times from earlier attempts.
+
+#### harness-ci
+
+- Keep refresh pull requests in the render class when their only manifest change increases the top-level schema by one, including schema-only refreshes after head verification. Other manifest edits still require configuration review.
+- CI setup documentation describes how the trusted refresh caller selects the engine release.
+- Run the CI template's skip check from the default branch on every event, refuse a missing helper, and update checkout to v7 under the documented action pinning policy.
+
+#### linear
+
+- Issue updates clear the description when the supplied text or description file is empty. Closing an owner ask also removes its action line when no other text remains.
+
+#### orch
+
+- CI waits use the `CI_WAIT_MAX_SECS` setting when no positional budget is given. Set it above the longest required job's run time. The default stays at 600 seconds.
+
+  You do: nothing
+- **Breaking:** Owner asks with `--issue` require `--do` text. The issue description opens with the person's action and closing evidence. The ask replaces an existing action line and restores a removed line during the watch's existing read. Closing an ask shows the latest remaining tracker ask's action. Closing the last tracker ask for that issue removes the line and owner assignment.
+- Round acceptance treats a failing validation artifact as final after the dev workflow's permitted in-round correction and rerun.
+- Verification reports overdue boxes even with blockers. Readers show UTC deadlines and blocker ids. Invalid checklists no longer stop other items from being read. Reconciliation accepts fractional merge times and reports missing local merges without stopping the sweep.
+- Copilot review requests keep an active run, pending request or completed review at the current head. Error reviews still permit the existing retry. Failed evidence reads send no request.
+- Fix rounds detect a repeated rule across sites through its optional owner. Refused rounds leave audit rows that merged cycle records retain.
+- Release-triggered verification waits with no deadline until a matching release exists. Its line shows the merge date. The deadline starts at release publication. Merge-triggered deadlines keep their clock from merge.
+- Starting a new dev or review round closes every earlier open stage of the same kind as superseded. `oversee-cycle stages` marks those rows with `superseded=1`.
+
+#### project-management
+
+- Issues and parent issues open with their outcome and completion checks. Initiative and project descriptions use a plain outcome sentence and short sections, with ownership and resource fields set during roadmap creation.
+
+#### review-gate
+
+- Consumer refreshes render the default catalog at the installed release tag when the source has no declared revision. A declared revision takes precedence.
+- Consumer CI installs the release selected by its refresh caller. The refresh engine and verifier use the same version while a newer release waits for the major tag move.
+
+#### reviewer
+
+- Review findings can name the symbol that must hold a rule shared across sites.
+
 ## [1.16.0] - 2026-10-11
 
 ### Added
@@ -2723,7 +2776,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.16.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.17.0..HEAD
+[1.17.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.17.0
 [1.16.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.16.0
 [1.15.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.15.0
 [1.14.4]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.4

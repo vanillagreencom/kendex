@@ -1,1 +1,0 @@
-- Review findings can name the symbol that must hold a rule shared across sites.

@@ -1,1 +1,0 @@
-- Run the CI template's skip check from the default branch on every event, refuse a missing helper, and update checkout to v7 under the documented action pinning policy.

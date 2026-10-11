@@ -1,1 +1,0 @@
-- Dev agents keep the validation mode and base for the permitted in-round correction and rerun, without an overseer ask.
