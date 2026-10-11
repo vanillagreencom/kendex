@@ -1,1 +1,3 @@
-- Set `ORCH_PR_ORDER` to choose `review-first`, `open-first` or `push-first` for any repository. When unset, private repositories keep `open-first`; public and internal repositories keep `review-first`. Opt into `push-first` to validate covered rounds through required pull-request CI. Push-first keeps interim heads draft until internal review passes and requests Copilot when the head becomes ready.
+- Set `ORCH_PR_ORDER` to choose `review-first`, `open-first` or `push-first` for any repository. Push-first lets covered implementation and internal-fix rounds defer validation to required pull request CI before publication. Submit verifies required CI on the published head before merge. Uncovered work keeps local validation.
+
+  You do: in `kendex.settings.toml` under `[env]`, set `ORCH_PR_ORDER = "push-first"` and `DEV_VALIDATE_CI_CONTEXT = "<the required status check whose pull request run covers DEV_VALIDATE_CMD>"`.
