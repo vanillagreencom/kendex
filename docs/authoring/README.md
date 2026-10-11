@@ -114,7 +114,7 @@ An agent with no row of its own can match skills by name prefix. For example, `r
 
 The consumer can replace an assignment in its own `[agent-skills]` table. Skills removed there stay removed. Refresh adds skills that the catalog newly assigns since the recorded installation. Skill names in a consumer assignment can come from another subscribed catalog.
 
-The list renders into every harness that installs the agent. Claude Code receives `skills:` frontmatter for preload. Other harnesses receive a `## Required Skills` section with paths to the skills.
+Claude Code receives `skills:` frontmatter for preload. Cursor installs the agent as a rule and omits the skill list. The other harnesses receive a `## Required Skills` section with paths to the skills.
 
 Adding an agent normally installs its available assigned skills. A bundle or `--no-auto-skills` can leave them out. Install and apply warn once per agent and missing skill when the scope has no install declaration for it. A skill installed through a bundle or dependency satisfies the assignment. Install the skill, or remove it from the agent's `[agent-skills]` row. An unresolved consumer assignment warns and the agent still renders with its available skills. A recorded fork with an unavailable skill refuses the operation.
 
