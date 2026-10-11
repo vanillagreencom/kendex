@@ -972,6 +972,8 @@ jobs:
         if: matrix.shard == 'guards-tools'
         run: |
           set -u
+          # Complete the checkout's toolchain install before concurrent readers.
+          tools/rust-reads --cli-smoke . >/dev/null || exit $?
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           set --
@@ -987,6 +989,7 @@ jobs:
         if: matrix.shard == 'guards-tools-tail'
         run: |
           set -u
+          tools/rust-reads --cli-smoke . >/dev/null || exit $?
           fail=0
           failed=""
           for t in tools/tests/harness-smoke.test.sh \

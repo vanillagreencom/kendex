@@ -475,7 +475,24 @@ PARTITION_RUNNER_OS=Linux
 PART="$TMP/partition"
 mkdir -p "$PART/.github/workflows"
 ln -s "$ROOT/skills" "$PART/skills"
-ln -s "$ROOT/tools"  "$PART/tools"
+mkdir -p "$PART/tools"
+for tool in "$ROOT"/tools/*; do
+  [[ "${tool##*/}" != rust-reads ]] || continue
+  ln -s "$tool" "$PART/tools/${tool##*/}"
+done
+# The roster sandbox has no Cargo workspace. Record the dependency call,
+# while the reader's own suite checks its metadata and source derivation.
+cat > "$PART/tools/rust-reads" <<'SH'
+#!/bin/sh
+[ "$*" = '--cli-smoke .' ] || exit 2
+[ -z "${TOOLS_PREP_RECORD:-}" ] || printf 'prepare\n' >> "$TOOLS_PREP_RECORD"
+printf 'metadata\n'
+if [ "${TOOLS_PREP_RESULT:-0}" -ne 0 ]; then
+  printf 'rust-reads: unreadable=cli-smoke\n' >&2
+fi
+exit "${TOOLS_PREP_RESULT:-0}"
+SH
+chmod +x "$PART/tools/rust-reads"
 ln -s "$ROOT/hooks"  "$PART/hooks"
 ln -s "$ROOT/refresh" "$PART/refresh"
 # Pooled calls use the real runners over empty copies of the suite files.
@@ -502,6 +519,7 @@ mkdir -p "$SHIM"
 printf '#!%s\n' "$BASH" > "$SHIM/bash"
 cat >> "$SHIM/bash" <<'SH'
 set -euo pipefail
+[ -z "${TOOLS_PREP_RECORD:-}" ] || printf 'suite\n' >> "$TOOLS_PREP_RECORD"
 case "$1:${2-}" in
   tools/tests/run-all.sh:*) battery=tools/tests ;;
   skills/orch/tests/run-all.sh:--battery) battery="$3" ;;
@@ -528,6 +546,47 @@ exit 0
 SH
 chmod +x "$SHIM/bash"
 export PARTITION_POOL="$POOL" PARTITION_POOL_CLAIMS="$TMP/pool-claims" PARTITION_HOST_PATH="$PATH"
+
+# Execute the real tools blocks with the same dependency boundary as the
+# roster checks. A failed preparation must stop before any suite starts.
+cp "$WORKFLOW" "$PART/.github/workflows/skill-tests.yml"
+split_run_blocks "$WORKFLOW" "$TMP/preparation-blocks"
+for block in "$TMP/preparation-blocks"/*.sh; do
+  shard="$(one_shard "$(cat "${block%.sh}.cond")")"
+  case "$shard" in guards-tools|guards-tools-tail) ;; *) continue ;; esac
+  for platform in Linux macOS; do
+    for defect in none missing late swallowed; do
+      awk -v defect="$defect" '
+        /tools\/rust-reads --cli-smoke/ {
+          call=$0; n++
+          if (defect == "missing" || defect == "late") next
+          if (defect == "swallowed") sub(/\|\| exit \$\?$/, "|| true")
+        }
+        { print }
+        END { if (defect == "late") print call; exit n != 1 }
+      ' "$block" > "$TMP/preparation-step" || { bad "preparation control has no unique call: $shard"; continue; }
+      for result in 0 2; do
+        : > "$TMP/preparation-record"
+        rc=0
+        (cd "$PART" && env -i "PATH=$SHIM:$PATH" "HOME=$HOME" \
+          "RUNNER_OS=$platform" "TOOLS_PREP_RESULT=$result" "TOOLS_PREP_RECORD=$TMP/preparation-record" \
+          "PARTITION_POOL=$POOL" "PARTITION_POOL_CLAIMS=$TMP/pool-claims" "PARTITION_HOST_PATH=$PATH" \
+          "$BASH" --noprofile --norc -e -o pipefail "$TMP/preparation-step") \
+          > "$TMP/preparation-out" 2> "$TMP/preparation-err" || rc=$?
+        valid=no
+        first="$(sed -n '1p' "$TMP/preparation-record")"
+        if [[ "$result" -eq 0 && "$rc" -eq 0 && "$first" == prepare ]] &&
+           grep -qx suite "$TMP/preparation-record" &&
+           ! grep -qx metadata "$TMP/preparation-out"; then valid=yes; fi
+        if [[ "$result" -eq 2 && "$rc" -eq 2 && "$(cat "$TMP/preparation-record")" == prepare ]] &&
+           grep -qx 'rust-reads: unreadable=cli-smoke' "$TMP/preparation-err"; then valid=yes; fi
+        expected=no
+        if [[ "$defect" == none || "$defect:$result" == swallowed:0 ]]; then expected=yes; fi
+        check "tools preparation: $platform $shard $defect result=$result" "$expected" "$valid"
+      done
+    done
+  done
+done
 
 # Serial blocks carry the path marker. Pooled blocks invoke a battery runner.
 # Orch's name-filter calls remain accounted for by section 2.
