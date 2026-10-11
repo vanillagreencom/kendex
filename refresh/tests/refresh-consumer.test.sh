@@ -2214,9 +2214,13 @@ bot_arm render-error 1 'bot-instructions: findings=1' 1 'refresh-error=bot-instr
   $'"$render_status" >&2\n  exit 1\n' $'"$render_status" >&2\n'
 bot_arm refused 2 'bot-instructions: findings=1' 1 'refresh-error=bot-instructions-render value=2' no \
   "grep -qx 'bot-instructions: unconfigured=.*'" 'true'
+# A copy installed before the render reported an unconfigured repository with
+# exit 0 refuses it with exit 2, and the run still leaves that consumer alone.
+bot_arm unconfigured-earlier 2 $'bot-instructions: unconfigured=kendex.toml\nbot-instructions: renders=none' 0 "${skip_line}unconfigured" yes \
+  "  0|2) if grep -qx 'bot-instructions: unconfigured=.*' <<<\"\$render_output\"; then render_skip=unconfigured; fi ;;"$'\n' ''
 rm -f -- "${TMP:?}/state/render-exit" "${TMP:?}/state/render-said"
 # A consumer that installed the package and never configured it is not set
-# up by a refresh: the package refuses as unconfigured, nothing renders, and
+# up by a refresh: the package reports it unconfigured, nothing renders, and
 # the run says why. A runner that does not read the record is the control,
 # and fails on the refusal.
 reset_default
@@ -2224,7 +2228,7 @@ git -C "$repo" rm -q -r -- .github AGENTS.md
 printf 'schema = 7\n' >"$repo/kendex.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
-unconfigured_case="  2) if grep -qx 'bot-instructions: unconfigured=.*' <<<\"\$render_output\"; then render_skip=unconfigured; fi ;;
+unconfigured_case="  0|2) if grep -qx 'bot-instructions: unconfigured=.*' <<<\"\$render_output\"; then render_skip=unconfigured; fi ;;
 "
 for mutation in none unread; do
   reset_default

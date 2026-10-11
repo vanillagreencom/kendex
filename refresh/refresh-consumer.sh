@@ -250,7 +250,11 @@ render_output="$(env -i PATH="$PATH" HOME="$HOME" KENDEX_UI=plain kendex bot-ins
 printf '%s\n' "$render_output"
 case "$render_status" in
   0) if grep -qxF 'bot-instructions-render=absent' <<<"$render_output"; then render_skip=absent; fi ;;
-  2) if grep -qx 'bot-instructions: unconfigured=.*' <<<"$render_output"; then render_skip=unconfigured; fi ;;
+esac
+# The package's render reports an unconfigured repository with exit 0; a copy
+# installed before it did refused one with exit 2.
+case "$render_status" in
+  0|2) if grep -qx 'bot-instructions: unconfigured=.*' <<<"$render_output"; then render_skip=unconfigured; fi ;;
 esac
 if [ -n "$render_skip" ]; then
   printf 'refresh-render=skipped package=bot-instructions cause=%s\n' "$render_skip"

@@ -20,7 +20,9 @@ the `--input` path for `region-bounds`. It is not always a path.
 
 `unconfigured` names the manifest read; `errors.Unconfigured` says when it is
 raised and which callers read it. Its `renders=none` line is the attestation
-`validators.md` § `orphan` defines.
+`validators.md` § `orphan` defines. On `render` the same two lines open a
+clean run on stdout, exit 0, that wrote nothing: `render` is the package's
+installer, and a repository not yet configured has nothing to install.
 
 `region-input` is the one subject a person cannot open: the host writes the
 snapshot to a temporary file and unlinks it as soon as the child returns. The
@@ -36,7 +38,7 @@ import os
 import sys
 import traceback
 
-from .errors import BotInstructionsError, SpecError, ValidationFailed
+from .errors import BotInstructionsError, SpecError, Unconfigured, ValidationFailed
 from . import render, run, tree, verbs
 
 SPEC_FILES = ("SKILL.md", "schemas/renders.md")
@@ -191,6 +193,13 @@ def main(argv=None):
             print(finding, file=sys.stderr)
         return 1
     except BotInstructionsError as exc:
+        if isinstance(exc, Unconfigured) and args.verb == "render":
+            # `Context` raises this only after the orphan scan found nothing,
+            # so the attestation holds and a stranded render stays a finding.
+            print(f"bot-instructions: {exc.key}={exc.subject}")
+            print(f"bot-instructions: {exc.attestation}")
+            print(str(exc))
+            return 0
         # Could not complete, which is 2 in the exit convention the
         # commit-guards pre-commit lane reads: 0 clean, 1 findings, 2 the
         # check could not answer. Everything a validator can attribute to the

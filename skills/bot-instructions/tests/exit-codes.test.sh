@@ -495,4 +495,46 @@ PY
   git -C "$disabled_repo" reset -q --hard HEAD || exit 1
 done
 
+# The installer path: `kendex add` runs `scripts/bot-instructions render` from
+# the repository root with no argument, in a new repository holding a README
+# and a manifest with no `[bot-instructions]` table. A render there finishes
+# having written nothing, and `check` keeps the refusal the pre-commit lane and
+# `kendex verify` read. Both print the record and its attestation. The control
+# is a copy without the render branch, which refused the install with exit 2.
+install_world() {
+  repo="$BI_TMP/install-$1"
+  rm -rf -- "${repo:?}"
+  mkdir -p "$repo" || return 1
+  git -C "$repo" init -q . || return 1
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
+  printf '# empty\n' > "$repo/README.md"
+  git -C "$repo" add README.md || return 1
+  git -C "$repo" -c user.email=fixture@example.invalid -c user.name=fixture commit -qm init || return 1
+  printf 'schema = 7\n' > "$repo/kendex.toml"
+}
+install_tree() { ( cd "$1" && find . -path ./.git -prune -o -type f -exec cksum {} + | sort ); }
+INSTALL_LAUNCH="$BI"
+INSTALL_REFUSES="$(bi_mutant install-refuses scripts/lib/cli.py \
+  '        if isinstance(exc, Unconfigured) and args.verb == "render":' \
+  '        if False:')" || exit 1
+while IFS='|' read -r label launcher verb want; do
+  [ -n "$label" ] || continue
+  install_world "$verb-$launcher" || { bad "$label" 'the world could not be built'; continue; }
+  before="$(install_tree "$repo")"
+  out="$(cd "$repo" && "${!launcher}" "$verb" 2>&1)"
+  status=$?
+  record="$(printf '%s\n' "$out" | head -2)"
+  if [ "$status" = "$want" ] && [ "$(install_tree "$repo")" = "$before" ] &&
+      [ "$record" = $'bot-instructions: unconfigured=kendex.toml\nbot-instructions: renders=none' ]; then
+    ok "$label"
+  else
+    bad "$label" "exit $status: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+  fi
+done <<'EOF'
+the installer render on an unconfigured repository exits 0 and writes nothing|INSTALL_LAUNCH|render|0
+check on an unconfigured repository still refuses with its attestation|INSTALL_LAUNCH|check|2
+control: a render that refuses the unconfigured repository fails the install|INSTALL_REFUSES|render|2
+EOF
+
 bi_summary

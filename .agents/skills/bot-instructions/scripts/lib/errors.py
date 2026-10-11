@@ -70,6 +70,7 @@ class Unconfigured(InputError):
     nothing to render or judge, and a caller that runs every installed
     package's render or check reads this key to leave that repo alone: a
     consumer refresh, the commit-guards pre-commit lane and `kendex verify`.
+    `render`, the installer, prints the same record and exits 0.
     The subject is the manifest that was read. The attestation says the
     orphan scan ran and found nothing; a copy older than that scan raises
     this refusal without it.

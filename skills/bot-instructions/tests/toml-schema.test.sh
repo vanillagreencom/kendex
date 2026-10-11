@@ -414,14 +414,15 @@ expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a tabl
   'a bot configuration scalar is refused as a table error naming the selected file' \
   check --repo "$repo"
 # A missing table is no schema finding: the package was never configured
-# here, and the record says so. refresh-consumer.sh in review-gate reads this
-# line to leave such a consumer unrendered. Without the refusal the run falls
+# here, and the record says so. The commit-guards pre-commit lane and
+# `kendex verify` read this line to leave such a repository alone; the
+# installer row in exit-codes.test.sh holds `render`. Without the refusal the run falls
 # through to the schema, which is the control.
 printf 'schema = 7\n' > "$repo/kendex-local.toml"
 unconfigured_raise='            raise Unconfigured(config_path)
 '
 for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_raise" '')"; do
-  out="$("$launcher" render --repo "$repo" 2>&1)"
+  out="$("$launcher" check --repo "$repo" 2>&1)"
   status=$?
   case "$launcher:$status:$(printf '%s\n' "$out" | grep -cxF 'bot-instructions: unconfigured=kendex-local.toml')" in
     "$BI:2:1") ok 'a missing bot table is refused as unconfigured, naming the manifest read' ;;
