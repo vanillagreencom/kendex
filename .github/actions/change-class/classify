@@ -172,9 +172,9 @@
 #   none   otherwise: a workflow that selects its jobs itself leaves
 #          COVERS_ALL_LANES unset, and its records say none.
 #
-# lanes and lane_verdicts are written after every other verdict, and
-# record_dir after them: a refusal anywhere above leaves neither lanes
-# output, and the failed step runs every lane.
+# Outputs reach the caller only after the proof and record checks succeed.
+# A refusal leaves the caller's output file unchanged, and the failed step
+# runs every lane.
 #
 # A segment is what the path holds, not what the caller hopes: `skills/AGENTS.md`
 # puts `AGENTS.md` in changed_skills. Over-inclusion is the safe direction —
@@ -235,6 +235,12 @@ fi
 
 work="$(mktemp -d)" || die mktemp-failed "could not create a working directory"
 trap 'rm -rf -- "${work:?}"' EXIT
+
+# The wrapped classifiers also write outputs. Keep their answers private
+# until this step has checked the proof that can stand consumer lanes down.
+step_output="$GITHUB_OUTPUT"
+export GITHUB_OUTPUT="${work:?}/outputs"
+: >"$GITHUB_OUTPUT"
 
 args=(--event "$EVENT" --head "$HEAD" --repo "$REPO")
 [ -z "${BASE:-}" ] || args=("${args[@]}" --base "$BASE")
@@ -479,10 +485,15 @@ if [ "$(proof_line kind)" = macos-patch ]; then
   proof_record=""
 fi
 case "$proof_reuse" in
-  true | false) [ -n "$proof_reason" ] ;;
+  true)
+    [ "$proof_reason" = exact-proof ] &&
+      [ -n "$proof_run" ] &&
+      [ -n "$proof_tree" ] &&
+      [ -f "$proof_record" ] && [ -r "$proof_record" ] && grep -q '[^[:space:]]' -- "$proof_record" ;;
+  false) [ -n "$proof_reason" ] ;;
   *) false ;;
 esac || die "proof-unreadable lines=$(printf '%s' "$proof_out" | tr '\n' ' ')" \
-  "proof printed no reuse and reason lines this action knows"
+  "proof printed an unknown answer or claimed reuse without a complete readable proof"
 printf 'proof: reuse=%s reason=%s run=%s %s\n' "$proof_reuse" "$proof_reason" \
   "$proof_run" "$(proof_line detail)" >&2
 
@@ -641,3 +652,4 @@ if [ -n "$record_dir" ]; then
     "$(sed -n 's/^covers=//p' "$record")" >&2
 fi
 printf 'record_dir=%s\n' "$record_dir" >>"$GITHUB_OUTPUT"
+cat -- "$GITHUB_OUTPUT" >>"$step_output"

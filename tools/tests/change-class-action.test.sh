@@ -165,12 +165,18 @@ record=""
 if [ "${STUB_REUSE:-false}" = true ]; then
   record="$1/record"
   printf '%s\n' "${STUB_RECORD:-}" >"$record"
+  case "${STUB_RECORD_MODE:-}" in
+    whitespace) printf ' \t\n' >"$record" ;;
+    missing) rm -- "$record" ;;
+    directory) rm -- "$record"; mkdir "$record" ;;
+    unreadable) chmod 000 "$record" ;;
+  esac
 fi
 reason=ineligible-event
 [ "${STUB_REUSE:-false}" != true ] || reason=exact-proof
 printf 'tree=%s\nworkflow=%s\nreuse=%s\nreason=%s\ndetail=stub\nrun=%s\nrecord=%s\n' \
   "${STUB_TREE:-}" "${STUB_WORKFLOW-.github/workflows/ci.yml}" "${STUB_REUSE:-false}" \
-  "${STUB_REASON:-$reason}" "${STUB_RUN:-}" "$record"
+  "${STUB_REASON:-$reason}" "${STUB_RUN:-}" "${STUB_RECORD_PATH-$record}"
 [ -z "${STUB_KIND:-}" ] || printf 'kind=%s\npatch_id=%s\nmacos_contract=%s\n' \
   "$STUB_KIND" "${STUB_PATCH:-}" "${STUB_MACOS_CONTRACT:-}"
 STUB
@@ -458,7 +464,7 @@ refusal_rows=0
 while IFS='|' read -r cause assignments; do
   refusal_rows=$((refusal_rows + 1))
   case "$assignments" in
-    *STUB_PATHS_UNREADABLE=* | *STUB_OUTPUT_UNREADABLE=*)
+    *STUB_PATHS_UNREADABLE=* | *STUB_OUTPUT_UNREADABLE=* | *STUB_RECORD_MODE=unreadable*)
       if [ "$(id -u)" -eq 0 ]; then
         printf '  skip  refusal %s: root reads a mode-000 file\n' "$cause"
         continue
@@ -467,7 +473,12 @@ while IFS='|' read -r cause assignments; do
   # shellcheck disable=SC2086 # the assignments are blank-separated words
   status="$(run "$CLASSIFY" $assignments)"
   check "refusal $cause: exit" "2" "$status"
-  check "refusal $cause: key" "$cause" "$(refusal)"
+  actual="$(refusal)"
+  case "$cause" in
+    proof-unreadable | queue-only-unreadable) actual="${actual%% *}" ;;
+  esac
+  check "refusal $cause: key" "$cause" "$actual"
+  check "refusal $cause: no outputs" "" "$(cat "$OUT")"
 done <<ROWS
 classifier-unreadable root=$TMP/nowhere|CLASSIFIER=$TMP/nowhere
 missing-event|EVENT=
@@ -476,7 +487,7 @@ missing-repo|REPO=
 missing-output-file|GITHUB_OUTPUT=
 classifier-failed status=2|STUB_CLASS_EXIT=2
 verdict-unreadable class-line=change_class=enormous|STUB_CLASS=enormous
-queue-only-unreadable path=$OUT|STUB_OUTPUT_UNREADABLE=1
+queue-only-unreadable|STUB_OUTPUT_UNREADABLE=1
 path-reader-failed status=2|STUB_PATHS_EXIT=2 STUB_PATHS=a
 docs-verdict-unreadable docs-line=harness_only=true|STUB_DOCS_LINE=harness_only=true STUB_PATHS=a
 class-without-paths class=micro|STUB_CLASS=micro STUB_PATHS=
@@ -489,8 +500,46 @@ outside-list-unreadable status=2|LANES_FROM=$TMP/decl/good STUB_PATHS=Makefile S
 lanes-reader-unreadable root=$TMP/no-lanes-lib|LANES_FROM=$TMP/decl/good CLASSIFIER=$TMP/no-lanes-lib
 proof-failed status=2|STUB_PROOF_EXIT=2
 proof-unreadable lines=tree= workflow=.github/workflows/ci.yml reuse=maybe reason=ineligible-event detail=stub run= record=|STUB_REUSE=maybe
+proof-unreadable|STUB_REUSE=true STUB_RUN= STUB_TREE=t1 STUB_RECORD=covers=all
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE= STUB_RECORD=covers=all
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD=
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD=covers=all STUB_REASON=ineligible-event
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD_PATH=
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD_MODE=whitespace
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD_MODE=missing
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD_MODE=directory
+proof-unreadable|STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD=covers=all STUB_RECORD_MODE=unreadable
 ROWS
 require_rows refusal "$refusal_rows"
+
+# The same result each refusal row requires. Keeping a changed rule's
+# condition in the copy makes a control reach the decision it must prove.
+proof_refusal_answer() { # SCRIPT [ASSIGNMENTS]...
+  local script="$1" status cause publication=empty
+  shift
+  status="$(run "$script" STUB_REUSE=true STUB_RUN=42 STUB_TREE=t1 STUB_RECORD=covers=all "$@")"
+  cause="$(refusal)"
+  [ ! -s "$OUT" ] || publication=written
+  printf '%s %s %s' "$status" "${cause%% *}" "$publication"
+}
+mutants=0
+while IFS='@' read -r needle replacement assignments expected; do
+  mutants=$((mutants + 1))
+  plant classify "$needle" "$replacement"
+  # shellcheck disable=SC2086 # the table holds blank-separated assignments
+  answer="$(proof_refusal_answer "$PLANTED" $assignments)"
+  check "must-fail: proof refusal fails without $needle" "$expected" "$answer"
+done <<'ROWS'
+[ -n "$proof_run" ] &&@true &&@STUB_RUN=@0  written
+[ -n "$proof_tree" ] &&@true &&@STUB_TREE=@0  written
+[ -f "$proof_record" ] && [ -r "$proof_record" ] && grep -q '[^[:space:]]' -- "$proof_record" ;;@true ;;@STUB_RECORD=@0  written
+[ "$proof_reason" = exact-proof ] &&@true &&@STUB_REASON=ineligible-event@0  written
+export GITHUB_OUTPUT="${work:?}/outputs"@export GITHUB_OUTPUT="$step_output"@STUB_RUN=@2 proof-unreadable written
+ROWS
+require_rows "proof refusal mutant" "$mutants"
+plant classify '[ -n "$proof_run" ] &&' '[ -n "${proof_run}" ] &&'
+check "a behaviour-preserving proof refusal control keeps its row" '2 proof-unreadable empty' \
+  "$(proof_refusal_answer "$PLANTED" STUB_RUN=)"
 
 # A classify with no proof beside it is a broken action, refused before
 # either wrapped script runs.
@@ -921,7 +970,7 @@ check "a behaviour-preserving queue mutant reads as still answering its row" sur
     '    elif [ "$queue_only" != "true" ]; then' pr-unconfirmed)"
 
 # Patch proof has a separate output and never changes tree lane verdicts.
-status="$(run "$CLASSIFY" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_PATCH=p1 STUB_RUN=42 STUB_RECORD='covers=all')"
+status="$(run "$CLASSIFY" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_PATCH=p1 STUB_RUN=42 STUB_TREE=t1 STUB_RECORD='covers=all')"
 check "patch proof classify exit" "0" "$status"
 check "patch proof keeps integrated lanes" "true false p1" "$(sed -n 's/^lanes=//p' "$OUT") $(sed -n 's/^proof_reuse=//p' "$OUT") $(sed -n 's/^patch_id=//p' "$OUT")"
 check "patch proof publishes macOS record separately" "macos_proof_record=covers=all" "$(outputs | tr ' ' '\n' | grep '^macos_proof_record=')"
@@ -934,15 +983,18 @@ for field in proof_reason proof_run; do
   esac
   sed "$edit" "$CLASSIFY" >"$TMP/patch-metadata-classify"
   ! cmp -s "$CLASSIFY" "$TMP/patch-metadata-classify" || exit 1
-  status="$(run "$TMP/patch-metadata-classify" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_RUN=42 STUB_RECORD='covers=all')"
+  status="$(run "$TMP/patch-metadata-classify" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_RUN=42 STUB_TREE=t1 STUB_RECORD='covers=all')"
   [ "$status" = 0 ] && [ "$(sed -n 's/^proof_reason=//p' "$OUT") $(sed -n 's/^proof_run=//p' "$OUT")" != 'patch-only-proof ' ] &&
     ok "must-fail: stale generic $field" || bad "must-fail: stale generic $field"
 done
 needle='  proof_reuse=false'
 [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] || exit 1
-sed '/^  proof_reuse=false$/d; /^  proof_record=""$/d' "$CLASSIFY" >"$TMP/patch-leak-classify"
+for needle in '  proof_record=""' '  proof_run=""' '  [ "$proof_reason" != exact-proof ] || proof_reason=patch-only-proof'; do
+  [ "$(grep -cxF -- "$needle" "$CLASSIFY")" -eq 1 ] || exit 1
+done
+sed '/^  proof_reuse=false$/d; /^  proof_record=""$/d; /^  proof_run=""$/d; /^  \[ "\$proof_reason" != exact-proof \] || proof_reason=patch-only-proof$/d' "$CLASSIFY" >"$TMP/patch-leak-classify"
 ! cmp -s "$CLASSIFY" "$TMP/patch-leak-classify" || exit 1
-status="$(run "$TMP/patch-leak-classify" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_PATCH=p1 STUB_RECORD='covers=all')"
+status="$(run "$TMP/patch-leak-classify" EVENT=merge_group MACOS_PATCH_PROOF=true STUB_REUSE=true STUB_KIND=macos-patch STUB_PATCH=p1 STUB_RUN=42 STUB_TREE=t1 STUB_RECORD='covers=all')"
 [ "$status" = 0 ] && [ "$(sed -n 's/^lanes=//p' "$OUT")" = false ] && ok "must-fail: patch proof leaks into tree proof" || bad "must-fail: patch proof leak control"
 
 # --- 6. The proof -------------------------------------------------------------

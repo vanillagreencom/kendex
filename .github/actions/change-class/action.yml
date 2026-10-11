@@ -142,7 +142,11 @@ outputs:
       where that run's record names the group's tree; on the merge queue's
       push to the default branch, the merge_group run of the pushed sha.
       false on every other event and on every refusal, whose key
-      proof_reason carries. The rules are
+      proof_reason carries. A true answer requires proof_reason=exact-proof,
+      a nonempty proof_run and proof_tree, and a readable proof_record file
+      with a nonblank line. Otherwise the step exits 2 with
+      cause=proof-unreadable and publishes no outputs. Consumers need no
+      further check of these proof fields. The rules are
       skills/harness-ci/references/wiring.md § Proof reuse.
     value: ${{ steps.classify.outputs.proof_reuse }}
   proof_reason:
@@ -160,7 +164,10 @@ outputs:
       event, change_class, docs_only and one changed_path line per path,
       for a workflow that selects its jobs itself to re-derive what that run
       ran, and its covers and lane lines, which this action applies to
-      lanes and lane_verdicts.
+      lanes and lane_verdicts. Where proof_reuse is true, the record contains
+      a nonblank line read from a readable file. An absent, unreadable or
+      blank record makes the step exit 2 with cause=proof-unreadable before
+      it publishes outputs.
     value: ${{ steps.classify.outputs.proof_record }}
   patch_id:
     description: The whitespace-preserving diff id from the endpoints' merge base, empty when unavailable.
