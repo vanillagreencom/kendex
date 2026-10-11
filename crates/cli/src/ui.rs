@@ -281,6 +281,31 @@ pub fn note(line: &str) {
     tell(Tone::Info, line);
 }
 
+pub(crate) fn outdated_line(projects: &[std::path::PathBuf]) -> Option<String> {
+    let first = projects.first()?;
+    if projects.len() == 1 {
+        return Some(format!(
+            "1 project has an older kendex.toml: {}; upgrade with: kendex refresh --project-path {}",
+            first.display(),
+            kendex_core::names::quoted(&first.to_string_lossy())
+        ));
+    }
+    let paths = projects
+        .iter()
+        .take(3)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rest = match projects.len().saturating_sub(3) {
+        0 => String::new(),
+        count => format!(" and {count} more"),
+    };
+    Some(format!(
+        "{} projects have an older kendex.toml: {paths}{rest}; upgrade each with: kendex refresh --project-path <path>",
+        projects.len()
+    ))
+}
+
 /// A line about something that will not work as the reader expects.
 pub fn warn(line: &str) {
     tell(Tone::Warn, line);
@@ -440,6 +465,42 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // KEN-3682's output table fixes this human notice's wording.
+    #[test]
+    fn outdated_notice_names_one_command_or_bounds_the_project_list() {
+        let rows: &[(&[&str], Option<&str>)] = &[
+            (&[], None),
+            (
+                &["/a"],
+                Some(
+                    "1 project has an older kendex.toml: /a; upgrade with: kendex refresh --project-path '/a'",
+                ),
+            ),
+            (
+                &["/a", "/b"],
+                Some(
+                    "2 projects have an older kendex.toml: /a, /b; upgrade each with: kendex refresh --project-path <path>",
+                ),
+            ),
+            (
+                &["/a", "/b", "/c", "/d", "/e"],
+                Some(
+                    "5 projects have an older kendex.toml: /a, /b, /c and 2 more; upgrade each with: kendex refresh --project-path <path>",
+                ),
+            ),
+            (
+                &["/a project"],
+                Some(
+                    "1 project has an older kendex.toml: /a project; upgrade with: kendex refresh --project-path '/a project'",
+                ),
+            ),
+        ];
+        for (paths, expected) in rows {
+            let projects: Vec<_> = paths.iter().map(std::path::PathBuf::from).collect();
+            assert_eq!(outdated_line(&projects).as_deref(), *expected);
+        }
+    }
 
     /// The override answers for exactly two values. Everything else,
     /// `auto` and a typo alike, leaves the streams to decide.

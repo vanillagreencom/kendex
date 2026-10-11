@@ -53,6 +53,7 @@ mod lock_version_refusal;
 mod marketplace_author;
 mod marketplace_cli;
 mod missing_remedy;
+mod outdated_projects;
 mod output_styles;
 mod packaging_recipes;
 mod pi_append_fallback;

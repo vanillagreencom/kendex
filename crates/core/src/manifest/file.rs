@@ -1,7 +1,7 @@
 //! Reads migrate supported older text in memory. The plan or the next
 //! write persists that rewrite through the existing byte-faithful fold.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::base::Base;
 use crate::env::Env;
@@ -147,6 +147,29 @@ pub fn model_bindings(
     Ok(bindings)
 }
 
+fn root_schema(table: &toml::Table) -> Option<i64> {
+    table.get("schema").and_then(toml::Value::as_integer)
+}
+
+/// Registered projects whose on-disk manifest still names an older schema.
+/// Unreadable settings or project files leave this advisory notice empty.
+pub fn outdated_projects(env: &Env) -> Vec<PathBuf> {
+    let Ok(settings) = crate::settings::load(env) else {
+        return Vec::new();
+    };
+    settings
+        .projects
+        .into_iter()
+        .filter(|root| {
+            std::fs::read_to_string(Env::project_manifest_file(root))
+                .ok()
+                .and_then(|text| text.parse::<toml::Table>().ok())
+                .and_then(|table| root_schema(&table))
+                .is_some_and(|schema| schema < i64::from(MANIFEST_SCHEMA))
+        })
+        .collect()
+}
+
 /// [`load`] for text the caller already read — the importer classifies the
 /// exact bytes its preconditions bind to.
 pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
@@ -156,7 +179,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?;
-    let mut schema = table.get("schema").and_then(toml::Value::as_integer);
+    let mut schema = root_schema(&table);
     if schema.is_some_and(|schema| schema > i64::from(MANIFEST_SCHEMA)) {
         return Err(CoreError::SchemaTooNew {
             path: path.to_path_buf(),
@@ -165,14 +188,14 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
     }
     let mut migrated_text = None;
     let mut migration_notes = Vec::new();
-    if schema.is_some_and(|schema| schema < i64::from(MANIFEST_SCHEMA)) {
+    if let Some(older_schema) = schema.filter(|schema| *schema < i64::from(MANIFEST_SCHEMA)) {
         let mut document =
             text.parse()
                 .map_err(|e: toml_edit::TomlError| CoreError::TomlParse {
                     path: path.to_path_buf(),
                     message: e.to_string(),
                 })?;
-        if let Some(accounts) = super::migrate::migrate(&mut document) {
+        if let Some(accounts) = super::migrate::migrate(&mut document, older_schema) {
             let rewritten =
                 super::fold::serialized(&document, text, super::fold::Serialization::Migration)
                     .map_err(|e| CoreError::TomlParse {
@@ -184,7 +207,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
                     path: path.to_path_buf(),
                     message: e.to_string(),
                 })?;
-            schema = table.get("schema").and_then(toml::Value::as_integer);
+            schema = root_schema(&table);
             migration_notes = accounts.into_iter().map(|account| format!(
                 "{}: {account}; https://github.com/vanillagreencom/kendex/blob/main/CHANGELOG.md",
                 path.display()

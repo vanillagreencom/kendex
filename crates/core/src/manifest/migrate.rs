@@ -17,8 +17,7 @@ const STEPS: &[Step] = &[Step {
     rewrite: schema_6_to_7,
 }];
 
-pub(super) fn migrate(document: &mut DocumentMut) -> Option<Vec<String>> {
-    let schema = document.get("schema")?.as_integer()?;
+pub(super) fn migrate(document: &mut DocumentMut, schema: i64) -> Option<Vec<String>> {
     let start = STEPS
         .iter()
         .position(|step| i64::from(step.from) == schema)?;

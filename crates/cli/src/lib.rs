@@ -325,6 +325,7 @@ pub fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         Ok(code) => {
+            announce_outdated_projects(code);
             ui::finish();
             code
         }
@@ -464,6 +465,21 @@ fn announce_the_terms_on_first_run(env: &Env) {
         legal::LEGAL.privacy_url
     ));
     let _ = legal::accept(env);
+}
+
+fn announce_outdated_projects(code: ExitCode) {
+    if code != ExitCode::SUCCESS
+        || !ui::stderr_is_terminal()
+        || kendex_core::privilege::acting_as_root()
+    {
+        return;
+    }
+    let Ok(env) = Env::detect() else {
+        return;
+    };
+    if let Some(line) = ui::outdated_line(&kendex_core::manifest::outdated_projects(&env)) {
+        ui::note(&line);
+    }
 }
 
 /// The command the person typed, without its flags and arguments: the

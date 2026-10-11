@@ -82,6 +82,7 @@ mod model_classes;
 mod not_offered_note;
 mod opencode_commands;
 mod opencode_mcp;
+mod outdated_projects;
 mod output_styles;
 mod package_checks_plan;
 mod package_detail;
