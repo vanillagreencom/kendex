@@ -1,0 +1,1 @@
+- Cycle targets forgive one clean final-head CI run and merge-group CI. Cycle records and progress reports show lane-controlled time beside open-to-merge time, with miss share based on lane-controlled time.

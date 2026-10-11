@@ -53,6 +53,33 @@ seed_fleet() {
 # the Escapes ones below, each on a later clock, reads a count.
 ESCAPES_UNREAD="Escapes: unread (the clock reads before the cap week 2026-09-28)"
 
+echo "=== render: the cycle owner supplies lane and open medians beside Landed ==="
+# The report file is the overseer's protocol. Old records have no lane time;
+# new records carry both spans. Their stored verdicts cannot set miss share.
+cycle_report() {
+  new_case "cycle-$1"
+  fleet '' \
+    '{"item":"KEN-1","status":"done","cycle":{"class":"micro","actual":3557,"lane_secs":1200,"open":3437,"verdict":"miss"}}' \
+    '{"item":"KEN-2","status":"done","cycle":{"class":"micro","actual":8899,"lane_secs":6536,"open":8779,"verdict":"met"}}' \
+    '{"item":"KEN-3","status":"done","cycle":{"class":"micro","actual":2500,"lane_secs":900,"open":2380,"verdict":"miss"}}' \
+    '{"item":"KEN-4","status":"done","cycle":{"class":"small","actual":100,"open":80,"verdict":"met"}}'
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$(awk '/^Landed|^Cycles:/' <<<"$OUT")" \
+    '0|Landed: none
+Cycles: class=micro lane_median=1200 open_median=3437 miss_share=1/3
+Cycles: class=small lane_median=- open_median=80 miss_share=-' \
+    'the report shows both class medians beside Landed and leaves legacy lane time unread'
+}
+cycle_report shipped
+CYCLE_REPORT="$(mutant_scripts cycle-report/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/cycle-report/github"
+mutate_file "$CYCLE_REPORT" 'class|lane_median|open_median|miss_share' 'class|open_median|miss_share'
+if (FAIL=0; REPORT_UNDER_TEST="$CYCLE_REPORT" cycle_report missing-lane; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/cycle-report.out"; then
+  fail 'the report mutation did not redden the cycle row'
+else
+  assert_file_contains "$TMP_ROOT/cycle-report.out" '  FAIL  ' 'the report rejects a missing lane median'
+fi
+
 echo "=== render: the rows from a fleet ==="
 seed_fleet render_fleet
 run -- render --state "$CASE/state.json" --repo owner/repo

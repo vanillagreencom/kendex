@@ -167,6 +167,9 @@ Rows:
                   `ITEM (direct push, SHA)`, with the commit's first 7
                   characters. Rows sort by time, oldest first; a direct
                   push uses its cycle row's at.
+  Cycles          one line per recorded class beside Landed: lane_median and
+                  open_median in seconds, plus miss_share on lane-controlled
+                  time. The read-only oversee-cycle report owns these figures.
   Escapes         one line under Landed: pull requests merged to the base
                   branch resolve-base-branch names that a revert commit
                   there names as #N, or a `Regressed-by: #N` line (plain or
@@ -884,6 +887,17 @@ render() {
     landed_name="Landed (since $cut_since, earlier merges not listed)"
   fi
   table "$landed_name" "$rows"
+  # Use the cycle owner on this report's snapshot, so a concurrent fleet
+  # write cannot give the two sections different records.
+  printf '%s\n' "$STATE_JSON" > "$WORK_DIR/workflow-state-oversee.json" || refuse state "$STATE"
+  list="$("$SCRIPT_DIR/oversee-cycle" --state-dir "$WORK_DIR" report 2>"$WORK_DIR/cycle.err")" \
+    || refuse state "$STATE" "$(cat "$WORK_DIR/cycle.err")"
+  awk '/^rollup / {
+    printf "Cycles:"
+    for (i = 2; i <= NF; i++)
+      if ($i ~ /^(class|lane_median|open_median|miss_share)=/) printf " %s", $i
+    print ""
+  }' <<<"$list"
   escapes_row
   echo
 
