@@ -165,5 +165,13 @@ for form in absent inline equals file file-equals nonempty empty-image absent-im
   assert "$form description update sends the requested value" jq -s -e \
     '[.[] | select(.query | contains("issueUpdate")) | .variables.input] | length == 1 and (.[0] | '"$rule"')' "$log"
 done
-assert_fails "update refuses empty --description with --description-file" "mutually exclusive" \
-  issues update PROJ-1 --description "" --description-file "$desc_file"
+log="$TMP_ROOT/empty-conflict.jsonl"
+: >"$log"
+rc=0
+(cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ CURL_PAYLOAD_LOG="$log" \
+  bash "$LINEAR" issues update PROJ-1 --description "" --description-file "$desc_file") \
+  >"$TMP_ROOT/empty-conflict.out" 2>"$TMP_ROOT/empty-conflict.err" || rc=$?
+assert_ne "update refuses empty --description with --description-file: exits nonzero" "$rc" 0
+assert "empty description conflict sends no issue update" jq -s -e \
+  'all(.[]; .query | contains("issueUpdate") | not)' "$log"

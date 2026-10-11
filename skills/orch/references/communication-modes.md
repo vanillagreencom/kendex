@@ -103,7 +103,7 @@ A decision the owner's authority rule reserves to the owner is a reserved ask: a
 
 An ask for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`. The [lane-mail owner-channel contract](../scripts/lane-mail) states the draft's fields and its `text_hash`. Send only when the approval for that ask id names the `text_hash` that `pending --item overseer --to owner` prints. An edited draft is a new ask.
 
-At `owner-ask-closed`, by any route including the watch's default close, the tracker route posts the ruling on the issue and removes the owner-ask label, assignee and opening action line. The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
+At `owner-ask-closed`, by any route including the watch's default close, the tracker route posts the ruling on the issue. If another tracker-posted ask for that issue remains open, it keeps the owner-ask label and assignee and shows the latest remaining ask's action. Otherwise it removes the label, assignee and opening action line. The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
 
 For a delivered owner request, `--ref` binds the reply to that request's delivery id through the [lane-mail owner-channel contract](../scripts/lane-mail). Answer it under the Reply row and Thread rule in [§ Owner messages](#owner-messages).
 

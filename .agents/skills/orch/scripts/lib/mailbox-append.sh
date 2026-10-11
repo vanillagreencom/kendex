@@ -241,7 +241,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
 }
 
 owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
-  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description
+  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description remaining
   issue="$(jq -r '.issue // empty' <<<"$ask")" || return 1
   [[ -n "$issue" ]] || return 0
   # The close guard supplies the ruling from the owner's last answer or the
@@ -257,11 +257,28 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
   current="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker.err")" || {
     owner_tracker_unwritten "$issue" labels-read; return 0;
   }
-  labels="$(owner_tracker_labels "$current" REMOVE)" || return 1
-  description="$(jq -r "$OWNER_ACTION_JQ"' (.description // "") | owner_action_body + "."' <<<"$current")" || return 1
+  # Distinct owner asks can share an issue. The locked pending reader owns
+  # closure and posting evidence; a closed ask cannot clear another open ask.
+  "${BASH_SOURCE[0]%/lib/mailbox-append.sh}/lane-mail" pending --item overseer --root "$ROOT" --to owner \
+    >"$work/tracker-remaining" 2>"$work/tracker.err" || {
+    owner_tracker_unwritten "$issue" asks-read; return 0;
+  }
+  remaining="$(jq -cs --arg issue "$issue" '[.[] | select(.tracker_posted == true and .issue == $issue)] | last' \
+    "$work/tracker-remaining")" || return 1
+  local owner_args=(--clear-assignee)
+  if [[ "$remaining" != null ]]; then
+    owner_args=()
+    labels="$(owner_tracker_labels "$current" ADD)" || return 1
+    description="$(jq -r --argjson ask "$remaining" "$OWNER_ACTION_JQ"'
+      .assignee as $name | (.description // "")
+      | (if ($ask.do // "") != "" then owner_action_line($name; $ask.do) else owner_action_body end) + "."' <<<"$current")" || return 1
+  else
+    labels="$(owner_tracker_labels "$current" REMOVE)" || return 1
+    description="$(jq -r "$OWNER_ACTION_JQ"' (.description // "") | owner_action_body + "."' <<<"$current")" || return 1
+  fi
   description="${description%.}"
   local label_args=(--clear-labels)
   [[ -z "$labels" ]] || label_args=(--labels "$labels")
-  "$tracker" issues update "$issue" "${label_args[@]}" --clear-assignee --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" ||
+  "$tracker" issues update "$issue" "${label_args[@]}" ${owner_args[@]+"${owner_args[@]}"} --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" ||
     owner_tracker_unwritten "$issue" close-update
 }
