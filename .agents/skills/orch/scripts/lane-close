@@ -302,7 +302,10 @@ a parked record it changes nothing. A local record has no sandbox and refuses.
 Before either park, the lane writes tmp/park-status.json with its head,
 branch, empty porcelain status and reading time at. The park reads Git HEAD
 and the branch ref through lane-host cat, then binds that clean-status record
-to those values. Missing, unreadable or mismatched evidence refuses. A queue
+to those values. This replaces git rev-parse HEAD and git symbolic-ref HEAD:
+the lane-host provider exposes cat/touch, not command execution. The file
+read supports loose refs and packed-refs, not reftable. Missing, unreadable
+or mismatched evidence refuses. A queue
 park whose remote Git read fails may use the item's workflow-state branch;
 its admission or refusal names branch-source=workflow-state.
 --park --until-pr N selects another OPEN PR in the same repository as the
@@ -675,7 +678,7 @@ tracker_read() { # OUT_VAR COMMAND...
 TRACKER_CAUSE=""
 ITEM_END=""
 tracker_terminal() {
-  local value number state reason pr_repo pr_number description checklist pending_pr=null
+  local value number state reason pr_repo pr_number pr_numbers description checklist pending_pr=null
   TRACKER_CAUSE=""
   if [[ "$TERMINAL_MODE" != close ]]; then
     # A resumed sandbox can be stopped or running while its PR is still open.
@@ -685,18 +688,21 @@ tracker_terminal() {
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
   fi
   if [[ "$pending_pr" != null ]]; then
-    # Tracker integration can close the item before its queued PR merges.
+    # Tracker integration can mark Done when the dependency merges while the
+    # lane's own PR stays OPEN. Both retained waits must permit terminal close.
     pr_repo="$(jq -er '.repo | strings | select(length > 0)' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
-    pr_number="$(jq -er '(.until_pr // .pr) | numbers | select(. > 0)' <<<"$pending_pr")" \
+    pr_numbers="$(jq -er '[.pr, .until_pr] | map(select(. != null)) | if length > 0 and all(.[]; type == "number" and . > 0) then unique[] else error("parked-record-invalid") end' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
-    tracker_read state env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' \
-      || { TRACKER_CAUSE=pr-read-failed; return 2; }
-    case "$state" in
-      OPEN) return 1 ;;
-      MERGED|CLOSED) ;;
-      *) TRACKER_CAUSE=pr-state-invalid; return 2 ;;
-    esac
+    while IFS= read -r pr_number; do
+      tracker_read state env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' \
+        || { TRACKER_CAUSE=pr-read-failed; return 2; }
+      case "$state" in
+        OPEN) return 1 ;;
+        MERGED|CLOSED) ;;
+        *) TRACKER_CAUSE=pr-state-invalid; return 2 ;;
+      esac
+    done <<<"$pr_numbers"
   fi
   case "$tracker" in
     linear)
@@ -797,6 +803,10 @@ PARK_BRANCH=""
 PARK_BRANCH_SOURCE=worktree
 PARK_SCRATCH=""
 park_worktree_read() {
+  # git rev-parse HEAD and git symbolic-ref HEAD are the documented interface.
+  # The lane-host provider exposes cat/touch but no command execution, so this
+  # read supports loose refs and packed-refs only. Reftable cannot be read here:
+  # dependency parks refuse worktree-unread; queue parks may use recorded branch.
   local scratch git_dir common head ref rc=0
   scratch="$(mktemp -d)" || return 1
   PARK_SCRATCH="$scratch"
