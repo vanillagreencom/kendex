@@ -3,8 +3,9 @@
 # `dependencies.required`, SKILL being the directory that holds the file. The
 # kendex engine reads the same key when it installs a skill
 # (crates/core/src/source/browse/deps.rs). Every SKILL.md here spells it as a
-# two-space `required:` or `optional:` key holding an inline list of bare
-# names. Anything else this reader meets under `dependencies:` prints `?` and
+# two-space `required:`, `optional:` or `agents:` key holding an inline list
+# of bare names. Only required skills add skill edges; optional skills and
+# agents do not. Anything else under `dependencies:` prints `?` and
 # its file, a name that is not bare prints `?` too, and each caller refuses
 # both rather than read them as no dependency. tools/ci-job-set follows the
 # rows to select shards; tools/shipped-refs judges a link between skills by
@@ -19,6 +20,7 @@ $0 == "---" { front = 0; next }
 }
 !deps { next }
 /^  optional:/ { next }
+/^  agents:/ { next }
 !/^  required:/ { print "?\t" FILENAME; next }
 {
   list = $0

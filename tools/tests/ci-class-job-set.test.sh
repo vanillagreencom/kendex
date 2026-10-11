@@ -380,7 +380,7 @@ cp -R "$READ_WORLD/crates" "$SEL_WORLD/crates"
 skill() { # NAME REQUIRED-LIST — a SKILL.md, with a dependencies block where REQUIRED-LIST is given
   mkdir -p "$SEL_WORLD/skills/$1/scripts" "$SEL_WORLD/skills/$1/tests"
   if [ -n "$2" ]; then
-    printf -- '---\nname: %s\ndependencies:\n  required: [%s]\n  optional: [price-handling]\n---\n' "$1" "$2"
+    printf -- '---\nname: %s\ndependencies:\n  required: [%s]\n  optional: [price-handling]\n  agents: [runtime]\n---\n' "$1" "$2"
   else
     printf -- '---\nname: %s\n---\n' "$1"
   fi >"$SEL_WORLD/skills/$1/SKILL.md"
@@ -406,6 +406,18 @@ printf 'run("tools/demo-tool")\n' >"$SEL_WORLD/pi-extensions/pi-demo/tests/demo.
 printf 'the `guards-scans` shard runs it\n' | tee "$SEL_WORLD/skills/AGENTS.md" >"$SEL_WORLD/docs/cite.md"
 git -C "$SEL_WORLD" init -q
 git -C "$SEL_WORLD" add -A
+# Catalog skills can declare all three lists; only required skills are edges.
+required_edge="$(printf 'doc-limits\tcommit-guards')"
+check "required, optional and agents lists retain the required skill edge" "$required_edge" \
+  "$(awk -f "$ROOT/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
+needle='/^  agents:/ { next }'
+[ "$(grep -cxF -- "$needle" "$ROOT/tools/lib/skill-requirements.awk")" -eq 1 ] || exit 1
+awk -v needle="$needle" '$0 != needle' "$ROOT/tools/lib/skill-requirements.awk" >"$TMP/rule/tools/lib/skill-requirements.awk"
+! cmp -s "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk" || exit 1
+got="$(awk -f "$TMP/rule/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
+[ "$got" != "$required_edge" ] && ok "must-fail: dropping the agents skip fails the required-edge row" || \
+  bad "must-fail: dropping the agents skip leaves the required-edge row green"
+cp "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk"
 # PATH|SHARDS, every row micro and not docs-only.
 world_rows=0
 while IFS='|' read -r path expected; do
@@ -505,6 +517,7 @@ s/\[commit-guards\]/["commit-guards"]/|exit=2 requirements-unreadable path=skill
 s/^dependencies:$/dependencies: # the skills it needs/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
 s/^  required:/   required:/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
 s/\[commit-guards\]/[commit-guard]/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
+s/^  agents:/  unknown:/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
 ROWS
 # An optional list is read past, never refused and never followed.
 check "an optional list is no dependency" '["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]' \
