@@ -8043,6 +8043,15 @@
             "name": "project-management",
             "harness": "claude"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "youtube-publish",
+            "harness": "claude"
+          }
         }
       ]
     },
@@ -8076,6 +8085,15 @@
             "source": ".",
             "kind": "skill",
             "name": "project-management",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "youtube-publish",
             "harness": "codex"
           }
         }
@@ -8113,6 +8131,15 @@
             "name": "project-management",
             "harness": "copilot"
           }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "youtube-publish",
+            "harness": "copilot"
+          }
         }
       ]
     },
@@ -8146,6 +8173,15 @@
             "source": ".",
             "kind": "skill",
             "name": "project-management",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "youtube-publish",
             "harness": "pi"
           }
         }
@@ -9763,12 +9799,117 @@
           "reason": "requested"
         }
       ]
+    },
+    "skill:youtube-publish:claude": {
+      "name": "youtube-publish",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9c2cc988a71810bf15c8aa0203c9f640f828875858fedb925faecf0db5c2921c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "e5e3745dc3c193030e63903292f4fffa33fead401d13da1692b0a20fff08236e",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "youtube-publish",
+        "paths": [
+          ".agents/skills/youtube-publish",
+          ".claude/skills/youtube-publish"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:youtube-publish:codex": {
+      "name": "youtube-publish",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9c2cc988a71810bf15c8aa0203c9f640f828875858fedb925faecf0db5c2921c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "e5e3745dc3c193030e63903292f4fffa33fead401d13da1692b0a20fff08236e",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "youtube-publish",
+        "paths": [
+          ".agents/skills/youtube-publish"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:youtube-publish:copilot": {
+      "name": "youtube-publish",
+      "kind": "skill",
+      "harness": "copilot",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9c2cc988a71810bf15c8aa0203c9f640f828875858fedb925faecf0db5c2921c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "e5e3745dc3c193030e63903292f4fffa33fead401d13da1692b0a20fff08236e",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "youtube-publish",
+        "paths": [
+          ".agents/skills/youtube-publish"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:youtube-publish:pi": {
+      "name": "youtube-publish",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9c2cc988a71810bf15c8aa0203c9f640f828875858fedb925faecf0db5c2921c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "e5e3745dc3c193030e63903292f4fffa33fead401d13da1692b0a20fff08236e",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "youtube-publish",
+        "paths": [
+          ".agents/skills/youtube-publish"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
     }
   },
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "131a4f29d2eca4d96699b831bfd634cee5eb7571"
+      "commit": "dfa0f3364e5dc3df175146fac26a02012f389768"
     }
   }
 }
