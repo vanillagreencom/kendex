@@ -782,9 +782,10 @@ Options:
   --item ISSUE_ID     live item; repeatable. No values skips merged and
                       handoff with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The first
-                      and ORCH_CONNECTED_REPOS get pr-watch attention. Further
-                      values add merge and report reads only, including the
-                      heartbeat's open list. Triage and lane rows persist in
+                      repository and ORCH_CONNECTED_REPOS feed pr-watch.
+                      Additional --repo values feed the existing merge,
+                      heartbeat, report and repository checks, but do not add
+                      repositories to pr-watch. Triage and lane rows persist in
                       the first one's baseline, mail rows beside it. With none
                       given, the first is the repository this checkout resolves to
   --hosted ITEM=REMOTE_ROOT
@@ -977,9 +978,9 @@ Which mode fits the overseer's harness:
                every line is handled. Nothing reports overseer-dead
 references/watch-delivery.md holds each harness's mechanism and re-arm rule.
 
-When pr-watch.sh is installed, oversee-watch runs it on every pass for every
---repo; it reads GitHub's review state and writes nothing. When pr-watch.sh is
-absent, the step is skipped with one stderr note.
+When pr-watch.sh is installed, oversee-watch runs it with the repository
+scope stated under --repo above; it reads GitHub's review state and writes
+nothing. When pr-watch.sh is absent, the step is skipped with one stderr note.
 Inside tmux, an --item with no LANE_WINDOW skips the pane checks with one
 stderr note; outside tmux there is no pane to read and nothing is noted.
 
@@ -1020,10 +1021,10 @@ Environment:
                               orch-env in this checkout, an inherited value
                               and KENDEX_ENV_FILE honored, since the watch
                               runs in the overseer's own checkout: each entry
-                              is a watched repository after the --repo values,
-                              an entry they already name skipped. Each one
-                              adds its reads to every long pass, as a --repo
-                              does. After a change, restart the watch: its
+                              joins the repository list after the --repo
+                              values, without repeats. The read scope is
+                              stated under --repo above. After a change,
+                              restart the watch: its
                               start exports the value it loaded, which every
                               repeat pass inherits. An unreadable setting
                               exits 2, in repeat mode before the first pass.
