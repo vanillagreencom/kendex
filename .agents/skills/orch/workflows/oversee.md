@@ -142,7 +142,7 @@ The overseer launch starts one detached repeat watch for the fleet. Read its eve
 
 `oversee-watch --help` states each refusal at start. After a self-succession the successor's own start takes over the watch `oversee-succeed` restarted and first prints what it reported, under `watch-replayed`: handle those lines as events.
 
-**The watch rule.** A turn never ends while the watch is stopped: it alone closes an owner ask at its deadline where its form allows (lane-mail ask help), reported as `owner-ask-closed`. The watch runs two passes on one clock. The mail pass starts every `ORCH_WATCH_MAIL_INTERVAL` seconds (default 20) and reads every mailbox and the lane records, printing what it finds as it finds it. The long pass, holding pr-watch, the merged check, triage, the outside-contribution and security-alert checks and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. A lane's note is read within one mail interval, whatever `--interval` is, save the delays and the overseer-pane hold `oversee-watch --help` names. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
+**The watch rule.** A turn never ends while the watch is stopped: it alone closes an owner ask at its deadline where its form allows (lane-mail ask help), reported as `owner-ask-closed`. Read `oversee-watch --help` for the mail cadence and delay contract. The long pass, holding pr-watch, the merged check, triage, the outside-contribution and security-alert checks and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
 
 ### Watch delivery
 

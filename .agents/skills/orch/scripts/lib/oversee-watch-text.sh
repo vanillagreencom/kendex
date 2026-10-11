@@ -1083,17 +1083,19 @@ Environment:
                               security-alert, bot-fix and
                               security-alerts-unread rows; the mail pass's
                               file beside the first one holds
-                              each lane mailbox's read position and when the
-                              last mail and long passes started, plus claims/ and
+                              each lane mailbox's read position, when the last
+                              full mail pass completed and when the last long
+                              pass started, plus claims/ and
                               usage/, both shared across the repositories
                               that point here
-  ORCH_WATCH_MAIL_INTERVAL    seconds from the start of one mail pass to the
-                              next, a whole number, default 20, and the most
+  ORCH_WATCH_MAIL_INTERVAL    idle seconds after a full mail read, a whole
+                              number, default 20, and the most
                               --repeat waits between two runs after one that
                               did not exit 2: a lane read failure first
                               reported, a hosted lane close that fails, or a
                               global failure. The mail pass paragraph above
-                              names when a note lands later. 0 reads the mail
+                              names the first-long-pass exception and delays.
+                              0 reads the mail
                               on every turn of the loop and waits out a long
                               pass in flight rather than polling it
   ORCH_DIRECTIVE_UNREAD_SECS  age in seconds past which a directive the lane

@@ -417,11 +417,7 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # Repeat schedule: oversee-watch --help, event lane-long.
 # ORCH_WATCH_LANE_AGE_SECS = "12600"
 
-# Seconds from the start of one oversee-watch mail pass to the next; a mail
-# pass reads every lane mailbox and the overseer's own apart from the
-# --interval pass that reads GitHub.
-# When a note arrives, and the exceptions to that: oversee-watch --help,
-# section Environment.
+# Mail cadence and delay contract: oversee-watch --help.
 # ORCH_WATCH_MAIL_INTERVAL = "20"
 
 # Age in seconds past which a directive a lane has not read is reported as
