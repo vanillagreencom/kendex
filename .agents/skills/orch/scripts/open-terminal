@@ -2852,13 +2852,11 @@ launch_finish() {
     # exits, so the shell stays to run it rather than exec the first.
     local run="exec $cmd"
     [[ "$RELAUNCH_ROUTE" != resume-or-fresh ]] || run="{ $cmd; }"
+    [[ -z "$CMD_TEMPLATE" ]] || run="$cmd"
     # An exported empty email wins over private files in the project loader.
     # A lane has no person to assign when it activates its work item.
     run="export KENDEX_USER_EMAIL='' && $run"
-    local rm_prompt_env
-    rm_prompt_env=$(lane_launch_rm_prompt_env "$cmd" "$HARNESS") || return 1
-    # Export before the group so both the resume and fresh fallback inherit it.
-    [[ -z "$rm_prompt_env" ]] || run="export $rm_prompt_env && $run"
+    run="$(lane_launch_line "$run" "$HARNESS" "" "" custom)" || return 1
     # Keep the marked launch root when a lane's tool shell changes directory.
     run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
@@ -2913,9 +2911,8 @@ launch_finish() {
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
     cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
   else
-    local rm_prompt_env
-    rm_prompt_env=$(lane_launch_rm_prompt_env "$cmd" "$HARNESS") || return 1
-    cmd="${rm_prompt_env:+env $rm_prompt_env }$cmd"
+    launch_form="$(lane_launch_form "$cmd" "$HARNESS" "" "$CMD_TEMPLATE")" || return 1
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" "$launch_form")" || return 1
   fi
   if [[ "$LANE_HOST" == local ]]; then
     cmd="export KENDEX_USER_EMAIL='' && $cmd"

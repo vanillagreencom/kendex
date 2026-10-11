@@ -128,10 +128,10 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;put,--item,KEN-40,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 assert_eq "$(ot_hosted_relaunch_text "$RUN/tmux.log")" \
-  "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN='/srv/lane' && export KENDEX_USER_EMAIL='' && exec $CD_HARNESS --model opus --effort high $QUESTION_OFF_ALL'" \
+  "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN='/srv/lane' && export KENDEX_USER_EMAIL='' && $CD_HARNESS --model opus --effort high $QUESTION_OFF_ALL'" \
   "the remote shell exports the host's lane origin"
 assert_eq "$(cd_guard_result 0)" 'rc=0 cd=attempted harness=started' \
-  'the hosted exec starts its harness after a successful cd'
+  'the hosted command starts its harness after a successful cd'
 assert_failed_cd "$(cd_guard_result 1)"
 
 # The refresh record belongs to the hosted worktree's git directory, not its
@@ -257,6 +257,10 @@ HARNESS_UP="OT_HARNESS_SCREEN=$TMP_ROOT/harness-screen"
 # Read the actual child environment on the provider's fresh and relaunch
 # routes. A status-1 continuation starts a second, fresh Claude process.
 RM_PROBE_BIN="$TMP_ROOT/rm-probe-bin"
+# The unattended words every brief and continuation line closes on, the text
+# read from lib/lane-launch.sh, which renders and judges them.
+UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT" )" || exit 1
+[[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 mkdir -p "$RM_PROBE_BIN"
 cat > "$RM_PROBE_BIN/claude" <<'STUB'
 #!/usr/bin/env bash
@@ -269,15 +273,16 @@ STUB
 chmod +x "$RM_PROBE_BIN/claude"
 ln -s "$RM_PROBE_BIN/claude" "$RM_PROBE_BIN/codex"
 hosted_rm_env() { # HARNESS FLAGS ROUTE RESUME_STATUS; sets HOSTED_RM_ENV
-  local harness="$1" flags="$2" route="$3" resume_status="$4" args=() line
+  local harness="$1" flags="$2" route="$3" resume_status="$4" args=() line launch="flags=$2"
   [[ "$route" != relaunch ]] || args+=(--relaunch)
-  run_ot "$HARNESS_UP;flags=$flags" --host "$HOST_STUB" --harness "$harness" \
+  [[ "$route" != compound ]] || launch="cmd=true && $harness $flags '/orch start {item} $UNATTENDED_TEXT'"
+  run_ot "$HARNESS_UP;$launch" --host "$HOST_STUB" --harness "$harness" \
     --lane "$H/.eclaude" --repo o/r ${args[@]+"${args[@]}"} KEN-41
-  [[ "$RC" == 0 ]] || { HOSTED_RM_ENV=launch-failed; return; }
+  [[ "$RC" == 0 ]] || { HOSTED_RM_ENV=launch-failed; printf '%s\n' "$OUT" >&2; return; }
   line="$(grep -m1 '^exec bash -lc ' "$RUN/tmux.log")" || { HOSTED_RM_ENV=unrendered; return; }
   # Let the shell decode the provider's quoted argument. Execute that same
   # argument in its login shell with PATH set after the profile, as above.
-  eval "set -- ${line#exec }"
+  eval "set -- ${line#exec }" || { HOSTED_RM_ENV=undecodable; return; }
   : > "$RUN/rm-env"
   env -i PATH="$PATH" HOME="$TMP_ROOT" RM_PROBE_BIN="$RM_PROBE_BIN" \
     RM_PROBE_LOG="$RUN/rm-env" RM_RESUME_STATUS="$resume_status" \
@@ -287,9 +292,11 @@ hosted_rm_env() { # HARNESS FLAGS ROUTE RESUME_STATUS; sets HOSTED_RM_ENV
 }
 printf '%s\n' \
   'claude|--model opus --effort high --dangerously-skip-permissions|fresh|0|fresh|1|1' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|compound|0|fresh|1|1' \
   'claude|--model opus --effort high --permission-mode bypassPermissions|relaunch|0|resume|1|1' \
   'claude|--model opus --effort high --dangerously-skip-permissions|relaunch|1|resume|1|1;fresh|1|1' \
   'claude|--model opus --effort high --permission-mode dontAsk|fresh|0|fresh|unset|unset' \
+  'claude|--model opus --effort high --permission-mode dontAsk|compound|0|fresh|unset|unset' \
   'claude|--model opus --effort high --permission-mode dontAsk|relaunch|1|resume|unset|unset;fresh|unset|unset' \
   'codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|0|fresh|unset|unset' \
   > "$TMP_ROOT/hosted-rm-rows"
@@ -301,8 +308,11 @@ done < "$TMP_ROOT/hosted-rm-rows"
 RM_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts hosted-rm-env-removed/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/hosted-rm-env-removed/orch"
-mutate_file "$OPEN_TERMINAL" '    [[ -z "$rm_prompt_env" ]] || run="export $rm_prompt_env && $run"' \
-  '    : '\''[[ -z "$rm_prompt_env" ]] || run="export $rm_prompt_env && $run"'\'
+rm -- "${OPEN_TERMINAL%/*}/lib/lane-launch.sh"
+cp -- "$SCRIPTS_DIR/lib/lane-launch.sh" "${OPEN_TERMINAL%/*}/lib/lane-launch.sh"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" \
+  "printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'" \
+  ": 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'"
 SAVED_FAIL="$FAIL"
 FAIL=0
 hosted_rm_env claude '--model opus --effort high --dangerously-skip-permissions' relaunch 1
@@ -316,10 +326,6 @@ assert_eq "$RM_CONTROL" 1 'control: the hosted resume and fallback children dete
 OPEN_TERMINAL="$RM_OT_SHIPPED"
 # The flags a hosted claude command leads with, as the remote command quotes them.
 CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
-# The unattended words every brief and continuation line closes on, the text
-# read from lib/lane-launch.sh, which renders and judges them.
-UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT" )"
-[[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 # hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude
 # relaunch, the continuation line and the start brief each closing on the
 # unattended words.

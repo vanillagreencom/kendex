@@ -1283,11 +1283,12 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # on another machine. It keeps its caller's form and has no local account read.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
-  if [[ -z "$dir" ]] || [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
+  if [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi
   if [[ -n "$template" ]]; then printf 'custom\n'; return; fi
+  if [[ -z "$dir" ]]; then printf 'unchecked\n'; return; fi
   name="$(basename -- "$dir")" || { printf 'prefix\n'; return; }
   name="${name#.}"
   if [[ "$name" != *"$harness"* || "$name" == "$harness" ]]; then printf 'prefix\n'; return; fi
@@ -1351,8 +1352,8 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
   esac
 }
 
-# The launch line for a command that must run on a chosen account, under the
-# form lane_launch_form picked for it.
+# The complete command under the form lane_launch_form picked for it. Empty
+# account words keep the caller's account, or the provider's on a host.
 #
 # The prefix value is quoted by lane_single_quote, not wrapped in bare quotes:
 # lane dirs are paths, an unquoted space would split the env assignment inside
@@ -1364,7 +1365,7 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 # this builder's to do.
 #
 # The lane is recorded in the launched command itself, so `ps` and the pane's
-# own first line show which account a stalled session belongs to — as the
+# own first line show which account a stalled session belongs to: the
 # launcher's own path, or as the env prefix where the machine has no launcher.
 # Not the window title: both launchers open their window with an explicit -n,
 # which turns tmux's automatic rename off, so the title keeps the name it was
@@ -1377,17 +1378,35 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
-  if [[ "$harness" == codex ]]; then
+  if [[ "$harness" == codex && -n "$var" ]]; then
     [[ "$form" != unchecked && "$form" != custom ]] || verified=false
     launch_env=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
   fi
   if [[ "$harness" != copilot ]]; then
     case "$form" in
+      custom)
+        [[ -z "$var" ]] || launch_env="$var=$(lane_single_quote "$dir")${launch_env:+ $launch_env}"
+        # The whole custom command runs in the same shell language. One
+        # quoted -c argument keeps operators, expansions and comments intact,
+        # and remains executable argv for overseer-run and other consumers.
+        if [[ -n "$launch_env" ]]; then
+          printf 'env %s %s -c %s\n' "$launch_env" "$(lane_single_quote "$BASH")" "$(lane_single_quote "$cmd")"
+        else
+          printf '%s\n' "$cmd"
+        fi
+        ;;
       launcher:*) printf '%s%s %s\n' "${launch_env:+env $launch_env }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-      *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${launch_env:+$launch_env }" "$cmd" ;;
+      *)
+        if [[ -n "$var" ]]; then
+          printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${launch_env:+$launch_env }" "$cmd"
+        else
+          printf '%s%s\n' "${launch_env:+env $launch_env }" "$cmd"
+        fi
+        ;;
     esac
     return
   fi
+  if [[ -z "$var" ]]; then printf '%s\n' "$cmd"; return; fi
   env_words="$(lane_copilot_env "$cmd" "$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills")")"
   case "$form" in
     launcher:*) printf '%s %s %s\n' "$env_words" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;

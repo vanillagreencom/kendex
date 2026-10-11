@@ -639,7 +639,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
     caller_brief="$2" brief_given=1
     shift 2
   fi
-  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" brief_join=" " model launch_env
+  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" brief_join=" " model
   shift 4
   brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff"
   case "$harness" in
@@ -679,8 +679,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   if [[ -n "$OL_LAUNCH_HOME" ]]; then
     OL_CMD="$(lane_launch_line "$cmd" "$harness" "$OL_LANE_VAR" "$OL_LAUNCH_HOME" "$OL_FORM")" || return 1
   else
-    launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
-    OL_CMD="${launch_env:+env $launch_env }$cmd"
+    OL_CMD="$(lane_launch_line "$cmd" "$harness" "" "" "$OL_FORM")" || return 1
   fi
   ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$model" \
     "$(launch_choice_effort "$harness" "$*")" "$launch_dir" || OL_IDENTITY=""

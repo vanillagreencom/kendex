@@ -241,7 +241,7 @@ screen() {
 # log are what `observe` reads.
 RUN_SEQ=0
 run() {
-  local mode="$1" envspec="$2" flags="$3" screens="$4" args=() envs=() pair i=0 name
+  local mode="$1" envspec="$2" flags="$3" screens="$4" args=() envs=() pair i=0 name prelude=true
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN/screens"
   ERR="$RUN/stderr"
@@ -260,6 +260,11 @@ run() {
   case "$mode" in
     gui) envs=(TMUX=); args=(--ghostty --harness claude) ;;
     gui-codex) envs=(TMUX=); args=(--ghostty --harness codex) ;;
+    compound|compound-account|compound-bash) envs=(TMUX=)
+      [[ "$mode" != compound-bash ]] || prelude='parts=(ready); [[ "${parts[0]}" == ready ]]'
+      args=(--ghostty --harness claude --cmd "$prelude && claude --model opus --effort high $flags --disallowedTools=AskUserQuestion,EnterPlanMode '$PROMPT'")
+      flags=-
+      [[ "$mode" != compound-account ]] || args+=(--lane "$CODEX_LANE") ;;
     github) envs=(TMUX=); args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
     custom) envs=(TMUX=); args=(--ghostty --cmd "claude 'Read the agent\\'s brief'") ;;
     custom-tmux) envs=(TMUX=stub,1,0); args=(--tmux --cmd "claude 'Read the agent\\'s brief'") ;;
@@ -414,6 +419,7 @@ if wait_capture; then
 printf '%s\n' "$@" > "$OT_ARGV_CAPTURE"
 printf '%s|%s\n' "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
   "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" > "$OT_ENV_CAPTURE"
+printf '%s\n' "${CLAUDE_CONFIG_DIR-unset}" > "$OT_ENV_CAPTURE.account"
 STUB
   chmod +x "$BIN/claude"
   cmd="$(cat "$CAP")"
@@ -437,32 +443,43 @@ fi
 # Explicit model flags suppress lane preference. Execute that no-account
 # launch, as the terminal does, and read its child environment, not its text.
 ln -s "$BIN/claude" "$BIN/codex"
-local_rm_env() { # MODE FLAGS; sets LOCAL_RM_ENV
+local_rm_env() { # MODE FLAGS; sets LOCAL_RM_ENV and LOCAL_RM_ACCOUNT
   local cmd
   run "$1" - "$2" -
   [[ "$RC" == 0 ]] && wait_capture || { LOCAL_RM_ENV=launch-failed; return; }
   cmd="$(cat "$CAP")"
-  rm -f "$TMP_ROOT/child-env"
+  rm -f "$TMP_ROOT/child-env" "$TMP_ROOT/child-env.account"
   env -u CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT \
-    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
-    OT_ENV_CAPTURE="$TMP_ROOT/child-env" "$BASH" -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }" \
+    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT -u CLAUDE_CONFIG_DIR OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
+    OT_ENV_CAPTURE="$TMP_ROOT/child-env" "$BASH" -lc "PATH=\"$BIN:\$PATH\"; $cmd" \
     > "$RUN/child.out" 2> "$RUN/child.err" || true
   LOCAL_RM_ENV="$(cat "$TMP_ROOT/child-env" 2>/dev/null || printf 'unrun\n')"
+  LOCAL_RM_ACCOUNT="$(cat "$TMP_ROOT/child-env.account" 2>/dev/null || printf 'unrun\n')"
 }
-while IFS='|' read -r mode flags expected; do
+printf '%s\n' \
+  'gui|--model opus --permission-mode bypassPermissions|1|1|unset' \
+  'gui|--model opus --permission-mode dontAsk|unset|unset|unset' \
+  'gui-codex|-m gpt-6-astra --dangerously-bypass-approvals-and-sandbox|unset|unset|unset' \
+  'compound|--dangerously-skip-permissions|1|1|unset' \
+  'compound-bash|--dangerously-skip-permissions|1|1|unset' \
+  "compound-account|--dangerously-skip-permissions|1|1|$CODEX_LANE" \
+  'compound|--permission-mode dontAsk|unset|unset|unset' \
+  "compound-account|--permission-mode dontAsk|unset|unset|$CODEX_LANE" \
+  > "$TMP_ROOT/local-rm-rows"
+while IFS='|' read -r mode flags inline substitution account; do
   local_rm_env "$mode" "$flags"
-  assert_eq "$LOCAL_RM_ENV" "$expected" \
+  assert_eq "$LOCAL_RM_ENV" "$inline|$substitution" \
     "the local $mode child receives removal switches only for Claude bypass: $flags"
-done <<'ROWS'
-gui|--model opus --permission-mode bypassPermissions|1|1
-gui|--model opus --permission-mode dontAsk|unset|unset
-gui-codex|-m gpt-6-astra --dangerously-bypass-approvals-and-sandbox|unset|unset
-ROWS
+  assert_eq "$LOCAL_RM_ACCOUNT" "$account" "the local $mode child keeps its selected account"
+done < "$TMP_ROOT/local-rm-rows"
 RM_OT="$(mutant_scripts local-rm-env-removed open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/local-rm-env-removed" init -q
 orch_fixture_shared_libs "$TMP_ROOT/local-rm-env-removed"
-mutate_file "$RM_OT" '    cmd="${rm_prompt_env:+env $rm_prompt_env }$cmd"' \
-  '    : '\''cmd="${rm_prompt_env:+env $rm_prompt_env }$cmd"'\'
+rm -- "${RM_OT%/*}/lib/lane-launch.sh"
+cp -- "$SCRIPTS_DIR/lib/lane-launch.sh" "${RM_OT%/*}/lib/lane-launch.sh"
+mutate_file "${RM_OT%/*}/lib/lane-launch.sh" \
+  "printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'" \
+  ": 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'"
 OT_UNDER_TEST="$RM_OT"
 SAVED_FAIL="$FAIL"
 FAIL=0
@@ -473,6 +490,27 @@ RM_CONTROL="$FAIL"
 FAIL="$SAVED_FAIL"
 assert_eq "$LOCAL_RM_ENV" 'unset|unset' 'control: the local mutant reaches Claude with neither switch'
 assert_eq "$RM_CONTROL" 1 'control: the actual local child detects the missing environment words'
+OT_UNDER_TEST="$OT"
+COMPOUND_OT="$(mutant_scripts local-rm-first-command open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/local-rm-first-command" init -q
+orch_fixture_shared_libs "$TMP_ROOT/local-rm-first-command"
+rm -- "${COMPOUND_OT%/*}/lib/lane-launch.sh"
+cp -- "$SCRIPTS_DIR/lib/lane-launch.sh" "${COMPOUND_OT%/*}/lib/lane-launch.sh"
+mutate_file "${COMPOUND_OT%/*}/lib/lane-launch.sh" \
+  "printf 'env %s %s -c %s\\n' \"\$launch_env\" \"\$(lane_single_quote \"\$BASH\")\" \"\$(lane_single_quote \"\$cmd\")\"" \
+  "printf 'env %s %s\\n' \"\$launch_env\" \"\$cmd\" # printf 'env %s %s -c %s\\n'"
+OT_UNDER_TEST="$COMPOUND_OT"
+for mode in compound compound-account; do
+  SAVED_FAIL="$FAIL"
+  FAIL=0
+  local_rm_env "$mode" '--dangerously-skip-permissions'
+  assert_eq "$LOCAL_RM_ENV" '1|1' \
+    "control: the $mode child detects settings scoped to the first command" > "$TMP_ROOT/compound-control-$mode.out"
+  RM_CONTROL="$FAIL"
+  FAIL="$SAVED_FAIL"
+  assert_eq "$LOCAL_RM_ENV" 'unset|unset' "control: the $mode mutant loses both child settings"
+  assert_eq "$RM_CONTROL" 1 "control: the $mode child rejects the first-command wrapper"
+done
 OT_UNDER_TEST="$OT"
 rm -f "$BIN/claude" "$BIN/codex"
 

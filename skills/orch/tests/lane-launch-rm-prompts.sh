@@ -37,7 +37,9 @@ render() { # LIB FORM HARNESS FLAGS
       printf "%s" "$OL_CMD"
     else
       [[ "$form" != launcher ]] || form="launcher:$root/bin/$harness"
-      lane_launch_line "$harness $flags" "$harness" CLAUDE_CONFIG_DIR "$root/account" "$form"
+      cmd="$harness $flags"
+      [[ "$form" != custom ]] || cmd="true && $cmd"
+      lane_launch_line "$cmd" "$harness" CLAUDE_CONFIG_DIR "$root/account" "$form"
     fi
   ' _ "$1" "$2" "$3" "$4" "$TMP_ROOT"
 }
@@ -47,6 +49,7 @@ printf '%s\n' \
   'prefix|claude|--dangerously-skip-permissions|1|1|Claude bypass prefix' \
   'launcher|claude|--permission-mode=bypassPermissions|1|1|Claude attached bypass launcher' \
   'prefix|claude|--permission-mode bypassPermissions|1|1|Claude separate bypass prefix' \
+  'custom|claude|--dangerously-skip-permissions|1|1|Claude compound account launch' \
   'overseer|claude|--dangerously-skip-permissions|1|1|Claude bypass overseer without home' \
   'overseer|claude|--permission-mode=bypassPermissions|1|1|Claude attached bypass overseer without home' \
   'launcher|claude|--permission-mode=dontAsk|unset|unset|Claude dontAsk launcher' \
