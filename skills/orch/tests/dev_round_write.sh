@@ -203,10 +203,15 @@ assert_eq "$(observe "rc=2")" "rc=2" "--items-file with a nonexistent path is re
 echo "=== recurrence candidates require an item answer ==="
 # Both workflows produce these location headers and patch records. A missing
 # state exercises the real workflow-state reader, not a stand-in for it.
-repeat_case() { # NAME PATCHES LOCATION ANSWER MODE EXPECT_RC [WRITER]
+repeat_case() { # NAME PATCHES LOCATION ANSWER MODE EXPECT_RC [WRITER KEY OWNER LAYOUT]
   local name="$1" patches="$2" location="$3" answer="$4" mode="$5" expected="$6" writer="${7:-$WRITE_BIN}" rid="repeat-$1" issue=i
-  local text="#1 | reviewer-error | $location" first="" record key='src/x.rs (`f`)' owner="${9-ABSENT}"
+  local text="#1 | reviewer-error | $location" first="" record key='src/x.rs (`f`)' owner="${9-ABSENT}" layout="${10-}"
   key="${8:-$key}"
+  # dev-fix and review-pr-comments put Owner after the other item fields.
+  if [[ "$owner" != ABSENT || -n "$layout" ]]; then
+    [[ "$layout" != pr-comments ]] || text+=$'\nTitle: "Prior intent is cleared at another site"'
+    text+=$'\nDescription: "A second site clears the prior intent."\nRecommendation: "Fix the rule at its owner."'
+  fi
   [[ "$owner" == ABSENT ]] || text+=$'\nOwner: '"$owner"
   "$STATE" --state-dir "$WT/tmp" update i 'del(.repeat_refusals)' >/dev/null
   "$STATE" --state-dir "$WT/tmp" set i pr_comment_review.patched_causes "$patches" >/dev/null
@@ -264,6 +269,7 @@ OWNER_PATCH='[{"cause":"prior intent must remain","commit":"aaa111","location":"
 OWNER_KEY='src/alert.rs (`AlertRow`)'
 SEND='src/send.rs (`on_failed_send`)'
 # NAME^PATCHES^LOCATION^ANSWER^MODE^RC^KEY^OWNER
+for layout in dev-fix pr-comments; do
 for row in \
   "owner_same^$OWNER_PATCH^$SEND^ABSENT^file^2^$OWNER_KEY^$OWNER_KEY" \
   "owner_close^$OWNER_PATCH^$SEND^structural-close^file^0^$OWNER_KEY^$OWNER_KEY" \
@@ -279,39 +285,51 @@ for row in \
   "owner_cut^$OWNER_PATCH^$OWNER_KEY^ABSENT^cut^0^$OWNER_KEY^$OWNER_KEY" \
   'serialization^[{"cause":"shared serialization owner","commit":"aaa111","location":"crates/core/src/manifest/file.rs (`parse_text`, `save`)","owner":"crates/core/src/manifest/file.rs (`serialization`)"}]^crates/core/src/manifest/fold.rs (`serialized`)^ABSENT^file^2^crates/core/src/manifest/file.rs (`serialization`)^crates/core/src/manifest/file.rs (`serialization`)'; do
   IFS='^' read -r name patches location answer mode expected key owner <<<"$row"
-  repeat_case "$name" "$patches" "$location" "$answer" "$mode" "$expected" "$WRITE_BIN" "$key" "$owner"
+  repeat_case "$name-$layout" "$patches" "$location" "$answer" "$mode" "$expected" "$WRITE_BIN" "$key" "$owner" "$layout"
+done
 done
 
-# The actual old comparison and an owner-dropping module must both redden this row.
-for control in baseline owner; do
+# Both shipped layouts must redden the old comparison and owner parser defects.
+for control in baseline owner line-only; do
   if [[ "$control" == baseline ]]; then
     MUTANT="$(mutant_scripts repeat-baseline dev-round-write)/dev-round-write" || exit 1
     mutate_file "$MUTANT" 'shared_cause_key($item; $patch)' '($item.text | split("\n")[0] | split("|") | .[2:] | join("|") | cause_key) as $location | select(($patch.location | cause_key) == $location) | $location'
   else
-    MUTANT="$(mutant_scripts repeat-owner lib/cause-keys.jq)/dev-round-write" || exit 1
-    mutate_file "${MUTANT%/*}/lib/cause-keys.jq" '(.location, .owner)' '(.location)'
+    MUTANT="$(mutant_scripts "repeat-$control" lib/cause-keys.jq)/dev-round-write" || exit 1
+    if [[ "$control" == owner ]]; then
+      mutate_file "${MUTANT%/*}/lib/cause-keys.jq" '(.location, .owner)' '(.location)'
+    else
+      mutate_file "${MUTANT%/*}/lib/cause-keys.jq" '$lines[1:][]' '$lines[1:2][]'
+    fi
   fi
-  if (FAIL=0; repeat_case "control-$control" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$MUTANT" "$OWNER_KEY" "$OWNER_KEY"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/control-$control.out"; then
-    fail "$control: mutation did not redden the owner row"
-  else
-    assert_file_contains "$TMP_ROOT/control-$control.out" 'got:      0' "$control: owner repeat is accepted by the planted defect"
-  fi
+  jq -n -L "${MUTANT%/*}/lib" 'include "cause-keys"; null' >/dev/null || exit 1
+  for layout in dev-fix pr-comments; do
+    if (FAIL=0; repeat_case "control-$control-$layout" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$MUTANT" "$OWNER_KEY" "$OWNER_KEY" "$layout"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/control-$control-$layout.out"; then
+      fail "$control/$layout: mutation did not redden the owner row"
+    else
+      assert_file_contains "$TMP_ROOT/control-$control-$layout.out" 'got:      0' "$control/$layout: owner repeat is accepted by the planted defect"
+    fi
+  done
 done
 
 # Resolve only pending refusals when a new round is placed.
+for layout in dev-fix pr-comments; do
 for resolution in recurrence same_key elsewhere; do
-  repeat_case "resolve-$resolution" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$WRITE_BIN" "$OWNER_KEY" "$OWNER_KEY"
+  repeat_case "resolve-$resolution-$layout" "$OWNER_PATCH" "$SEND" ABSENT file 2 "$WRITE_BIN" "$OWNER_KEY" "$OWNER_KEY" "$layout"
   "$STATE" --state-dir "$WT/tmp" update i '.repeat_refusals += [{item: 7, round_id: "older", location: "old", at: "2026-01-01T00:00:00Z", next_fix_elsewhere: true}]' >/dev/null
   next_text="#1 | reviewer-error | $SEND"; answer=ABSENT; want=false
+  [[ "$layout" != pr-comments ]] || next_text+=$'\nTitle: "Prior intent is cleared at another site"'
+  next_text+=$'\nDescription: "A second site clears the prior intent."\nRecommendation: "Fix the rule at its owner."'
   case "$resolution" in
     recurrence) answer=structural-close ;;
     same_key) next_text+=$'\nOwner: '"$OWNER_KEY" ;;
     elsewhere) want=true ;;
   esac
   jq -n --arg text "$next_text" --arg reach "$OK_REACH" --arg answer "$answer" '[{n:1,text:$text,reach:$reach} + (if $answer == "ABSENT" then {} else {recurrence:$answer} end)]' > "$ITEMS"
-  run_write --worktree "$WT" --issue i --round-id "resolved-$resolution" --items-file "$ITEMS" --cut
+  run_write --worktree "$WT" --issue i --round-id "resolved-$resolution-$layout" --items-file "$ITEMS" --cut
   assert_eq "$RC" 0 "$resolution: next round writes" "$ERR"
   assert_eq "$("$STATE" --state-dir "$WT/tmp" get i '.repeat_refusals | map(.next_fix_elsewhere)' | jq -c .)" "[$want,true]" "$resolution: pending row resolves, old row stays unchanged"
+done
 done
 for control in append resolve; do
   MUTANT="$(mutant_scripts "refusal-$control" dev-round-write)/dev-round-write" || exit 1
