@@ -21,6 +21,13 @@ fn the_catalog_revision_is_run_scoped_and_declared_revisions_win() {
             Some("vN"),
         ),
         (
+            "https override",
+            "https://github.com/vanillagreencom/kendex",
+            Some("vN"),
+            None,
+            Some("vN"),
+        ),
+        (
             "declared",
             manifest::DEFAULT_SOURCE_REPO,
             Some("vN"),
@@ -55,6 +62,12 @@ fn the_catalog_revision_is_run_scoped_and_declared_revisions_win() {
             Some(rev) => f.env.with_var("KENDEX_CATALOG_REV", rev),
             None => f.env,
         };
+        if repo.contains("://") {
+            // Full URLs bypass host rebasing; this mirror uses the fixture transport.
+            let mirror = super::store::mirror_dir(&env, &crate::remote::cache_key(&env, repo));
+            super::store::ensure_mirror(&mirror, &format!("file://{}", f.upstream.display()))
+                .unwrap();
+        }
         let source = manifest::SourceDecl {
             repo: Some(repo.to_owned()),
             path: None,

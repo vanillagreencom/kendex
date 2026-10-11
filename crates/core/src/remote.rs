@@ -32,9 +32,10 @@ pub fn clone_url(env: &Env, repo: &str) -> String {
 
 fn effective_rev<'a>(env: &'a Env, repo: &str, rev: Option<&'a str>) -> Option<&'a str> {
     rev.or_else(|| {
-        (repo == crate::manifest::DEFAULT_SOURCE_REPO)
-            .then(|| env.var("KENDEX_CATALOG_REV"))
-            .flatten()
+        (crate::source_ref::repo_identity(repo)
+            == crate::source_ref::repo_identity(crate::manifest::DEFAULT_SOURCE_REPO))
+        .then(|| env.var("KENDEX_CATALOG_REV"))
+        .flatten()
     })
 }
 
