@@ -15,7 +15,7 @@
 | Decision request | The choice the user must make, in the [persona's conduct format](../persona.md#conduct) | A decision blocks an action under [decisions.md](decisions.md#authority) |
 | Critical notice | The failure, its effect and the action the user must take | Work stops, data or money is at risk, or timely user action is required |
 | Input-device notice | Which mouse or keyboard action you need and when | Before taking control; wait for the user's agreement |
-| Progress report | Landed, running, blocked and waiting on you | At the cadence the user sets and before a session handoff |
+| Progress report | Landed, running, blocked and waiting on you | At the cadence the user sets. Before a session handoff only when the user set no rule for it |
 | Reply | The answer to the user's message | The user asks or gives information that needs an answer |
 
 ## Delivery

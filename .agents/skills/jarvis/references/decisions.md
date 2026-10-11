@@ -14,6 +14,10 @@ The user keeps a responsibility map in their own instructions. Use this shape; t
 |---|---|---|---|---|
 | User-defined area | Person or role | Specific permitted work | Specific reserved work | Event or changed fact |
 
+The rules above are defaults. A standing grant replaces the default for one action: a map entry that names the action, the date the user granted it and the user's words. It approves that action until the user removes the entry or its condition for review holds. Where the map has no entry for an action, the default applies.
+
+A grant covers only the action it names. Spending money, an external commitment and a send in the user's name keep their rules unless an entry names that exact action. A remembered remark is not a grant, because [memory does not create authority](memory.md#notes).
+
 ## Approach
 
 - Use the platform's supported feature before adding a replacement. Read its documentation and name any gap that requires another route.
