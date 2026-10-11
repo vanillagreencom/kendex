@@ -418,6 +418,54 @@ mutant mutant-lanes-unreported '"$record_mode" "$record_selection" "$record_verd
 run_script "$MUTANT" --record --run-dir "$lane_dir"
 assert_eq "$RC|${OUT%% verdict=*}" "0|validate-mode=full " "control: the old record behavior reds the reported-lanes assertion" "$ERR"
 
+# The real timeout ends before a validation command reports its lanes.
+PREVIEW_ROWS=(
+  'all|printf selection=all|all'
+  'subset|printf selection=subset|subset'
+  'missing||unreported'
+  'failed|printf selection=all; exit 1|unreported'
+)
+for row in "${PREVIEW_ROWS[@]}"; do
+  IFS='|' read -r label selector want <<<"$row"
+  proj="$(make_proj "proj-preview-$label" 'sleep 30' 2)"
+  [[ -z "$selector" ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+  run_script "$RUN" --worktree "$proj" --poll 1
+  dir="$(run_dir_of "$OUT")"
+  run_script "$RUN" --record --run-dir "$dir"
+  assert_eq "$RC|${OUT%% head=*}" "0|validate-mode=full selection=$want verdict=no-verdict" "bound-ended preview: $label" "$ERR"
+  case "$label" in
+    all|subset)
+      mutant "mutant-preview-$label" 'all|subset) record_selection="selection=$start_selection" ;;' 'all|subset) : ;;'
+      ;;
+    missing) mutant mutant-preview-missing "record_selection='selection=unreported'" "record_selection='selection=all'" ;;
+    failed) mutant mutant-preview-failed '|| { selection=""; return 1; }' '|| return 1'
+      run_script "$MUTANT" --worktree "$proj" --poll 1
+      dir="$(run_dir_of "$OUT")"
+      ;;
+  esac
+  run_script "$MUTANT" --record --run-dir "$dir"
+  assert_eq "$([[ "$(record_field selection "$OUT")" != "$want" ]] && echo turned || echo held)" turned "control: bound-ended preview $label"
+  [[ "$label" != all ]] || preview_all_dir="$dir"
+done
+rm -- "${preview_all_dir:?}/log"
+run_script "$RUN" --record --run-dir "$preview_all_dir"
+assert_eq "${OUT%% verdict=*}" 'validate-mode=full selection=all' 'a missing log retains the preview' "$ERR"
+printf 'validate: lanes=lint selection=subset\nvalidate: lanes= selection=all\n' > "$preview_all_dir/log"
+run_script "$RUN" --record --run-dir "$preview_all_dir"
+assert_eq "${OUT%% verdict=*}" 'validate-mode=full selection=all' 'a malformed last line uses the preview' "$ERR"
+printf 'validate: lanes=lint selection=subset\n' > "$preview_all_dir/log"
+run_script "$RUN" --record --run-dir "$preview_all_dir"
+assert_eq "${OUT%% verdict=*}" 'validate-mode=full lanes=lint selection=subset' 'a valid log outranks the preview' "$ERR"
+mutant mutant-preview-log 'print fields[2] " " fields[3]' 'print fallback'
+run_script "$MUTANT" --record --run-dir "$preview_all_dir"
+assert_eq "${OUT%% verdict=*}" 'validate-mode=full selection=all' 'control: ignoring the log turns precedence red' "$ERR"
+mutant mutant-preview-start 'printf '\''%s\n'\'' "$selection" ;;' ': ;;'
+proj="$(make_proj proj-preview-start 'sleep 30' 2)"
+printf 'DEV_VALIDATE_SELECTION_CMD = "printf selection=all"\n' >> "$proj/kendex.settings.toml"
+run_script "$MUTANT" --worktree "$proj" --poll 1
+run_script "$MUTANT" --record --run-dir "$(run_dir_of "$OUT")"
+assert_eq "${OUT%% verdict=*}" 'validate-mode=full selection=unreported' 'control: dropping the start preview turns the bound-ended record red' "$ERR"
+
 # The start's control: with the own-exit marker never written, a command's own
 # exit 124 reads as the bound's.
 mutant mutant-no-own-exit 'rc=$?; : > "$2"; exit "$rc"' 'rc=$?; exit "$rc"'
@@ -2236,51 +2284,51 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
 # --- The command's own preview resolves CI selection before launch -----------
 # label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback
 SELECTION_ROWS=(
-  "a full all selection uses required PR CI|full|yes|all|rules|ci||unreported|no|absent|0"
-  "a range all selection uses required PR CI|range|yes|all|rules|ci||unreported|no|absent|0"
+  "a full all selection uses required PR CI|full|yes|all|rules|ci||all|no|absent|0"
+  "a range all selection uses required PR CI|range|yes|all|rules|ci||all|no|absent|0"
   # KEN-3495's archived submit range selected all after PR #4528 opened.
   # Re-deriving its saved base/head diff yields standard, measured=false,
   # cause=verify-refused. Its original class.log is no longer available.
-  "KEN-3495 standard fallback all range uses required PR CI|range|yes|all-fallback|rules|ci||unreported|no|absent|0"
-  "a full standard fallback all selection uses required PR CI|full|yes|all-fallback|rules|ci||unreported|no|absent|0"
-  "a ci standard fallback all selection uses required PR CI|ci|yes|all-fallback|rules|ci||unreported|no|absent|0"
-  "a full subset retains local execution|full|yes|subset|rules|full||unreported|no|full|0"
-  "a range subset uses required PR CI|range|yes|subset|rules|ci||unreported|no|absent|0"
-  "a guard-scans subset uses required PR CI|range|yes|guard-scans|rules|ci||unreported|no|absent|0"
-  "a ci subset uses required PR CI|ci|yes|subset|rules|ci||unreported|no|absent|0"
-  "a pre-open range subset retains scoped local execution|range|yes|subset|pr-no-pr|range||unreported|yes|range|0|pr-not-open"
-  "a closed PR range subset retains scoped local execution|range|yes|subset|pr-closed|range||unreported|yes|range|0|pr-not-open"
-  "a merged PR range subset retains scoped local execution|range|yes|subset|pr-merged|range||unreported|yes|range|0|pr-not-open"
-  "a range subset without required CI retains local execution|range|yes|subset|unrequired|range||unreported|yes|range|0|context-unrequired"
-  "a range subset CI does not cover retains local execution|range|yes|subset-render|rules|range||unreported|yes|range|0|class-uncovered"
-  "a range subset with unread rules retains local execution|range|yes|subset|rules-fail|range||unreported|yes|range|0|rules-unread"
-  "a failed range subset PR lookup retains the original failure|range|yes|subset|pr-unread|range||unreported|yes|range|1|base-unresolved"
+  "KEN-3495 standard fallback all range uses required PR CI|range|yes|all-fallback|rules|ci||all|no|absent|0"
+  "a full standard fallback all selection uses required PR CI|full|yes|all-fallback|rules|ci||all|no|absent|0"
+  "a ci standard fallback all selection uses required PR CI|ci|yes|all-fallback|rules|ci||all|no|absent|0"
+  "a full subset retains local execution|full|yes|subset|rules|full||subset|no|full|0"
+  "a range subset uses required PR CI|range|yes|subset|rules|ci||subset|no|absent|0"
+  "a guard-scans subset uses required PR CI|range|yes|guard-scans|rules|ci||subset|no|absent|0"
+  "a ci subset uses required PR CI|ci|yes|subset|rules|ci||subset|no|absent|0"
+  "a pre-open range subset retains scoped local execution|range|yes|subset|pr-no-pr|range||subset|yes|range|0|pr-not-open"
+  "a closed PR range subset retains scoped local execution|range|yes|subset|pr-closed|range||subset|yes|range|0|pr-not-open"
+  "a merged PR range subset retains scoped local execution|range|yes|subset|pr-merged|range||subset|yes|range|0|pr-not-open"
+  "a range subset without required CI retains local execution|range|yes|subset|unrequired|range||subset|yes|range|0|context-unrequired"
+  "a range subset CI does not cover retains local execution|range|yes|subset-render|rules|range||subset|yes|range|0|class-uncovered"
+  "a range subset with unread rules retains local execution|range|yes|subset|rules-fail|range||subset|yes|range|0|rules-unread"
+  "a failed range subset PR lookup retains the original failure|range|yes|subset|pr-unread|range||subset|yes|range|1|base-unresolved"
   "a failed range preview retains local execution|range|yes|failed|rules|range||unreported|yes|range|0"
   "an unknown range selection retains local execution|range|yes|unknown|rules|range||unreported|yes|range|0"
   "an unset selector preserves local execution|full|no|all|rules|full||unreported|no|full|0"
   "an unset selector preserves range local execution|range|no|all|rules|range||unreported|yes|range|0"
   "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no|full|0"
   "an unknown selection preserves local execution|full|yes|unknown|rules|full||unreported|no|full|0"
-  "an all selection without required CI retains local execution|full|yes|all|unrequired|full||unreported|no|full|0|context-unrequired"
-  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||unreported|no|full|0|class-uncovered"
+  "an all selection without required CI retains local execution|full|yes|all|unrequired|full||all|no|full|0|context-unrequired"
+  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||all|no|full|0|class-uncovered"
   "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-no-pr|full|true|subset|yes|absent|0|pr-not-open"
   "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-no-pr|range|true|subset|yes|absent|0|pr-not-open"
   "a closed PR full all selection runs scoped suites|full|yes|all|pr-closed|full|true|subset|yes|absent|0|pr-not-open"
   "a closed PR range all selection runs scoped suites|range|yes|all|pr-closed|range|true|subset|yes|absent|0|pr-not-open"
   "a merged PR full all selection runs scoped suites|full|yes|all|pr-merged|full|true|subset|yes|absent|0|pr-not-open"
   "a merged PR range all selection runs scoped suites|range|yes|all|pr-merged|range|true|subset|yes|absent|0|pr-not-open"
-  "a failed full PR lookup keeps the original failure|full|yes|all|pr-unread|full||unreported|no|full|1|base-unresolved"
-  "a failed range PR lookup keeps the original failure|range|yes|all|pr-unread|range||unreported|yes|range|1|base-unresolved"
-  "a full network failure keeps the original failure|full|yes|all|pr-network|full||unreported|no|full|1|base-unresolved"
-  "a range network failure keeps the original failure|range|yes|all|pr-network|range||unreported|yes|range|1|base-unresolved"
-  "a full invalid response keeps the original failure|full|yes|all|pr-invalid|full||unreported|no|full|1|base-unresolved"
-  "a range invalid response keeps the original failure|range|yes|all|pr-invalid|range||unreported|yes|range|1|base-unresolved"
-  "a full unknown state keeps the original failure|full|yes|all|pr-state|full||unreported|no|full|1|base-unresolved"
-  "a range unknown state keeps the original failure|range|yes|all|pr-state|range||unreported|yes|range|1|base-unresolved"
-  "a full empty base keeps the original failure|full|yes|all|pr-empty|full||unreported|no|full|1|base-unresolved"
-  "a range empty base keeps the original failure|range|yes|all|pr-empty|range||unreported|yes|range|1|base-unresolved"
-  "a full URI failure keeps the original failure|full|yes|all|pr-uri|full||unreported|no|full|1|base-unresolved"
-  "a range URI failure keeps the original failure|range|yes|all|pr-uri|range||unreported|yes|range|1|base-unresolved"
+  "a failed full PR lookup keeps the original failure|full|yes|all|pr-unread|full||all|no|full|1|base-unresolved"
+  "a failed range PR lookup keeps the original failure|range|yes|all|pr-unread|range||all|yes|range|1|base-unresolved"
+  "a full network failure keeps the original failure|full|yes|all|pr-network|full||all|no|full|1|base-unresolved"
+  "a range network failure keeps the original failure|range|yes|all|pr-network|range||all|yes|range|1|base-unresolved"
+  "a full invalid response keeps the original failure|full|yes|all|pr-invalid|full||all|no|full|1|base-unresolved"
+  "a range invalid response keeps the original failure|range|yes|all|pr-invalid|range||all|yes|range|1|base-unresolved"
+  "a full unknown state keeps the original failure|full|yes|all|pr-state|full||all|no|full|1|base-unresolved"
+  "a range unknown state keeps the original failure|range|yes|all|pr-state|range||all|yes|range|1|base-unresolved"
+  "a full empty base keeps the original failure|full|yes|all|pr-empty|full||all|no|full|1|base-unresolved"
+  "a range empty base keeps the original failure|range|yes|all|pr-empty|range||all|yes|range|1|base-unresolved"
+  "a full URI failure keeps the original failure|full|yes|all|pr-uri|full||all|no|full|1|base-unresolved"
+  "a range URI failure keeps the original failure|range|yes|all|pr-uri|range||all|yes|range|1|base-unresolved"
 )
 selection_rows() { # SCRIPT [LABEL]
   local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback expected_rc args n answer measured

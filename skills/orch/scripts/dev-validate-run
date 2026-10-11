@@ -672,7 +672,8 @@ preview_selection() {
       DEV_VALIDATE_PATHS="$class_scratch/paths" DEV_VALIDATE_BASE="$base_sha" \
       DEV_VALIDATE_MODE="$requested_mode" DEV_VALIDATE_SCOPED=false \
       "$BASH" -c "$selection_cmd" 2>"$class_scratch/selection.log")" \
-    && selection="$(sed -n '/^selection=/p' <<<"$selection")"
+    && selection="$(sed -n '/^selection=/p' <<<"$selection")" \
+    || { selection=""; return 1; }
 }
 
 # The contexts the base branch requires, one per line: those its rulesets'
@@ -959,6 +960,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     printf 'class=%s\n' "$class"
     printf 'docs-only=%s\n' "$docs_only"
     printf 'validate-mode=%s\n' "$validate_mode"
+    case "${selection:-}" in selection=all|selection=subset) printf '%s\n' "$selection" ;; esac
     [[ "$scoped" == false ]] || printf 'scoped=true\n'
     printf 'validate-base=%s\n' "$base_sha"
     [[ -z "$orphaned_sha" ]] || printf 'validate-base-orphaned=%s\n' "$orphaned_sha"
@@ -1201,13 +1203,17 @@ if [[ "$mode" == record ]]; then
   # references/artifact-checks.md's Validation command output contract.
   # The last candidate owns the result, even when it is malformed.
   record_selection='selection=unreported'
+  start_selection="$(start_field "$run_dir/start" selection)"
+  case "$start_selection" in
+    all|subset) record_selection="selection=$start_selection" ;;
+  esac
   if [[ -e "$run_dir/log" ]]; then
-    record_selection="$(LC_ALL=C awk '
+    record_selection="$(LC_ALL=C awk -v fallback="$record_selection" '
       /^validate:/ { last = $0 }
       END {
         if (last ~ /^validate: lanes=[[:alnum:]_.-]+(,[[:alnum:]_.-]+)* selection=(all|subset|battery)$/) {
           split(last, fields, " "); print fields[2] " " fields[3]
-        } else print "selection=unreported"
+        } else print fallback
       }' "$run_dir/log")" || die record-unreadable "path=$run_dir/log"
   fi
   record_mode="$(start_field "$run_dir/start" validate-mode)"
