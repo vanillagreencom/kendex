@@ -38,8 +38,10 @@ if [[ "${1:-}" == --case ]]; then
   tm -f /dev/null new-session -d -s fixture -x 200 -y 50
   tm set-option -g default-shell "$BASH"
   tm set-option -g default-command "$BASH --noprofile --norc -i"
-  printf '#!%s\nprintf "%%s" "${%s:-}" > %q\nprintf "%%s\\n" %q\nexec sleep 30\n' \
-    "$BASH" "$VAR" "$ROOT/account" "$SCREEN" > "$ROOT/bin/$HARNESS-real"
+  mkdir -p "$ROOT/real-bin/harness"
+  cp "$(command -v sleep)" "$ROOT/real-bin/harness/$HARNESS"
+  printf '#!%s\nprintf "%%s" "${%s:-}" > %q\nprintf "%%s\\n" %q\nexec %q 30\n' \
+    "$BASH" "$VAR" "$ROOT/account" "$SCREEN" "$ROOT/real-bin/harness/$HARNESS" > "$ROOT/bin/$HARNESS-real"
   chmod +x "$ROOT/bin/$HARNESS-real"
   {
     printf '#!%s\n' "$BASH"

@@ -57,7 +57,7 @@ in_range() { # NAME VALUE LO HI
 }
 
 BIN="$TMP_ROOT/bin"
-mkdir -p "$BIN" "$TMP_ROOT/work"
+mkdir -p "$BIN/processes" "$TMP_ROOT/work"
 # The work directory is the overseer's checkout, current with its origin, so a
 # launch's fast-forward has nothing to move or refuse until a row says so.
 # shellcheck source=lib/overseer-checkout.sh
@@ -69,13 +69,14 @@ checkout_world "$TMP_ROOT/work" || { echo "fixture: the work checkout could not 
 # is what a successor launched without the entry meets. The codex stub asks
 # none, its trust being the launch-home rows' subject.
 for harness in claude codex copilot; do
+  cp "$(command -v sleep)" "$BIN/processes/$harness"
   case "$harness" in
     claude) lane_var=CLAUDE_CONFIG_DIR ;;
     codex) lane_var=CODEX_HOME ;;
     copilot) lane_var=COPILOT_HOME ;;
   esac
   trust_gate=""
-  [[ "$harness" != claude ]] || trust_gate="jq -e --arg d \"\$(pwd -P)\" '.projects[\$d].hasTrustDialogAccepted == true' \"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}/.claude.json\" >/dev/null 2>&1 || { echo 'Do you trust the files in this folder?'; exec sleep 100000; }"
+  [[ "$harness" != claude ]] || trust_gate="jq -e --arg d \"\$(pwd -P)\" '.projects[\$d].hasTrustDialogAccepted == true' \"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}/.claude.json\" >/dev/null 2>&1 || { echo 'Do you trust the files in this folder?'; exec '$BIN/processes/claude' 100000; }"
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
@@ -83,7 +84,7 @@ $(checkout_stub_line)
 $trust_gate
 if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE successor startup waiting'; else echo 'esc to interrupt'; fi
 [ ! -f "$TMP_ROOT/asking" ] || echo 'Do you want to proceed?'
-exec sleep 100000
+exec "$BIN/processes/$harness" 100000
 STUB
 done
 # A caller pane whose foreground process NAMES a harness, which is what
@@ -3063,7 +3064,7 @@ if [ -f "$TMP_ROOT/selects-late" ]; then
   # The real sleep, here and in the gate: a virtual-clock run hands the pane its
   # PATH, whose stub sleep finds no real one in the pane's environment and
   # fails at once, ending the process that carries the handed-over account.
-  exec "$STUB_REAL_SLEEP" 100000
+  exec "$BIN/processes/claude" 100000
 fi
 if [ -f "$TMP_ROOT/selects-nothing" ]; then
   unset CLAUDE_CONFIG_DIR
@@ -3077,7 +3078,7 @@ fi
 if [ -f "$TMP_ROOT/dialog" ]; then cat "$TMP_ROOT/dialog"
 elif [ -f "$TMP_ROOT/idle" ]; then :
 else echo 'esc to interrupt'; fi
-exec sleep 100000
+exec "$BIN/processes/claude" 100000
 STUB
 chmod +x "$BIN/4claude"
 
@@ -3313,7 +3314,7 @@ case " \$* " in
   *" capture-pane "*" \${gate#* } "*)
     if [ -n "\$gate" ] && [ ! -f "$TMP_ROOT/late-release" ]; then
       : > "$TMP_ROOT/late-release"
-      until [ "\$(cat "/proc/\${gate%% *}/comm" 2>/dev/null)" = sleep ] &&
+      until [ "\$(cat "/proc/\${gate%% *}/comm" 2>/dev/null)" = claude ] &&
         "$REAL_TMUX" "\$@" | grep -q 'esc to interrupt'; do
         n=\$((n + 1)); [ "\$n" -lt 200 ] || break
         sleep 0.05

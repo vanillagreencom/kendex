@@ -56,7 +56,10 @@ tm() { TMUX_TMPDIR="$TMUX_DIR" tmux -L default "$@"; }
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 BIN="$TMP_ROOT/bin"
-mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
+mkdir -p "$BIN/processes" "$TMP_ROOT/work/tmp"
+for harness in claude codex copilot; do
+  cp "$(command -v sleep)" "$BIN/processes/$harness"
+done
 # The work directory is the overseer's checkout, current with its origin, so a
 # launch's fast-forward has nothing to move or refuse until a row says so.
 # shellcheck source=lib/overseer-checkout.sh
@@ -75,14 +78,14 @@ if [ -f "$TMP_ROOT/row" ]; then
   printf '{"at":%s,"event":"SessionStart","harness":"claude","source":"startup"}\n' "\$(date +%s)" \
     >> "\$box/session-\$(tmux display-message -p '#{pid}')-\${TMUX_PANE#%}.jsonl"
 fi
-exec sleep 100000
+exec "$BIN/processes/claude" 100000
 STUB
 # The codex harness, recording its home and argv as the claude stub does.
 cat > "$BIN/codex" <<STUB
 #!/bin/sh
 { printf 'home=%s\n' "\${CODEX_HOME:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.codex"
 echo 'esc to interrupt'
-exec sleep 100000
+exec "$BIN/processes/codex" 100000
 STUB
 chmod +x "$BIN/claude" "$BIN/codex"
 cat > "$BIN/kendex" <<'STUB'
@@ -534,7 +537,7 @@ cat > "$BIN/copilot" <<STUB
 #!/bin/sh
 { printf 'home=%s\n' "\${COPILOT_HOME:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.copilot"
 echo 'esc to interrupt'
-exec sleep 100000
+exec "$BIN/processes/copilot" 100000
 STUB
 chmod +x "$BIN/copilot"
 COP_SL="$TMP_ROOT/sl/copilot-statusline"

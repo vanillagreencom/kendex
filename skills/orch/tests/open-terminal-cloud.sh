@@ -553,10 +553,11 @@ echo "=== an account refusal names the session the CLI already made ==="
 # per-process environment and skips where the platform has none, the
 # reader's own predicate deciding.
 OTHER_LANE="$TMP_ROOT/.other"
-mkdir -p "$OTHER_LANE"
+mkdir -p "$OTHER_LANE" "$TMP_ROOT/mismatch-bin"
+cp "$(command -v sleep)" "$TMP_ROOT/mismatch-bin/claude"
 mismatch_row() { # SCRIPT ITEM — the launch, its result in MISMATCH
   local tree child="$TMP_ROOT/mismatch-child"
-  bash -c 'env CLAUDE_CONFIG_DIR="$1" sleep 30 & echo "$!" > "$2"; wait' _ "$OTHER_LANE" "$child" & tree=$!
+  bash -c 'env CLAUDE_CONFIG_DIR="$1" "$3" 30 & echo "$!" > "$2"; wait' _ "$OTHER_LANE" "$child" "$TMP_ROOT/mismatch-bin/claude" & tree=$!
   run_ot SCRIPT="$1" OT_PANE_PID="$tree" ORCH_TMUX_VERIFY_SECS=3 -- "${CLOUD[@]}" "$2"
   kill "$(cat "$child")" "$tree" 2>/dev/null || true
   MISMATCH="rc=$RC mismatch=$(grep -cxF "open-terminal: lane-mismatch item=$2 picked=$LANE_DIR observed=$OTHER_LANE" <<<"$ERR" || true) refused=$(grep -cxF "open-terminal: cloud-account-refused item=$2 session=session_01CLOUD" <<<"$ERR" || true) closed=$(grep -c '^kill-window' "$TMUX_LOG" || true) record=$(record "$2")"
