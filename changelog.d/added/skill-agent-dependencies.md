@@ -1,1 +1,0 @@
-- Skills can declare `dependencies.agents` in `SKILL.md` to install and render required agents on selected harnesses that support them at the install scope. Package previews show required agents and their install state. Unsupported tools get a warning while the skill installs. Refresh updates the list, and removal with a sweep keeps agents also added by name.

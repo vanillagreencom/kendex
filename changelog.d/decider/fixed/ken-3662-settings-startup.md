@@ -1,1 +1,0 @@
-- Reduce process starts when project settings load.

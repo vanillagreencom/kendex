@@ -6,6 +6,98 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-10-11
+
+### Added
+
+- Skills can declare `dependencies.agents` in `SKILL.md` to install and render required agents on selected harnesses that support them at the install scope. Package previews show required agents and their install state. Unsupported tools get a warning while the skill installs. Refresh updates the list, and removal with a sweep keeps agents also added by name.
+
+### Packages
+
+#### auditor
+
+- Add an auditor that compares source evidence with a stated standard and gives each gap an owner and closing check.
+
+#### cpa
+
+- Add a finance and tax preparer that reads original records and prepares work for the user's decision.
+
+#### decider
+
+- Reduce process starts when project settings load.
+
+#### github
+
+- Require a head-bound review disposition when a Copilot overview recommends changes without a review thread.
+- Reduce process starts when project settings load.
+
+#### harness-ci
+
+- Repositories can use `HARNESS_CI_STANDARD_PATHS` to require standard review for high-risk paths, even for a small change.
+- Consumer refresh CI guidance states when a render proof covers the bot-instructions check and keeps CodeQL, launcher or script tests, and other guard jobs running.
+
+#### lane-mail-check
+
+- The wake check names the Jarvis session in its summary and comments.
+
+#### legal
+
+- Add a legal preparer that checks original sources, jurisdiction and the event that requires another check.
+
+#### linear
+
+- Initiatives can set an owner, lead team, labels, and resource links. Projects can set a lead and resource links. Reads show these fields, repeated link URLs are skipped, and a failed link reports a partial write.
+- Reduce process starts when project settings load.
+
+#### operator
+
+- Add an operator that completes one approved browser or account step and checks the result at the service.
+
+#### orch
+
+- The lane age event and status report show separate review, fix receipt, validation, recorded restack and repeated class counts. Unavailable counts read `unread`. Lane status files have no write-side line cap. The overseer reads only the last non-empty lines to limit context use.
+- Set `ORCH_PR_ORDER` to choose `review-first`, `open-first` or `push-first` for any repository. Push-first lets covered implementation and internal-fix rounds defer validation to required pull request CI before publication. Submit verifies required CI on the published head before merge. Uncovered work keeps local validation.
+
+  You do: in `kendex.settings.toml` under `[env]`, set `ORCH_PR_ORDER = "push-first"` and `DEV_VALIDATE_CI_CONTEXT = "<the required status check whose pull request run covers DEV_VALIDATE_CMD>"`.
+
+- Mail delivery from a linked checkout finds the main checkout when either path contains a newline.
+- Lanes activate their Linear items without assigning the owner. Owner asks keep their existing assignment and removal route.
+- Reduce idle watcher, mailbox read, and default-root lookup process starts while retaining message output, cursor positions, and hosted read batching.
+- Retirement examples and test fixtures use neutral account names.
+- Running lanes keep their account handoff checks when a fleet state cannot be read. The check reports the unread overseer seats and uses the account's wall reading. Projected launch checks refuse with exit 8 before reading local or provider usage.
+
+#### preflight
+
+- Reduce process starts when project settings load.
+
+#### researcher
+
+- Keep user facts in the user's own skills or memory and return research to the caller when planner instructions or a tracker are unavailable.
+
+#### review-gate
+
+- Consumer refresh merges its published head directly when the base branch has no rules or protection, so GitHub's auto-merge refusal no longer fails the run.
+
+#### reviewer-arch
+
+- Keep user facts in the user's own skills or memory and preserve review output when instruction files are unavailable.
+
+#### scout
+
+- Keep user facts in the user's own skills or memory and report unread facts as unread.
+
+#### second-opinion
+
+- Reduce process starts when project settings load.
+
+#### slack
+
+- The Slack app manifest ships as `app-manifest.yaml`, linked from the Slack app setup instructions.
+
+#### worktree
+
+- Reduce startup work when mailbox readers resolve their worktree or checkout.
+
 ## [1.15.0] - 2026-10-10
 
 ### Added
@@ -2631,7 +2723,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.15.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.16.0..HEAD
+[1.16.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.16.0
 [1.15.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.15.0
 [1.14.4]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.4
 [1.14.3]: https://github.com/vanillagreencom/kendex/releases/tag/v1.14.3

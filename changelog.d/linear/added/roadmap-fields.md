@@ -1,1 +1,0 @@
-- Initiatives can set an owner, lead team, labels, and resource links. Projects can set a lead and resource links. Reads show these fields, repeated link URLs are skipped, and a failed link reports a partial write.
