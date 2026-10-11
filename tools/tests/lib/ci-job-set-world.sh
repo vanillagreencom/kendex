@@ -105,8 +105,8 @@ macos_record() { # CLASS DOCS PATHS — actual PR coverage fields
 }
 
 # The whole shard roster, in the matrix's order.
-ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls-a","linear-controls-b","worktree","rest","slack","node","pi-claude-bridge"]'
-ORCH='"orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-state","orch-rest"'
+ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-dev","orch-state","orch-rest","guards-scans","guards-commit","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls-a","linear-controls-b","worktree","rest","slack","node","pi-claude-bridge"]'
+ORCH='"orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-dev","orch-state","orch-rest"'
 # The expected queue list comes from each row's shards, with the platform
 # exclusions held to the workflow by orch-shard-partition.test.sh.
 macos_shards() { # SHARDS: the macOS-capable members in the same order

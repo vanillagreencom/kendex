@@ -540,6 +540,8 @@ linux_only="$(measured linux false true false '["node","pi-claude-bridge","linea
 check "the portability row selects orch-rest" true \
   "$(jq -c 'index("orch-rest") != null' <<<"$open_terminal_queue")"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"
+only_dev="$(measured both false true false '["orch-dev"]' '["orch-dev"]')"
+only_state="$(measured both false true false '["orch-state"]' '["orch-state"]')"
 # EVENT|RESULT|SELECTION|LEGS. VERIFY_ROW, PROSE_ROW and one_skill name no leg.
 queue_rows=0
 while IFS='|' read -r event result sel expected; do
@@ -557,6 +559,8 @@ merge_group|success|$SOURCE_PROOF_ROW|$QUEUE_ALL
 merge_group|success|$PATCH_PROOF_ROW|none
 merge_group|success|$ORCH_CODE_ROW|$(macos_shards "$ORCH_SHARDS")
 merge_group|success|$only_succeed|["orch-oversee-succeed"]
+merge_group|success|$only_dev|["orch-dev"]
+merge_group|success|$only_state|["orch-state"]
 merge_group|success|$one_skill|none
 merge_group|success|$VERIFY_ROW|none
 merge_group|success|$PROSE_ROW|none
@@ -564,6 +568,8 @@ merge_group|success|$linux_only|none
 merge_group|failure|$ALL_OFF|$QUEUE_ALL
 pull_request|success|$ALL_ON|$QUEUE_ALL
 pull_request|success|$open_terminal|$open_terminal_queue
+pull_request|success|$only_dev|["orch-dev"]
+pull_request|success|$only_state|["orch-state"]
 pull_request|success|$ORCH_CODE_ROW|$(macos_shards "$ORCH_SHARDS")
 pull_request|success|$one_skill|none
 pull_request|success|$VERIFY_ROW|none
@@ -1110,6 +1116,16 @@ selected-failed|merge_group|$open_terminal|failure|true 1
 selected-cancelled|merge_group|$open_terminal|cancelled|true 1
 selected-skipped|merge_group|$open_terminal|skipped|true 1
 selected-passed|merge_group|$open_terminal|success|true 0
+dev-failed|merge_group|$only_dev|failure|true 1
+dev-cancelled|merge_group|$only_dev|cancelled|true 1
+dev-skipped|merge_group|$only_dev|skipped|true 1
+dev-passed|merge_group|$only_dev|success|true 0
+state-failed|merge_group|$only_state|failure|true 1
+state-cancelled|merge_group|$only_state|cancelled|true 1
+state-skipped|merge_group|$only_state|skipped|true 1
+state-passed|merge_group|$only_state|success|true 0
+dev-pr-skipped|pull_request|$only_dev|skipped|true 1
+state-pr-skipped|pull_request|$only_state|skipped|true 1
 unselected-docs|merge_group|$VERIFY_ROW|skipped|false 0
 pull-request|pull_request|$open_terminal|skipped|true 1
 patch-proven|merge_group|$PATCH_PROOF_ROW|skipped|false 0
@@ -1119,6 +1135,10 @@ plant "$WORKFLOW" "MACOS_QUEUE: \${{ $queue_expr }}" "MACOS_QUEUE: \${{ $queue_e
 false_expr="$(aggregate_lanes "$TMP/wf-queue-lane-false.yml" "$CI_JOB" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$2 == j { print $3 }')"
 check "must-fail: a CI lane ignoring the selection lets a selected queue job skip" "false 0" \
   "$(queue_aggregate "$false_expr" merge_group "$open_terminal" skipped)"
+for selection in "$only_dev" "$only_state"; do
+  check "must-fail: ignoring a family selection lets its selected queue job skip" "false 0" \
+    "$(queue_aggregate "$false_expr" merge_group "$selection" skipped)"
+done
 
 check "a lane the class stood down may skip" "0" \
   "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'false:ui-tests' \

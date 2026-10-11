@@ -50,8 +50,8 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-state -orch-rest -guards-commit -linear -linear-controls-a -linear-controls-b -worktree -rest -slack -node -pi-claude-bridge"
-ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-watch +orch-oversee-succeed +orch-state +orch-rest"
+NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -linear -linear-controls-a -linear-controls-b -worktree -rest -slack -node -pi-claude-bridge"
+ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-watch +orch-oversee-succeed +orch-dev +orch-state +orch-rest"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
 # `+shard` members it must hold and `-shard` members it must not. Empty
@@ -108,6 +108,11 @@ small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+review-gate +orch-rest +rest
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|$ORCH_ALL +guards-scans +guards-tools
 micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
+micro|false|skills/orch/tests/dev-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/review-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/lane-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/dev-review-lane-workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
 standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
 micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
@@ -455,6 +460,7 @@ ROWS
 # skills/orch/scripts/lib/branch-growth.sh under the package-arm edit is the
 # inverse the selection must never reach, an orch diff selecting none of
 # orch's shards.
+[ "$(grep -c '^    skills/orch)' "$JOB_SET")" -eq 1 ] || exit 1
 while IFS='@' read -r edit paths; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   chmod +x "$TMP/rule/tools/ci-job-set"
@@ -467,6 +473,7 @@ while IFS='@' read -r edit paths; do
   [ "$got" != "$expected" ] && ok "control: $edit reddens $paths" ||
     bad "control: $edit reddens $paths (still '$got')"
 done <<'CONTROLS'
+/^    skills\/orch)/s/ orch-dev / /@skills/orch/tests/dev-future.sh
 s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
 s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight

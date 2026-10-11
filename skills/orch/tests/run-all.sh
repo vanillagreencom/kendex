@@ -135,6 +135,11 @@ if [ "${1-}" = --shard ]; then
       set -- oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report'
       for arg in "${WATCH[@]}"; do set -- "$@" "!$arg"; done ;;
     orch-oversee-watch) set -- "${WATCH[@]}" ;;
+    # Dev/review owns mixed family names. State rejects those names, and
+    # rest rejects both families, so future suites have one owner.
+    orch-dev) set -- dev review '!open-terminal' '!oversee' ;;
+    orch-state) set -- lane workflow-state '!dev' '!review' '!open-terminal' '!oversee' ;;
+    orch-rest) set -- '!open-terminal' '!oversee' '!lane' '!workflow-state' '!dev' '!review' ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi

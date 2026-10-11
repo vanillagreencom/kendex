@@ -334,7 +334,79 @@ else
   bad "must-fail: a repeated shard produced no duplicate, so the overlap check proves nothing"
 fi
 
+# Each family must also fail the existing coverage check when its workflow
+# call is omitted or repeated. Read the calls instead of restating filters.
+for profile in orch-dev orch-state; do
+  remaining=()
+  family_args=""
+  family_calls=0
+  for args in "${shard_args[@]}"; do
+    case "$args" in
+      *"--shard $profile") family_args="$args"; family_calls=$((family_calls + 1)) ;;
+      *) remaining+=("$args") ;;
+    esac
+  done
+  check "$profile has one workflow call on $PARTITION_RUNNER_OS" "1" "$family_calls"
+  [[ "$family_calls" == 1 ]] || continue
+  family="$(union_of "$family_args")"
+  check "must-fail: omitting $profile names its lost $PARTITION_RUNNER_OS suites" \
+    "$family" "$(missing_from "${remaining[@]}")"
+  check "must-fail: repeating $profile names its duplicate $PARTITION_RUNNER_OS suites" \
+    "$family" "$(shared_by "${shard_args[@]}" "$family_args")"
 done
+done
+PARTITION_RUNNER_OS=Linux
+
+# CI produces these profiles. Future suite names follow their family once,
+# and dev/review owns an overlap with lane/workflow-state. The real runner
+# decides membership; these empty files add no second selector owner.
+family_rows='dev_future|orch-dev
+review_future|orch-dev
+lane_future|orch-state
+workflow-state_future|orch-state
+dev_review_lane_workflow-state_future|orch-dev
+other_future|orch-rest'
+while IFS='|' read -r name profile; do
+  printf '#!/usr/bin/env bash\n' > "$SANDBOX/$name.sh"
+done <<< "$family_rows"
+for PARTITION_RUNNER_OS in Linux macOS; do
+  for profile in orch-dev orch-state orch-rest; do
+    selected --shard "$profile" > "$TMP/$profile.names"
+  done
+  while IFS='|' read -r name owner; do
+    claims=0
+    for profile in orch-dev orch-state orch-rest; do
+      if grep -qxF "$name" "$TMP/$profile.names"; then
+        claims=$((claims + 1))
+        check "$name follows its family on $PARTITION_RUNNER_OS" "$owner" "$profile"
+      fi
+    done
+    check "$name has one family owner on $PARTITION_RUNNER_OS" "1" "$claims"
+  done <<< "$family_rows"
+  for name in dev_validate_run dev_validate_run_selection; do
+    grep -qxF "$name" "$TMP/orch-dev.names" && ok "$name runs in the $PARTITION_RUNNER_OS dev profile" || bad "$name is lost from the dev profile"
+    ! grep -qxF "$name" "$TMP/orch-state.names" && ok "$name leaves the $PARTITION_RUNNER_OS state profile" || bad "$name remains in the state profile"
+  done
+  check "the exact validation alias retains both physical suites on $PARTITION_RUNNER_OS" \
+    $'dev_validate_run\ndev_validate_run_selection' "$(selected '=dev_validate_run')"
+  # A planted assertion uses a private suite file and the workflow profile's
+  # real entry. A selected failure must propagate to the shard verdict.
+  while IFS='|' read -r name profile; do
+    printf '#!/usr/bin/env bash\ntest green = red\n' > "$SANDBOX/$name.sh"
+    rc=0
+    RUNNER_OS="$PARTITION_RUNNER_OS" bash "$SANDBOX/run-all.sh" --shard "$profile" \
+      > "$TMP/family-failure.log" 2>&1 || rc=$?
+    check "must-fail: $profile propagates an asserted failure on $PARTITION_RUNNER_OS" "1" "$rc"
+    grep -qxF "  - $name" "$TMP/family-failure.log" && ok "$profile names its failed suite" || bad "$profile lost the failed suite name"
+    printf '#!/usr/bin/env bash\n' > "$SANDBOX/$name.sh"
+  done <<'ROWS'
+dev_future|orch-dev
+lane_future|orch-state
+ROWS
+done
+while IFS='|' read -r name profile; do
+  rm -- "$SANDBOX/$name.sh"
+done <<< "$family_rows"
 PARTITION_RUNNER_OS=Linux
 
 # A new oversee suite belongs to the complement on both platforms, even when its
@@ -364,14 +436,14 @@ for PARTITION_RUNNER_OS in Linux macOS; do
 done
 cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
 PARTITION_RUNNER_OS=Windows
-for profile in orch-oversee orch-oversee-watch; do
+for profile in orch-oversee orch-oversee-watch orch-dev orch-state orch-rest; do
   check "$profile refuses an unsupported platform" "1" "$(status_of --shard "$profile")"
 done
 # GitHub's Windows runner is outside the orch shard's supported platforms.
 # Accept it in a disposable runner to prove that the refusal checks fail.
 sed 's/Linux|macOS)/Linux|macOS|Windows)/' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "platform control changed no refusal"
-for profile in orch-oversee orch-oversee-watch; do
+for profile in orch-oversee orch-oversee-watch orch-dev orch-state orch-rest; do
   check "must-fail: $profile accepts Windows after its platform refusal is removed" \
     "0" "$(status_of --shard "$profile")"
 done
