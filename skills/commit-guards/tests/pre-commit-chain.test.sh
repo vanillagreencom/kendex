@@ -181,6 +181,7 @@ fx_bot_unadopted() { repo bot-unadopted; bot_real '[skills.orch]\n'; }
 BOT_CONFIGURED='[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = "fixture"\nsummary = "A fixture."\n\n[bot-instructions.bots]\ncodex = true\n'
 fx_bot_stale() { repo bot-stale; bot_real "$BOT_CONFIGURED"; }
 fx_bot_refuses() { repo bot-refuses; tree bot-instructions "bot-instructions: source=<repo>" 2; }
+fx_bot_older_attested() { repo bot-older-attested; tree bot-instructions $'bot-instructions: unconfigured=kendex.toml\nbot-instructions: renders=none\nfixture=older-copy' 2; }
 # A copy older than the package's orphan scan: the record with no
 # `renders=none` attestation under it, whatever renders the tree holds. The
 # lane names that cause after the package's own text.
@@ -189,7 +190,8 @@ UNADOPTED="rc=0 $BOT;pre-commit: not-adopted=bot-instructions:kendex.toml;$BATCH
 REFUSED="rc=2 $BOT;bot-instructions: source=<repo> check --staged;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 BARE_REFUSED="rc=2 $BOT;bot-instructions: unconfigured=kendex.toml;fixture=pre-scan-copy check --staged;pre-commit: unattested=bot-instructions:kendex.toml;$(incomplete 'bot-instructions check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 run_rows \
-  "an installed package with no [bot-instructions] table is not adopted: one line, and the chain passes|fx_bot_unadopted||$BARE||$UNADOPTED" \
+  "the real package successful empty result is not adopted: one line, and the chain passes|fx_bot_unadopted||$BARE||$UNADOPTED" \
+  "an older attested exit-2 result is also not adopted: one line, and the chain passes|fx_bot_older_attested||$BARE||$UNADOPTED" \
   "any other exit-2 refusal is a step that did not complete, and blocks|fx_bot_refuses||$BARE||$REFUSED" \
   "an unconfigured record without its renders=none attestation blocks, its cause named|fx_bot_bare||$BARE||$BARE_REFUSED"
 fx_bot_stale
@@ -232,7 +234,7 @@ EDIT
 assert_eq "control: a package that never looks for marked renders passes the removed table as not adopted" "rc=0" "$(run "" "$BARE" "" | cut -d' ' -f1)"
 
 # Controls, each on a private install: without the not-adopted branch the
-# unconfigured install blocks, with the record's key unread every exit-2
+# successful empty result prints raw advice, with the record's key unread every exit-2
 # refusal passes, and with the attestation unread the bare record passes.
 bot_mutant() { # NAME OLD NEW
   install "$TMP/bot-mutant-$1"
@@ -244,7 +246,7 @@ assert s.count(sys.argv[2]) == 1
 p.write_text(s.replace(sys.argv[2], sys.argv[3]))
 EDIT
 }
-bot_mutant unread '"$status" -eq 2 ] && [[' '"$status" -eq 99 ] && [['
+bot_mutant unread 'if { [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; } && [[' 'if false && [['
 bot_mutant keyless '"bot-instructions: unconfigured="*' '"bot-instructions: "*'
 bot_mutant unattested 'if [ "${rest' 'if true || [ "${rest'
 fx_bot_unadopted_control() { repo bot-unadopted-control; bot_real '[skills.orch]\n'; }
@@ -253,7 +255,11 @@ fx_bot_unadopted_control() { repo bot-unadopted-control; bot_real '[skills.orch]
 fx_bot_refuses_control() { repo bot-refuses-control; tree bot-instructions $'bot-instructions: source=<repo>\nbot-instructions: renders=none\nfixture=attested' 2; }
 fx_bot_bare_control() { repo bot-bare-control; tree bot-instructions "bot-instructions: unconfigured=kendex.toml" 2; }
 fx_bot_unadopted_control
-assert_eq "control: a lane that ignores the unconfigured record blocks the unconfigured install" "rc=2" "$(run "" bot-mutant-unread "" | cut -d' ' -f1)"
+uncollapsed="$(run "" bot-mutant-unread "")"
+case "$uncollapsed" in
+  "rc=0 $BOT;bot-instructions: unconfigured=kendex.toml;bot-instructions: renders=none;"*) uncollapsed=raw ;;
+esac
+assert_eq "control: ignoring the successful empty record loses the collapsed not-adopted output" raw "$uncollapsed"
 fx_bot_refuses_control
 assert_eq "control: a lane that matches any refusal key passes an attested source refusal" "rc=0" "$(run "" bot-mutant-keyless "" | cut -d' ' -f1)"
 assert_eq "the real lane blocks the attested source refusal" "rc=2" "$(run "" "$BARE" "" | cut -d' ' -f1)"
