@@ -8,6 +8,7 @@ use crate::model::HarnessId;
 mod file;
 mod fold;
 mod migrate;
+mod shared_text;
 mod validate;
 pub use file::{
     ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_file_name,
@@ -371,6 +372,12 @@ pub struct Manifest {
     pub agent_additional_instructions: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub skill_instructions: BTreeMap<String, String>,
+    /// `[shared-text]`: a paragraph written once under a name, placed into
+    /// a `[skill-instructions]` value by `{{shared-text:NAME}}`. Expanded
+    /// only where text is read for output ([`Manifest::expand_shared_text`]),
+    /// so a save writes the token back, never the text.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared_text: BTreeMap<String, String>,
     /// `[command-instructions]`: the project's text for a command, written
     /// into every tool's copy above the publisher's body, which still
     /// updates. Keyed like `[skill-instructions]`, `all` and `*` included.
@@ -397,6 +404,15 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// A `[skill-instructions]` value as output reads it: each
+    /// `{{shared-text:NAME}}` replaced by that `[shared-text]` entry with
+    /// its trailing whitespace trimmed. A value without a token comes back
+    /// as written; an undeclared name stays as written, since validation
+    /// refuses a file holding one before it loads.
+    pub fn expand_shared_text<'a>(&self, value: &'a str) -> std::borrow::Cow<'a, str> {
+        shared_text::expand(value, &self.shared_text)
+    }
+
     /// The environment `[hooks.<name>]` declares for its registration: the one
     /// reading the renderer, the installation hash and the scan share.
     pub fn hook_env(&self, name: &str) -> Option<&BTreeMap<String, String>> {

@@ -384,6 +384,49 @@ fn the_customization_opt_in_carries_package_settings_only() {
     assert!(!text.contains("reviewers"), "{text}");
 }
 
+/// A template travels without the project's `[shared-text]`, so the
+/// instructions it carries hold the paragraph a token placed, not the token.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_template_carries_the_shared_text_a_token_places() {
+    let project = seeded();
+    let manifest = project.root.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    let placed = declared.replace(
+        "\"gh\" = \"read this first\"\n",
+        "\"gh\" = \"read this first {{shared-text:delivery}}\"\n[shared-text]\ndelivery = \"Push the item branch.\\n\"\n",
+    );
+    assert_ne!(placed, declared);
+    fs::write(&manifest, placed).unwrap();
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let created = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Placed".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .map(|member| member.key.clone())
+                .collect(),
+            customizations: true,
+            fingerprint: draft.fingerprint,
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        created
+            .customizations
+            .skill_instructions
+            .get("gh")
+            .map(String::as_str),
+        Some("read this first Push the item branch.")
+    );
+    let saved = fs::read_to_string(project.env.templates_file()).unwrap();
+    assert!(!saved.contains("{{shared-text:"), "{saved}");
+}
+
 /// A package installed from a marketplace and edited here is two things
 /// under one name. Neither is picked for the person: the save refuses
 /// until they choose, and each choice records what it says it does.

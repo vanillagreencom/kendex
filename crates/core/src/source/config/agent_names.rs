@@ -130,6 +130,9 @@ impl Uses {
                 &format!("kendex.toml: skill-instructions.{skill}"),
             );
         }
+        for (name, text) in &mut manifest.shared_text {
+            *text = self.labels(text, &format!("kendex.toml: shared-text.{name}"));
+        }
         for (command, instructions) in &mut manifest.command_instructions {
             *instructions = self.labels(
                 instructions,

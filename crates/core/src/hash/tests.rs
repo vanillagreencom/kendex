@@ -626,6 +626,55 @@ fn editing_a_shared_key_invalidates_dependents() {
     assert_eq!(unrelated, unrelated_before);
 }
 
+/// A skill's hash reads its instructions with their shared texts placed:
+/// editing one shared text moves every skill that places it and no other,
+/// and a manifest without the table or a token serializes as it always has.
+#[test]
+fn editing_a_shared_text_moves_the_skills_that_place_it_only() {
+    let mut manifest = Manifest {
+        schema: MANIFEST_SCHEMA,
+        ..Manifest::default()
+    };
+    for (skill, text) in [
+        ("dev", "{{shared-text:delivery}}"),
+        ("orch", "Own.\n\n{{shared-text:delivery}}"),
+        ("github", "Own."),
+    ] {
+        manifest
+            .skill_instructions
+            .insert(skill.into(), text.into());
+    }
+    let hashes = |manifest: &Manifest| {
+        ["dev", "orch", "github"].map(|skill| {
+            in_place_installation_hash(manifest, ItemKind::Skill, skill, HarnessId::Claude)
+        })
+    };
+    manifest
+        .shared_text
+        .insert("delivery".into(), "Push to the item branch.".into());
+    let before = hashes(&manifest);
+    manifest.shared_text.insert(
+        "delivery".into(),
+        "Push to the item branch and open a PR.".into(),
+    );
+    let after = hashes(&manifest);
+    assert_ne!(after[0], before[0], "dev places delivery");
+    assert_ne!(after[1], before[1], "orch places delivery");
+    assert_eq!(after[2], before[2], "github places nothing");
+
+    let plain = Manifest {
+        schema: MANIFEST_SCHEMA,
+        skill_instructions: [("github", "Own.\n"), ("all", "Everyone.")]
+            .map(|(key, text)| (key.to_owned(), text.to_owned()))
+            .into(),
+        ..Manifest::default()
+    };
+    assert_eq!(
+        relevant_sections(&plain, ItemKind::Skill, "github", HarnessId::Claude),
+        "skill-instructions.github=Own.\n\nskill-instructions.all=Everyone.\n"
+    );
+}
+
 /// A skill's installation hash reads what its render carries: an edit to
 /// the package's tests, evaluation sets or maintainer notes moves nothing a
 /// consumer records, and an edit to a file the render carries does.

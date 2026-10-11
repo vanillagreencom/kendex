@@ -195,3 +195,37 @@ fn a_finding_is_one_line_however_its_parts_are_written() {
     let pair = joined(&[finding.clone(), finding]);
     assert_eq!(pair.lines().count(), 2, "{pair:?}");
 }
+
+/// A token is found at the entry holding it when its name is undeclared or
+/// it sits inside a shared text; a declared token, and `{{args}}`, are not.
+#[test]
+fn a_shared_text_token_names_a_declared_entry_outside_any_shared_text() {
+    let rows: [(&str, &[&str]); 4] = [
+        (
+            "[shared-text]\ndelivery = \"Ship.\"\n[skill-instructions]\ndev = \"{{shared-text:delivery}} {{args}}\"\nall = \"{{shared-text:delivery}}\"\n",
+            &[],
+        ),
+        (
+            "[shared-text]\ndelivery = \"Ship.\"\n[skill-instructions]\ndev = \"{{shared-text:delivery}}\"\norch = \"{{shared-text:deliver}}\"\n",
+            &["skill-instructions.orch"],
+        ),
+        (
+            "[skill-instructions]\nall = \"{{shared-text:delivery}}\"\n",
+            &["skill-instructions.all"],
+        ),
+        (
+            "[shared-text]\ndelivery = \"Ship. {{shared-text:tests}}\"\ntests = \"Test.\"\n[skill-instructions]\ndev = \"{{shared-text:delivery}}\"\n",
+            &["shared-text.delivery"],
+        ),
+    ];
+    for (body, expected) in rows {
+        let manifest = format!("schema = 7\n{body}");
+        let found = validate(&parse(&manifest));
+        assert!(
+            found.iter().all(|finding| !finding.fix.is_empty()),
+            "{manifest}"
+        );
+        let locations: Vec<_> = found.iter().map(|f| f.location.as_str()).collect();
+        assert_eq!(locations, expected, "{manifest}");
+    }
+}

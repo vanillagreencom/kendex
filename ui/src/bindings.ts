@@ -3133,6 +3133,13 @@ export type Manifest_Deserialize = {
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
 	/**
+	 *  `[shared-text]`: a paragraph written once under a name, placed into
+	 *  a `[skill-instructions]` value by `{{shared-text:NAME}}`. Expanded
+	 *  only where text is read for output ([`Manifest::expand_shared_text`]),
+	 *  so a save writes the token back, never the text.
+	 */
+	"shared-text"?: { [key in string]: string },
+	/**
 	 *  `[command-instructions]`: the project's text for a command, written
 	 *  into every tool's copy above the publisher's body, which still
 	 *  updates. Keyed like `[skill-instructions]`, `all` and `*` included.
@@ -3199,6 +3206,13 @@ export type Manifest_Serialize = {
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
+	/**
+	 *  `[shared-text]`: a paragraph written once under a name, placed into
+	 *  a `[skill-instructions]` value by `{{shared-text:NAME}}`. Expanded
+	 *  only where text is read for output ([`Manifest::expand_shared_text`]),
+	 *  so a save writes the token back, never the text.
+	 */
+	"shared-text"?: { [key in string]: string },
 	/**
 	 *  `[command-instructions]`: the project's text for a command, written
 	 *  into every tool's copy above the publisher's body, which still

@@ -70,6 +70,7 @@ const TOP_LEVEL: &[&str] = &[
     "agent-launch-instructions",
     "agent-additional-instructions",
     "skill-instructions",
+    "shared-text",
     "command-instructions",
     "bot-instructions",
     "agent-frontmatter",
@@ -191,7 +192,47 @@ pub fn validate(table: &Table) -> Vec<Finding> {
     validate_model_classes(table, &mut findings);
     validate_model_bindings(table, &mut findings);
     validate_hooks(table, &mut findings);
+    validate_shared_text(table, &mut findings);
     findings
+}
+
+/// A token names a declared `[shared-text]` entry, and a shared text holds
+/// none: expansion is one level, so a nested token would render as written.
+fn validate_shared_text(table: &Table, findings: &mut Vec<Finding>) {
+    let strings = |key: &str| {
+        table
+            .get(key)
+            .and_then(Value::as_table)
+            .into_iter()
+            .flatten()
+            .filter_map(|(name, value)| Some((name, value.as_str()?)))
+    };
+    let declared = |name: &str| {
+        table
+            .get("shared-text")
+            .and_then(Value::as_table)
+            .is_some_and(|shared| shared.contains_key(name))
+    };
+    for (skill, value) in strings("skill-instructions") {
+        for (_, name) in super::shared_text::tokens(value) {
+            if !declared(name) {
+                findings.push(Finding {
+                    location: format!("skill-instructions.{skill}"),
+                    problem: format!("no [shared-text] entry is named '{name}'"),
+                    fix: format!("declare [shared-text] {name} = \"…\", or remove the token"),
+                });
+            }
+        }
+    }
+    for (name, value) in strings("shared-text") {
+        if super::shared_text::tokens(value).next().is_some() {
+            findings.push(Finding {
+                location: format!("shared-text.{name}"),
+                problem: "a shared text cannot place another shared text".into(),
+                fix: "write the paragraph out here, or place both from [skill-instructions]".into(),
+            });
+        }
+    }
 }
 
 fn validate_model_classes(table: &Table, findings: &mut Vec<Finding>) {

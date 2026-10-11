@@ -656,7 +656,11 @@ pub fn relevant_sections(
         ItemKind::Skill => {
             for key in shared_keys {
                 if let Some(text) = manifest.skill_instructions.get(key) {
-                    push("skill-instructions", key, text);
+                    push(
+                        "skill-instructions",
+                        key,
+                        &manifest.expand_shared_text(text),
+                    );
                 }
             }
         }

@@ -1,6 +1,7 @@
+use std::borrow::Cow;
 use std::path::Path;
 
-use super::agent::merged_instructions;
+use super::agent::merged_instructions_with;
 use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
@@ -91,8 +92,19 @@ pub fn render_skill(
     manifest: &Manifest,
     name: &str,
 ) -> Result<(Rendered, SkillText)> {
-    let instructions = merged_instructions(&manifest.skill_instructions, name);
+    let instructions = skill_instructions(manifest, name);
     with_instructions(sealed, source_dir, instructions.as_deref())
+}
+
+/// `[skill-instructions]` as `name` renders them: the merge every
+/// instructions table shares, over each value with its shared texts placed.
+pub(crate) fn skill_instructions(manifest: &Manifest, name: &str) -> Option<String> {
+    merged_instructions_with(&manifest.skill_instructions, name, |value| {
+        match manifest.expand_shared_text(value) {
+            Cow::Borrowed(text) => Cow::Borrowed(text.trim_end()),
+            Cow::Owned(text) => Cow::Owned(text.trim_end().to_owned()),
+        }
+    })
 }
 
 /// The same tree from the publisher's own bytes alone. Not a subtraction

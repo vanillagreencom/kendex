@@ -112,6 +112,7 @@ mod settings_edits;
 mod settings_grammar;
 mod settings_seed;
 mod settings_seed_repo;
+mod shared_text;
 mod skill_records;
 mod source_store;
 mod structural_claims;

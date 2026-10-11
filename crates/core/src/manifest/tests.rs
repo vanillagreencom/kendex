@@ -124,6 +124,35 @@ fn edit_command_instructions(
     assert_eq!(std::fs::read_to_string(path).unwrap(), written);
 }
 
+/// A token is the consumer's own text: a load keeps it, and a save writes
+/// the token back beside its table, never the paragraph it places.
+#[test]
+fn a_shared_text_token_loads_and_saves_as_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let path = root.join("kendex.toml");
+    let token = "Own. {{shared-text:delivery}}";
+    let paragraph = "Push the item branch.";
+    std::fs::write(
+        &path,
+        format!(
+            "schema = 7\n\n[sources.cat]\nrepo = 'owner/catalog'\n\n[skills.gh]\nsource = 'cat'\n\n[skill-instructions]\ngh = '{token}'\n\n[shared-text]\ndelivery = '{paragraph}'\n"
+        ),
+    )
+    .unwrap();
+    let mut manifest = load_current(&path).unwrap().unwrap();
+    assert_eq!(manifest.skill_instructions["gh"], token);
+    assert_eq!(manifest.shared_text["delivery"], paragraph);
+    manifest.skills.get_mut("gh").unwrap().enabled = false;
+    save(&path, &manifest).unwrap();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(written.matches(token).count(), 1, "{written}");
+    assert_eq!(written.matches(paragraph).count(), 1, "{written}");
+    let reloaded = load_current(&path).unwrap().unwrap();
+    assert_eq!(reloaded.skill_instructions, manifest.skill_instructions);
+    assert_eq!(reloaded.shared_text, manifest.shared_text);
+}
+
 #[test]
 fn catalog_alias_uses_the_native_catalog_basename() {
     // Add and subscription requests carry native local paths or remote references.

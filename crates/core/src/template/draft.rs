@@ -662,7 +662,19 @@ pub(super) fn customizations_for(manifest: &Manifest, names: &[&str]) -> Customi
         agent_skills: pick(&manifest.agent_skills, mine),
         agent_launch_instructions: pick(&manifest.agent_launch_instructions, mine),
         agent_additional_instructions: pick(&manifest.agent_additional_instructions, mine),
-        skill_instructions: pick(&manifest.skill_instructions, mine),
+        // A template travels without this manifest's `[shared-text]`, so it
+        // carries each placed paragraph rather than a token naming it.
+        skill_instructions: manifest
+            .skill_instructions
+            .iter()
+            .filter(|(name, _)| mine(name))
+            .map(|(name, value)| {
+                (
+                    name.clone(),
+                    manifest.expand_shared_text(value).into_owned(),
+                )
+            })
+            .collect(),
         command_instructions: pick(&manifest.command_instructions, mine),
         // On the declaration rather than in a table of its own, so it is
         // read off the hook's declaration rather than through `pick`.

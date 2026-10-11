@@ -508,8 +508,7 @@ fn skill_round_trip(of: &ForkOf, files: &[(PathBuf, Vec<u8>)]) -> Option<(String
         .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
         .map(|(_, bytes)| bytes)?;
     let text = String::from_utf8(bytes.clone()).ok()?;
-    let instructions =
-        crate::render::agent::merged_instructions(&of.manifest.skill_instructions, of.name);
+    let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
     Some((
         crate::render::skill::inject_instructions(&text, instructions.as_deref()),
         text,

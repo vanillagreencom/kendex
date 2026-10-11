@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 
 use crate::env::Env;
@@ -141,15 +142,16 @@ pub fn merged_instructions(
     table: &std::collections::BTreeMap<String, String>,
     agent_name: &str,
 ) -> Option<String> {
-    merged_instructions_with(table, agent_name, str::trim_end)
+    merged_instructions_with(table, agent_name, |value| Cow::Borrowed(value.trim_end()))
 }
 
-/// The same merge with the caller's whitespace treatment. Capture also
-/// reads the verbatim values written by earlier renderings.
+/// The same merge with the caller's reading of each value. Capture reads
+/// the verbatim values written by earlier renderings; a skill reads its
+/// values with their shared texts placed.
 pub(crate) fn merged_instructions_with<'a>(
     table: &'a std::collections::BTreeMap<String, String>,
     agent_name: &str,
-    text: impl Fn(&'a str) -> &'a str,
+    text: impl Fn(&'a str) -> Cow<'a, str>,
 ) -> Option<String> {
     let shared = SHARED_INSTRUCTIONS
         .iter()
@@ -163,12 +165,12 @@ pub(crate) fn merged_instructions_with<'a>(
         .map(|value| text(value));
     match (shared, specific) {
         (None, None) => None,
-        (None, Some(text)) => Some(text.to_owned()),
+        (None, Some(text)) => Some(text.into_owned()),
         (Some(shared), specific) => {
             let mut out = format!("{SHARED_START}\n{shared}\n{SHARED_END}");
             if let Some(text) = specific {
                 out.push_str("\n\n");
-                out.push_str(text);
+                out.push_str(&text);
             }
             Some(out)
         }

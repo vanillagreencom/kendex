@@ -313,12 +313,12 @@ fn capture_wrappers(
         launch: merged_instructions_with(
             &of.manifest.agent_launch_instructions,
             of.name,
-            std::convert::identity,
+            std::borrow::Cow::Borrowed,
         ),
         additional: merged_instructions_with(
             &of.manifest.agent_additional_instructions,
             of.name,
-            std::convert::identity,
+            std::borrow::Cow::Borrowed,
         ),
         ..around.clone()
     };

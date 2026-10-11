@@ -206,6 +206,23 @@ Merge review: a second reviewer signs off before merge.
 
 A key names the package; `all` or `*` names every package of that kind. kendex renders the shared text first, then the package's own, as a `## Project Instructions` block between `kendex:project-instructions` markers, directly after the frontmatter and above the publisher's body. The publisher's body is never edited and still updates, so a project keeps its text without copying the command. A tool that reads a command file of its own gets the block in that file. Gemini gets it in the TOML `prompt`. Codex gets it in the generated skill. With no key for a command, every copy is the publisher's own rendering, byte for byte. In a source-catalog checkout the table goes in `kendex-local.toml`, which configures that checkout alone and ships to no install.
 
+A paragraph several skills share, but not every skill, is written once under a name in `[shared-text]`. A `[skill-instructions]` value places it with `{{shared-text:NAME}}`, where the token stands. Each skill picks its own paragraphs and their order:
+
+```toml
+[shared-text]
+delivery = "Commit on the item branch and open one pull request."
+
+[skill-instructions]
+dev = "{{shared-text:delivery}}"
+orch = """
+Hand each lane one issue.
+
+{{shared-text:delivery}}
+"""
+```
+
+Each skill's `SKILL.md` carries the full paragraph, because a skill is read alone; only the manifest's copy is single, so editing it changes every skill that places it. The token works in `all` and `*` too. A shared text cannot place another, and a token naming no `[shared-text]` entry is refused when the manifest loads. kendex writes the token back as written; a template carries the paragraph itself.
+
 ## Settings
 
 Only a skill seeds settings into a project, through its `kendex.settings.toml.example`. The same file declares the credentials the skill reads, which kendex keeps out of committed configuration: [settings.md](settings.md).
