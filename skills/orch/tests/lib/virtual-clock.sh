@@ -119,6 +119,8 @@ _virtual_clock_seed() {
 
 # Inject the same clock into a watch's Bash SECONDS reading. This is a test
 # boundary; the shipped watch has no clock setting or fixture command.
+# Process-budget mutants pass this expression as an argument too. Only the
+# watch's idle and mail deadline assignments consume the injected clock.
 virtual_clock_bash_env() { # FILE
   cat >"$1" <<'EOF'
 set -T
@@ -127,7 +129,8 @@ trap 'if [[ "$BASH_COMMAND" == tick_wait && "${NOTE_AT:-}" == 2 && -n "${LONG_PI
   # Faster mailbox reads must not turn it into the separate overrun row.
   until [[ -e "$LONG_DONE" ]]; do "$STUB_REAL_SLEEP" 0.1; done
 fi
-if [[ "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB_CLOCK:-}" ]]; then
+if [[ ( "$BASH_COMMAND" == "now="* || "$BASH_COMMAND" == "MAIL_DUE="* ) &&
+      "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB_CLOCK:-}" ]]; then
   IFS= read -r _virtual_now <"$STUB_CLOCK" || [[ "$_virtual_now" =~ ^[0-9]+$ ]]
   SECONDS=$((_virtual_now - WATCH_EPOCH + WATCH_SECONDS))
 fi' DEBUG
