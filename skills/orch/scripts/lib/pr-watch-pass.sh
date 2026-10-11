@@ -1,11 +1,12 @@
 # shellcheck shell=bash
-# The review-gate reducer pass of oversee-watch: pr-watch over every --repo,
+# The review-gate reducer pass of oversee-watch: pr-watch over the item
+# repository and ORCH_CONNECTED_REPOS,
 # each repo's rising edge against its own persisted baseline, and the context
 # block every other event carries. Sourced by oversee-watch, and like the rest
-# of its lib/ it reads that script's globals (REPOS, PR_WATCH, PW_STATE_DIR,
+# of its lib/ it reads that script's globals (REPOS, PW_REPO_INDICES, PR_WATCH, PW_STATE_DIR,
 # WORK_DIR, SINCE) and calls its `die`.
 
-# The latest pr-watch result across every --repo, closing every event block:
+# The latest pr-watch result across the reducer's repositories, closing every event block:
 # each line carries the repo it came from, and rc is the highest status any
 # repo's reducer returned. PW_EVENT marks a pass whose block opened with the
 # pr-watch event, where those lines already stand under it.
@@ -14,6 +15,8 @@ PW_EVENT=0
 PW_OUT=""
 PW_ERR=""
 PW_PASSES=0
+# check_repo_set selects the repositories whose pull requests this fleet owns.
+PW_REPO_INDICES=()
 # One entry per --repo, in REPOS order: the `<pr>\t<kind>` keys the last
 # complete pass saw, and whether this run started with a baseline file.
 # Refresh-ready's kind includes its head prefix because every proved
@@ -113,10 +116,9 @@ check_pr_watch() {
   # printed, and that line is then never news again.
   local pass_keys=()
   PW_PASSES=$((PW_PASSES + 1))
-  # Every repo is reduced on every pass, even once one of them has news: the
-  # context each event carries is the whole fleet's state, and a repo skipped
-  # here would carry a stale baseline into the next pass.
-  for i in "${!REPOS[@]}"; do
+  # Every owned repository is reduced even once one has news, so its baseline
+  # and the event's context cover the same complete pass.
+  for i in "${PW_REPO_INDICES[@]}"; do
     repo="${REPOS[$i]}"
     rc=0
     out="$(GH_REPO="$repo" "$PR_WATCH" 2>"$errf")" || rc=$?
@@ -183,10 +185,10 @@ check_pr_watch() {
     [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
     [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
   fi
-  for i in "${!REPOS[@]}"; do
+  for i in "${PW_REPO_INDICES[@]}"; do
     pw_stage_state "$(pw_state_file "${REPOS[$i]}")" "${pass_keys[$i]}"
   done
-  for i in "${!REPOS[@]}"; do
+  for i in "${PW_REPO_INDICES[@]}"; do
     pw_commit_state "$(pw_state_file "${REPOS[$i]}")"
     PW_SEEN[$i]="${pass_keys[$i]}"
   done

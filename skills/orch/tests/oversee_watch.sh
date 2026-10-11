@@ -15,7 +15,7 @@
 #       baseline persists, so a line appearing between two runs is the next
 #       run's first-pass event and a standing line is not; an unseen `<pr> <kind>`
 #       line mid-run is the event; an ordinary head-only change is not; GH_REPO reaches
-#       pr-watch and its argv is empty, for every repo; an
+#       pr-watch and its argv is empty, for each owned repo; an
 #       error and refresh-ready keys preempt a repo's opening pass; each new
 #       refresh-ready head is news, while every other kind there
 #       still baselines silently;
@@ -25,7 +25,7 @@
 #       control being the reducer's early exit restored; the state file is
 #       rewritten after every pass, and an uncreatable state dir or an
 #       unreadable state file exits 2 naming the path; the reducer runs for
-#       every --repo, with per-repo baselines and repo-prefixed lines on both
+#       the item and connected repositories, with per-repo baselines and repo-prefixed lines on both
 #       streams, no baseline advances until the whole pass has reduced, a repo
 #       named for the first time baselines its standing attention in either
 #       ordering, the context header carries the highest status across repos, a
@@ -145,7 +145,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a new kind on a baseline
 new_case prwatch_args_every_repo
 printf '0' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1d5"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(cut -f1 "$STUB_DIR/prwatch.args.all" | sort -u | paste -sd, -)" "other/repo,owner/repo" \
   "every repo is reduced" "$err"
 assert_eq "$(cut -f2 "$STUB_DIR/prwatch.args.all" | sort -u)" "" \
@@ -391,7 +391,7 @@ else
     "the failure names what could not be written"
 fi
 
-# 1k. the reducer covers EVERY --repo: attention on a second repo is the event,
+# 1k. the reducer covers every connected repository: attention there is the event,
 # every repo's latest lines reach the context prefixed with the repo they came
 # from, and each repo keeps its own baseline. Red when the reducer runs for the
 # first --repo alone: the second repo is never reduced, so its rising edge is
@@ -406,7 +406,7 @@ printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.othe
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo.2"
 printf 'E_REDUCER_READ count=1\n' > "$STUB_DIR/prwatch.err.other_repo"
 err="$TMP_ROOT/e1k"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "a second repo's attention exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "attention on a second --repo is the event" "$err"
@@ -429,7 +429,7 @@ new_case prwatch_multi_repo_failure
 printf '2' > "$STUB_DIR/prwatch.rc.other_repo"
 printf 'E_REDUCER_AUTH\n' > "$STUB_DIR/prwatch.err.other_repo"
 err="$TMP_ROOT/e1l1"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "a global pr-watch failure on any repo exits 2" "$err"
 assert_eq "$out" "" "a global failure on any repo prints no EVENT" "$err"
 assert_contains "$(cat "$err")" "oversee-watch: reducer-failed repo=other/repo exit=2" \
@@ -460,7 +460,7 @@ new_case prwatch_multi_repo_transactional
 printf '0' > "$STUB_DIR/prwatch.rc.owner_repo"
 printf '0' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1m1"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "run 1: a clear fleet reaches the heartbeat" "$err"
 
@@ -470,7 +470,7 @@ printf '1' > "$STUB_DIR/prwatch.rc.owner_repo"
 printf '2' > "$STUB_DIR/prwatch.rc.other_repo"
 printf 'pr-watch: HTTP 502: bad gateway\n' > "$STUB_DIR/prwatch.err.other_repo"
 err="$TMP_ROOT/e1m2"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "run 2: a global failure on a later repo exits 2" "$err"
 assert_eq "$out" "" "run 2 prints no EVENT" "$err"
 assert_eq "$([[ -f "$STATE_DIR/owner_repo__none" ]] && echo yes || echo no)" "yes" \
@@ -482,7 +482,7 @@ assert_eq "$(cat "$STATE_DIR/owner_repo__none"; echo x)" "x" \
 rm -f "$STUB_DIR/prwatch.err.other_repo"
 printf '0' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1m3"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "the event the failing pass could not print is still an event" "$err"
 assert_contains "$out" "$(printf 'owner/repo\t12\taaaa0000\tthreads-open')" \
@@ -498,7 +498,7 @@ else
   chmod 500 "$STATE_DIR/other_repo__none"
   printf '12\taaaa0000\tthreads-open\t2 unresolved\n34\tcccc0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo"
   err="$TMP_ROOT/e1m4"
-  out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+  out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
   chmod 700 "$STATE_DIR/other_repo__none"
   assert_eq "$rc" "2" "run 4: a state file that cannot be written exits 2" "$err"
   assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
@@ -516,7 +516,7 @@ else
   chmod 700 "$STATE_DIR/other_repo__none"
   rmdir "$STATE_DIR/other_repo__none"
   err="$TMP_ROOT/e1m5"
-  out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+  out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
   assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
     "the run after a failed state write reports that event again" "$err"
   assert_contains "$out" "$(printf 'owner/repo\t34\tcccc0000\tthreads-open')" \
@@ -530,7 +530,7 @@ printf '0' > "$STUB_DIR/prwatch.rc.owner_repo"
 printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.other_repo"
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1n"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "a standing line beside a clear repo is not re-reported" "$err"
 assert_not_contains "$out" "EVENT pr-watch" "no repo reads another repo's baseline" "$err"
@@ -542,7 +542,7 @@ printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.own
 printf '1' > "$STUB_DIR/prwatch.rc.owner_repo"
 printf '0' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1o"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "attention on the first repo alone is that repo's baseline" "$err"
 assert_contains "$out" "pr-watch rc=1" \
@@ -558,7 +558,7 @@ printf '1' > "$STUB_DIR/prwatch.rc.owner_repo.2"
 printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.other_repo"
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1p"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "the first repo's new line is the event" "$err"
 assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
   "a repo reduced after the one with news still reaches the context" "$err"
@@ -578,7 +578,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none
 printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.other_repo"
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1q2"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "a repo named for the first time baselines its standing attention" "$err"
 assert_not_contains "$out" "EVENT pr-watch" "the newly named repo never preempts the lane checks" "$err"
@@ -602,7 +602,7 @@ printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.othe
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo"
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n34\tcccc0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo"
 err="$TMP_ROOT/e1r2"
-out="$(run_watch -- --repo other/repo --repo owner/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=owner/repo -- --repo other/repo --repo owner/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "a baselined repo's new line is an event behind a repo named for the first time" "$err"
 assert_contains "$out" "$(printf 'owner/repo\t34\tcccc0000\tthreads-open')" \
@@ -617,7 +617,7 @@ printf '0' > "$STUB_DIR/prwatch.rc.other_repo.1"
 printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.other_repo.2"
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo.2"
 err="$TMP_ROOT/e1s1"
-out="$(run_watch -- --repo=owner/repo --repo=other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo=owner/repo --repo=other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "the = spelling builds the same two-repo fleet" "$err"
 assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
@@ -1885,6 +1885,78 @@ for row in \
 done
 
 # --- 8d. ORCH_CONNECTED_REPOS adds watched repositories --------------------
+# Extra --repo values are owner-report inputs. Only the item repository and
+# connected entries can produce pull request attention for this overseer.
+reducer_scope_case() { # NAME MODE [WATCH]
+  local mode="$2" args=(--repo Owner/Repo --repo Other/Repo --item issue-5 --max-loops 1) env_args=()
+  new_case "$1"
+  mkdir -p "$STATE_DIR"
+  printf '77\tthreads-open\n' > "$STUB_DIR/excluded-baseline"
+  cp "$STUB_DIR/excluded-baseline" "$STATE_DIR/other_repo__none"
+  printf '77\tbbbb0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.other_repo"
+  printf '1' > "$STUB_DIR/prwatch.rc.other_repo"
+  printf '77\tissue-9\treport-only PR\n' > "$STUB_DIR/open.other_repo.txt"
+  write_state "$STUB_DIR/state.json"
+  args+=(--state "$STUB_DIR/state.json")
+  cat > "$STUB_DIR/report-stub" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$STUB_DIR/report.args"
+EOF
+  chmod +x "$STUB_DIR/report-stub"
+  if [[ "$mode" == merged ]]; then
+    printf '[{"number":77,"headRefName":"issue-5","headRepositoryOwner":{"login":"other"},"mergedAt":"2026-08-15T10:00:00Z"}]\n' \
+      > "$STUB_DIR/merged.other_repo.json"
+  elif [[ "$mode" == explicit ]]; then
+    args+=(--repo Connected/Repo)
+  elif [[ "$mode" == repeat || "$mode" == repeat-default ]]; then
+    repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+    env_args+=(PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH")
+    args+=(--repeat 0)
+    if [[ "$mode" == repeat-default ]]; then
+      printf 'Owner/Repo\n' > "$STUB_DIR/repoview.txt"
+      args=(--no-repo --item issue-5 --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json")
+    fi
+  fi
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${3:-}" run_watch ORCH_CONNECTED_REPOS='Owner/Repo Connected/Repo Connected/Repo' \
+    OVERSEE_WATCH_REPORT="$STUB_DIR/report-stub" ${env_args[@]+"${env_args[@]}"} \
+    -- "${args[@]}" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  SCOPE_REDUCED="$(cat "$STUB_DIR/prwatch.repos")"
+  SCOPE_BASELINE=changed
+  if cmp -s "$STUB_DIR/excluded-baseline" "$STATE_DIR/other_repo__none"; then SCOPE_BASELINE=kept; fi
+}
+assert_reducer_scope() {
+  local before="$FAIL"
+  assert_eq "$SCOPE_REDUCED" $'owner/repo\nconnected/repo' "the reducer reads only the item and connected repositories" "$err"
+  assert_eq "$SCOPE_BASELINE" kept "the excluded repository's baseline stays byte-for-byte unchanged" "$err"
+  [[ "$FAIL" -eq "$before" ]]
+}
+for mode in merged heartbeat explicit repeat repeat-default; do
+  reducer_scope_case "reducer_scope_$mode" "$mode"
+  assert_reducer_scope || true
+  want_rc=0
+  [[ "$mode" != repeat && "$mode" != repeat-default ]] || want_rc=2
+  assert_eq "$rc" "$want_rc" "scope $mode completes its pass" "$err"
+  if [[ "$mode" == merged ]]; then
+    assert_contains "$out" "EVENT merged 77 issue-5 other/repo" "an excluded repository's merge still reaches the overseer" "$err"
+  elif [[ "$mode" != repeat-default ]]; then
+    assert_contains "$out" $'other/repo\t77\tissue-9' "the heartbeat still reads the extra repository" "$err"
+  fi
+  if [[ "$mode" != repeat-default ]]; then
+    assert_file_contains "$STUB_DIR/report.args" other/repo "the report still receives the extra repository"
+  fi
+  assert_not_contains "$out" refresh-ready "the excluded repository produces no reducer attention" "$err"
+done
+# Restore the previous selection: every --repo becomes a reducer input.
+SCOPE_MUTANT="$(mutant_scripts reducer-scope-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reducer-scope-mutant/github"
+mutate_file "$SCOPE_MUTANT" '  PW_REPO_INDICES=(0)' '  PW_REPO_INDICES=("${!REPOS[@]}")'
+reducer_scope_case reducer_scope_control merged "$SCOPE_MUTANT"
+control_rc=0
+(FAIL=0; assert_reducer_scope) > "$STUB_DIR/control.log" || control_rc=$?
+assert_eq "$control_rc" 1 "control: reducing every --repo fails the same scope assertions" "$err"
+assert_contains "$SCOPE_REDUCED" other/repo "control: the previous selection reduces the excluded repository" "$err"
+
 # Each entry the setting lists is read after the --repo values, the items
 # repository first, and an entry a --repo already names is read once. The
 # reads proven are the merged lookup for the item and the heartbeat's open
@@ -1944,7 +2016,7 @@ done
 CONNECTED_MUTANT_DIR="$TMP_ROOT/connected-add"
 CONNECTED_MUTANT="$(mutant_scripts connected-add/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$CONNECTED_MUTANT_DIR/github"
-mutate_file "$CONNECTED_MUTANT" '  REPOS+=(${connected_list[@]+"${connected_list[@]}"})' '  true || REPOS+=(${connected_list[@]+"${connected_list[@]}"})'
+mutate_file "$CONNECTED_MUTANT" 'if [[ "$repo_i" -eq "${#REPOS[@]}" ]]; then REPOS+=("$repo_raw"); fi' 'if [[ "$repo_i" -eq "${#REPOS[@]}" ]]; then continue; fi'
 connected_case connected-add "Other/Repo owner/repo" repo "$CONNECTED_MUTANT"
 assert_eq "rc=$rc merged=$CONNECTED_MERGED open=$CONNECTED_OPEN" "rc=0 merged=owner/repo open=owner/repo" \
   "control: without the append only the --repo is read" "$err"

@@ -781,12 +781,12 @@ Options:
                       afresh; LINEAR_TEAM below arms the triage check
   --item ISSUE_ID     live item; repeatable. No values skips merged and
                       handoff with a note
-  --repo OWNER/REPO   repository; repeatable and case-normalized. Every
-                      check reads all of them; triage and lane rows persist
-                      in the first one's baseline, mail rows in the file
-                      beside it. ORCH_CONNECTED_REPOS below adds more after
-                      them; with none given, the first is the repository
-                      this checkout resolves to
+  --repo OWNER/REPO   repository; repeatable and case-normalized. The first
+                      and ORCH_CONNECTED_REPOS get pr-watch attention. Further
+                      values add merge and report reads only, including the
+                      heartbeat's open list. Triage and lane rows persist in
+                      the first one's baseline, mail rows beside it. With none
+                      given, the first is the repository this checkout resolves to
   --hosted ITEM=REMOTE_ROOT
                       the item's lane lives on another host; its mailbox is
                       read through `lane-host` against REMOTE_ROOT rather

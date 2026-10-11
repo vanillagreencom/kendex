@@ -545,11 +545,12 @@ fi
 # repeat would reduce that repository twice into one state file and report it
 # twice in the context, so it is a usage error, named as the caller spelled it.
 # A single run and repeat mode both call it.
-# ORCH_CONNECTED_REPOS then adds each repository the overseer may launch lanes
-# in, after every --repo so the items repository stays first. An entry a --repo
-# already names is skipped rather than refused: a launch line written before
-# the setting names them by hand, and repeat mode hands its pass the set this
-# check settled. The setting is read even with no --repo, so the repeat
+# ORCH_CONNECTED_REPOS adds each repository the overseer may launch lanes
+# in, after every --repo so the items repository stays first. Only that first
+# repository and the connected entries get reducer indices, including entries
+# already passed with --repo. The repeat wrapper passes the full read set to
+# its child, which derives the same reducer scope from the setting.
+# The setting is read even with no --repo, so the repeat
 # wrapper, which resolves no default, refuses an unreadable one once rather
 # than each pass refusing it after every sleep; the set itself is still
 # unresolved there and gains nothing, and the call below the default
@@ -564,11 +565,19 @@ check_repo_set() {
     fi
     repos_seen+="${REPOS[$repo_i]}"$'\n'
   done
-  connected="$(orch_connected_repos ${REPOS[@]+"${REPOS[@]}"})" \
+  connected="$(orch_connected_repos)" \
     || die connected-repos-unread "" "setting=ORCH_CONNECTED_REPOS"
   [[ ${#REPOS[@]} -gt 0 ]] || return 0
   IFS=$'\n' read -ra connected_list -d '' <<<"$connected" || true
-  REPOS+=(${connected_list[@]+"${connected_list[@]}"})
+  PW_REPO_INDICES=(0)
+  for repo_raw in ${connected_list[@]+"${connected_list[@]}"}; do
+    repo_i=0
+    while [[ "$repo_i" -lt "${#REPOS[@]}" && "${REPOS[$repo_i]}" != "$repo_raw" ]]; do
+      repo_i=$((repo_i + 1))
+    done
+    if [[ "$repo_i" -eq "${#REPOS[@]}" ]]; then REPOS+=("$repo_raw"); fi
+    [[ "$repo_i" -eq 0 ]] || PW_REPO_INDICES+=("$repo_i")
+  done
 }
 
 # The --item and --hosted checks, run by a single run and by every repeat pass
