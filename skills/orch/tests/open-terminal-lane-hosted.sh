@@ -285,18 +285,19 @@ hosted_rm_env() { # HARNESS FLAGS ROUTE RESUME_STATUS; sets HOSTED_RM_ENV
     rm-probe "$3" > "$RUN/rm-replay.out" 2> "$RUN/rm-replay.err" || true
   HOSTED_RM_ENV="$(paste -sd';' "$RUN/rm-env")"
 }
+printf '%s\n' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|fresh|0|fresh|1|1' \
+  'claude|--model opus --effort high --permission-mode bypassPermissions|relaunch|0|resume|1|1' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|relaunch|1|resume|1|1;fresh|1|1' \
+  'claude|--model opus --effort high --permission-mode dontAsk|fresh|0|fresh|unset|unset' \
+  'claude|--model opus --effort high --permission-mode dontAsk|relaunch|1|resume|unset|unset;fresh|unset|unset' \
+  'codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|0|fresh|unset|unset' \
+  > "$TMP_ROOT/hosted-rm-rows"
 while IFS='|' read -r harness flags route resume_status expected; do
   hosted_rm_env "$harness" "$flags" "$route" "$resume_status"
   assert_eq "$HOSTED_RM_ENV" "$expected" \
     "the hosted $harness $route child receives removal switches only for Claude bypass: $flags" "$RUN/rm-replay.err"
-done <<'ROWS'
-claude|--model opus --effort high --dangerously-skip-permissions|fresh|0|fresh|1|1
-claude|--model opus --effort high --permission-mode bypassPermissions|relaunch|0|resume|1|1
-claude|--model opus --effort high --dangerously-skip-permissions|relaunch|1|resume|1|1;fresh|1|1
-claude|--model opus --effort high --permission-mode dontAsk|fresh|0|fresh|unset|unset
-claude|--model opus --effort high --permission-mode dontAsk|relaunch|1|resume|unset|unset;fresh|unset|unset
-codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|0|fresh|unset|unset
-ROWS
+done < "$TMP_ROOT/hosted-rm-rows"
 RM_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts hosted-rm-env-removed/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/hosted-rm-env-removed/orch"

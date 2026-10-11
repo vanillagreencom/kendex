@@ -42,6 +42,23 @@ render() { # LIB FORM HARNESS FLAGS
   ' _ "$1" "$2" "$3" "$4" "$TMP_ROOT"
 }
 
+printf '%s\n' \
+  'launcher|claude|--dangerously-skip-permissions|1|1|Claude bypass launcher' \
+  'prefix|claude|--dangerously-skip-permissions|1|1|Claude bypass prefix' \
+  'launcher|claude|--permission-mode=bypassPermissions|1|1|Claude attached bypass launcher' \
+  'prefix|claude|--permission-mode bypassPermissions|1|1|Claude separate bypass prefix' \
+  'overseer|claude|--dangerously-skip-permissions|1|1|Claude bypass overseer without home' \
+  'overseer|claude|--permission-mode=bypassPermissions|1|1|Claude attached bypass overseer without home' \
+  'launcher|claude|--permission-mode=dontAsk|unset|unset|Claude dontAsk launcher' \
+  'prefix|claude|--model fable|unset|unset|Claude without bypass' \
+  'overseer|claude|--permission-mode=dontAsk|unset|unset|Claude dontAsk overseer without home' \
+  "prefix|claude|-- '--dangerously-skip-permissions'|unset|unset|Claude bypass text after option delimiter" \
+  'prefix|codex|--dangerously-bypass-approvals-and-sandbox|unset|unset|Codex bypass prefix' \
+  'launcher|codex|--dangerously-bypass-approvals-and-sandbox|unset|unset|Codex bypass launcher' \
+  'prefix|pi|--dangerously-skip-permissions|unset|unset|Pi command' \
+  'prefix|opencode|--dangerously-skip-permissions|unset|unset|OpenCode command' \
+  'prefix|copilot|--allow-all|unset|unset|Copilot bypass command' \
+  > "$TMP_ROOT/launch-rows"
 while IFS='|' read -r form harness flags inline substitution label; do
   want="$inline|$substitution"
   line="$(render "$LIB" "$form" "$harness" "$flags")"
@@ -54,23 +71,7 @@ while IFS='|' read -r form harness flags inline substitution label; do
   fi
   got="$(env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" "$BASH" -c "$line")"
   assert_eq "$got" "$want" "$label: process environment"
-done <<'ROWS'
-launcher|claude|--dangerously-skip-permissions|1|1|Claude bypass launcher
-prefix|claude|--dangerously-skip-permissions|1|1|Claude bypass prefix
-launcher|claude|--permission-mode=bypassPermissions|1|1|Claude attached bypass launcher
-prefix|claude|--permission-mode bypassPermissions|1|1|Claude separate bypass prefix
-overseer|claude|--dangerously-skip-permissions|1|1|Claude bypass overseer without home
-overseer|claude|--permission-mode=bypassPermissions|1|1|Claude attached bypass overseer without home
-launcher|claude|--permission-mode=dontAsk|unset|unset|Claude dontAsk launcher
-prefix|claude|--model fable|unset|unset|Claude without bypass
-overseer|claude|--permission-mode=dontAsk|unset|unset|Claude dontAsk overseer without home
-prefix|claude|-- '--dangerously-skip-permissions'|unset|unset|Claude bypass text after option delimiter
-prefix|codex|--dangerously-bypass-approvals-and-sandbox|unset|unset|Codex bypass prefix
-launcher|codex|--dangerously-bypass-approvals-and-sandbox|unset|unset|Codex bypass launcher
-prefix|pi|--dangerously-skip-permissions|unset|unset|Pi command
-prefix|opencode|--dangerously-skip-permissions|unset|unset|OpenCode command
-prefix|copilot|--allow-all|unset|unset|Copilot bypass command
-ROWS
+done < "$TMP_ROOT/launch-rows"
 
 # Drop both env words while retaining their text. The first launch assertion
 # must fail, and the suite must return nonzero. Copy all library dependencies.

@@ -154,7 +154,9 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     let result = shipped("orch");
     let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let fixtures = [
+        "skills/orch/tests/lane-launch-rm-prompts.sh",
         "skills/orch/tests/open-terminal-claude-handoff.sh",
+        "skills/orch/tests/open-terminal-lane-hosted.sh",
         "skills/orch/tests/open-terminal-preference.sh",
         "skills/orch/tests/oversee_succeed.sh",
         "skills/orch/tests/lib/overseer-watch-case.sh",
