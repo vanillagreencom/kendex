@@ -23,6 +23,7 @@ The directory is a remote, so it gets a catalog's distrust and a mirror's offlin
 - Do say where a name comes from: a bare name searching every enabled subscription refuses on two offers, naming both spellings, and the default catalog is reached only when nothing else offers the name.
 - Do date an offered item by the newest commit that touched what it contains, never by the bare tip.
 - Do let a run select the default catalog's revision through `KENDEX_CATALOG_REV`; a declared `rev` outranks it. The variable changes no declaration on disk.
+- Never read a declaration at a commit older than the one the scope's record names for it: where the selector's commit is on the history of the recorded one, the recorded commit is read and kept (`source::record_ahead`).
 - Never treat frontmatter as trusted YAML: aliases and duplicate keys are refused, and every interpolated value in a generated file is quoted.
 - Never remove a snapshot a lock names; the keep set is the newest `KENDEX_SOURCE_CACHE_KEEP` plus every pinned commit, and a mirror is kept for the life of the install.
 - Never let a bundle declaration the reader cannot read cost the other sets anything: it is reported by name and the rest installs.

@@ -113,6 +113,7 @@ mod settings_grammar;
 mod settings_seed;
 mod settings_seed_repo;
 mod skill_records;
+mod source_record_floor;
 mod source_store;
 mod structural_claims;
 mod submit_client;

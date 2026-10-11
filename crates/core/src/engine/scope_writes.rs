@@ -240,13 +240,12 @@ pub(super) fn record_readings(
                     recorded => {
                         let keeps = options.keep_source_records
                             && recorded.is_some_and(|recorded| recorded.written_for(repo, rev));
-                        commit_reading(env, repo, rev, state.sources.get(name), keeps).map(
-                            |commit| SourceRev {
+                        commit_reading(env, repo, rev, state.sources.get(name), recorded, keeps)
+                            .map(|commit| SourceRev {
                                 repo: repo.to_owned(),
                                 rev: rev.map(str::to_owned),
                                 commit,
-                            },
-                        )
+                            })
                     }
                 },
                 None => Reading::Unrecorded,
@@ -284,7 +283,8 @@ pub(super) fn record_readings(
                         ),
                         None => (source_rev, state.sources.get(&decl.source)),
                     };
-                    commit_reading(env, repo, rev, resolution, false).map(|commit| BundleRev {
+                    let recorded = lock.sources.get(&decl.source);
+                    commit_reading(env, repo, rev, resolution, recorded, false).map(|commit| BundleRev {
                         source: decl.source.clone(),
                         source_repo: repo.to_owned(),
                         selector: if held.iter().any(|pin| {
@@ -326,16 +326,23 @@ fn repository<'a>(manifest: &'a Manifest, name: &str) -> Option<(&'a str, Option
 /// resolution the pass made, or, where it made none, the mirror's answer,
 /// unless `keeps` says the record's entry stands for it ([`Reading::Kept`]).
 /// Never a commit the record chose for a resolution: that is the reason it
-/// stood in.
+/// stood in. The mirror's answer is no older than `recorded`, the source's
+/// entry, where that entry was written for this declaration, as
+/// [`crate::source::resolve`] reads it.
 fn commit_reading(
     env: &Env,
     repo: &str,
     rev: Option<&str>,
     resolution: Option<&SourceState>,
+    recorded: Option<&SourceRev>,
     keeps: bool,
 ) -> Reading<String> {
+    let recorded = recorded.filter(|recorded| recorded.written_for(repo, rev));
     let mirror = || match crate::remote::mirror_commit(env, repo, rev) {
-        Some(commit) => Reading::Fresh(commit),
+        Some(commit) => Reading::Fresh(
+            crate::source::record_ahead(env, repo, &commit, recorded)
+                .map_or(commit.clone(), str::to_owned),
+        ),
         None => Reading::StoodIn(StoodIn::Unserved),
     };
     match resolution {

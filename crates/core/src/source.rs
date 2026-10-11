@@ -274,7 +274,8 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         };
     }
     if let Some(repo) = &decl.repo {
-        if let Some(resolution) = crate::remote::cached(env, repo, decl.rev.as_deref())? {
+        let recorded = recorded_for(env, scope, name, repo, decl);
+        if let Some(resolution) = cached_from(env, repo, decl.rev.as_deref(), recorded.as_ref())? {
             return Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
                 root: resolution.root,
@@ -288,7 +289,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         // away, still leaves the installed commit readable here — and the
         // record knows which commit that is, so the answer carries it
         // rather than letting a later lock write erase an honest one.
-        if let Some((root, commit)) = last_resolved(env, scope, name, repo, decl) {
+        if let Some((root, commit)) = last_resolved(env, recorded.as_ref()) {
             return Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
                 root,
@@ -352,24 +353,73 @@ pub(crate) fn read_installed(
     }))
 }
 
-/// The checkout for the commit this scope's lock recorded, if the cache
-/// still holds it unmodified. Only for the declaration that produced it: a
-/// manifest that now names another repository or another revision must not
-/// be served the previous one under the current one's name.
-fn last_resolved(
+/// What this scope's lock records for the source, only for the declaration
+/// that produced it: a manifest that now names another repository or
+/// another revision must not be served the previous one under the current
+/// one's name.
+fn recorded_for(
     env: &Env,
     scope: &Scope,
     name: &str,
     repo: &str,
     decl: &SourceDecl,
-) -> Option<(PathBuf, String)> {
+) -> Option<crate::lock::SourceRev> {
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope)).ok()?;
     let recorded = lock.sources.get(name)?;
     // Exact strings: the record counts only for the repository it was
     // written against, spelled the way the declaration spells it.
-    if !recorded.written_for(repo, decl.rev.as_deref()) {
+    recorded
+        .written_for(repo, decl.rev.as_deref())
+        .then(|| recorded.clone())
+}
+
+/// The commit `recorded` names where `resolved` is on its history and is
+/// not that commit: the record already reached past what the selector
+/// names here, so reading the selector would move the record backwards.
+/// That happens where a run selects an older revision than the one the
+/// record was written under: a release's catalog revision over a record a
+/// main build wrote. `recorded` is the scope's entry written for the
+/// declaration being read. Only a pin is asked about, as
+/// [`crate::attest`]'s history check asks.
+pub(crate) fn record_ahead<'a>(
+    env: &Env,
+    repo: &str,
+    resolved: &str,
+    recorded: Option<&'a crate::lock::SourceRev>,
+) -> Option<&'a str> {
+    let recorded = recorded?.commit.as_str();
+    if recorded == resolved || !crate::remote::store::is_pin(recorded) {
         return None;
     }
+    let mirror = crate::remote::store::mirror_dir(env, &crate::remote::cache_key(env, repo));
+    (crate::remote::store::is_ancestor(&mirror, resolved, recorded) == Some(true))
+        .then_some(recorded)
+}
+
+/// What the cache answers for a repository declaration without any
+/// network, read no older than `recorded` ([`record_ahead`]).
+fn cached_from(
+    env: &Env,
+    repo: &str,
+    rev: Option<&str>,
+    recorded: Option<&crate::lock::SourceRev>,
+) -> Result<Option<crate::remote::Resolution>> {
+    let Some(resolution) = crate::remote::cached(env, repo, rev)? else {
+        return Ok(None);
+    };
+    match record_ahead(env, repo, &resolution.commit, recorded) {
+        None => Ok(Some(resolution)),
+        Some(commit) => crate::remote::cached(env, repo, Some(commit)),
+    }
+}
+
+/// The checkout for the commit this scope's lock recorded, if the cache
+/// still holds it unmodified.
+fn last_resolved(
+    env: &Env,
+    recorded: Option<&crate::lock::SourceRev>,
+) -> Option<(PathBuf, String)> {
+    let recorded = recorded?;
     let key = crate::remote::cache_key(env, &recorded.repo);
     let root = crate::remote::store::published(env, &key, &recorded.commit)?;
     Some((root, recorded.commit.clone()))
