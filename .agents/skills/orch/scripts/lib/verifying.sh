@@ -29,8 +29,6 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
   id="$(jq -r '.id' <<<"$row")" || return 1
   blocked="$(jq -c '(.blocked_by_open // [] | length) > 0' <<<"$row")" || return 1
   if jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
-    # The parser bounds a fired release at 72 hours. The same bound dates an
-    # unfired trigger from merge, so waiting cannot hide it indefinitely.
     [[ "$merged" != null ]] || { verifying_error verifying-merge-unread "issue=$id"; return 2; }
     release_rows="$(jq -c '.[] | select(.trigger_kind == "release")' <<<"$boxes")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
     while IFS= read -r box; do
@@ -75,14 +73,14 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
         break
       done <<<"$releases"
       boxes="$(jq -c --argjson box "$box" --argjson fired "$resolved" --argjson merged "$merged" '
-        map(if .number == $box.number then .trigger_epoch = $fired
-            | .deadline_epoch = (if $fired == null then $merged + 259200 else $fired + (.deadline_hours * 3600) end)
-            | if .deadline_epoch == null then . else .deadline = (.deadline_epoch | todateiso8601) end
+        map(if .number == $box.number then .trigger_epoch = $fired | .merged = ($merged | todateiso8601)
+            | .deadline_epoch = (if $fired == null then null else $fired + (.deadline_hours * 3600) end)
+            | .deadline = (if .deadline_epoch == null then null else .deadline_epoch | todateiso8601 end)
             else . end)' <<<"$boxes")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
     done <<<"$release_rows"
   fi
   boxes="$(jq -c --argjson now "$now" --argjson blocked "$blocked" '
-    map(.status = (if .deadline_epoch <= $now then "overdue"
+    map(.status = (if .deadline_epoch != null and .deadline_epoch <= $now then "overdue"
         elif $blocked then "blocked"
         elif .trigger_kind != "merge" and (.trigger_epoch == null or .trigger_epoch > $now) then "waiting"
         else "due" end))' <<<"$boxes")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
@@ -93,5 +91,5 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
 verifying_lines() { # ITEM BOXES SAFE_ROW
   jq -r --arg id "$1" --argjson row "$3" '
     ($row.blocked_by_open // [] | if length == 0 then "-" else join(",") end) as $blocked
-    | .[] | "verifying \($id) box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline) blocked_by=\($blocked) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)"' <<<"$2"
+    | .[] | "verifying \($id) box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline // "-")\(if .merged then " merged=\(.merged)" else "" end) blocked_by=\($blocked) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)"' <<<"$2"
 }

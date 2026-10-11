@@ -568,7 +568,7 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   fi
   printf '%s\n' '[{"tagName":"v1","publishedAt":"2026-10-02T00:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json"
   case "$control" in
-    cutoff|waiting|fractional) echo '[]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    cutoff|waiting|fractional|null) echo '[]' >"$STUB_DIR/releases.owner_releases.json" ;;
     containment|arguments)
       printf '%s\n' '[{"tagName":"v3","publishedAt":"2026-10-02T00:00:00Z","isDraft":false},{"tagName":"v2","publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_repo.json"
       printf '%s\n' '{"status":"behind"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json"
@@ -596,13 +596,15 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   case "$control" in
     release) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=KEN-99" ;;
     containment|arguments) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=-" ;;
-    cutoff|waiting|fractional) expected="${expected%deadline=*}deadline=2026-10-04T00:00:00Z blocked_by=-" ;;
+    cutoff|waiting|fractional|null) expected="${expected%deadline=*}deadline=- blocked_by=-" ;;
+    fired) expected="${expected%deadline=*}deadline=2026-10-05T00:00:00Z blocked_by=-" ;;
     *) [[ "$blockers" != '[]' ]] && expected+=KEN-99 || expected+=- ;;
   esac
+  if [[ "$trigger" == release* ]]; then expected="${expected/ blocked_by=/ merged=2026-10-01T00:00:00Z blocked_by=}"; fi
   expected+=' reading="Read health" where="service" why="live release"'
   expected_watch="$expected"
   if [[ "$control" == missing ]]; then
-    expected_watch='verifying KEN-0 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'$'\n'"$expected"
+    expected_watch='verifying KEN-0 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T00:00:00Z merged=2026-10-01T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'$'\n'"$expected"
   fi
   assert_eq "$watch_lines" "$expected_watch" "$name status, date and blockers" "$ERR"
   reconcile_same_world "$RECONCILE_SCRIPTS" "$gh_command"
@@ -664,9 +666,12 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   case "$control" in
-    overdue) mutate_verifying "$MUTANT_WATCH" 'if .deadline_epoch <= $now then "overdue"' 'if .deadline_epoch <= $now and ($blocked | not) then "overdue"' ;;
+    overdue) mutate_verifying "$MUTANT_WATCH" 'if .deadline_epoch != null and .deadline_epoch <= $now then "overdue"' 'if .deadline_epoch != null and .deadline_epoch <= $now and ($blocked | not) then "overdue"' ;;
     blockers) mutate_verifying "$MUTANT_WATCH" ' blocked_by=\($blocked)' '' ;;
-    cutoff|waiting) mutate_verifying "$MUTANT_WATCH" '$merged + 259200' 'null' ;;
+    cutoff|waiting) mutate_verifying "$MUTANT_WATCH" 'if $fired == null then null' 'if $fired == null then $merged + 259200' ;;
+    null) mutate_verifying "$MUTANT_WATCH" '.deadline_epoch != null and ' '' ;;
+    fired) mutate_verifying "$MUTANT_WATCH" '$fired + (.deadline_hours * 3600)' '$merged + 259200' ;;
+    merge-clock) mutate_verifying "$MUTANT_WATCH" '.deadline_epoch <= $now' 'false' ;;
     release) mutate_verifying "$MUTANT_WATCH" 'if jq -e '\''any(.[]; .trigger_kind == "release")'\'' <<<"$boxes" >/dev/null; then' 'if [[ "$blocked" == false ]] && jq -e '\''any(.[]; .trigger_kind == "release")'\'' <<<"$boxes" >/dev/null; then' ;;
     invalid) mutate_verifying "$MUTANT_WATCH" 'if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then' 'if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then die verifying-invalid "" "issue=$id"' ;;
   esac
@@ -680,7 +685,10 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
 done <<'ROWS'
 blocked_overdue|merge|["KEN-99"]|2026-10-03T00:00:01Z|2026-10-03T00:00:00Z|overdue|overdue
 blocked_future|merge|["KEN-99"]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|blocked|blockers
-release_unfired_late|release owner/releases v*|[]|2026-10-04T01:00:00Z|+24h|overdue|cutoff
+release_unfired_late|release owner/releases v*|[]|2026-10-04T01:00:00Z|+72h|waiting|cutoff
+release_null_deadline|release owner/releases v*|[]|2026-10-04T01:00:00Z|+72h|waiting|null
+release_fired_72h|release owner/releases v*|[]|2026-10-04T01:00:00Z|+72h|due|fired
+merge_72h|merge|[]|2026-10-04T01:00:00Z|2026-10-04T00:00:00Z|overdue|merge-clock
 release_blocked|release owner/releases v*|["KEN-99"]|2026-10-02T00:00:01Z|+24h|blocked|release
 release_waiting|release owner/releases v*|[]|2026-10-02T00:00:01Z|+24h|waiting|waiting
 invalid_then_due|merge|[]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|due|invalid

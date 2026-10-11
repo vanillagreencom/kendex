@@ -98,7 +98,7 @@ REAL_DATE="$(command -v date)"
 cat >"$TMP_ROOT/bin/date" <<'SH'
 #!/usr/bin/env bash
 if [[ "$*" == "-u +%s" ]]; then
-  jq -nr '"2026-10-02T12:00:00Z" | fromdateiso8601'
+  jq -nr --arg now "${VERIFY_NOW:-2026-10-02T12:00:00Z}" '$now | fromdateiso8601'
 else
   exec "$REAL_DATE" "$@"
 fi
@@ -148,7 +148,7 @@ for id in T-7 T-8; do
 done
 
 # Both readers resolve release publication. This release has not fired.
-# Its merge bound is still ahead of the fixture clock.
+# Waiting retains the merge date without a deadline.
 jq --arg d '## Done when
 - [ ] Post-merge: Read health; Where: service; Why after merge: release; Trigger: release owner/repo v*; Deadline: +24h' '.identifier = "T-9" | .id = "uuid-T-9" | .description = $d' "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-9.json"
 
@@ -157,16 +157,18 @@ cat >"$TMP_ROOT/bin/gh" <<'SH'
 set -euo pipefail
 case "$1 $2" in
   'pr list') echo '[{"state":"MERGED","mergedAt":"2026-10-01T00:00:00.123Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"}]' ;;
-  'release list') echo '[]' ;;
+  'release list') cat "$RELEASES" ;;
+  'api repos/owner/repo/compare/'*) echo ahead ;;
   *) exit 2 ;;
 esac
 SH
 chmod +x "$TMP_ROOT/bin/gh"
+printf '%s\n' '[]' >"$TMP_ROOT/releases.json"
 
 OUT=""
 RC=0
 OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
-  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || RC=$?
+  REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || RC=$?
 assert_eq "$RC" 1 "the sweep reports a finding"
 assert_not_contains "$OUT" "issue=T-1" "a fully met completion leaves no done-unchecked finding"
 assert_contains "$OUT" "done-unchecked issue=T-2" "a partly met completion is still done-unchecked"
@@ -174,12 +176,43 @@ assert_contains "$OUT" 'verifying T-3 box=2 trigger="merge" status=overdue deadl
 assert_contains "$OUT" "verifying-empty issue=T-4" "Verifying with no open box is reported"
 assert_not_contains "$OUT" "issue=T-5" "future Verifying has no stale development finding"
 assert_not_contains "$OUT" "issue=T-6" "completed verification has no finding"
-assert_contains "$OUT" 'verifying T-9 box=1 trigger="release owner/repo v*" status=waiting deadline=2026-10-04T00:00:00Z blocked_by=-' "an unfired release carries its merge bound"
+assert_contains "$OUT" 'verifying T-9 box=1 trigger="release owner/repo v*" status=waiting deadline=- merged=2026-10-01T00:00:00Z blocked_by=-' "an unfired release has no deadline and keeps its merge date"
 assert_contains "$OUT" 'verifying-counts due=1 overdue=1 blocked=0 waiting=1 items=6' "the count line reports every fixture status"
 assert_contains "$OUT" "verifying-invalid issue=T-7" "missing post-merge metadata is reported"
 assert_contains "$OUT" "verifying-invalid issue=T-8" "open branch work in Verifying is reported"
 # Controls mutate only disposable scripts outside the item worktree.
 source "$TEST_DIR/lib/growth-state.sh"
+mkdir -p "$TMP_ROOT/release-state"
+while IFS='|' read -r name trigger deadline releases status due_at control; do
+  jq --arg trigger "$trigger" --arg deadline "$deadline" '.description = ("## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: release; Trigger: " + $trigger + "; Deadline: " + $deadline)' "$TMP_ROOT/state/T-9.json" >"$TMP_ROOT/release-state/T-9.json"
+  printf '%s\n' "$releases" >"$TMP_ROOT/releases.json"
+  ROW_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token REAL_DATE="$REAL_DATE" VERIFY_NOW=2026-10-04T01:00:00Z RELEASES="$TMP_ROOT/releases.json" STATE="$TMP_ROOT/release-state" "$RW" 2>&1)" || true
+  expected="verifying T-9 box=1 trigger=\"$trigger\" status=$status deadline=$due_at"
+  [[ "$trigger" != release* ]] || expected+=' merged=2026-10-01T00:00:00Z'
+  assert_contains "$ROW_OUT" "$expected blocked_by=-" "$name reports its clock and trigger"
+  [[ "$status" != waiting ]] || assert_not_contains "$ROW_OUT" 'status=overdue' "$name never becomes overdue without a release"
+  MUTANT_DIR="$TMP_ROOT/release-$name"
+  MUTANT_RW="$(mutant_scripts "release-$name/orch" reconcile-work-items)/reconcile-work-items" || exit 1
+  ln -s "$LINEAR_SKILL" "$MUTANT_DIR/linear"
+  mutant_lib="${MUTANT_RW%/*}/lib/verifying.sh"
+  rm -- "${mutant_lib:?}"
+  cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
+  case "$control" in
+    waiting) mutate_file "$mutant_lib" 'if $fired == null then null' 'if $fired == null then $merged + 259200' ;;
+    fired) mutate_file "$mutant_lib" '$fired + (.deadline_hours * 3600)' '$merged + 259200' ;;
+    merge) mutate_file "$mutant_lib" '.deadline_epoch <= $now' 'false' ;;
+    null) mutate_file "$mutant_lib" '.deadline_epoch != null and ' '' ;;
+  esac
+  CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token REAL_DATE="$REAL_DATE" VERIFY_NOW=2026-10-04T01:00:00Z RELEASES="$TMP_ROOT/releases.json" STATE="$TMP_ROOT/release-state" "$MUTANT_RW" 2>&1)" || true
+  assert_not_contains "$CONTROL_OUT" 'scan-failed' "control: $name reaches a complete judgement"
+  assert_not_contains "$CONTROL_OUT" "$expected blocked_by=-" "control: $name rejects the restored defect"
+done <<'ROWS'
+waiting|release owner/repo v*|+72h|[]|waiting|-|waiting
+null|release owner/repo v*|+72h|[]|waiting|-|null
+fired|release owner/repo v*|+72h|[{"tagName":"v1","publishedAt":"2026-10-02T00:00:00Z","isDraft":false}]|due|2026-10-05T00:00:00Z|fired
+merge|merge|2026-10-04T00:00:00Z|[]|overdue|2026-10-04T00:00:00Z|merge
+ROWS
+printf '%s\n' '[]' >"$TMP_ROOT/releases.json"
 for control in overdue empty stale fields branch; do
   MUTANT_DIR="$TMP_ROOT/reconcile-$control"
   MUTANT_RW="$(mutant_scripts "reconcile-$control/orch" reconcile-work-items)/reconcile-work-items" || exit 1
@@ -207,7 +240,7 @@ for control in overdue empty stale fields branch; do
   esac
   CONTROL_RC=0
   CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
-    REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" RECONCILE_STALE_HOURS=0 "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
+    REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" RECONCILE_STALE_HOURS=0 "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
   assert_eq "$CONTROL_RC" 1 "control: $control reaches findings"
   if [[ "$control" == stale ]]; then
     assert_contains "$CONTROL_OUT" "$expected" "control: removing the exclusion makes Verifying stale development"
@@ -222,7 +255,7 @@ mkdir -p "$TMP_ROOT/overdue-state"
 cp "$TMP_ROOT/state/T-3.json" "$TMP_ROOT/overdue-state/T-3.json"
 OVERDUE_RC=0
 OVERDUE_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
-  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/overdue-state" "$RW" 2>&1)" || OVERDUE_RC=$?
+  REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/overdue-state" "$RW" 2>&1)" || OVERDUE_RC=$?
 assert_eq "$OVERDUE_RC" 1 "an overdue box alone exits 1"
 assert_contains "$OVERDUE_OUT" 'verifying-counts due=0 overdue=1 blocked=0 waiting=0 items=1' "the overdue-only fixture has no other finding"
 MUTANT_DIR="$TMP_ROOT/reconcile-exit"
@@ -231,7 +264,7 @@ ln -s "$LINEAR_SKILL" "$MUTANT_DIR/linear"
 mutate_file "$MUTANT_RW" 'findings=$((findings + overdue_count))' 'findings=$((findings + 0))'
 CONTROL_RC=0
 CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
-  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/overdue-state" "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
+  REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/overdue-state" "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
 assert_eq "$CONTROL_RC" 0 "control: dropping the overdue finding violates exit 1"
 
 # The zero line also prints when the live tracker holds no Verifying item.
@@ -241,7 +274,7 @@ for file in "$TMP_ROOT/state/"*.json; do
 done
 ZERO_RC=0
 ZERO_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
-  REAL_DATE="$REAL_DATE" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || ZERO_RC=$?
+  REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || ZERO_RC=$?
 assert_contains "$ZERO_OUT" 'verifying-counts due=0 overdue=0 blocked=0 waiting=0 items=0' "no Verifying item reports a zero count"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
