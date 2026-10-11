@@ -229,6 +229,11 @@ OVERVIEW_BODY='<!-- ccr-overview-v2 -->
 Coverage expires too early on its due date, and malformed URL inputs can bypass or escape structured validation.
 
 **0 open findings**'
+# Copilot verdict from kendex#4757, recorded in KEN-3778:
+# https://github.com/vanillagreencom/kendex/pull/4757#pullrequestreview-5482780819
+OVERVIEW_CLOSER='<!-- ccr-overview-v2 -->
+
+### 🔵 Needs a closer look'
 # Exact no-change heading from Copilot, read live in this round:
 # https://github.com/vanillagreencom/kendex/pull/4724#pullrequestreview-5481548444
 OVERVIEW_APPROVED='<!-- ccr-overview-v2 -->
@@ -258,6 +263,7 @@ body_of() {
       "$(supp_zwsp "$COPILOT_ENTRY")" ;;
     crlf) supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES" | awk '{ printf "%s\r\n", $0 }' ;;
     overview) printf '%s' "$OVERVIEW_BODY" ;;
+    overview-closer) printf '%s' "$OVERVIEW_CLOSER" ;;
     overview-approved) printf '%s' "$OVERVIEW_APPROVED" ;;
     overview-unknown) printf '<!-- ccr-overview-v2 -->\n\n### 🟣 Verdict unavailable\n' ;;
     overview-no-verdict) printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n**0 open findings**\n' ;;
@@ -289,6 +295,7 @@ the same section under another title passes|v2-other-title|$PASSED
 a body whose overview reads Findings: None still fails on its one entry|copilot|$FAILED | suppressed-findings count=1 | suppressed-entry $COPILOT_ENTRY
 a body written with CRLF line ends reads as the same block|crlf|$BOTH_STANDING
 a Changes recommended overview with no thread fails despite zero open findings|overview|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
+a Needs a closer look overview fails with one review finding|overview-closer|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 the live Approved overview has no body finding|overview-approved|$PASSED
 an overview with an unreadable verdict fails closed|overview-unknown|$FAILED | suppressed-findings state=unparsed
 an overview marker with no verdict adds nothing|overview-no-verdict|$PASSED
@@ -342,7 +349,7 @@ one_entry() { supp_body '### Suppressed comments (1)' "**$1**
 * Blocking: the only finding."; }
 reply_body_of() {
   case "$1" in
-    heading | v2 | overview) body_of "$1" ;;
+    heading | v2 | overview | overview-closer) body_of "$1" ;;
     spaced) one_entry "$SUPP_SPACED" ;;
     short-long) two_entries "$SUPP_SHORT" "$SUPP_LONGER" ;;
     stem) two_entries "$SUPP_STEM" "$SUPP_EXTENDS" ;;
@@ -392,6 +399,7 @@ the reading identity's label-only decline answers nothing|heading|author|app|$H7
 a User named like the app answers nothing for the app author|heading|app|impostor|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 a User named like the app answers nothing for the reading identity|heading|author|impostor|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 a current-head Fixed-in review disposition answers the overview|overview|author|author|$H7|$OVERVIEW_ENTRY - Fixed in $HEAD|$PASSED
+a current-head disposition answers the Needs a closer look overview|overview-closer|author|author|$H7|$OVERVIEW_ENTRY - Fixed in $HEAD|$PASSED
 an earlier-head review disposition answers nothing|overview|author|author|$O7|$OVERVIEW_ENTRY - Fixed in $HEAD|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 a reasoned decline answers the overview|overview|author|author|$H7|\`$OVERVIEW_ENTRY\` - $SUPP_REASON|$PASSED
 a tracked issue answers the overview|overview|author|author|$H7|**$OVERVIEW_ENTRY** - Tracked: KEN-1400|$PASSED
@@ -593,6 +601,9 @@ mutant_row "with a constant overview id, answering one review clears the other" 
 mutant_row "without overview counting, fleet#1176 passes as the old checker did" overview-count \
   '      | ($body | overview_verdict) as $verdict' '      | "" as $verdict' \
   'at_head "$(body_of overview)"' "$PASSED"
+mutant_row "without Needs a closer look counting, its unanswered overview is unparsed" overview-closer \
+  '        | if (["Changes recommended", "Needs a closer look"] | index($verdict)) != null then' '        | if (["Changes recommended"] | index($verdict)) != null then' \
+  'at_head "$(body_of overview-closer)"' "$FAILED | suppressed-findings state=unparsed"
 mutant_row "without unknown-verdict refusal, the unreadable overview passes" overview-unparsed \
   '          else .unparsed += 1 end;' '          else . end;' \
   'at_head "$(body_of overview-unknown)"' "$PASSED"

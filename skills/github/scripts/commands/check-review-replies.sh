@@ -32,8 +32,9 @@ Rules (each fails on its own):
                       `Suppressed comments (N)` or `Previously missed (N)`
                       (a markdown heading or a <details> summary), and no
                       counted reply answers each one. A ccr-overview-v2
-                      `Changes recommended` verdict also counts as one
-                      body finding, keyed by `review:<REST review id>`.
+                      `Changes recommended` or `Needs a closer look` verdict
+                      also counts as one body finding, keyed by
+                      `review:<REST review id>`.
 
 Whose words count:
   A finding source, a review body, counts when its author is a bot or has
@@ -400,7 +401,7 @@ SUPP_SCAN_DEF='
             | if .section != null then .section.parsed += 1 else . end
           else . end)
         | close_section
-        | if $verdict == "Changes recommended" then
+        | if (["Changes recommended", "Needs a closer look"] | index($verdict)) != null then
             .entries += 1 | .list += ["review:\($id)"]
           elif $verdict == "" or $verdict == "Approved" then .
           else .unparsed += 1 end;
