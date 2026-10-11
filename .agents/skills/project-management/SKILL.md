@@ -177,6 +177,18 @@ A Linear list read is workspace-wide, so each path states whether it resolves th
 | Kind | Files |
 |------|-------|
 | Schemas | [audit-issues-input](schemas/audit-issues-input.md), [audit-output](schemas/audit-output.md), [roadmap-plan-input](schemas/roadmap-plan-input.md), [roadmap-plan-output](schemas/roadmap-plan-output.md), [cycle-plan-output](schemas/cycle-plan-output.md) |
-| Templates | [issue-description-template](templates/issue-description-template.md), [parent-issue-template](templates/parent-issue-template.md) |
+| Templates | [issue-description-template](templates/issue-description-template.md), [parent-issue-template](templates/parent-issue-template.md), [initiative-project-template](templates/initiative-project-template.md) |
 | References | [labels](references/labels.md), [dependencies](references/dependencies.md) |
 | Tracker CLI | Linear: `.agents/skills/linear/scripts/linear.sh`; GitHub: `gh` + `.agents/skills/github/scripts/github.sh` |
+
+## Where each rule lives
+
+| Rule | Home | Reason and callers |
+|---|---|---|
+| Issue body and field mapping | Package: [issue-description-template](templates/issue-description-template.md) and [parent-issue-template](templates/parent-issue-template.md) | The audit maps structured fields into its own body. Linear's [IssueCreateInput.templateId](https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts) lets supplied values override template values. A Linear copy would be a second body no create reads. audit-issues, orch's start-new, plan-issues and merge-pr, and linear's patterns/workflow-actions.md cite these templates. |
+| Reached by and Symptom lines | Tool: `linear.sh issues create`; meaning: § Disposition | The tool refuses missing values. The package says what each value names. audit-issues passes the template body and review-born flag. |
+| Required issue labels | Tool and project taxonomy: [labels](references/labels.md) | The tool checks the project's declared labels. The audit's label preflight builds the complete set. |
+| Initiative and project body | Package: [initiative-project-template](templates/initiative-project-template.md) | Linear documents [issue templates](https://linear.app/docs/issue-templates) and [project templates](https://linear.app/docs/project-templates). [InitiativeCreateInput](https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts) has no template id. roadmap-create uses this shared template. |
+| Initiative owner, lead team, labels, links and status updates; project lead, labels and links | Linear fields, set by the Linear CLI flags | Linear stores these values. roadmap-create sets the creation fields by flag. A Linear project template can prefill fields for a person in the app; the agent path needs no second template or consumer setup. Status updates use Linear's update fields when a workflow calls for them. |
+| GitHub issue and pull request templates | Repository: `.github/ISSUE_TEMPLATE` and `pull_request_template.md` | The repository owns its GitHub forms. This package ships none; kendex tracks work in Linear. |
+| Comments | Package: this section | A comment carries one update. A run of time stamps is one line and a link. Completion and verification comment producers keep their own forms. |

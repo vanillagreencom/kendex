@@ -50,18 +50,18 @@ List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | 
 .agents/skills/linear/scripts/linear.sh initiatives list --status Active --max
 ```
 
-Creating one takes a name and a multi-month objective as free text:
+Build the new initiative from [initiative-project-template.md](../templates/initiative-project-template.md). Take its name, owner, lead team, labels and resource link from the approved plan or the user's answers. Read `project-labels list --max` for the entity labels. Fill `[INITIATIVE_DESC]` and `[INITIATIVE_CONTENT]` from the template.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh initiatives create --name "[NAME]" --description "[DESCRIPTION]"
+.agents/skills/linear/scripts/linear.sh initiatives create --name "[NAME]" --description "[INITIATIVE_DESC]" --content "[INITIATIVE_CONTENT]" --owner "[OWNER_EMAIL_OR_ID]" --lead-team "[TEAM_KEY_OR_NAME]" --labels "[INITIATIVE_LABELS]" --link "[RESOURCE_LABEL]=[RESOURCE_URL]"
 ```
 
 ### 3.2 Project
 
-`--description` is a 255-character subtitle; `--content` is the unlimited markdown body.
+Build the project from [initiative-project-template.md](../templates/initiative-project-template.md). Use the plan's project outcome for `[PROJECT_DESC]` and its deliverables and acceptance for `[PROJECT_CONTENT]`. Take the lead, team and labels from the plan or the user's answers. Read `project-labels list --max` for the entity labels. Add `--link "[RESOURCE_LABEL]=[RESOURCE_URL]"` when the project has research or design.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh projects create --name "[PROJECT_NAME]" --description "[PROJECT_DESC]" --state "planned"
+.agents/skills/linear/scripts/linear.sh projects create --name "[PROJECT_NAME]" --team "[TEAM_KEY_OR_NAME]" --description "[PROJECT_DESC]" --content "[PROJECT_CONTENT]" --state "planned" --lead "[LEAD_EMAIL_OR_ID]" --labels "[PROJECT_LABELS]"
 .agents/skills/linear/scripts/linear.sh initiatives add-project [INITIATIVE_ID] --project [PROJECT_ID]
 ```
 

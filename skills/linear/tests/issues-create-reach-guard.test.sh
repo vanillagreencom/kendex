@@ -83,6 +83,15 @@ run_linear issues create --title "Refresh skips a worktree" \
   --description "$(printf '%s\n\nThe render is left stale.\n' "$REACH_LINE")"
 assert_created "a create whose body names the run that reaches it"
 
+printf '%s\n' 'Keep generated skill files current after refresh.' \
+  '' 'The work is complete when refresh updates the installed skill.' \
+  '' '## Done when' '' '- [ ] Refresh updates the installed skill.' \
+  '' '## Requirements' '' '- Update the installed skill during refresh.' \
+  '' '## Filing record' '' "$REACH_LINE" \
+  '' '## Context' '' '**Location**: skill rendering' >"$TMP_ROOT/body.md"
+run_linear issues create --title "Refresh updates the skill" --description-file "$TMP_ROOT/body.md"
+assert_created "a create with its reach under Filing record after the outcome"
+
 printf -- '- Reached by: `tools/guard` on a fresh clone\n' >"$TMP_ROOT/body.md"
 run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body.md"
 assert_created "a create whose reach is a list item arriving by --description-file"

@@ -7,21 +7,25 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 ## Template
 
 ```markdown
-**Research**: [RESEARCH_REF]
-**Decision [DXXX]**: [DECISION_PATH]
-**Source**: [ORIGIN_CONTEXT]
-**Reached by**: [REACH]
+[SUMMARY: one or two plain sentences on the children's shared outcome and its impact]
 
-[SUMMARY — 1-2 sentences on the bundle's overall goal, synthesized from the children, not copied from one of them]
+[DONE: one sentence saying how we know the shared outcome is complete]
+
+## Acceptance Criteria
+
+- [ ] [Criterion from child [ISSUE_ID]]
 
 ## Sub-Issues
 
 - [ISSUE_ID]: [title] (agent:X) [blocks [ISSUE_ID]]
 - [ISSUE_ID]: [title] (agent:Y)
 
-## Acceptance Criteria
+## Filing record
 
-- [ ] [Criterion from child [ISSUE_ID]]
+**Research**: [RESEARCH_REF]
+**Decision**: [DXXX] [DECISION_PATH]
+**Source**: [ORIGIN_CONTEXT]
+**Reached by**: [REACH]
 
 ## Context
 
@@ -38,3 +42,4 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping). Omit Acceptance Criteria when the children have none.
 7. A coordination parent has no defect of its own, so its `[REACH]` is the run that produced it — the roadmap layer, the audit, or the merge-pr rebundle that detached its children — named as that run, not as a defect. Such a parent is structural and never `--review-born`.
 8. After any hierarchy change, regenerate Summary, Sub-Issues, and Acceptance Criteria from the current children.
+9. Filing headers follow [issue-description-template.md](issue-description-template.md) § Rules. Keep them under Filing record. Synthesize the opening from all children.
