@@ -977,7 +977,9 @@ cmd_new_round_id() {
     # Round identity and its start share the locked write. Recovery mints here too.
     cmd_update "$issue_id" --arg field "$field" --arg round "$value" --arg kind "$kind" --argjson now "$now" '
         .[$field] = $round
-        | .stages = ((.stages // []) + [{kind: $kind, round_id: $round, start: $now, end: null}])' || return 1
+        | .stages = ((.stages // [] | map(
+            if .kind == $kind and .end == null then .end = $now | .superseded = true else . end
+          )) + [{kind: $kind, round_id: $round, start: $now, end: null}])' || return 1
     echo "$value"
 }
 
