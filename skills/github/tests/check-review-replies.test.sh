@@ -82,8 +82,9 @@ rest_actor() { # ACCOUNT -> the user and author_association fields
   read -r login type assoc id <<<"$(account "$1")"
   jq -cn --arg l "$login" --arg t "$type" --arg a "$assoc" --argjson i "$id" '{user: {login: $l, type: $t, id: $i}, author_association: $a}'
 }
-review() { # ACCOUNT STATE COMMIT BODY
-  jq -cn --argjson u "$(rest_actor "$1")" --arg s "$2" --arg c "$3" --arg b "$4" '$u + {state: $s, commit_id: $c, body: $b}'
+review() { # ACCOUNT STATE COMMIT BODY [REST_ID]
+  jq -cn --argjson u "$(rest_actor "$1")" --arg s "$2" --arg c "$3" --arg b "$4" --argjson id "${5:-5481571326}" \
+    '$u + {id: $id, state: $s, commit_id: $c, body: $b}'
 }
 comment() { # ACCOUNT BODY
   jq -cn --argjson u "$(rest_actor "$1")" --arg b "$2" '$u + {body: $b}'
@@ -218,6 +219,25 @@ SUPP_OVER="$(printf '### Previously missed (1)\n\n**%s**\n* Blocking: selected c
 # `Findings: None` and no thread, the entry only under `Previously missed
 # (1)`, its summary carrying a severity image.
 COPILOT_ENTRY='skills/orch/references/merge-attempt.md:25'
+# The fleet#1176 excerpt recorded in KEN-3751, review 5481571326:
+# https://github.com/vanillagreencom/fleet/pull/1176#pullrequestreview-5481571326
+OVERVIEW_ENTRY='review:5481571326'
+OVERVIEW_BODY='<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+Coverage expires too early on its due date, and malformed URL inputs can bypass or escape structured validation.
+
+**0 open findings**'
+# Exact no-change heading from Copilot, read live in this round:
+# https://github.com/vanillagreencom/kendex/pull/4724#pullrequestreview-5481548444
+OVERVIEW_APPROVED='<!-- ccr-overview-v2 -->
+
+### 🟢 Approved
+
+The pins are internally consistent, and both Arch recipes match their generated metadata.
+
+**0 open findings**'
 body_of() {
   case "$1" in
     heading) supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES" ;;
@@ -237,6 +257,12 @@ body_of() {
     copilot) printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### Needs a closer look\n\nThe recording workflow assumes a lane status file.\n\n**Findings:** None\n\n<details>\n<summary><strong>Previously missed (1)</strong></summary>\n\nIn code that has not changed since last review\n\n<details>\n<summary><picture><img alt="Medium severity"></picture> Unconditional lane-status write breaks standalone merge-pr runs</summary>\n\n`%s`\n\n**Blocking:** This status write is unconditional.\n</details>\n</details>\n' \
       "$(supp_zwsp "$COPILOT_ENTRY")" ;;
     crlf) supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES" | awk '{ printf "%s\r\n", $0 }' ;;
+    overview) printf '%s' "$OVERVIEW_BODY" ;;
+    overview-approved) printf '%s' "$OVERVIEW_APPROVED" ;;
+    overview-unknown) printf '<!-- ccr-overview-v2 -->\n\n### 🟣 Verdict unavailable\n' ;;
+    overview-no-verdict) printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n**0 open findings**\n' ;;
+    overview-no-marker) printf '%s' "$OVERVIEW_BODY" | sed '/ccr-overview-v2/d' ;;
+    overview-sections) printf '%s\n\n%s' "$OVERVIEW_BODY" "$(supp_body '### Previously missed (2)' "$SUPP_ENTRIES")" ;;
     *) echo "UNKNOWN-BODY: $1" >&2; exit 2 ;;
   esac
 }
@@ -262,6 +288,12 @@ a summary-titled section with no count fails as unparsed|v2-no-count|$FAILED | s
 the same section under another title passes|v2-other-title|$PASSED
 a body whose overview reads Findings: None still fails on its one entry|copilot|$FAILED | suppressed-findings count=1 | suppressed-entry $COPILOT_ENTRY
 a body written with CRLF line ends reads as the same block|crlf|$BOTH_STANDING
+a Changes recommended overview with no thread fails despite zero open findings|overview|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
+the live Approved overview has no body finding|overview-approved|$PASSED
+an overview with an unreadable verdict fails closed|overview-unknown|$FAILED | suppressed-findings state=unparsed
+an overview marker with no verdict adds nothing|overview-no-verdict|$PASSED
+a verdict without the overview marker adds nothing|overview-no-marker|$PASSED
+overview and section findings share the suppressed-findings count|overview-sections|$FAILED | suppressed-findings count=3 | suppressed-entry $SUPP_FIRST | suppressed-entry $SUPP_SECOND | suppressed-entry $OVERVIEW_ENTRY
 ROWS
 
 echo "=== which reviews the scan reads ==="
@@ -286,6 +318,8 @@ an app author's own review body is not read|app|app|COMMENTED|$HEAD|heading|$PAS
 a maintainer's review body is read|author|maintainer|COMMENTED|$HEAD|heading|$BOTH_STANDING
 a NONE-association reviewer's block is not read|author|stranger|COMMENTED|$HEAD|heading|$PASSED
 a NONE-association reviewer's unparsed section leaves the verdict at pass|author|stranger|COMMENTED|$HEAD|no-count-prose|$PASSED
+an earlier head's overview is not read|author|copilot|COMMENTED|$OTHER|overview|$PASSED
+a stranger's overview is not read|author|stranger|COMMENTED|$HEAD|overview|$PASSED
 ROWS
 
 echo "=== the head-bound disposition comments ==="
@@ -308,7 +342,7 @@ one_entry() { supp_body '### Suppressed comments (1)' "**$1**
 * Blocking: the only finding."; }
 reply_body_of() {
   case "$1" in
-    heading | v2) body_of "$1" ;;
+    heading | v2 | overview) body_of "$1" ;;
     spaced) one_entry "$SUPP_SPACED" ;;
     short-long) two_entries "$SUPP_SHORT" "$SUPP_LONGER" ;;
     stem) two_entries "$SUPP_STEM" "$SUPP_EXTENDS" ;;
@@ -349,6 +383,12 @@ the reading identity's comment answers on a person's PR|heading|author|app|$H7|*
 the reading identity's label-only decline answers nothing|heading|author|app|$H7|**$SUPP_FIRST** - Declined: frozen\n**$SUPP_SECOND** - Tracked separately|$BOTH_STANDING
 a User named like the app answers nothing for the app author|heading|app|impostor|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 a User named like the app answers nothing for the reading identity|heading|author|impostor|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
+a current-head Fixed-in review disposition answers the overview|overview|author|author|$H7|$OVERVIEW_ENTRY - Fixed in $HEAD|$PASSED
+an earlier-head review disposition answers nothing|overview|author|author|$O7|$OVERVIEW_ENTRY - Fixed in $HEAD|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
+a reasoned decline answers the overview|overview|author|author|$H7|\`$OVERVIEW_ENTRY\` - $SUPP_REASON|$PASSED
+a tracked issue answers the overview|overview|author|author|$H7|**$OVERVIEW_ENTRY** - Tracked: KEN-1400|$PASSED
+a label-only decline leaves the overview standing|overview|author|author|$H7|$OVERVIEW_ENTRY - Declined: frozen|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
+a tracking reply without an issue leaves the overview standing|overview|author|author|$H7|$OVERVIEW_ENTRY - Tracked separately|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 ROWS
 
 # Two reviews whose section counts cancel, every parsed entry answered: the
@@ -537,6 +577,15 @@ mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR_AUTHOR [FILE]]
   assert_eq "$got" "$6" "must-fail: $1"
 }
 READ_FAILED='rc=2  check-review-replies: read-failed pr=7'
+mutant_row "without overview counting, fleet#1176 passes as the old checker did" overview-count \
+  '      | ($body | overview_verdict) as $verdict' '      | "" as $verdict' \
+  'at_head "$(body_of overview)"' "$PASSED"
+mutant_row "without unknown-verdict refusal, the unreadable overview passes" overview-unparsed \
+  '          else .unparsed += 1 end;' '          else . end;' \
+  'at_head "$(body_of overview-unknown)"' "$PASSED"
+mutant_row "without the Approved verdict, the no-change overview fails" overview-approved \
+  '          elif $verdict == "" or $verdict == "Approved" then .' '          elif $verdict == "" then .' \
+  'at_head "$(body_of overview-approved)"' "$FAILED | suppressed-findings state=unparsed"
 mutant_row "with the untracked-claim line cut, the claim passes" untracked \
   '[ "$untracked" = 0 ] || {' '[ true ] || {' \
   'threads_set "$(thread_node author "Out of scope, tracked.")"' "$PASSED"
@@ -649,7 +698,7 @@ mutant_row "with the page-shape test cut, a non-array reviews page reads as no r
   "    jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null || {" \
   "at_head \"\$(body_of heading)\"; gh_stub_answer \"\$REVIEWS_PATH\" '{\"message\":\"Server Error\"}'" "$PASSED" author lib/github-api.sh
 mutant_row "with the body scan cut, only thread state is read and a body-only finding passes" body-scan \
-  '      | (.body // "") | suppressed_scan' '      | "" | suppressed_scan' \
+  '      | .id as $id | (.body // "") | suppressed_scan($id)' '      | .id as $id | "" | suppressed_scan($id)' \
   'at_head "$(body_of copilot)"' "$PASSED"
 
 echo

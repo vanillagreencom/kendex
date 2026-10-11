@@ -1,0 +1,1 @@
+- Require a head-bound review disposition when a Copilot overview recommends changes without a review thread.
