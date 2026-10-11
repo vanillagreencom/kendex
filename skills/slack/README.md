@@ -10,7 +10,7 @@ A relay between an overseer's mailbox and one private Slack channel. Session own
 - Read a requested thread as plain text with `slack thread`, without loading channel history.
 - Send a text reply only to its thread with `slack post --thread TS`.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
-- Post an alert or a file to any channel from a script, with `--mention` for the owners.
+- Post an alert or a file to any channel from a script, with `--mention` for the owners. While the root's Jarvis session hold stands, `--mention` posts with no mention and prints one `mention-held` line on stderr.
 - Send text as standard Markdown and file comments as Slack's mrkdwn markup. [Message standard](SKILL.md#message-standard) defines the difference.
 - Refuse any text or file that matches the secret-value pattern.
 
@@ -61,13 +61,13 @@ The app must be a member of every channel it posts to. `setup` creates or adopts
 
 ## The Jarvis session hold
 
-Each root checks the presence pair at every poll from its own settings and private env files, with caller exports taking precedence. The settings reader runs when a file's modification time, size or existence changes. A presence setting added, changed or removed takes effect on the next poll after that file changes, with no restart. Other settings still need `slack setup` or a restart. An empty or absent `SLACK_JARVIS_SESSION_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold. `slack listen --status` shows `held-by=jarvis` while held. A refused settings read fails that root's post step and keeps its hold; other roots continue.
+Each root checks the presence pair at every poll from its own settings and private env files, with caller exports taking precedence. The settings reader runs when a file's modification time, size or existence changes. A presence setting added, changed or removed takes effect on the next poll after that file changes, with no restart. Other settings still need `slack setup` or a restart. An empty or absent `SLACK_JARVIS_SESSION_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold. When the setting moves to another file, a running relay keeps the replaced file: the hold stands while either file is fresh. The relay drops the replaced file once the new one is fresh or the replaced one is stale. Emptying or removing the setting ends the hold at once. `slack listen --status` shows `held-by=jarvis` while held. A refused settings read fails that root's post step and keeps its hold; other roots continue.
 
 Replies to messages the owner typed in the channel still post in their threads while held.
 
 The retired presence keys remain readable until kendex 2.0.0. Each fallback prints a `setting-renamed` line once per old key and process. The new key takes precedence, including an empty value.
 
-The Jarvis session's watch writes a bare read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen`. On resume, the relay clamps the count to the mailbox length, skips notices at or below it and journals their ids. Later notices, open asks and held answers still post. A missing or unreadable count skips nothing; hold times do not set the cutoff.
+The Jarvis session's watch writes a bare read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen`. On resume, the relay clamps the count to the mailbox length, skips notices and open asks at or below it, with no post and no mention, and journals their ids. Later notices and asks, and held answers, still post. A missing or unreadable count skips nothing; hold times do not set the cutoff.
 
 `lane-mail events` supplies `line` (physical position) and `count` (complete line count) for suppression. The oldest supported producer is orch 3.0.0 with its [owner channel](https://github.com/vanillagreencom/kendex/commit/ac62981e). [Position metadata](https://github.com/vanillagreencom/kendex/commit/e9c9497e) enables Jarvis-read suppression and the read mark on an answer. Missing or malformed positions still route without that suppression. Each bad field gets an `envelope-field` diagnostic with root and id. Other bad fields skip the envelope. A checkout poll failure names the root; other checkouts still run.
 

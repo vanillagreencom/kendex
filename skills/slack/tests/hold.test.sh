@@ -3,10 +3,11 @@
 # and an ask are held, an owner message still lands and its reply posts once
 # in that message's thread,
 # the hold is journaled once and `--status` shows held-by=jarvis. Once the
-# file is stale the resume posts the open ask, the answer to an ask the
-# channel shows open and notices past the Jarvis session's seen line count. Its
-# journal records that count, the skipped ids and asks whose posts landed.
-# A dead token on an earlier ask still records every later read notice id.
+# file is stale the resume posts the answer to an ask the channel shows open,
+# and notices and open asks past the Jarvis session's seen line count; an ask
+# at or below it is skipped with no post and no mention. Its journal records
+# that count, the skipped ids and asks whose posts landed.
+# A dead token on an ask still records every read notice id.
 # A restart or a missing seen file cannot replay a skipped or posted id.
 # A missing, unreadable or invalid count skips nothing; a count past the
 # snapshot clamps. An absent Jarvis session file or an empty setting posts as before,
@@ -14,7 +15,9 @@
 # refuses the post step alone. Compaction keeps a standing hold and the resumes inside the
 # horizon. Changed root settings update the presence pair on the next poll
 # without a restart; unchanged files run no settings reader. A refused read
-# retains the hold and fails only that root. The controls plant one mutant per rule.
+# retains the hold and fails only that root. A renamed presence file keeps the
+# replaced one holding until the new one is fresh or the replaced one stale.
+# The controls plant one mutant per rule.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -52,6 +55,7 @@ assert_eq "$RC=$(count "$CH" 'Refused before the hold.')" "1=0" "a notice Slack 
 # --- a fresh file holds a notice and an ask; owner text still lands ----------
 fresh
 notice "$ROOT" n1 'Held notice.'
+READ_LINES="$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
 ASK1="$(ask "$ROOT" q1 'Held and open?')"
 ASK2="$(ask "$ROOT" q2 'Held and answered?')"
 sk_lm "$ROOT" resolve --item overseer --id "$ASK2" --text "$(sk_text a2 'a')" >/dev/null
@@ -79,7 +83,7 @@ row "$ROOT"
 assert_has "$LINE" " held-by=jarvis" "the status row shows the hold"
 
 # --- a stale file resumes: asks and answers survive a Jarvis session read ---------
-sk_jarvis_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
+sk_jarvis_read "$ROOT" "$READ_LINES"
 stale
 notice "$ROOT" n5 'After the stale file.'
 sk_poll "$ROOT" "$HOLD"
@@ -200,17 +204,18 @@ past-gap 6 0 0 4
 ROWS
 
 # --- a refusal on an ask preserves later read notice ids ---------------------------
-# refused_resume ROOT [ERROR] : a held ask before a read notice and an unread
-# notice; Slack refuses the ask once. Prints the ask id and sets REFUSED_READ.
+# refused_resume ROOT [ERROR] : a read notice, then a held ask and an unread
+# notice past the seen count; Slack refuses the ask once. Prints the ask id and
+# sets REFUSED_READ.
 refused_resume() {
   local id
   sk_bind "$1"
   sk_poll "$1" "$HOLD"
   fresh
-  id="$(ask "$1" "r-$(basename "$1")" "Refused on resume in $(basename "$1")?")"
-  notice "$1" "read-$(basename "$1")" "Read after the ask in $(basename "$1")."
+  notice "$1" "read-$(basename "$1")" "Read before the ask in $(basename "$1")."
   REFUSED_READ="$(last_id "$1")"
   sk_jarvis_read "$1" "$(wc -l < "$(sk_box "$1")/to-overseer.jsonl")"
+  id="$(ask "$1" "r-$(basename "$1")" "Refused on resume in $(basename "$1")?")"
   notice "$1" "unread-$(basename "$1")" "Unread after the ask in $(basename "$1")."
   sk_poll "$1" "$HOLD"
   stale
@@ -227,16 +232,48 @@ while read -r error key status unread; do
   CH_R="$(sk_channel "$R")"
   assert_has "$ERR1" "slack: $key=" "$error: the ask refusal reports its key"
   assert_eq "$(jq -c .unknown "$R/tmp/slack/status.json")" '[]' "$error: an explicit rejection clears the in-flight unknown before restart"
-  assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(resumed_asks "$R")=$(jq -r 'select(.t == "resume") | "\(.seen)=\(.skipped | join(","))"' "$(sk_journal "$R")")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
-    "$status=0==2=$REFUSED_READ=0=$unread=hold resume " "$error: the failed ask is omitted and every read notice id survives the refusal"
+  assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(resumed_asks "$R")=$(jq -r 'select(.t == "resume") | "\(.seen)=\(.skipped | join(","))"' "$(sk_journal "$R")")=$(count "$CH_R" "Read before the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
+    "$status=0==1=$REFUSED_READ=0=$unread=hold resume " "$error: the failed ask is omitted and every read notice id survives the refusal"
   rm -- "$(sk_box "$R")/to-overseer.seen"
   sk_poll "$R" "$HOLD"
-  assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
+  assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(count "$CH_R" "Read before the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
     "0=1=0=1=hold resume " "$error: restart posts the pending ask and unread notice but never the read notice"
 done <<'ROWS'
 not_in_channel slack-api-failed 1 1
 invalid_auth slack-auth-failed 2 0
 token_revoked slack-auth-failed 2 0
+ROWS
+
+# --- a resume skips an ask the Jarvis session read and mentions the owners on a later one ---
+# The control posts every open ask whatever its line, the rule before asks were read.
+while read -r name control; do
+  R="$(sk_new_root "ask-seen-$name")"
+  sk_bind "$R"
+  sk_poll "$R" "$HOLD"
+  fresh
+  READ_ASK="$(ask "$R" "read-$name" "Read by the session in $name?")"
+  sk_jarvis_read "$R" "$(wc -l < "$(sk_box "$R")/to-overseer.jsonl")"
+  UNREAD_ASK="$(ask "$R" "unread-$name" "Unread by the session in $name?")"
+  sk_poll "$R" "$HOLD"
+  stale
+  [ "$control" = real ] || sk_mutant every-ask relay.py 'kind in \("notice", "ask"\) and' 'kind == "notice" and'
+  sk_poll "$R" "$HOLD"
+  CH_R="$(sk_channel "$R")"
+  READ_ROW="$RC=$(count "$CH_R" "Read by the session in $name?")=$(jq -r 'select(.t == "resume") | .skipped | join(",")' "$(sk_journal "$R")")"
+  if [ "$control" != real ]; then
+    sk_assert_red "$READ_ROW" "0=0=$READ_ASK" "$name: posting every open ask fails the read-ask row"
+    sk_bin_reset
+    continue
+  fi
+  assert_eq "$READ_ROW" "0=0=$READ_ASK" "$name: an ask at or below the seen count is journaled skipped and never posted"
+  assert_eq "$(count "$CH_R" "Unread by the session in $name?")=$(resumed_asks "$R")" "1=$UNREAD_ASK" \
+    "$name: an ask past the seen count posts and is journaled landed"
+  assert_eq "$(sk_state ".messages.${CH_R}[] | select(.text | contains(\"Unread by the session in $name?\")) | .text | startswith(\"<@U001> <@U002> \")")" \
+    "true" "$name: the ask past the count carries the owners' mention"
+  sk_bin_reset
+done <<'ROWS'
+real real
+every-ask-control every-ask
 ROWS
 
 # --- root-local settings through the real launcher and one two-root poll ----------
@@ -569,6 +606,65 @@ caller-empty toml empty real
 no-read toml none mutant
 ROWS
 
+# --- a renamed presence file holds until the new file is fresh -------------------
+# The setting moves to a file nothing wrote yet while the old one is fresh: a
+# running relay stays held and posts no ask. A fresh new file keeps the hold.
+# At the end the new file is stale and the old one is aged OLD_END: stale, so
+# both files are; or fresh, so only the drop of the old path once the new one
+# was fresh lets the hold end. Each control reds one rule.
+polls() { # ROOT — wait for two completed polls, the first of which may predate a change
+  local n after
+  for n in 1 2; do
+    after="$(jq -r .last_poll "$1/tmp/slack/status.json")"
+    polled_after "$1" "$after" || exit 1
+  done
+}
+while read -r name control old_end; do
+  R="$(sk_new_root "rename-$name")"
+  sk_bind "$R"
+  CHANNEL="$(sk_channel "$R")"
+  OLD="$SK_TMP/rename-$name-old"; NEW="$SK_TMP/rename-$name-new"
+  touch -- "$OLD"; sk_age_file "$OLD" 10
+  printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\n' "$OLD" > "$R/kendex.settings.toml"
+  case "$control" in
+    new-only) sk_mutant rename-new-only relay.py 'if self\.replaced_session_file and not' 'if False and not' ;;
+    keep) sk_mutant rename-keep relay.py 'if self\.replaced_session_file and not presence_fresh\(touched, self\.presence, now\):' 'if self.replaced_session_file:' ;;
+  esac
+  sk_relay_start "$R"
+  polled_after "$R" 0 || exit 1
+  ask "$R" "rename-$name" "Asked across the rename in $name?" >/dev/null
+  printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\n' "$NEW" > "$R/kendex.settings.toml"
+  polls "$R"
+  row "$R"
+  RENAMED="$(field "$LINE" held-by)=$(count "$CHANNEL" "Asked across the rename in $name?")"
+  case "$control" in
+    new-only) sk_assert_red "$RENAMED" "jarvis=0" "control: reading only the new path resumes and posts the ask at the rename" ;;
+    *) assert_eq "$RENAMED" "jarvis=0" "$name: the replaced fresh file holds while the new one is absent" ;;
+  esac
+  if [ "$control" != new-only ]; then
+    touch -- "$NEW"; sk_age_file "$NEW" 10
+    polls "$R"
+    row "$R"
+    assert_eq "$(field "$LINE" held-by)=$(count "$CHANNEL" "Asked across the rename in $name?")" "jarvis=0" \
+      "$name: the new file written fresh keeps the hold"
+    sk_age_file "$NEW" 900; sk_age_file "$OLD" "$old_end"
+    polls "$R"
+    row "$R"
+    ENDED="$(field "$LINE" held-by)=$(count "$CHANNEL" "Asked across the rename in $name?")"
+    case "$control" in
+      keep) sk_assert_red "$ENDED" "=1" "control: keeping the replaced path after the new file was fresh holds past its end" ;;
+      *) assert_eq "$ENDED" "=1" "$name: the hold ends with the new file stale and the old one aged $old_end, and the ask posts once" ;;
+    esac
+  fi
+  sk_relay_stop
+  sk_bin_reset
+done <<'ROWS'
+both-stale real 900
+dropped real 10
+read-new-control new-only 900
+keep-control keep 10
+ROWS
+
 # Count calls through the real Relay start and poll owners. A stub returns
 # an unconfigured presence pair; no parser or API behavior is under test here.
 R="$(sk_new_root presence-count)"; S="$(sk_new_root presence-count-peer)"
@@ -653,7 +749,7 @@ held() {
   sk_poll "$1" "$HOLD"
 }
 
-sk_mutant hold relay.py 'if touched is not None and now - touched < self\.presence\.jarvis_session_max_age:' 'if False:'
+sk_mutant hold relay.py 'if presence_fresh\(touched, self\.presence, now\):' 'if False:'
 BETA="$(sk_new_root beta)"
 held "$BETA"
 assert_eq "$(count "$(sk_channel "$BETA")" 'Held in beta.')" "1" "control: the hold check gone, a notice posts under a fresh file"
@@ -694,7 +790,7 @@ assert_eq "$RC=$(jq -r 'select(.t == "resume") | .skipped | length' "$(sk_journa
   "control: without snapshot suppression, a dead token leaves no read notice id in the resume"
 rm -- "$(sk_box "$THETA")/to-overseer.seen"
 sk_poll "$THETA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$THETA")" 'Read after the ask in theta.')" "1" \
+assert_eq "$(count "$(sk_channel "$THETA")" 'Read before the ask in theta.')" "1" \
   "control: the unrecorded read notice replays after the token refusal and restart"
 sk_bin_reset
 

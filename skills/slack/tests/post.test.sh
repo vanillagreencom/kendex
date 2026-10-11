@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # `slack post`: a message to the bound channel or --channel sent as
-# standard Markdown, the owner mention, a thread reply, an edit, a file with
+# standard Markdown, the owner mention and its drop under a fresh
+# SLACK_JARVIS_SESSION_FILE, a thread reply, an edit, a file with
 # its comment, and the refusals for a secret value in the text or the file,
 # a text past Slack's Markdown cap, an unreadable file and flag misuse. The
 # controls plant one mutant per rule: the text check gone, so a token posts;
 # the file check gone, so a token uploads; the body sent as `text`, which
 # Slack renders as mrkdwn; the length check gone, so a text past the cap
-# reaches Slack, which refuses it.
+# reaches Slack, which refuses it; the hold check gone, a held post mentions.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -27,6 +28,20 @@ assert_eq "$(arg_of C001 "$TS")" "markdown_text" "the text is sent as markdown_t
 
 sk_run -- post --root "$ROOT" --text 'Alert.' --channel C777 --mention
 assert_eq "$RC=$(last C777)" "0=top | UBOT | <@U001> <@U002> Alert." "--channel posts elsewhere and --mention prefixes every owner"
+
+# held_post NAME AGE: --mention under a Jarvis session file touched AGE seconds ago.
+# Prints the post and the count of mention-held lines, the key the overseer reads.
+JARVIS_SESSION="$SK_TMP/jarvis-session-live"
+held_post() {
+  touch -- "$JARVIS_SESSION"; sk_age_file "$JARVIS_SESSION" "$2"
+  sk_run "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION" -- post --root "$ROOT" --text "Alert $1." --channel C779 --mention
+  printf '%s=%s=%s' "$RC" "$(last C779)" "$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')"
+}
+assert_eq "$(held_post held 10)" "0=top | UBOT | Alert held.=1" "--mention under a fresh Jarvis session file posts with no mention and says mention-held"
+assert_eq "$(held_post stale 900)" "0=top | UBOT | <@U001> <@U002> Alert stale.=0" "--mention under a stale file keeps the mention"
+touch -- "$JARVIS_SESSION"
+sk_run "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION" -- post --root "$ROOT" --text 'Plain held.' --channel C779
+assert_eq "$RC=$(last C779)=$ERR" "0=top | UBOT | Plain held.=" "a post without --mention is unchanged under a fresh file"
 
 sk_run -- post --root "$ROOT" --text 'In the thread.' --thread "$TS"
 assert_eq "$RC=$(last C001)" "0=$TS | UBOT | In the thread." "--thread replies under the message"
@@ -97,6 +112,10 @@ sk_mutant length verbs.py 'markdown_checked\(body, "text"\)' 'markdown_checked("
 sk_run -- post --root "$ROOT" --text "$LONG"
 assert_eq "$ERR1" "slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long" \
   "control: the length check gone, a text past the cap reaches Slack, which refuses it"
+sk_bin_reset
+
+sk_mutant mention-hold verbs.py 'if presence_fresh\(touched_at' 'if False and presence_fresh(touched_at'
+sk_assert_red "$(held_post control 10)" "0=top | UBOT | Alert control.=1" "control: the hold check gone, a held post mentions the owners"
 sk_bin_reset
 
 sk_mutant file-bytes secret.py 'check\(data, what\)\n    return data' 'check(b"", what)\n    return data'

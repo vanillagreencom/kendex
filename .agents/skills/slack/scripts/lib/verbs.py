@@ -15,10 +15,10 @@ from typing import List, Optional
 from api import Slack, markdown_checked
 from markup import outbound, plain
 from refusals import Refusal, keyed, notice
-from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, mention, resolve_owner_ids
+from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, mention, presence_fresh, resolve_owner_ids, touched_at
 from secret import check as secret_check
 from secret import checked_file
-from settings import CALLER_ENV, Settings, load, user_handle
+from settings import CALLER_ENV, Settings, load, load_presence, user_handle
 from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
@@ -235,7 +235,11 @@ def post(
     channel = channel or binding.channel
     prefix = ""
     if mention_owners:
-        if binding is not None and binding.owner_ids:
+        # The relay's hold: while a Jarvis session answers, the owners are not paged.
+        presence = load_presence(root)
+        if presence_fresh(touched_at(presence.jarvis_session_file), presence, time.time()):
+            notice("mention-held", f"{root} file={presence.jarvis_session_file}", file=sys.stderr)
+        elif binding is not None and binding.owner_ids:
             prefix = mention(binding) + " "
         else:
             owners = load().owners

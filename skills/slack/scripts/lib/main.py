@@ -70,7 +70,9 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
           link expansion past that cap selects Slack's mrkdwn instead;
-          --mention prefixes every owner; --file uploads the file with the
+          --mention prefixes every owner, unless the root's Jarvis session
+          hold stands, which posts with no mention and prints mention-held
+          on stderr; --file uploads the file with the
           text as its comment instead, in Slack's mrkdwn and outside the
           12,000-character cap;
           --thread replies only in a thread; --update edits the message at that
