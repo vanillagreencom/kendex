@@ -25,7 +25,7 @@ file_lock_message() {
   case "$_message_key" in
     lock-timeout)
       printf 'file-lock: lock-timeout lock-file=%s wait-s=%s\n' "$lock_file" "${wait_s}"
-      printf '%s\n' "Error: could not acquire $lock_file.d after ${wait_s}s. If no orch process is running, remove it: rmdir '$lock_file.d'"
+      printf '%s\n' "Error: could not acquire $lock_file.d after ${wait_s}s. If no mailbox or orch process uses this lock, remove it: rmdir '$lock_file.d'"
       ;;
   esac
 }
