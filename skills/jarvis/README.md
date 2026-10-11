@@ -24,6 +24,7 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 - `reviewer-arch` checks a design against the project's architecture rules.
 - Setup workflows connect Slack, Linear, GitHub and a fleet machine with checked results.
 - Your own skills and private notes add task knowledge and personal context.
+- [Updates](#update) replace the Jarvis render and keep your instructions, own skills, memory and handoffs unchanged.
 
 ## Install
 
@@ -61,6 +62,10 @@ Use a private Git repository for your assistant home. Committed files travel wit
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
 
 `kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. These lines keep scratch and secrets out of Git. You do not need to add them yourself.
+
+## Update
+
+Run `kendex refresh` from your assistant home to update `.agents/skills/jarvis/`. kendex leaves `AGENTS.md`, `skills/own/`, `memory/` and `state/` byte-identical and writes no `skills/base/` copy. Add `--verbose` for package details: the CLI test sees `skill jarvis [codex]: Stale` before the update and `refreshed 3 changes · safety: clean` after it. An edited Jarvis render stays in place; the output names `skill jarvis for Codex: edited on disk and changed upstream`. If you declare a private `operator`, `auditor` or `legal` from source `.`, your declaration wins. The test's plan prints `Install agent operator for Codex` and installs the private operator. The catalog copy can install only after you remove your own entry. A release that needs a user-file edit states it in a `You do:` line in its changelog entry.
 
 ## Licence
 

@@ -68,6 +68,7 @@ mod refresh_fresh_clone;
 mod refresh_ledger;
 mod refresh_locked;
 mod refresh_retired;
+mod refresh_user_files;
 mod release_workflow;
 mod remote_e2e;
 mod remove_declared;
