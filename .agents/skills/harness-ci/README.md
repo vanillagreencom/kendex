@@ -23,7 +23,7 @@ kendex add vanillagreencom/kendex --skill harness-ci
 - kendex writes a list of every file it generated, called the inventory, beside the files it installed.
 - Your CI step tells the checker which GitHub event it is handling and which two commits to compare.
 - The checker works out the range that event needs, then reads the inventory as it stood at each end of that range.
-- Harness mode checks the paths left after the [schema-step exception](SKILL.md#manifest-schema-steps). It answers `true` when each remaining path is on the inventory at each end where that file exists. A schema-only step also answers `true`.
+- Harness mode checks the paths left after the [schema-step exception](SKILL.md#manifest-schema-steps). It answers `true` only when each remaining path is on the inventory at each end where that file exists. Newly inventoried paths still cause a `false` answer. A schema-only step also answers `true`.
 - Docs mode answers `true` only when every changed path is in its documented path set.
 - Anything it cannot prove answers `false`, and your workflow uses that answer to run or skip the product checks.
 - The aggregate helper accepts a skipped job only when a successful classifier authorized that job.

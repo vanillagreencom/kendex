@@ -29,7 +29,7 @@
 # with cause=no-queue-path. The causes are read in this order, first match
 # winning, and every one but no-queue-path reads true:
 #
-#   no-changed-paths      the diff is empty
+#   no-changed-paths      harness-only returned an empty changed-path list
 #   paths-unread          the changed paths were not read
 #   path-quoted path=<p>  git quoted a changed path, which no glob matches
 #   queue-list-unreadable orch's narrow-change.conf could not be read
