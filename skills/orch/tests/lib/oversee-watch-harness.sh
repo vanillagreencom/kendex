@@ -299,6 +299,11 @@ case "${1:-} ${2:-}" in
     [[ -f "$src" ]] || src="$STUB_DIR/releases.json"
     if [[ -f "$src" ]]; then jq -c --argjson limit "$limit" 'if type == "array" then .[:$limit] else . end' "$src"; else echo '[]'; fi
     exit ;;
+  "pr view")
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    [[ -r "$STUB_DIR/dependency-$3.json" ]] || { printf 'dependency-unread pr=%s\n' "$3" >&2; exit 1; }
+    cat "$STUB_DIR/dependency-$3.json"
+    exit 0 ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }

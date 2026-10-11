@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Close one recorded tmux lane, its hosted sandbox, and its fleet record, or
 # park a hosted lane's clean merge wait: end its harness and stop its sandbox
-# while the PR waits for the queue, its disk and record kept for the resume.
+# while its own or a dependency PR waits, its disk kept for the resume.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -21,10 +21,16 @@ source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 
 message() { # REASON FIELD=VALUE...
-  local reason="$1" field
+  local reason="$1" field branch_source_named=false
   shift
   printf 'lane-close: %s' "$reason"
-  for field in "$@"; do printf ' %s' "$field"; done
+  for field in "$@"; do
+    printf ' %s' "$field"
+    [[ "$field" != branch-source=* ]] || branch_source_named=true
+  done
+  if [[ "$reason" == park-refused && "${PARK_BRANCH_SOURCE:-}" == workflow-state && "$branch_source_named" == false ]]; then
+    printf ' branch-source=workflow-state'
+  fi
   printf '\n'
   case "$reason" in
     argument-count) printf '%s\n' 'Specify one lane item.' ;;
@@ -102,7 +108,11 @@ message() { # REASON FIELD=VALUE...
         '  local             the record carries no host, so there is no sandbox to stop.' \
         '  repo-unresolved   the record names no repository and gh repo view could not answer for this checkout; pass --repo OWNER/REPO.' \
         '  pr-read-failed    gh pr view could not read the pull request; its own words are on the lines above this one.' \
-        '  pr-branch-mismatch  the pull request'"'"'s head branch is not the item'"'"'s branch, so --pr names another lane'"'"'s pull request.' \
+        '  pr-branch-mismatch  the pull request head branch differs from the checked-out branch, or the workflow-state branch named by branch-source.' \
+        '  pr-head-mismatch  the pull request head differs from the checked-out commit.' \
+        '  worktree-unread   the remote Git identity could not be read and no admitted branch fallback answered.' \
+        '  clean-status-unread  the lane did not supply a readable tmp/park-status.json.' \
+        '  clean-status-invalid  that record names another branch or head, a nonempty status, or no reading time.' \
         '  pr-not-open       the pull request is merged or closed: a merged lane takes the full close, never a park.' \
         '  provider-unsupported  the lane host answered stop-sandbox --check with the status or cause named, so the sandbox could not be brought back once stopped: exit=2 is the absent-verb status of a provider without the stop-sandbox and start pair, lane-host-ssh among them; cause=answer-unparsed a check that succeeded without its sandbox-stoppable item=ID line.' \
         '  queue-read-failed the merge queue could not be asked whether it holds the pull request; gh api graphql'"'"'s own words are on the lines above this one.' \
@@ -130,7 +140,7 @@ message() { # REASON FIELD=VALUE...
 
 usage() {
   cat <<'EOF'
-Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
+Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park [--pr N] [--until-pr N]]
                   [--harness claude|codex|pi|copilot] [--tracker linear|github]
                   [--repo OWNER/REPO] ITEM
 
@@ -256,7 +266,7 @@ on: the record's lane host answers stop-sandbox --check --item ID with its
 sandbox-stoppable line, so the sandbox it stops can be started again, which a
 provider without the stop-sandbox and start pair, lane-host-ssh among them,
 refuses with the absent-verb status 2; the pull request is open and is the
-item's own branch; the merge queue holds it, read through gh api graphql as
+lane's checked-out branch and head; the merge queue holds it, read through gh api graphql as
 isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
 armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
 every required check green on the current head and nothing else blocking; and
@@ -289,6 +299,19 @@ what --keep-sandbox leaves, and refuses as park-failed: the harness is gone
 and the sandbox still up, which that status says. --park on a stopped record
 judges the pull request again and stops the sandbox from the record alone; on
 a parked record it changes nothing. A local record has no sandbox and refuses.
+Before either park, the lane writes tmp/park-status.json with its head,
+branch, empty porcelain status and reading time at. The park reads Git HEAD
+and the branch ref through lane-host cat, then binds that clean-status record
+to those values. Missing, unreadable or mismatched evidence refuses. A queue
+park whose remote Git read fails may use the item's workflow-state branch;
+its admission or refusal names branch-source=workflow-state.
+--park --until-pr N selects another OPEN PR in the same repository as the
+resume prerequisite. --pr is optional there and retains the lane's own PR
+identity. Branch, queue, CLEAN and reducer checks apply only to a queue park.
+The dependency park retains until_pr beside head, repo, at and the optional
+own pr. Its own PR merge does not clear the wait. The watch reports the
+dependency's merge as parked-merged and its unmerged close as parked-closed.
+
 The record's worktree must stand: a removed-worktree answer to the stop
 refuses as stop-failed, as it does under --keep-sandbox.
 
@@ -365,6 +388,7 @@ KEEP_SANDBOX=false
 TERMINAL_MODE=close
 PARK=false
 PARK_PR=""
+PARK_UNTIL_PR=""
 OPT_HARNESS=""
 OPT_TRACKER=""
 OPT_REPO=""
@@ -385,6 +409,8 @@ while [[ $# -gt 0 ]]; do
     --park) PARK=true; shift ;;
     --pr) need_value "$@"; PARK_PR="$2"; shift 2 ;;
     --pr=*) PARK_PR="${1#--pr=}"; need_value --pr "$PARK_PR"; shift ;;
+    --until-pr) need_value "$@"; PARK_UNTIL_PR="$2"; shift 2 ;;
+    --until-pr=*) PARK_UNTIL_PR="${1#--until-pr=}"; need_value --until-pr "$PARK_UNTIL_PR"; shift ;;
     --help|-h) usage; exit 0 ;;
     --*) message argument-count "value=$1" >&2; usage >&2; exit 2 ;;
     *)
@@ -400,10 +426,11 @@ done
 if [[ "$PARK" == true && "$KEEP_SANDBOX" == true ]]; then
   message argument-count "value=--park" "conflict=--keep-sandbox" >&2; usage >&2; exit 2
 fi
-if [[ "$PARK" == true && -z "$PARK_PR" || "$PARK" == false && -n "$PARK_PR" ]]; then
+if [[ "$PARK" == true && -z "$PARK_PR$PARK_UNTIL_PR" || "$PARK" == false && -n "$PARK_PR$PARK_UNTIL_PR" ]]; then
   message missing-value "option=--park" "requires=--pr" >&2; usage >&2; exit 2
 fi
 [[ -z "$PARK_PR" || "$PARK_PR" =~ ^[1-9][0-9]*$ ]] || { message missing-value "option=--pr" "value=$PARK_PR" >&2; exit 2; }
+[[ -z "$PARK_UNTIL_PR" || "$PARK_UNTIL_PR" =~ ^[1-9][0-9]*$ ]] || { message missing-value "option=--until-pr" "value=$PARK_UNTIL_PR" >&2; exit 2; }
 if [[ "$TERMINAL_MODE" != close ]]; then
   [[ "$KEEP_SANDBOX" == false && "$PARK" == false ]] \
     || { message argument-count "value=terminal" "conflict=keep-or-park" >&2; exit 2; }
@@ -661,7 +688,7 @@ tracker_terminal() {
     # Tracker integration can close the item before its queued PR merges.
     pr_repo="$(jq -er '.repo | strings | select(length > 0)' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
-    pr_number="$(jq -er '.pr | numbers | select(. > 0)' <<<"$pending_pr")" \
+    pr_number="$(jq -er '(.until_pr // .pr) | numbers | select(. > 0)' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
     tracker_read state env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' \
       || { TRACKER_CAUSE=pr-read-failed; return 2; }
@@ -757,6 +784,7 @@ fi
 # exact condition), never an approval. Nothing here counts a check or a thread
 # itself. Each refusal names the
 # condition it stopped on and changes nothing.
+# Dependency parks use only the provider, OPEN dependency and lane evidence.
 # PARK_HEAD and PARK_REPO carry what the record will hold.
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"
 PARK_QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }'
@@ -765,8 +793,50 @@ PARK_QUEUE_JQ='.data.repository.pullRequest | if (.isInMergeQueue | type) != "bo
 PARK_CHECK_LINE_RE='^sandbox-stoppable item=[^ ]+$'
 PARK_HEAD=""
 PARK_REPO=""
+PARK_BRANCH=""
+PARK_BRANCH_SOURCE=worktree
+PARK_SCRATCH=""
+park_worktree_read() {
+  local scratch git_dir common head ref rc=0
+  scratch="$(mktemp -d)" || return 1
+  PARK_SCRATCH="$scratch"
+  trap '[[ -z "$PARK_SCRATCH" ]] || rm -rf -- "$PARK_SCRATCH"' EXIT
+  ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$ITEM" "$mail_root/.git" "$scratch/gitfile" "$scratch/err" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    head="$(cat "$scratch/gitfile")" || rc=2
+    [[ "$rc" -ne 0 ]] || git_dir="$(lane_gitfile_git_dir "$head")" || rc=2
+  fi
+  if [[ "$rc" -eq 0 ]]; then
+    common="${git_dir%/worktrees/*}"
+    ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$ITEM" "$git_dir/HEAD" "$scratch/HEAD" "$scratch/err" || rc=$?
+  fi
+  if [[ "$rc" -eq 0 ]]; then
+    head="$(cat "$scratch/HEAD")" || rc=2
+    case "$head" in
+      'ref: refs/heads/'*) ref="${head#ref: }"; PARK_BRANCH="${ref#refs/heads/}" ;;
+      *) rc=2 ;;
+    esac
+  fi
+  if [[ "$rc" -eq 0 ]]; then
+    ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$ITEM" "$common/$ref" "$scratch/ref" "$scratch/err" || rc=$?
+    if [[ "$rc" -eq 1 ]]; then
+      rc=0
+      ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$ITEM" "$common/packed-refs" "$scratch/packed" "$scratch/err" || rc=$?
+      if [[ "$rc" -eq 0 ]]; then
+        PARK_HEAD="$(awk -v ref="$ref" '$2 == ref { print $1 }' "$scratch/packed")" || rc=2
+      fi
+    elif [[ "$rc" -eq 0 ]]; then
+      PARK_HEAD="$(cat "$scratch/ref")" || rc=2
+    fi
+  fi
+  [[ "$rc" -ne 0 || ( -n "$PARK_HEAD" && -n "$PARK_BRANCH" ) ]] || rc=2
+  [[ "$rc" -eq 0 ]] || cat -- "$scratch/err" >&2
+  rm -rf -- "${scratch:?}"
+  PARK_SCRATCH=""
+  return "$rc"
+}
 park_judge() {
-  local err view fields pr_state pr_head pr_branch armed merge_state queue queued out rc=0 kinds
+  local err view fields pr_state pr_head pr_branch armed merge_state queue queued out rc=0 kinds target clean
   [[ -n "$host" ]] || { message park-refused "item=$ITEM" "reason=local" >&2; exit 1; }
   [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
   err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=provider-unsupported" "cause=stderr-unsaved" >&2; exit 1; }
@@ -782,17 +852,40 @@ park_judge() {
     tracker_read PARK_REPO env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner \
       || { message park-refused "item=$ITEM" "reason=repo-unresolved" >&2; exit 1; }
   fi
-  tracker_read view env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$PARK_PR" --repo "$PARK_REPO" \
+  target="${PARK_UNTIL_PR:-$PARK_PR}"
+  tracker_read view env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$target" --repo "$PARK_REPO" \
       --json state,headRefOid,headRefName,autoMergeRequest,mergeStateStatus \
-    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$PARK_PR" "repo=$PARK_REPO" >&2; exit 1; }
+    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$target" "repo=$PARK_REPO" >&2; exit 1; }
   # One tab-separated line, the arm read as a word: a null autoMergeRequest is
   # a pull request nothing will merge unless the queue holds it.
   fields="$(jq -r '[.state, .headRefOid, .headRefName, (if .autoMergeRequest == null then "no" else "yes" end), .mergeStateStatus] | @tsv' <<<"$view" 2>/dev/null)" \
-    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$PARK_PR" "cause=payload-unparsed" >&2; exit 1; }
+    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$target" "cause=payload-unparsed" >&2; exit 1; }
   IFS=$'\t' read -r pr_state pr_head pr_branch armed merge_state <<<"$fields"
-  [[ "$(printf '%s' "$pr_branch" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')" ]] \
-    || { message park-refused "item=$ITEM" "reason=pr-branch-mismatch" "pr=$PARK_PR" "branch=$pr_branch" >&2; exit 1; }
-  [[ "$pr_state" == OPEN ]] || { message park-refused "item=$ITEM" "reason=pr-not-open" "pr=$PARK_PR" "state=$pr_state" >&2; exit 1; }
+  [[ "$pr_state" == OPEN ]] || { message park-refused "item=$ITEM" "reason=pr-not-open" "pr=$target" "state=$pr_state" >&2; exit 1; }
+  rc=0
+  park_worktree_read || rc=$?
+  [[ "$rc" -ne 4 ]] || { message lane-host-busy "item=$ITEM" step=park-worktree-read >&2; exit "$LANE_HOST_BUSY_EXIT"; }
+  if [[ "$rc" -ne 0 ]]; then
+    [[ -z "$PARK_UNTIL_PR" ]] || { message park-refused "item=$ITEM" reason=worktree-unread >&2; exit 1; }
+    # Older fleet records can retain the PR branch in the item's workflow state.
+    PARK_BRANCH_SOURCE=workflow-state
+    PARK_BRANCH="$("$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} get "$ITEM" '.branch // empty')" \
+      || { message park-refused "item=$ITEM" reason=worktree-unread "branch-source=$PARK_BRANCH_SOURCE" >&2; exit 1; }
+    PARK_HEAD="$pr_head"
+  fi
+  if [[ -z "$PARK_UNTIL_PR" ]]; then
+    [[ "$pr_branch" == "$PARK_BRANCH" ]] \
+      || { message park-refused "item=$ITEM" "reason=pr-branch-mismatch" "pr=$PARK_PR" "branch=$pr_branch" "branch-source=$PARK_BRANCH_SOURCE" >&2; exit 1; }
+    [[ "$pr_head" == "$PARK_HEAD" ]] \
+      || { message park-refused "item=$ITEM" reason=pr-head-mismatch "pr=$PARK_PR" "branch-source=$PARK_BRANCH_SOURCE" >&2; exit 1; }
+  fi
+  tracker_read clean env ORCH_LANE_HOST="$host" "$LANE_HOST" cat --item "$ITEM" "$mail_root/tmp/park-status.json" \
+    || { message park-refused "item=$ITEM" reason=clean-status-unread >&2; exit 1; }
+  jq -e --arg head "$PARK_HEAD" --arg branch "$PARK_BRANCH" \
+    '.head == $head and .branch == $branch and .porcelain == "" and (.at | type == "string" and length > 0)' <<<"$clean" >/dev/null \
+    || { message park-refused "item=$ITEM" reason=clean-status-invalid "branch-source=$PARK_BRANCH_SOURCE" >&2; exit 1; }
+  # Dependency admission does not judge the other lane's queue or reviews.
+  [[ -z "$PARK_UNTIL_PR" ]] || return 0
   # Queue membership is GraphQL's alone: gh pr view exposes no field for it,
   # and on a queue base the arm converts to the entry once the checks are
   # green, so the entry is the wait's whole evidence.
@@ -808,6 +901,7 @@ park_judge() {
   fi
   [[ -x "$PR_WATCH" ]] || { message park-refused "item=$ITEM" "reason=reducer-missing" "path=$PR_WATCH" >&2; exit 1; }
   err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=reducer-failed" "cause=stderr-unsaved" >&2; exit 1; }
+  rc=0
   out="$(GH_REPO="$PARK_REPO" "$PR_WATCH" "$PARK_PR" 2>"$err")" || rc=$?
   [[ "$rc" -eq 0 ]] || cat -- "$err" >&2
   rm -f -- "${err:?}"
@@ -821,7 +915,6 @@ park_judge() {
       exit 1 ;;
     *) message park-refused "item=$ITEM" "reason=reducer-failed" "pr=$PARK_PR" "exit=$rc" >&2; exit 1 ;;
   esac
-  PARK_HEAD="$pr_head"
 }
 
 # The sandbox stop and the record it earns, from a lane whose harness is gone
@@ -831,6 +924,7 @@ park_judge() {
 PARK_LINE_RE='^sandbox-stopped item=[^ ]+$'
 park_sandbox() {
   local out err rc=0 at fields=("item=$ITEM" "pr=$PARK_PR")
+  [[ -z "$PARK_UNTIL_PR" ]] || fields+=("until-pr=$PARK_UNTIL_PR")
   err="$(mktemp)" || { message park-failed "${fields[@]}" "cause=stderr-unsaved" >&2; exit 1; }
   out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop-sandbox --item "$ITEM" 2>"$err")" || rc=$?
   cat -- "$err" >&2
@@ -845,9 +939,10 @@ park_sandbox() {
   fi
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
-    --arg item "$ITEM" --arg pr "$PARK_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
-    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = {pr: ($pr | tonumber), head: $head, repo: $repo, at: $at} | del(.pending_pr)) else error("lane record disappeared") end' \
+    --arg item "$ITEM" --arg pr "$PARK_PR" --arg until "$PARK_UNTIL_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = ({head: $head, repo: $repo, at: $at} + (if $pr == "" then {} else {pr: ($pr | tonumber)} end) + (if $until == "" then {} else {until_pr: ($until | tonumber)} end)) | del(.pending_pr)) else error("lane record disappeared") end' \
     >/dev/null || { message state-write-failed "item=$ITEM" "status=parked" >&2; exit 1; }
+  [[ "$PARK_BRANCH_SOURCE" == worktree ]] || fields+=("branch-source=$PARK_BRANCH_SOURCE")
   message parked "${fields[@]}" "head=$PARK_HEAD" "status=parked"
   exit 0
 }

@@ -1,0 +1,1 @@
+- Park hosted lanes while they wait for another pull request to merge, and admit queue waits from the lane's checked-out second branch. Resume dependency waits through the existing fleet watch.

@@ -1377,7 +1377,7 @@ launch_ambient_codex_home() {
 # once and later launch writes keep it until close or a new park replaces it.
 UNPARK_JQ='def unpark($at): (if .parked.at == null then .
   else .pauses = ((.pauses // []) + [{from: .parked.at, to: $at, cause: "parked"}]) end)
-  | (if .parked == null then . else .pending_pr = (.parked | {pr, repo, head}) end) | del(.parked);'
+  | (if .parked == null then . else .pending_pr = (.parked | {pr, repo, head} + (if .until_pr == null then {} else {until_pr: .until_pr} end)) end) | del(.parked);'
 
 # One lane record per item in the oversee workflow state WORKFLOW_STATE_ARGS
 # addresses, which is what oversee-watch --state reads the live fleet from.

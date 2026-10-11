@@ -927,8 +927,8 @@ assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a resumed
 # Each is driven through the seam the harness hands `handoff-standing` to,
 # leaving every other workflow-state call whole.
 old_state_reader() { # PATH STATUS STDOUT STDERR — an orch install answering STATUS
-  printf '#!/bin/sh\n[ -z "%s" ] || printf "%%s\\n" "%s"\nprintf "%%s\\n" "%s" >&2\nexit %s\n' \
-    "$3" "$3" "$4" "$2" > "$1"
+  printf '#!/bin/sh\ncase " $* " in\n  *" handoff-standing "*)\n[ -z "%s" ] || printf "%%s\\n" "%s"\nprintf "%%s\\n" "%s" >&2\nexit %s ;;\n  *) exec "%s" "$@" ;;\nesac\n' \
+    "$3" "$3" "$4" "$2" "$REPO_ROOT/skills/orch/scripts/workflow-state" > "$1"
   chmod +x "$1"
 }
 for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install older than the verb" \
@@ -1461,6 +1461,49 @@ assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
 WATCH_BIN="$OWED_MUTANT" parked_run --
 assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
   "control: with the membership test removed a queued record is handed on at the heartbeat" "$err"
+
+# A dependency park uses the dependency's number, without crediting its merge
+# to the parked item. The stopped record after Recovery relaunch ends the hand.
+DEPENDENCY_BIN="$(mutant_scripts dependency-own/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/dependency-own/github"
+mutate_file "$DEPENDENCY_BIN" 'gh pr view "$until" --repo "$repo" --json state' 'gh pr view 2 --repo "$repo" --json state'
+CLOSED_REPEAT_BIN="$(mutant_scripts dependency-closed-repeat/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/dependency-closed-repeat/github"
+mutate_file "$CLOSED_REPEAT_BIN" 'if [[ "$key" != "$prior" ]]; then' 'if true; then'
+dependency_case() { # NAME OWN_PR DEPENDENCY_STATE [WATCH_BIN]
+  parked_fleet "$1"
+  jq --arg own "$2" '(.lanes[] | select(.item == "issue-2")).parked |=
+    (.until_pr=9 | if $own == "absent" then del(.pr) else . end)' "$STUB_DIR/state.json" >"$STUB_DIR/state.next"
+  mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+  printf '[{"number":2,"headRefName":"issue-2","mergedAt":"2026-09-20T00:00:00Z"}]\n' >"$STUB_DIR/merged.json"
+  printf '{"state":"MERGED"}\n' >"$STUB_DIR/dependency-2.json"
+  jq -nc --arg state "$3" '{state:$state}' >"$STUB_DIR/dependency-9.json"
+  WATCH_BIN="${4:-}" parked_run --
+}
+for row in \
+  'dependency_no_own|absent|MERGED|rc=0 events=parked-merged issue-2' \
+  'dependency_with_own|present|MERGED|rc=0 events=parked-merged issue-2' \
+  'dependency_own_only|present|OPEN|rc=0 events=heartbeat loops=2' \
+  'dependency_closed|absent|CLOSED|rc=0 events=parked-closed issue-2'; do
+  IFS='|' read -r name own dependency want <<<"$row"
+  dependency_case "$name" "$own" "$dependency"
+  assert_eq "rc=$rc events=$EVENTS" "$want" "$name: only the dependency determines the resume" "$err"
+  parked_run --
+  if [[ "$dependency" == MERGED ]]; then want='events=parked-merged issue-2,heartbeat loops=2'
+  else want='events=heartbeat loops=2'; fi
+  assert_eq "events=$EVENTS" "$want" "$name: replay keeps the merge hand or suppresses the closed event" "$err"
+  jq '(.lanes[] | select(.item == "issue-2")) |= (.status="stopped" | del(.parked))' "$STUB_DIR/state.json" >"$STUB_DIR/state.next"
+  mv -- "$STUB_DIR/state.next" "$STUB_DIR/state.json"
+  parked_run --
+  assert_not_contains "$out" 'EVENT parked-merged ' "$name: Recovery relaunch ends the resume hand" "$err"
+done
+dependency_case dependency_own_control present OPEN "$DEPENDENCY_BIN"
+assert_eq "events=$EVENTS" 'events=parked-merged issue-2' \
+  'control: reading the own PR instead of the dependency resumes before the dependency merges' "$err"
+dependency_case dependency_closed_repeat_control absent CLOSED "$CLOSED_REPEAT_BIN"
+WATCH_BIN="$CLOSED_REPEAT_BIN" parked_run --
+assert_eq "events=$EVENTS" 'events=parked-closed issue-2' \
+  'control: without the saved dependency state a closed dependency raises a second event' "$err"
 
 custom_close_case() { # NAME
   local name="$1" custom

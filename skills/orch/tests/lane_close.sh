@@ -81,6 +81,10 @@ if [[ "$verb" == remove ]]; then
   printf 'removed path=/fleet/completion-summary-%s.md\n' "$1"
   exit 0
 fi
+if [[ "$verb" == get && "$1" != oversee ]]; then
+  printf '%s\n' "${LANE_CLOSE_WORKFLOW_BRANCH:-}"
+  exit 0
+fi
 [[ "$1" == oversee ]]; shift
 case "$verb" in
   get) jq "$1" "$LANE_CLOSE_STATE" ;;
@@ -126,6 +130,35 @@ printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
 # read the provider could not make, or busy, the dispatcher's refusal at its
 # per-home cap.
 if [[ "$1" == cat ]]; then
+  if [[ -n "${LANE_CLOSE_REAL_ROOT:-}" ]]; then
+    case "$4" in
+      /srv/worktree/*)
+        path="${LANE_CLOSE_REAL_ROOT}/${4#/srv/worktree/}"
+        [[ -f "$path" ]] || exit 2
+        cat "$path"; exit ;;
+      "$LANE_CLOSE_REAL_ROOT"/* | "${LANE_CLOSE_REAL_ROOT%/*}"/*)
+        [[ -f "$4" ]] || exit 2
+        cat "$4"; exit ;;
+    esac
+  fi
+  # Park admission reads real Git identity and the lane's clean-status evidence.
+  case "$4" in
+    */tmp/park-status.json)
+      [[ "${LANE_CLOSE_CLEAN_STATUS:-0}" -eq 0 ]] || exit "$LANE_CLOSE_CLEAN_STATUS"
+      jq -nc --arg branch "${LANE_CLOSE_PARK_BRANCH:-ken-1}" --arg head "${LANE_CLOSE_PARK_HEAD:-abc123}" \
+        --arg porcelain "${LANE_CLOSE_PORCELAIN:-}" '{head:$head,branch:$branch,porcelain:$porcelain,at:"2026-10-11T10:00:00Z"}'
+      exit 0 ;;
+    */HEAD)
+      [[ "${LANE_CLOSE_PARK_READ:-0}" -eq 1 ]] || exit 255
+      printf 'ref: refs/heads/%s\n' "${LANE_CLOSE_PARK_BRANCH:-ken-1}"; exit 0 ;;
+    */refs/heads/*)
+      [[ "${LANE_CLOSE_LOOSE_MISSING:-0}" -eq 0 ]] || exit 2
+      printf '%s\n' "${LANE_CLOSE_PARK_HEAD:-abc123}"; exit 0 ;;
+    */packed-refs) printf '%s refs/heads/%s\n' "${LANE_CLOSE_PARK_HEAD:-abc123}" "${LANE_CLOSE_PARK_BRANCH:-ken-1}"; exit 0 ;;
+  esac
+  if [[ "${LANE_CLOSE_PARK_READ:-0}" -eq 1 ]]; then
+    printf 'gitdir: /srv/clone/.git/worktrees/ken-1\n'; exit 0
+  fi
   case "${LANE_CLOSE_HOST_GITFILE:-gone}" in
     standing) printf 'gitdir: /srv/clone/.git/worktrees/ken-1\n'; exit 0 ;;
     failed) printf 'lane-host-ssh: ssh-failed item=%s\n' "$3" >&2; exit 255 ;;
@@ -1935,6 +1968,7 @@ echo '=== --park stops a clean merge wait: harness, window, then sandbox ==='
 # reads GitHub and the reducer before the stop; the record ends parked and
 # carries the pull request and head it was judged on.
 working_screen() { printf '› run\n  press to interrupt\n' >"$SCREEN"; }
+export LANE_CLOSE_PARK_READ=1
 park_count() { grep -c -- '^stop-sandbox --item KEN-1 host=' "$HOST_CALLS" || true; }
 prwatch_count() { awk 'END { print NR + 0 }' "$LANE_CLOSE_PRWATCH_CALLS"; }
 # A new explicit park acquires the PR it just judged, replacing a prior wait.
@@ -1957,7 +1991,7 @@ run_close "$SCRIPT" --park --pr 7
 # follows the view, and no stop precedes the reducer's answer.
 check_count() { grep -c -- '^stop-sandbox --check --item KEN-1 host=' "$HOST_CALLS" || true; }
 assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) view=$(grep -c '^pr view 7 --repo owner/repo --json ' "$GH_CALLS" || true) queue=$(grep -c '^api graphql -f query=.* -F owner=owner -F repo=repo -F number=7$' "$GH_CALLS" || true) reducer=$(grep -c '^7 repo=owner/repo$' "$LANE_CLOSE_PRWATCH_CALLS" || true) stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") parked_rec=$(jq -c '.lanes[0].parked | [.pr, .head, .repo, (.at | type)]' "$STATE") order=$(awk '{ print $1 ($2 == "--check" ? "-check" : "") }' "$HOST_CALLS" | paste -sd, -)" \
-  'rc=0 parked=1 view=1 queue=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string"] order=stop-sandbox-check,stop,stop-sandbox' \
+  'rc=0 parked=1 view=1 queue=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string"] order=stop-sandbox-check,cat,cat,cat,cat,stop,stop-sandbox' \
   'a working hosted lane on an open, armed, CLEAN, silent pull request is parked: the provider checked, the harness stopped, the window closed, the sandbox stopped, the record parked with its pull request and head'
 
 # On a merge-queue base the arm converts to the queue entry once the checks
@@ -1999,7 +2033,7 @@ for row in \
   "not-armed|LANE_CLOSE_PR_VIEW=$UNARMED|reason=not-armed pr=7 head=abc123" \
   "merge-state|LANE_CLOSE_PR_VIEW=$BLOCKED|reason=merge-state pr=7 state=BLOCKED" \
   "pr-not-open|LANE_CLOSE_PR_VIEW=$MERGED|reason=pr-not-open pr=7 state=MERGED" \
-  "pr-branch-mismatch|LANE_CLOSE_PR_VIEW=$OTHER|reason=pr-branch-mismatch pr=7 branch=ken-2" \
+  "pr-branch-mismatch|LANE_CLOSE_PR_VIEW=$OTHER|reason=pr-branch-mismatch pr=7 branch=ken-2 branch-source=worktree" \
   "pr-read-failed|LANE_CLOSE_PR_VIEW_STATUS=1|reason=pr-read-failed pr=7 repo=owner/repo" \
   "queue-read-failed|LANE_CLOSE_PR_QUEUE_STATUS=1|reason=queue-read-failed pr=7 repo=owner/repo" \
   "queue-unparsed|LANE_CLOSE_PR_QUEUE={\"data\":null}|reason=queue-read-failed pr=7 cause=payload-unparsed" \
@@ -2053,7 +2087,7 @@ assert_eq "rc=$RC refused=$(grep -c "^lane-close: park-refused item=KEN-1 reason
 # one gh view, one queue read, no reducer call and no stop at all.
 write_state running codex /host linear owner/repo; write_panes python; working_screen
 LANE_CLOSE_PR_VIEW="$BLOCKED" run_close "$SCRIPT" --park --pr 7
-assert_eq "check=$(check_count) host=$(host_call_count) reducer=$(prwatch_count) park=$(park_count)" 'check=1 host=1 reducer=0 park=0' 'an armed, unqueued pull request GitHub reports blocked never reaches the reducer or a stop'
+assert_eq "check=$(check_count) reducer=$(prwatch_count) park=$(park_count)" 'check=1 reducer=0 park=0' 'an armed, unqueued pull request GitHub reports blocked never reaches the reducer or a stop'
 
 echo '=== a park whose sandbox stop fails records stopped, which is what stands ==='
 # The harness is gone and the window closed by then, the sandbox still up:
@@ -2109,6 +2143,79 @@ for row in '--park|missing-value option=--park requires=--pr' '--pr 7|missing-va
   assert_eq "rc=$RC refused=$(grep -c "^lane-close: $expect\$" <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=2 refused=1 host=0 status=running' "lane-close $args is refused before any read"
 done
+
+# The provider file interface reads an actual second-branch Git worktree.
+# Its status evidence comes from the lane's own Git command before the notice.
+PARK_REPO_FIXTURE="$TMP_ROOT/park-repo"
+PARK_TREE="$TMP_ROOT/park-tree"
+git init -q "$PARK_REPO_FIXTURE"
+git -C "$PARK_REPO_FIXTURE" config gc.auto 0
+git -C "$PARK_REPO_FIXTURE" config maintenance.auto false
+git -C "$PARK_REPO_FIXTURE" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+git -C "$PARK_REPO_FIXTURE" worktree add -q -b ht-974-pr2 "$PARK_TREE"
+mkdir -p "$PARK_TREE/tmp"
+printf 'tmp/\n' >"$PARK_REPO_FIXTURE/.git/info/exclude"
+PARK_SHA="$(git -C "$PARK_TREE" rev-parse HEAD)" || exit 1
+PARK_VIEW="$(jq -nc --arg head "$PARK_SHA" '{state:"OPEN",headRefOid:$head,headRefName:"ht-974-pr2",autoMergeRequest:{enabledAt:"t"},mergeStateStatus:"CLEAN"}')" || exit 1
+DIRTY_CONTROL="$(mutant park-dirty '.porcelain == ""' 'true')"
+BRANCH_CONTROL="$(mutant park-branch '[[ "$pr_branch" == "$PARK_BRANCH" ]]' '[[ true ]]')"
+HEAD_CONTROL="$(mutant park-head '[[ "$pr_head" == "$PARK_HEAD" ]]' '[[ true ]]')"
+CLEAN_HEAD_CONTROL="$(mutant park-clean-head '.head == $head' 'true')"
+CLEAN_BRANCH_CONTROL="$(mutant park-clean-branch '.branch == $branch' 'true')"
+park_contract_row() { # SCRIPT MODE
+  local script="$1" mode="$2" porcelain branch view="$PARK_VIEW" args=(--park --pr 7)
+  write_state running codex /host linear owner/repo; write_panes python; working_screen
+  if [[ "$mode" == dirty ]]; then printf 'uncommitted\n' >"$PARK_TREE/dirty"; fi
+  porcelain="$(git -C "$PARK_TREE" status --porcelain)" || exit 1
+  branch="$(git -C "$PARK_TREE" branch --show-current)" || exit 1
+  jq -nc --arg head "$PARK_SHA" --arg branch "$branch" --arg porcelain "$porcelain" \
+    '{head:$head,branch:$branch,porcelain:$porcelain,at:"2026-10-11T10:00:00Z"}' >"$PARK_TREE/tmp/park-status.json"
+  case "$mode" in
+    dependency) args=(--park --until-pr 9); view="$UNARMED" ;;
+    dependency-own) args=(--park --pr 7 --until-pr 9); view="$OTHER" ;;
+    unrelated) view="$(jq '.headRefName="unrelated"' <<<"$view")" || exit 1 ;;
+    head-moved) view="$(jq '.headRefOid="moved"' <<<"$view")" || exit 1 ;;
+    packed) git -C "$PARK_REPO_FIXTURE" pack-refs --all ;;
+    missing) rm -- "$PARK_TREE/tmp/park-status.json" ;;
+    mismatched) jq '.head="old"' "$PARK_TREE/tmp/park-status.json" >"$PARK_TREE/tmp/status.next"; mv -- "$PARK_TREE/tmp/status.next" "$PARK_TREE/tmp/park-status.json" ;;
+    branch-status) jq '.branch="old"' "$PARK_TREE/tmp/park-status.json" >"$PARK_TREE/tmp/status.next"; mv -- "$PARK_TREE/tmp/status.next" "$PARK_TREE/tmp/park-status.json" ;;
+  esac
+  LANE_CLOSE_REAL_ROOT="$PARK_TREE" LANE_CLOSE_PR_VIEW="$view" run_close "$script" "${args[@]}"
+  printf 'rc=%s status=%s pr=%s until=%s reason=%s reducer=%s\n' "$RC" \
+    "$(jq -r '.lanes[0].status' "$STATE")" "$(jq -r '.lanes[0].parked.pr' "$STATE")" \
+    "$(jq -r '.lanes[0].parked.until_pr' "$STATE")" "$(sed -n 's/^lane-close: park-refused .*reason=\([^ ]*\).*/\1/p' <<<"$ERR")" "$(prwatch_count)"
+  [[ "$mode" != dirty ]] || rm -- "$PARK_TREE/dirty"
+}
+for row in \
+  "$SCRIPT|clean|rc=0 status=parked pr=7 until=null reason= reducer=1" \
+  "$SCRIPT|packed|rc=0 status=parked pr=7 until=null reason= reducer=1" \
+  "$SCRIPT|dependency|rc=0 status=parked pr=null until=9 reason= reducer=0" \
+  "$SCRIPT|dependency-own|rc=0 status=parked pr=7 until=9 reason= reducer=0" \
+  "$SCRIPT|unrelated|rc=1 status=running pr=null until=null reason=pr-branch-mismatch reducer=0" \
+  "$SCRIPT|dirty|rc=1 status=running pr=null until=null reason=clean-status-invalid reducer=0" \
+  "$SCRIPT|missing|rc=1 status=running pr=null until=null reason=clean-status-unread reducer=0" \
+  "$SCRIPT|mismatched|rc=1 status=running pr=null until=null reason=clean-status-invalid reducer=0" \
+  "$SCRIPT|branch-status|rc=1 status=running pr=null until=null reason=clean-status-invalid reducer=0" \
+  "$SCRIPT|head-moved|rc=1 status=running pr=null until=null reason=pr-head-mismatch reducer=0" \
+  "$DIRTY_CONTROL|dirty|rc=0 status=parked pr=7 until=null reason= reducer=1" \
+  "$BRANCH_CONTROL|unrelated|rc=0 status=parked pr=7 until=null reason= reducer=1" \
+  "$HEAD_CONTROL|head-moved|rc=0 status=parked pr=7 until=null reason= reducer=1" \
+  "$CLEAN_HEAD_CONTROL|mismatched|rc=0 status=parked pr=7 until=null reason= reducer=1" \
+  "$CLEAN_BRANCH_CONTROL|branch-status|rc=0 status=parked pr=7 until=null reason= reducer=1"; do
+  IFS='|' read -r owner mode want <<<"$row"
+  assert_eq "$(park_contract_row "$owner" "$mode")" "$want" "park admission: $mode through ${owner##*/}"
+done
+for row in \
+  'ken-1|rc=0 status=parked fallback=1' \
+  'other-branch|rc=1 status=running fallback=1'; do
+  IFS='|' read -r recorded_branch want <<<"$row"
+  write_state running codex /host linear owner/repo; write_panes python; working_screen
+  LANE_CLOSE_PARK_READ=0 LANE_CLOSE_HOST_GITFILE=failed LANE_CLOSE_WORKFLOW_BRANCH="$recorded_branch" \
+    run_close "$SCRIPT" --park --pr 7
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") fallback=$(grep -c 'branch-source=workflow-state' <<<"$OUT$ERR" || true)" \
+    "$want" 'queue branch fallback names its workflow-state source on admission and refusal' "$TMP_ROOT/err"
+done
+unset LANE_CLOSE_PARK_READ
 
 echo '=== a stop=none kind closes its record and worktree and keeps the session ==='
 cloud_state() { # [WINDOW]

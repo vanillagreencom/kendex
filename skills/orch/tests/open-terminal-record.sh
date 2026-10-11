@@ -61,6 +61,10 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 # The resolver's `gh repo view` rung, answered only where a row arms it.
+if [[ "${1:-} ${2:-}" == 'pr view' && -n "${STUB_PR_STATE:-}" ]]; then
+  printf '%s\n' "$STUB_PR_STATE"
+  exit 0
+fi
 [[ "${1:-}" == repo && -n "${STUB_GH_REPO:-}" ]] || exit 1
 printf '%s\n' "$STUB_GH_REPO"
 EOF
@@ -520,7 +524,8 @@ printf '[env]\nORCH_STATE_DIR = "state"\n' > "$TMP_ROOT/wt/CC-1/kendex.settings.
 assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
   "a record in the lane worktree's tmp retires its session where its state directory setting names another"
 PLACE_MUTANT="$(mutant_scripts place-mutant open-terminal)" || exit 1
-mutate_file "$PLACE_MUTANT/open-terminal" 'handoff-standing "$2" --worktree "$3"' 'handoff-standing "$2"'
+mutate_file "$PLACE_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"' \
+  'lane_handoff_standing "" "" "$WORKFLOW_STATE" handoff-standing "$2"'
 assert_eq "$(retired_under "$PLACE_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
   "control: a relaunch naming no worktree misses that record and resumes the retired session"
 rm -f -- "${TMP_ROOT:?}/wt/CC-1/kendex.settings.toml"
@@ -696,6 +701,36 @@ assert_eq "rc=$RC start=$(grep -c '^start ' "$TMP_ROOT/host.log" || true) create
   "rc=0 start=0 creates=1" "a stopped record's relaunch starts no sandbox"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-65") | .pending_pr | {pr,repo,head}' | jq -c .)" '{"pr":65,"repo":"o/r","head":"abc"}' \
   "a later successful relaunch retains the same PR wait"
+
+# A dependency park has no own PR. Exercise the existing unpark and close
+# owners together: the retained dependency admits terminal close at its merge.
+mkdir -p "$TMP_ROOT/linear/scripts"
+ln -s "$SCRIPTS_DIR/../../linear/scripts/lib" "$TMP_ROOT/linear/scripts/lib"
+cat >"$TMP_ROOT/linear/scripts/linear.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '{"state_type":"completed","description":""}\n'
+EOF
+chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
+DEPENDENCY_OT="$(mutant_scripts dependency-unpark open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/dependency-unpark" init -q
+git -C "$TMP_ROOT/dependency-unpark" config gc.auto 0
+git -C "$TMP_ROOT/dependency-unpark" config maintenance.auto false
+orch_fixture_shared_libs "$TMP_ROOT/dependency-unpark"
+mutate_file "$DEPENDENCY_OT" '{until_pr: .until_pr}' '{}'
+for row in "$OT|0|done" "$DEPENDENCY_OT|2|stopped"; do
+  IFS='|' read -r owner close_rc close_status <<<"$row"
+  "$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" \
+    '(.lanes[] | select(.item == "CC-65")) |= (.status="parked" | .parked={until_pr:9,head:"abc",repo:"o/r",at:$at})' >/dev/null
+  STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
+    run_ot SCRIPT="$owner" --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
+  assert_eq "rc=$RC status=$(field "$(record CC-65)" status)" 'rc=0 status=running' 'dependency park without own PR resumes its harness'
+  "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")).status="stopped"' >/dev/null
+  CLOSE_RC=0
+  PATH="$BIN:$PATH" ORCH_LANE_HOST="$HOST_STUB" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" STUB_PR_STATE=MERGED \
+    "$REPO/scripts/lane-close" --state-dir "$STATE" --if-terminal CC-65 >"$TMP_ROOT/dependency-close.out" 2>"$TMP_ROOT/dependency-close.err" || CLOSE_RC=$?
+  assert_eq "rc=$CLOSE_RC status=$(field "$(record CC-65)" status)" "rc=$close_rc status=$close_status" \
+    'dependency identity survives resume and terminal close; dropping it refuses close'
+done
 
 # The two reads ahead of the marker. A provider answers a file it does not
 # have with a status and no line of its own, and the gitfile reader prints
