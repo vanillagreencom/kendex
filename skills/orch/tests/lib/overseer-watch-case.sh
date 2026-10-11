@@ -4,6 +4,8 @@
 # builder whose pane reads one state, and the run wrapper. Sourced after
 # lib/oversee-watch-harness.sh, whose TMP_ROOT, STUB_DIR, new_case and
 # run_watch it uses; defines no assertion.
+# shellcheck source=virtual-clock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/virtual-clock.sh"
 PANE=%9
 WINDOW=@7
 # The line a live overseer's `--print-launch-line` would hand back, carrying a
@@ -216,14 +218,28 @@ run() { # ENV=VAL... -- ARGS...
     [[ "$arg" != --repeat && "$arg" != --repeat=* ]] || repeat_parent=1
   done
   target="${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}"
-  if [[ -f "$STUB_DIR/repeat-child" && "$repeat_parent" -eq 0 ]]; then
-    OUT="$(WATCH_BIN="$TMP_ROOT/bin/watch-child-stub.sh" run_watch \
-      OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" CHILD_WATCH_BIN="$target" "$@" 2>"$ERR" </dev/null)" \
-      && RC=0 || RC=$?
-  else
-    OUT="$(run_watch OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" "$@" 2>"$ERR" </dev/null)" \
-    && RC=0 || RC=$?
-  fi
+  OUT="$({
+    clock_args=()
+    # A frozen banner reset must freeze the elapsed deadline clock too.
+    # Keep this environment inside the invocation so later real-time rows
+    # cannot inherit the frozen clock.
+    if [[ -f "$STUB_DIR/now.epoch" ]]; then
+      clock_bin="$TMP_ROOT/run-$RUN_SEQ-clock"
+      mkdir -p "$clock_bin" || exit 1
+      virtual_clock_install "$clock_bin" "$clock_bin/now"
+      cp "$STUB_DIR/now.epoch" "$STUB_CLOCK" || exit 1
+      virtual_clock_bash_env "$clock_bin/bash-env" || exit 1
+      clock_args=(PATH="$clock_bin:$TMP_ROOT/bin:$PATH" BASH_ENV="$clock_bin/bash-env")
+    fi
+    if [[ -f "$STUB_DIR/repeat-child" && "$repeat_parent" -eq 0 ]]; then
+      WATCH_BIN="$TMP_ROOT/bin/watch-child-stub.sh" run_watch \
+        OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" CHILD_WATCH_BIN="$target" \
+        ${clock_args[@]+"${clock_args[@]}"} "$@"
+    else
+      run_watch OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" \
+        ${clock_args[@]+"${clock_args[@]}"} "$@"
+    fi
+  } 2>"$ERR" </dev/null)" && RC=0 || RC=$?
 }
 
 # The real lane-mail, which the stubs below hand every call to.

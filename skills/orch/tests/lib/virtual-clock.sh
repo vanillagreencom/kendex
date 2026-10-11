@@ -127,7 +127,7 @@ trap 'if [[ "$BASH_COMMAND" == tick_wait && "${NOTE_AT:-}" == 2 && -n "${LONG_PI
   # Faster mailbox reads must not turn it into the separate overrun row.
   until [[ -e "$LONG_DONE" ]]; do "$STUB_REAL_SLEEP" 0.1; done
 fi
-if [[ "$BASH_COMMAND" == "now="*"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB_CLOCK:-}" ]]; then
+if [[ "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB_CLOCK:-}" ]]; then
   IFS= read -r _virtual_now <"$STUB_CLOCK" || [[ "$_virtual_now" =~ ^[0-9]+$ ]]
   SECONDS=$((_virtual_now - WATCH_EPOCH + WATCH_SECONDS))
 fi' DEBUG
