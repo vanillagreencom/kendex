@@ -1,0 +1,1 @@
+- Event blocks print only changed verification rows and new pull request attention keys. The heartbeat keeps both full lists.

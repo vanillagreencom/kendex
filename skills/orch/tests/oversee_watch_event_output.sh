@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Surface: oversee-watch event output and heartbeat output. The overseer's
+# numbered log follow consumes these EVENT blocks and machine-read rows.
+# Inputs: skills/orch/* skills/linear/scripts/lib/* skills/github/scripts/lib/*
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/oversee-watch-harness.sh"
+
+DISARMED=$'owner/repo\t12\taaaa0000\tdisarmed\tauto-merge off'
+THREADS=$'owner/repo\t34\tbbbb0000\tthreads-open\t1 unresolved'
+
+# Linear's Verifying inventory and the reducer are the real row producers.
+output_world() {
+  new_case "$1"
+  printf '{"lanes":[],"launch_queue":[]}\n' > "$STUB_DIR/fleet.json"
+  jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' > "$STUB_DIR/now.epoch"
+  jq -nc --arg trigger "${2:-merge}" '[{id:"KEN-1",state:"Verifying",priority:2,
+    description:("## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: " + $trigger + "; Deadline: 2026-10-03T00:00:00Z")}]' \
+    > "$STUB_DIR/tracker.out"
+  printf '12\taaaa0000\tdisarmed\tauto-merge off\n' > "$STUB_DIR/prwatch.out"
+  printf '1\n' > "$STUB_DIR/prwatch.rc"
+  # An existing clear reducer read lets its first new key rise immediately.
+  mkdir -p "$STATE_DIR"
+  : > "$STATE_DIR/owner_repo__none"
+}
+
+output_pass() {
+  RC=0
+  run_watch -- --state "$STUB_DIR/fleet.json" --max-loops "${1:-1}" gh-1 \
+    > "$STUB_DIR/out" 2> "$STUB_DIR/err" || RC=$?
+  OUT="$(cat "$STUB_DIR/out")"
+}
+
+# Three event passes: a due box and disarmed key, a lane question, then a
+# second PR's threads-open key. The baseline persists across watch processes.
+event_sequence() {
+  output_world "$1"
+  output_pass
+  cp "$STUB_DIR/out" "$STUB_DIR/log"
+  printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-1.txt"
+  output_pass
+  cat "$STUB_DIR/out" >> "$STUB_DIR/log"
+  printf '34\tbbbb0000\tthreads-open\t1 unresolved\n' >> "$STUB_DIR/prwatch.out"
+  output_pass
+  cat "$STUB_DIR/out" >> "$STUB_DIR/log"
+}
+
+event_contract() {
+  assert_eq "$RC" 0 'event output completes' "$STUB_DIR/err"
+  assert_eq "$(grep -c '^verifying KEN-1 ' "$STUB_DIR/log" || true)" 1 'a standing due row prints once'
+  assert_eq "$(grep -cxF "$DISARMED" "$STUB_DIR/log" || true)" 1 'a standing reducer key prints once'
+  assert_eq "$(awk -F'\t' '$1 == "owner/repo"' <<<"$OUT")" "$THREADS" 'the third event carries only the second PR new key'
+}
+
+event_sequence events
+event_contract
+assert_contains "$(cat "$STUB_DIR/log")" 'EVENT lane-asking gh-1' 'the second pass is an event block'
+
+# A cleared key must rise again even though its row was printed earlier.
+printf '0\n' > "$STUB_DIR/prwatch.rc"
+output_pass
+assert_contains "$OUT" 'EVENT heartbeat' 'a cleared reducer key permits a quiet heartbeat'
+printf '1\n' > "$STUB_DIR/prwatch.rc"
+output_pass
+assert_eq "$(awk -F'\t' '$1 == "owner/repo"' <<<"$OUT")" "$DISARMED"$'\n'"$THREADS" 'recurring cleared keys print again'
+
+# Waiting and completed rows use the existing deadline row. Completion wakes
+# once, then another event carries none of its standing boxes=0 context.
+completion_sequence() {
+  output_world "$1"
+  jq -nc '[{id:"KEN-1",state:"Verifying",priority:2,description:"## Done when\n- [x] branch proof"}]' > "$STUB_DIR/tracker.out"
+  output_pass
+  FIRST_RC=$RC
+  cp "$STUB_DIR/out" "$STUB_DIR/first"
+  printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-1.txt"
+  output_pass
+}
+completion_contract() {
+  assert_eq "$FIRST_RC:$RC" 0:0 'both completion reads finish' "$STUB_DIR/err"
+  assert_eq "$(grep -cx 'verifying KEN-1 boxes=0' "$STUB_DIR/first" || true)" 1 'the first empty checklist read prints completion'
+  assert_contains "$(cat "$STUB_DIR/first")" 'EVENT verifying-deadline KEN-1 boxes=0' 'completion wakes through the existing event kind'
+  assert_not_contains "$OUT" 'verifying KEN-1' 'another event does not repeat empty completion'
+  assert_contains "$(cat "$STATE_DIR/owner_repo__none")" $'verifying-deadline\tKEN-1\tboxes=0' 'completion reuses the deadline row'
+}
+completion_sequence no_boxes
+completion_contract
+
+output_world waiting 2026-10-02T12:00:00Z
+output_pass
+assert_eq "$(grep -c '^verifying KEN-1 .* status=waiting ' <<<"$OUT" || true)" 1 'a first waiting read prints under the new reducer event'
+assert_contains "$(cat "$STATE_DIR/owner_repo__none")" $'verifying-deadline\tKEN-1\t-' 'a valid no-due read reuses the deadline row'
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-1.txt"
+output_pass
+assert_not_contains "$OUT" 'verifying KEN-1' 'a standing no-due row stays out of other event blocks'
+
+heartbeat_sequence() {
+  output_world "$1"
+  output_pass
+  output_pass 3
+}
+heartbeat_contract() {
+  assert_eq "$RC" 0 'quiet passes complete' "$STUB_DIR/err"
+  assert_eq "$(sed -n '1p' <<<"$OUT")" 'EVENT heartbeat loops=3 interval=0s since=none' 'quiet passes reach heartbeat'
+  assert_eq "$(grep -c '^verifying KEN-1 .* status=due ' <<<"$OUT" || true)" 1 'heartbeat retains the full verifying list'
+  assert_eq "$(awk -F'\t' '$1 == "owner/repo"' <<<"$OUT")" "$DISARMED" 'heartbeat retains the full reducer output'
+}
+heartbeat_sequence heartbeat
+heartbeat_contract
+
+# Each output contract rejects restored repetition or missing heartbeat
+# output in a disposable production copy outside the worktree.
+while IFS='@' read -r name file old new contract; do
+  scripts="$(mutant_scripts "output-$name/orch" "$file")" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/output-$name/github"
+  ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/output-$name/linear"
+  mutate_file "$scripts/$file" "$old" "$new"
+  WATCH_BIN="$scripts/oversee-watch" "${contract}_sequence" "control_$name"
+  control_rc=0
+  ( FAIL=0; "${contract}_contract"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/output-$name.log" || control_rc=$?
+  assert_eq "$control_rc" 1 "control: $name reddens the output contract"
+done <<'ROWS'
+verifying_repeat@oversee-watch@[[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"@event
+pr_repeat@lib/pr-watch-pass.sh@[[ -z "$event_out" ]] || printf '%s' "$event_out"@[[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"@event
+completion_repeat@oversee-watch@[[ "$prior" != "$key" ]] || continue@[[ "$prior" != "$key" || "$key" == boxes=0 ]] || continue@completion
+verifying_heartbeat@oversee-watch@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' ""@heartbeat
+pr_heartbeat@lib/pr-watch-pass.sh@[[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"@[[ -z "$PW_OUT" ]] || printf '%s\n' ""@heartbeat
+ROWS
+
+printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
+[[ "$FAIL" == 0 ]]

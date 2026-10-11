@@ -185,7 +185,7 @@ The long pass's events, checked and reported in this order:
                              nothing; a session with no Stop row after the
                              record gets no such judgement. Emitted every long
                              pass it stands
-  EVENT pr-watch rc=N        new review-gate attention; reducer output follows
+  EVENT pr-watch rc=N        new review-gate attention; only rising-key lines follow
                              refresh-ready wakes on the opening pass and
                              once per new head, including without a lane
   EVENT merged <PR> <branch> <repo>
@@ -610,8 +610,11 @@ The long pass's events, checked and reported in this order:
                              Merge triggers keep their deadline from merge.
                              Invalid items report their parser
                              error on stderr; the pass reads the next item.
-                             Printed with the event block or heartbeat. An item
-                             with none prints verifying <item> boxes=0.
+                             Event blocks print only items whose deadline row
+                             changed. The heartbeat prints every box. An item
+                             with none prints verifying <item> boxes=0 once at
+                             first read, with EVENT verifying-deadline <item>
+                             boxes=0, and again at heartbeat.
   EVENT heartbeat            --max-loops long passes with no event, after
                              the repeated parked-merged lines above. A line
                              `  failing <item> <key>` follows for every lane
@@ -740,8 +743,8 @@ no other kind can carry them. A slice that is nothing but that noise prints
 `payload-noise-only lines=N` in place of the block, so silence and
 suppression read apart. No other payload is filtered.
 
-The latest pr-watch attention lines close the block when any exist and the
-pr-watch event did not open it. Triage
+The heartbeat prints the full latest pr-watch attention output. Event blocks
+carry only the lines whose keys rose this pass. Triage
 reads the live tracker list and rebuilds only acknowledged triage keys in the
 first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.

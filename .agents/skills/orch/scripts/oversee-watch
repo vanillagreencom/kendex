@@ -4390,6 +4390,7 @@ check_report() {
 OWED_PR_LIMIT=1000
 OWED_LINES=""
 VERIFYING_LINES=""
+VERIFYING_EVENT_LINES=""
 # The heartbeat's own caches: one listing per host, one verdict per host,
 # harness and model, and the answers owed_accounts and owed_wall hand back.
 OWED_ACCOUNTS=""
@@ -4399,6 +4400,7 @@ OWED_VERDICT=""
 owed_read() {
   OWED_LINES=""
   VERIFYING_LINES=""
+  VERIFYING_EVENT_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
   local errf="$WORK_DIR/owed.err" out items rows rc=0 n
   local id state priority lane host harness model delivery key verdict line asked answer
@@ -4563,17 +4565,28 @@ verifying_read() { # SAFE_ITEMS
     VERIFYING_LINES+="$lines"$'\n'
     due="$(jq -r '.[] | select(.status == "due" or .status == "overdue")
       | "box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline)"' <<<"$boxes")" || die verifying-invalid "" "issue=$id"
-    [[ -n "$due" ]] || continue
+    # The existing row also records a valid read with no due boxes. This
+    # distinguishes first-read completion from an unchanged empty due set.
+    key="${due//$'\n'/|}"
+    [[ -n "$key" ]] || key=-
+    [[ "$lines" != "verifying $id boxes=0" ]] || key=boxes=0
     prior="$(lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id")" \
       || die state-read-failed "" "row=verifying-deadline" "issue=$id"
-    state="$(lane_row_set verifying-deadline "$state" "$id" "${due//$'\n'/|}")"
-    [[ "$prior" != "${due//$'\n'/|}" ]] || continue
+    state="$(lane_row_set verifying-deadline "$state" "$id" "$key")"
+    [[ "$prior" != "$key" ]] || continue
+    VERIFYING_EVENT_LINES+="$lines"$'\n'
+    if [[ "$key" == boxes=0 ]]; then
+      echo "EVENT verifying-deadline $id boxes=0"
+      PASS_EVENT=1
+    fi
+    [[ -n "$due" ]] || continue
     while IFS= read -r row; do
       echo "EVENT verifying-deadline $id $row"
     done <<<"$due"
     PASS_EVENT=1
   done <<<"$rows"
   VERIFYING_LINES="${VERIFYING_LINES%$'\n'}"
+  VERIFYING_EVENT_LINES="${VERIFYING_EVENT_LINES%$'\n'}"
   lane_row_commit "$state"
 }
 
@@ -4675,8 +4688,8 @@ heartbeat() {
 # sets for this process belongs there. The baselines it committed are what the
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
-LONG_RETURNS=(LONG_EVENT LONG_FAILED OWNER_TRACKER_DELIVERED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES)
+LONG_RETURNS=(LONG_EVENT LONG_FAILED OWNER_TRACKER_DELIVERED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES)
 long_pass() {
   local i state_file
   PASS_EVENT=0
@@ -4930,12 +4943,10 @@ run_end() {
     mail_turn
   fi
   if [[ "$PASS_FAILED" -eq 1 ]]; then
-    pr_watch_context
     exit 2
   fi
   if [[ "$PASS_EVENT" -eq 1 ]]; then
-    [[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"
-    pr_watch_context
+    [[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"
     exit 0
   fi
   [[ "$LONG_PASSES" -lt "$MAX_LOOPS" ]] || heartbeat

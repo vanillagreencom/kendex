@@ -1,17 +1,14 @@
 # shellcheck shell=bash
 # The review-gate reducer pass of oversee-watch: pr-watch over the item
-# repository and ORCH_CONNECTED_REPOS,
-# each repo's rising edge against its own persisted baseline, and the context
-# block every other event carries. Sourced by oversee-watch, and like the rest
-# of its lib/ it reads that script's globals (REPOS, PW_REPO_INDICES, PR_WATCH, PW_STATE_DIR,
-# WORK_DIR, SINCE) and calls its `die`.
+# repository and ORCH_CONNECTED_REPOS, each repo's rising edge against its
+# own persisted baseline, and the full heartbeat output. Sourced by
+# oversee-watch, and like the rest of its lib/ it reads that script's globals
+# (REPOS, PW_REPO_INDICES, PR_WATCH, PW_STATE_DIR, WORK_DIR, SINCE) and calls its `die`.
 
-# The latest pr-watch result across the reducer's repositories, closing every event block:
+# The latest pr-watch result across the reducer's repositories, printed at heartbeat:
 # each line carries the repo it came from, and rc is the highest status any
-# repo's reducer returned. PW_EVENT marks a pass whose block opened with the
-# pr-watch event, where those lines already stand under it.
+# repo's reducer returned.
 PW_RC=0
-PW_EVENT=0
 PW_OUT=""
 PW_ERR=""
 PW_PASSES=0
@@ -97,7 +94,7 @@ pw_init_state() {
 }
 
 pr_watch_context() {
-  [[ "$PW_RC" -ne 0 && "$PW_EVENT" -eq 0 ]] || return 0
+  [[ "$PW_RC" -ne 0 ]] || return 0
   echo "pr-watch rc=$PW_RC"
   [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
   [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
@@ -107,17 +104,16 @@ pr_watch_context() {
 # follow it, and the pass runs on so a lane's question is read on the same
 # pass. The loop body only reaches `sleep` when nothing needs the overseer.
 check_pr_watch() {
-  PW_EVENT=0
   [[ -n "$PR_WATCH" ]] || return 0
-  local errf="$WORK_DIR/pr-watch.err" i repo out err rc keys carried new_keys key
-  local rc_max=0 out_all="" err_all="" event=0
+  local errf="$WORK_DIR/pr-watch.err" i repo out err rc keys carried new_keys key line keyed new_lines
+  local rc_max=0 out_all="" err_all="" event_out="" event=0
   # This pass's keys per repo. The reduction touches no baseline: a die below
   # would otherwise leave a repo's rising edge recorded as seen with no event
   # printed, and that line is then never news again.
   local pass_keys=()
   PW_PASSES=$((PW_PASSES + 1))
-  # Every owned repository is reduced even once one has news, so its baseline
-  # and the event's context cover the same complete pass.
+  # Every owned repository is reduced even once one has news: the heartbeat
+  # needs their complete state and none may carry a stale baseline forward.
   for i in "${PW_REPO_INDICES[@]}"; do
     repo="${REPOS[$i]}"
     rc=0
@@ -139,12 +135,21 @@ check_pr_watch() {
     # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
     # trusted.
     [[ -n "$out" ]] || die reducer-failed "${err:-<no stderr>}" "repo=$repo" "exit=$rc"
-    keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 ($3 == "refresh-ready" ? ":" $2 : "") }' <<<"$out")"
+    # Keep the reducer line beside its key so event selection uses the same
+    # identity as the persisted edge, including refresh-ready's head.
+    keyed="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 ($3 == "refresh-ready" ? ":" $2 : "") "\034" $0 }' <<<"$out")"
+    keys=""
     new_keys=""
-    while IFS= read -r key; do
+    new_lines=""
+    while IFS=$'\034' read -r key line; do
       [[ -n "$key" ]] || continue
-      grep -qxF -- "$key" <<<"${PW_SEEN[$i]}" || new_keys+="$key"$'\n'
-    done <<<"$keys"
+      keys+="$key"$'\n'
+      if ! grep -qxF -- "$key" <<<"${PW_SEEN[$i]}"; then
+        new_keys+="$key"$'\n'
+        new_lines+="$line"$'\n'
+      fi
+    done <<<"$keyed"
+    keys="${keys%$'\n'}"
     if [[ -n "$carried" && -n "$keys" ]]; then
       pass_keys[$i]="$carried"$'\n'"$keys"
     else
@@ -166,9 +171,11 @@ check_pr_watch() {
       event=1
     elif [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
       ow_message reducer-baseline "repo=$repo" "exit=$rc" "count=$(grep -c . <<<"$new_keys")" >&2
+      continue
     else
       event=1
     fi
+    event_out+="$(pw_prefix "$repo" "${new_lines%$'\n'}")"$'\n'
   done
   PW_RC="$rc_max"
   PW_OUT="${out_all%$'\n'}"
@@ -182,7 +189,7 @@ check_pr_watch() {
   # split, and only the repos it did advance suppress their duplicate.
   if [[ "$event" -eq 1 ]]; then
     echo "EVENT pr-watch rc=$PW_RC"
-    [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
+    [[ -z "$event_out" ]] || printf '%s' "$event_out"
     [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
   fi
   for i in "${PW_REPO_INDICES[@]}"; do
@@ -193,7 +200,6 @@ check_pr_watch() {
     PW_SEEN[$i]="${pass_keys[$i]}"
   done
   [[ "$event" -eq 1 ]] || return 0
-  PW_EVENT=1
   # shellcheck disable=SC2034  # read by oversee-watch's pass loop
   PASS_EVENT=1
 }

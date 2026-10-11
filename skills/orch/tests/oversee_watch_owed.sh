@@ -429,7 +429,7 @@ for control in membership event filter queue; do
   case "$control" in
     membership) mutate_verifying "$MUTANT_WATCH" 'In Progress,In Review,Verifying' 'In Progress,In Review' ;;
     event) mutate_verifying "$MUTANT_WATCH" 'select(.status == "due" or .status == "overdue")' 'select(false)' ;;
-    filter) mutate_verifying "$MUTANT_WATCH" 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"' 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"; VERIFYING_LINES=""' ;;
+    filter) mutate_verifying "$MUTANT_WATCH" 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"' 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"; VERIFYING_LINES=""; VERIFYING_EVENT_LINES=""' ;;
     queue)
       old='    verifying_read "$items"'
       new='    items="$(jq -c --argjson fleet "$FLEET_STATE" '\''map(. as $item | select(($fleet.launch_queue // []) | index($item.id) | not))'\'' <<<"$items")"
@@ -905,7 +905,7 @@ MUTANT_DIR="$TMP_ROOT/repeat-mutant"
 MUTANT_WATCH="$(mutant_scripts "repeat-mutant/orch" oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
 ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-mutate_verifying "$MUTANT_WATCH" '[[ "$prior" != "${due//$'"'"'\n'"'"'/|}" ]] || continue' '[[ "$prior" != "${due//$'"'"'\n'"'"'/|}" ]] || { VERIFYING_LINES=""; continue; }'
+mutate_verifying "$MUTANT_WATCH" '[[ "$prior" != "$key" ]] || continue' '[[ "$prior" != "$key" ]] || { VERIFYING_LINES=""; continue; }'
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "$RC" 0 "control: repeat reaches the watch result" "$ERR"
 assert_eq "$(box_status)" '' "control: dropping a standing due line violates repeated listing"

@@ -11,7 +11,7 @@
 # fleet needs a hand and prints one wake carrying every event the pass found,
 # one EVENT line each, and exits once. Covered here:
 #   1.  pr-watch: on the fleet's first run oversee-watch: reducer-baseline is a
-#       baseline (no event, one stderr note, context on the next event); that
+#       baseline (no event, one stderr note, full output at heartbeat); that
 #       baseline persists, so a line appearing between two runs is the next
 #       run's first-pass event and a standing line is not; an unseen `<pr> <kind>`
 #       line mid-run is the event; an ordinary head-only change is not; GH_REPO reaches
@@ -28,7 +28,7 @@
 #       the item and connected repositories, with per-repo baselines and repo-prefixed lines on both
 #       streams, no baseline advances until the whole pass has reduced, a repo
 #       named for the first time baselines its standing attention in either
-#       ordering, the context header carries the highest status across repos, a
+#       ordering, the heartbeat header carries the highest status across repos, a
 #       global failure names its repo, a repeated --repo exits 2 naming the
 #       spelling given, and --repo=VALUE is the same option
 #   2.  merged: an --item's PR merged at/after --since fires, naming its
@@ -248,7 +248,7 @@ printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-
 err="$TMP_ROOT/e1f"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" "a lane question is seen despite standing pr-watch attention" "$err"
-assert_contains "$out" "pr-watch rc=1" "the question event still carries the pr-watch context" "$err"
+assert_not_contains "$out" "pr-watch rc=1" "a lane question carries no standing reducer context" "$err"
 
 # 1f'. a new reducer line and a lane's question on the SAME pass are both
 # reported, as one block: the pr-watch event opens it with its reducer lines,
@@ -412,8 +412,8 @@ assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "attention on a second --repo is the event" "$err"
 assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
   "the second repo's line carries its repo" "$err"
-assert_contains "$out" "$(printf 'owner/repo\t12\taaaa0000\tthreads-open')" \
-  "every repo's latest lines reach the event's context" "$err"
+assert_not_contains "$out" "$(printf 'owner/repo\t12\taaaa0000\tthreads-open')" \
+  "standing keys in the first repo stay out of the second repo's event" "$err"
 assert_contains "$out" "$(printf 'other/repo\tE_REDUCER_READ count=1')" \
   "the reducer's stderr carries its repo too" "$err"
 assert_contains "$(cat "$STUB_DIR/prwatch.repos")" "other/repo" \
@@ -560,8 +560,8 @@ printf '1' > "$STUB_DIR/prwatch.rc.other_repo"
 err="$TMP_ROOT/e1p"
 out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "the first repo's new line is the event" "$err"
-assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
-  "a repo reduced after the one with news still reaches the context" "$err"
+assert_not_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
+  "a repo reduced after the one with news prints no standing key" "$err"
 assert_eq "$(cat "$STATE_DIR/other_repo__none")" "$(printf '7\tthreads-open')" \
   "and the same pass writes its baseline" "$err"
 
