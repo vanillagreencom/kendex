@@ -112,7 +112,7 @@ while IFS='|' read -r name field expression posted; do
   sk_lm "$R" notice --item overseer --to owner --file "$(sk_text "$name-good" 'Healthy envelope.')" >/dev/null
   sk_event_filter "$R" "if .text == \"Malformed field.\" then $expression else . end"
   if [ "$field" = line ] || [ "$field" = count ]; then
-    sk_master_read "$R" 1
+    sk_jarvis_read "$R" 1
     printf '{"t":"hold","at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(sk_journal "$R")"
   fi
   sk_poll "$R"
@@ -264,7 +264,7 @@ done
 sk_bin_reset
 
 sk_mutant missing-count relay.py 'if None in counts:' 'if False:'
-sk_master_read "$SK_TMP/field-missing-count" 1
+sk_jarvis_read "$SK_TMP/field-missing-count" 1
 printf '{"t":"hold","at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(sk_journal "$SK_TMP/field-missing-count")"
 sk_poll "$SK_TMP/field-missing-count"
 assert_eq "$RC" "1" "control: requiring count again fails a legacy resume poll"

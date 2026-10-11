@@ -257,7 +257,7 @@ sleep 2 # two polls past the last edit, so the last reload has started
 sk_assert_red "$(reloads)" "1" "control: the two-poll rule gone, a file still being written is loaded"
 sk_relay_stop
 
-sk_mutant loaded-env relay.py '\*sys\.argv\[1:\]\], CALLER_ENV\)' '*sys.argv[1:]], dict(os.environ))'
+sk_mutant loaded-env relay.py '\*\*CALLER_ENV' '**dict(os.environ)'
 start
 printf 'export SLACK_POLL_SECONDS=2\n' > "$SK_RUN_FROM/.env.local"
 printf '# update\n' >> "${SK_BIN%/*}/lib/relay.py"

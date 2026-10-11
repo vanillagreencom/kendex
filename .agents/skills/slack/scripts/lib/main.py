@@ -91,19 +91,22 @@ files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (
 --once), SLACK_OWNERS (default KENDEX_USER_EMAIL), KENDEX_USER_HANDLE (setup's
 channel name; default KENDEX_USER_EMAIL's local part), SLACK_POLL_SECONDS (15),
 SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
-SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600) are read per root
+SLACK_JARVIS_SESSION_FILE (empty) and SLACK_JARVIS_SESSION_MAX_AGE (600) are read per root
 at every poll, using the settings reader when that root's files change,
 with the original caller exports taking precedence. Other settings need
 slack setup or a restart.
 A relative file path starts at its root; ~ expands to the home directory.
-While its file is younger than its age bound, --status shows held-by=master.
-A root naming no file has no hold. README.md defines the master hold and resume.
+While its file is younger than its age bound, --status shows held-by=jarvis.
+A root naming no file has no hold. README.md defines the Jarvis session hold and resume.
 
 Non-fatal diagnostics on stderr:
+  setting-renamed old=KEY new=KEY
+    A retired presence key supplies the value; the new key is unset.
+    Printed once per old key and process, including across package reloads.
   reference-link-unavailable=REFERENCE root=ROOT cause=CAUSE
     A PR repository or commit hash cannot be resolved. The text is sent unchanged.
   envelope-field=ROOT id=ID field=FIELD
-    Missing or invalid line/count fields disable master-read suppression.
+    Missing or invalid line/count fields disable Jarvis-read suppression.
     Other invalid fields skip that envelope. The relay continues.
   handle-from-email=LOCAL
     KENDEX_USER_HANDLE is unset; setup names the channel after LOCAL.

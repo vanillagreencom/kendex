@@ -25,7 +25,7 @@ EXPLAIN = {
     "setting-invalid": (
         "The named setting holds a value the package cannot read; the value"
         " above says which. SLACK_POLL_SECONDS, SLACK_THREAD_DAYS and"
-        " SLACK_MASTER_MAX_AGE are whole numbers of at least 1; SLACK_OWNERS"
+        " SLACK_JARVIS_SESSION_MAX_AGE are whole numbers of at least 1; SLACK_OWNERS"
         " is comma-separated email"
         " addresses."
     ),
@@ -147,8 +147,8 @@ EXPLAIN = {
         " not sent; the value names the envelope and the text's length."
         " Send it again with a shorter draft or one without that run."
     ),
-    "master-file-unreadable": (
-        "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
+    "jarvis-session-file-unreadable": (
+        "SLACK_JARVIS_SESSION_FILE names a path whose age cannot be read, for a"
         " reason other than its absence; the value names the path and the"
         " error. Nothing from the mailbox is posted until it can be read or"
         " the setting is emptied; owner messages are still delivered."

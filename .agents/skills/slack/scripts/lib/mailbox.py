@@ -73,7 +73,7 @@ class LaneMail:
 
     def events(self) -> List[Dict]:
         """Validated envelopes from lane-mail; absent position metadata
-        disables master-read suppression, never delivery of that envelope."""
+        disables Jarvis-read suppression, never delivery of that envelope."""
         code, out, err = self._run("events", "--item", "overseer")
         if code != 0:
             raise Refusal("lane-mail-failed", err.strip() or _first(err))

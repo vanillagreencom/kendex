@@ -22,16 +22,16 @@ SLACK_POLL_SECONDS = "15"
 # topic is not routed; the owner writes top-level instead.
 SLACK_THREAD_DAYS = "7"
 
-# A file a master session touches while it answers the overseer, such as
-# "~/.fleet/master-live". While it is younger than SLACK_MASTER_MAX_AGE the
+# A file a Jarvis session touches while it answers the overseer, such as
+# "~/.fleet/jarvis-session-live". While it is younger than SLACK_JARVIS_SESSION_MAX_AGE the
 # relay holds its mailbox posts and `slack listen --status` shows
-# held-by=master; owner messages in the channel still reach the overseer.
+# held-by=jarvis; owner messages in the channel still reach the overseer.
 # Replies to messages the owner typed in the channel still post in their threads.
 # README.md says what posts on resume. Empty means no hold.
-SLACK_MASTER_FILE = ""
+SLACK_JARVIS_SESSION_FILE = ""
 
-# Seconds after its last touch that SLACK_MASTER_FILE still holds the relay.
-SLACK_MASTER_MAX_AGE = "600"
+# Seconds after its last touch that SLACK_JARVIS_SESSION_FILE still holds the relay.
+SLACK_JARVIS_SESSION_MAX_AGE = "600"
 
 [secrets]
 

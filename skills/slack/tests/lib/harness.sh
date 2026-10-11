@@ -286,10 +286,10 @@ sk_event() {
 import json, pathlib, sys, time
 sys.path.insert(0, sys.argv[3])
 from relay import RootRelay
-from settings import DEFAULT_MASTER_MAX_AGE, Presence, load
+from settings import DEFAULT_JARVIS_SESSION_MAX_AGE, Presence, load
 from verbs import api_for
 settings = load()
-relay = RootRelay(pathlib.Path(sys.argv[1]), settings, Presence("", DEFAULT_MASTER_MAX_AGE), api_for(settings), time.time)
+relay = RootRelay(pathlib.Path(sys.argv[1]), settings, Presence("", DEFAULT_JARVIS_SESSION_MAX_AGE), api_for(settings), time.time)
 relay.on_message(json.loads(pathlib.Path(sys.argv[2]).read_text()), "UBOT")
 PY
 }
@@ -414,8 +414,8 @@ sk_age_file() {
   python3 -c 'import os, sys, time; t = time.time() - int(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"
 }
 
-# sk_master_read ROOT COUNT — the file the master's watch writes after drain.
-sk_master_read() { printf '%s\n' "$2" > "$(sk_box "$1")/to-overseer.seen"; }
+# sk_jarvis_read ROOT COUNT — the file the Jarvis session's watch writes after drain.
+sk_jarvis_read() { printf '%s\n' "$2" > "$(sk_box "$1")/to-overseer.seen"; }
 
 # sk_age_resume ROOT AT — the last resume moved to an age boundary.
 sk_age_resume() {
@@ -429,8 +429,8 @@ path.write_text("".join(json.dumps(line) + "\n" for line in lines))
 PY
 }
 
-# sk_unposted ROOT MASTER — notices written while the relay is down, with a
-# standing start seed, then the first poll under fresh master presence. Each
+# sk_unposted ROOT JARVIS_SESSION — notices written while the relay is down, with a
+# standing start seed, then the first poll under fresh Jarvis session presence. Each
 # text carries its number: lane-mail refuses an owner notice text it already
 # holds from the last 24 hours.
 sk_unposted() {
@@ -442,7 +442,7 @@ sk_unposted() {
     sk_lm "$1" notice --item overseer --to owner --file "$(sk_text "$name-$n" "Backlog in $name. Notice $n.")" >/dev/null
     sk_age_envelope "$1" "$(tail -n 1 "$(sk_box "$1")/to-overseer.jsonl" | jq -r .id)" 1200
   done
-  sk_poll "$1" "SLACK_MASTER_FILE=$2"
+  sk_poll "$1" "SLACK_JARVIS_SESSION_FILE=$2"
 }
 
 # sk_fake_systemctl — a systemctl of its own that appends its arguments to

@@ -108,7 +108,7 @@ assert_eq "$(cat "$(sk_journal "$BETA")")" "$HELD" "the refused compact leaves t
 sk_relay_stop
 
 # A resume keeps its skipped ids as one line, by its own `at`, not the
-# hold's start or the master's count. Compaction drops the aged line whole.
+# hold's start or the Jarvis session's count. Compaction drops the aged line whole.
 RESUMES="$(sk_new_root resumes)"
 sk_bind "$RESUMES"
 cat > "$(sk_journal "$RESUMES")" <<EOF

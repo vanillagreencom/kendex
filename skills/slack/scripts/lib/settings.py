@@ -1,4 +1,4 @@
-"""Process settings and each root's master presence settings.
+"""Process settings and each root's Jarvis session presence settings.
 
 Both use kendex's one settings reader. A root load starts from the caller's
 original environment, not the launch checkout's loaded exports.
@@ -20,9 +20,18 @@ from refusals import Refusal, keyed
 DEFAULT_API_URL = "https://slack.com/api"
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_THREAD_DAYS = 7
-DEFAULT_MASTER_MAX_AGE = 600
-# The name `listen --status` shows for the presence SLACK_MASTER_FILE marks.
-MASTER = "master"
+DEFAULT_JARVIS_SESSION_MAX_AGE = 600
+# The name `listen --status` shows for the presence SLACK_JARVIS_SESSION_FILE marks.
+JARVIS_SESSION = "jarvis"
+# Live fleets use SLACK_MASTER_FILE and SLACK_MASTER_MAX_AGE. Keep their
+# aliases until kendex 2.0.0, the next major after the current 1.17.0 release.
+PRESENCE_ALIASES = {
+    "SLACK_JARVIS_SESSION_FILE": "SLACK_MASTER_FILE",
+    "SLACK_JARVIS_SESSION_MAX_AGE": "SLACK_MASTER_MAX_AGE",
+}
+# The relay's re-exec keeps the same process, so it carries issued warnings
+# through this internal transport and removes it from root settings reads.
+RENAMED_SETTINGS = set(json.loads(os.environ.pop("_KENDEX_SLACK_RENAMED_SETTINGS", "[]")))
 EMAIL = re.compile(r"^[^\s@,]+@[^\s@,]+$")
 # Direct library callers have no launcher snapshot. Do not pass the internal
 # transport on to lane-mail or the root settings subprocess.
@@ -30,13 +39,16 @@ CALLER_ENV = (
     json.loads(os.environ.pop("_KENDEX_SLACK_CALLER_ENV"))
     if "_KENDEX_SLACK_CALLER_ENV" in os.environ else dict(os.environ)
 )
+CALLER_ENV.pop("_KENDEX_SLACK_RENAMED_SETTINGS", None)
 ROOT_ENV = r'''
 set -euo pipefail
 source "$1/scripts/lib/kendex-env.sh"
 kendex_project_env_supports selected-private-path || exit 1
 kendex_load_project_env "$2" _slack_private_file || exit 1
-export SLACK_MASTER_FILE="${SLACK_MASTER_FILE-}" SLACK_MASTER_MAX_AGE="${SLACK_MASTER_MAX_AGE-}"
-exec "$3" -c 'import json, os, sys; print(json.dumps(dict({name: os.environ.get(name, "") for name in sys.argv[2:]}, private_file=sys.argv[1])))' "$_slack_private_file" SLACK_MASTER_FILE SLACK_MASTER_MAX_AGE
+reader=$3
+shift 3
+export "$@"
+exec "$reader" -c 'import json, os, sys; print(json.dumps(dict({name: os.environ[name] for name in sys.argv[2:] if name in os.environ}, private_file=sys.argv[1])))' "$_slack_private_file" "$@"
 '''
 
 
@@ -44,8 +56,8 @@ exec "$3" -c 'import json, os, sys; print(json.dumps(dict({name: os.environ.get(
 class Presence:
     """One root's hold file and freshness bound."""
 
-    master_file: str
-    master_max_age: int
+    jarvis_session_file: str
+    jarvis_session_max_age: int
     private_file: str = ".env.local"
 
 
@@ -105,7 +117,8 @@ def load_presence(root: Path) -> Presence:
         raise Refusal("orch-missing", str(root))
     try:
         proc = subprocess.run(
-            ["bash", "-c", ROOT_ENV, "slack-root-settings", orch, str(root), sys.executable],
+            ["bash", "-c", ROOT_ENV, "slack-root-settings", orch, str(root), sys.executable,
+             *PRESENCE_ALIASES, *PRESENCE_ALIASES.values()],
             cwd=str(root), env=CALLER_ENV, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, check=False,
         )
@@ -117,12 +130,18 @@ def load_presence(root: Path) -> Presence:
         values = json.loads(proc.stdout)
     except ValueError as err:
         raise Refusal("setting-invalid", f"root={root} settings-reader=invalid-output") from err
-    path = os.path.expanduser(values["SLACK_MASTER_FILE"].strip())
+    for name, old in PRESENCE_ALIASES.items():
+        if name not in values and old in values:
+            values[name] = values[old]
+            if old not in RENAMED_SETTINGS:
+                print(f"setting-renamed old={old} new={name}", file=sys.stderr, flush=True)
+                RENAMED_SETTINGS.add(old)
+    path = os.path.expanduser(values.get("SLACK_JARVIS_SESSION_FILE", "").strip())
     if path and not os.path.isabs(path):
         path = str(root / path)
     return Presence(
-        master_file=path,
-        master_max_age=_positive_int("SLACK_MASTER_MAX_AGE", DEFAULT_MASTER_MAX_AGE, values, root),
+        jarvis_session_file=path,
+        jarvis_session_max_age=_positive_int("SLACK_JARVIS_SESSION_MAX_AGE", DEFAULT_JARVIS_SESSION_MAX_AGE, values, root),
         private_file=values["private_file"],
     )
 

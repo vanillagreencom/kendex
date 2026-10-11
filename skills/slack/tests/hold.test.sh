@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# `slack listen` under SLACK_MASTER_FILE: while the file is fresh a notice
+# `slack listen` under SLACK_JARVIS_SESSION_FILE: while the file is fresh a notice
 # and an ask are held, an owner message still lands and its reply posts once
 # in that message's thread,
-# the hold is journaled once and `--status` shows held-by=master. Once the
+# the hold is journaled once and `--status` shows held-by=jarvis. Once the
 # file is stale the resume posts the open ask, the answer to an ask the
-# channel shows open and notices past the master's seen line count. Its
+# channel shows open and notices past the Jarvis session's seen line count. Its
 # journal records that count, the skipped ids and asks whose posts landed.
 # A dead token on an earlier ask still records every later read notice id.
 # A restart or a missing seen file cannot replay a skipped or posted id.
 # A missing, unreadable or invalid count skips nothing; a count past the
-# snapshot clamps. An absent master file or an empty setting posts as before,
-# SLACK_MASTER_MAX_AGE bounds the hold, and a file whose age cannot be read
+# snapshot clamps. An absent Jarvis session file or an empty setting posts as before,
+# SLACK_JARVIS_SESSION_MAX_AGE bounds the hold, and a file whose age cannot be read
 # refuses the post step alone. Compaction keeps a standing hold and the resumes inside the
 # horizon. Changed root settings update the presence pair on the next poll
 # without a restart; unchanged files run no settings reader. A refused read
@@ -19,13 +19,13 @@ set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
 sk_fake_start
-echo "=== slack listen: the master hold ==="
+echo "=== slack listen: the Jarvis session hold ==="
 
-MASTER="$SK_TMP/master-live"
-HOLD="SLACK_MASTER_FILE=$MASTER"
-aged() { sk_age_file "$MASTER" "$1"; } # SECONDS
-fresh() { touch -- "$MASTER" && aged 10; }
-stale() { aged 600; } # the default SLACK_MASTER_MAX_AGE: the hold ends as this runs
+JARVIS_SESSION="$SK_TMP/jarvis-session-live"
+HOLD="SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION"
+aged() { sk_age_file "$JARVIS_SESSION" "$1"; } # SECONDS
+fresh() { touch -- "$JARVIS_SESSION" && aged 10; }
+stale() { aged 600; } # the default SLACK_JARVIS_SESSION_MAX_AGE: the hold ends as this runs
 count() { sk_state "[(.messages.${1} // [])[] | select(.text | contains(\"$2\"))] | length"; } # CHANNEL TEXT
 holds() { jq -r 'select(.t == "hold" or .t == "resume") | .t' "$(sk_journal "$1")" | tr '\n' ' '; } # ROOT
 ask() { sk_lm "$1" ask --item overseer --to owner --file "$(sk_text "$2" "$3")" --options a,b --recommend a | sed 's/^id=//'; } # ROOT NAME TEXT
@@ -41,7 +41,7 @@ CH="$(sk_channel "$ROOT")"
 sk_poll "$ROOT" "$HOLD"
 ASK0="$(ask "$ROOT" q0 'Posted before the hold?')"
 sk_poll "$ROOT" "$HOLD"
-assert_eq "$RC=$(count "$CH" 'Posted before the hold?')" "0=1" "with no master file the ask posts"
+assert_eq "$RC=$(count "$CH" 'Posted before the hold?')" "0=1" "with no Jarvis session file the ask posts"
 ASK0_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Posted before the hold?\")) | .ts")"
 notice "$ROOT" n0 'Refused before the hold.'
 sk_age_envelope "$ROOT" "$(last_id "$ROOT")" 20
@@ -55,11 +55,11 @@ notice "$ROOT" n1 'Held notice.'
 ASK1="$(ask "$ROOT" q1 'Held and open?')"
 ASK2="$(ask "$ROOT" q2 'Held and answered?')"
 sk_lm "$ROOT" resolve --item overseer --id "$ASK2" --text "$(sk_text a2 'a')" >/dev/null
-sk_lm "$ROOT" resolve --item overseer --id "$ASK0" --text "$(sk_text a0 'b, from the master')" >/dev/null
+sk_lm "$ROOT" resolve --item overseer --id "$ASK0" --text "$(sk_text a0 'b, from the Jarvis session')" >/dev/null
 TS1="$(sk_inject "$CH" U001 'Still heard.')"
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Held notice.')=$(count "$CH" 'Held and open?')=$(count "$CH" 'Answered in the chat')=$(count "$CH" 'Refused before the hold.')" \
-  "0=0=0=0=0" "a fresh master file holds the notice, the ask, the answer and the pending notice"
+  "0=0=0=0=0" "a fresh Jarvis session file holds the notice, the ask, the answer and the pending notice"
 assert_eq "$(jq -r 'select(.kind == "directive") | .delivery_id' "$(sk_box "$ROOT")/to-lane.jsonl")" "$CH:$TS1" \
   "an owner message in the channel still lands while held"
 DIRECTIVE="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
@@ -76,18 +76,18 @@ sk_poll "$ROOT" "$HOLD"
 assert_eq "$(count "$CH" 'Reply while held.')" "1" "a held poll after restart does not repeat the reply"
 assert_eq "$(holds "$ROOT")" "hold " "the hold is journaled once"
 row "$ROOT"
-assert_has "$LINE" " held-by=master" "the status row shows the hold"
+assert_has "$LINE" " held-by=jarvis" "the status row shows the hold"
 
-# --- a stale file resumes: asks and answers survive a master read ----------------
-sk_master_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
+# --- a stale file resumes: asks and answers survive a Jarvis session read ---------
+sk_jarvis_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
 stale
 notice "$ROOT" n5 'After the stale file.'
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Held and open?')=$(count "$CH" 'Held notice.')=$(count "$CH" 'Held and answered?')" "0=1=0=0" \
   "the resume posts the open ask and neither the held notice nor the answered ask"
 assert_eq "$(count "$CH" 'Refused before the hold.')=$(count "$CH" 'After the stale file.')" "0=1" \
-  "the resume skips a notice the master read before the hold and posts the later one"
-assert_has "$(sk_state ".messages.${CH}[] | select(.thread_ts == \"$ASK0_TS\") | .text")" "Answered in the chat: b, from the master" \
+  "the resume skips a notice the Jarvis session read before the hold and posts the later one"
+assert_has "$(sk_state ".messages.${CH}[] | select(.thread_ts == \"$ASK0_TS\") | .text")" "Answered in the chat: b, from the Jarvis session" \
   "an ask the channel shows open gets its held answer, so its thread closes"
 assert_eq "$(holds "$ROOT")=$(jq -r 'select(.t == "resume") | .asks | join(",")' "$(sk_journal "$ROOT")")" "hold resume =$ASK1" \
   "the resume is journaled with the ask it posted"
@@ -102,9 +102,9 @@ assert_eq "$(count "$CH" 'After the resume.')=$(count "$CH" 'Held notice.')=$(co
 # --- removal resumes against the same seen count ---------------------------------
 fresh
 notice "$ROOT" n6 'Held until removed.'
-sk_master_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
+sk_jarvis_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
 sk_poll "$ROOT" "$HOLD"
-rm -f -- "$MASTER"
+rm -f -- "$JARVIS_SESSION"
 notice "$ROOT" n7 'After the removal.'
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Held until removed.')=$(count "$CH" 'After the removal.')" "0=0=1" \
@@ -113,27 +113,27 @@ assert_eq "$RC=$(count "$CH" 'Held until removed.')=$(count "$CH" 'After the rem
 # --- an absent file or an empty setting posts as before ---------------------------
 notice "$ROOT" n3 'No file.'
 sk_poll "$ROOT" "$HOLD"
-assert_eq "$RC=$(count "$CH" 'No file.')=$(holds "$ROOT")" "0=1=hold resume hold resume " "an absent master file holds nothing"
+assert_eq "$RC=$(count "$CH" 'No file.')=$(holds "$ROOT")" "0=1=hold resume hold resume " "an absent Jarvis session file holds nothing"
 fresh
 notice "$ROOT" n4 'No setting.'
 sk_poll "$ROOT"
 assert_eq "$RC=$(count "$CH" 'No setting.')=$(holds "$ROOT")" "0=1=hold resume hold resume " "an empty setting holds nothing"
 
-# --- SLACK_MASTER_MAX_AGE bounds the hold -------------------------------------------
+# --- SLACK_JARVIS_SESSION_MAX_AGE bounds the hold -------------------------------------------
 aged 900
 notice "$ROOT" n9 'Under the age bound.'
-sk_poll "$ROOT" "$HOLD" SLACK_MASTER_MAX_AGE=3600
-assert_eq "$RC=$(count "$CH" 'Under the age bound.')" "0=0" "a file touched 900 s ago holds under SLACK_MASTER_MAX_AGE=3600"
+sk_poll "$ROOT" "$HOLD" SLACK_JARVIS_SESSION_MAX_AGE=3600
+assert_eq "$RC=$(count "$CH" 'Under the age bound.')" "0=0" "a file touched 900 s ago holds under SLACK_JARVIS_SESSION_MAX_AGE=3600"
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Under the age bound.')" "0=1" "the same file is stale under the default 600, and the notice posts"
 
-# --- a master file whose age cannot be read refuses the post step alone -------------
+# --- a Jarvis session file whose age cannot be read refuses the post step alone -------------
 printf 'x\n' > "$SK_TMP/plain-file"
-UNREADABLE="SLACK_MASTER_FILE=$SK_TMP/plain-file/child"
+UNREADABLE="SLACK_JARVIS_SESSION_FILE=$SK_TMP/plain-file/child"
 TS2="$(sk_inject "$CH" U001 'Heard past the refusal.')"
 notice "$ROOT" n10 'Behind an unreadable file.'
 sk_poll "$ROOT" "$UNREADABLE"
-assert_eq "$RC=${ERR1%% (*}" "1=slack: master-file-unreadable=$SK_TMP/plain-file/child" "an unreadable master file is refused by path"
+assert_eq "$RC=${ERR1%% (*}" "1=slack: jarvis-session-file-unreadable=$SK_TMP/plain-file/child" "an unreadable Jarvis session file is refused by path"
 assert_has "$(jq -r 'select(.kind == "directive") | .delivery_id' "$(sk_box "$ROOT")/to-lane.jsonl")" "$CH:$TS2" \
   "an owner message still lands past the refusal"
 assert_eq "$(count "$CH" 'Behind an unreadable file.')" "0" "no envelope posts past the refusal"
@@ -156,22 +156,22 @@ assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume " "compaction drops a r
 while read -r value seen backlog fourth skipped; do
   R="$(sk_new_root "seen-$value")"
   fresh
-  sk_unposted "$R" "$MASTER"
+  sk_unposted "$R" "$JARVIS_SESSION"
   IDS="$(jq -sc 'map(.id)' "$(sk_box "$R")/to-overseer.jsonl")"
   case "$value" in
     missing) ;;
     unreadable) mkdir "$(sk_box "$R")/to-overseer.seen" ;;
-    ancient) sk_master_read "$R" 3 ;;
+    ancient) sk_jarvis_read "$R" 3 ;;
     gapped|past-gap)
-      # A killed writer can leave filtered physical lines; the master's
+      # A killed writer can leave filtered physical lines; the Jarvis session's
       # cursor still counts them, including one after the last envelope.
       python3 - "$(sk_box "$R")/to-overseer.jsonl" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 path.write_text("interrupted\n" + path.read_text() + "interrupted\n")
 PY
-      if [ "$value" = gapped ]; then sk_master_read "$R" 3; else sk_master_read "$R" 99; fi ;;
-    *) sk_master_read "$R" "$value" ;;
+      if [ "$value" = gapped ]; then sk_jarvis_read "$R" 3; else sk_jarvis_read "$R" 99; fi ;;
+    *) sk_jarvis_read "$R" "$value" ;;
   esac
   notice "$R" "fourth-$value" "Fourth in seen-$value."
   if [ "$value" = ancient ]; then aged 1000000000; else stale; fi
@@ -210,7 +210,7 @@ refused_resume() {
   id="$(ask "$1" "r-$(basename "$1")" "Refused on resume in $(basename "$1")?")"
   notice "$1" "read-$(basename "$1")" "Read after the ask in $(basename "$1")."
   REFUSED_READ="$(last_id "$1")"
-  sk_master_read "$1" "$(wc -l < "$(sk_box "$1")/to-overseer.jsonl")"
+  sk_jarvis_read "$1" "$(wc -l < "$(sk_box "$1")/to-overseer.jsonl")"
   notice "$1" "unread-$(basename "$1")" "Unread after the ask in $(basename "$1")."
   sk_poll "$1" "$HOLD"
   stale
@@ -247,10 +247,10 @@ while read -r name first control a_posts a_held; do
   B="$(sk_new_root "pair-$name-b")"
   sk_bind "$A"
   sk_bind "$B"
-  FILE="$B/tmp/master-live"
+  FILE="$B/tmp/jarvis-session-live"
   touch -- "$FILE"
   sk_age_file "$FILE" 10
-  printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "600"\n' "$FILE" > "$B/kendex.settings.toml"
+  printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\nSLACK_JARVIS_SESSION_MAX_AGE = "600"\n' "$FILE" > "$B/kendex.settings.toml"
   if [ "$first" = A ]; then FIRST="$A"; SECOND="$B"; else FIRST="$B"; SECOND="$A"; fi
   SK_RUN_FROM="$FIRST"
   sk_run -- listen --once --root "$FIRST" --root "$SECOND"
@@ -266,9 +266,9 @@ while read -r name first control a_posts a_held; do
     "0=$a_posts=0" "$name: only roots with a fresh configured file hold (control must hold A)"
   sk_run -- listen --status --root "$A" --root "$B"
   assert_has "$OUT" "slack-relay=$B state=ok" "$name: B has its own status row"
-  assert_has "$OUT" "held-by=master" "$name: status reports the master hold"
+  assert_has "$OUT" "held-by=jarvis" "$name: status reports the Jarvis session hold"
   assert_eq "$(jq -r 'if .held_by == "" then "none" else .held_by end' "$A/tmp/slack/status.json")=$(jq -r .held_by "$B/tmp/slack/status.json")" \
-    "$a_held=master" "$name: the hold belongs to B only, unless the control leaks"
+    "$a_held=jarvis" "$name: the hold belongs to B only, unless the control leaks"
   sk_bin_reset
   sk_age_file "$FILE" 900
   sk_run -- listen --once --root "$FIRST" --root "$SECOND"
@@ -278,16 +278,16 @@ while read -r name first control a_posts a_held; do
 done <<'ROWS'
 A-first A real 1 none
 B-first B real 1 none
-B-first-control B leak 0 master
-B-first-launcher-control B launch 0 master
+B-first-control B leak 0 jarvis
+B-first-launcher-control B launch 0 jarvis
 ROWS
 
 # Both files have the same age, but each root has its own freshness bound.
 A="$(sk_new_root ages-a)"
 B="$(sk_new_root ages-b)"
 for R in "$A" "$B"; do sk_bind "$R"; done
-printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "3600"\n' "$MASTER" > "$A/kendex.settings.toml"
-printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "600"\n' "$MASTER" > "$B/kendex.settings.toml"
+printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\nSLACK_JARVIS_SESSION_MAX_AGE = "3600"\n' "$JARVIS_SESSION" > "$A/kendex.settings.toml"
+printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\nSLACK_JARVIS_SESSION_MAX_AGE = "600"\n' "$JARVIS_SESSION" > "$B/kendex.settings.toml"
 fresh
 SK_RUN_FROM="$A"
 sk_run -- listen --once --root "$A" --root "$B"
@@ -303,6 +303,68 @@ assert_eq "$RC=$(count "$(sk_channel "$A")" 'Age notice A.')=$(count "$(sk_chann
   "0=1=1" "A resumes at its own bound and B never repeats"
 SK_RUN_FROM=""
 
+# The real settings reader resolves aliases per root. Both roots read the
+# same retired pair in one process, so each fallback warning appears once.
+while read -r name source new_file new_age held warnings control; do
+  R="$(sk_new_root "alias-$name")"; S="$(sk_new_root "alias-peer-$name")"
+  sk_bind "$R"; sk_bind "$S"
+  fresh; aged 900
+  for ROOT_ALIAS in "$R" "$S"; do
+    case "$source" in
+      private) SETTINGS_FILE="$ROOT_ALIAS/.env.local" ;;
+      *) SETTINGS_FILE="$ROOT_ALIAS/kendex.settings.toml"; printf '[env]\n' > "$SETTINGS_FILE" ;;
+    esac
+    printf 'SLACK_MASTER_FILE="%s"\nSLACK_MASTER_MAX_AGE="3600"\n' "$JARVIS_SESSION" >> "$SETTINGS_FILE"
+    case "$new_file" in
+      absent) ;;
+      empty) printf 'SLACK_JARVIS_SESSION_FILE=""\n' >> "$SETTINGS_FILE" ;;
+      fresh) printf 'SLACK_JARVIS_SESSION_FILE="%s"\n' "$JARVIS_SESSION" >> "$SETTINGS_FILE" ;;
+    esac
+    case "$new_age" in
+      absent) ;;
+      empty) printf 'SLACK_JARVIS_SESSION_MAX_AGE=""\n' >> "$SETTINGS_FILE" ;;
+      *) printf 'SLACK_JARVIS_SESSION_MAX_AGE="%s"\n' "$new_age" >> "$SETTINGS_FILE" ;;
+    esac
+  done
+  sk_run -- listen --once --root "$R" --root "$S"
+  notice "$R" "alias-$name" "Alias notice $name."
+  case "$control" in
+    alias) sk_mutant no-alias settings.py 'if name not in values and old in values:' 'if False:' ;;
+    precedence) sk_mutant old-wins settings.py 'if name not in values and old in values:' 'if old in values:' ;;
+    warning) sk_mutant repeated-warning settings.py 'if old not in RENAMED_SETTINGS:' 'if True:' ;;
+    status) sk_mutant retired-status settings.py 'JARVIS_SESSION = "jarvis"' 'JARVIS_SESSION = "retired"' ;;
+  esac
+  sk_run -- listen --once --root "$R" --root "$S"
+  POSTS="$(count "$(sk_channel "$R")" "Alias notice $name.")"
+  HELD="$(jq -r .held_by "$R/tmp/slack/status.json")"
+  WARNINGS="$(printf '%s\n' "$ERR" | grep -c '^setting-renamed old=')"
+  EXPECTED_HELD=""; [ "$held" != 1 ] || EXPECTED_HELD=jarvis
+  case "$control" in
+    alias|precedence|status) sk_assert_red "$RC=$POSTS=$HELD" "0=$((1 - held))=$EXPECTED_HELD" "$name: the hold contract rejects the mutant" ;;
+    *) assert_eq "$RC=$POSTS=$HELD" "0=$((1 - held))=$EXPECTED_HELD" "$name: the selected keys set the hold" ;;
+  esac
+  case "$control" in
+    warning) sk_assert_red "$WARNINGS" "$warnings" "$name: the warning contract rejects the mutant" ;;
+    alias|precedence) ;;
+    *) assert_eq "$WARNINGS" "$warnings" "$name: each fallback warns once across both roots" ;;
+  esac
+  if [ "$control" = real ] && [ "$warnings" = 2 ]; then
+    assert_eq "$ERR" 'setting-renamed old=SLACK_MASTER_FILE new=SLACK_JARVIS_SESSION_FILE
+setting-renamed old=SLACK_MASTER_MAX_AGE new=SLACK_JARVIS_SESSION_MAX_AGE' "$name: diagnostics name each replacement key"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+legacy toml absent absent 1 2 real
+private-legacy private absent absent 1 2 real
+new-file toml empty absent 0 1 real
+new-age toml fresh 600 0 0 real
+new-empty-age toml fresh empty 0 0 real
+alias-control toml absent absent 1 2 alias
+precedence-control toml empty absent 0 1 precedence
+warning-control toml absent absent 1 2 warning
+status-control toml absent absent 1 2 status
+ROWS
+
 # Each source is loaded by kendex_load_project_env. Tokens and owners in a
 # served root must not replace the process settings from the launch checkout.
 # Private files permit bare assignments. The export control keeps their shell
@@ -313,33 +375,33 @@ while read -r name source file age caller control posts; do
   sk_poll "$R"
   mkdir -p "$R/.kendex"
   case "$file" in
-    relative) FILE="tmp/master-live"; touch -- "$R/$FILE"; sk_age_file "$R/$FILE" 900 ;;
-    tilde) FILE="~/master-live"; touch -- "$SK_TMP/home/master-live"; sk_age_file "$SK_TMP/home/master-live" 900 ;;
+    relative) FILE="tmp/jarvis-session-live"; touch -- "$R/$FILE"; sk_age_file "$R/$FILE" 900 ;;
+    tilde) FILE="~/jarvis-session-live"; touch -- "$SK_TMP/home/jarvis-session-live"; sk_age_file "$SK_TMP/home/jarvis-session-live" 900 ;;
     absent) FILE="" ;;
-    *) FILE="$MASTER"; fresh; aged 900 ;;
+    *) FILE="$JARVIS_SESSION"; fresh; aged 900 ;;
   esac
   printf '[env]\nSLACK_BOT_TOKEN = "wrong-root-token"\nSLACK_OWNERS = "wrong@example.test"\nSLACK_API_URL = "http://invalid.test"\n' > "$R/kendex.settings.toml"
   case "$source" in
-    local|private|named) printf 'SLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "600"\n' "$FILE" >> "$R/kendex.settings.toml" ;;
+    local|private|named) printf 'SLACK_JARVIS_SESSION_FILE = "%s"\nSLACK_JARVIS_SESSION_MAX_AGE = "600"\n' "$FILE" >> "$R/kendex.settings.toml" ;;
   esac
   case "$source" in
-    local) printf '[env]\nSLACK_MASTER_MAX_AGE = "%s"\n' "$age" > "$R/.kendex/settings.toml" ;;
-    private) printf '[env]\nSLACK_MASTER_MAX_AGE = "600"\n' > "$R/.kendex/settings.toml"; printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/.env.local" ;;
-    named) printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
-    private-only) printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$FILE" "$age" > "$R/.env.local" ;;
-    named-only) printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$FILE" "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
-    private-age) printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/.env.local" ;;
-    named-age) printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
+    local) printf '[env]\nSLACK_JARVIS_SESSION_MAX_AGE = "%s"\n' "$age" > "$R/.kendex/settings.toml" ;;
+    private) printf '[env]\nSLACK_JARVIS_SESSION_MAX_AGE = "600"\n' > "$R/.kendex/settings.toml"; printf 'SLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$age" > "$R/.env.local" ;;
+    named) printf 'SLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
+    private-only) printf 'SLACK_JARVIS_SESSION_FILE=%s\nSLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$FILE" "$age" > "$R/.env.local" ;;
+    named-only) printf 'SLACK_JARVIS_SESSION_FILE=%s\nSLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$FILE" "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
+    private-age) printf 'SLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$age" > "$R/.env.local" ;;
+    named-age) printf 'SLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
   esac
   case "$control" in
-    export) sk_mutant presence-export settings.py 'export (SLACK_MASTER_FILE="\$\{SLACK_MASTER_FILE-\}" SLACK_MASTER_MAX_AGE="\$\{SLACK_MASTER_MAX_AGE-\}")' '\1' ;;
+    export) sk_mutant presence-export settings.py 'export "\$@"' ':' ;;
   esac
   notice "$R" "settings-$name" "Settings notice $name."
   case "$caller" in
-    age) sk_poll "$R" SLACK_MASTER_MAX_AGE=600 ;;
-    file) sk_poll "$R" "SLACK_MASTER_FILE=$SK_TMP/no-master" ;;
-    empty) sk_poll "$R" SLACK_MASTER_FILE= ;;
-    configured-file) sk_poll "$R" "SLACK_MASTER_FILE=$FILE" ;;
+    age) sk_poll "$R" SLACK_JARVIS_SESSION_MAX_AGE=600 ;;
+    file) sk_poll "$R" "SLACK_JARVIS_SESSION_FILE=$SK_TMP/no-jarvis-session" ;;
+    empty) sk_poll "$R" SLACK_JARVIS_SESSION_FILE= ;;
+    configured-file) sk_poll "$R" "SLACK_JARVIS_SESSION_FILE=$FILE" ;;
     *) sk_poll "$R" ;;
   esac
   assert_eq "$RC=$(count "$(sk_channel "$R")" "Settings notice $name.")" "0=$posts" \
@@ -366,11 +428,11 @@ ROWS
 
 R="$(sk_new_root invalid-age)"
 sk_bind "$R"
-printf '[env]\nSLACK_MASTER_MAX_AGE = "invalid"\n' > "$R/kendex.settings.toml"
+printf '[env]\nSLACK_JARVIS_SESSION_MAX_AGE = "invalid"\n' > "$R/kendex.settings.toml"
 sk_run -- listen --once --root "$A" --root "$R"
-assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_MASTER_MAX_AGE=invalid root=$R" \
+assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_JARVIS_SESSION_MAX_AGE=invalid root=$R" \
   "invalid root age refuses at start and names that root even without a file"
-printf '[env]\nSLACK_MASTER_FILE = []\n' > "$R/kendex.settings.toml"
+printf '[env]\nSLACK_JARVIS_SESSION_FILE = []\n' > "$R/kendex.settings.toml"
 sk_run -- listen --once --root "$A" --root "$R"
 assert_eq "$RC" "2" "an unreadable root setting refuses startup instead of disabling its hold"
 assert_has "$ERR1" "slack: setting-invalid=root=$R settings-reader=" "the root settings failure names its root and reader"
@@ -388,12 +450,50 @@ polled_after() { # ROOT LAST_POLL
   bad "running relay did not complete its next poll" "$1"
   return 1
 }
+
+# An installed package update re-executes the relay with its original caller
+# environment. Retired keys keep their hold and warnings across that re-exec.
+while read -r name control; do
+  R="$(sk_new_root "reload-alias-$name")"
+  sk_bind "$R"
+  fresh; aged 900
+  printf '[env]\nSLACK_MASTER_FILE="%s"\nSLACK_MASTER_MAX_AGE="3600"\n' "$JARVIS_SESSION" > "$R/kendex.settings.toml"
+  case "$control" in
+    warning) sk_mutant reload-warnings relay.py 'json.dumps\(sorted\(RENAMED_SETTINGS\)\)' 'json.dumps([])' ;;
+    *) sk_copy reload-alias ;;
+  esac
+  sk_relay_start "$R"
+  PID="$(jq -r .pid "$R/tmp/slack/status.json")"
+  BEFORE_CODE="$(jq -r .code "$R/tmp/slack/status.json")"
+  notice "$R" "reload-alias-$name" "Held across update $name."
+  AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
+  polled_after "$R" "$AFTER" || exit 1
+  printf '\n' >> "${SK_BIN%/*}/lib/relay.py"
+  TRIES=0
+  while [ "$(jq -r .code "$R/tmp/slack/status.json")" = "$BEFORE_CODE" ] && [ "$TRIES" -lt 100 ]; do
+    TRIES=$((TRIES + 1)); sleep 0.1
+  done
+  assert_lacks "$(jq -r .code "$R/tmp/slack/status.json")" "$BEFORE_CODE" "$name: the package update completes its reload"
+  assert_eq "$(jq -r '.pid,.held_by' "$R/tmp/slack/status.json" | tr '\n' '=')$(count "$(sk_channel "$R")" "Held across update $name.")" \
+    "$PID=jarvis=0" "$name: the same process keeps its old-key hold after reload"
+  sk_relay_stop
+  WARNINGS="$(grep -c '^setting-renamed old=' "$SK_TMP/relay.err")"
+  case "$control" in
+    warning) sk_assert_red "$WARNINGS" 2 "$name: repeated warnings after reload fail the process limit" ;;
+    *) assert_eq "$WARNINGS" 2 "$name: reload issues no repeated fallback warnings" ;;
+  esac
+  sk_bin_reset
+done <<'ROWS'
+legacy real
+warning-control warning
+ROWS
+
 live_setting() { # ROOT SOURCE AGE
   case "$2" in
-    toml) printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "%s"\n' "$MASTER" "$3" > "$1/kendex.settings.toml" ;;
-    local) mkdir -p "$1/.kendex"; printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "%s"\n' "$MASTER" "$3" > "$1/.kendex/settings.toml" ;;
-    private) printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$MASTER" "$3" > "$1/.env.local" ;;
-    named) printf '[env]\nKENDEX_ENV_FILE = "private.env"\n' > "$1/kendex.settings.toml"; printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$MASTER" "$3" > "$1/private.env" ;;
+    toml) printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\nSLACK_JARVIS_SESSION_MAX_AGE = "%s"\n' "$JARVIS_SESSION" "$3" > "$1/kendex.settings.toml" ;;
+    local) mkdir -p "$1/.kendex"; printf '[env]\nSLACK_JARVIS_SESSION_FILE = "%s"\nSLACK_JARVIS_SESSION_MAX_AGE = "%s"\n' "$JARVIS_SESSION" "$3" > "$1/.kendex/settings.toml" ;;
+    private) printf 'SLACK_JARVIS_SESSION_FILE=%s\nSLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$JARVIS_SESSION" "$3" > "$1/.env.local" ;;
+    named) printf '[env]\nKENDEX_ENV_FILE = "private.env"\n' > "$1/kendex.settings.toml"; printf 'SLACK_JARVIS_SESSION_FILE=%s\nSLACK_JARVIS_SESSION_MAX_AGE=%s\n' "$JARVIS_SESSION" "$3" > "$1/private.env" ;;
   esac
 }
 while read -r name source caller control; do
@@ -404,7 +504,7 @@ while read -r name source caller control; do
     sk_mutant no-poll-presence relay.py 'presence = load_presence\(self.path\)' 'presence = self.presence'
   fi
   case "$caller" in
-    empty) sk_relay_start "$R" --root "$S" SLACK_MASTER_FILE= ;;
+    empty) sk_relay_start "$R" --root "$S" SLACK_JARVIS_SESSION_FILE= ;;
     *) sk_relay_start "$R" --root "$S" ;;
   esac
   polled_after "$S" 0 || exit 1
@@ -425,26 +525,26 @@ while read -r name source caller control; do
       assert_lacks "$LINE" held-by= "$name: caller's empty export still wins after the file changes"
       assert_eq "$(count "$CHANNEL" "Changed hold $name.")" 1 "$name: caller override permits the notice" ;;
     *:mutant)
-      sk_assert_red "$(field "$LINE" held-by)=$(count "$CHANNEL" "Changed hold $name.")" "master=0" \
+      sk_assert_red "$(field "$LINE" held-by)=$(count "$CHANNEL" "Changed hold $name.")" "jarvis=0" \
         "control: dropping the per-poll read fails the running hold assertion" ;;
     *)
-      assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)=$(count "$CHANNEL" "Changed hold $name.")" "ok=master=0" \
+      assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)=$(count "$CHANNEL" "Changed hold $name.")" "ok=jarvis=0" \
         "$name: the changed setting holds on the next completed poll"
       live_setting "$R" "$source" invalid
       notice "$R" "live-$name-invalid" "Invalid hold $name."
       AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
       polled_after "$R" "$AFTER" || exit 1
       row "$R"
-      assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)=$(count "$CHANNEL" "Invalid hold $name.")" "failing=master=0" \
+      assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)=$(count "$CHANNEL" "Invalid hold $name.")" "failing=jarvis=0" \
         "$name: a refused reading retains the hold and posts nothing"
-      assert_has "$(jq -r .last_error "$R/tmp/slack/status.json")" "setting-invalid=SLACK_MASTER_MAX_AGE=invalid root=$R" \
+      assert_has "$(jq -r .last_error "$R/tmp/slack/status.json")" "setting-invalid=SLACK_JARVIS_SESSION_MAX_AGE=invalid root=$R" \
         "$name: the refused reading names its root"
       row "$S"; assert_eq "$(field "$LINE" state)" ok "$name: a refused reading leaves its peer ok"
       case "$source" in
         toml) rm -- "$R/kendex.settings.toml" ;;
         local) rm -- "$R/.kendex/settings.toml" ;;
-        private) printf 'SLACK_MASTER_FILE=\n' > "$R/.env.local" ;;
-        named) printf 'SLACK_MASTER_FILE=\n' > "$R/private.env" ;;
+        private) printf 'SLACK_JARVIS_SESSION_FILE=\n' > "$R/.env.local" ;;
+        named) printf 'SLACK_JARVIS_SESSION_FILE=\n' > "$R/private.env" ;;
       esac
       AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
       polled_after "$R" "$AFTER" || exit 1
@@ -502,7 +602,7 @@ try:
         for root in listener.roots:
             root.poll("UBOT")
     assert [calls[root] for root in roots] == [1, 1], calls
-    (roots[0] / "kendex.settings.toml").write_text('[env]\nSLACK_MASTER_FILE = "master"\n')
+    (roots[0] / "kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "jarvis"\n')
     for root in listener.roots:
         root.poll("UBOT")
     assert [calls[root] for root in roots] == [2, 1], calls
@@ -553,7 +653,7 @@ held() {
   sk_poll "$1" "$HOLD"
 }
 
-sk_mutant hold relay.py 'if touched is not None and now - touched < self\.presence\.master_max_age:' 'if False:'
+sk_mutant hold relay.py 'if touched is not None and now - touched < self\.presence\.jarvis_session_max_age:' 'if False:'
 BETA="$(sk_new_root beta)"
 held "$BETA"
 assert_eq "$(count "$(sk_channel "$BETA")" 'Held in beta.')" "1" "control: the hold check gone, a notice posts under a fresh file"
@@ -568,8 +668,8 @@ sk_bin_reset
 sk_mutant count relay.py 'envelope\["line"\] <= seen' 'False'
 DELTA="$(sk_new_root delta)"
 fresh
-sk_unposted "$DELTA" "$MASTER"
-sk_master_read "$DELTA" 3
+sk_unposted "$DELTA" "$JARVIS_SESSION"
+sk_jarvis_read "$DELTA" 3
 stale
 sk_poll "$DELTA" "$HOLD"
 assert_eq "$(count "$(sk_channel "$DELTA")" 'Backlog in delta.')" "3" "control: the seen rule gone, all three pre-hold notices replay"
@@ -577,8 +677,8 @@ sk_bin_reset
 
 EPSILON="$(sk_new_root epsilon)"
 fresh
-sk_unposted "$EPSILON" "$MASTER"
-sk_master_read "$EPSILON" 3
+sk_unposted "$EPSILON" "$JARVIS_SESSION"
+sk_jarvis_read "$EPSILON" 3
 stale
 sk_poll "$EPSILON" "$HOLD"
 sk_mutant replay store.py 'self\.carried\.update\(str\(env_id\) for env_id in line\["skipped"\]\)' 'self.carried.update([])'
@@ -600,10 +700,10 @@ sk_bin_reset
 
 ETA="$(sk_new_root eta)"
 fresh
-sk_unposted "$ETA" "$MASTER"
-sk_master_read "$ETA" 3
+sk_unposted "$ETA" "$JARVIS_SESSION"
+sk_jarvis_read "$ETA" 3
 aged 1000000000
-sk_mutant age-stamp relay.py 'at = format_at\(self.clock\(\)\)' 'at = format_at(self.master_touched() + self.presence.master_max_age)'
+sk_mutant age-stamp relay.py 'at = format_at\(self.clock\(\)\)' 'at = format_at(self.jarvis_session_touched() + self.presence.jarvis_session_max_age)'
 sk_poll "$ETA" "$HOLD"
 sk_bin_reset
 sk_run -- compact --root "$ETA"
@@ -614,8 +714,8 @@ assert_eq "$(count "$(sk_channel "$ETA")" 'Backlog in eta.')" "3" "control: an e
 sk_mutant clamp relay.py 'return min\(count, lines\)' 'return count'
 ZETA="$(sk_new_root zeta)"
 fresh
-sk_unposted "$ZETA" "$MASTER"
-sk_master_read "$ZETA" 99
+sk_unposted "$ZETA" "$JARVIS_SESSION"
+sk_jarvis_read "$ZETA" 99
 stale
 sk_poll "$ZETA" "$HOLD"
 assert_eq "$(jq -r 'select(.t == "resume") | .seen' "$(sk_journal "$ZETA")")" "99" "control: without clamping, the resume records a count past its snapshot"
@@ -628,24 +728,24 @@ assert_eq "$(resumed_asks "$PI")" "$PI_ASK" "control: every routed ask journaled
 sk_bin_reset
 
 
-sk_mutant age settings.py '_positive_int\("SLACK_MASTER_MAX_AGE", DEFAULT_MASTER_MAX_AGE, values, root\)' 'DEFAULT_MASTER_MAX_AGE'
+sk_mutant age settings.py '_positive_int\("SLACK_JARVIS_SESSION_MAX_AGE", DEFAULT_JARVIS_SESSION_MAX_AGE, values, root\)' 'DEFAULT_JARVIS_SESSION_MAX_AGE'
 IOTA="$(sk_new_root iota)"
 sk_bind "$IOTA"
 sk_poll "$IOTA" "$HOLD"
 fresh
 aged 900
 notice "$IOTA" ni 'Aged in iota.'
-sk_poll "$IOTA" "$HOLD" SLACK_MASTER_MAX_AGE=3600
-assert_eq "$(count "$(sk_channel "$IOTA")" 'Aged in iota.')" "1" "control: the setting unread, a file inside SLACK_MASTER_MAX_AGE holds nothing"
+sk_poll "$IOTA" "$HOLD" SLACK_JARVIS_SESSION_MAX_AGE=3600
+assert_eq "$(count "$(sk_channel "$IOTA")" 'Aged in iota.')" "1" "control: the setting unread, a file inside SLACK_JARVIS_SESSION_MAX_AGE holds nothing"
 sk_bin_reset
 
-sk_mutant unreadable relay.py 'raise Refusal\("master-file-unreadable", f"\{path\} \(\{err\.strerror\}\)"\) from err' 'return None'
+sk_mutant unreadable relay.py 'raise Refusal\("jarvis-session-file-unreadable", f"\{path\} \(\{err\.strerror\}\)"\) from err' 'return None'
 KAPPA="$(sk_new_root kappa)"
 sk_bind "$KAPPA"
 sk_poll "$KAPPA"
 notice "$KAPPA" nk 'Unreadable in kappa.'
 sk_poll "$KAPPA" "$UNREADABLE"
-assert_eq "$RC=$(count "$(sk_channel "$KAPPA")" 'Unreadable in kappa.')" "0=1" "control: the refusal turned to no master, a notice posts past an unreadable file"
+assert_eq "$RC=$(count "$(sk_channel "$KAPPA")" 'Unreadable in kappa.')" "0=1" "control: the refusal turned to no Jarvis session, a notice posts past an unreadable file"
 sk_bin_reset
 
 sk_mutant status verbs.py 'if record\.get\("held_by"\) else ""' 'if False else ""'

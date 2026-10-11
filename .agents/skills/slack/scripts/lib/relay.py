@@ -55,11 +55,11 @@ line keeps that post from ever repeating.
 
 Each root checks its presence pair at every poll through the settings reader
 when its settings files change. Other settings need slack setup or a restart.
-While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
+While SLACK_JARVIS_SESSION_FILE is younger than SLACK_JARVIS_SESSION_MAX_AGE a Jarvis session
 answers the overseer, and the relay holds mailbox posts except replies to
 messages the owner typed in the channel, which still post in their threads.
 Reading the channel goes on. When the file goes stale or
-absent the relay resumes. The master's watch writes its last mailbox read
+absent the relay resumes. The Jarvis session's watch writes its last mailbox read
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices on lines at or below that count and journals their ids; later
 notices post. A missing or unreadable seen file skips nothing. The count is
@@ -99,7 +99,7 @@ from markup import Verbatim, outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
-from settings import CALLER_ENV, MASTER, Presence, Settings, load_presence
+from settings import CALLER_ENV, JARVIS_SESSION, RENAMED_SETTINGS, Presence, Settings, load_presence
 from store import (
     READ,
     SEEN,
@@ -323,8 +323,8 @@ class RootRelay:
             self.presence = presence
             self.presence_files = stamp[:2] + self.presence_stamp((presence.private_file,)) if changed_private else stamp
         now = self.clock()
-        touched = self.master_touched()
-        if touched is not None and now - touched < self.presence.master_max_age:
+        touched = self.jarvis_session_touched()
+        if touched is not None and now - touched < self.presence.jarvis_session_max_age:
             if not self.state.held:
                 self.journal.append(t="hold", at=format_at(touched))
             self.post_events([routed for routed in self.routes(self.mail.events()) if routed[1] == "reply"])
@@ -588,10 +588,10 @@ class RootRelay:
 
     # -- outbound: the mailbox to Slack --------------------------------------
 
-    def master_touched(self) -> Optional[float]:
-        """SLACK_MASTER_FILE's mtime; None for an empty setting or an absent
-        file, which is no master."""
-        path = self.presence.master_file
+    def jarvis_session_touched(self) -> Optional[float]:
+        """SLACK_JARVIS_SESSION_FILE's mtime; None for an empty setting or an absent
+        file, which is no Jarvis session."""
+        path = self.presence.jarvis_session_file
         if not path:
             return None
         try:
@@ -599,10 +599,10 @@ class RootRelay:
         except FileNotFoundError:
             return None
         except OSError as err:
-            raise Refusal("master-file-unreadable", f"{path} ({err.strerror})") from err
+            raise Refusal("jarvis-session-file-unreadable", f"{path} ({err.strerror})") from err
 
-    def master_read(self, events: List[Dict]) -> Optional[int]:
-        """The master's seen line count, clamped to this mailbox snapshot;
+    def jarvis_session_read(self, events: List[Dict]) -> Optional[int]:
+        """The Jarvis session's seen line count, clamped to this mailbox snapshot;
         None when absent, unreadable or not a bare nonnegative integer."""
         path = self.path / "tmp/lane-mail/overseer/to-overseer.seen"
         try:
@@ -621,7 +621,7 @@ class RootRelay:
     def resume(self, events: List[Dict]) -> None:
         """End a hold, post unread notices and open asks, then journal the
         seen count, skipped notice ids and asks whose posts landed."""
-        seen = self.master_read(events)
+        seen = self.jarvis_session_read(events)
         routed = self.routes(events, seen or 0)
         skipped = [str(envelope["id"]) for envelope, route, _ in routed if route == "seen"]
         asks: List[str] = []
@@ -640,7 +640,7 @@ class RootRelay:
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
-        `answer`, `resolution`, `seen` for a notice the master read on resume,
+        `answer`, `resolution`, `seen` for a notice the Jarvis session read on resume,
         `overdue` for a carried reserved ask open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record."""
         closures = {str(e["id"]): e for e in events
@@ -917,7 +917,7 @@ class RootRelay:
                 "connection": connection,
                 "connection_since": since,
                 "connection_error": connection_error,
-                "held_by": MASTER if self.state.held else "",
+                "held_by": JARVIS_SESSION if self.state.held else "",
 
             },
         )
@@ -1045,7 +1045,9 @@ class Relay:
         notice("reloading", f"{self.reading} running={self.code}")
         sys.stderr.flush()
         try:
-            os.execve(str(LAUNCHER), [str(LAUNCHER), *sys.argv[1:]], CALLER_ENV)
+            os.execve(str(LAUNCHER), [str(LAUNCHER), *sys.argv[1:]], {
+                **CALLER_ENV, "_KENDEX_SLACK_RENAMED_SETTINGS": json.dumps(sorted(RENAMED_SETTINGS)),
+            })
         except OSError as err:
             raise Refusal("reexec-failed", f"{LAUNCHER} ({err.strerror})") from err
 
