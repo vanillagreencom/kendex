@@ -30,6 +30,14 @@ pub fn clone_url(env: &Env, repo: &str) -> String {
     }
 }
 
+fn effective_rev<'a>(env: &'a Env, repo: &str, rev: Option<&'a str>) -> Option<&'a str> {
+    rev.or_else(|| {
+        (repo == crate::manifest::DEFAULT_SOURCE_REPO)
+            .then(|| env.var("KENDEX_CATALOG_REV"))
+            .flatten()
+    })
+}
+
 /// One repository declaration, answered: the commit it names right now and
 /// the directory holding that commit's content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +129,7 @@ impl Synced {
 /// selector whose fetch fails degrades to a warning and the cached commit,
 /// so an offline session keeps working.
 pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
+    let rev = effective_rev(env, repo, rev);
     let url = clone_url(env, repo);
     let key = cache_key(env, repo);
     let mirror = store::mirror_dir(env, &key);
@@ -229,6 +238,7 @@ pub(crate) fn cached_or_sync(env: &Env, repo: &str, rev: Option<&str>) -> Result
 /// walk over a checkout. `None` is a mirror that cannot answer, a pin it
 /// does not hold included.
 pub fn mirror_commit(env: &Env, repo: &str, rev: Option<&str>) -> Option<String> {
+    let rev = effective_rev(env, repo, rev);
     let mirror = store::mirror_dir(env, &cache_key(env, repo));
     let commit = named_commit(&mirror, rev)?;
     // A resolved ref is a commit the mirror holds; a pin is taken on its
@@ -250,6 +260,7 @@ fn named_commit(mirror: &std::path::Path, rev: Option<&str>) -> Option<String> {
 }
 
 fn cached_strict(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolution>> {
+    let rev = effective_rev(env, repo, rev);
     let key = cache_key(env, repo);
     let mirror = store::mirror_dir(env, &key);
     if let Some(commit) = named_commit(&mirror, rev) {
@@ -428,10 +439,7 @@ pub fn sync_source(env: &Env, name: &str, decl: &SourceDecl) -> Result<Synced> {
 /// on purpose: no checkout is verified and nothing is materialized.
 pub fn cache_head(env: &Env, repo: &str, rev: Option<&str>) -> Option<String> {
     let key = cache_key(env, repo);
-    let commit = match rev.filter(|rev| store::is_pin(rev)) {
-        Some(pin) => pin.to_owned(),
-        None => store::resolve_ref(&store::mirror_dir(env, &key), rev.unwrap_or("HEAD"))?,
-    };
+    let commit = named_commit(&store::mirror_dir(env, &key), effective_rev(env, repo, rev))?;
     Some(commit.chars().take(7).collect())
 }
 

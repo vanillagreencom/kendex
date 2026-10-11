@@ -15,7 +15,7 @@ const APP_DIR: &str = "kendex";
 
 /// Process env vars kendex reads: the ones that relocate a harness root,
 /// and the ones that tune how it behaves.
-const HARNESS_VARS: [&str; 10] = [
+const HARNESS_VARS: [&str; 11] = [
     "CODEX_HOME",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
@@ -28,6 +28,8 @@ const HARNESS_VARS: [&str; 10] = [
     // Rebases `owner/repo` source shorthands onto another git host —
     // release smokes and tests point it at a file:// fixture tree.
     "KENDEX_GIT_BASE",
+    // Selects the default catalog's revision for this invocation only.
+    "KENDEX_CATALOG_REV",
     // How many of one repository's newest snapshots the source cache
     // keeps (`remote::store::KEEP_VAR`).
     "KENDEX_SOURCE_CACHE_KEEP",
@@ -512,6 +514,33 @@ const HOST_OS: FakeOs = if cfg!(target_os = "macos") {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn detect_reads_the_catalog_revision_from_the_process() {
+        const PROOF: &str = "KENDEX_TEST_CATALOG_REV_PROOF";
+        if let Some(proof) = std::env::var_os(PROOF) {
+            let env = Env::detect().unwrap();
+            assert_eq!(env.var("KENDEX_CATALOG_REV"), Some("vN"));
+            std::fs::write(proof, "verified").unwrap();
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let proof = home.join("catalog-revision-proof");
+        let mut environment = crate::test_util::fixture_env(&home).to_vec();
+        environment.push(("KENDEX_CATALOG_REV", "vN".into()));
+        environment.push((PROOF, proof.as_os_str().to_owned()));
+        let output = crate::test_util::reexecute_test(
+            module_path!(),
+            "detect_reads_the_catalog_revision_from_the_process",
+            &environment,
+        )
+        .unwrap();
+        assert!(output.status.success(), "child environment check failed");
+        assert_eq!(std::fs::read_to_string(proof).unwrap(), "verified");
+    }
 
     /// The hatch permits writes to a real machine, so only the documented
     /// value spends it — a `0` or a typo reads as nobody's consent.

@@ -159,6 +159,7 @@ SH
 cat >"$TMP/bin/kendex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s|%s\n' "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/catalog-revs"
 # The runner calls the render verb under env -i, so it reads no test
 # setting; a row drives it through the state. render-exit and render-said are the verb's
 # exit and output where a row sets them; otherwise, like kendex, it runs the
@@ -301,7 +302,7 @@ file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
 file_edit "$TMP/bin" gh 1 '@STATE@' "s|@STATE@|$TMP/state|"
 file_edit "$TMP/bin" gh 1 '@FIXTURES@' "s|@FIXTURES@|$FIXTURES|"
 file_edit "$TMP/bin" gh 1 '@GH_SHIM@' "s|@GH_SHIM@|$TMP/standard-gh|"
-file_edit "$TMP/bin" kendex 5 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 6 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -400,6 +401,52 @@ runner="$repo/refresh/refresh-consumer.sh"
 git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
+
+# The shared workflow produces the release tag. An absent tag must stop
+# before the first engine call, or this run would render the default branch.
+mkdir -p "$TMP/catalog-control"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/catalog-control/"
+python3 - "$TMP/catalog-control/refresh/refresh-consumer.sh" <<'CATALOG_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+line = ': "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the installed release tag}"'
+assert s.count(line) == 1
+changed = s.replace(line, ': # ' + line)
+assert changed != s
+p.write_text(changed)
+CATALOG_CONTROL
+catalog_runner="$runner"
+while IFS='|' read -r name revision mutant expected; do
+  reset_default
+  : >"$TMP/state/catalog-revs"
+  : >"$TMP/state/kendex"
+  runner="$catalog_runner"
+  if [ "$mutant" = yes ]; then runner="$TMP/catalog-control/refresh/refresh-consumer.sh"; fi
+  CATALOG_REV="$revision"
+  run_refresh current pass render
+  unset CATALOG_REV
+  case "$expected" in
+    release)
+      if [ "$RC" -eq 0 ] && grep -qxF 'refresh --scope project --yes --leave|v1.7.0' "$TMP/state/catalog-revs"; then
+        ok "$name"
+      else bad "$name" "$OUT"; fi ;;
+    absent)
+      if [ "$RC" -ne 0 ] && [ ! -s "$TMP/state/catalog-revs" ]; then ok "$name"
+      else bad "$name" "$OUT"; fi ;;
+    control)
+      if [ "$RC" -eq 0 ] && grep -qxF 'refresh --scope project --yes --leave|unset' "$TMP/state/catalog-revs"; then
+        ok "$name"
+      else bad "$name" "$OUT"; fi ;;
+  esac
+done <<'CATALOG_ROWS'
+refresh passes the installed release tag to kendex|v1.7.0|no|release
+an absent catalog revision stops before any kendex call||no|absent
+control: dropping the revision requirement runs refresh without its tag||yes|control
+CATALOG_ROWS
+runner="$catalog_runner"
+reset_default
 
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
