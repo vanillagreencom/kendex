@@ -2,14 +2,13 @@
 # Surface: command-position selection and data masking.
 # Inputs: skills/commit-guards/scripts/lib/command-position.sh.
 set -euo pipefail
-ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd)"
+TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=lib/harness.bash
+. "$TEST_DIR/lib/harness.bash"
+ROOT="${TEST_DIR%/*}"
 READER="${READER_UNDER_TEST:-$ROOT/scripts/lib/command-position.sh}"
 # shellcheck source=../scripts/lib/command-position.sh
 source "$READER"
-TMP_ROOT="$(mktemp -d)" || { echo 'command-position.test: scratch=mktemp-failed' >&2; exit 1; }
-[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'command-position.test: scratch=not-a-directory' >&2; exit 1; }
-TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'command-position.test: scratch=resolve-failed' >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 failed=0
 while IFS='|' read -r label expected mode encoded; do
   printf -v command '%b' "$encoded"
@@ -76,7 +75,7 @@ pipeline brace receiver|tar|pipes|tar -cf - repo/.git | { cd /tmp/x; tar -xf -; 
 ROWS
 if [ -z "${READER_UNDER_TEST:-}" ]; then
   while IFS='|' read -r defect row; do
-    mutant="$TMP_ROOT/$defect.sh"
+    mutant="$TMP/$defect.sh"
     awk -v defect="$defect" '
       /^    COMMAND_TEXTS=\$rest\$NL/ && defect == "arguments" {
         print; print "    COMMAND_TEXTS=$COMMAND_TEXTS${rest#*[[:space:]]}$NL"; changed++; next
@@ -109,10 +108,10 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
     ' "$READER" >"$mutant" || exit 1
     cmp -s -- "$READER" "$mutant" && exit 1
     rc=0
-    env -i HOME="$HOME" PATH="$PATH" READER_UNDER_TEST="$mutant" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/$defect.log" 2>&1 || rc=$?
-    if [ "$rc" = 1 ] && grep -Fq "FAIL $row:" "$TMP_ROOT/$defect.log"; then
+    env -i HOME="$HOME" PATH="$PATH" READER_UNDER_TEST="$mutant" "$BASH" "${BASH_SOURCE[0]}" >"$TMP/$defect.log" 2>&1 || rc=$?
+    if [ "$rc" = 1 ] && grep -Fq "FAIL $row:" "$TMP/$defect.log"; then
       printf 'PASS control %s\n' "$defect"
-    else cat "$TMP_ROOT/$defect.log"; failed=$((failed + 1)); fi
+    else cat "$TMP/$defect.log"; failed=$((failed + 1)); fi
   done <<'CONTROLS'
 arguments|ordinary argument
 heredoc-owner|prefixed shell heredoc
