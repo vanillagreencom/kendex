@@ -1545,7 +1545,7 @@ case "$1:$2" in
     shift 3
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --description-file) jq --rawfile body "$2" '.description = $body' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
+        --description) jq --arg body "$2" '.description = $body' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
         --labels) jq --arg labels "$2" '.labels = ($labels | split(","))' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
         --assignee) jq --slurpfile user "$TRACKER_CASE_DIR/user" '.assignee = $user[0][0].name' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
         --clear-assignee) jq '.assignee = ""' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift ;;
@@ -1696,7 +1696,7 @@ tracker_case() { # ROW WATCH
     mv -- "$STUB_DIR/aged-answers" "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
   fi
   tracker_pass "$watch"
-  [[ "$row" != restored ]] || assert_eq "$(jq -s '[.[] | select(index("--description-file") and (index("--labels") | not) and (index("--clear-assignee") | not))] | length' "$STUB_DIR/calls")" 1 'long pass restores the line once'
+  [[ "$row" != restored ]] || assert_eq "$(jq -s '[.[] | select(index("--description") and (index("--labels") | not) and (index("--clear-assignee") | not))] | length' "$STUB_DIR/calls")" 1 'long pass restores the line once'
   second="$(tracker_answer_count "$id")"
   second=$((second - first))
   after="$(wc -l <"$STUB_DIR/calls" | tr -d ' ')"
@@ -1753,7 +1753,7 @@ assert_eq "$TRACKER_ROWS" "$(awk 'END {print NR}' <<<"$TRACKER_CASES")" 'all tra
 NORMAL_TRACKER_MAIL="$TRACKER_MAIL"
 ACTION_MAIL="$(mutant_scripts tracker-action/orch lib/mailbox-append.sh)/lane-mail"
 ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-action/linear"
-mutate_file "${ACTION_MAIL%/*}/lib/mailbox-append.sh" '--labels "$labels" --description-file "$work/tracker-description"' '--labels "$labels"'
+mutate_file "${ACTION_MAIL%/*}/lib/mailbox-append.sh" '--labels "$labels" --description "$description"' '--labels "$labels"'
 TRACKER_MAIL="$ACTION_MAIL"
 tracker_case action-mutant "$REPO_ROOT/skills/orch/scripts/oversee-watch"
 assert_eq "$ACTION_CORRECT" false 'control: skipping the description write fails the first-row contract'

@@ -191,6 +191,8 @@ owner_tracker_unwritten() { # ISSUE CAUSE
 }
 
 # One description format serves the ask, its close and the watch's existing read.
+# The Linear file reader trims trailing newlines. Use --description and keep
+# a sentinel during shell capture so the existing body retains those bytes.
 OWNER_ACTION_JQ='def owner_action_body:
   sub("^\\*\\*[^*\\r\\n]+, what you do:\\*\\*[^\\r\\n]*(\\r?\\n\\r?\\n)?"; "");
 def owner_action_line($name; $action):
@@ -204,7 +206,7 @@ owner_tracker_labels() { # ITEM JSON ADD|REMOVE
 }
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
-  local tracker="$1" envelope="$2" work="$3" issue labels current owner
+  local tracker="$1" envelope="$2" work="$3" issue labels current owner description
   OWNER_TRACKER_POSTED=0
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
   owner="$("$tracker" users list --max --format=safe 2>"$work/tracker.err" | jq -ce --arg email "$OWNER_TRACKER_EMAIL" '
@@ -219,9 +221,10 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
     owner_tracker_unwritten "$issue" labels-read; return 0;
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
-  jq -j --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
-    (.description // "") | owner_action_line($owner.name; $ask.do)' <<<"$current" >"$work/tracker-description" || return 1
-  "$tracker" issues update "$issue" --labels "$labels" --description-file "$work/tracker-description" >"$work/tracker.out" 2>"$work/tracker.err" || {
+  description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
+    (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
+  description="${description%.}"
+  "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
     owner_tracker_unwritten "$issue" label; return 0;
   }
   jq -r '.text, "", ("Options: " + (.options | join(", "))),
@@ -238,7 +241,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
 }
 
 owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
-  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current
+  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description
   issue="$(jq -r '.issue // empty' <<<"$ask")" || return 1
   [[ -n "$issue" ]] || return 0
   # The close guard supplies the ruling from the owner's last answer or the
@@ -255,9 +258,10 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
     owner_tracker_unwritten "$issue" labels-read; return 0;
   }
   labels="$(owner_tracker_labels "$current" REMOVE)" || return 1
-  jq -j "$OWNER_ACTION_JQ"' (.description // "") | owner_action_body' <<<"$current" >"$work/tracker-description" || return 1
+  description="$(jq -r "$OWNER_ACTION_JQ"' (.description // "") | owner_action_body + "."' <<<"$current")" || return 1
+  description="${description%.}"
   local label_args=(--clear-labels)
   [[ -z "$labels" ]] || label_args=(--labels "$labels")
-  "$tracker" issues update "$issue" "${label_args[@]}" --clear-assignee --description-file "$work/tracker-description" >"$work/tracker.out" 2>"$work/tracker.err" ||
+  "$tracker" issues update "$issue" "${label_args[@]}" --clear-assignee --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" ||
     owner_tracker_unwritten "$issue" close-update
 }
