@@ -1,0 +1,1 @@
+- Consumer refresh merges its published head directly when the base branch has no rules or protection, so GitHub's auto-merge refusal no longer fails the run.

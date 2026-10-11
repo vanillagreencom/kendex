@@ -59,6 +59,16 @@ shown_head() {
 }
 case "$*" in
   'api repos/acme/test --jq .default_branch') printf 'main\n' ;;
+  'api repos/acme/test/rules/branches/main')
+    if [ -f "$TEST_STATE/branch-rules" ]; then
+      [ "$(cat "$TEST_STATE/branch-rules")" != fail ] || exit 87
+      cat "$TEST_STATE/branch-rules"
+    else printf '[{"type":"required_status_checks"}]\n'; fi ;;
+  'api repos/acme/test/branches/main --jq .protected')
+    if [ -f "$TEST_STATE/branch-protected" ]; then
+      [ "$(cat "$TEST_STATE/branch-protected")" != fail ] || exit 87
+      cat "$TEST_STATE/branch-protected"
+    else printf 'false\n'; fi ;;
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
@@ -135,6 +145,7 @@ case "$*" in
       *)
         head="$(shown_head)"
         case " $* " in *" --match-head-commit $head "*) ;; *) exit 1 ;; esac
+        [ "${TEST_ARM_MODE:-armed}" != merge-refused ] || exit 74
         arm_state=MERGED
         if [ "${TEST_ARM_MODE:-armed}" = clean-open ]; then arm_state=OPEN
         else : >"$TEST_STATE/merged"; fi
@@ -425,6 +436,14 @@ arm_helper="${runner%/*}/../skills/review-gate/scripts/lib/arm-published-head.sh
 cp "$arm_helper" "$TMP/arm-helper"
 printf '%s\n' "$second" >"$TMP/state/old-head"
 for row in \
+  'unprotected|matched|armed|pass|0|direct|1|skip-rules|empty|false' \
+  'unprotected-delayed|delayed|armed|pass|0|direct|2||empty|false' \
+  'unprotected-unseen|never|armed|pass|0|unseen|5||empty|false' \
+  'ruled|matched|armed|pass|0|armed|1|ignore-rules|rule|false' \
+  'protected|matched|armed|pass|0|armed|1|ignore-protection|empty|true' \
+  'rules-read|matched|armed|pass|0|armed|1|ignore-rules|fail|false' \
+  'protection-read|matched|armed|pass|0|armed|1|ignore-protection|empty|fail' \
+  'merge-refused|matched|merge-refused|pass|74|merge-failed|1||empty|false' \
   'delayed|delayed|armed|pass|0|armed|2|direct no-pauses' \
   'never|never|armed|pass|0|unseen|5|direct no-pauses' \
   'head-read|failed|armed|pass|1|read-failed|0|direct' \
@@ -441,7 +460,13 @@ for row in \
   'arm-query|matched|armed|fail|1|query|1|' \
   'arm-partial|matched|armed|partial|1|output|1|' \
   'arm-malformed|matched|armed|malformed|1|output|1|'; do
-  IFS='|' read -r name HEAD_MODE ARM_MODE ARM_QUERY expected outcome reads control <<<"$row"
+  IFS='|' read -r name HEAD_MODE ARM_MODE ARM_QUERY expected outcome reads control rules protected <<<"$row"
+  case "${rules:-rule}" in
+    empty) printf '[]\n' >"$TMP/state/branch-rules" ;;
+    fail) printf 'fail\n' >"$TMP/state/branch-rules" ;;
+    rule) printf '[{"type":"required_status_checks"}]\n' >"$TMP/state/branch-rules" ;;
+  esac
+  printf '%s\n' "${protected:-false}" >"$TMP/state/branch-protected"
   for mutation in none $control; do
     reset_default
     cp "$TMP/arm-runner" "$runner"
@@ -465,13 +490,13 @@ import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 if sys.argv[2] == 'old-helper':
-    start = s.index('      if gh pr merge ')
-    end = s.index('      return "$arm_status"', start) + len('      return "$arm_status"')
+    start = s.index('      if [ "$route" = direct ]; then')
+    end = s.index('      return $?', start) + len('      return $?')
     old = s[start:end]
     new = '      gh pr merge "$number" --repo "$repository" --auto "--$method" --match-head-commit "$revision"\n      return $?'
 else:
-    old = 'if merge_state="$(gh pr view "$number" --repo "$repository" --json mergeStateStatus --jq .mergeStateStatus)" &&\n          [ "$merge_state" = CLEAN ]; then'
-    new = old.split(' &&')[0][3:] + ' || :\n      if :; then'
+    old = 'if ! merge_state="$(gh pr view "$number" --repo "$repository" --json mergeStateStatus --jq .mergeStateStatus)" ||\n            [ "$merge_state" != CLEAN ]; then'
+    new = old.split(' ||')[0][4:] + ' || :\n        if false; then # ' + old.replace('\n', '\n# ')
 assert s.count(old) == 1
 changed = s.replace(old, new)
 assert changed != s
@@ -488,8 +513,30 @@ if sys.argv[2] == 'direct':
     end = s.index("printf 'refresh-state=%s pr=%s class=%s")
     old = s[start:end]
     new = 'gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"\n'
+elif sys.argv[2] == 'skip-rules':
+    old = 'if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&'
+    new = 'if false && # ' + old
+elif sys.argv[2] in ('ignore-rules', 'ignore-protection'):
+    old = '''if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&
+    branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" &&
+    [ "$branch_protected" = false ] &&
+    jq -e 'type == "array" and length == 0' <<<"$branch_rules" >/dev/null; then'''
+    if sys.argv[2] == 'ignore-rules':
+        new = old.replace(
+            'if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&',
+            'if { branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" || :; } &&',
+        ).replace(
+            'jq -e \'type == "array" and length == 0\' <<<"$branch_rules" >/dev/null; then',
+            ':; then',
+        )
+    else:
+        new = old.replace(
+            'branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" &&',
+            '{ branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" || :; } &&',
+        ).replace('[ "$branch_protected" = false ] &&', ': &&')
+    new = '# ' + old.replace('\n', '\n# ') + '\n' + new
 else:
-    old = '  exit "$arm_status"'
+    old = '  exit "$arm_status"\nfi'
     new = '  exit 0 # ' + old.strip()
 assert s.count(old) == 1
 changed = s.replace(old, new)
@@ -502,7 +549,22 @@ ARM_CONTROL
     : >"$TMP/state/calls"
     run_refresh "arm-$name-$mutation" pass render
     arm_matches=false
-    if refresh_arm_matches "$expected" "$outcome" "$reads"; then arm_matches=true; fi
+    if [ "$outcome" = direct ] || [ "$outcome" = merge-failed ]; then
+      head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+      if [ "$RC" -eq "$expected" ] && [ "$(cat "$TMP/state/head-reads")" -eq "$reads" ] &&
+          grep -qxF "pr merge 1 --repo acme/test --squash --match-head-commit $head" "$TMP/state/calls" &&
+          ! grep -qF -- '--auto' "$TMP/state/calls" &&
+          ! grep -qF -- '--json mergeStateStatus' "$TMP/state/calls" &&
+          awk '/^pr view .*--json headRefOid / { seen++ } /^pr merge / { if (!seen) exit 1; merges++ } END { if (merges != 1) exit 1 }' "$TMP/state/calls"; then
+        case "$outcome" in
+          direct)
+            if [ -f "$TMP/state/merged" ] && grep -qxF 'refresh-state=merged pr=1 class=render' <<<"$OUT"; then arm_matches=true; fi ;;
+          merge-failed)
+            if [ ! -f "$TMP/state/merged" ] && ! grep -q '^refresh-state=' <<<"$OUT" &&
+                grep -qxF "refresh-error=merge pr=1 pushed=$head value=$expected" <<<"$OUT"; then arm_matches=true; fi ;;
+        esac
+      fi
+    elif refresh_arm_matches "$expected" "$outcome" "$reads"; then arm_matches=true; fi
     case "$name" in
       clean | clean-open | blocked | merge-state-read)
         head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
@@ -534,6 +596,19 @@ ARM_CONTROL
           ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
         ok "control: $name without pauses turns the arm assertion red"
       else bad "$name pause control" "$OUT"; fi
+    elif [ "$mutation" = skip-rules ]; then
+      if [ "$RC" -eq 0 ] && [ "$arm_matches" = false ] && [ -f "$TMP/state/armed" ] &&
+          ! grep -qxF 'api repos/acme/test/rules/branches/main' "$TMP/state/calls"; then
+        ok 'control: skipping the rules read turns the unprotected merge assertion red'
+      else bad "$name skipped rules control" "$OUT"; fi
+    elif [ "$mutation" = ignore-rules ] || [ "$mutation" = ignore-protection ]; then
+      head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+      if [ "$RC" -eq 0 ] && [ "$arm_matches" = false ] && [ -f "$TMP/state/merged" ] &&
+          grep -qxF 'refresh-state=merged pr=1 class=render' <<<"$OUT" &&
+          grep -qxF "pr merge 1 --repo acme/test --squash --match-head-commit $head" "$TMP/state/calls" &&
+          ! grep -qF -- '--auto' "$TMP/state/calls"; then
+        ok "control: $name $mutation directly merges and turns the refusal assertion red"
+      else bad "$name $mutation refusal control" "$OUT"; fi
     elif [ "$name" = delayed ] || [ "$name" = never ]; then
       if [ "$RC" -eq 1 ] && grep -qF 'expected head oid does not match' <<<"$OUT" &&
           ! refresh_arm_matches "$expected" "$outcome" "$reads"; then
@@ -545,6 +620,7 @@ ARM_CONTROL
   done
 done
 unset HEAD_MODE ARM_MODE ARM_QUERY
+rm -f -- "$TMP/state/branch-rules" "$TMP/state/branch-protected"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 cp "$TMP/arm-helper" "$arm_helper"
@@ -1134,7 +1210,7 @@ p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 mutations = {
  'measured': ('[[ "$class_line" != "class: class=$class measured=true "* ]]', '[[ " $class_line " != *\' measured=true \'* ]]'),
- 'disable': ('rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?', 'if [ "$class" = render ]; then\n  rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?\nelse\n  RG_ARM_RESULT=matched; RG_ARM_SEEN="$head"\n  gh pr merge "$pr" --repo "$GH_REPO" --disable-auto\nfi'),
+ 'disable': ('rg_arm_published_head "$GH_REPO" "$pr" "$head" squash "$merge_route" || arm_status=$?', 'if [ "$class" = render ]; then\n  rg_arm_published_head "$GH_REPO" "$pr" "$head" squash "$merge_route" || arm_status=$?\nelse\n  RG_ARM_RESULT=matched; RG_ARM_SEEN="$head"\n  gh pr merge "$pr" --repo "$GH_REPO" --disable-auto\nfi'),
 }
 old, new = mutations[sys.argv[2]]
 assert s.count(old) == 1

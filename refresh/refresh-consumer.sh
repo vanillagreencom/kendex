@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Runs with the consumer's default-branch checkout as the working directory,
 # from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
-# checkout and never executes the remote rolling branch. It requests auto-merge
-# after GitHub shows the published head. SKILL.md defines the arm outcomes.
+# checkout and never executes the remote rolling branch. After GitHub shows the
+# published head, it merges directly where the base has no rules or protection,
+# or requests auto-merge. SKILL.md defines the arm outcomes.
 # Output records: refresh-state=current pr=none class=none, or
-# refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
+# refresh-state=unchanged|pushed|merged pr=NUMBER class=CLASS, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
 # whose render did not run also gets
@@ -400,7 +401,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] ||
   exit 1
 fi
 report_settings
-merge_note='The refresh workflow waits for GitHub to show the published head before requesting auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
+merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
@@ -447,15 +448,32 @@ if [ -z "$pr" ]; then
 else
   gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" >/dev/null
 fi
+merge_route=auto
+# The completed render proof permits a direct merge only when GitHub confirms
+# that the base requires nothing else. Unreadable evidence keeps the arm route.
+if branch_rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" &&
+    branch_protected="$(gh api "repos/$GH_REPO/branches/$default" --jq .protected)" &&
+    [ "$branch_protected" = false ] &&
+    jq -e 'type == "array" and length == 0' <<<"$branch_rules" >/dev/null; then
+  merge_route=direct
+fi
 arm_status=0
-rg_arm_published_head "$GH_REPO" "$pr" "$head" squash || arm_status=$?
+rg_arm_published_head "$GH_REPO" "$pr" "$head" squash "$merge_route" || arm_status=$?
 if [ "$arm_status" -ne 0 ]; then
+  if [ "$RG_ARM_RESULT" = merged ]; then
+    printf 'refresh-error=merge pr=%s pushed=%s value=%s\n' "$pr" "$head" "$arm_status" >&2
+    exit "$arm_status"
+  fi
   printf 'refresh-error=arm pr=%s pushed=%s head=%s value=%s\n' "$pr" "$head" "$RG_ARM_SEEN" "$arm_status" >&2
   exit "$arm_status"
 fi
 if [ "$RG_ARM_RESULT" = unmatched ]; then
   printf 'refresh-state=unarmed pr=%s pushed=%s head=%s\n' "$pr" "$head" "$RG_ARM_SEEN"
   printf '::warning title=refresh unarmed::pull request %s left unarmed: GitHub showed %s, pushed %s\n' "$pr" "$RG_ARM_SEEN" "$head"
+  exit 0
+fi
+if [ "$RG_ARM_RESULT" = merged ]; then
+  printf 'refresh-state=merged pr=%s class=%s\n' "$pr" "$class"
   exit 0
 fi
 # gh can succeed on a merge-queue repository without enabling auto-merge.
