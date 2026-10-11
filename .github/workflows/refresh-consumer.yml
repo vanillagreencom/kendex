@@ -8,7 +8,8 @@
 # commit, the one job.workflow_sha names. The run installs the one stable
 # vN.Y.Z release tagged on that commit, where vN is the tag the caller named,
 # and stops before any install when the commit carries no such tag or more
-# than one. It renders the catalog at that release tag. Every step runs its
+# than one. It renders the default catalog at that release tag when the source
+# has no declared rev. A declared rev takes precedence. Every step runs its
 # scripts from that checkout. The consumer code
 # a run executes is the settings report in refresh-consumer.sh, which sources
 # the consumer's refreshed orch libraries, and the refreshed bot-instructions
