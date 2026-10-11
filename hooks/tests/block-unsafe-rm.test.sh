@@ -18,6 +18,7 @@ TMP_ROOT="$(mktemp -d)" || { echo 'block-unsafe-rm: scratch=mktemp-failed' >&2; 
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'block-unsafe-rm: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'block-unsafe-rm: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
 
@@ -58,6 +59,7 @@ run_payload() { # raw-json -> rc, stderr in ERR_FILE
 
 # The hook's dependency list, in the order it checks them: the shared table
 # pins it as the value of the world that has none of them.
+PAYLOAD_ADVISORY=1
 PAYLOAD_TOOLS=jq,cat
 
 # shellcheck source=lib/payload-rows.sh
@@ -172,12 +174,6 @@ skill_load_control redirection-crossing "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${
 skill_load_control redirection-target "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"' \
   'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT})*"' HOOK redirection_rows \
   'redirection output spaced safe target'
-skill_load_control redirection-boundary "$HOOK" "ENDERS='&;|'" \
-  "ENDERS='' #" HOOK redirection_rows 'redirection semicolon boundary' \
-  'redirection and boundary' 'redirection or boundary' 'redirection pipe boundary'
-skill_load_control redirection-newline "$HOOK" 'GAP="[${BLANK}]"' \
-  'GAP="[${SPACE_ANY}]"' HOOK redirection_rows \
-  'redirection newline boundary'
 first_table 'unset and empty roots match no literal|payload|0|-|{"command":"rm -rf /home/method/dev/.scratch/agents /shared/tmp /shared/te(mp).+ /shared/agent /shared/home"}'
 PAYLOAD_HOME=/
 first_table 'filesystem root direct glob|payload|2|block-unsafe-rm: refused=shared-root|{"command":"rm -rf /tmp.*"}
@@ -261,7 +257,7 @@ first_table "\
 the refused shape is the value|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf \$CACHE/\$KEY
 a variable root before flags reaches the same value|command|2|block-unsafe-rm: refused=recursive-rm|rm \$DIR/sub -rf
 an operand that cannot collapse says nothing|command|0|-|rm -rf -- \"\${P:?}/save\"
-a payload that is not JSON is refused unread|payload|2|block-unsafe-rm: payload=invalid-json|not JSON
+a payload that is not JSON is refused unread|payload|0|block-unsafe-rm: payload=invalid-json|not JSON
 "
 run_hook 'rm -rf $CACHE/$KEY'
 assert_contains "$ERR_FILE" 'rm -- "${NAME:?}/file"' 'the guarded rewrite adds no delete flags'
@@ -272,5 +268,16 @@ payload_table "$HOOK" 'rm -rf $X/sub' 'rm -rf -- "${X:?}/sub"'
 
 run_hook 'rm "-rf" "$X/sub"';         assert_eq "$rc" 2 'a quoted flag does not hide a variable root'
 
+# The shared reader is present in every disposable hook installation.
+. "$TEST_DIR/lib/assert.sh"
+command_position_rows() {
+  first_table 'real rm|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${TMPDIR:?}"
+quoted rm text|command|0|-|echo '\''rm -rf "$HOME"'\''
+rm heredoc data|command|0|-|cat <<'\''EOF'\''\nrm -rf $HOME\nEOF
+cached git removal|command|0|-|git rm --cached "$HOME"
+'
+}
+command_position_rows
+skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real rm'
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

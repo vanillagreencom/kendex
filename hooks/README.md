@@ -2,13 +2,13 @@
 
 The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` renders this file from each hook's frontmatter, and fails when the committed file differs. The tools a hook does not run on, each with its reason, are on its package page and in `kendex show hook <name>` and `kendex index --json`.
 
-- `block-argv-kill`: Stops a command that kills processes by name. On a machine running several agents, one name matches every lane using that tool. Names the safe form: kill a process id you started.
-- `block-bare-cd`: Stops a command whose whole line is a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
-- `block-repo-copy`: Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.
-- `block-unsafe-rm`: Stops deletes of shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
+- `block-argv-kill`: Stops executable pkill and killall commands. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+- `block-bare-cd`: Stops a standalone cd on a shell that persists across calls. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+- `block-repo-copy`: Stops executable copies of .git or target into temporary folders. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+- `block-unsafe-rm`: Stops executable rm commands on shared roots or paths rooted at a possibly empty variable. Quoted arguments of other commands and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
 - `block-worktree-refresh`: Requires installed CLI project-write protection before a plain bare worktree advisory or silent non-plain text naming the kendex word or path basename in a linked or unknown checkout. Other path and file names do not trigger the check. Other plain project writers refuse.
 - `cloud-git-hooks`: Arms the repository's git checks when a Claude Code cloud session starts or resumes. Local sessions do nothing; an installation gap is reported to the agent.
-- `command-safety`: Refuses shell commands matching a project's deny pattern, a kilobyte or megabyte systemd-run memory cap by default, and every command while its settings file cannot be read.
+- `command-safety`: Applies the project deny pattern at executable command positions. Quoted arguments and here-document data pass. Unreadable settings, tools or input produce one warning and allow the call.
 - `critical-path-deny`: In an unattended orch lane, denies the remaining critical-path removal prompts at once and gives rewrites for variable targets and unresolved paths. The launch environment removes prompts for inline shell scripts and targets from command substitution.
 - `dev-stop-check`: Stops a coding agent from finishing while the validation run it started is still going, and hands it the command that waits for the verdict.
 - `doc-drift-check`: Retired. Runs no check; `kendex remove doc-drift-check --scope project --sweep` removes it and its files.
@@ -19,7 +19,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `lane-mail-prompt`: Hands a Copilot lane the messages its overseer sent with each prompt it is handed, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `lane-mail-start`: Hands a Copilot lane the messages its overseer sent as soon as its session starts, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `pre-commit-check`: Stops options that skip armed commit checks and bypass commits after a hook-path change in the same command. Missing setup or an unavailable reader produces a notice with the responsible owner.
-- `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
+- `reviewer-read-only`: Keeps reviewer agents from edits, Git writes and Git discards. Git stash list and text that mentions these commands pass. Missing tools or unreadable input produce one warning and allow the call.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice, and a lane launched to refresh gets the whole report.
 - `session-end-row`: Writes down that a session ended, so a fleet's overseer that exits is seen to have exited without anyone reading its screen.

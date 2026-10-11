@@ -344,7 +344,7 @@ type PlantedRow = (&'static str, fn(&mut HookSource), &'static [&'static str]);
     clippy::too_many_lines,
     reason = "one table: planted defects judged by one render, each row a hook edit of its own"
 )]
-fn planted_rows() -> [PlantedRow; 10] {
+fn planted_rows() -> [PlantedRow; 9] {
     [
         // Codex and Copilot never fire TaskCompleted. The planted Copilot
         // companion reason leaves the Codex companion without one, and the
@@ -425,22 +425,15 @@ fn planted_rows() -> [PlantedRow; 10] {
         (
             "block-bare-cd",
             |source| {
+                source.description = source.description.replace(
+                    "Not run on antigravity: its toolCall.args payload is not read.",
+                    "",
+                );
                 source
                     .description
                     .push_str(" Not run on antigravity: an unterminated reason");
             },
             &["hooks-readme: unterminated-reason=block-bare-cd:antigravity"],
-        ),
-        // Codex runs block-bare-cd: a fallback there must end, or the row
-        // drops it.
-        (
-            "block-bare-cd",
-            |source| {
-                source
-                    .description
-                    .push_str(" On codex: an unterminated fallback");
-            },
-            &["hooks-readme: unterminated-fallback=block-bare-cd:codex"],
         ),
         // OpenCode and Cursor take block-bare-cd as advisory prose, where
         // the row reads neither sentence.

@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # The text of a shell command that the shell would run, cut into segments.
-# Older installed block-worktree-refresh hooks still use this reader.
+# Used by block-argv-kill, block-bare-cd, block-repo-copy, block-unsafe-rm,
+# command-safety and reviewer-read-only.
 # Pure Bash, no external command, and sourcing it defines functions and
 # constants only.
 #
@@ -8,8 +9,8 @@
 # segment is the text between two of `;`, `&`, `|`, `(`, `)`, `` ` `` and a
 # line end, with a backslash-newline continuing it, and without the comment a
 # `#` beginning a word starts. What the shell would not run as a command is
-# masked out before the cut: the whitespace, the `<` and the separators inside
-# a quoted span become \001, so no word inside a span reaches a caller's
+# masked out before the cut: whitespace and separators inside a quoted span
+# become control bytes, so no word inside a span reaches a caller's
 # pattern and no character inside one starts or ends a segment, and a heredoc
 # body its command reads as data is dropped. A span or a body that a
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
@@ -18,14 +19,21 @@
 # so a command the reader could not take apart is read with its full reach.
 #
 # `command_text SEGMENT` leaves COMMAND_TEXTS holding, one per line, that
-# segment from each word the shell may execute, for a caller judging what a
+# segment from the selected executable word, for a caller judging what a
 # command is rather than what it mentions.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
-# and COMMAND_TEXTS, so a caller does not use those names for its own state.
+# DATA and COMMAND_TEXTS, so a caller does not use those names for its own state.
 
 NL=$'\n'
 MASK=$'\001'
+MASK_LT=$'\002'
+MASK_AMP=$'\003'
+MASK_SEMI=$'\004'
+MASK_PIPE=$'\005'
+MASK_OPEN=$'\006'
+MASK_CLOSE=$'\007'
+MASK_TICK=$'\010'
 # A `#` begins a comment wherever it begins a word, which is the start of the
 # line, the point after a blank, and the point after an unquoted `&`, `;`, `|`,
 # a parenthesis or a backtick, since each of those ends the word before it. The
@@ -47,7 +55,6 @@ uncommented() { # LINE -> BARE, the line without its comment
 # `dash`, `ksh`), or the word `eval`, `source` or `.`. It also reads an English
 # word ending in `sh`, such as `push`, as one; that keeps the span as command
 # text rather than masking it, which is the direction a guard fails in.
-SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:space:]]|$)'
 # A word standing immediately after a redirection operator is a file the shell
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
@@ -56,12 +63,16 @@ REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
 # `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
 # basename would never read as a shell. The redirection targets go next, since
 # a target named for a script would otherwise read as the interpreter of one.
-runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
+runs_shell_text() { # TEXT -> 0 when its executable runs shell text
   local bare=${1//[\'\"]/}
   while [[ $bare =~ $REDIRECT_RE ]]; do
     bare=${bare/"${BASH_REMATCH[0]}"/ }
   done
-  [[ $bare =~ $SHELL_RE ]]
+  local saved=${COMMAND_TEXTS-}
+  command_text "$bare"
+  local selected=$COMMAND_TEXTS
+  COMMAND_TEXTS=$saved
+  [[ $selected =~ ^([^[:space:]]*sh|eval|source|\.)([[:space:]]|$) ]]
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
 # delimiter, a word the shell does not run. `<<<` is a here-string, and the
@@ -157,13 +168,22 @@ SEP='[&;|()`'$NL']'
 # word inside it reads as a word of the command; its `<`, so a `<<` written in
 # it arms no heredoc; and the separators, so a `(` or a `;` written in it
 # neither opens a command position for the next span nor cuts the segment.
-SPAN_MASK='[[:space:]<&;|()`]'
-# The one judge of what the shell would not run, masking only that and leaving
-# a caller's patterns their whole-text reach over everything else, so there is
-# no list of words that may precede a command to be incomplete.
+# Preserve each quoted separator so command_text can restore literal operands
+# after selecting the executable word. Whitespace still keeps a span one word.
+mask_data() { # TEXT -> DATA
+  DATA=${1//[[:space:]]/$MASK}
+  DATA=${DATA//</$MASK_LT}
+  DATA=${DATA//&/$MASK_AMP}
+  DATA=${DATA//;/$MASK_SEMI}
+  DATA=${DATA//\|/$MASK_PIPE}
+  DATA=${DATA//\(/$MASK_OPEN}
+  DATA=${DATA//\)/$MASK_CLOSE}
+  DATA=${DATA//\`/$MASK_TICK}
+}
+# The data masker leaves executable selection to command_text.
 #
 # Each quoted span keeps its quotes, since a command word may be quoted whole
-# (`"/path/kendex" refresh`), while the characters SPAN_MASK names inside it
+# (`"/path/kendex" refresh`), while its separators and whitespace
 # are masked. A span the shell does run — the argument of a shell, `eval`,
 # `source` or `.` word in the same segment — is opened as its own command
 # position with its whitespace intact. A quote the shell hands on as a
@@ -197,10 +217,12 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
-        out=$out$quote${span//$SPAN_MASK/$MASK}$quote
+        mask_data "$span"
+        out=$out$quote$DATA$quote
       else
         lift_substitutions "$span" || return 1
-        out=$out$quote${OUTSIDE//$SPAN_MASK/$MASK}$quote$SUBS
+        mask_data "$OUTSIDE"
+        out=$out$quote$DATA$quote$SUBS
       fi
     else
       out=$out$NL$span$NL
@@ -215,7 +237,7 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
 # unterminated body is text the reader could not read, and dropping it would
 # take the rest of the command with it. Each segment then loses its comment.
 command_segments() { # TEXT -> SEGMENTS, one segment per line
-  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cut out=""
+  local joined=${1//\\$NL/} line index count delim expands end term judged="" cut out=""
   local lines
   lines=()
   while IFS= read -r line; do
@@ -233,40 +255,47 @@ EOF
     if mask_spans "$BARE"; then
       BARE=$MASKED
     fi
-    [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue
-    delim=${BASH_REMATCH[2]}
-    # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`, but a quoted
-    # delimiter stops the shell expanding the body, so nothing in that body runs.
-    expands=1
-    case "$delim" in
-      \'*\' | \"*\") delim=${delim:1:${#delim} - 2}; expands="" ;;
-    esac
-    end=$index
-    while [ "$end" -lt "$count" ]; do
-      term=${lines[$end]}
-      [ "${term#"${term%%[![:space:]]*}"}" = "$delim" ] && break
-      end=$((end + 1))
-    done
-    [ "$end" -lt "$count" ] || continue
-    if runs_shell_text "$BARE"; then
-      while [ "$index" -lt "$end" ]; do
-        judged=$judged${lines[$index]}$NL
-        index=$((index + 1))
-      done
-    elif [ -n "$expands" ]; then
-      # The body itself is data, but the shell expands it before the command
-      # reads it, so a command substitution inside it runs. A line holding one
-      # the reader cannot close is kept whole rather than dropped.
-      while [ "$index" -lt "$end" ]; do
-        if lift_substitutions "${lines[$index]}"; then
-          judged=$judged$SUBS
-        else
-          judged=$judged${lines[$index]}$NL
+    local openings=$BARE strip_tabs match
+    local heredoc_open='(^|[^<])<<(-?)[[:blank:]]*([^[:space:]<][^[:space:]]*)'
+    while [[ $openings =~ $heredoc_open ]]; do
+      match=${BASH_REMATCH[0]}
+      strip_tabs=${BASH_REMATCH[2]}
+      delim=${BASH_REMATCH[3]}
+      openings=${openings#*"$match"}
+      # Quoted delimiters stop expansion, but a shell still executes the body
+      # it reads as its own input. Each delimiter consumes its body in order.
+      expands=1
+      case "$delim" in
+        \'*\' | \"*\") delim=${delim:1:${#delim} - 2}; expands="" ;;
+      esac
+      end=$index
+      while [ "$end" -lt "$count" ]; do
+        term=${lines[$end]}
+        if [ "$strip_tabs" = - ]; then
+          while [[ $term == $'\t'* ]]; do term=${term#$'\t'}; done
         fi
-        index=$((index + 1))
+        [ "$term" = "$delim" ] && break
+        end=$((end + 1))
       done
-    fi
-    index=$((end + 1))
+      [ "$end" -lt "$count" ] || break
+      if runs_shell_text "$BARE"; then
+        while [ "$index" -lt "$end" ]; do
+          judged=$judged${lines[$index]}$NL
+          index=$((index + 1))
+        done
+      elif [ -n "$expands" ]; then
+        # An expanded body is data, except for its command substitutions.
+        while [ "$index" -lt "$end" ]; do
+          if lift_substitutions "${lines[$index]}"; then
+            judged=$judged$SUBS
+          else
+            judged=$judged${lines[$index]}$NL
+          fi
+          index=$((index + 1))
+        done
+      fi
+      index=$((end + 1))
+    done
   done
   # A quote the reader could not pair leaves the original text to be cut
   # whole, the reach a caller's patterns had before any span was read.
@@ -275,12 +304,28 @@ EOF
   else
     cut=$joined
   fi
-  cut=${cut//;/$NL}
-  cut=${cut//&/$NL}
-  cut=${cut//\|/$NL}
-  cut=${cut//\(/$NL}
-  cut=${cut//\)/$NL}
-  cut=${cut//\`/$NL}
+  if [ "${2:-}" != lines ]; then
+    # Redirection operators contain ampersands or pipes without ending a
+    # command. Restore these characters only after command selection.
+    cut=${cut//\&>/$MASK_AMP>}
+    cut=${cut//>\&/>$MASK_AMP}
+    cut=${cut//<\&/<$MASK_AMP}
+    cut=${cut//>\|/>$MASK_PIPE}
+    cut=${cut//;/$NL}
+    cut=${cut//&/$NL}
+    if [ "${2:-}" = pipes ]; then
+      cut=${cut//\|\|/$NL}
+      local pipe_join='\|[[:blank:]]*'$NL
+      while [[ $cut =~ $pipe_join ]]; do
+        cut=${cut/"${BASH_REMATCH[0]}"/| }
+      done
+    else
+      cut=${cut//\|/$NL}
+    fi
+    cut=${cut//\(/$NL}
+    cut=${cut//\)/$NL}
+    cut=${cut//\`/$NL}
+  fi
   while IFS= read -r line; do
     uncommented "$line"
     out=$out$BARE$NL
@@ -289,39 +334,43 @@ $cut
 EOF
   SEGMENTS=$out
 }
-# The parts of one segment the shell may execute, each from a word on to the
-# segment's end. Leading `NAME=value` words are assignments the shell makes for
-# the command, not the command, so each is stepped over; a quoted value was
-# masked to one word by command_segments. What the executable word runs is not
-# always that word: `bash` runs a script among the words after it, and a
-# launcher such as `env` or `xargs` runs a word of its own. Which word depends
-# on options that may take the next word as their value, and a launcher may
-# launch another, so no option is read and no launcher is listed: the
-# executable word starts a text, and so does every word after it. A word that
-# only stands as an argument is judged as a command too, which is the direction
-# a guard fails in. A quote around a word stays, as the caller's pattern may
-# allow one. COMMAND_TEXTS is empty when the segment executes nothing.
+# Select the executable word, after assignments and shell control words.
+# A command launcher selects its next non-option word. Ordinary arguments never
+# open command positions. This remains a lexical reader: assembled names and
+# value-taking launcher options are outside its contract.
 command_text() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word name
-  while :; do
-    rest=${rest#"${rest%%[![:space:]]*}"}
-    word=${rest%%[[:space:]]*}
-    case "$word" in
-      [[:alpha:]_]*=*) ;;
-      *) break ;;
-    esac
-    name=${word%%=*}
-    case "$name" in
-      *[![:alnum:]_]*) break ;;
-    esac
-    rest=${rest#"$word"}
-  done
+  local rest=$1 word name executable launcher=""
   COMMAND_TEXTS=""
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0
-    COMMAND_TEXTS=$COMMAND_TEXTS$rest$NL
     word=${rest%%[[:space:]]*}
-    rest=${rest#"$word"}
+    case "$word" in
+      [[:alpha:]_]*=*)
+        name=${word%%=*}
+        case "$name" in *[![:alnum:]_]*) ;; *) rest=${rest#"$word"}; continue ;; esac
+        ;;
+    esac
+    executable=$word
+    case "$executable" in
+      \'*\' | \"*\") executable=${executable:1:${#executable} - 2} ;;
+    esac
+    executable=${executable##*/}
+    case "$executable" in
+      if | then | elif | while | until | do | '!' | time | command | exec | sudo | env | nohup)
+        rest=${rest#"$word"}; launcher=1; continue ;;
+      -*)
+        if [ -n "$launcher" ]; then rest=${rest#"$word"}; continue; fi ;;
+    esac
+    rest=$executable${rest#"$word"}
+    rest=${rest//$MASK_LT/<}
+    rest=${rest//$MASK_AMP/\&}
+    rest=${rest//$MASK_SEMI/;}
+    rest=${rest//$MASK_PIPE/|}
+    rest=${rest//$MASK_OPEN/(}
+    rest=${rest//$MASK_CLOSE/)}
+    rest=${rest//$MASK_TICK/\`}
+    COMMAND_TEXTS=$rest$NL
+    return 0
   done
 }

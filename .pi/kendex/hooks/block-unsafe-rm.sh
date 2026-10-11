@@ -5,11 +5,13 @@
 # matcher: Bash
 # requires: [command-safety]
 # description: Block rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
-# summary: Stops deletes of shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
-# safety: The raw command scan refuses any rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The existing empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. Harmless text with the same shape can be refused. The scan does not parse shell: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, command substitutions, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line.
+# summary: Stops executable rm commands on shared roots or paths rooted at a possibly empty variable. Quoted arguments of other commands and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and here-document bodies. This is a lexical check; shell-assembled names and value-taking launcher options are outside its contract. Every diagnostic starts with block-unsafe-rm: <key>=<value>.
+# requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
+trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
 
 # The command as it was read, empty until the reader has it: the refusal quotes
 # it, and a refusal can be reached before it is set.
@@ -26,10 +28,10 @@ refuse() { # KEY VALUE [CAUSE]
   printf 'block-unsafe-rm: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
-      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; this check is unavailable" >&2
       ;;
     payload=invalid-json)
-      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      echo "the hook payload is not valid JSON, or names a command that is not a string; this check is unavailable" >&2
       ;;
     refused=shared-root)
       echo "This rm targets a shared root, its direct glob, or a child path with . or .. segments:" >&2
@@ -52,7 +54,12 @@ refuse() { # KEY VALUE [CAUSE]
   # The cause a command this hook ran wrote, captured at the site and replayed
   # here: under the keyed line, never ahead of it.
   [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
-  exit 2
+  case "$1" in
+    refused | path) exit 2 ;;
+    *)
+      echo "Check skipped. Repair the hook installation, tools or payload adapter; retry the command." >&2
+      exit 0 ;;
+  esac
 }
 
 # jq is the only reader of the payload. Without it the command cannot be read,
@@ -65,10 +72,10 @@ for dependency in jq cat; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-INPUT=$(cat)
+INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 
 # A payload that does not parse, or that names a command which is not a
-# string, is refused rather than skipped. An absent command is the empty
+# string, produces a warning and allows the call. An absent command is the empty
 # string and passes. The command is read where each harness carries it:
 # `tool_input.command` (Claude Code, Codex, Gemini CLI and the Pi carrier), a
 # bare `command`, or Copilot's `toolArgs.command`, whose `toolArgs` arrives as
@@ -76,7 +83,7 @@ INPUT=$(cat)
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
 COMMAND=$(printf '%s' "$INPUT" \
-  | jq -r 'def copilot: .toolArgs
+  | jq -er 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
            if .tool_input.command != null then .tool_input.command
@@ -86,49 +93,18 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# The whole rule, built from named parts so each one is readable on its own.
-# The parts count WHEREVER they stand in the command. There is no
-# command-position test: one was tried, and a hand-written list of the keywords
-# that may precede an rm is an enumeration of shell grammar — every revision of
-# it named fewer members than it missed, and `if`, `while`, `until`, `!` and
-# `time` all carried a real variable-rooted recursive rm straight past it.
-# ENDERS is what remains of that reading: it says where one command ends and
-# the next begins, so GAP and SKIP exclude it and a scan never REACHES out of
-# the command it began in.
-#
-#   ENDERS    the characters that END one command: `;`, `&`, `|` and a newline.
-#             The newline is one of them because the words of the next line are
-#             not this rm's operands.
-#   RM_EDGE   what may stand immediately left of the `rm`: the start of the
-#             command, or any character an identifier cannot hold, so
-#             `confirm -rf $X` is one word and not this hook's rm. It is a word
-#             boundary and nothing more — bash's `=~` runs without REG_NEWLINE,
-#             so `^` alone would never reach line two of a multi-line call, and
-#             a newline is one of the characters this admits.
-#   ROOT      an operand rooted in a variable that may expand empty: `$NAME`,
-#             `${NAME}`, `${NAME:-…}`. `${NAME:?…}` aborts on empty and is the
-#             accepted rewrite for a non-shared root; the
-#             identifier test is what keeps `${X+x:?}` — an unset-guarded
-#             ALTERNATIVE whose text merely contains :? — on the refused side.
-#             A leading double quote is peeled, since quoting does not stop an
-#             empty expansion; a single-quoted run is a literal the shell never
-#             expands and is not a variable root.
-#   GAP       the whitespace standing between two words of ONE command. It is
-#             horizontal whitespace and nothing else, because the only
-#             whitespace character in ENDERS is the newline: a gap that crossed
-#             one would read the next command's words as this rm's operands.
-#   SKIP      crosses words and complete redirections in an agent's Bash call.
-#             A redirection's operator and target form one unit, so its target
-#             never becomes an operand. Quoted and escaped parts stay inside
-#             WORD, including spaces in a target. A redirection may touch a
-#             word, but an operand still needs GAP before it. Separators in
-#             ENDERS stop the scan outside words and redirections.
-#
-# Flags do not affect the rule. Shell-assembled command names and line
-# continuations remain outside this lexical scan.
-# The ampersand leads so this string does not spell bash 4's case fall-through
-# operator, which tools/bash32-lint flags in string data too. A bracket
-# expression carries no order, so the set below is the set named above.
+# Resolve only this hook's installed dependency, never a payload-selected path.
+reader=""
+for candidate in "${BASH_SOURCE[0]%/*}/../skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh"; do
+  if [ -f "$candidate" ]; then reader=$candidate; break; fi
+done
+[ -n "$reader" ] || refuse reader unavailable
+# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
+source "$reader" 2>/dev/null || refuse reader unreadable
+# Match rm operands only after the shared reader selects rm.
 ENDERS='&;|'$'\n'
 # BLANK and SPACE_ANY are the class names as they are spelled INSIDE a bracket
 # expression, so the same two definitions serve a class of their own and a
@@ -136,7 +112,7 @@ ENDERS='&;|'$'\n'
 BLANK='[:blank:]'
 SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
-RM_EDGE='(^|[^[:alnum:]_.-])'
+RM_EDGE='^'
 ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
 CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"
 WORD_PART="[^${ENDERS}<>${SPACE_ANY}\"'\\\\]"
@@ -158,24 +134,26 @@ SHARED_END="[\"']*(${SHARED_SLASH})?${SHARED_BOUNDARY}"
 # Apple's regex rejects an empty alternative; an optional suffix accepts none.
 SHARED_ROOT="\"*\\\$(${SHARED_NAMES}|\\{${SHARED_NAMES}([^[:alnum:]_}][^}]*)?\\})${SHARED_END}"
 SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"
-[[ ! $COMMAND =~ $SHARED_RE ]] || refuse refused shared-root
+command_segments "$COMMAND"
+while IFS= read -r segment; do
+  command_text "$segment"
+  selected=${COMMAND_TEXTS%"$NL"}
+  [[ $selected == rm[[:space:]]* ]] || continue
+  [[ ! $selected =~ $SHARED_RE ]] || refuse refused shared-root
 for root_name in TMPDIR TMP TEMP AGENT_TMPDIR HOME; do
   root_value=${!root_name-}
   [ -n "$root_value" ] || continue
   while [[ $root_value == */ && $root_value != / ]]; do root_value=${root_value%/}; done
-  literal_root=$root_value
+  literal_root=${root_value//[[:space:]]/$MASK}
   literal_end=$SHARED_END
   if [ "$root_value" = / ]; then literal_root=''; literal_end="${SHARED_SLASH}${SHARED_BOUNDARY}"; fi
   for metachar in '\' '.' '[' ']' '(' ')' '{' '}' '*' '+' '?' '^' '$' '|'; do
     literal_root=${literal_root//"$metachar"/\\"$metachar"}
   done
-  SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+[\"']*${literal_root}${literal_end}"
-  [[ ! $COMMAND =~ $SHARED_RE ]] || refuse refused shared-root
+  LITERAL_RE="${RM_EDGE}rm${SKIP}${GAP}+[\"']*${literal_root}${literal_end}"
+  [[ ! $selected =~ $LITERAL_RE ]] || refuse refused shared-root
 done
 
-if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
-  exit 0
-fi
-
-# Keep the refusal key stable for existing callers.
-refuse refused recursive-rm
+  [[ ! $selected =~ $UNSAFE_RE ]] || refuse refused recursive-rm
+done <<<"$SEGMENTS"
+exit 0

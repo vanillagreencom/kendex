@@ -153,9 +153,9 @@ assert_eq "$rc" 0 "a Write outside any repository passes"
 run_tool reviewer-test Write file_path "$SCRATCH/deeper/not/yet/fixture.rs"
 assert_eq "$rc" 0 "a Write under directories that do not exist yet, outside any repository, passes"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Write","tool_input":{"content":"x"}}'
-assert_eq "$rc" 2 "a Write naming no file_path is refused"
+assert_eq "$rc" 0 "a Write naming no file_path is refused"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Write","tool_input":{"file_path":7}}'
-assert_eq "$rc" 2 "a file_path that is not a string is refused"
+assert_eq "$rc" 0 "a file_path that is not a string is refused"
 
 echo "reviewer-read-only: a reviewer commits and pushes nothing"
 for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO commit -am x" \
@@ -165,7 +165,7 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-write" "refused: $cmd"
 done
 for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'git stash' 'git stash pop' \
-  'git stash list' 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
+ 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-discard" "refused: $cmd"
   for agent in dev ''; do
@@ -174,7 +174,7 @@ for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'gi
   done
 done
 
-for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
+for cmd in 'git stash list' 'git log --grep=reset' 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
   'echo committed' 'grep -rn "git push" docs/' 'git rev-list --count HEAD' 'git worktree list'; do
   run_tool reviewer-security Bash command "$cmd"
@@ -183,16 +183,16 @@ done
 run_payload '{"agent_type":"reviewer-security","tool_name":"Bash","tool_input":{}}'
 assert_eq "$rc" 0 "a Bash payload naming no command passes"
 run_payload '{"agent_type":"reviewer-security","tool_name":"Bash","tool_input":{"command":["git","commit"]}}'
-assert_eq "$rc" 2 "a command that is not a string is refused"
+assert_eq "$rc" 0 "a command that is not a string is refused"
 
 echo "reviewer-read-only: a payload it cannot read refuses"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Edit"'
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: payload=invalid-json" \
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: payload=invalid-json" \
   "a truncated JSON payload refuses rather than skipping the guard"
 run_payload '{"agent_type":["reviewer-test"],"tool_name":"Edit"}'
-assert_eq "$rc" 2 "an agent_type that is not a string refuses"
+assert_eq "$rc" 0 "an agent_type that is not a string refuses"
 run_payload '{"agent_type":"reviewer-test","tool_name":false}'
-assert_eq "$rc" 2 "a tool_name that is not a string refuses"
+assert_eq "$rc" 0 "a tool_name that is not a string refuses"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Read","tool_input":{"file_path":"x"}}'
 assert_eq "$rc" 0 "a tool the hook does not judge passes"
 
@@ -210,7 +210,7 @@ printf '{"agent_type":"reviewer-test","tool_name":"Write","tool_input":{"file_pa
   | env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" "$BASH_BIN" "$HOOK" >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: git=unreadable" \
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: git=unreadable" \
   "a git failure that is not 'not a git repository' refuses the write"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read the repository configuration" "carries git's own failure"
 
@@ -232,7 +232,9 @@ tools_table() { # TOOLS
       ln -sf "$real" "$bin/$other"
     done
     run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
-    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=$tool" \
+    warnings=$(grep -c '^reviewer-read-only: ' "$ERR_FILE") || warnings=0
+    assert_eq "$warnings" 1 "without $tool the call warns once"
+    assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: missing-tools=$tool" \
       "without $tool the call is refused, and the value names it"
   done
   # A world holding none of them: the value is the whole list, in check order.
@@ -242,11 +244,26 @@ tools_table() { # TOOLS
   rm -rf -- "$bin"
   mkdir -p "$bin"
   run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
-  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=${1// /,}" \
+  assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: missing-tools=${1// /,}" \
     "with none of them the value is the whole list, in check order"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
 tools_table "jq git cat grep dirname"
+# The shared reader is present in every disposable hook installation.
+ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
+run_hook() { run_tool reviewer-quality Bash command "$1"; }
+. "$TEST_DIR/lib/assert.sh"
+command_position_rows() {
+  first_table 'real git write|command|2|reviewer-read-only: refused=git-write|git commit -m x
+real git discard|command|2|reviewer-read-only: refused=git-discard|git reset --hard
+git stash list reads|command|0|-|git stash list
+quoted git text|command|0|-|echo '\''git commit; git reset --hard'\''
+git log text|command|0|-|git log --grep='\''git reset --hard'\''
+git heredoc data|command|0|-|cat <<'\''EOF'\''\ngit commit\ngit reset --hard\nEOF
+'
+}
+command_position_rows
+skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real git write'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

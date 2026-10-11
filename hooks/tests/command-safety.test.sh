@@ -55,7 +55,7 @@ fi
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   cost_mutant="$scratch/two-payload-reads.sh"
   [ ! -L "$hook_source" ] || exit 1
-  awk '/^fields=.*jq -r / { print "jq -r empty <<<\"$input\" >/dev/null"; changed++ }
+  awk '/^fields=.*jq -er / { print "jq -r empty <<<\"$input\" >/dev/null"; changed++ }
     { print } END { if (changed != 1) exit 1 }' "$hook_source" > "$cost_mutant" || exit 1
   cmp -s -- "$hook_source" "$cost_mutant" && exit 1
   control_status=0
@@ -161,8 +161,8 @@ cat >"$repo/kendex.settings.toml" <<'RAW_POLICY'
 [env]
 COMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS.$"
 RAW_POLICY
-check 2 $'printf \'%s\' \'BLOCK_THIS\\\nTAIL\'' 'raw quoted continuation'
-assert_first 'command-safety: refused=policy' 'raw quoted continuation names the policy'
+check 0 $'printf \'%s\' \'BLOCK_THIS\\\nTAIL\'' 'raw quoted continuation'
+assert_first '-' 'quoted data passes silently'
 settings
 
 # A fresh install has no settings line, or no settings file at all; the
@@ -217,21 +217,21 @@ printf '[env]\n' >"$repo/kendex.settings.toml"
 check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'a global hook outside Git leaves the hook inactive' /
 mkdir -p "$scratch/outside"
 printf 'gitdir: /missing\n' >"$scratch/outside/.git"
-check 2 'git status' 'an unresolved Git worktree refuses' "$scratch/outside"
+check 0 'git status' 'an unresolved Git worktree warns' "$scratch/outside"
 assert_first 'command-safety: git=unreadable' 'and the git key names the working directory it could not resolve'
 assert_replays "$(git -C "$scratch/outside" rev-parse --show-toplevel 2>&1 || true)" \
   "and git's own words on the entry it could not read stand under it"
 mv "$scratch/outside/.git" "$scratch/unresolved-git-marker"
 printf '[env\n' >"$repo/kendex.settings.toml"
-check 2 'git status' 'malformed project settings refuse'
+check 0 'git status' 'malformed project settings warn'
 assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
 assert_cause present "and the loader's own words are replayed under it"
-# A malformed value on a key the hook never reads still refuses, and the
+# A malformed value on a key the hook never reads still warns, and the
 # refusal carries the loader's line naming the file, the line and the key.
 # The probe runs the installed loader itself, so the row asserts the hook's
 # replay; the loader's own suite pins that line's value.
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\nOTHER = "a"b"\n' >"$repo/kendex.settings.toml"
-check 2 'git status' 'an inner double quote on a key the hook does not read refuses'
+check 0 'git status' 'an inner double quote on a key the hook does not read warns'
 assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
 assert_replays "$(cd "$repo" && GG_CHECK=command-safety bash -c '
   source "$1/common.sh"
@@ -274,7 +274,7 @@ done <<'SHAPES'
 0|-|{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}|an allowed command under a Copilot toolArgs object
 2|command-safety: refused=policy|{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}|a refused command under a Copilot toolArgs string
 0|-|{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}|an allowed command under a Copilot toolArgs string
-2|command-safety: payload=invalid-cwd|{tool_input:{command:"git status"},cwd:42}|a non-string working directory refuses
+0|command-safety: payload=invalid-cwd|{tool_input:{command:"git status"},cwd:42}|a non-string working directory warns
 0|-|{tool_input:{command:""},cwd:{}}|an empty command still bypasses the working directory read
 0|-|{tool_input:{command:"\n\n"},cwd:{}}|a command containing only trailing newlines still bypasses the working directory read
 0|-|{tool_input:{command:"git status"}}|an allowed command without cwd uses the caller directory
@@ -293,7 +293,7 @@ settings
 
 # A cwd the payload names and the hook cannot enter: the value is the path as
 # it was requested, not the empty string the failed probe would leave behind.
-check 2 'git status' 'a cwd that cannot be entered refuses' "$scratch/gone"
+check 0 'git status' 'a cwd that cannot be entered warns' "$scratch/gone"
 assert_first "command-safety: cwd=$scratch/gone" 'and the value is the path the payload asked for'
 
 # Every external command this hook runs, one world each: without dirname it
@@ -312,7 +312,8 @@ status=0
 out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
   | env -i HOME="$HOME" PATH="$notools" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
 keyed="${out%%$'\n'*}"
-if [ "$status" -eq 2 ] && [ "$keyed" = 'command-safety: missing-tools=jq,git,grep,cat,dirname' ]; then
+if [ "$status" -eq 0 ] && [ "$keyed" = 'command-safety: missing-tools=jq,git,grep,cat,dirname' ] &&
+  [ "$(grep -c '^command-safety: ' <<<"$out")" -eq 1 ]; then
   printf 'PASS with none of them the value is the whole list, in check order\n'
   passed=$((passed + 1))
 else
@@ -324,11 +325,12 @@ status=0
 out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
   | env -i HOME="$HOME" PATH="$nodirname" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
 keyed="${out%%$'\n'*}"
-if [ "$status" -eq 2 ] && [ "$keyed" = 'command-safety: missing-tools=dirname' ]; then
-  printf 'PASS without dirname the refusal names it\n'
+if [ "$status" -eq 0 ] && [ "$keyed" = 'command-safety: missing-tools=dirname' ] &&
+  [ "$(grep -c '^command-safety: ' <<<"$out")" -eq 1 ]; then
+  printf 'PASS without dirname the warning names it\n'
   passed=$((passed + 1))
 else
-  printf 'FAIL without dirname the refusal names it: exit %s, keyed line %s\n' "$status" "$keyed"
+  printf 'FAIL without dirname the warning names it: exit %s, keyed line %s\n' "$status" "$keyed"
   failed=$((failed + 1))
 fi
 
@@ -337,23 +339,23 @@ check 0 'qs -c vshell' 'policy is configured, not tied to Quickshell'
 check 2 'other-command' 'a different project policy takes effect'
 assert_first 'command-safety: refused=policy' 'a command the policy matches names the policy'
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$repo/kendex.settings.toml"
-check 2 "printf '%s' 'BLOCK_THIS'" 'matching quoted text is still refused'
+check 0 "printf '%s' 'BLOCK_THIS'" 'matching quoted text passes'
 check 0 'git status' 'a command outside the policy passes'
 assert_first - 'a command it allows says nothing at all'
 
 # Every state of the policy the hook can find, each its own value under the
 # settings key, so a reader tells a broken pattern from an absent one.
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "["\n' >"$repo/kendex.settings.toml"
-check 2 'scripts/validate qml' 'invalid pattern refuses'
+check 0 'scripts/validate qml' 'invalid pattern warns'
 assert_first 'command-safety: settings=invalid-pattern' 'and the value says the pattern is unreadable'
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = ""\n' >"$repo/kendex.settings.toml"
-check 2 'scripts/validate qml' 'empty pattern refuses'
+check 0 'scripts/validate qml' 'empty pattern warns'
 assert_first 'command-safety: settings=empty' 'and the value says the pattern is empty'
 settings
 before=$((passed + failed))
 while IFS='|' read -r payload label; do
   [ -n "$payload" ] || continue
-  shape 2 'command-safety: payload=invalid-json' "$payload" "$label"
+  shape 0 'command-safety: payload=invalid-json' "$payload" "$label"
 done <<'PAYLOADS'
 not JSON|a payload that is not JSON is refused unread
 {"tool_input":{"command":false}}|a command that is not a string is refused unread
@@ -374,7 +376,7 @@ cp "$ROOT/skills/commit-guards/scripts/lib/settings.sh" "$hostile/.agents/skills
 check 0 'git status' 'global delivery prefers its installed loader' "$hostile" "$global/hooks/command-safety.sh"
 [ ! -e "$hostile_marker" ] || { printf 'FAIL global delivery ran the project loader\n'; failed=$((failed + 1)); }
 mv "$global/skills/commit-guards/scripts/lib" "$scratch/absent-global-lib"
-check 2 'git status' 'missing global support refuses without a project fallback' "$hostile" "$global/hooks/command-safety.sh"
+check 0 'git status' 'missing global support warns without a project fallback' "$hostile" "$global/hooks/command-safety.sh"
 assert_first 'command-safety: settings=no-loader' 'and the settings key names the missing loader'
 [ ! -e "$hostile_marker" ] || { printf 'FAIL missing global support ran the project loader\n'; failed=$((failed + 1)); }
 
@@ -384,10 +386,10 @@ mv "$repo/.agents/skills/commit-guards/scripts/lib" "$repo/.claude/skills/commit
 check 2 'qs -c vshell' 'copy delivery finds the installed dependency'
 check 0 'scripts/validate qml' 'copy delivery allows validation'
 printf 'return 1\n' >"$repo/.claude/skills/commit-guards/scripts/lib/common.sh"
-check 2 'scripts/validate qml' 'a failed settings loader refuses with the blocking exit code'
+check 0 'scripts/validate qml' 'a failed settings loader warns and allows the call'
 assert_first 'command-safety: exit=1' 'and the exit key carries the status the check left'
 mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
-check 2 'scripts/validate qml' 'missing settings support refuses'
+check 0 'scripts/validate qml' 'missing settings support warns'
 
 # Each control plants one defect in a copy and reruns these assertions; a
 # defect's rows are adjacent, and each names the line that copy must print,
@@ -408,21 +410,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
           at = index($0, from)
           if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ }
         }
-        defect == "no-join" && /^joined_command_text=/ {
-          $0 = "joined_command_text=\"$command_text\""; changed++
-        }
-        defect == "no-raw" && /^GREP_ERR=/ {
-          changed += sub(/"\$command_text" /, "")
-        }
         defect == "no-default" && /^default_pattern=/ {
           $0 = "default_pattern=" q "^$" q; changed++
         }
         defect == "no-quote" && /^default_pattern=/ { swap("[[:punct:]]?", "") }
         defect == "unit-g" && /^default_pattern=/ { swap("[KkMm]", "[KkMmGg]") }
         defect == "default-key" { swap("refuse refused default-policy", "refuse refused policy") }
-        defect == "no-cwd-check" && /^    elif \$payload.cwd != null/ {
-          $0 = "    elif false"; changed++
-        }
         defect == "no-cwd-fallback" { swap("cwd=\"$PWD\"", "cwd=/") }
         { print }
         END { if (changed != 1) exit 1 }
@@ -446,9 +439,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       failed=$((failed + 1))
     fi
   done <<'CONTROLS'
-no-join|FAIL continued-line MemoryMax: exit 0, expected 2:
-no-join|FAIL continued-line MemoryHigh: exit 0, expected 2:
-no-raw|FAIL raw quoted continuation: exit 0, expected 2:
 no-default|FAIL empty-env: the default refuses a bare MemoryMax: exit 0, expected 2:
 no-default|FAIL no-file: the default refuses a bare MemoryMax: exit 0, expected 2:
 no-quote|FAIL empty-env: the default refuses a quoted MemoryMax: exit 0, expected 2:
@@ -457,9 +447,31 @@ no-quote|FAIL the example and the doc carry the hook default: hook [
 unit-g|FAIL empty-env: the default passes a gigabyte cap: exit 2, expected 0:
 unit-g|FAIL no-file: the default passes a gigabyte cap: exit 2, expected 0:
 default-key|FAIL empty-env: a bare MemoryMax names the default policy: first line command-safety: refused=policy, expected command-safety: refused=default-policy
-no-cwd-check|FAIL a non-string working directory refuses:
 no-cwd-fallback|FAIL a denied command without cwd uses the caller policy:
 CONTROLS
 fi
+TMP_ROOT=$scratch
+ERR_FILE="$scratch/stderr"
+PASS=0
+FAIL=0
+HOOK=$hook_source
+ln -s "$ROOT/skills" "$scratch/skills"
+. "$ROOT/hooks/tests/lib/assert.sh"
+run_hook() {
+  local payload
+  payload=$(jq -nc --arg cwd "$repo" --arg c "$1" '{cwd:$cwd,tool_input:{command:$c}}')
+  rc=0
+  "$BASH" "$HOOK" <<<"$payload" >/dev/null 2>"$ERR_FILE" || rc=$?
+}
+command_position_rows() {
+  first_table 'real policy command|command|2|command-safety: refused=policy|qs -c vshell
+quoted policy text|command|0|-|echo "qs -c vshell"
+policy heredoc data|command|0|-|cat <<"EOF"\nqs -c vshell\nEOF
+'
+}
+command_position_rows
+skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real policy command'
+failed=$((failed + FAIL))
+passed=$((passed + PASS))
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

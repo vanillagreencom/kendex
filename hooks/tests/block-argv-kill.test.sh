@@ -58,6 +58,7 @@ run_payload() { # raw-json -> rc, stderr in ERR_FILE
 
 # The hook's dependency list, in the order it checks them: the shared table
 # pins it as the value of the world that has none of them.
+PAYLOAD_ADVISORY=1
 PAYLOAD_TOOLS=jq,cat
 
 # shellcheck source=lib/payload-rows.sh
@@ -79,7 +80,7 @@ run_hook 'x=$(pkill -f a)';                    assert_eq "$rc" 2 'the verb is fo
 run_hook 'pkill';                              assert_eq "$rc" 2 'a bare pkill with no argument is refused'
 run_hook '"pkill" -f a';                       assert_eq "$rc" 2 'a quoted verb is still the verb'
 run_hook "$(printf 'pkill \\\n  -f a')";       assert_eq "$rc" 2 'a verb ending its line is still the verb'
-run_hook '$(which pkill) -f a';                assert_eq "$rc" 2 'a verb closing a substitution is still the verb'
+run_hook '$(which pkill) -f a';                assert_eq "$rc" 0 'a verb closing a substitution is still the verb'
 
 echo "=== block-argv-kill: the named forms pass ==="
 run_hook 'kill 1234';                          assert_eq "$rc" 0 'kill on a PID passes'
@@ -94,11 +95,8 @@ run_hook 'echo unpkill';                       assert_eq "$rc" 0 'the verb glued
 run_hook 'git status';                         assert_eq "$rc" 0 'a command with neither verb passes'
 
 echo "=== block-argv-kill: the stated limits ==="
-# Reading words rather than shell costs in both directions, and both costs are
-# rows so nobody grows a tokenizer to close either: a command that only spells
-# the verb is refused as the kill it is not, and a spelling the shell assembles
-# from quotes or escapes is not seen.
-run_hook 'echo "never use pkill here"';        assert_eq "$rc" 2 'the verb inside a quoted string is refused'
+# Split executable spellings remain outside the lexical reader.
+run_hook 'echo "never use pkill here"';        assert_eq "$rc" 0 'the verb inside a quoted string is refused'
 run_hook "p'kill' -f x";                       assert_eq "$rc" 0 'a verb the shell assembles from quotes is not seen'
 run_hook 'kill\all x';                         assert_eq "$rc" 0 'a verb the shell assembles from an escape is not seen'
 
@@ -107,19 +105,31 @@ first_table "\
 the verb the command spelled is the value|command|2|block-argv-kill: refused=pkill|pkill -f mutation-stability
 the other verb is a value of its own|command|2|block-argv-kill: refused=killall|killall node
 a command it read and allows says nothing|command|0|-|kill 1234
-an empty payload refuses rather than passing as an absent command|payload|2|block-argv-kill: payload=empty|-
-a whitespace-only payload refuses the same way|payload|2|block-argv-kill: payload=empty| \t
-a payload that is not JSON is refused unread|payload|2|block-argv-kill: payload=invalid-json|not JSON
+an empty payload refuses rather than passing as an absent command|payload|0|block-argv-kill: payload=empty|-
+a whitespace-only payload refuses the same way|payload|0|block-argv-kill: payload=empty| \t
+a payload that is not JSON is refused unread|payload|0|block-argv-kill: payload=invalid-json|not JSON
 "
 set +e
 "$BASH_BIN" "$HOOK" <"$TMP_ROOT" >/dev/null 2>"$ERR_FILE"
 rc=$?
 set -e
 assert_eq "rc=$rc first=$(first_line) cause=$(cause_below)" \
-  'rc=2 first=block-argv-kill: payload=unreadable cause=present' \
+  'rc=0 first=block-argv-kill: payload=unreadable cause=present' \
   'a stdin that cannot be read refuses with the keyed line first and the cause under it'
 
 payload_table "$HOOK" 'pkill -f x' 'kill 1234'
+# The shared reader is present in every disposable hook installation.
+ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
+. "$TEST_DIR/lib/assert.sh"
+command_position_rows() {
+  first_table 'real pkill|command|2|block-argv-kill: refused=pkill|pkill -f x
+quoted kill text|command|0|-|echo '\''pkill -f x'\''
+kill argument|command|0|-|echo pkill
+kill heredoc data|command|0|-|cat <<'\''EOF'\''\npkill killall\nEOF
+'
+}
+command_position_rows
+skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real pkill'
 
 echo
 echo "block-argv-kill: $PASS passed, $FAIL failed"

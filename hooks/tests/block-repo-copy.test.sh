@@ -64,6 +64,7 @@ run_payload() { # raw-json -> rc, stderr in ERR_FILE
 
 # The hook's dependency list, in the order it checks them: the shared table
 # pins it as the value of the world that has none of them.
+PAYLOAD_ADVISORY=1
 PAYLOAD_TOOLS=jq,cat
 
 # shellcheck source=lib/payload-rows.sh
@@ -189,7 +190,7 @@ assert_eq "$rc" 2 'and so is an rsync wrapped over three lines'
 # the same trade as the redirection row below, recorded here so revisiting the
 # pipe decision reds rather than moving this shape in silence.
 run_hook "$(printf 'cp -r %s/.git /srv/keep ||\n  echo /tmp' "$REPO")"
-assert_eq "$rc" 2 'a wrapped or-list binds across the || as one command'
+assert_eq "$rc" 0 'an or-list ends the copy before another command'
 
 echo "=== block-repo-copy: commands that are not copies at all ==="
 run_hook "git status --short";               assert_eq "$rc" 0 'a non-copy command passes'
@@ -207,7 +208,7 @@ a two-word verb reaches the set's own spelling|command|2|block-repo-copy: refuse
 the blanks the command spelled are not part of the verb|command|2|block-repo-copy: refused=git clone|git   clone $REPO/.git /tmp/copy
 the verb on the far side of a pipe is the one that matched|command|2|block-repo-copy: refused=tar|tar -cf - $REPO/target | tar -xf - -C /tmp
 a copy the hook allows says nothing|command|0|-|cp -r $REPO/docs /tmp/copy
-a payload that is not JSON is refused unread|payload|2|block-repo-copy: payload=invalid-json|not JSON
+a payload that is not JSON is refused unread|payload|0|block-repo-copy: payload=invalid-json|not JSON
 "
 run_hook "cp -r $REPO/target /tmp/copy"
 assert_contains "$err" "cp -r $REPO/target /tmp/copy" 'the refusal quotes the command it judged'
@@ -232,12 +233,12 @@ assert_eq "$rc" 0 'a source reached through a variable is not seen'
 run_hook "tar -czf /tmp/repo.tgz $REPO/.git"
 assert_eq "$rc" 0 'a tar naming its destination before its source is not seen'
 run_hook "echo \"cp -r $REPO/.git /tmp/copy\" >>notes.md"
-assert_eq "$rc" 2 'a copy spelled inside a quoted string is refused as the copy it is not'
+assert_eq "$rc" 0 'a copy spelled inside a quoted string passes'
 # The comment tail is the same reading: the whole command text is read, so the
 # three parts count where they stand after a `#` and a read-only command
 # carrying a copy in its comment is refused as the copy it is not.
 run_hook "ls -la $REPO  # cp -r $REPO/.git /tmp/copy"
-assert_eq "$rc" 2 'and so is one spelled in a comment tail'
+assert_eq "$rc" 0 'a copy spelled in a comment tail passes'
 # The run between the marker and the destination crosses everything that is
 # not an ender, the pipe being only the one deliberately left out of ENDERS. A
 # redirection standing between them is crossed too, so a temp path that is a
@@ -250,6 +251,19 @@ assert_eq "$rc" 2 'a temp path reached across a redirection is read as the desti
 # refused, never one into it allowed — and widening PATH_CHAR reds this row.
 run_hook "cp -r $REPO/.git /tmp-old/x"
 assert_eq "$rc" 2 'a sibling of the temp root spelled with punctuation is refused with it'
+# The shared reader is present in every disposable hook installation.
+ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
+. "$TEST_DIR/lib/assert.sh"
+command_position_rows() {
+  first_table 'real cp|command|2|block-repo-copy: refused=cp|cp -r /repo/.git /tmp/copy
+quoted copy text|command|0|-|echo '\''cp -r /repo/.git /tmp/copy'\''
+copy heredoc data|command|0|-|cat <<'\''EOF'\''\ncp -r /repo/.git /tmp/copy\nEOF
+pipe argument is data|command|0|-|cp -r /repo/.git /srv/keep | echo /tmp
+receiver command|command|2|block-repo-copy: refused=cp|echo x | cp -r /repo/.git /tmp/copy
+'
+}
+command_position_rows
+skill_load_control executable-selection "$HOOK" 'command_text "${remaining%%|*}"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real cp'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -4,12 +4,14 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree.
-# summary: Stops a command that kills processes by name. On a machine running several agents, one name matches every lane using that tool. Names the safe form: kill a process id you started.
-# safety: One regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-argv-kill: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# summary: Stops executable pkill and killall commands. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and here-document bodies. This is a lexical check; shell-assembled names and value-taking launcher options are outside its contract. Every diagnostic starts with block-argv-kill: <key>=<value>.
 # timeout: 10
+# requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
+trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
 
 # The command as it was read, empty until the reader has it: the refusal quotes
 # it, and a refusal can be reached before it is set.
@@ -26,16 +28,16 @@ refuse() { # KEY VALUE [CAUSE]
   printf 'block-argv-kill: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
-      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; this check is unavailable" >&2
       ;;
     payload=unreadable)
-      echo "the hook payload could not be read from stdin; refusing rather than skipping the guard" >&2
+      echo "the hook payload could not be read from stdin; this check is unavailable" >&2
       ;;
     payload=empty)
-      echo "the hook payload is empty, which would read as an absent command; refusing rather than skipping the guard" >&2
+      echo "the hook payload is empty, which would read as an absent command; this check is unavailable" >&2
       ;;
     payload=invalid-json)
-      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      echo "the hook payload is not valid JSON, or names a command that is not a string; this check is unavailable" >&2
       ;;
     refused=*)
       echo "refusing a kill by process name or argv pattern:" >&2
@@ -50,7 +52,12 @@ refuse() { # KEY VALUE [CAUSE]
   # The cause a command this hook ran wrote, captured at the site and replayed
   # here: under the keyed line, never ahead of it.
   [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
-  exit 2
+  case "$1" in
+    refused | path) exit 2 ;;
+    *)
+      echo "Check skipped. Repair the hook installation, tools or payload adapter; retry the command." >&2
+      exit 0 ;;
+  esac
 }
 
 # jq is the only reader of the payload. Without it the command cannot be read,
@@ -75,7 +82,7 @@ case "$INPUT" in
 esac
 
 # A payload that does not parse, or that names a command which is not a
-# string, is refused rather than skipped. An absent command is the empty
+# string, produces a warning and allows the call. An absent command is the empty
 # string and passes. The command is read where each harness carries it:
 # `tool_input.command` (Claude Code, Codex, Gemini CLI and the Pi carrier), a
 # bare `command`, or Copilot's `toolArgs.command`, whose `toolArgs` arrives as
@@ -83,7 +90,7 @@ esac
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
 COMMAND=$(printf '%s' "$INPUT" \
-  | jq -r 'def copilot: .toolArgs
+  | jq -er 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
            if .tool_input.command != null then .tool_input.command
@@ -93,17 +100,21 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# The word between two edges: the ends of the command or any character an
-# identifier cannot hold, so `/usr/bin/pkill`, `"pkill"` and `$(which pkill)`
-# are the verb and `unpkill`, `pkill-wrapper` and `killall.log` are not. `=~`
-# runs without REG_NEWLINE, so the edge classes admit a newline and a verb on
-# the second line of a multi-line call is found; `^` alone would not reach it.
-KILL_RE='(^|[^[:alnum:]_.-])(pkill|killall)($|[^[:alnum:]_.-])'
-
-if [[ ! $COMMAND =~ $KILL_RE ]]; then
-  exit 0
-fi
-
-# The verb the command spelled is the second group of the regex above, the
-# only one that carries it, so the first line names what was matched.
-refuse refused "${BASH_REMATCH[2]}"
+# Resolve only this hook's installed dependency, never a payload-selected path.
+reader=""
+for candidate in "${BASH_SOURCE[0]%/*}/../skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
+  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh"; do
+  if [ -f "$candidate" ]; then reader=$candidate; break; fi
+done
+[ -n "$reader" ] || refuse reader unavailable
+# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
+source "$reader" 2>/dev/null || refuse reader unreadable
+KILL_RE='^(pkill|killall)($|[[:space:]])'
+command_segments "$COMMAND"
+while IFS= read -r segment; do
+  command_text "$segment"
+  if [[ $COMMAND_TEXTS =~ $KILL_RE ]]; then refuse refused "${BASH_REMATCH[1]}"; fi
+done <<<"$SEGMENTS"
+exit 0

@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings still refuse. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# summary: Refuses shell commands matching a project's deny pattern, a kilobyte or megabyte systemd-run memory cap by default, and every command while its settings file cannot be read.
-# safety: When executed, blocks command text matching the project's policy, or the shipped default where the project sets none, before the shell tool runs. Unreadable input, missing settings support, unreadable project settings (even where the unreadable part is a key this hook does not read), and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings warn and allow the call. Matching starts at executable command positions, and does not inspect the desktop or running processes.
+# summary: Applies the project deny pattern at executable command positions. Quoted arguments and here-document data pass. Unreadable settings, tools or input produce one warning and allow the call.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and here-document bodies. This is a lexical check; shell-assembled names and value-taking launcher options are outside its contract. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -41,7 +41,7 @@ refuse() { # KEY VALUE [CAUSE]
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
-        echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
+        echo "run it with no memory cap, or with a cap in gigabytes"
         echo "a project that wants another policy sets COMMAND_SAFETY_DENY_PATTERN in kendex.settings.toml [env] to replace the default, and the value \"^\$\" turns matching off" ;;
       exit=*) echo "the command safety check could not complete" ;;
     esac
@@ -49,10 +49,15 @@ refuse() { # KEY VALUE [CAUSE]
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2 || :
-  exit 2
+  case "$1" in
+    refused | path) exit 2 ;;
+    *)
+      echo "Check skipped. Repair the hook installation, tools or payload adapter; retry the command." >&2
+      exit 0 ;;
+  esac
 }
 # An exit that is neither a verdict (0) nor a refusal (2) is a check that did
-# not complete, and it leaves as a refusal. The EXIT trap is what reaches every
+# not complete, and it leaves with a warning. The EXIT trap is what reaches every
 # such exit on Bash 3.2 too: an ERR trap inherited through `set -E` fires there
 # inside a command substitution even when the substitution stands on the left
 # of `||`, which reads the settings loader's guarded probes as failures.
@@ -63,7 +68,7 @@ for dependency in jq git grep cat dirname; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 input="$(cat 2>&1)" || refuse payload unreadable "$input"
-fields="$(jq -r '
+fields="$(jq -er '
   def command_arg:
     if type == "object" then (.command // .cmd)
     elif type == "string" then
@@ -138,12 +143,14 @@ if [ -z "$lib" ]; then
     "$root"/*) lib="$root/.agents/skills/commit-guards/scripts/lib" ;;
   esac
 fi
-[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
+[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] && [ -f "$lib/command-position.sh" ] || refuse settings no-loader
 GG_CHECK=command-safety
 # shellcheck source=../skills/commit-guards/scripts/lib/common.sh
 source "$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
+# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
+source "$lib/command-position.sh"
 # cd runs twice on purpose: a substitution cannot move this shell, so the
 # probe is what carries the cause into the refusal and the second one is the
 # move. The second failure is unreachable in practice — the probe just
@@ -156,11 +163,8 @@ cd -- "$root" || refuse cwd "$root"
 # failure the substitution holds the loader's keyed line — for a value in
 # another shape, the file, the line and the key — and a successful read is
 # silent, so the pattern is not mixed with a diagnostic.
-# A malformed value on a key this hook never reads still refuses: the loader
-# judges the [env] table whole, as every kendex settings reader does, so a
-# policy read past the bad line would come from a file the rest of the
-# toolchain rejects. The replayed line names what to fix, so the caller can
-# clear the refusal.
+# A failed whole-table settings read warns; the shell call remains available
+# so the operator can repair that file.
 # The default is the host-safety rule every install gets: a systemd-run memory
 # cap in K or M starved a build's cgroup into a kernel allocation failure that
 # left a host's root volume read-only. skills/commit-guards'
@@ -169,26 +173,22 @@ default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
-status=0
-# Shell line continuations can split a denied command or token. Keep the raw
-# text too: single quotes preserve backslash-newline pairs as literal text.
-# Bash 3.2 needs ANSI-C quoting expanded before the replacement pattern.
-continuation=$'\\\n'
-joined_command_text="${command_text//"$continuation"/}"
-# grep's words on a pattern it cannot read are captured: stderr becomes the
-# substitution's stdout and grep's own stdout is discarded, so the status still
-# decides and the cause reaches the refusal below its keyed line.
-GREP_ERR=$(printf '%s\n' "$command_text" "$joined_command_text" | LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null) || status=$?
-case "$status" in
-  0)
-    # The default's reason and remedy are known here; a project pattern's are
-    # its own. A project that sets the default's own value refuses for the
-    # default's reason, so it gets the default's text.
-    if [ "$pattern" = "$default_pattern" ]; then
-      refuse refused default-policy
-    fi
-    refuse refused policy
-    ;;
-  1) exit 0 ;;
-  *) refuse settings invalid-pattern "$GREP_ERR" ;;
-esac
+# A project pattern applies from an executable word. Ordinary arguments cannot
+# become commands. A match must begin at that position, even for an unanchored
+# configured expression.
+command_segments "$command_text"
+while IFS= read -r segment; do
+  command_text "$segment"
+  selected=${COMMAND_TEXTS%"$NL"}
+  [ -n "$selected" ] || continue
+  status=0
+  GREP_ERR=$(LC_ALL=C grep -E -- "^($pattern)" <<<"$selected" 2>&1 >/dev/null) || status=$?
+  case "$status" in
+    0)
+      if [ "$pattern" = "$default_pattern" ]; then refuse refused default-policy; fi
+      refuse refused policy ;;
+    1) ;;
+    *) refuse settings invalid-pattern "$GREP_ERR" ;;
+  esac
+done <<<"$SEGMENTS"
+exit 0

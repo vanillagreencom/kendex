@@ -111,6 +111,67 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
     }
 }
 
+/// The catalog's bare-cd guard needs a shell that persists between calls.
+/// A fresh install receives neither the hook nor its registration on the
+/// per-call Codex and Pi shells, while Claude receives its shared reader.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn bare_cd_only_installs_on_shells_that_persist_between_calls() {
+    let f = world();
+    fs::write(
+        f.source.join("hooks/block-bare-cd.sh"),
+        include_str!("../../../../hooks/block-bare-cd.sh"),
+    )
+    .unwrap();
+    let manifest = f.project.join("kendex.toml");
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("[hooks.judge]", "[hooks.block-bare-cd]"),
+    )
+    .unwrap();
+    apply_now(&f);
+    let lock = lock_of(&f);
+    assert!(lock.entries.contains_key("hook:block-bare-cd:claude"));
+    assert!(lock.entries.contains_key("skill:commit-guards:claude"));
+    assert!(f.project.join(".claude/hooks/block-bare-cd.sh").is_file());
+    for (tool, directory) in [(HarnessId::Codex, ".codex"), (HarnessId::Pi, ".pi/kendex")] {
+        assert!(
+            !lock
+                .entries
+                .contains_key(&format!("hook:block-bare-cd:{}", tool.name())),
+            "{tool:?}"
+        );
+        assert!(
+            !lock
+                .entries
+                .contains_key(&format!("skill:commit-guards:{}", tool.name())),
+            "{tool:?}"
+        );
+        assert!(
+            !f.project
+                .join(directory)
+                .join("hooks/block-bare-cd.sh")
+                .exists(),
+            "{tool:?}"
+        );
+        let registry = f.project.join(directory).join("hooks.json");
+        if registry.exists() {
+            let value: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(registry).unwrap()).unwrap();
+            assert!(
+                value["hooks"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .all(|entries| entries.as_array().unwrap().is_empty()),
+                "{tool:?} remained registered: {value}"
+            );
+        }
+    }
+}
+
 /// Script or advisory file written for each tool. The fixture's judge names
 /// all eight tools.
 const TOOLS: [(HarnessId, &str); 8] = [
