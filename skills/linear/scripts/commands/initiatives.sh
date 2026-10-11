@@ -32,6 +32,10 @@ Create Options:
   --content <text>      Long description (markdown, shows in body)
   --target-date <date>  Target date (YYYY-MM-DD)
   --status <status>     Status: Planned, Active, Completed (default: Planned)
+  --owner <email-or-id> Owner user; email matches the whole address, ignoring case
+  --lead-team <ref>     Lead team key or name
+  --labels <list>       Comma-separated initiative label names; replaces the set
+  --link <label=url>    Resource link; repeatable; skips an existing URL
 
 Update Options:
   --name <text>         New name
@@ -39,6 +43,10 @@ Update Options:
   --content <text>      Long description (markdown)
   --target-date <date>  New target date
   --status <status>     New status
+  --owner <email-or-id> Owner user; email matches the whole address, ignoring case
+  --lead-team <ref>     Lead team key or name
+  --labels <list>       Comma-separated initiative label names; replaces the set
+  --link <label=url>    Resource link; repeatable; skips an existing URL
 
 Add/Remove Project Options:
   --project <id-or-name>  Project ID or name (required)
@@ -99,7 +107,11 @@ list_initiatives() {
                 status
                 health
                 targetDate
-                projects { pageInfo { hasNextPage endCursor } nodes { id name state } }
+                owner { name email }
+                leadTeam { id key name }
+                labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+                links(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }
+                projects(first: 10) { pageInfo { hasNextPage endCursor } nodes { id name state } }
                 createdAt
                 updatedAt
             }
@@ -154,6 +166,9 @@ get_initiative() {
             targetDate
             url
             owner { name email }
+            leadTeam { id key name }
+            labels { pageInfo { hasNextPage endCursor } nodes { name } }
+            links { pageInfo { hasNextPage endCursor } nodes { id label url } }
             lastUpdate {
                 id
                 body
@@ -191,6 +206,7 @@ get_initiative() {
 }
 
 create_initiative() {
+    local owner="" owner_set=false lead_team="" labels="" labels_set=false links='[]' link
     local name=""
     local description=""
     local content=""
@@ -199,6 +215,14 @@ create_initiative() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --owner) linear_require_option_value "$@" || return 1; owner="$2"; owner_set=true; shift 2 ;;
+            --lead-team) linear_require_team_value "$@" || return 1; lead_team="$2"; shift 2 ;;
+            --labels) linear_require_option_value "$@" || return 1; labels="$2"; labels_set=true; shift 2 ;;
+            --link)
+                linear_require_option_value "$@" || return 1
+                link=$(linear_parse_entity_link "$2") || return 1
+                links=$(jq -c --argjson link "$link" '. + [$link]' <<<"$links") || return 1
+                shift 2 ;;
             --name) name="$2"; shift 2 ;;
             --description) description="$2"; shift 2 ;;
             --content) content="$2"; shift 2 ;;
@@ -228,6 +252,20 @@ create_initiative() {
     [ -n "$target_date" ] && input_json=$(echo "$input_json" | jq --arg v "$target_date" '. + {targetDate: $v}')
     [ -n "$status" ] && input_json=$(echo "$input_json" | jq --arg v "$status" '. + {status: $v}')
 
+    local resolved
+    if [[ "$owner_set" == true ]]; then
+        resolved=$(resolve_assignee_id "$owner" Owner) || return 1
+        input_json=$(jq -c --arg id "$resolved" '. + {ownerId: $id}' <<<"$input_json") || return 1
+    fi
+    if [[ -n "$lead_team" ]]; then
+        resolved=$(resolve_team_id "$lead_team") || return 1
+        input_json=$(jq -c --arg id "$resolved" '. + {leadTeamId: $id}' <<<"$input_json") || return 1
+    fi
+    if [[ "$labels_set" == true ]]; then
+        resolved=$(linear_resolve_entity_labels initiative "$labels") || return 1
+        input_json=$(jq -c --argjson ids "$resolved" '. + {labelIds: $ids}' <<<"$input_json") || return 1
+    fi
+
     local mutation='
     mutation CreateInitiative($input: InitiativeCreateInput!) {
         initiativeCreate(input: $input) {
@@ -242,14 +280,15 @@ create_initiative() {
     }'
 
     local result
-    result=$(graphql_query "$mutation" "{\"input\": $input_json}")
-    normalize_mutation_response "$result" "initiativeCreate" "initiative"
+    result=$(graphql_query "$mutation" "{\"input\": $input_json}") || return 1
+    linear_finish_entity_write "$result" "initiativeCreate" "initiative" "$links"
 }
 
 update_initiative() {
     local initiative_id="$1"
     shift
 
+    local owner="" owner_set=false lead_team="" labels="" labels_set=false links='[]' link
     local name=""
     local description=""
     local content=""
@@ -258,6 +297,14 @@ update_initiative() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --owner) linear_require_option_value "$@" || return 1; owner="$2"; owner_set=true; shift 2 ;;
+            --lead-team) linear_require_team_value "$@" || return 1; lead_team="$2"; shift 2 ;;
+            --labels) linear_require_option_value "$@" || return 1; labels="$2"; labels_set=true; shift 2 ;;
+            --link)
+                linear_require_option_value "$@" || return 1
+                link=$(linear_parse_entity_link "$2") || return 1
+                links=$(jq -c --argjson link "$link" '. + [$link]' <<<"$links") || return 1
+                shift 2 ;;
             --name) name="$2"; shift 2 ;;
             --description) description="$2"; shift 2 ;;
             --content) content="$2"; shift 2 ;;
@@ -282,7 +329,21 @@ update_initiative() {
     [ -n "$target_date" ] && input_json=$(echo "$input_json" | jq --arg v "$target_date" '. + {targetDate: $v}')
     [ -n "$status" ] && input_json=$(echo "$input_json" | jq --arg v "$status" '. + {status: $v}')
 
-    if [ "$input_json" = "{}" ]; then
+    local resolved
+    if [[ "$owner_set" == true ]]; then
+        resolved=$(resolve_assignee_id "$owner" Owner) || return 1
+        input_json=$(jq -c --arg id "$resolved" '. + {ownerId: $id}' <<<"$input_json") || return 1
+    fi
+    if [[ -n "$lead_team" ]]; then
+        resolved=$(resolve_team_id "$lead_team") || return 1
+        input_json=$(jq -c --arg id "$resolved" '. + {leadTeamId: $id}' <<<"$input_json") || return 1
+    fi
+    if [[ "$labels_set" == true ]]; then
+        resolved=$(linear_resolve_entity_labels initiative "$labels") || return 1
+        input_json=$(jq -c --argjson ids "$resolved" '. + {labelIds: $ids}' <<<"$input_json") || return 1
+    fi
+
+    if [[ "$input_json" == "{}" && "$links" == '[]' ]]; then
         echo '{"error": "No update options provided"}' >&2
         return 1
     fi
@@ -300,8 +361,8 @@ update_initiative() {
     }'
 
     local result
-    result=$(graphql_query "$mutation" "{\"id\": \"$initiative_id\", \"input\": $input_json}")
-    normalize_mutation_response "$result" "initiativeUpdate" "initiative"
+    result=$(graphql_query "$mutation" "{\"id\": \"$initiative_id\", \"input\": $input_json}") || return 1
+    linear_finish_entity_write "$result" "initiativeUpdate" "initiative" "$links"
 }
 
 delete_initiative() {

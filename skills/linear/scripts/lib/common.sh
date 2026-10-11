@@ -1067,6 +1067,129 @@ resolve_team_node() {
     esac
 }
 
+# find_user_by_email EMAIL — the user whose whole address is EMAIL, compared
+# case-insensitively by Linear's own filter, as one {id, name, email} object on
+# stdout; nothing at all when no user has it. Asked of the server rather than
+# scanned out of a listing, so no page bound can hide a user. Exits 1 when the query itself failed, its error already on stderr: a
+# failed lookup is never an unknown address.
+find_user_by_email() {
+    local email="$1" vars result
+    vars=$(jq -cn --arg email "$email" '{email: $email}') || return 1
+    result=$(graphql_pages 'query GetUserByEmail($email: String!, $after: String) { users(filter: {email: {eqIgnoreCase: $email}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name email } } }' "$vars" users) || return 1
+    jq -c '.users.nodes[0] // empty' <<<"$result"
+}
+
+# resolve_assignee_id REF — the id of the user an --assignee value names, on
+# stdout. `me` is the API key's own user, a user id is taken as given (the
+# form activate_issue passes once it has resolved the person). Owner and Lead
+# writes resolve IDs before mutation. A value
+# containing `@` is an email address (find_user_by_email), and anything else
+# is a name matched as a case-insensitive substring. A miss refuses: every
+# other resolver here fails closed, and dropping the field on an unresolvable
+# name reported success with the issue unassigned.
+resolve_assignee_id() {
+    local ref="$1" role="${2:-Assignee}" result assignee_id
+    if [[ "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
+        if [[ "$role" == Assignee ]]; then
+            assignee_id="$ref"
+        else
+            local id_vars
+            id_vars=$(jq -cn --arg id "$ref" '{id: $id}') || return 1
+            result=$(graphql_pages 'query GetUserById($id: ID!, $after: String) { users(filter: {id: {eq: $id}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }' "$id_vars" users) || return 1
+            assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result") || return 1
+        fi
+    elif [ "$ref" = "me" ]; then
+        result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
+        assignee_id=$(jq -r '.viewer.id // empty' <<<"$result") || return 1
+    elif [[ "$ref" == *@* ]]; then
+        result=$(find_user_by_email "$ref") || return 1
+        assignee_id=$(jq -r '.id // empty' <<<"$result") || return 1
+    else
+        local user_query='query GetUser($name: String!, $after: String) { users(filter: {name: {containsIgnoreCase: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
+        local user_vars
+        user_vars=$(jq -cn --arg name "$ref" '{name: $name}') || return 1
+        result=$(graphql_pages "$user_query" "$user_vars" users) || return 1
+        assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result") || return 1
+    fi
+    if [ -z "$assignee_id" ]; then
+        jq -cn --arg who "$ref" --arg role "$role" '{code: "USER_NOT_FOUND", reference: $who, error: ($role + " not found: " + $who)}' >&2
+        return 1
+    fi
+    printf '%s\n' "$assignee_id"
+}
+
+
+# Resolve the label set that roadmap callers give initiatives and projects.
+linear_resolve_entity_labels() {
+    local entity="$1" labels="$2" names name result id ids='[]' query vars
+    query="query ResolveLabels(\$name: String!, \$after: String) { ${entity}Labels(filter: {name: {eq: \$name}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id } } }"
+    IFS=',' read -ra names <<<"$labels"
+    for name in "${names[@]}"; do
+        name="${name#"${name%%[![:space:]]*}"}"
+        name="${name%"${name##*[![:space:]]}"}"
+        vars=$(jq -cn --arg name "$name" '{name: $name}') || return 1
+        result=$(graphql_pages "$query" "$vars" "${entity}Labels") || return 1
+        id=$(jq -r --arg field "${entity}Labels" '.[$field].nodes[0].id // empty' <<<"$result") || return 1
+        if [[ -z "$id" ]]; then
+            jq -cn --arg entity "$entity" --arg name "$name" \
+                '{code: "LABEL_NOT_FOUND", resource: $entity, reference: $name, error: ("Label not found: " + $name)}' >&2
+            return 1
+        fi
+        ids=$(jq -c --arg id "$id" '. + [$id]' <<<"$ids") || return 1
+    done
+    printf '%s\n' "$ids"
+}
+
+# CLI callers produce LABEL=URL; split only the first equals sign.
+linear_parse_entity_link() {
+    local value="$1"
+    if [[ "$value" != *=* || -z "${value%%=*}" || -z "${value#*=}" ]]; then
+        jq -cn --arg value "$value" '{code: "INVALID_LINK", reference: $value, error: "--link requires LABEL=URL"}' >&2
+        return 1
+    fi
+    jq -cn --arg label "${value%%=*}" --arg url "${value#*=}" '{label: $label, url: $url}'
+}
+
+# Links follow the entity write. A failed link leaves that write in place.
+linear_finish_entity_write() {
+    local result="$1" operation="$2" entity="$3" links="$4" normalized id query vars existing link url reply connection=links
+    normalized=$(normalize_mutation_response "$result" "$operation" "$entity") || return 1
+    if [[ "$links" == '[]' ]]; then
+        printf '%s\n' "$normalized"
+        return 0
+    fi
+    if ! jq -e '.success == true' <<<"$normalized" >/dev/null; then
+        printf '%s\n' "$normalized"
+        return 1
+    fi
+    id=$(jq -er --arg op "$operation" --arg entity "$entity" '.[$op][$entity].id | strings | select(length > 0)' <<<"$result") || return 1
+    [[ "$entity" != project ]] || connection=externalLinks
+    query="query EntityLinks(\$id: String!) { $entity(id: \$id) { id $connection(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } } } }"
+    vars=$(jq -cn --arg id "$id" '{id: $id}') || return 1
+    if ! reply=$(graphql_query "$query" "$vars"); then
+        jq -c '. + {partial: true}' <<<"$normalized"
+        return 1
+    fi
+    existing=$(jq -ce --arg entity "$entity" --arg connection "$connection" '.[$entity][$connection].nodes | arrays' <<<"$reply") || {
+        jq -c '. + {partial: true}' <<<"$normalized"
+        return 1
+    }
+    while IFS= read -r link; do
+        url=$(jq -r '.url' <<<"$link") || return 1
+        if jq -e --arg url "$url" 'any(.[]; .url == $url)' <<<"$existing" >/dev/null; then
+            continue
+        fi
+        vars=$(jq -cn --arg key "${entity}Id" --arg id "$id" --argjson link "$link" '{input: ($link + {($key): $id})}') || return 1
+        if ! reply=$(graphql_query 'mutation CreateEntityLink($input: EntityExternalLinkCreateInput!) { entityExternalLinkCreate(input: $input) { success entityExternalLink { id label url } } }' "$vars") \
+            || ! jq -e '.entityExternalLinkCreate.success == true' <<<"$reply" >/dev/null; then
+            jq -c --argjson link "$link" '. + {partial: true, failed_link: $link}' <<<"$normalized"
+            return 1
+        fi
+        existing=$(jq -c --argjson link "$link" '. + [$link]' <<<"$existing") || return 1
+    done < <(jq -c '.[]' <<<"$links")
+    printf '%s\n' "$normalized"
+}
+
 # Resolve workflow state name to UUID for a specific team
 # Usage: resolve_state_id "In Progress" "team-uuid-or-name"
 # Second arg can be team UUID, key or name (will resolve)

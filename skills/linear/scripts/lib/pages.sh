@@ -177,12 +177,13 @@ linear_list_read() {
 # queries. A nested read only runs when Linear leaves that connection open.
 linear_connection_fields() {
     case "$1:$2" in
-    issue:labels|project:labels|project:teams|user:teams|viewer:teams) printf '%s' 'name' ;;
+    initiative:labels|issue:labels|project:labels|project:teams|user:teams|viewer:teams) printf '%s' 'name' ;;
     issue:relations) printf '%s' "$ISSUE_BLOCKS_NODE_FIELDS" ;;
     issue:inverseRelations) printf '%s' "$ISSUE_BLOCKED_BY_NODE_FIELDS" ;;
     issue:children) linear_children_fields "${LINEAR_CHILD_DEPTH:-1}" ;;
     issue:comments) printf '%s' 'id body createdAt updatedAt user { name email }' ;;
     issue:attachments) printf '%s' 'id url title' ;;
+    project:externalLinks|initiative:links) printf '%s' 'id label url' ;;
     project:relations) printf '%s' 'id type anchorType relatedAnchorType relatedProject { id name state progress }' ;;
     project:inverseRelations) printf '%s' 'id type anchorType relatedAnchorType project { id name state progress }' ;;
     project:projectUpdates) printf '%s' 'id body health createdAt user { name }' ;;
