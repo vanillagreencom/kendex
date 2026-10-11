@@ -59,7 +59,9 @@
 # just retired, which must not read as current scope.
 # An old run finishing later does not replace a newer run. Reruns keep their
 # original id, so a later attempt can replace it through its execution time.
+COPILOT_REVIEW_CHECK_NAME='copilot-pull-request-reviewer'
 CI_RUN_JQ_DEFS='
+  def is_review_check: .name == "'"$COPILOT_REVIEW_CHECK_NAME"'";
   def latest_workflow_attempt:
     max_by(.id) as $newest
     | map(select(.id == $newest.id or ((.run_attempt // 1) > 1
