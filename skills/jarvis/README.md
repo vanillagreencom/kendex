@@ -56,7 +56,7 @@ Use a private Git repository for your assistant home. Committed files travel wit
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](references/memory.md). |
 | `state/`, with `state/handoff.md` and `state/archive/` | Committed | Current and archived handoffs travel with you without secrets under [Handoff](references/long-session.md#handoff); an app-managed home permits model file and shell writes only here. |
 | `.agents/skills/` and each harness's skill directory, such as `.claude/skills/` | Committed | kendex renders or links installed skills here so a clone has them; VGS reads the Jarvis render when present. |
-| `skills/base/` | Local | VGS supplies this package copy only without kendex; it removes the copy when the kendex render is present. |
+| `skills/base/` | Local | VGS supplies this package copy when `.agents/skills/jarvis/` is absent; it removes the copy when that render is present. |
 | `tmp/` | Local | Scratch files stay on this machine under [Scratch files](references/computer-use.md#scratch-files). |
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
 
