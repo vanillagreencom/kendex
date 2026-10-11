@@ -2,6 +2,9 @@
 # Sourced reader for the live commit's Copilot work. The caller selects gh's
 # token and owns polling and diagnostics. A failed read never means no work.
 
+# shellcheck source=../../../github/scripts/lib/ci-run-correlation.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../github/scripts/lib" && pwd)/ci-run-correlation.sh"
+
 # Prints a JSON array of {id, started_at} for queued or in-progress Copilot
 # runs. With PR_NUMBER, also reads pending review requests from the timeline
 # when no active check exists. GitHub queues runs with started_at=null. Reads
@@ -9,12 +12,12 @@
 orch_copilot_check_runs() { # OWNER/REPO FULL_HEAD_SHA [PR_NUMBER]
   local checks active timeline
   checks=$(gh api "repos/$1/commits/$2/check-runs?filter=all&per_page=100" --paginate --slurp |
-    jq -ces '
+    jq -ces "$CI_RUN_JQ_DEFS"'
       if length != 1 or (.[0] | type) != "array" or (.[0] | length) == 0
       then error("check-runs response is empty or repeated") else .[0] end |
       map(if (.check_runs | type) == "array" then .check_runs
           else error("check_runs is not an array") end) | add |
-      map(select(.name == "copilot-pull-request-reviewer") |
+      map(select(is_review_check) |
         if (.status | type) != "string" then error("Copilot check status is unreadable")
         else . end)') || return $?
   active=$(jq -c '

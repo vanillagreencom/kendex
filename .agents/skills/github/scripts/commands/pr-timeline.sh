@@ -32,9 +32,7 @@ Output, one JSON object on stdout:
     "last_push":        the later of the final head's push and the last force
                         push,
     "first_bot_review": the first review a Bot account other than the PR's
-                        author submitted: a lane that opens its PR as an app
-                        answers its threads in reviews of its own, which are
-                        no bot's review of the PR,
+                        author submitted, reply-only reviews excluded,
     "first_gate_met":   the first approval submitted on any head the PR
                         carried, one dismissed since included: a ruleset
                         that dismisses stale approvals on push turns every
@@ -48,7 +46,8 @@ Output, one JSON object on stdout:
                         where none was submitted, the gate context's
                         success on the final head,
     "ci_green":         the last check run on the final head completed, when
-                        every one concluded success, neutral or skipped,
+                        every one concluded success, neutral or skipped;
+                        Copilot review checks excluded from all CI figures,
     "armed":            the last time auto-merge was enabled, by any
                         method: GitHub records an arm with the merge method
                         as AutoMergeEnabledEvent, with squash as
@@ -59,10 +58,13 @@ Output, one JSON object on stdout:
   },
   "ci_head_secs":        first check-run start to last check-run end on the
                          final head,
+  "ci_head_clean_secs":  the same over each workflow run's latest attempt
+                         on that head; null unless every attempt passed,
   "ci_merge_group_secs": the same over the merge commit's merge_group runs,
   "open_secs":           created to merged,
   "bot_reviews":         reviews submitted by Bot accounts other than the
-                         PR's author,
+                         PR's author, excluding reviews with an empty body
+                         and only replies to earlier comments,
   "push_times":          each push to the PR's head branch, ascending and
                          unique, as the repository's activity log records it:
                          a push a later rebase rewrote keeps its time, and a
@@ -93,13 +95,19 @@ to its committer date only for last_push.
 
 Every stamp is ISO 8601 UTC, and every stamp and duration is null where the
 PR never reached it. The gate is a commit status, not a check run, so no CI
-figure counts it. Every CI figure reads only the checks of the current
+figure counts it. ci_green, ci_head_secs and ci_merge_group_secs read only
+the checks of the current
 authoritative run of each workflow, as lib/ci-run-correlation.sh scopes a
 `gh pr checks` rollup, and the latest check run per name within a suite, as
 GitHub's own rollup does.
+ci_head_clean_secs groups by workflow run, keeping each run's latest
+attempt. A failed distinct run keeps it null even when a later run passed.
+Success, neutral and skipped count as passed. An Actions rerun reads the
+REST attempt jobs endpoint because a partial rerun's check suite retains
+successful jobs from the earlier attempt.
 
 Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
-page (more than 100 commits, reviews or marked timeline events) refuses as
+page (more than 100 commits, reviews, comments per review or marked timeline events) refuses as
 `truncated: <connection>` rather than printing a stamp read from part of the
 history. Each commit's check suites and each suite's check runs are read
 through every page with the GraphQL cursor, up to 20 pages of 50 suites per
@@ -127,7 +135,7 @@ RUN_PAGE_FRAGMENT='fragment runPage on CheckRunConnection {
 }'
 SUITE_PAGE_FRAGMENTS='fragment suitePage on CheckSuiteConnection {
   pageInfo { hasNextPage endCursor }
-  nodes { id workflowRun { event url workflow { name } } checkRuns(first: 100, filterBy: { checkType: LATEST }) { ...runPage } }
+  nodes { id workflowRun { event url runAttempt workflow { name } } checkRuns(first: 100, filterBy: { checkType: LATEST }) { ...runPage } }
 }
 '"$RUN_PAGE_FRAGMENT"
 SUITES_PAGE_QUERY='query suitesPage($owner: String!, $name: String!, $oid: GitObjectID!, $cursor: String!) {
@@ -148,7 +156,7 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
       commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
-      reviews(first: 100) { totalCount nodes { state submittedAt author { __typename login } commit { oid ...pushed } } }
+      reviews(first: 100) { totalCount nodes { state body submittedAt author { __typename login } commit { oid ...pushed } comments(first: 100) { totalCount nodes { replyTo { id } } } } }
       timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_SQUASH_ENABLED_EVENT, AUTO_REBASE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
@@ -244,9 +252,10 @@ def suites($c): [$c.checkSuites.nodes[]?];
 # scope_current_run reads: the run it belongs to through its workflow run
 # link, its state the conclusion once completed and the status before, a
 # neutral conclusion reading as skipped as gh buckets it.
-def rollup($s): [$s[] | . as $suite | .checkRuns.nodes[]
+def rollup($s): [$s[] | . as $suite | .checkRuns.nodes[] | select(is_review_check | not)
   | {name, workflow: ($suite.workflowRun.workflow.name // ""),
      link: ($suite.workflowRun.url // .detailsUrl // ""),
+     attempt: ($suite.workflowRun.runAttempt // 1),
      state: (if .status != "COMPLETED" then .status
              elif .conclusion == "NEUTRAL" then "SKIPPED" else .conclusion end),
      startedAt, completedAt}];
@@ -272,6 +281,7 @@ def rounds($reviews; $pushed):
 | ([$head, $p.mergeCommit] | map(select(. != null)) | map(suites(.)) | add // []) as $all_suites
 | [ (if $p.commits.totalCount > 100 then "commits" else empty end),
     (if $p.reviews.totalCount > 100 then "reviews" else empty end),
+    (if any($p.reviews.nodes[]; .comments.totalCount > 100) then "review-comments" else empty end),
     (if $p.timelineItems.pageInfo.hasNextPage then "timeline" else empty end),
     ([$head, $p.mergeCommit][] | select(. != null) | select(.checkSuites.pageInfo.hasNextPage) | "check-suites"),
     ($all_suites[] | select(.checkRuns.pageInfo.hasNextPage) | "check-runs")
@@ -288,7 +298,9 @@ def rounds($reviews; $pushed):
   | [$p.timelineItems.nodes[] | select(.__typename == "ReviewDismissedEvent")
      | select(.previousReviewState == "APPROVED") | .review.submittedAt // empty] as $dismissed_approvals
   | [$p.reviews.nodes[] | select(.author.__typename == "Bot" and .submittedAt != null
-      and .author.login != $p.author.login)] as $bot
+      and .author.login != $p.author.login)
+      | select(((.body // "") == "" and (.comments.nodes | length) > 0
+          and all(.comments.nodes[]; .replyTo != null)) | not)] as $bot
   | {
       first_commit: ($p.firstCommit.nodes[0].commit.authoredDate // null),
       created: $p.createdAt,
@@ -309,8 +321,10 @@ def rounds($reviews; $pushed):
       head: $head.oid, merge_commit: ($p.mergeCommit.oid // null),
       stamps: $stamps,
       ci_head_secs: null,
+      ci_head_clean_secs: null,
       ci_merge_group_secs: null,
-      _checks: {head: rollup($head_suites), group: rollup($group_suites)},
+      _checks: {head: rollup($head_suites), group: rollup($group_suites),
+                pending_run: any($head_suites[]; .workflowRun != null and (.checkRuns.nodes | length) == 0)},
       open_secs: secs($stamps.created; $stamps.merged),
       bot_reviews: ($bot | length),
       push_times: null,
@@ -321,6 +335,34 @@ def rounds($reviews; $pushed):
         $pushed)
     }
   end'
+
+# A partial Actions rerun retains successful jobs from its earlier attempt
+# in the suite's LATEST rollup. The attempt jobs endpoint isolates the jobs
+# that actually ran this time, without deduplicating their display names.
+latest_attempt_checks() { # OWNER NAME
+    local owner="$1" name="$2" checks attempts id attempt pages jobs
+    checks=$(cat) || return 1
+    attempts=$(jq -r "$CI_RUN_JQ_DEFS"'
+        map(select(runid != null and .attempt > 1)) | group_by(runid)
+        | .[] | [ (.[0] | runid), (map(.attempt) | max) ] | @tsv' <<<"$checks") || return 1
+    while IFS=$'\t' read -r id attempt; do
+        [ -n "$id" ] || continue
+        pages=$(gh_rest "repos/$owner/$name/actions/runs/$id/attempts/$attempt/jobs?per_page=100" --paginate) || return 1
+        jobs=$(jq -ces "$CI_RUN_JQ_DEFS"'
+            [.[] | .jobs[]?] as $jobs
+            | if length > 0 and all(.[]; (.jobs | type) == "array" and .total_count == ($jobs | length))
+              then $jobs | map(select(is_review_check | not) | {name, state: (if .status != "completed" then (.status | ascii_upcase)
+                 elif .conclusion == "neutral" then "SKIPPED" else (.conclusion | ascii_upcase) end),
+                 startedAt: .started_at, completedAt: .completed_at})
+              else error("attempt jobs are incomplete") end' <<<"$pages") || return 1
+        checks=$(jq -c --argjson id "$id" --argjson jobs "$jobs" "$CI_RUN_JQ_DEFS"'
+            map(select(runid != $id)) + $jobs' <<<"$checks") || return 1
+        # An attempt with no jobs can still be queued. It cannot prove a
+        # clean run while other workflows on this head have finished.
+        if [ "$jobs" = '[]' ]; then printf '[]\n'; return 0; fi
+    done <<<"$attempts"
+    printf '%s\n' "$checks"
+}
 
 pr_timeline() {
     local pr_num="" repo_arg="" gate="Review gate"
@@ -355,25 +397,29 @@ pr_timeline() {
         || { github_error "No PR found: $pr_num"; exit 1; }
     data=$(page_commit_checks "$HEAD_PATH" "$owner" "$name" <<<"$data") || exit 1
     data=$(page_commit_checks "$MERGE_PATH" "$owner" "$name" <<<"$data") || exit 1
-    result=$(jq -c --arg repo "$owner/$name" "$FILTER" <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
+    result=$(jq -c --arg repo "$owner/$name" "$CI_RUN_JQ_DEFS$FILTER" <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
     if jq -e 'has("truncated")' >/dev/null <<<"$result"; then
         jq -c '{error: ("truncated: " + .truncated)}' <<<"$result" >&2
         exit 1
     fi
     # The CI figures, over the checks scope_current_run keeps of each set.
-    local head_checks group_checks
+    local head_checks group_checks clean_checks
+    clean_checks=$(jq -c '._checks.head' <<<"$result" | latest_attempt_checks "$owner" "$name") \
+        || { github_error 'pr-timeline: latest attempt checks unreadable'; exit 1; }
     head_checks=$(jq -c '._checks.head' <<<"$result" | scope_current_run) \
         || { github_error 'pr-timeline: head checks unscoped'; exit 1; }
     group_checks=$(jq -c '._checks.group' <<<"$result" | scope_current_run) \
         || { github_error 'pr-timeline: merge-group checks unscoped'; exit 1; }
-    result=$(jq -c --argjson head "$head_checks" --argjson group "$group_checks" "$CI_RUN_JQ_DEFS"'
+    result=$(jq -c --argjson head "$head_checks" --argjson group "$group_checks" --argjson clean "$clean_checks" "$CI_RUN_JQ_DEFS"'
         def span($r): [$r[] | select(.startedAt != null and .completedAt != null)]
           | if length == 0 then null
             else (map(.completedAt | fromdate) | max) - (map(.startedAt | fromdate) | min) end;
         def green($r): if ($r | length) > 0 and all($r[]; bucket | IN("pass", "skipping"))
           then ($r | map(.completedAt) | max) else null end;
-        del(._checks) | .stamps.ci_green = green($head)
-        | .ci_head_secs = span($head) | .ci_merge_group_secs = span($group)' <<<"$result") \
+        ._checks.pending_run as $pending_run | del(._checks) | .stamps.ci_green = green($head)
+        | .ci_head_secs = span($head)
+        | .ci_head_clean_secs = (if ($pending_run | not) and green($clean) != null then span($clean) else null end)
+        | .ci_merge_group_secs = span($group)' <<<"$result") \
         || { github_error 'pr-timeline: unreadable checks'; exit 1; }
 
     # first_gate_met, where no approval set it, from the status history of

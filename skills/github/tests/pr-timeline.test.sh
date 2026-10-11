@@ -31,8 +31,10 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 PR_TIMELINE="$REPO_ROOT/skills/github/scripts/commands/pr-timeline.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "pr-timeline: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pr-timeline: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "pr-timeline: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 PASS=0
 FAIL=0
 
@@ -89,7 +91,7 @@ response() {
         {__typename: "AutoMergeEnabledEvent", createdAt: t("10:26")},
         {__typename: "AutoMergeEnabledEvent", createdAt: t("10:50")},
         {__typename: "AddedToMergeQueueEvent", createdAt: t("10:55")}]}
-    }}}} | '"$1"
+    }}}} | .data.repository.pullRequest.reviews.nodes |= map(. + {body: "", comments: {totalCount: 1, nodes: [{replyTo: null}]}}) | '"$1"
 }
 
 # Each head's status history, newest first as the REST endpoint lists it:
@@ -118,6 +120,7 @@ ACTIVITY_PATH="api-repos/owner/repo/activity?ref=refs%2Fheads%2Ffeature&per_page
 # carries, so a page the code asks for in such a case is refused rather than
 # answered with the PR.
 stage_pages() { :; }
+stage_attempts() { :; }
 
 BIN="$PR_TIMELINE"
 # PR_SELECTOR is the text the PR query must carry for the response to answer
@@ -130,17 +133,18 @@ run() { # EDIT [ARGS...]
   gh_stub_reset
   gh_stub_answer "api-graphql:$PR_SELECTOR" "$(response "$edit")"
   stage_pages
+  stage_attempts
   gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status_history "$HISTORY_B1")"
   gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
   gh_stub_answer "api-repos/owner/repo/commits/b2/statuses?per_page=100" "$(status_history "")"
   gh_stub_answer "$ACTIVITY_PATH" "$(activity_log "$ACTIVITY")"
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
-    bash "$BIN" 42 "$@" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
+    "$BASH" "$BIN" 42 "$@" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   printf 'rc=%s' "$rc"
 }
 
 echo "=== the stamps and wall times of a merged PR ==="
-WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
+WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
 assert_eq "$(run .) $(cat "$TMP_ROOT/stdout")" "rc=0 $WANT" \
   "the force-pushed-over head's gate is the first pass, the merge group's runs stay out of the head's CI, the author's own review is no bot's, and the pushes are the branch log's for this life of the name"
 
@@ -151,13 +155,34 @@ while IFS='@' read -r label edit want; do
   assert_eq "$(jq -c "$want" "$TMP_ROOT/stdout")" "true" "$label"
 done <<'ROWS'
 an open PR has no merge, merge-group CI or open time@.data.repository.pullRequest |= (.mergedAt = null | .mergeCommit = null)@[.stamps.merged, .merge_commit, .ci_merge_group_secs, .open_secs] == [null, null, null, null]
-a failing head run leaves CI never green, its wall time still read@.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[0].checkRuns.nodes[1].conclusion = "FAILURE"@[.stamps.ci_green, .ci_head_secs] == [null, 1500]
+a failing head run leaves CI never green, its wall time still read@.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[0].checkRuns.nodes[1].conclusion = "FAILURE"@[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs] == [null, 1500, null]
 a pending gate is not met@.data.repository.pullRequest.headCommit.nodes[0].commit.status.context.state = "PENDING"@.stamps.gate_met == null
 no Bot review leaves the first one null, the count zero and the times empty@.data.repository.pullRequest.reviews.nodes |= map(.author.__typename = "User")@[.stamps.first_bot_review, .bot_reviews, .bot_review_times] == [null, 0, []]
 a PR whose author GitHub no longer names counts every Bot review@.data.repository.pullRequest.author = null@[.bot_reviews, .bot_review_times[-1]] == [3, "2026-09-20T10:35:00Z"]
 no force push leaves the head's push, its first check suite, the last push@.data.repository.pullRequest.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent"))@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:20:00Z", "2026-09-20T10:25:00Z"]
 a final head with no check suite and no force push falls back to its commit date@.data.repository.pullRequest |= (.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent")) | (.commits.nodes[0], .reviews.nodes[2,3]).commit.firstSuite.nodes = [])@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:10:00Z", "2026-09-20T10:25:00Z"]
 ROWS
+
+echo "=== reply-only Bot reviews do not count ==="
+# A person opens the PR. Copilot submits a review, then an App answers a
+# thread through the API, which creates a COMMENTED review for its reply.
+REVIEW_PAIR='.data.repository.pullRequest |= (.author = {login: "person"} | .reviews.nodes = [.reviews.nodes[2], .reviews.nodes[3]] | .reviews.nodes[0].author.login = "copilot" | .reviews.nodes[1].comments.nodes = [{replyTo: {id: "earlier-comment"}}])'
+# GitHub returns a review's comment fields only when the query requests them.
+PR_SELECTOR='comments(first: 100) { totalCount nodes { replyTo { id } } }'
+while IFS='@' read -r label edit want; do
+  [[ -n "$label" ]] || continue
+  run "$REVIEW_PAIR | $edit" >/dev/null
+  assert_eq "$(jq -c '[.bot_reviews, .bot_review_times, .stamps.first_bot_review]' "$TMP_ROOT/stdout")" "$want" "$label"
+done <<'ROWS'
+a reply-only App review leaves only the Copilot review@.@[1,["2026-09-20T10:30:00Z"],"2026-09-20T10:30:00Z"]
+a Bot review with an empty body and a new thread counts@.data.repository.pullRequest.reviews.nodes[1].comments.nodes[0].replyTo = null@[2,["2026-09-20T10:30:00Z","2026-09-20T10:35:00Z"],"2026-09-20T10:30:00Z"]
+a Bot review with a body and reply comments counts@.data.repository.pullRequest.reviews.nodes[1].body = "Review summary"@[2,["2026-09-20T10:30:00Z","2026-09-20T10:35:00Z"],"2026-09-20T10:30:00Z"]
+a Bot approval with no body and no comments counts@.data.repository.pullRequest.reviews.nodes[1] |= (.state = "APPROVED" | .comments = {totalCount: 0, nodes: []})@[2,["2026-09-20T10:30:00Z","2026-09-20T10:35:00Z"],"2026-09-20T10:30:00Z"]
+a reply before the review does not become the first Bot review@.data.repository.pullRequest.reviews.nodes[1].submittedAt = t("10:25")@[1,["2026-09-20T10:30:00Z"],"2026-09-20T10:30:00Z"]
+ROWS
+PR_SELECTOR='state body submittedAt'
+assert_eq "$(run "$REVIEW_PAIR | .data.repository.pullRequest.reviews.nodes[1].body = \"Review summary\"") $(jq -c .bot_reviews "$TMP_ROOT/stdout")" 'rc=0 2' "the review body is requested from GitHub"
+PR_SELECTOR='pullRequest(number'
 
 echo "=== armed is the latest arm of any merge method ==="
 # The 10:50 arm made with another method, after the 10:26 merge-method arm:
@@ -321,6 +346,47 @@ a later all-skipped run keeps the substantive run current@$(extra_run "$HEAD_PAT
 a later run that failed leaves CI never green@$(extra_run "$HEAD_PATH" 9999 pull_request FAILURE 10:46 10:47)@[null,1500,900]
 ROWS
 
+echo "=== review check runs do not extend CI ==="
+COPILOT_CHECK="$HEAD_PATH.checkSuites.nodes += [suite(null; [run(\"copilot-pull-request-reviewer\"; \"10:46\"; \"11:10\")])]"
+run "$COPILOT_CHECK" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:45:00Z",1500,1500]' "a later Copilot review check does not extend either CI span"
+EMPTY_RUN="$HEAD_PATH.checkSuites.nodes += [suite(\"push\"; [])]"
+run "$EMPTY_RUN" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" 'null' "a workflow run with no jobs yet cannot prove a clean span"
+
+echo "=== clean CI uses each workflow run's latest attempt ==="
+# Only the failed test is rerun. The suite keeps the earlier lint job.
+RERUN_HEAD="$HEAD_PATH.checkSuites.nodes |= [.[0]] | $HEAD_PATH.checkSuites.nodes[0] |= (.workflowRun.runAttempt = 2 | .checkRuns.nodes[1] |= (.startedAt = t(\"10:50\") | .completedAt = t(\"11:05\")))"
+ATTEMPT_PAGES='{"total_count":1,"jobs":[{"name":"test","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}'
+stage_attempts() { gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"; }
+PR_SELECTOR='event url runAttempt'
+while IFS='@' read -r label edit pages_edit want; do
+  [[ -n "$label" ]] || continue
+  ATTEMPT_PAGES="$(jq -c "$pages_edit" <<<'{"total_count":1,"jobs":[{"name":"test","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}')"
+  assert_eq "$(run "$RERUN_HEAD | $edit") $(jq -c '[.ci_head_secs, .ci_head_clean_secs]' "$TMP_ROOT/stdout")" "rc=0 $want" "$label"
+done <<ROWS
+a partial rerun keeps the earlier lint in the head span, only the rerun in the clean span@.@.@[2700,900]
+a red latest attempt has no clean span@.@.jobs[0].conclusion = "failure"@[2700,null]
+a neutral latest attempt counts as passed@.@.jobs[0].conclusion = "neutral"@[2700,900]
+a skipped latest attempt counts as passed@.@.jobs[0].conclusion = "skipped"@[2700,900]
+a pending latest attempt has no clean span@.@.jobs[0] |= (.status = "in_progress" | .conclusion = null | .completed_at = null)@[2700,null]
+an attempt with no jobs yet has no clean span@.@.total_count = 0 | .jobs = []@[2700,null]
+the later review check stays out of the clean rerun span@$COPILOT_CHECK@.@[2700,900]
+an earlier failed distinct run keeps the clean span null@$STALE_HEAD@.@[2700,null]
+ROWS
+PR_SELECTOR='pullRequest(number'
+assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2/jobs?per_page=100 --paginate')" "1" "the latest attempt's jobs are read once through all pages"
+ATTEMPT_PAGES='{"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}
+{"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:48:00Z","completed_at":"2026-09-20T11:10:00Z"}]}'
+run "$RERUN_HEAD" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '1320' "all job pages count, including jobs with the same display name"
+ATTEMPT_PAGES='{"total_count":2,"jobs":[]}'
+assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "an incomplete attempt jobs response prints no timeline"
+stage_attempts() { gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' 1 'HTTP 404'; }
+assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "an unreadable attempt jobs response prints no timeline"
+stage_attempts() { :; }
+
 echo "=== a connection longer than its page refuses ==="
 while IFS='|' read -r connection edit; do
   [[ -n "$connection" ]] || continue
@@ -329,6 +395,7 @@ while IFS='|' read -r connection edit; do
 done <<'ROWS'
 commits|.data.repository.pullRequest.commits.totalCount = 101
 reviews|.data.repository.pullRequest.reviews.totalCount = 101
+review-comments|.data.repository.pullRequest.reviews.nodes[1].comments.totalCount = 101
 timeline|.data.repository.pullRequest.timelineItems.pageInfo.hasNextPage = true
 ROWS
 
@@ -515,6 +582,52 @@ mutate() { # ANCHOR REPLACEMENT
   assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
 }
 
+# The same rows expose the former CI/review classifications when each
+# changed decision is removed from a private source copy.
+mutate '| select(is_review_check | not)' '| select(true)'
+run "$COPILOT_CHECK" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T11:10:00Z",3000,3000]' "control: counting the review check extends both CI spans"
+
+mutate 'clean_checks=$(jq -c '\''._checks.head'\'' <<<"$result" | latest_attempt_checks "$owner" "$name")' \
+  'clean_checks=$(jq -c '\''._checks.head'\'' <<<"$result")'
+run "$RERUN_HEAD" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '2700' \
+  "control: timing the suite rollup keeps the earlier lint in the clean span"
+
+mutate 'and .total_count == ($jobs | length)' 'and true'
+ATTEMPT_PAGES='{"total_count":2,"jobs":[]}'
+stage_attempts() { gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"; }
+assert_eq "$(run "$RERUN_HEAD") $(jq -c .pr "$TMP_ROOT/stdout")" 'rc=0 42' \
+  "control: without the count check an incomplete jobs response prints a timeline"
+stage_attempts() { :; }
+
+mutate 'and all(.comments.nodes[]; .replyTo != null)) | not)] as $bot' 'and false) | not)] as $bot'
+run "$REVIEW_PAIR" >/dev/null
+assert_eq "$(jq -c '[.bot_reviews, .bot_review_times]' "$TMP_ROOT/stdout")" \
+  '[2,["2026-09-20T10:30:00Z","2026-09-20T10:35:00Z"]]' \
+  "control: without the reply-only test the App's reply counts as a Bot review"
+
+mutate 'if any($p.reviews.nodes[]; .comments.totalCount > 100)' 'if false'
+assert_eq "$(run '.data.repository.pullRequest.reviews.nodes[1].comments.totalCount = 101') $(jq -c .pr "$TMP_ROOT/stdout")" 'rc=0 42' \
+  "control: an unchecked review comments connection prints a partial timeline"
+
+mutate '($pending_run | not) and green($clean) != null' 'green($clean) != null'
+run "$EMPTY_RUN" >/dev/null
+assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '1500' \
+  "control: ignoring a run without jobs reports clean CI before that run starts"
+
+mutate 'state body submittedAt' 'state submittedAt'
+PR_SELECTOR='state body submittedAt'
+assert_eq "$(run "$REVIEW_PAIR")" 'rc=1' "control: a query without the body cannot read it"
+mutate 'comments(first: 100) { totalCount nodes { replyTo { id } } }' ''
+PR_SELECTOR='comments(first: 100) { totalCount nodes { replyTo { id } } }'
+assert_eq "$(run "$REVIEW_PAIR")" 'rc=1' "control: a query without reply links cannot read them"
+mutate 'event url runAttempt' 'event url'
+PR_SELECTOR='event url runAttempt'
+assert_eq "$(run "$RERUN_HEAD")" 'rc=1' "control: a query without the attempt number cannot read it"
+PR_SELECTOR='pullRequest(number'
+
 # The historical status default is part of the command contract, independent
 # of the retired package's settings.
 mutate 'gate="Review gate"' 'gate="Other status"'
@@ -589,7 +702,7 @@ assert_eq "$(jq -c '.push_times[0]' "$TMP_ROOT/stdout")" '"2026-09-20T08:00:00Z"
 
 # The Bot reviews read without the author test: the PR author's own reply
 # counts as a bot's review of the PR.
-mutate '      and .author.login != $p.author.login)] as $bot' '      )] as $bot'
+mutate '      and .author.login != $p.author.login)' '      )'
 run . >/dev/null
 assert_eq "$(jq -c '[.bot_reviews, .bot_review_times[-1]]' "$TMP_ROOT/stdout")" '[3,"2026-09-20T10:35:00Z"]' \
   "control: without the author test the PR author's own review is counted and timed"
