@@ -1830,6 +1830,10 @@ TRACKER_MAIL="$NORMAL_TRACKER_MAIL"
 assert_not_contains "$(cat "$STUB_DIR/posted")" 'Approved action.' \
   'control: dropping the ruling fails the supplied-ruling assertion'
 
+# The macOS orch leg runs Bash 3.2. The Linear CLI owns its Bash 4 runtime
+# check; the stubbed tracker table above still runs on both shells.
+if bash -c 'source "$1"; linear_require_supported_bash' bash \
+  "$REPO_ROOT/skills/linear/scripts/lib/bash-version.sh" 2>/dev/null; then
 # Linear issues without a body leave only the action line. Exercise close
 # through the real CLI, because an argv stub cannot detect an omitted field.
 new_case mail_real_tracker_close
@@ -1915,6 +1919,9 @@ real_tracker_close '' "$REAL_TRACKER_ROOT/mutant-linear/scripts/linear.sh"
 assert_eq "$REAL_CLOSE_RC" 0 'control: nonempty-only description update still reports close success'
 assert_eq "$(jq -r '.description != "" and .assignee == null and .labels.nodes == []' "$REAL_TRACKER_ROOT/issue.json")" true \
   'control: nonempty-only description update fails the empty-body close assertion'
+else
+  printf 'skip: real Linear close requires its supported Bash runtime\n'
+fi
 
 # The mailbox process ceilings use the same instrument as the reader suite.
 PROCESS_RC=0
