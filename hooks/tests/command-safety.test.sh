@@ -48,6 +48,22 @@ else
   printf 'FAIL payload read cost: exit=%s jq=%s\n' "$cost_status" "$jq_count"
   failed=$((failed + 1))
 fi
+# The shipped reader control-prefix fixture has several executable selections.
+# Its matching cost must stay the same as the single git-status command.
+single_grep=$(process_count_command grep)
+process_count_reset
+compound_payload=$(jq -nc --arg cwd "$repo" '{tool_input:{command:"if rm \"$X\"; then echo done; fi"},cwd:$cwd}')
+compound_status=0
+env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$BASH" "$hook" \
+  <<<"$compound_payload" >"$scratch/compound.out" 2>"$scratch/compound.err" || compound_status=$?
+compound_grep=$(process_count_command grep)
+printf 'cost command-safety compound-grep=%s single-grep=%s processes=%s\n' "$compound_grep" "$single_grep" "$(process_count_total)"
+if [ "$compound_status" -eq 0 ] && [ "$compound_grep" -eq "$single_grep" ]; then
+  passed=$((passed + 1))
+else
+  printf 'FAIL compound regex cost: exit=%s compound=%s single=%s\n' "$compound_status" "$compound_grep" "$single_grep"
+  failed=$((failed + 1))
+fi
 if [ "${1:-}" = --cost-row ]; then
   [ "$failed" -eq 0 ]
   exit
@@ -68,6 +84,22 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     printf 'FAIL duplicate payload read control: exit=%s\n' "$control_status"
   fi
 fi
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  cost_mutant="$scratch/per-segment-regex.sh"
+  awk '/^  selections=\$selections\$COMMAND_TEXTS/ {
+    print; print "  LC_ALL=C grep -E -- \"^($pattern)\" <<<\"$COMMAND_TEXTS\" >/dev/null || :"; changed++; next
+  } { print } END { if (changed != 1) exit 1 }' "$hook_source" >"$cost_mutant" || exit 1
+  cmp -s -- "$hook_source" "$cost_mutant" && exit 1
+  control_status=0
+  env -i "HOME=$HOME" "PATH=$PATH" "HOOK_UNDER_TEST=$cost_mutant" "$BASH" "${BASH_SOURCE[0]}" --cost-row \
+    >"$scratch/per-segment-regex.log" 2>&1 || control_status=$?
+  if [ "$control_status" -eq 1 ] && grep -q '^FAIL compound regex cost:' "$scratch/per-segment-regex.log"; then
+    passed=$((passed + 1))
+  else
+    printf 'FAIL per-segment regex control: exit=%s\n' "$control_status"
+    failed=$((failed + 1))
+  fi
+fi
 # `first` is line 1, the contract: the hook captures what a command it ran
 # wrote and replays it under the keyed line, so nothing precedes the key.
 # `cause` says whether that captured text is there. The reader is the shared
@@ -78,7 +110,7 @@ first=-
 check() { # EXPECTED COMMAND LABEL [CWD] [HOOK]
   local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload_hook="${5:-$hook}" payload status=0 output
   payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
-  output="$(printf '%s' "$payload" | bash "$payload_hook" 2>"$scratch/stderr")" || status=$?
+  output="$(printf '%s' "$payload" | "$BASH" "$payload_hook" 2>"$scratch/stderr")" || status=$?
   first="$(first_line "$scratch/stderr")"
   cause="$(cause_below "$scratch/stderr")"
   if [ "$status" -eq "$expected" ]; then
@@ -363,22 +395,6 @@ not JSON|a payload that is not JSON is refused unread
 PAYLOADS
 [ "$((passed + failed))" -gt "$before" ] || { printf 'FAIL no unreadable payload was asserted\n'; failed=$((failed + 1)); }
 
-global="$scratch/global/.claude"
-hostile="$scratch/hostile"
-mkdir -p "$global/hooks" "$global/skills/commit-guards/scripts" "$hostile/.agents/skills/commit-guards/scripts/lib"
-git -C "$hostile" init -q
-cp "$hook_source" "$global/hooks/command-safety.sh"
-cp -R "$ROOT/skills/commit-guards/scripts/lib" "$global/skills/commit-guards/scripts/lib"
-printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$hostile/kendex.settings.toml"
-hostile_marker="$scratch/hostile-loader-ran"
-printf 'printf ran >"%s"\nreturn 1\n' "$hostile_marker" >"$hostile/.agents/skills/commit-guards/scripts/lib/common.sh"
-cp "$ROOT/skills/commit-guards/scripts/lib/settings.sh" "$hostile/.agents/skills/commit-guards/scripts/lib/settings.sh"
-check 0 'git status' 'global delivery prefers its installed loader' "$hostile" "$global/hooks/command-safety.sh"
-[ ! -e "$hostile_marker" ] || { printf 'FAIL global delivery ran the project loader\n'; failed=$((failed + 1)); }
-mv "$global/skills/commit-guards/scripts/lib" "$scratch/absent-global-lib"
-check 0 'git status' 'missing global support warns without a project fallback' "$hostile" "$global/hooks/command-safety.sh"
-assert_first 'command-safety: settings=no-loader' 'and the settings key names the missing loader'
-[ ! -e "$hostile_marker" ] || { printf 'FAIL missing global support ran the project loader\n'; failed=$((failed + 1)); }
 
 settings
 mkdir -p "$repo/.claude/skills/commit-guards/scripts"
@@ -387,7 +403,7 @@ check 2 'qs -c vshell' 'copy delivery finds the installed dependency'
 check 0 'scripts/validate qml' 'copy delivery allows validation'
 printf 'return 1\n' >"$repo/.claude/skills/commit-guards/scripts/lib/common.sh"
 check 0 'scripts/validate qml' 'a failed settings loader warns and allows the call'
-assert_first 'command-safety: exit=1' 'and the exit key carries the status the check left'
+assert_first 'command-safety: settings=unreadable' 'and the settings key names the failed support load'
 mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 0 'scripts/validate qml' 'missing settings support warns'
 
@@ -467,10 +483,93 @@ command_position_rows() {
   first_table 'real policy command|command|2|command-safety: refused=policy|qs -c vshell
 quoted policy text|command|0|-|echo "qs -c vshell"
 policy heredoc data|command|0|-|cat <<"EOF"\nqs -c vshell\nEOF
+else command|command|2|command-safety: refused=policy|if true; then true; else qs -c vshell; fi
+brace command|command|2|command-safety: refused=policy|{ qs -c vshell; }
+timeout command|command|2|command-safety: refused=policy|timeout 5 qs -c vshell
+prefixed shell body|command|2|command-safety: refused=policy|true; bash <<EOF\nqs -c vshell\nEOF
+pipeline shell body|command|2|command-safety: refused=policy|cat <<EOF | bash\nqs -c vshell\nEOF
+prefixed data body|command|0|-|true; cat <<EOF\nqs -c vshell\nEOF
+pipeline data body|command|0|-|cat <<EOF | cat\nqs -c vshell\nEOF
 '
 }
 command_position_rows
 skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real policy command'
+# Env::global_skills_dir and the harness adapters emit these installed roots.
+# One table covers native, shared, relocated, partial and unavailable support.
+global_reader_rows() {
+  local label hook_dir library state expected key home installed project payload status marker native
+  while IFS='|' read -r label hook_dir library state expected key; do
+    home="$scratch/global-layouts/$label"
+    rm -rf -- "$home"
+    project="$home/project"
+    installed="$home/$hook_dir/command-safety.sh"
+    marker="$home/project-loader-ran"
+    mkdir -p "${installed%/*}" "$project/.agents/skills/commit-guards/scripts/lib"
+    git -C "$project" init -q
+    git -C "$project" config gc.auto 0
+    git -C "$project" config maintenance.auto false
+    cp "$HOOK" "$installed"
+    cp -R "$ROOT/skills/commit-guards/scripts/lib/." "$project/.agents/skills/commit-guards/scripts/lib/"
+    printf 'printf ran >"%s"\nreturn 1\n' "$marker" >"$project/.agents/skills/commit-guards/scripts/lib/common.sh"
+    printf '[env]\n' >"$project/kendex.settings.toml"
+    if [ "$state" != absent ]; then
+      mkdir -p "$home/$library/commit-guards/scripts/lib"
+      cp -R "$ROOT/skills/commit-guards/scripts/lib/." "$home/$library/commit-guards/scripts/lib/"
+    fi
+    if [ "$state" = partial ]; then
+      native="${installed%/hooks/*}/skills/commit-guards/scripts/lib"
+      mkdir -p "$native"
+      printf 'return 1\n' >"$native/common.sh"
+    fi
+    # A damaged installed support file, including a missing nested import,
+    # must report one advisory key rather than a raw shell diagnostic.
+    case "$state" in
+      syntax) printf 'if (\n' >"$home/$library/commit-guards/scripts/lib/command-position.sh" ;;
+      return-two) printf 'return 2\n' >"$home/$library/commit-guards/scripts/lib/settings.sh" ;;
+      exit-two) printf 'exit 2\n' >"$home/$library/commit-guards/scripts/lib/common.sh" ;;
+      nested-absent) rm "$home/$library/commit-guards/scripts/lib/paths.sh" ;;
+    esac
+    if [ "$state" = bad-setting ]; then
+      printf '[env]\nUNRELATED = false\n' >"$project/kendex.settings.toml"
+    fi
+    payload=$(jq -nc --arg cwd "$project" '{cwd:$cwd,tool_input:{command:"systemd-run --user --scope -p MemoryMax=64M cargo test"}}')
+    status=0
+    env HOME="$home" "$BASH" "$installed" <<<"$payload" >/dev/null 2>"$ERR_FILE" || status=$?
+    assert_eq "rc=$status first=$(first_line "$ERR_FILE")" "rc=$expected first=command-safety: $key" "$label installed reader"
+    assert_eq "$([ -e "$marker" ] && echo ran || echo untouched)" untouched "$label project loader boundary"
+    case "$state" in syntax | return-two | exit-two | nested-absent)
+      assert_eq "$(grep -c '^command-safety: ' "$ERR_FILE")" 1 "$label warns once" ;;
+    esac
+  done <<'LAYOUTS'
+claude-native|.claude/hooks|.claude/skills|present|2|refused=default-policy
+pi-native|.pi/agent/kendex/hooks|.pi/agent/skills|present|2|refused=default-policy
+pi-shared|.pi/agent/kendex/hooks|.agents/skills|present|2|refused=default-policy
+pi-relocated-native|relocated/pi/agent/kendex/hooks|relocated/pi/agent/skills|present|2|refused=default-policy
+pi-relocated-shared|relocated/pi/agent/kendex/hooks|.agents/skills|present|2|refused=default-policy
+codex-native|.codex/hooks|.codex/skills|present|2|refused=default-policy
+codex-shared|.codex/hooks|.agents/skills|present|2|refused=default-policy
+codex-relocated-shared|relocated/codex/hooks|.agents/skills|present|2|refused=default-policy
+gemini-native|.gemini/hooks|.gemini/skills|present|2|refused=default-policy
+gemini-shared|.gemini/hooks|.agents/skills|present|2|refused=default-policy
+copilot-native|.copilot/hooks|.copilot/skills|present|2|refused=default-policy
+copilot-shared|.copilot/hooks|.agents/skills|present|2|refused=default-policy
+copilot-relocated-shared|relocated/copilot/hooks|.agents/skills|present|2|refused=default-policy
+partial-native|.codex/hooks|.agents/skills|partial|2|refused=default-policy
+absent-global|.codex/hooks|.agents/skills|absent|0|settings=no-loader
+bad-setting|.codex/hooks|.agents/skills|bad-setting|0|settings=unreadable
+reader-syntax|.codex/hooks|.agents/skills|syntax|0|settings=unreadable
+settings-return|.codex/hooks|.agents/skills|return-two|0|settings=unreadable
+common-exit|.codex/hooks|.agents/skills|exit-two|0|settings=unreadable
+nested-absent|.codex/hooks|.agents/skills|nested-absent|0|settings=unreadable
+LAYOUTS
+}
+global_reader_rows
+skill_load_control global-reader "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
+  'lib=""' HOOK global_reader_rows 'pi-shared installed reader' 'codex-shared installed reader' 'gemini-shared installed reader' 'copilot-shared installed reader'
+skill_load_control loader-boundary "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
+  'lib="$root/.agents/skills/commit-guards/scripts/lib"' HOOK global_reader_rows 'absent-global project loader boundary'
+skill_load_control support-state "$HOOK" 'loading="$lib/common.sh"' 'loading=""' HOOK global_reader_rows 'common-exit installed reader' 'common-exit warns once'
+skill_load_control support-diagnostics "$HOOK" 'loading="$lib/command-position.sh"' 'source "$lib/command-position.sh" || refuse settings unreadable "$loading"' HOOK global_reader_rows 'reader-syntax installed reader'
 failed=$((failed + FAIL))
 passed=$((passed + PASS))
 printf '%s passed, %s failed\n' "$passed" "$failed"

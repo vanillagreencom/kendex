@@ -260,6 +260,20 @@ quoted copy text|command|0|-|echo '\''cp -r /repo/.git /tmp/copy'\''
 copy heredoc data|command|0|-|cat <<'\''EOF'\''\ncp -r /repo/.git /tmp/copy\nEOF
 pipe argument is data|command|0|-|cp -r /repo/.git /srv/keep | echo /tmp
 receiver command|command|2|block-repo-copy: refused=cp|echo x | cp -r /repo/.git /tmp/copy
+else command|command|2|block-repo-copy: refused=cp|if true; then true; else cp -r /repo/.git /tmp/copy; fi
+brace command|command|2|block-repo-copy: refused=cp|{ cp -r /repo/.git /tmp/copy; }
+timeout command|command|2|block-repo-copy: refused=cp|timeout 5 cp -r /repo/.git /tmp/copy
+prefixed shell body|command|2|block-repo-copy: refused=cp|true; bash <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
+pipeline shell body|command|2|block-repo-copy: refused=cp|cat <<EOF | bash\ncp -r /repo/.git /tmp/copy\nEOF
+prefixed data body|command|0|-|true; cat <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
+pipeline data body|command|0|-|cat <<EOF | cat\ncp -r /repo/.git /tmp/copy\nEOF
+tar subshell receiver|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (cd /tmp/x && tar -xf -)
+tar brace receiver|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | { cd /tmp/x; tar -xf -; }
+tar multiline receiver|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (\ncd /tmp/x\ntar -xf -\n)
+tar receiver data|command|0|-|tar -cf - /repo/.git | (echo /tmp/x && tar -xf - -C /srv)
+tar command data|command|0|-|tar -cf - /repo/.git | (cd /tmp/x && echo tar -xf -)
+tar ordinary receiver|command|0|-|tar -cf - /repo/.git | (cd /srv/x && tar -xf -)
+copy receiver group|command|2|block-repo-copy: refused=cp|echo x | (cd /srv; cp -r /repo/.git /tmp/x)
 '
 }
 command_position_rows

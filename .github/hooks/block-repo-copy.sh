@@ -4,8 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a copy (cp, rsync, tar, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
-# summary: Stops executable copies of .git or target into temporary folders. Quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and here-document bodies. This is a lexical check; shell-assembled names and value-taking launcher options are outside its contract. Every diagnostic starts with block-repo-copy: <key>=<value>.
+# summary: Stops executable copies of .git or target into temporary folders. Ordinary quoted arguments and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and data-only here-document bodies. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-repo-copy: <key>=<value>.
 # requires-skills: [commit-guards]
 # ---
 
@@ -136,22 +136,44 @@ while IFS= read -r segment; do
   while :; do
     command_text "${remaining%%|*}"
     selected=${COMMAND_TEXTS%"$NL"}
-    # Only tar can copy across a pipe, and its receiver must itself be tar.
-    if [[ $remaining == *"|"* && $selected == tar[[:space:]]* ]]; then
+    selections=$COMMAND_TEXTS
+    if [[ $remaining == *"|"* ]]; then
       receiver=${remaining#*|}
+      receiver_head=${receiver#"${receiver%%[![:space:]]*}"}
       command_text "${receiver%%|*}"
-      if [[ $COMMAND_TEXTS == tar[[:space:]]* ]]; then
+      if [[ $receiver_head == "$MASK_OPEN"* ]]; then
+        # Inspect the receiver with the same reader. Only actual cd and tar
+        # commands can connect the sender to a temporary extraction directory.
+        # Other copy commands in the group keep their own checks.
+        receiver_text=$COMMAND_TEXTS
+        directory=""
+        command_segments "$receiver_text"
+        while IFS= read -r receiving; do
+          command_text "$receiving"
+          selections=$selections$COMMAND_TEXTS
+          case "$COMMAND_TEXTS" in
+            cd[[:space:]]*) directory=${COMMAND_TEXTS%"$NL"} ;;
+            tar[[:space:]]*)
+              if [[ $selected == tar[[:space:]]* ]] && [ -n "$directory" ]; then
+                selections=$selections$selected" "$directory$NL
+              fi ;;
+          esac
+        done <<<"$SEGMENTS"
+      elif [[ $selected == tar[[:space:]]* && $COMMAND_TEXTS == tar[[:space:]]* ]]; then
+        # A direct tar receiver carries its own destination argument.
         command_text "$remaining"
-        selected=${COMMAND_TEXTS%"$NL"}
+        selections=$COMMAND_TEXTS
       fi
     fi
-    if [[ $selected =~ $BLOCK_RE ]]; then
-      VERB_HIT=${BASH_REMATCH[2]}
-      case "$VERB_HIT" in
-        *[[:space:]]*) VERB_HIT="${VERB_HIT%%[[:space:]]*} ${VERB_HIT##*[[:space:]]}" ;;
-      esac
-      refuse refused "$VERB_HIT"
-    fi
+    while IFS= read -r selected; do
+      if [[ $selected =~ $BLOCK_RE ]]; then
+        VERB_HIT=${BASH_REMATCH[2]}
+        case "$VERB_HIT" in
+          *[[:space:]]*) VERB_HIT="${VERB_HIT%%[[:space:]]*} ${VERB_HIT##*[[:space:]]}" ;;
+        esac
+        refuse refused "$VERB_HIT"
+      fi
+    done <<<"$selections"
     [[ $remaining == *"|"* ]] || break
     remaining=${remaining#*|}
   done

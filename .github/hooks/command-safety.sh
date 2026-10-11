@@ -4,8 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings warn and allow the call. Matching starts at executable command positions, and does not inspect the desktop or running processes.
-# summary: Applies the project deny pattern at executable command positions. Quoted arguments and here-document data pass. Unreadable settings, tools or input produce one warning and allow the call.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and here-document bodies. This is a lexical check; shell-assembled names and value-taking launcher options are outside its contract. Every diagnostic starts with command-safety: <key>=<value>.
+# summary: Applies the project deny pattern at executable command positions. Ordinary quoted arguments and here-document data pass. Unreadable settings, tools or input produce one warning and allow the call.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and data-only here-document bodies. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -24,6 +24,7 @@ set -euo pipefail
 # cannot carry a failure out: a write that fails there would leave with the
 # writer's status rather than the refusal's, which the harness runs past.
 refuse() { # KEY VALUE [CAUSE]
+  loading=""
   {
     printf 'command-safety: %s=%s\n' "$1" "$2"
     case "$1=$2" in
@@ -61,7 +62,10 @@ refuse() { # KEY VALUE [CAUSE]
 # such exit on Bash 3.2 too: an ERR trap inherited through `set -E` fires there
 # inside a command substitution even when the substitution stands on the left
 # of `||`, which reads the settings loader's guarded probes as failures.
-trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
+# Support can explicitly exit with a guard's verdict status. While sourcing,
+# that status is a support failure, not an executable-command refusal.
+loading=""
+trap 'rc=$?; [ -z "$loading" ] || refuse settings unreadable "$loading" 2>&3; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
 MISSING=""
 for dependency in jq git grep cat dirname; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
@@ -129,8 +133,8 @@ levels=0
 # above hooks. A wider walk can reach executable files outside the install.
 while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
   candidate="$at/skills/commit-guards/scripts/lib"
-  if [ -e "$candidate/common.sh" ] || [ -L "$candidate/common.sh" ] \
-    || [ -e "$candidate/settings.sh" ] || [ -L "$candidate/settings.sh" ]; then
+  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ] \
+    && [ -f "$candidate/command-position.sh" ]; then
     lib="$candidate"
     break
   fi
@@ -139,18 +143,30 @@ while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
   levels=$((levels + 1))
 done
 if [ -z "$lib" ]; then
+  # Choose the shared scope once. A global hook can use HOME's installed
+  # dependency, but cannot source a project selected by the payload.
   case "$hook_dir" in
     "$root"/*) lib="$root/.agents/skills/commit-guards/scripts/lib" ;;
+    *) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}" ;;
   esac
 fi
 [ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] && [ -f "$lib/command-position.sh" ] || refuse settings no-loader
 GG_CHECK=command-safety
+# Keep nested support reads under errexit. A source on the left of || would
+# continue past a failed nested import. EXIT owns the advisory outcome, and
+# its saved stderr survives the source command's diagnostic redirection.
+exec 3>&2
+loading="$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/common.sh
-source "$lib/common.sh"
+source "$lib/common.sh" 2>/dev/null
+loading="$lib/settings.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
-source "$lib/settings.sh"
+source "$lib/settings.sh" 2>/dev/null
+loading="$lib/command-position.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
-source "$lib/command-position.sh"
+source "$lib/command-position.sh" 2>/dev/null
+loading=""
+exec 3>&-
 # cd runs twice on purpose: a substitution cannot move this shell, so the
 # probe is what carries the cause into the refusal and the second one is the
 # move. The second failure is unreachable in practice — the probe just
@@ -177,18 +193,21 @@ pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || r
 # become commands. A match must begin at that position, even for an unanchored
 # configured expression.
 command_segments "$command_text"
+selections=""
 while IFS= read -r segment; do
   command_text "$segment"
-  selected=${COMMAND_TEXTS%"$NL"}
-  [ -n "$selected" ] || continue
-  status=0
-  GREP_ERR=$(LC_ALL=C grep -E -- "^($pattern)" <<<"$selected" 2>&1 >/dev/null) || status=$?
-  case "$status" in
-    0)
-      if [ "$pattern" = "$default_pattern" ]; then refuse refused default-policy; fi
-      refuse refused policy ;;
-    1) ;;
-    *) refuse settings invalid-pattern "$GREP_ERR" ;;
-  esac
+  [ -n "$COMMAND_TEXTS" ] || continue
+  selections=$selections$COMMAND_TEXTS
 done <<<"$SEGMENTS"
+selections=${selections%"$NL"}
+status=0
+GREP_ERR=$(LC_ALL=C grep -E -- "^($pattern)" <<<"$selections" 2>&1 >/dev/null) || status=$?
+case "$status" in
+  0)
+    [ -n "$selections" ] || exit 0
+    if [ "$pattern" = "$default_pattern" ]; then refuse refused default-policy; fi
+    refuse refused policy ;;
+  1) ;;
+  *) refuse settings invalid-pattern "$GREP_ERR" ;;
+esac
 exit 0

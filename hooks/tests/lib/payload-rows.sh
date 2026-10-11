@@ -122,10 +122,13 @@ payload_first() { # -> line 1's key=value, `refusal`, or `malformed`
 
 payload_run() { # hook dir path payload -> "rc=N first=KEY=VALUE"
   local hook="$1" dir="$2" path="$3" payload="$4" rc=0
-  printf '%s' "$payload" | (
+  # A dependency warning can exit before stdin is read. A pipe would then
+  # measure printf's SIGPIPE rather than the hook's advisory exit status.
+  printf '%s' "$payload" >"$PAYLOAD_ROOT/input"
+  (
     cd "$dir" && env -i HOME="$HOME" PWD="$dir" PATH="$path" "$PAYLOAD_BASH" "$hook" \
       >/dev/null 2>"$PAYLOAD_ROOT/stderr"
-  ) || rc=$?
+  ) <"$PAYLOAD_ROOT/input" || rc=$?
   printf 'rc=%s first=%s' "$rc" "$(payload_first)"
 }
 

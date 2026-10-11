@@ -6,7 +6,7 @@
 # requires: [command-safety]
 # description: Block rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
 # summary: Stops executable rm commands on shared roots or paths rooted at a possibly empty variable. Quoted arguments of other commands and here-document data pass. Missing tools or unreadable input produce one warning and allow the call.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and here-document bodies. This is a lexical check; shell-assembled names and value-taking launcher options are outside its contract. Every diagnostic starts with block-unsafe-rm: <key>=<value>.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and data-only here-document bodies. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-unsafe-rm: <key>=<value>.
 # requires-skills: [commit-guards]
 # ---
 

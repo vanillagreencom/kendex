@@ -26,9 +26,9 @@ selected_rows() {
 }
 skill_load_control selected "$HOOK" value=expected value=broken HOOK selected_rows \
   'first selected row' 'second selected row'
-assert_eq "PASS=$PASS FAIL=$FAIL" 'PASS=3 FAIL=0' 'only control results reach the parent counters'
+assert_eq "PASS=$PASS FAIL=$FAIL" 'PASS=4 FAIL=0' 'only control results reach the parent counters'
 assert_eq "$HOOK" "$TMP_ROOT/source.sh" 'the override does not replace the parent hook'
-assert_eq "$(cat -- "$TMP_ROOT/invoked")" "$TMP_ROOT/selected.sh" 'only the selected callback runs once on the mutant'
+assert_eq "$(cat -- "$TMP_ROOT/invoked")" "$(printf '%s\n%s' "$TMP_ROOT/hooks/selected.baseline.sh" "$TMP_ROOT/hooks/selected.sh")" 'only the selected callback runs on both copies'
 assert_eq "$(env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$HOOK")" expected 'the original source stays unchanged'
 
 # A large hook can put its anchors deep inside the file.
@@ -45,7 +45,7 @@ perl -e 'print "#" . ("s" x 22000) . "\n"' >>"$TMP_ROOT/deep-expected.sh"
 skill_load_control deep "$HOOK" "$ANCHOR" value=broken HOOK selected_rows \
   'first selected row' 'second selected row'
 status=0
-cmp -s -- "$TMP_ROOT/deep.sh" "$TMP_ROOT/deep-expected.sh" || status=$?
+cmp -s -- "$TMP_ROOT/hooks/deep.sh" "$TMP_ROOT/deep-expected.sh" || status=$?
 assert_eq "$status" 0 'the deep literal edit preserves every other source byte'
 HOOK="$TMP_ROOT/source.sh"
 
@@ -59,7 +59,7 @@ while IFS='|' read -r MODE want; do
     ambiguous) source="$TMP_ROOT/repeated.sh"; printf '%s\n' "$anchor" "$anchor" >"$source" ;;
     unreadable) source="$TMP_ROOT/absent.sh" ;;
     symlink) source="$TMP_ROOT/linked.sh"; ln -s "$HOOK" "$source" ;;
-    unwritable) mkdir "$TMP_ROOT/invalid.sh" ;;
+    unwritable) mkdir "$TMP_ROOT/hooks/invalid.sh" ;;
     *) echo "skill-load-control-test: mode=$MODE" >&2; exit 2 ;;
   esac
   set +e
@@ -84,6 +84,7 @@ ROWS
 # caller's outcome.log must not overlap the helper's callback capture, which
 # would let control output overwrite the duplicate FAIL row before matching.
 callback_outcome() {
+  if [[ "$HOOK" == *.baseline.sh ]]; then selected_rows; return; fi
   case "$MODE" in
     missing) assert_eq broken expected 'another row' ;;
     duplicate)
@@ -126,7 +127,7 @@ helper_rows() {
   assert_eq "$status" 0 'the helper isolates its callback log'
 }
 if [ "${HELPER_CONTROL_ACTIVE:-}" != 1 ]; then
-  skill_load_control helper "$LIBRARY" '  set +e' '  log="$TMP_ROOT/$name.log"' LIBRARY helper_rows \
+  skill_load_control helper "$LIBRARY" '    set +e' '    log="$TMP_ROOT/$name.log"' LIBRARY helper_rows \
     'the helper isolates its callback log'
 fi
 

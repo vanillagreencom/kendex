@@ -45,9 +45,10 @@ LAYOUTS
 # The subshell keeps the override and assertion counts out of the parent.
 # Keep the matched code and remove only its effect.
 skill_load_control() { # NAME SOURCE ANCHOR INSERT OVERRIDE ROWS FAILED-ROW...
-  local name="$1" source="$2" anchor="$3" insert="$4" override="$5" rows="$6" log status row matches
+  local name="$1" source="$2" anchor="$3" insert="$4" override="$5" rows="$6" log status row matches variant target
   shift 6
   [ ! -L "$source" ] || { echo "skill-load-control: source=symlink" >&2; exit 2; }
+  mkdir -p "$TMP_ROOT/hooks" || { echo "skill-load-control: scratch=unwritable" >&2; exit 2; }
   # Bash 3.2 pattern substitution over the full hook is costly. Byte offsets
   # keep the anchor literal and preserve the source outside the insertion.
   perl -e '
@@ -70,22 +71,32 @@ skill_load_control() { # NAME SOURCE ANCHOR INSERT OVERRIDE ROWS FAILED-ROW...
     open my $output, ">", $target or die "skill-load-control: mutation=unwritable\n$!\n";
     print {$output} $changed or die "skill-load-control: mutation=unwritable\n$!\n";
     close $output or die "skill-load-control: mutation=unwritable\n$!\n";
-  ' -- "$source" "$TMP_ROOT/$name.sh" "$anchor" "$insert" || exit 2
-  # The caller can capture control results at a name-based path of its own.
-  # Give the callback an exclusive log so those writes cannot overwrite rows.
-  log=$(mktemp "$TMP_ROOT/$name.log.XXXXXX") || { echo "skill-load-control: log=mktemp-failed" >&2; exit 2; }
-  set +e
-  (
+  ' -- "$source" "$TMP_ROOT/hooks/$name.sh" "$anchor" "$insert" || exit 2
+  cp -- "$source" "$TMP_ROOT/hooks/$name.baseline.sh" || { echo "skill-load-control: baseline=unreadable" >&2; exit 2; }
+  # Both copies use the hook/skill layout the caller prepares. The unchanged
+  # copy must pass the same callback before a mutant failure is accepted.
+  for variant in baseline mutant; do
+    target="$TMP_ROOT/hooks/$name.sh"
+    [ "$variant" != baseline ] || target="$TMP_ROOT/hooks/$name.baseline.sh"
+    # The callback can use a name-based log. Keep this capture exclusive.
+    log=$(mktemp "$TMP_ROOT/$name.$variant.log.XXXXXX") || { echo "skill-load-control: log=mktemp-failed" >&2; exit 2; }
+    set +e
+    (
+      set -e
+      PASS=0
+      FAIL=0
+      printf -v "$override" '%s' "$target"
+      "$rows"
+      [ "$FAIL" -eq 0 ]
+    ) >"$log" 2>&1
+    status=$?
     set -e
-    PASS=0
-    FAIL=0
-    printf -v "$override" '%s' "$TMP_ROOT/$name.sh"
-    "$rows"
-    [ "$FAIL" -eq 0 ]
-  ) >"$log" 2>&1
-  status=$?
-  set -e
-  assert_eq "$status" 1 "control $name: the mutated hook turns the suite red"
+    if [ "$variant" = baseline ]; then
+      assert_eq "$status" 0 "control $name: the unchanged copy passes the selected rows"
+    else
+      assert_eq "$status" 1 "control $name: the mutated hook turns the suite red"
+    fi
+  done
   for row in "$@"; do
     matches=$(grep -Fxc -e "  FAIL  $row" -- "$log") || {
       status=$?

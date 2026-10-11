@@ -49,9 +49,9 @@ uncommented() { # LINE -> BARE, the line without its comment
     *) BARE=$1 ;;
   esac
 }
-# The one test of whether text the shell reads out of a quoted span or out of a
-# heredoc body is a command: a word before it in the same segment runs shell
-# text. That is a word whose basename ends in `sh` (`sh`, `bash`, `zsh`,
+# The selected executable decides whether a quoted span is shell program text.
+# A heredoc uses its redirection owner and the pipeline's receivers, not the
+# first command on its opening line. Shell basenames end in `sh` (`sh`, `bash`, `zsh`,
 # `dash`, `ksh`), or the word `eval`, `source` or `.`. It also reads an English
 # word ending in `sh`, such as `push`, as one; that keeps the span as command
 # text rather than masking it, which is the direction a guard fails in.
@@ -255,13 +255,26 @@ EOF
     if mask_spans "$BARE"; then
       BARE=$MASKED
     fi
-    local openings=$BARE strip_tabs match
+    local openings=$BARE strip_tabs match before owner receiver pipeline executable_body
     local heredoc_open='(^|[^<])<<(-?)[[:blank:]]*([^[:space:]<][^[:space:]]*)'
     while [[ $openings =~ $heredoc_open ]]; do
       match=${BASH_REMATCH[0]}
       strip_tabs=${BASH_REMATCH[2]}
       delim=${BASH_REMATCH[3]}
+      before=${openings%%"$match"*}${BASH_REMATCH[1]}
+      owner=${before##*$SEP}
       openings=${openings#*"$match"}
+      executable_body=""
+      if runs_shell_text "$owner"; then executable_body=1; fi
+      # A shell receiving this pipeline also executes its stdin. Stop at a
+      # list or group boundary; a later independent shell owns no such input.
+      pipeline=${openings%%[&;\(\)\`$NL]*}
+      pipeline=${pipeline%%'||'*}
+      while [[ $pipeline == *"|"* ]]; do
+        receiver=${pipeline#*|}
+        if runs_shell_text "${receiver%%|*}"; then executable_body=1; fi
+        pipeline=$receiver
+      done
       # Quoted delimiters stop expansion, but a shell still executes the body
       # it reads as its own input. Each delimiter consumes its body in order.
       expands=1
@@ -278,7 +291,7 @@ EOF
         end=$((end + 1))
       done
       [ "$end" -lt "$count" ] || break
-      if runs_shell_text "$BARE"; then
+      if [ -n "$executable_body" ]; then
         while [ "$index" -lt "$end" ]; do
           judged=$judged${lines[$index]}$NL
           index=$((index + 1))
@@ -311,6 +324,23 @@ EOF
     cut=${cut//>\&/>$MASK_AMP}
     cut=${cut//<\&/<$MASK_AMP}
     cut=${cut//>\|/>$MASK_PIPE}
+    if [ "${2:-}" = pipes ]; then
+      # A tar receiver can change directory inside a subshell or brace group.
+      # Keep that pipe receiver together; its caller selects the commands in
+      # it with this same reader before judging a destination.
+      local pipe_group='\|[[:blank:]]*(\([^)]*\)|\{[^}]*\})' group kept
+      while [[ $cut =~ $pipe_group ]]; do
+        group=${BASH_REMATCH[0]}
+        kept=${group//;/$MASK_SEMI}
+        kept=${kept//&/$MASK_AMP}
+        kept=${kept//$NL/$MASK_SEMI}
+        kept=${kept//\(/$MASK_OPEN}
+        kept=${kept//\)/$MASK_CLOSE}
+        kept=${kept//\{/$MASK_OPEN}
+        kept=${kept//\}/$MASK_CLOSE}
+        cut=${cut/"$group"/"$kept"}
+      done
+    fi
     cut=${cut//;/$NL}
     cut=${cut//&/$NL}
     if [ "${2:-}" = pipes ]; then
@@ -334,17 +364,24 @@ $cut
 EOF
   SEGMENTS=$out
 }
-# Select the executable word, after assignments and shell control words.
-# A command launcher selects its next non-option word. Ordinary arguments never
-# open command positions. This remains a lexical reader: assembled names and
-# value-taking launcher options are outside its contract.
+# Select the executable word after control words, assignments and launchers.
+# Known launcher options consume their own values; timeout consumes its duration.
+# find's -exec and -execdir operands are actual command positions. Other find
+# arguments remain data. Assembled names and unknown option arities remain
+# outside this lexical reader's contract.
 command_text() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word name executable launcher=""
+  local rest=$1 word name executable launcher="" takes_value="" duration="" find_rest found
   COMMAND_TEXTS=""
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0
+    case "$rest" in
+      \(* | "$MASK_OPEN"*) rest=${rest:1}; continue ;;
+    esac
     word=${rest%%[[:space:]]*}
+    if [ -n "$takes_value" ]; then
+      rest=${rest#"$word"}; takes_value=""; continue
+    fi
     case "$word" in
       [[:alpha:]_]*=*)
         name=${word%%=*}
@@ -356,11 +393,45 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
       \'*\' | \"*\") executable=${executable:1:${#executable} - 2} ;;
     esac
     executable=${executable##*/}
+    case "$launcher:$executable" in
+      timeout:-k | timeout:--kill-after | timeout:-s | timeout:--signal | \
+      nice:-n | nice:--adjustment | ionice:-c | ionice:--class | ionice:-n | ionice:--classdata | \
+      sudo:-u | sudo:-g | sudo:-h | sudo:-p | sudo:-C | sudo:-T | doas:-u | doas:-C | \
+      env:-u | env:--unset | env:-C | env:--chdir | exec:-a | \
+      xargs:-I | xargs:-n | xargs:-L | xargs:-P | xargs:-s | xargs:-E | xargs:-a | \
+      xargs:--replace | xargs:--max-args | xargs:--max-lines | xargs:--max-procs | \
+      xargs:--max-chars | xargs:--eof | xargs:--arg-file | \
+      stdbuf:-i | stdbuf:-o | stdbuf:-e | stdbuf:--input | stdbuf:--output | stdbuf:--error)
+        rest=${rest#"$word"}; takes_value=1; continue ;;
+      command:-v | command:-V)
+        # These ask about a command without running it.
+        COMMAND_TEXTS="command $rest$NL"
+        return 0 ;;
+    esac
     case "$executable" in
-      if | then | elif | while | until | do | '!' | time | command | exec | sudo | env | nohup)
-        rest=${rest#"$word"}; launcher=1; continue ;;
-      -*)
-        if [ -n "$launcher" ]; then rest=${rest#"$word"}; continue; fi ;;
+      -*) if [ -n "$launcher" ]; then rest=${rest#"$word"}; continue; fi ;;
+    esac
+    if [ -n "$duration" ]; then
+      rest=${rest#"$word"}; duration=""; continue
+    fi
+    case "$executable" in
+      fi | done | esac | '}') return 0 ;;
+      if | then | else | elif | while | until | do | '{' | '!' | time | command | exec | \
+      sudo | env | nohup | timeout | nice | ionice | xargs | doas | stdbuf | setsid)
+        rest=${rest#"$word"}; launcher=$executable
+        [ "$launcher" != timeout ] || duration=1
+        continue ;;
+      find)
+        find_rest=${rest#"$word"}
+        found=""
+        while [ -n "$find_rest" ]; do
+          find_rest=${find_rest#"${find_rest%%[![:space:]]*}"}
+          name=${find_rest%%[[:space:]]*}
+          find_rest=${find_rest#"$name"}
+          case "$name" in -exec | -execdir) found=1; break ;; esac
+        done
+        if [ -n "$found" ]; then rest=$find_rest; launcher=""; continue; fi
+        ;;
     esac
     rest=$executable${rest#"$word"}
     rest=${rest//$MASK_LT/<}

@@ -126,6 +126,14 @@ command_position_rows() {
 quoted kill text|command|0|-|echo '\''pkill -f x'\''
 kill argument|command|0|-|echo pkill
 kill heredoc data|command|0|-|cat <<'\''EOF'\''\npkill killall\nEOF
+else command|command|2|block-argv-kill: refused=pkill|if true; then true; else pkill -f x; fi
+brace command|command|2|block-argv-kill: refused=pkill|{ pkill -f x; }
+timeout command|command|2|block-argv-kill: refused=pkill|timeout 5 pkill -f x
+nice command|command|2|block-argv-kill: refused=pkill|nice -n 5 pkill -f x
+prefixed shell body|command|2|block-argv-kill: refused=pkill|true; bash <<EOF\npkill -f x\nEOF
+pipeline shell body|command|2|block-argv-kill: refused=pkill|cat <<EOF | bash\npkill -f x\nEOF
+prefixed data body|command|0|-|true; cat <<EOF\npkill -f x\nEOF
+pipeline data body|command|0|-|cat <<EOF | cat\npkill -f x\nEOF
 '
 }
 command_position_rows

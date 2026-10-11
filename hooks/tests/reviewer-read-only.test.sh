@@ -217,7 +217,7 @@ assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read the repository confi
 echo "reviewer-read-only: without the tools it runs"
 # One world per declared dependency, each holding every other tool and not
 # that one: the refusal names the missing tool and nothing is judged without
-# it. A row per tool is what keeps the inventory honest — an absent grep does
+# it. A row per tool is what keeps the inventory honest — an absent jq does
 # not stall this hook, it passes the call through.
 tools_table() { # TOOLS
   local tool other bin before=$((PASS + FAIL))
@@ -248,7 +248,7 @@ tools_table() { # TOOLS
     "with none of them the value is the whole list, in check order"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
-tools_table "jq git cat grep dirname"
+tools_table "jq git cat dirname"
 # The shared reader is present in every disposable hook installation.
 ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
 run_hook() { run_tool reviewer-quality Bash command "$1"; }
@@ -260,6 +260,13 @@ git stash list reads|command|0|-|git stash list
 quoted git text|command|0|-|echo '\''git commit; git reset --hard'\''
 git log text|command|0|-|git log --grep='\''git reset --hard'\''
 git heredoc data|command|0|-|cat <<'\''EOF'\''\ngit commit\ngit reset --hard\nEOF
+else command|command|2|reviewer-read-only: refused=git-write|if true; then true; else git commit -m x; fi
+brace command|command|2|reviewer-read-only: refused=git-write|{ git commit -m x; }
+timeout command|command|2|reviewer-read-only: refused=git-write|timeout 5 git commit -m x
+prefixed shell body|command|2|reviewer-read-only: refused=git-discard|true; bash <<EOF\ngit reset --hard\nEOF
+pipeline shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | bash\ngit reset --hard\nEOF
+prefixed data body|command|0|-|true; cat <<EOF\ngit reset --hard\nEOF
+pipeline data body|command|0|-|cat <<EOF | cat\ngit reset --hard\nEOF
 '
 }
 command_position_rows
@@ -276,6 +283,28 @@ skill_load_control shared-reader-lookup "$HOOK" \
   '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
   '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
   HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
+
+. "$TEST_DIR/lib/process-count.sh"
+process_count_setup "$TMP_ROOT"
+reviewer_cost_rows() {
+  local command payload status
+  while IFS= read -r command; do
+    payload=$(jq -nc --arg c "$command" '{agent_type:"reviewer-perf",tool_name:"Bash",tool_input:{command:$c}}')
+    process_count_reset
+    status=0
+    env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$BASH_BIN" "$HOOK" \
+      <<<"$payload" >/dev/null 2>"$ERR_FILE" || status=$?
+    printf 'cost reviewer-read-only grep=%s processes=%s\n' "$(process_count_command grep)" "$(process_count_total)"
+    assert_eq "rc=$status grep=$(process_count_command grep) first=$(first_line)" 'rc=0 grep=0 first=-' "reviewer regex cost: $command"
+  done <<'COSTS'
+git status
+if rm "$X"; then echo done; fi
+COSTS
+}
+reviewer_cost_rows
+skill_load_control regex-processes "$HOOK" '      [ -n "$selected" ] || continue' \
+  '      grep -E -- "$GIT_WRITE" <<<"$selected" >/dev/null || :' \
+  HOOK reviewer_cost_rows 'reviewer regex cost: git status' 'reviewer regex cost: if rm "$X"; then echo done; fi'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

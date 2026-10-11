@@ -113,7 +113,7 @@ shared_rows
 skill_load_control shared-variable "$HOOK" 'SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"' \
   "SHARED_RE='a^'" HOOK shared_rows 'incident guarded TMPDIR root'
 skill_load_control shared-literal "$HOOK" '${literal_root}${literal_end}"' \
-  "SHARED_RE='a^'" HOOK shared_rows 'incident literal glob'
+  "LITERAL_RE='a^'" HOOK shared_rows 'incident literal glob'
 skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
   "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
   'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
@@ -275,6 +275,15 @@ command_position_rows() {
 quoted rm text|command|0|-|echo '\''rm -rf "$HOME"'\''
 rm heredoc data|command|0|-|cat <<'\''EOF'\''\nrm -rf $HOME\nEOF
 cached git removal|command|0|-|git rm --cached "$HOME"
+else command|command|2|block-unsafe-rm: refused=recursive-rm|if true; then true; else rm -rf $X/sub; fi
+brace command|command|2|block-unsafe-rm: refused=recursive-rm|{ rm -rf $X/sub; }
+timeout command|command|2|block-unsafe-rm: refused=recursive-rm|timeout 5 rm -rf $X/sub
+find shell command|command|2|block-unsafe-rm: refused=recursive-rm|find . -exec sh -c "rm -rf $X/sub" {} \\;
+xargs shell command|command|2|block-unsafe-rm: refused=recursive-rm|xargs sh -c "rm -rf $X/sub"
+prefixed shell body|command|2|block-unsafe-rm: refused=recursive-rm|true; bash <<EOF\nrm -rf $X/sub\nEOF
+pipeline shell body|command|2|block-unsafe-rm: refused=recursive-rm|cat <<EOF | bash\nrm -rf $X/sub\nEOF
+prefixed data body|command|0|-|true; cat <<EOF\nrm -rf $X/sub\nEOF
+pipeline data body|command|0|-|cat <<EOF | cat\nrm -rf $X/sub\nEOF
 '
 }
 command_position_rows
