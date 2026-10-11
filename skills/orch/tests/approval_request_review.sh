@@ -25,7 +25,7 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
-  'auth status'|'api user') exit 0 ;;
+  'auth status'|'api user') exit "${AUTH_EXIT:-0}" ;;
   'repo view') echo consumer/repo ;;
   'pr view')
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
@@ -48,6 +48,7 @@ case "$1 $2" in
     ;;
   'pr ready')
     printf 'ready\n' >> "$TRANSITION_LOG"
+    [[ "${CLOUD_DIRTY_BASE:-false}" != true ]] || touch "$PWD/cloud-cleanup-blocker"
     [[ "${READY_EXIT:-0}" == 0 ]] || exit "$READY_EXIT"
     printf 'false\n' > "$DRAFT_FILE"
     [[ "${MOVE_READY_HEAD:-false}" != true ]] || printf 'new-head\n' > "$HEAD_FILE"
@@ -271,24 +272,64 @@ git -C "$ACTION_CWD" config maintenance.auto false
 git -C "$ACTION_CWD" checkout -q -b item
 write_settings "$ACTION_CWD/kendex.settings.toml" '"off"' ''
 mkdir -p "$ACTION_CWD/tmp"
-cloud_script() { # LIB
+cloud_script() { # LIB [ERREXIT]
   local words block
   words="$(env -i PATH="$PATH" "$BASH" -uc 'source "$1"; printf "%s" "$LAUNCH_SESSION_TEXT"' _ "$1")"
-  block="$(awk '/^git fetch origin \[BASE\]$/ {take=1} take {print} take && /^git worktree remove tmp\/review-base$/ {exit}' <<<"$words")"
+  block="$(awk '/^\($/ || /^git fetch origin \[BASE\]$/ {take=1} take {print} take && (/^\)$/ || /^git worktree remove tmp\/review-base$/) {exit}' <<<"$words")"
   block="${block//.agents\/skills\/orch\/scripts\/approval-wait/$RUN}"
   block="${block//\[PR_NUMBER\]/42}"
   block="${block//\[BASE\]/main}"
-  printf 'set -euo pipefail\n%s\n' "${block:-:}" > "$TMP_ROOT/cloud-complete.sh"
+  printf 'set -uo pipefail\n%s\n%s\n' "${2:+set -e}" "${block:-:}" > "$TMP_ROOT/cloud-complete.sh"
 }
-cloud_script "$REPO_ROOT/skills/orch/scripts/lib/lane-launch.sh"
-for row in 'cloud marks ready|true|ready,request head=current-head draft=false' 'person already marked ready|false|request head=current-head draft=false'; do
-  IFS='|' read -r label draft transitions <<<"$row"
+for row in \
+  'cloud marks ready|strict|true|0|0|false|0|1|ready,request head=current-head draft=false|0' \
+  'person already marked ready|strict|false|0|0|false|0|1|request head=current-head draft=false|0' \
+  'authentication failure with errexit|strict|true|1|0|false|3|0||0' \
+  'authentication failure without errexit||true|1|0|false|3|0||0' \
+  'ready failure with errexit|strict|true|0|8|false|2|0|ready|0' \
+  'ready failure without errexit||true|0|8|false|2|0|ready|0' \
+  'cleanup failure with errexit|strict|true|0|0|true|128|1|ready,request head=current-head draft=false|128' \
+  'cleanup failure without errexit||true|0|0|true|128|1|ready,request head=current-head draft=false|128' \
+  'request and cleanup failure with errexit|strict|true|0|8|true|2|0|ready|128' \
+  'request and cleanup failure without errexit||true|0|8|true|2|0|ready|128'; do
+  IFS='|' read -r label errexit draft auth_exit ready_exit dirty want_rc requests transitions cleanup_exit <<<"$row"
+  cloud_script "$REPO_ROOT/skills/orch/scripts/lib/lane-launch.sh" "$errexit"
   printf '%s\n' "$draft" > "$DRAFT_FILE"
   printf 'current-head\n' > "$HEAD_FILE"
+  RUN_ENV=("AUTH_EXIT=$auth_exit" "READY_EXIT=$ready_exit" "CLOUD_DIRTY_BASE=$dirty")
   run_action "$TMP_ROOT/cloud-complete.sh" 0
-  assert_eq "$RC|$REQUESTS|$(paste -sd, "$TRANSITION_LOG")|$(cat "$EXECUTION_LOG")" "0|1|$transitions|" "$label requests through the trusted base owner" "$ERR"
-  assert_not_contains "$(git -C "$ACTION_CWD" worktree list --porcelain)" 'tmp/review-base' "$label removes its temporary base checkout"
+  assert_eq "$RC|$REQUESTS|$(paste -sd, "$TRANSITION_LOG")|$(cat "$EXECUTION_LOG")" "$want_rc|$requests|$transitions|" "$label preserves the request result" "$ERR"
+  if [[ "$cleanup_exit" == 0 ]]; then
+    assert_not_contains "$(git -C "$ACTION_CWD" worktree list --porcelain)" 'tmp/review-base' "$label removes its temporary base checkout"
+  else
+    assert_contains "$(cat "$ERR")" "cloud-completion: base-cleanup-failed exit=$cleanup_exit" "$label reports cleanup failure separately"
+    assert_contains "$(git -C "$ACTION_CWD" worktree list --porcelain)" 'tmp/review-base' "$label retains the checkout Git refused to remove"
+  fi
+  [[ ! -d "$ACTION_CWD/tmp/review-base" ]] || git -C "$ACTION_CWD" worktree remove --force tmp/review-base
 done
+RUN_ENV=()
+# The emitted commands own cleanup and preserve its two independent results.
+# Each control changes a disposable source copy and runs the real request owner.
+for row in \
+  'cloud-request-cleanup|cloud_request_status=$?|exit "$?" # cloud_request_status=$?|strict|1|false|3|yes|no' \
+  'cloud-request-result|exit "$cloud_request_status"|exit "$cloud_cleanup_status"||1|false|0|no|no' \
+  'cloud-cleanup-report|  printf "%s\n" "cloud-completion: base-cleanup-failed exit=$cloud_cleanup_status" >&2|  : # printf "%s\n" "cloud-completion: base-cleanup-failed exit=$cloud_cleanup_status" >&2|strict|0|true|128|yes|no'; do
+  IFS='|' read -r label old new errexit auth_exit dirty want_rc registered diagnostic <<<"$row"
+  scripts="$(mutant_scripts "$label" lib/lane-launch.sh)" || exit 1
+  mutate_file "$scripts/lib/lane-launch.sh" "$old" "$new"
+  cloud_script "$scripts/lib/lane-launch.sh" "$errexit"
+  printf 'true\n' > "$DRAFT_FILE"
+  printf 'current-head\n' > "$HEAD_FILE"
+  RUN_ENV=("AUTH_EXIT=$auth_exit" "CLOUD_DIRTY_BASE=$dirty")
+  run_action "$TMP_ROOT/cloud-complete.sh" 0
+  actual_registered=no
+  [[ ! -d "$ACTION_CWD/tmp/review-base" ]] || actual_registered=yes
+  actual_diagnostic=no
+  [[ "$(cat "$ERR")" != *'cloud-completion: base-cleanup-failed'* ]] || actual_diagnostic=yes
+  assert_eq "$RC|$actual_registered|$actual_diagnostic" "$want_rc|$registered|$diagnostic" "$label control breaks its failure handling" "$ERR"
+  [[ "$actual_registered" == no ]] || git -C "$ACTION_CWD" worktree remove --force tmp/review-base
+done
+RUN_ENV=()
 for row in \
   'cloud-ready|--request-review --mark-ready|--request-review|true' \
   'cloud-policy|--base-checkout tmp/review-base|--base-checkout .|false'; do

@@ -683,10 +683,21 @@ LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this p
 # checkout carries it, and otherwise commits under the gates that hold the
 # merge. It holds no apostrophe or backtick, as the words above hold none.
 LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. The task above is the whole issue. This session cloned the item branch {branch}: work on it as checked out, create no other work branch. The detached base checkout in the completion commands below is the only extra worktree allowed. Commit and push each finished part of the work to {branch} on origin as it finishes, not only at the end. Before each commit, before staging or validation, apply the safe fixes of the formatter declared by the repository lint script or DEV_VALIDATE_CMD. Run its write mode only on files you changed. Apply no unsafe fix and touch no other file. For a review or audit, commit the report file after each section, so a session that runs out of credit or time leaves its work on the branch. Never push to a claude/ branch, since your overseer finds your work by the item branch name. You reach your overseer through your branch and pull request and nothing else. Where .agents/skills/commit-guards/scripts/install-git-hooks is present, arm the commit hooks with it before your first commit. Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge. Then, before any other work, make your first commit with git commit --allow-empty, push it to {branch}, and open a draft pull request from {branch}: your overseer reads an item branch with no open pull request soon after launch as a lane that never started, and GitHub opens none on a branch with no commit ahead of its base. While the work goes on, and while a blocker stands, keep the pull request draft, with where the work stands and any blocker under a ## Lane status heading in its body, and name a blocker in a pull request comment too. When the change is committed and pushed and your own tests pass, read the pull request target base with gh pr view [PR_NUMBER] --json baseRefName --jq .baseRefName and bind that branch as [BASE]. The detached checkout below supplies the consumer base policy without item-branch changes. Run these commands in order:
-git fetch origin [BASE]
-git worktree add --detach tmp/review-base origin/[BASE]
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --base-checkout tmp/review-base
-git worktree remove tmp/review-base
+(
+git fetch origin [BASE] || exit "$?"
+git worktree add --detach tmp/review-base origin/[BASE] || exit "$?"
+cloud_request_status=0
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --base-checkout tmp/review-base || cloud_request_status=$?
+cloud_cleanup_status=0
+git worktree remove tmp/review-base || cloud_cleanup_status=$?
+if [ "$cloud_cleanup_status" -ne 0 ]; then
+  printf "%s\n" "cloud-completion: base-cleanup-failed exit=$cloud_cleanup_status" >&2
+fi
+if [ "$cloud_request_status" -ne 0 ]; then
+  exit "$cloud_request_status"
+fi
+exit "$cloud_cleanup_status"
+)
 Remove the temporary base checkout even if the request fails. Use a full clone under tmp/ only if Gate-mode routing refuses the detached base checkout, and name its refusal line in the pull request. On a fallback or failure, copy the request answer to a pull request comment for the landing lane. Never mark ready another way and never close and reopen the pull request to request review. Read no CI and wait on no review, since CI and merge belong to the landing lane. Never ask a question: a step that needs an answer is a step this lane never takes, so name the blocker in the pull request and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person.'
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
