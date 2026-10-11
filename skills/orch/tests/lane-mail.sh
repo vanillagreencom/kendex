@@ -1671,14 +1671,14 @@ while IFS= read -r row; do
   printf 'read evidence: %s processes=%s %s\n' "$row" "$processes" "$result"
 done <"$TMP_ROOT/read-results"
 
-# A private orch copy must still call the shipped worktree owner for default
-# root rows. Without that sibling it would silently use the checkout fallback.
-# The same rows reject restoring the per-file read path.
+# The added startup work reaches the common fast-read path. Its drain control
+# keeps the captured output and exceeds the same cap the full reader battery
+# asserts. Default-root coverage stays in that production battery.
 READ_MUTANT="$(mutant_scripts read-cost/orch lane-mail)/lane-mail"
 ln -s "$REPO_ROOT/skills/worktree" "${READ_MUTANT%/scripts/lane-mail}/../worktree"
 mutate_file "$READ_MUTANT" '  READ_BOX="$BOX"' '  WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")"; date -u +%s >/dev/null; jq -n null >/dev/null; jq -n null >/dev/null; READ_BOX="$BOX"'
 python3 "$REPO_ROOT/skills/orch/tests/lib/mail-read-cases.py" "$READ_MUTANT" \
-  "$TMP_ROOT/read-control" "$BASH" "$READ_COUNT" >"$TMP_ROOT/read-control-results"
+  "$TMP_ROOT/read-control" "$BASH" "$READ_COUNT" startup-control >"$TMP_ROOT/read-control-results"
 while IFS= read -r row; do
   IFS= read -r result
   IFS= read -r processes

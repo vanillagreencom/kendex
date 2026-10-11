@@ -19,16 +19,24 @@ def module(name, file):
     return result
 
 
-def run(script, root, bash, counting):
+def run(script, root, bash, counting, control=False):
     here = Path(__file__).parent
     counter = module("counter", here / "process-count.py")
     world = module("world", here / "mail-read-world.py")
     rows = json.loads((here.parent / "fixtures/mail-read-base.json").read_text())
+    if control:
+        # Startup work is shared by every fast reader. One successful drain
+        # proves that extra work breaks its process cap without replaying the
+        # output battery. The production run still checks every saved row.
+        rows = [row for row in rows if row["state"] == "whole"
+                and row["args"] == ["drain", "--after", "0"] and "root" not in row]
+        assert len(rows) == 1, "startup control needs the explicit-root drain fixture"
+    count_dir = Path(root) / "counter"
+    if counting:
+        counter.install(count_dir, os.environ["PATH"], bash)
     for index, row in enumerate(rows):
         case = Path(root) / str(index)
         world.prepare(case, row["state"])
-        count_dir = case / "counter"
-        counter.install(count_dir, os.environ["PATH"], bash)
         env = {key: os.environ[key] for key in ("HOME", "PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
         args = [bash, script, *row["args"], "--item", "KEN-1"]
         caller = case
@@ -41,6 +49,10 @@ def run(script, root, bash, counting):
         else:
             args.extend(("--root", str(case)))
         if counting:
+            # Each launch has a fresh measurement. Wrapper files describe the
+            # same PATH for the entire run and need no per-case installation.
+            (count_dir / "trace").write_text("")
+            (count_dir / "external").write_text("")
             env.update(PATH=str(count_dir / "bin") + os.pathsep + env["PATH"], BASH_ENV=str(count_dir / "bash-env"))
         result = subprocess.run(args, cwd=caller, capture_output=True, env=env, timeout=30)
         stdout_matches = result.stdout == row["stdout"].encode()
@@ -122,4 +134,4 @@ if __name__ == "__main__":
     if sys.argv[4].startswith("delivery-"):
         delivery(*sys.argv[1:4], sys.argv[4][len("delivery-"):], sys.argv[5] == "yes")
     else:
-        run(*sys.argv[1:4], sys.argv[4] == "yes")
+        run(*sys.argv[1:4], sys.argv[4] == "yes", sys.argv[5:] == ["startup-control"])
