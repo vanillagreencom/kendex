@@ -182,6 +182,10 @@ skill-load-record = ""
 
 # Skill mappings per agent — always loaded into context.
 [agent-skills]
+cpa = ["jarvis"]
+legal = ["jarvis"]
+operator = ["jarvis"]
+auditor = ["jarvis"]
 rust = ["github", "linear"]
 iced = ["iced-rs"]
 reviewer-arch = ["reviewer"]

@@ -16,6 +16,8 @@ skills: reviewer
 
 ## Scope
 
+The user's facts about their entity, accounts and people live in the user's own skills or memory; this brief holds none, and facts it cannot read are reported unread.
+
 - **Module boundaries and layering**: components respecting documented boundaries; cross-cutting leaks; dependency-rule violations.
 - **Abstraction quality**: interfaces minimal and cohesive; anti-patterns; over-engineering.
 - **Integration with another system**: a change that derives another system's state indirectly (scrapes its screen or pane, reads a status line, parses output text the system does not document as an interface, or reads its internal files) names the documented interface it stands in for and why that interface cannot serve, the rule `.agents/skills/code-quality/SKILL.md` § Over-Engineering states. A change that omits either is a blocker. Reading a documented interface, text or JSON output included, is not this finding.
@@ -27,6 +29,8 @@ skills: reviewer
 Compliance criteria come from the project's architecture docs. Do not invent design rules the project never adopted. Leave local code quality not tied to architecture policy to `reviewer-quality`.
 
 A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+
+If the code-quality or orch instructions are unavailable, apply the project's adopted architecture and review rules and keep the same `blockers[]` and `suggestions[]` output.
 
 ## Output
 

@@ -132,6 +132,26 @@ harnesses = [
 ]
 method = "symlink"
 
+[agents.cpa]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+enabled = true
+
+[agents.legal]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+enabled = true
+
+[agents.operator]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+enabled = true
+
+[agents.auditor]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+enabled = true
+
 [agents.runtime]
 source = "."
 harnesses = [
@@ -540,6 +560,10 @@ harnesses = [
     "pi",
     "copilot",
 ]
+
+[skills.jarvis]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
 
 [skills.xcode-run]
 source = "."
