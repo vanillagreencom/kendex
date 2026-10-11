@@ -5,6 +5,10 @@
 # about it: may the heavy lanes stand down? By default, the engine records its
 # rendered files in .kendex-generated.json. Carrier packages and in-place
 # sources stay outside that inventory and always run product checks.
+# In harness and render-candidate modes, a byte-exact top-level kendex.toml
+# schema step is removed from the path set. A hand edit counts the same as
+# the engine's: that line decides no render or classifier input, and the
+# render proof still runs kendex verify on the head.
 # `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
 # `--mode render-candidate` permits new head-owned paths and the adopted refresh
 # caller without an inventory entry to gate render-proof prerequisites. It
@@ -326,6 +330,57 @@ head_rev="$(git_repo rev-parse --verify --quiet "${head}^{commit}")" || verdict 
   "cause=unresolved-endpoint endpoint=$(stable_value "$head")" \
   "endpoint '$head' does not resolve to a commit"
 base_rev="$base"
+
+# The refresh writer changes only the canonical root schema line by one.
+# Compare committed bytes, including line endings, rather than parse TOML.
+schema_step() {
+  python3 -I - "$repo" "$base_rev" "$head_rev" <<'SCHEMA_STEP'
+import os
+import re
+import subprocess
+import sys
+
+repo, base, head = sys.argv[1:]
+environment = {key: os.environ[key] for key in ("PATH", "SystemRoot") if key in os.environ}
+try:
+    before, after = [subprocess.run(
+        ["git", "-C", repo, "show", f"{revision}:kendex.toml"],
+        env=environment, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
+    ).stdout for revision in (base, head)]
+except (OSError, subprocess.CalledProcessError):
+    sys.exit(1)
+lines = before.splitlines(keepends=True)
+candidates = []
+for index, line in enumerate(lines):
+    content = line.rstrip(b"\r\n")
+    if content.lstrip().startswith(b"["):
+        break
+    match = re.fullmatch(rb"schema = ([0-9]+)", content)
+    if match:
+        candidates.append((index, int(match[1]), content))
+for index, previous, content in candidates:
+    if content != f"schema = {previous}".encode():
+        continue
+    if sum(candidate[2] == content for candidate in candidates) != 1:
+        continue
+    expected = list(lines)
+    expected[index] = expected[index].replace(content, f"schema = {previous + 1}".encode(), 1)
+    if b"".join(expected) != after:
+        continue
+    print(f"schema-bump: path=kendex.toml from={previous} to={previous + 1}")
+    sys.exit(0)
+sys.exit(1)
+SCHEMA_STEP
+}
+if grep -qxF kendex.toml <<<"$changed" && schema_bump="$(schema_step 2>/dev/null)" \
+    && schema_paths="$(sed '/^kendex\.toml$/d' <<<"$changed")"; then
+  changed="$schema_paths"
+  printf '%s\n' "$schema_bump" >&2
+  [ -n "$changed" ] || verdict false \
+    "cause=empty-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
+    "the diff contains no changed paths after the schema step"
+fi
+
 # A base older than the render that first wrote the inventory holds none,
 # which is a long-lived branch's normal state rather than a failed read:
 # generated ownership at that end is not recorded, so the diff runs product

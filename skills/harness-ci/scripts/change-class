@@ -179,7 +179,10 @@
 #
 # A changed kendex configuration file refuses every narrow class, not only
 # render: those files decide what is rendered and what each judgement below
-# reads. A harness's own registry files refuse every narrow class but
+# reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
+# A hand edit counts the same as the engine's: that line decides no render or
+# classifier input, and the proof still runs kendex verify on the head.
+# A harness's own registry files refuse every narrow class but
 # render, the files it executes as configuration: its hooks, its permissions,
 # and the MCP servers it may run. kendex writes keys in those and never the
 # file, so a re-rendered one reaches render only where the row owning it says
@@ -405,6 +408,7 @@ if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
     "the shipped harness-only classifier refused this call"
 fi
 sed -n '/^changed-path: /p' "$harness_err" >&2
+sed -n '/^schema-bump: /p' "$harness_err" >&2
 sed -n '/^base-rev: /p' "$harness_err" >&2
 sed -n '/^head-rev: /p' "$harness_err" >&2
 sed -n 's/^fallback: /harness-note: /p' "$harness_err" >&2

@@ -2212,6 +2212,73 @@ TOML
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
+  # The previous engine left schema 6; the next real refresh must persist 7.
+  git -C "$consumer" checkout -q -B schema-base "$consumer_base"
+  python3 - "$consumer/kendex.toml" <<'OLD_SCHEMA'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+before = path.read_bytes()
+assert before.startswith(b"schema = 7\n")
+path.write_bytes(before.replace(b"schema = 7\n", b"schema = 6\n", 1))
+OLD_SCHEMA
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m 'the consumer on schema 6'
+  schema_base="$(git -C "$consumer" rev-parse HEAD)"
+  git -C "$consumer" checkout -q -B schema-refreshed
+  kendex_here "$consumer" refresh --scope project -y --leave
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m 'kendex refresh migrates the schema'
+  schema_refresh_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$schema_base" --head HEAD)"
+  assert_eq "a real refresh from schema 6 keeps its render class" \
+    'class=render measured=true cause=renders-match-their-sources' \
+    "$(printf '%s\n' "$schema_refresh_err" | sed -n 's/^class: //p')"
+  schema_candidate="$(classify --mode render-candidate --repo "$consumer" \
+    --event pull_request --base "$schema_base" --head HEAD)"
+  assert_eq "the schema refresh installs proof prerequisites" render_candidate=true "$schema_candidate"
+  assert_eq "the real refresh reports its schema step" \
+    'schema-bump: path=kendex.toml from=6 to=7' \
+    "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^schema-bump: /p')"
+  schema_log_mutant="$(mutant schema-step-hidden change-class \
+    'sed -n '\''/^schema-bump: /p'\'' "$harness_err" >&2' ':')"
+  schema_hidden_err="$(CHANGE_CLASS="$schema_log_mutant" classify_stderr --repo "$consumer" \
+    --event pull_request --base "$schema_base" --head HEAD)"
+  schema_log_status=0
+  (PASS=0; FAIL=0
+    assert_eq 'the real refresh reports its schema step' \
+      'schema-bump: path=kendex.toml from=6 to=7' \
+      "$(printf '%s\n' "$schema_hidden_err" | sed -n '/^schema-bump: /p')"
+    report schema-log-control) >"$SANDBOX/schema-log-control.log" 2>&1 || schema_log_status=$?
+  assert_eq "must-fail: hiding the schema diagnostic turns its assertion red" 1 "$schema_log_status"
+  schema_mutant="$(mutant schema-step-retained harness-only \
+    'if grep -qxF kendex.toml <<<"$changed" && schema_bump="$(schema_step 2>/dev/null)" \' \
+    'if false \' )"
+  schema_control="$(CHANGE_CLASS="$schema_mutant" classify_stderr --repo "$consumer" \
+    --event pull_request --base "$schema_base" --head HEAD)"
+  assert_eq "must-fail: retaining the real schema step loses render classification" \
+    'class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml' \
+    "$(printf '%s\n' "$schema_control" | sed -n 's/^class: //p')"
+  git -C "$consumer" checkout -q -B schema-and-instructions schema-refreshed
+  python3 - "$consumer/kendex.toml" <<'MANIFEST_EDIT'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+before = path.read_bytes()
+original = b'This consumer answers to its own rules, not the catalog\'s.'
+assert before.count(original) == 1
+path.write_bytes(before.replace(original, b'This consumer has changed instructions.', 1))
+MANIFEST_EDIT
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m 'schema step and changed instructions'
+  schema_edit_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$schema_base" --head HEAD)"
+  assert_eq "a real schema refresh with changed instructions requires configuration review" \
+    'class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml' \
+    "$(printf '%s\n' "$schema_edit_err" | sed -n 's/^class: //p')"
+  git -C "$consumer" checkout -q refreshed
   assert_eq "and a record the catalog has not moved past trails nothing" "" \
     "$(printf '%s\n' "$refresh_err" | sed -n '/^render-stale: /p')"
   git -C "$consumer" checkout -q -B unknown-source refreshed
