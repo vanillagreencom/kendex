@@ -311,6 +311,10 @@ fn a_renderer_failure_after_removal_keeps_the_uninstall_account() {
     )
     .unwrap();
 
+    let manifest = f.project.join("kendex.toml");
+    let existing = fs::read_to_string(&manifest).unwrap();
+    fs::write(&manifest, format!("{existing}\n[bot-instructions]\n")).unwrap();
+
     let error = match kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "commit-guards")
     {
         Err(error) => error,
