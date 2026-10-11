@@ -94,7 +94,7 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 			// exitCode=null and let finalizeTaskLifecycle classify as
 			// 'failed' (no stopReason, non-zero exit). The canonical exit
 			// event fires here, and the subscriber/daemon routes the
-			// resulting pi-bg-task-exit wake to master.
+			// resulting pi-bg-task-exit wake to the Pi session that owns the task.
 			//
 			// stamp terminationReason so callers can distinguish
 			// an orphan-watcher finalize from an explicit extension-stop or
