@@ -10,7 +10,6 @@ import {
   DEPENDENCY_REMOVED_NOTE,
   DEPENDENCY_UNKNOWN_NOTE,
 } from "@/lib/copy-marketplaces";
-import { kindLabel } from "@/lib/labels";
 import { mount } from "@/test/dom";
 import { DependencyChoice, DependencyFacts } from "./package-dependencies";
 
@@ -161,7 +160,7 @@ describe("required dependencies with the same name across kinds", () => {
           const row = rows?.[index];
           expect(row?.firstChild?.textContent).toBe(dependency.shown);
           expect(row?.querySelector("span")?.textContent).toBe(
-            kindLabel(dependency.kind),
+            dependency.kind === "skill" ? "Skill" : "Agent",
           );
           expect(row?.querySelector("span")?.hidden).toBe(false);
           expect(row?.querySelectorAll("span")).toHaveLength(
