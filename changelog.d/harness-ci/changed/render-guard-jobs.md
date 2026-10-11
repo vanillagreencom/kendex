@@ -1,0 +1,1 @@
+- Consumer refresh CI guidance states when a render proof covers the bot-instructions check and keeps CodeQL, launcher or script tests, and other guard jobs running.
