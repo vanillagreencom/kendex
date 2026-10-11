@@ -26,8 +26,8 @@ Every read and write goes to Linear's API as it runs; no tracker data is stored 
 |----------|---------|
 | `issues` | list, get, bulk-get, create, update, bulk-update, archive, trash/delete, children, list-relations, add-relation, remove-relation, activate, block, unblock, complete, validate-completion |
 | `comments` / `labels` / `project-labels` | list, create, update, delete (`comments` also bulk-list, `labels` also audit) |
-| `projects` | list, get, create, update, delete, list-dependencies, add-dependency, remove-dependency, post-update, list-updates, reorder, set-sort-order |
-| `initiatives` / `milestones` | list, get, create, update, delete (`initiatives` also add-project, remove-project) |
+| `projects` | list, get, create, update, delete, list-dependencies, add-dependency, remove-dependency, post-update, list-updates, reorder, set-sort-order; create/update take `--lead EMAIL\|ID` and repeatable `--link LABEL=URL` |
+| `initiatives` / `milestones` | list, get, create, update, delete (`initiatives` also add-project, remove-project; create/update take `--owner EMAIL\|ID`, `--lead-team KEY\|NAME`, `--labels A,B`, and repeatable `--link LABEL=URL`) |
 | `teams` / `users` / `statuses` / `documents` | list, get (`users` also has `me`; `teams keys` reads `{urlKey, keys}` for outbound tracker links without changing `teams list`'s array) |
 | `cycles` | list, create, update |
 | `attachments` | list (every file an issue references), fetch (download one) |

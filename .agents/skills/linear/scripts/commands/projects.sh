@@ -54,6 +54,8 @@ Create Options:
   --content <text>      Long description (markdown, shows in body)
   --state <name>        Initial state (backlog, planned, started, paused, completed)
   --priority <n>        Priority: 1=urgent, 2=high, 3=normal, 4=low, 0=none
+  --lead <email-or-id>  Lead user; email matches the whole address, ignoring case
+  --link <label=url>    Resource link; repeatable; skips an existing URL
   --labels <list>       Comma-separated project label names (e.g., "phase-1,area:backend")
 
 Update Options:
@@ -62,6 +64,8 @@ Update Options:
   --content <text>      Long description (markdown)
   --state <name>        New state (backlog, planned, started, paused, completed)
   --priority <n>        Priority: 1=urgent, 2=high, 3=normal, 4=low, 0=none
+  --lead <email-or-id>  Lead user; email matches the whole address, ignoring case
+  --link <label=url>    Resource link; repeatable; skips an existing URL
   --labels <list>       Comma-separated project label names
 
 Dependency Options (add-dependency):
@@ -202,6 +206,7 @@ list_projects() {
                 lead { name }
                 teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
                 labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+                links { pageInfo { hasNextPage endCursor } nodes { id label url } }
                 url
                 createdAt
                 updatedAt
@@ -292,6 +297,7 @@ get_project() {
             url
             teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
             labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+            links { pageInfo { hasNextPage endCursor } nodes { id label url } }
             lead { name email }
             createdAt
             updatedAt
@@ -340,6 +346,7 @@ get_project() {
 }
 
 create_project() {
+    local lead="" lead_set=false links='[]' link
     local name=""
     local team=""
     local description=""
@@ -350,6 +357,12 @@ create_project() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --lead) linear_require_option_value "$@" || return 1; lead="$2"; lead_set=true; shift 2 ;;
+        --link)
+            linear_require_option_value "$@" || return 1
+            link=$(linear_parse_entity_link "$2") || return 1
+            links=$(jq -c --argjson link "$link" '. + [$link]' <<<"$links") || return 1
+            shift 2 ;;
         --name)
             name="$2"
             shift 2
@@ -433,38 +446,21 @@ create_project() {
         input_parts+=("\"priority\": $priority")
     fi
 
-    # Resolve project label names to IDs
+    local resolved
+    if [[ "$lead_set" == true ]]; then
+        resolved=$(resolve_assignee_id "$lead" Lead) || return 1
+        resolved=$(jq -cn --arg id "$resolved" '$id') || return 1
+        input_parts+=("\"leadId\": $resolved")
+    fi
     if [ -n "$labels" ]; then
-        local label_ids=()
-        IFS=',' read -ra label_names <<<"$labels"
-        for label_name in "${label_names[@]}"; do
-            # Parameter expansion, not xargs: xargs parses quotes, so a label
-            # named won't-fix aborted the command with an unmatched-quote error.
-            label_name="${label_name#"${label_name%%[![:space:]]*}"}"
-            label_name="${label_name%"${label_name##*[![:space:]]}"}"
-            local label_query='query GetProjectLabel($name: String!, $after: String) { projectLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
-            local label_result
-            label_result=$(graphql_pages "$label_query" "$(jq -cn --arg name "$label_name" '{name: $name}')" projectLabels) || return 1
-            local label_id
-            label_id=$(echo "$label_result" | jq -r '.projectLabels.nodes[0].id // empty')
-            if [ -z "$label_id" ]; then
-                echo "{\"error\": \"Project label not found: $label_name\"}" >&2
-                return 1
-            fi
-            label_ids+=("\"$label_id\"")
-        done
-        local label_ids_json
-        label_ids_json=$(
-            IFS=,
-            echo "[${label_ids[*]}]"
-        )
-        input_parts+=("\"labelIds\": $label_ids_json")
+        resolved=$(linear_resolve_entity_labels project "$labels") || return 1
+        input_parts+=("\"labelIds\": $resolved")
     fi
 
     local input_json
     input_json=$(
         IFS=,
-        echo "{${input_parts[*]}}"
+        echo "{${input_parts[*]-}}"
     )
 
     local mutation="
@@ -478,14 +474,15 @@ create_project() {
     }"
 
     local result
-    result=$(graphql_query "$mutation" "{\"input\": $input_json}")
-    normalize_mutation_response "$result" "projectCreate" "project"
+    result=$(graphql_query "$mutation" "{\"input\": $input_json}") || return 1
+    linear_finish_entity_write "$result" "projectCreate" "project" "$links"
 }
 
 update_project() {
     local project_id="$1"
     shift
 
+    local lead="" lead_set=false links='[]' link
     local name=""
     local description=""
     local content=""
@@ -495,6 +492,12 @@ update_project() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --lead) linear_require_option_value "$@" || return 1; lead="$2"; lead_set=true; shift 2 ;;
+        --link)
+            linear_require_option_value "$@" || return 1
+            link=$(linear_parse_entity_link "$2") || return 1
+            links=$(jq -c --argjson link "$link" '. + [$link]' <<<"$links") || return 1
+            shift 2 ;;
         --name)
             name="$2"
             shift 2
@@ -559,35 +562,18 @@ update_project() {
         input_parts+=("\"priority\": $priority")
     fi
 
-    # Resolve project label names to IDs
+    local resolved
+    if [[ "$lead_set" == true ]]; then
+        resolved=$(resolve_assignee_id "$lead" Lead) || return 1
+        resolved=$(jq -cn --arg id "$resolved" '$id') || return 1
+        input_parts+=("\"leadId\": $resolved")
+    fi
     if [ -n "$labels" ]; then
-        local label_ids=()
-        IFS=',' read -ra label_names <<<"$labels"
-        for label_name in "${label_names[@]}"; do
-            # Parameter expansion, not xargs: xargs parses quotes, so a label
-            # named won't-fix aborted the command with an unmatched-quote error.
-            label_name="${label_name#"${label_name%%[![:space:]]*}"}"
-            label_name="${label_name%"${label_name##*[![:space:]]}"}"
-            local label_query='query GetProjectLabel($name: String!, $after: String) { projectLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
-            local label_result
-            label_result=$(graphql_pages "$label_query" "$(jq -cn --arg name "$label_name" '{name: $name}')" projectLabels) || return 1
-            local label_id
-            label_id=$(echo "$label_result" | jq -r '.projectLabels.nodes[0].id // empty')
-            if [ -z "$label_id" ]; then
-                echo "{\"error\": \"Project label not found: $label_name\"}" >&2
-                return 1
-            fi
-            label_ids+=("\"$label_id\"")
-        done
-        local label_ids_json
-        label_ids_json=$(
-            IFS=,
-            echo "[${label_ids[*]}]"
-        )
-        input_parts+=("\"labelIds\": $label_ids_json")
+        resolved=$(linear_resolve_entity_labels project "$labels") || return 1
+        input_parts+=("\"labelIds\": $resolved")
     fi
 
-    if [ ${#input_parts[@]} -eq 0 ]; then
+    if [[ ${#input_parts[@]} -eq 0 && "$links" == '[]' ]]; then
         echo '{"error": "No update options provided"}' >&2
         return 1
     fi
@@ -595,7 +581,7 @@ update_project() {
     local input_json
     input_json=$(
         IFS=,
-        echo "{${input_parts[*]}}"
+        echo "{${input_parts[*]-}}"
     )
 
     local mutation="
@@ -609,8 +595,8 @@ update_project() {
     }"
 
     local result
-    result=$(graphql_query "$mutation" "{\"id\": \"$project_id\", \"input\": $input_json}")
-    normalize_mutation_response "$result" "projectUpdate" "project"
+    result=$(graphql_query "$mutation" "{\"id\": \"$project_id\", \"input\": $input_json}") || return 1
+    linear_finish_entity_write "$result" "projectUpdate" "project" "$links"
 }
 
 delete_project() {
@@ -849,7 +835,7 @@ post_update() {
     local input_json
     input_json=$(
         IFS=,
-        echo "{${input_parts[*]}}"
+        echo "{${input_parts[*]-}}"
     )
 
     local mutation="

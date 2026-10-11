@@ -1075,49 +1075,6 @@ upload_attach_paths() {
     done
 }
 
-# find_user_by_email EMAIL — the user whose whole address is EMAIL, compared
-# case-insensitively by Linear's own filter, as one {id, name, email} object on
-# stdout; nothing at all when no user has it. Asked of the server rather than
-# scanned out of a listing, so no page bound can hide a user. Exits 1 when the query itself failed, its error already on stderr: a
-# failed lookup is never an unknown address.
-find_user_by_email() {
-    local email="$1" vars result
-    vars=$(jq -cn --arg email "$email" '{email: $email}')
-    result=$(graphql_pages 'query GetUserByEmail($email: String!, $after: String) { users(filter: {email: {eqIgnoreCase: $email}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name email } } }' "$vars" users) || return 1
-    jq -c '.users.nodes[0] // empty' <<<"$result"
-}
-
-# resolve_assignee_id REF — the id of the user an --assignee value names, on
-# stdout. `me` is the API key's own user, a user id is taken as given (the
-# form activate_issue passes once it has resolved the person), a value
-# containing `@` is an email address (find_user_by_email), and anything else
-# is a name matched as a case-insensitive substring. A miss refuses: every
-# other resolver here fails closed, and dropping the field on an unresolvable
-# name reported success with the issue unassigned.
-resolve_assignee_id() {
-    local ref="$1" result assignee_id
-    if [[ "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
-        assignee_id="$ref"
-    elif [ "$ref" = "me" ]; then
-        result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
-        assignee_id=$(jq -r '.viewer.id // empty' <<<"$result")
-    elif [[ "$ref" == *@* ]]; then
-        result=$(find_user_by_email "$ref") || return 1
-        assignee_id=$(jq -r '.id // empty' <<<"$result")
-    else
-        local user_query='query GetUser($name: String!, $after: String) { users(filter: {name: {containsIgnoreCase: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
-        local user_vars
-        user_vars=$(jq -cn --arg name "$ref" '{name: $name}')
-        result=$(graphql_pages "$user_query" "$user_vars" users) || return 1
-        assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result")
-    fi
-    if [ -z "$assignee_id" ]; then
-        jq -cn --arg who "$ref" '{error: ("Assignee not found: " + $who)}' >&2
-        return 1
-    fi
-    printf '%s\n' "$assignee_id"
-}
-
 create_issue() {
     local title=""
     local team=""
