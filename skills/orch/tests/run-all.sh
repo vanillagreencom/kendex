@@ -93,6 +93,7 @@ unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
   ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORCH_TEST_DIR="$TEST_DIR"
 
 # Suites that run alone, one at a time, once every other selected suite has
 # finished: each holds a fixed wall-clock window that the code under test
@@ -147,6 +148,11 @@ done
 FILTER="$*"
 
 matches() { # BASE FILTER
+  # Exact callers select the entire physical suite, including both parts.
+  if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] &&
+    [ "$1" = dev_validate_run_selection ] && [ "$2" = =dev_validate_run ]; then
+    return 0
+  fi
   case "$2" in
     =*) [ "$1" = "${2#=}" ] ;;
     *) case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac ;;
@@ -425,7 +431,11 @@ while [ "$finished" -lt "$RUN" ]; do
       { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; } &&
       { [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
-      "${KENDEX_GROUP_LEADER[@]}" bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
+      suite_args=("$TEST_DIR/${SUITES[next]}.sh")
+      if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] && [ "${SUITES[next]}" = dev_validate_run ]; then
+        suite_args+=(runner)
+      fi
+      "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS

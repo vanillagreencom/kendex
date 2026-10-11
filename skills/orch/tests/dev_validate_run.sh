@@ -13,6 +13,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
+# run-all gives each part its own suite deadline; a direct run keeps all rows.
+PART="${1:-all}"
+case "$PART" in all|runner|selection) ;; *) echo "dev_validate_run: part-invalid value=$PART" >&2; exit 1 ;; esac
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIPTS_DIR="$REPO_ROOT/skills/orch/scripts"
@@ -140,6 +144,21 @@ mutant() { # NAME OLD NEW
   mutate_file "$MUTANT" "$2" "$3"
 }
 
+make_mode_proj() { # NAME RANGE_CMD
+  local dir
+  dir="$(make_proj "$1" "echo full" 20)"
+  [[ -z "$2" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$2" >> "$dir/kendex.settings.toml"
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
+  git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
+  printf '%s\n' "$dir"
+}
+start_line() { # RUN_DIR KEY
+  sed -n "s/^$2=//p" "$1/start"
+}
+# One field of a --record line, empty where the line carries none.
+record_field() { awk -v key="$1=" '{for (i=1; i<=NF; i++) if (index($i,key)==1) {print substr($i,length(key)+1); exit}}' <<<"$2"; }
+
 echo "=== dev-validate-run bounded validation runner ==="
 
 # --- Refusals that run on every host, dependencies installed or not -----------
@@ -165,6 +184,7 @@ farm_path() { # NAME OMIT...
   printf '%s\n' "$dir"
 }
 
+if [[ "$PART" != selection ]]; then
 proj_dep="$(make_proj proj-dep "echo x" 20)"
 RUN_PATH="$(farm_path no-timeout timeout gtimeout)"
 run_script "$RUN" --worktree "$proj_dep" --poll 1
@@ -182,6 +202,7 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
 fi
 RUN_PATH=""
 
+fi
 # --- The rows below run the command, so they need what this host may not have -
 SKIP_REASON=""
 if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
@@ -199,6 +220,7 @@ if [[ -n "$SKIP_REASON" ]]; then
 fi
 
 # --- The verdict a finished command leaves behind -----------------------------
+if [[ "$PART" != selection ]]; then
 # label|cmd|timeout-secs|expected verdict|expected exit status
 ROWS=(
   "a command that succeeds records a zero sentinel and passes|echo built; exit 0|20|state=done guard-exit=0 validate=pass|0"
@@ -364,18 +386,6 @@ assert_eq "$(output_of "$OUT")" "ran-under-bash" \
 # --- The mode picks the command, and the run records the mode that ran --------
 # A committed project whose full battery and range command each print which one
 # ran; the range command also prints the base it was handed.
-make_mode_proj() { # NAME RANGE_CMD — RANGE_CMD empty leaves the setting unset
-  local dir
-  dir="$(make_proj "$1" "echo full" 20)"
-  [[ -z "$2" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$2" >> "$dir/kendex.settings.toml"
-  git -C "$dir" config gc.auto 0
-  git -C "$dir" config maintenance.auto false
-  git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
-  printf '%s\n' "$dir"
-}
-start_line() { # RUN_DIR KEY — one line of the run's start record
-  sed -n "s/^$2=//p" "$1/start"
-}
 RANGE_CMD='echo range $DEV_VALIDATE_BASE'
 # label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)|record's class base
 MODE_ROWS=(
@@ -439,7 +449,7 @@ assert_eq "$OUT" "validate-mode=full" \
 # pre-rebase head), and was then rebased over the three commits main gained and
 # given the round's own commit r1. The range command prints the files the range
 # it was handed holds.
-orphan_commit() { # DIR FILE — one commit adding FILE
+orphan_commit() { # DIR FILE
   : > "$1/$2"
   git -C "$1" add -- "$2"
   git -C "$1" -c user.name=t -c user.email=t@example.com commit -q -m "$2"
@@ -467,8 +477,6 @@ ORPHAN_ROWS=(
   "a base the rebase left off the branch validates the branch's own diff|$pre_rebase|b1 r1 |$fork|$pre_rebase|"
   "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1||$rebased_b1"
 )
-# One field of a --record line, empty where the line carries none.
-record_field() { awk -v key="$1=" '{for (i=1; i<=NF; i++) if (index($i,key)==1) {print substr($i,length(key)+1); exit}}' <<<"$2"; }
 for row in "${ORPHAN_ROWS[@]}"; do
   IFS='|' read -r label base want_range want_base want_orphaned want_class_base <<<"$row"
   run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
@@ -669,6 +677,7 @@ assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: required options=--worktree,
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
+fi
 # --- The command learns the change class, and only from the classifier --------
 # The classifier and the docs reader are stubs beside a copy of the scripts,
 # laid out as the installed packages are: orch/scripts next to
@@ -738,6 +747,7 @@ esac
 SH
 chmod +x "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/harness-ci/scripts/harness-only"
 export STUB_ARGS="$TMP_ROOT/stub-args" STUB_SEEN="$TMP_ROOT/stub-seen"
+if [[ "$PART" != selection ]]; then
 proj_class="$(make_proj proj-class 'printf %s:%s:%s ${DEV_VALIDATE_CLASS-unset} ${DEV_VALIDATE_DOCS_ONLY-unset} $(cat ${DEV_VALIDATE_PATHS-/dev/null})' 20)"
 # The run directories land under tmp/, which an orch project ignores.
 printf 'tmp/\n' > "$proj_class/.gitignore"
@@ -824,6 +834,7 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-sec
   "standard:false: class=standard docs-only=false class-fallback=classifier-absent" \
   "no classifier runs the whole battery, naming the absence" "$ERR"
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
+fi
 
 # --- A ci request runs nothing where the base requires the named context -------
 # Projects whose validation command is `echo full` and whose range command
@@ -958,6 +969,8 @@ ci_proj() { # NAME CONTEXT — CONTEXT empty leaves the setting unset
   git -C "$dir" update-ref refs/remotes/origin/main HEAD
   printf '%s\n' "$dir"
 }
+CI_SCRIPT="$LAYOUT/orch/scripts/dev-validate-run"
+if [[ "$PART" != selection ]]; then
 proj_ci="$(ci_proj proj-ci CI)"
 proj_ci_unset="$(ci_proj proj-ci-unset '')"
 ci_head="$(git -C "$proj_ci" rev-parse HEAD)"
@@ -1010,7 +1023,6 @@ ci_rows() {
       "$(start_line "$ci_dir" validate-mode 2>/dev/null)" "$(start_line "$ci_dir" ci-fallback 2>/dev/null)"
   done
 }
-CI_SCRIPT="$LAYOUT/orch/scripts/dev-validate-run"
 CI_GOT="$(ci_rows "$CI_SCRIPT")"
 for row in "${CI_ROWS[@]}"; do
   IFS='|' read -r label _ _ _ _ _ want_out want_mode want_fallback <<<"$row"
@@ -1552,6 +1564,8 @@ for row in "${MODE_REFUSALS[@]}"; do
   assert_eq "$(sed -n 1p <"$ERR") rc=$RC" "$want rc=2" "$label"
 done
 
+fi
+if [[ "$PART" != runner ]]; then
 # --- No process the run starts outlives it ------------------------------------
 # Each command leaves a grandchild behind and records its pid in the worktree.
 # One that calls setsid leaves the run's process group, which only a unit's
@@ -1922,10 +1936,11 @@ LIVE_ROWS=(
 )
 # One line per row: its name, then `refused` with the refusal's keyed line or
 # `started` with the verdict, and the run directories the worktree holds after.
-live_rows() { # SCRIPT
+live_rows() { # SCRIPT [NAME]
   local row name verdict process argv want proj result RUN_PATH
   for row in "${LIVE_ROWS[@]}"; do
     IFS='|' read -r name verdict process argv want <<<"$row"
+    [[ -z "${2:-}" || "$name" == "$2" ]] || continue
     RUN_PATH=""
     [[ "$argv" == reads ]] || RUN_PATH="$TMP_ROOT/unread-ps-bin:$PATH"
     plant "$name" setsid "$verdict" "$process"
@@ -1978,7 +1993,7 @@ lib_mutant() { # NAME OLD NEW
 live_control() { # MUTATE NAME OLD NEW ROW
   local got
   "$1" "$2" "$3" "$4"
-  got="$(live_rows "$MUTANT" | grep "^$5 " || true)"
+  got="$(live_rows "$MUTANT" "$5" | grep "^$5 " || true)"
   assert_eq "$([[ "$got" != "$(live_want "$5")" ]] && echo turned || echo "held:$got")" "turned" \
     "control: $2 turns the $5 row"
 }
@@ -1991,10 +2006,11 @@ live_control mutant mutant-unread-no-run '[[ "$is" != 1 ]] || continue' '[[ "$is
 # --live answers the judgment a start refuses on, over the same planted
 # records, and starts nothing: the run the start names as run-live, or
 # live=none at exit 1. dev-stop-check reads it.
-live_read_rows() { # SCRIPT
+live_read_rows() { # SCRIPT [NAME]
   local row name verdict process argv proj RUN_PATH
   for row in "${LIVE_ROWS[@]}"; do
     IFS='|' read -r name verdict process argv _ <<<"$row"
+    [[ -z "${2:-}" || "$name" == "$2" ]] || continue
     RUN_PATH=""
     [[ "$argv" == reads ]] || RUN_PATH="$TMP_ROOT/unread-ps-bin:$PATH"
     plant "$name" setsid "$verdict" "$process"
@@ -2024,7 +2040,7 @@ for row in "${LIVE_ROWS[@]}"; do
     "--live in a worktree holding a planted $name record"
 done
 mutant mutant-live-read-none $'if [[ -z "$LIVE_RUN_DIR" ]]; then\n    echo live=none' $'if :; then\n    echo live=none'
-live_read_got="$(live_read_rows "$MUTANT" | grep '^live-child ' || true)"
+live_read_got="$(live_read_rows "$MUTANT" live-child | grep '^live-child ' || true)"
 assert_eq "$([[ "$live_read_got" != "$(live_read_want live-child)" ]] && echo turned || echo "held:$live_read_got")" "turned" \
   "control: a --live that reports no run turns the live-child row"
 
@@ -2494,10 +2510,10 @@ assert_eq "$(start_line "$(run_dir_of "$OUT")" finding-prefix)|$(start_line "$la
 # --- A value option given twice is refused, never half-read ---------------------
 # option|the arguments that repeat it
 REPEAT_ROWS=(
-  "--worktree|--worktree $proj_probe --worktree $proj_log --poll 1"
+  "--worktree|--worktree $proj_probe --worktree $TMP_ROOT/proj-log --poll 1"
   "--poll|--worktree $proj_probe --poll 1 --poll 2"
-  "--run-dir|--wait --run-dir $stale --run-dir $absent"
-  "--budget|--wait --run-dir $stale --budget 5 --budget 6"
+  "--run-dir|--wait --run-dir $TMP_ROOT/stale --run-dir $TMP_ROOT/absent"
+  "--budget|--wait --run-dir $TMP_ROOT/stale --budget 5 --budget 6"
 )
 repeat_rows() { # SCRIPT
   local row flag args
@@ -2515,5 +2531,6 @@ for row in "${REPEAT_ROWS[@]}"; do
     "a second $flag is refused rather than silently winning"
 done
 
+fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
