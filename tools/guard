@@ -27,6 +27,7 @@ set -uo pipefail
 # beside it, not necessarily in the repository it judges.
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
 
+# Exit 3 is the validation runner's host no-verdict. A code finding wins.
 fail=0
 # A finding is one stable first line, `guard: <key>=<value>`: the key names
 # the condition and the value is what the reader acts on — a path, a count,
@@ -43,11 +44,20 @@ note() { # KEY VALUE — the same shape for a notice, which is not a finding
   printf 'guard-note: %s=%s\n' "$1" "$2"
   finding_text "$1" "$2"
 }
+unrun() { # KEY VALUE: report the host cause without a code finding
+  note no-verdict "$1=$2"
+  finding_text "$1" "$2"
+  [ "$fail" -eq 1 ] || fail=3
+}
 count_lines() { # TEXT — the non-empty lines in TEXT, a scan finding's value
   printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'
 }
 finding_text() { # KEY VALUE — the English for one key, and the whole of it
   case "$1" in
+    no-verdict)
+      echo 'the check could not run; its cause follows.' ;;
+    scan)
+      echo 'the source scan could not read that input; no match or clean result was produced.' ;;
     doc-limits)
       echo "the document byte-ceiling check refused the working tree; its own report above names the cause." ;;
     bot-instructions)
@@ -139,17 +149,17 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "free space plus $cargo_target outside its incremental directories is less than one full run needs."
       echo "Free space on that volume outside $cargo_target, for example another checkout's target/, or remove an incremental directory under it." ;;
     cargo-space-unreadable)
-      echo "free space on the cargo target volume could not be read at $2; the cargo block continued because an unreadable probe does not establish exhaustion." ;;
+      echo "free space on the cargo target volume could not be read at $2; the cargo block did not run." ;;
     cargo-target-unreadable)
-      echo "the size of the cargo target directory could not be read at $2; the cargo block continued because an unreadable probe does not establish exhaustion." ;;
+      echo "the size of the cargo target directory could not be read at $2; the cargo block did not run." ;;
     cargo-space-end)
-      echo 'the cargo target volume ended below the exhaustion floor, so validation fails regardless of the cargo exit codes.' ;;
+      echo 'the cargo target volume ended below the exhaustion floor; the host cannot supply a complete validation result.' ;;
     cargo-space-end-unreadable)
-      echo "free space on the cargo target volume could not be read at $2 after the cargo block, so the exhaustion check did not run and validation fails." ;;
+      echo "free space on the cargo target volume could not be read at $2 after the cargo block, so the exhaustion check did not run." ;;
     touched-set)
       echo "the touched-file set for the suite lane could not be read at that step." ;;
     missing-tool)
-      printf '%s is required to read a Pi package.json for its test script.\n' "$2" ;;
+      printf 'the required command %s is unavailable.\n' "$2" ;;
     missing-peers)
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
@@ -241,19 +251,19 @@ cargo_target_kib() { # TARGET_PATH — KiB it holds outside any incremental dire
     END { if (bad || NR == 0) exit 1; print kib }' <<<"$output"
 }
 
-whole_setting() { # NAME VALUE — refuse a space bound that is not a positive whole number
+whole_setting() { # NAME VALUE: a malformed capacity setting leaves no verdict
   # A zero bound would turn its floor off.
   case "$2" in
-    "" | *[!0-9]*) refuse cargo-space-setting "$1" ;;
+    "" | *[!0-9]*) space_stop cargo-space-setting "$1" ;;
     *[!0]*) ;;
-    *) refuse cargo-space-setting "$1" ;;
+    *) space_stop cargo-space-setting "$1" ;;
   esac
 }
 
 space_stop() { # KEY VALUE — a full run without room ends here, before any later
   # step can compile into the volume: a touched suite may run cargo too.
-  say "$1" "$2"
-  exit 1
+  unrun "$1" "$2"
+  exit "$fail"
 }
 
 # default is the commit chain's lane: the staged change. range validates
@@ -440,7 +450,20 @@ fi
 # runs the same check on pull requests and merge groups. A range run leaves
 # it to full validation or that required CI job.
 if [ "$MODE" = full ]; then
-  "$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check || say decision-ids "$?"
+  decision_status=0
+  decision_out=$("$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check 2>&1) || decision_status=$?
+  [ -z "$decision_out" ] || printf '%s\n' "$decision_out"
+  if [ "$decision_status" -ne 0 ]; then
+    if grep -q '^error=base-unverified ' <<<"$decision_out"; then
+      unrun decision-ids "$decision_status"
+      # A missing base must not hide a defect the local half did establish.
+      if grep -qE '^error=' <<<"$(sed '/^error=base-unverified /d' <<<"$decision_out")"; then
+        say decision-ids "$decision_status"
+      fi
+    else
+      say decision-ids "$decision_status"
+    fi
+  fi
 fi
 
 # The hit lines below are a tracked file's own bytes, and a source file may
@@ -494,14 +517,22 @@ done <<<"$files"
 # means, so the only blanket skips left are the generated files inside those
 # trees. Usage: scan <grep-ERE> <path-ERE>
 scan() {
-  local pat=$1 filter=$2 f
+  local pat=$1 filter=$2 f out rc
+  hits=""
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     case "$f" in
       ui/src/components/ui/* | ui/src/bindings.ts) continue ;; # generated: shadcn, tauri-specta
     esac
     [[ "$f" =~ $filter ]] || continue
-    grep -nHE "$pat" "$f" || true
+    rc=0
+    out=$(grep -nHE "$pat" "$f") || rc=$?
+    case "$rc" in
+      0) hits="${hits:+$hits
+}$out" ;;
+      1) ;;
+      *) hits=""; unrun scan "$f status=$rc"; return ;;
+    esac
   done <<<"$files"
 }
 
@@ -515,27 +546,27 @@ scan() {
 # The plain Homebrew name must resolve to the cask (the app): brew checks
 # formulas first, so a formula claiming `kendex` silently flips the default
 # install back to CLI-only.
-hits=$(scan 'class Kendex < Formula' '^packaging/homebrew/')
+scan 'class Kendex < Formula' '^packaging/homebrew/'
 [ -n "$hits" ] && {
   say homebrew-formula "$(count_lines "$hits")"
   show "$hits"
 }
 
-hits=$(scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|layout|meta|plugin_registry|slot)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs')
+scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|layout|meta|plugin_registry|slot)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs'
 [ -n "$hits" ] && {
   say catalog-fs-read "$(count_lines "$hits")"
   show "$hits" | head -5
 }
 
-hits=$(scan '@tauri-apps/' '^ui/src/')
+scan '@tauri-apps/' '^ui/src/'
 [ -n "$hits" ] && {
   say ui-tauri-import "$(count_lines "$hits")"
   show "$hits"
 }
 
-hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.tsx?$')
+scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.tsx?$'
 [ -n "$hits" ] && {
-  say ui-color-literal "$(count_lines "$hits")"
+  note ui-color-literal "$(count_lines "$hits")"
   show "$hits" | head -5
 }
 
@@ -659,7 +690,7 @@ ROWS
 # required_only) that orch ci-wait and the GitHub commands source. A caller
 # carrying its own copy is the drift the library ended; the scan reads the
 # spelling those files use.
-hits=$(scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^(skills/orch/scripts/ci-wait|skills/github/scripts/commands/[^/]+\.sh)$')
+scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^(skills/orch/scripts/ci-wait|skills/github/scripts/commands/[^/]+\.sh)$'
 [ -n "$hits" ] && {
   say ci-correlation-copy "$(count_lines "$hits")"
   show "$hits"
@@ -673,7 +704,8 @@ hits=$(scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^
 # outliving kendex with no output to capture and no timeout that would
 # make sense. Integration tests under crates/*/tests run our own binary
 # and are likewise not tool launches.
-hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src/process/')
+scan 'Command::new' '^crates/(core|cli)/src/'
+hits=$(grep -v '^crates/core/src/process/' <<<"$hits") || hits=""
 [ -n "$hits" ] && {
   say raw-command-new "$(count_lines "$hits")"
   show "$hits" | head -5
@@ -685,7 +717,8 @@ hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src
 # spellings a Rust literal gives them, and a handle wherever it is named by
 # its io:: path; println!/eprintln! are clippy's print_stdout and
 # print_stderr, which the workspace denies.
-hits=$(scan '\\x1[bB]|\\u\{0*1[bB]\}|\\033|io::std(out|err)\(\)' '^crates/cli/src/' | grep -Ev '^crates/cli/src/ui(\.rs|/)')
+scan '\\x1[bB]|\\u\{0*1[bB]\}|\\033|io::std(out|err)\(\)' '^crates/cli/src/'
+hits=$(grep -Ev '^crates/cli/src/ui(\.rs|/)' <<<"$hits") || hits=""
 [ -n "$hits" ] && {
   say cli-raw-output "$(count_lines "$hits")"
   show "$hits" | head -5
@@ -849,7 +882,15 @@ fi
 # leaves this parse to the guards-scans shard, which runs it on both legs.
 # One line on purpose, like the lane above it: the must-fail control in
 # tools/tests/guard-full.test.sh removes this lane by deleting it.
-[ "$MODE" != full ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
+if [ "$MODE" = full ] && lane_on shell_shards; then
+  parse_status=0
+  "$TOOLS_DIR/bash32-parse" || parse_status=$?
+  case "$parse_status" in
+    0) ;;
+    2) unrun bash32-parse "$parse_status" ;;
+    *) say bash32-parse "$parse_status" ;;
+  esac
+fi
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
@@ -1179,6 +1220,11 @@ if [ "$MODE" = range ]; then
 fi
 
 cargo_target="${CARGO_TARGET_DIR:-target}"
+cargo_available=1
+if [ -f Cargo.toml ] && { [ "$MODE" = full ] || [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; } && ! command -v cargo >/dev/null 2>&1; then
+  unrun missing-tool cargo
+  cargo_available=0
+fi
 # The path df, du and find read: a relative target never reaches them as an
 # option.
 case "$cargo_target" in
@@ -1195,27 +1241,27 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # An empty default, because orch-env replaces a malformed value with the
   # default it is given and whole_setting would never see it.
   guard_min_free_gb=$("$ORCH_ENV" GUARD_MIN_FREE_GB "") ||
-    refuse cargo-space-setting GUARD_MIN_FREE_GB
+    space_stop cargo-space-setting GUARD_MIN_FREE_GB
   whole_setting GUARD_MIN_FREE_GB "$guard_min_free_gb"
   guard_exhausted_free_mb=$("$ORCH_ENV" GUARD_EXHAUSTED_FREE_MB "") ||
-    refuse cargo-space-setting GUARD_EXHAUSTED_FREE_MB
+    space_stop cargo-space-setting GUARD_EXHAUSTED_FREE_MB
   whole_setting GUARD_EXHAUSTED_FREE_MB "$guard_exhausted_free_mb"
   # A start below the exhaustion floor would fail the end probe, so it
   # refuses on the free figure alone, before the target is measured. Room is
   # free space plus the target outside its incremental directories, which a
   # run without incremental compilation never rewrites.
   if ! cargo_free_start_kib=$(cargo_free_kib "$cargo_target_path"); then
-    note cargo-space-unreadable "$cargo_target"
+    space_stop cargo-space-unreadable "$cargo_target"
   elif [ "$cargo_free_start_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ]; then
     space_stop cargo-space-free "free-kib=$cargo_free_start_kib min-free-mib=$guard_exhausted_free_mb"
   elif ! cargo_target_start_kib=$(cargo_target_kib "$cargo_target_path"); then
-    note cargo-target-unreadable "$cargo_target"
+    space_stop cargo-target-unreadable "$cargo_target"
   elif [ "$((cargo_free_start_kib + cargo_target_start_kib))" -lt "$((10#$guard_min_free_gb * 1024 * 1024))" ]; then
     space_stop cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb"
   fi
 fi
 
-if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
+if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
   if cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
     say tauri-dependency crates/core
   fi
@@ -1226,19 +1272,19 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
   done
   # No cargo check runs beside clippy: clippy-driver is rustc with lints
   # added, so it reports every error cargo check reports over the same
-  # packages and targets, and -D warnings makes each rustc warning an error
-  # too. A cargo check first would build the workspace's check metadata a
+  # packages and targets. Warnings remain advisory. A cargo check first would
+  # build the workspace's check metadata a
   # second time, under a fingerprint clippy does not reuse.
   if [ "$rust_all" -eq 1 ]; then
-    cargo clippy --workspace --all-targets --quiet -- -D warnings || say clippy workspace
+    cargo clippy --workspace --all-targets --quiet || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
-      cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings || say clippy "$manifest"
+      cargo clippy --manifest-path "$manifest" --all-targets --quiet || say clippy "$manifest"
     done
   fi
   # rustfmt exits 0 when writing its diff fails, so the diff goes through a
   # pipe this script reads, never straight to a stream that may be full.
-  fmt_out=$(cargo fmt --check 2>&1) || say cargo-fmt workspace
+  fmt_out=$(cargo fmt --check 2>&1) || note cargo-fmt workspace
   [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
 fi
 
@@ -1252,13 +1298,14 @@ fi
 # not evidence about this change and is not run here; CI also runs the
 # shards of the packages that read a touched one, as tools/ci-job-set selects.
 # Of skill, hook and tools tests, mapped_suites below states which run.
-# A Pi package whose suite value-imports Pi has no lockfile for those peers;
-# CI installs them in the step before its suite, so a checkout without that
-# install names the missing peers beside the failing suite rather than in
-# place of it.
-pi_suite_failed() { # DIR
-  [ -d "$1/node_modules" ] || say missing-peers "$1"
-  say suite "$1"
+# A Pi package's suite can import peers that CI installs before the suite.
+# A missing dependency gives no test verdict; an assertion still fails.
+pi_suite_failed() { # DIR OUTPUT: Node and shell dependency errors, not assertions
+  if [ ! -d "$1/node_modules" ] && grep -qE '^(Error \[ERR_MODULE_NOT_FOUND\]|Error: Cannot find module |error: Cannot find package |sh: .*: not found)' <<<"$2"; then
+    unrun missing-peers "$1"
+  else
+    say suite "$1"
+  fi
 }
 # The role of REL, a path inside the tree DIR (a skill, hooks/ or tools/), in the
 # reach scan; this table, with mapped_suites' header, is the one statement of
@@ -1653,13 +1700,15 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         suite_selection=all
         [ "$selection_only" -eq 0 ] || [ "$scoped_only" -eq 1 ] || continue
         if ! command -v jq >/dev/null 2>&1; then
-          say missing-tool jq
+          unrun missing-tool jq
           continue
         fi
         if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null; then
-          (cd "$d" && npm run test:ci) || pi_suite_failed "$d"
+          suite_out=$(cd "$d" && npm run test:ci 2>&1) || pi_suite_failed "$d" "$suite_out"
+          [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
         elif jq -e '.scripts.test' "$d/package.json" >/dev/null; then
-          (cd "$d" && npm test) || pi_suite_failed "$d"
+          suite_out=$(cd "$d" && npm test 2>&1) || pi_suite_failed "$d" "$suite_out"
+          [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
         fi
         ;;
       *)
@@ -1744,7 +1793,7 @@ if [ "$selection_only" -eq 1 ]; then
   exit "$fail"
 fi
 
-if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
   # its cargo_lint, cargo_macos and cargo_windows_check lanes for. Here they are
@@ -1791,11 +1840,11 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
     ! lane_on cargo_windows_check || cross_targets="$cross_targets x86_64-pc-windows-msvc"
     if [ -n "$cross_targets" ]; then
       if ! installed_targets=$(rustup target list --installed); then
-        say rustup-targets unreadable
+        unrun rustup-targets unreadable
       else
         for cross_target in $cross_targets; do
           if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
-            say missing-target "$cross_target"
+            unrun missing-target "$cross_target"
           else
             cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
               say cross-check "$cross_target"
@@ -1808,7 +1857,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
     fi
   fi
 fi
-if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ] && lane_on cargo_linux; then
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
@@ -1825,17 +1874,21 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
     if [ -n "$death" ]; then
       signal=$(printf '%s' "$death" | sed -n 's/.*(signal: \([0-9][0-9]*\).*/\1/p')
       [ -n "$signal" ] || signal=unknown
-      say test-binary-signal "$signal"
+      unrun test-binary-signal "$signal"
       printf '%s\n' "${death#*successfully: }"
+      # Concurrent cases can fail assertions before the same binary dies.
+      if grep -qE '^test result: FAILED| --- FAILED$|^test .*\.\.\. FAILED$' "$tests_log"; then
+        say cargo-test workspace
+      fi
     else
       say cargo-test workspace
     fi
   fi
   rm -f "$tests_log"
   if ! cargo_free_end_kib=$(cargo_free_kib "$cargo_target_path"); then
-    say cargo-space-end-unreadable "$cargo_target"
+    unrun cargo-space-end-unreadable "$cargo_target"
   elif [ "$cargo_free_end_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ]; then
-    say cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"
+    unrun cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"
   fi
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then

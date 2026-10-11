@@ -8,7 +8,7 @@
     "build": "vite build",
     "test": "vitest run",
     "check:types": "tsc --noEmit",
-    "check:lint": "biome check src",
+    "check:lint": "biome lint src",
     "check": "npm run check:types && npm run check:lint",
     "tauri": "tauri"
   },

@@ -76,7 +76,7 @@ grep -qFx "cargo test --workspace --quiet" "$CALLS" \
   || bad "inverse: the same skill-only diff under --full runs the workspace tests" "rc=$RC log=$(cat "$CALLS")"
 if mutant_guard 's/^\[ "\$MODE" != full \] || ! lane_on cargo_lint || rust_all=1$/! lane_on cargo_lint || rust_all=1/'; then
   run_range "$BASE" "$MUTANT_TOOLS/guard"
-  grep -qFx "cargo clippy --workspace --all-targets --quiet -- -D warnings" <<<"$LOG" \
+  grep -qFx "cargo clippy --workspace --all-targets --quiet" <<<"$LOG" \
     && ok "control: with range compiling everything the skill-only diff reaches cargo" \
     || bad "control: with range compiling everything the skill-only diff reaches cargo" "rc=$RC log=$LOG"
 else
@@ -86,10 +86,10 @@ back_to_base
 
 echo "=== what a range compiles is what it touched since its base ==="
 CORE_CALLS="cargo tree -p kendex-core -e normal
-cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings
+cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet
 cargo fmt --check"
 WORKSPACE_CALLS="cargo tree -p kendex-core -e normal
-cargo clippy --workspace --all-targets --quiet -- -D warnings
+cargo clippy --workspace --all-targets --quiet
 cargo fmt --check"
 UI_CALLS="npm run --prefix ui check:types
 npm run --prefix ui check:lint
@@ -220,14 +220,14 @@ OUT=""
 RC=0
 : >"$CALLS"
 OUT="$(cd "$R" && env GUARD_MIN_FREE_GB=1000000 GUARD_EXHAUSTED_FREE_MB=1000000000 PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --range "$BASE" 2>&1 </dev/null)" || RC=$?
-[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: cargo-space-"* ]] && grep -qFx "cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings" "$CALLS" \
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: cargo-space-"* ]] && grep -qFx "cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet" "$CALLS" \
   && ok "a range under unreachable space floors still checks its crate" \
   || bad "a range under unreachable space floors still checks its crate" "rc=$RC out=$OUT"
 if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ -f Cargo.toml \]; then$/if [ "$MODE" != default ] \&\& [ -f Cargo.toml ]; then/'; then
   OUT=""
   RC=0
   OUT="$(cd "$R" && env GUARD_MIN_FREE_GB=1000000 GUARD_EXHAUSTED_FREE_MB=1000000000 PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$MUTANT_TOOLS/guard" --range "$BASE" 2>&1 </dev/null)" || RC=$?
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-"* ]] \
+  [ "$RC" -eq 3 ] && [[ "$OUT" == *"guard-note: no-verdict=cargo-space-"* ]] \
     && ok "control: with the floor applied to range the same run stops on space" \
     || bad "control: with the floor applied to range the same run stops on space" "rc=$RC out=$OUT"
 else

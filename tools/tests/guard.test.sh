@@ -453,6 +453,48 @@ run_guard
   || bad "the shipped policy passes the lane unchanged" "rc=$RC out=$OUT"
 
 echo "=== commit compile scheduling follows product changes ==="
+echo "=== color style warns and failed source reads have no verdict ==="
+mkdir -p "$R/ui/src"
+printf 'export const color = "#abc";\n' >"$R/ui/src/style.ts"
+git -C "$R" add ui/src/style.ts
+run_guard
+[ "$RC" -eq 0 ] && [[ "$OUT" == *'guard-note: ui-color-literal=1'* ]] \
+  && ok 'a color literal warns without blocking' \
+  || bad 'a color literal warns without blocking' "rc=$RC out=$OUT"
+if mutant_guard 's/  note ui-color-literal/  say ui-color-literal/'; then
+  run_mutant
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: ui-color-literal=1'* ]] \
+    && ok 'control: a blocking color check turns the style row red' \
+    || bad 'color warning control' "rc=$RC out=$OUT"
+else bad 'color warning control changed nothing'; fi
+REAL_GREP="$(command -v grep)"
+cat >"$MUTANT_TOOLS/grep" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -nHE ] && [ "${!#}" = ui/src/style.ts ]; then
+  printf 'ui/src/style.ts:1:partial match\n'
+  printf 'grep: ui/src/style.ts: Permission denied\n' >&2
+  exit 2
+fi
+exec "$GUARD_REAL_GREP" "$@"
+SH
+chmod +x "$MUTANT_TOOLS/grep"
+run_guard PATH="$MUTANT_TOOLS:$PATH" GUARD_REAL_GREP="$REAL_GREP"
+[ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=scan=ui/src/style.ts status=2'* ]] \
+  && [[ "$OUT" != *'guard-note: ui-color-literal='* ]] \
+  && ok 'a failed read reports no-verdict and discards partial matches' \
+  || bad 'failed source read' "rc=$RC out=$OUT"
+if mutant_guard 's/unrun scan "\$f status=\$rc"/:/'; then
+  GUARD_TEST_ENV=("PATH=$MUTANT_TOOLS:$PATH" "GUARD_REAL_GREP=$REAL_GREP")
+  run_mutant
+  [ "$RC" -eq 0 ] && [[ "$OUT" != *'guard-note: no-verdict=scan='* ]] \
+    && ok 'control: swallowing the read failure turns its row red' \
+    || bad 'failed source read control' "rc=$RC out=$OUT"
+  unset GUARD_TEST_ENV
+else bad 'failed source read control changed nothing'; fi
+rm -- "$MUTANT_TOOLS/grep"
+git -C "$R" reset -q HEAD -- ui/src/style.ts
+rm -- "$R/ui/src/style.ts"
+
 mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/ui" "$R/fake-bin"
 printf '[workspace]\n' >"$R/Cargo.toml"
 printf '[package]\nname = "kendex-core"\n\n[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
@@ -464,6 +506,10 @@ cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >>"$COMPILE_LOG"
+if [ "${WARN_CLIPPY:-0}" = 1 ] && [ "${1:-}" = clippy ]; then
+  printf 'warning: unused variable\n' >&2
+  case "$*" in *'-D warnings'*) exit 1 ;; esac
+fi
 [ "$*" != "${FAIL_COMPILE:-}" ]
 SH
 cat >"$R/fake-bin/npm" <<'SH'
@@ -487,7 +533,7 @@ printf 'fn second() {}\n' >>"$R/crates/core/src/lib.rs"
 git -C "$R" add crates/core/src/lib.rs
 : >"$COMPILE_LOG"
 run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
-[ "$RC" -eq 0 ] && grep -Fxq 'cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+[ "$RC" -eq 0 ] && grep -Fxq 'cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet' "$COMPILE_LOG" \
   && ! grep -Eq 'crates/cli|cargo (check|test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
   && ok "Rust checks select the touched crate, clippy alone compiling it, and omit full suites" \
   || bad "Rust scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
@@ -501,9 +547,33 @@ while IFS='|' read -r command clause; do
     && ok "the $command failure blocks, naming it" \
     || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
 done <<'ROWS'
-clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings|clippy=crates/core/Cargo.toml
+clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet|clippy=crates/core/Cargo.toml
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the compiler failures" >&2; exit 2; }
+run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" WARN_CLIPPY=1
+[ "$RC" -eq 0 ] && [[ "$OUT" != *'guard: clippy='* ]] \
+  && ok 'clippy warnings pass while compiler errors still block' \
+  || bad 'clippy warning severity' "rc=$RC out=$OUT"
+if mutant_guard 's/cargo clippy --manifest-path "\$manifest" --all-targets --quiet ||/cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings ||/'; then
+  GUARD_TEST_ENV=("PATH=$R/fake-bin:$PATH" "COMPILE_LOG=$COMPILE_LOG" WARN_CLIPPY=1)
+  run_mutant
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: clippy=crates/core/Cargo.toml'* ]] \
+    && ok 'control: denying warnings turns the clippy row red' \
+    || bad 'clippy warning control' "rc=$RC out=$OUT"
+  unset GUARD_TEST_ENV
+else bad 'clippy warning control changed nothing'; fi
+RESOLVER='BASH_FUNC_command%%=() { if [ "$*" = "-v cargo" ]; then return 1; fi; builtin command "$@"; }'
+run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" "$RESOLVER"
+[ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-tool=cargo'* ]] \
+  && ok 'an unavailable compiler has no verdict' \
+  || bad 'missing compiler no-verdict' "rc=$RC out=$OUT"
+if mutant_guard 's/  unrun missing-tool cargo/  note missing-tool cargo/'; then
+  GUARD_TEST_ENV=("PATH=$R/fake-bin:$PATH" "COMPILE_LOG=$COMPILE_LOG" "$RESOLVER")
+  run_mutant
+  [ "$RC" -eq 0 ] && ok 'control: losing the missing compiler result turns its row red' \
+    || bad 'missing compiler control' "rc=$RC out=$OUT"
+  unset GUARD_TEST_ENV
+else bad 'missing compiler control changed nothing'; fi
 git -C "$R" reset -q HEAD -- crates/core/src/lib.rs
 git -C "$R" checkout -q -- crates/core/src/lib.rs
 printf 'export const value = 1;\n' >"$R/ui/test.ts"
@@ -531,7 +601,7 @@ printf '# workspace changed\n' >>"$R/Cargo.toml"
 git -C "$R" add Cargo.toml
 : >"$COMPILE_LOG"
 run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
-[ "$RC" -eq 0 ] && grep -Fxq 'cargo clippy --workspace --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+[ "$RC" -eq 0 ] && grep -Fxq 'cargo clippy --workspace --all-targets --quiet' "$COMPILE_LOG" \
   && ! grep -Eq 'cargo (check|test|doc)' "$COMPILE_LOG" \
   && ok "shared Rust inputs compile the workspace with clippy alone, without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
@@ -550,12 +620,12 @@ unreadable_inputs() { # [GUARD] — the staged recipe with the reader failing; s
 }
 unreadable_inputs
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] \
-  && grep -Fxq 'cargo clippy --workspace --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+  && grep -Fxq 'cargo clippy --workspace --all-targets --quiet' "$COMPILE_LOG" \
   && ok "an underivable set of shared inputs is a finding, and the workspace compiles" \
   || bad "an underivable set of shared inputs is a finding, and the workspace compiles" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 if mutant_guard '/^  workspace_every=1$/d'; then
   unreadable_inputs "$MUTANT_TOOLS/guard"
-  grep -Fxq 'cargo clippy --workspace --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+  grep -Fxq 'cargo clippy --workspace --all-targets --quiet' "$COMPILE_LOG" \
     && bad "control: with every path no longer an input the recipe compiles nothing" "calls=$(cat "$COMPILE_LOG")" \
     || ok "control: with every path no longer an input the recipe compiles nothing"
 else

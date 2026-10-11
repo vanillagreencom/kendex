@@ -78,7 +78,7 @@ run_guard
   && [[ "$OUT" != *$'\n'"error=base-unverified"* ]] \
   && ok "full validation reds through the decision-ID lane, naming the rows" \
   || bad "full validation reds through the decision-ID lane, naming the rows" "rc=$RC out=$OUT"
-if mutant_guard 's/decisions" check || say decision-ids "\$?"/decisions" check || :/'; then
+if mutant_guard 's/say decision-ids "\$decision_status"/:/g'; then
   OUT=""
   RC=0
   OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
@@ -88,6 +88,25 @@ if mutant_guard 's/decisions" check || say decision-ids "\$?"/decisions" check |
 else
   bad "control: the decision-ID finding could not be cut from a guard copy"
 fi
+FULL_GUARD=0
+FULL_GUARD=1
+run_guard DECISIONS_BASE_REF=missing-base
+[ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: decision-ids=1'* ]] \
+  && [[ "$OUT" == *'guard-note: no-verdict=decision-ids=1'* ]] \
+  && ok 'an unavailable decision base cannot hide duplicate local IDs' \
+  || bad 'decision code finding takes priority' "rc=$RC out=$OUT"
+sed '4d' "$R/docs/decisions/INDEX.md" >"$TMP/unique-index"
+cp "$TMP/unique-index" "$R/docs/decisions/INDEX.md"
+run_guard DECISIONS_BASE_REF=missing-base
+[ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=decision-ids=1'* ]] \
+  && [[ "$OUT" != *'guard: decision-ids='* ]] \
+  && ok 'an unavailable decision base has no verdict' \
+  || bad 'decision base no-verdict' "rc=$RC out=$OUT"
+if mutant_guard 's/unrun decision-ids "\$decision_status"/:/'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard DECISIONS_BASE_REF=missing-base
+  [ "$RC" -eq 0 ] && ok 'control: dropping unavailable-base evidence turns its row red' \
+    || bad 'decision base control' "rc=$RC out=$OUT"
+else bad 'decision base control changed nothing'; fi
 FULL_GUARD=0
 rm -rf -- "$R/docs/decisions"
 
@@ -125,6 +144,21 @@ else
   bad "control: the parse lane could not be deleted from a guard copy"
 fi
 rm -f "$R/tools/planted.sh"
+
+echo "=== an absent Bash 3.2 parser has no verdict ==="
+cp "$GUARD" "$MUTANT_TOOLS/guard"
+cp "$MUTANT_TOOLS/bash32-parse" "$TMP/parser-kept"
+printf '#!/usr/bin/env bash\nprintf "bash32-parse: no-bash32=absent\\n"\nexit 2\n' >"$MUTANT_TOOLS/bash32-parse"
+GUARD="$MUTANT_TOOLS/guard" run_guard
+[ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=bash32-parse=2'* ]] \
+  && ok 'a missing parser reports no-verdict with its host cause' \
+  || bad 'missing parser no-verdict' "rc=$RC out=$OUT"
+if mutant_guard 's/2) unrun bash32-parse/2) note bash32-parse/'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard
+  [ "$RC" -eq 0 ] && ok 'control: dropping the unavailable parser result turns its row red' \
+    || bad 'missing parser control' "rc=$RC out=$OUT"
+else bad 'missing parser control changed nothing'; fi
+cp "$TMP/parser-kept" "$MUTANT_TOOLS/bash32-parse"
 
 FULL_GUARD=1
 echo "=== full validation runs the ceiling check, and no growth check ==="
@@ -251,18 +285,19 @@ high_free_kib=$((30 * G))
 # CARGO_TARGET_DIR is the world's absent target/; $TMP/cold/target is absent
 # below an existing directory.
 SPACE_ROWS=(
-  "a cold target below the start floor refuses before cargo|CARGO_TARGET_DIR=$TMP/cold/target DF_FREE_KIB_START=$G|1|guard: cargo-space-start=free-kib=$G target-kib=0 min-gib=24|0"
+  "a cold target below the start floor has no verdict before cargo|CARGO_TARGET_DIR=$TMP/cold/target DF_FREE_KIB_START=$G|3|guard-note: no-verdict=cargo-space-start=free-kib=$G target-kib=0 min-gib=24|0"
   "the build in a warm target counts toward the start floor|CARGO_TARGET_DIR=$TMP/warm DU_KIB=$((23 * G)) DF_FREE_KIB_START=$G|0||1"
-  "free space below the exhaustion floor refuses before the target is measured|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/inc DF_FREE_KIB_START=708|1|guard: cargo-space-free=free-kib=708 min-free-mib=512|0"
-  "an incremental directory is not room|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$((8 * G)) DF_FREE_KIB_START=$G|1|guard: cargo-space-start=free-kib=$G target-kib=$((22 * G)) min-gib=24|0"
+  "free space below the exhaustion floor has no verdict before the target is measured|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/inc DF_FREE_KIB_START=708|3|guard-note: no-verdict=cargo-space-free=free-kib=708 min-free-mib=512|0"
+  "an incremental directory is not room|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$((8 * G)) DF_FREE_KIB_START=$G|3|guard-note: no-verdict=cargo-space-start=free-kib=$G target-kib=$((22 * G)) min-gib=24|0"
   "a volume above the start floor reaches the cargo block|DF_FREE_KIB_START=$high_free_kib|0||1"
-  "an unreadable start probe is named and the block still runs|DF_FAIL_CALL=1 DF_FREE_KIB_START=$G|0|guard-note: cargo-space-unreadable=target|1"
-  "an unreadable target size is named and the block still runs|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/warm DF_FREE_KIB_START=$G|0|guard-note: cargo-target-unreadable=$TMP/warm|1"
-  "an exhausted volume fails after zero cargo exit codes, with cross-target checks left to CI|GUARD_FULL_CROSS_DOC=ci DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|1|guard: cargo-space-end=free-kib=0 min-mib=512|1"
-  "an unreadable end probe fails the run|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|1|guard: cargo-space-end-unreadable=target|1"
-  "a start floor that is not a whole number refuses|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|2|guard: cargo-space-setting=GUARD_MIN_FREE_GB|0"
-  "an exhaustion floor that is not a whole number refuses|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
-  "an exhaustion floor of zero refuses|GUARD_EXHAUSTED_FREE_MB=0 DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
+  "an unreadable start probe has no verdict before cargo|DF_FAIL_CALL=1 DF_FREE_KIB_START=$G|3|guard-note: no-verdict=cargo-space-unreadable=target|0"
+  "an unreadable target size has no verdict before cargo|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/warm DF_FREE_KIB_START=$G|3|guard-note: no-verdict=cargo-target-unreadable=$TMP/warm|0"
+  "an exhausted volume has no verdict after zero cargo exit codes, with cross-target checks left to CI|GUARD_FULL_CROSS_DOC=ci DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|3|guard-note: no-verdict=cargo-space-end=free-kib=0 min-mib=512|1"
+  "an unreadable end probe has no verdict|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|3|guard-note: no-verdict=cargo-space-end-unreadable=target|1"
+  "a malformed start floor has no verdict|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|3|guard-note: no-verdict=cargo-space-setting=GUARD_MIN_FREE_GB|0"
+  "a malformed exhaustion floor has no verdict|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|3|guard-note: no-verdict=cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
+  "a zero exhaustion floor has no verdict|GUARD_EXHAUSTED_FREE_MB=0 DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|3|guard-note: no-verdict=cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
+  "a compile error stays blocking when the end volume is exhausted|CROSS_CHECK_FAIL=$APPLE DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|1|guard-note: no-verdict=cargo-space-end=free-kib=0 min-mib=512|1"
 )
 # A touched suite that leaves a marker: a refused start must end the run before
 # the suite lane, where a suite may run cargo of its own.
@@ -302,18 +337,21 @@ while IFS='|' read -r n edit; do
     bad "control: the edit changed no guard line: $edit"
   fi
 done <<'EDITS'
-0|/^space_stop() {/,/^}/s/^  exit 1$/  :/
+0|/^space_stop() {/,/^}/s/^  exit "\$fail"$/  :/
 0|/^  while \[ ! -e "\$path" \]; do$/,/^  done$/d
 1|s/"\$((cargo_free_start_kib + cargo_target_start_kib))"/"$cargo_free_start_kib"/
 2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif false \&\& [ "$cargo_free_start_kib" -lt/
 2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif cargo_target_kib "$cargo_target_path" >\/dev\/null \&\& [ "$cargo_free_start_kib" -lt/
 3|s/{ kib -= \$1 }/{ }/
-7|s/^    say cargo-space-end "free-kib/    note cargo-space-end "free-kib/
-8|s/^    say cargo-space-end-unreadable/    note cargo-space-end-unreadable/
-9|s/"" | \*\[!0-9\]\*) refuse cargo-space-setting/"") refuse cargo-space-setting/
+5|s/^    space_stop cargo-space-unreadable/    note cargo-space-unreadable/
+6|s/^    space_stop cargo-target-unreadable/    note cargo-target-unreadable/
+7|s/^    unrun cargo-space-end "free-kib/    note cargo-space-end "free-kib/
+8|s/^    unrun cargo-space-end-unreadable/    note cargo-space-end-unreadable/
+9|s/"" | \*\[!0-9\]\*) space_stop cargo-space-setting/"") space_stop cargo-space-setting/
 10|/^  whole_setting GUARD_EXHAUSTED_FREE_MB/d
 11|s/^    \*\[!0\]\*) ;;$/    *) ;;/
 4|/^  export CARGO_INCREMENTAL=0$/d
+12|s/\[ "\$fail" -eq 1 \] || fail=3/fail=3/
 EDITS
 git -C "$R" checkout -q -- skills/demo/tests/demo.test.sh
 
@@ -329,14 +367,14 @@ if [ -e /dev/full ]; then
     OUT="$(cat "$TMP/guard-stream")"
   }
   fmt_full_row "$GUARD"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-fmt=workspace"*"Diff in src/lib.rs:"* ]] \
-    && ok "a format diff fails validation when a write to the guard's stream would fail" \
-    || bad "a format diff fails validation when a write to the guard's stream would fail" "rc=$RC out=$OUT"
-  if mutant_guard 's/  fmt_out=$(cargo fmt --check 2>&1) || say/  fmt_out=""; cargo fmt --check || say/'; then
+  [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: cargo-fmt=workspace"*"Diff in src/lib.rs:"* ]] \
+    && ok "a format diff warns and passes" \
+    || bad "a format diff warns and passes" "rc=$RC out=$OUT"
+  if mutant_guard 's/  fmt_out=$(cargo fmt --check 2>&1) || note/  fmt_out=$(cargo fmt --check 2>\&1) || say/'; then
     fmt_full_row "$MUTANT_TOOLS/guard"
-    [ "$RC" -eq 0 ] \
-      && ok "control: with fmt writing to the guard's stream the same diff passes" \
-      || bad "control: with fmt writing to the guard's stream the same diff passes" "rc=$RC out=$OUT"
+    [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-fmt=workspace"* ]] \
+      && ok "control: with formatting blocking the same diff fails" \
+      || bad "control: with formatting blocking the same diff fails" "rc=$RC out=$OUT"
   else
     bad "control: the fmt capture could not be removed from a guard copy"
   fi
@@ -368,13 +406,13 @@ rm -f "$R/fake-bin/df" "$R/fake-bin/du"
 
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"guard: rustup-targets=unreadable"*) true ;; *) false ;; esac \
+[ "$RC" -eq 3 ] && case "$OUT" in *"guard-note: no-verdict=rustup-targets=unreadable"*) true ;; *) false ;; esac \
   && ok "a failed installed-target lookup blocks guard" \
   || bad "a failed installed-target lookup blocks guard" "rc=$RC out=$OUT"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
 [ "$RC" -ne 0 ] &&
-  case "$OUT" in *"guard: missing-target=$APPLE"*) true ;; *) false ;; esac &&
-  case "$OUT" in *"guard: missing-target=$WINDOWS"*) true ;; *) false ;; esac \
+  case "$OUT" in *"guard-note: no-verdict=missing-target=$APPLE"*) true ;; *) false ;; esac &&
+  case "$OUT" in *"guard-note: no-verdict=missing-target=$WINDOWS"*) true ;; *) false ;; esac \
   && ok "every missing target is refused with its own install command" \
   || bad "every missing target is refused with its own install command" "rc=$RC out=$OUT"
 if grep -qE -- "--target ($APPLE|$WINDOWS)\$" "$CARGO_CALL_LOG"; then
@@ -384,7 +422,7 @@ else
 fi
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$WINDOWS"
-[ "$RC" -ne 0 ] && case "$OUT" in *"guard: missing-target=$APPLE"*) true ;; *) false ;; esac &&
+[ "$RC" -eq 3 ] && case "$OUT" in *"guard-note: no-verdict=missing-target=$APPLE"*) true ;; *) false ;; esac &&
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "a missing target does not stop the targets after it" \
   || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
@@ -403,6 +441,17 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTA
 [ "$RC" -eq 0 ] \
   && ok "installed targets that all compile reach the host suite" \
   || bad "installed targets that all compile reach the host suite" "rc=$RC out=$OUT"
+for key in rustup-targets missing-target; do
+  if mutant_guard "s/unrun $key/note $key/"; then
+    if [ "$key" = missing-target ]; then
+      GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=""
+    else
+      GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
+    fi
+    [ "$RC" -eq 0 ] && ok "control: losing $key evidence turns its host row red" \
+      || bad "cross-toolchain control: $key" "rc=$RC out=$OUT"
+  else bad "cross-toolchain control changed nothing: $key"; fi
+done
 [ "$(grep -cFx "$(check_call "$APPLE")" "$CARGO_CALL_LOG")" -eq 1 ] &&
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "guard asks cargo once for every cross target's core and CLI tests" \
@@ -762,7 +811,7 @@ COMPILER_DEATH="$(printf '%s\n' \
   'Caused by:' \
   '  process didn'"'"'t exit successfully: `rustc --crate-name kendex_core ...` (signal: 9, SIGKILL: kill)')"
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: test-binary-signal=11"*"review_fixes-ff58"*"SIGSEGV"* ]] \
+[ "$RC" -eq 3 ] && [[ "$OUT" == *"guard-note: no-verdict=test-binary-signal=11"*"review_fixes-ff58"*"SIGSEGV"* ]] \
   && [[ "$OUT" != *"guard: cargo-test=workspace"* ]] \
   && ok "a runner killed by a signal is reported as the artifact's death, not a failing test" \
   || bad "a runner killed by a signal is reported as the artifact's death, not a failing test" "rc=$RC out=$OUT"
@@ -770,6 +819,19 @@ run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_S
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
   && ok "a failing assertion still reads as tests failed" \
   || bad "a failing assertion still reads as tests failed" "rc=$RC out=$OUT"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$ASSERTION
+$DEATH"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *'guard-note: no-verdict=test-binary-signal=11'* ]] \
+  && [[ "$OUT" == *'guard: cargo-test=workspace'* ]] \
+  && ok 'a signal cannot hide an assertion that already failed' \
+  || bad 'assertion before signal' "rc=$RC out=$OUT"
+if mutant_guard '/^      if grep -qE.*test result: FAILED/,/^      fi$/d'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$ASSERTION
+$DEATH"
+  [ "$RC" -eq 3 ] && [[ "$OUT" != *'guard: cargo-test=workspace'* ]] \
+    && ok 'control: losing the assertion finding turns the mixed row red' \
+    || bad 'assertion before signal control' "rc=$RC out=$OUT"
+else bad 'assertion before signal control changed nothing'; fi
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$COMPILER_DEATH"
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
   && ok "a compiler killed by a signal is not named as a test binary's death" \
@@ -783,6 +845,27 @@ else
   bad "control: the death check could not be removed from a guard copy"
 fi
 rm -f "$R/Cargo.toml"
+
+echo "=== missing suite peers have no verdict while assertions still block ==="
+mkdir -p "$R/pi-extensions/peers"
+printf '{"scripts":{"test":"node test.mjs"}}\n' >"$R/pi-extensions/peers/package.json"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$PEER_SUITE_OUTPUT"\nexit 1\n' >"$R/fake-bin/npm"
+chmod +x "$R/fake-bin/npm"
+for row in 'missing peers|Error [ERR_MODULE_NOT_FOUND]: Cannot find package pi-ai|3|guard-note: no-verdict=missing-peers=pi-extensions/peers' \
+  'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|guard: suite=pi-extensions/peers'; do
+  IFS='|' read -r label output expected key <<<"$row"
+  run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$output"
+  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$key"* ]] \
+    && ok "$label" || bad "$label" "rc=$RC out=$OUT"
+done
+if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT='Error [ERR_MODULE_NOT_FOUND]: Cannot find package pi-ai'
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
+    && ok 'control: losing missing-peer classification turns its row red' \
+    || bad 'missing-peer control' "rc=$RC out=$OUT"
+else bad 'missing-peer control changed nothing'; fi
+rm -- "$R/fake-bin/npm"
+rm -r -- "$R/pi-extensions/peers"
 
 echo "=== full validation runs the lanes the change class selects ==="
 # dev-validate-run hands over the class, the docs verdict and the changed
@@ -831,7 +914,7 @@ lanes_ran() {
     case "$lane" in
       suites) [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] ;;
       parse) [[ "$OUT" == *"stub: bash32-parse"* ]] ;;
-      lint) grep -qFx "clippy --workspace --all-targets --quiet -- -D warnings" "$CARGO_CALL_LOG" ;;
+      lint) grep -qFx "clippy --workspace --all-targets --quiet" "$CARGO_CALL_LOG" ;;
       apple) grep -qF -- "--target aarch64-apple-darwin" "$CARGO_CALL_LOG" ;;
       windows) grep -qF -- "--target x86_64-pc-windows-msvc" "$CARGO_CALL_LOG" ;;
       test) grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG" ;;

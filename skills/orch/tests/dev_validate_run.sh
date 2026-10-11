@@ -339,6 +339,7 @@ if [[ "$PART" != selection ]]; then
 ROWS=(
   "a command that succeeds records a zero sentinel and passes|echo built; exit 0|20|state=done guard-exit=0 validate=pass|0"
   "a command that fails records its own status and fails the round|echo broke; exit 7|20|state=done guard-exit=7 validate=FAILING|1"
+  "unavailable host checks record no-verdict with their own exit|echo guard-note: no-verdict=missing-tool=cargo; exit 3|20|state=done guard-exit=3 validate=no-verdict|1"
   "a command that exits 124 itself inside the bound fails the round|exit 124|20|state=done guard-exit=124 validate=FAILING|1"
   "a command that exits 137 itself fails the round|exit 137|20|state=done guard-exit=137 validate=FAILING|1"
   "a command that outlives the bound is cut off at it: no verdict, neither pass nor FAILING|sleep 30|2|state=done guard-exit=124 validate=no-verdict|1"
@@ -356,6 +357,22 @@ done
 # The last run above is the timeout one; its own sentinel and log are the files
 # a waiter in another process reads.
 timeout_dir="$(run_dir_of "$OUT")"
+
+# This status comes from tools/guard, not the timeout owner. Both the writer
+# and the reader must preserve it, and the host result must permit a retry.
+host_proj="$(make_proj host-no-verdict 'echo guard-note: no-verdict=missing-tool=cargo; exit 3' 20)"
+run_script "$RUN" --worktree "$host_proj" --poll 1
+host_dir="$(run_dir_of "$OUT")"
+assert_eq "$(sed 's/ at=[^ ]*//' "$host_dir/exit")" 'guard-exit=3 verdict=no-verdict cause=host' \
+  'the writer records the unavailable host cause without a timeout proof'
+run_script "$RUN" --record --run-dir "$host_dir"
+assert_eq "$(record_field verdict "$OUT")" no-verdict 'the reader preserves the host no-verdict'
+mutant mutant-host-failing '*" verdict=no-verdict cause=host") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict cause=host") SENTINEL_VERDICT=FAILING ;;'
+run_script "$MUTANT" --record --run-dir "$host_dir"
+assert_eq "$(record_field verdict "$OUT")" FAILING 'control: losing the host result makes its record fail'
+mutant mutant-host-writer '"guard-exit=3 at="*) sentinel="$sentinel verdict=no-verdict cause=host" ;;' '"guard-exit=3 at="*) : ;;'
+run_script "$MUTANT" --worktree "$host_proj" --poll 1
+assert_eq "$(verdict_of "$OUT")" 'state=done guard-exit=3 validate=FAILING' 'control: losing the host marker turns that run red'
 assert_eq "$(sed 's/ at=[^ ]*//' "$timeout_dir/exit")" "guard-exit=124 verdict=no-verdict" \
   "the sentinel file carries the guard-exit line and the bound's verdict on one line"
 assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\([^ ]*\).*$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \

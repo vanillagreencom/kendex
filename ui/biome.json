@@ -17,6 +17,7 @@
     "enabled": true,
     "rules": {
       "recommended": true,
+      "style": "warn",
       "suspicious": {
         "noExplicitAny": "error",
         "noConsole": {

@@ -435,9 +435,15 @@ find_live_run() { # WORKTREE
 # a poll that caught a half-written sentinel would read a verdict that is not
 # one. The child and the ci route both write through here.
 write_verdict() { # STARTED-AT ENDED-AT SECONDS SENTINEL-LINE
+  local sentinel="$4"
+  # Validation commands reserve exit 3 for unavailable host checks. The cause
+  # keeps this result out of the timeout-only reuse proof.
+  case "$sentinel" in
+    "guard-exit=3 at="*) sentinel="$sentinel verdict=no-verdict cause=host" ;;
+  esac
   printf 'started-at=%s\nended-at=%s\nseconds=%s\n' "$1" "$2" "$3" > "$run_dir/timing.part"
   mv "$run_dir/timing.part" "$run_dir/timing"
-  printf '%s\n' "$4" > "$run_dir/exit.part"
+  printf '%s\n' "$sentinel" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
 }
 
@@ -1128,6 +1134,7 @@ read_sentinel() {
   SENTINEL_AT="${line#* at=}"
   SENTINEL_AT="${SENTINEL_AT%% *}"
   case "$line" in
+    *" verdict=no-verdict cause=host") SENTINEL_VERDICT=no-verdict ;;
     *" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;
     "guard-exit=0 "*) SENTINEL_VERDICT=pass ;;
     *) SENTINEL_VERDICT=FAILING ;;
