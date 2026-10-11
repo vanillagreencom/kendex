@@ -193,33 +193,47 @@ The long pass's events, checked and reported in this order:
                              --repo, <branch> being the item's own, its key
                              lower-cased. The PR is the item's by
                              lib/lane-state.sh's lane_own: the number a
-                             parked record names, a head on that branch, or
+                             queue-parked record names, a head on that branch, or
                              the key in its title's conventional-commit scope
                              or right after Closes on a body line, as a
                              Claude cloud session's claude/ branch names no
                              item; a search for the key that fills its page
                              exits 2 as merged-search-truncated at 1000. A
-                             parked record's item is an --item for
-                             this check alone, and the merge of the pull
-                             request its record names, in that repository,
-                             is followed by parked-merged below. Another pull
+                             queue-parked record's item is an --item for
+                             this check alone. Its recorded own PR merge can
+                             produce parked-merged below. A dependency park
+                             reads until_pr directly and reports no item
+                             merged event. Another pull
                              request on the branch's name is reported and
                              hands nothing on, under a parked-merge-unmatched
                              note on stderr naming the recorded key and the
                              keys seen; the repository is matched in lower
                              case, GitHub's names being case-insensitive
   EVENT parked-merged <item> pr=<N> repo=<owner/repo>
-                             the pull request a parked record names merged in
-                             that repository, repo= in lower case: the
-                             sandbox stays stopped, the record stays parked
-                             and nothing is closed, since nothing here wakes a
-                             parked sandbox and the record carries no launch
-                             flags. The overseer relaunches the lane, which
-                             runs its own post-merge. Printed in the pass
-                             that reports the merge, and again ahead of every
-                             heartbeat while the record still reads parked
-                             and its merged row holds that pull request; the
-                             relaunch rewriting the record stopped ends it
+                             the selected wait PR merged and the terminal
+                             judge keeps the item open. repo= is in lower
+                             case. A dependency park selects parked.until_pr;
+                             a queue park selects parked.pr. The sandbox
+                             stays stopped and the record stays parked until
+                             relaunch. A dependency lane rebases and continues
+                             its held step. A queue lane finishes its own
+                             post-merge work. Recovery instructions are in
+                             references/oversee-events.md.
+                             Printed when the watch first reads that merge,
+                             and again ahead of every heartbeat while the
+                             record stays parked and the terminal judge keeps
+                             it open. Dependency replay uses the parked-until
+                             row holding <repo>#<N> MERGED; queue replay uses
+                             the item's merged row holding <repo>#<N>.
+                             Relaunch rewriting the record stopped ends replay
+  EVENT parked-closed <item> pr=<N> repo=<owner/repo>
+                             parked.until_pr closed without merging. repo= is
+                             in lower case. Reported once per selected
+                             dependency or state change, recorded in the
+                             parked-until row. No heartbeat replay. The
+                             sandbox stays stopped and the record stays
+                             parked. Recovery instructions are in
+                             references/oversee-events.md
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT outside-contribution <repo>#<N> kind=<pr|issue> author=<login> [head=<sha>]
@@ -899,11 +913,12 @@ Options:
                       kept, is one --item for the merged check and the
                       lane-long age alone: its pane is gone and its mailbox
                       and state are on a stopped disk, so no other check
-                      reads it, and the merge of the
-                      pull request its `parked` names, in that repository,
-                      prints parked-merged in the same pass and at every
-                      heartbeat while the record reads parked, and closes
-                      nothing.
+                      reads it. The wait selects `parked.until_pr` for a
+                      dependency park, even with no own `parked.pr`; a queue
+                      park selects `parked.pr`. The selected PR's merge
+                      produces parked-merged as above. A dependency PR's
+                      unmerged close produces parked-closed.
+                      The own PR's merge cannot clear a dependency wait.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the
                       count of records whose status is not running, so a
