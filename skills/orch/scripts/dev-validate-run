@@ -154,16 +154,20 @@
 #          the lanes the round's changes need, and stands for the round, never
 #          for the branch, unless its command reports selection=battery: every
 #          lane it has, none stood down for that class.
-#   ci     a post-open fix round's run, which the pull request's CI on the
-#          pushed head validates. It runs no command and passes at once, with
+#   ci     a round deferred to required PR CI on the published head.
+#          It runs no command and completes the local round at once, with
 #          a zero-second wall time, only where the project names the status
 #          check context that runs its validation in DEV_VALIDATE_CI_CONTEXT
-#          and the base branch of the worktree branch's open pull request
-#          requires that context, through its rulesets or its classic branch
+#          and the base branch requires that context. Under push-first,
+#          pr-order permits this before publication, when no PR exists and
+#          resolve-base-branch names the base. Every order uses an open PR's
+#          own base. Both rule reads must succeed: its rulesets and classic branch
 #          protection, as GitHub reports them for the repository gh resolves
 #          (GH_REPO, else the worktree). The base is the pull request's own,
 #          which a stacked pull request sets to a branch other than the
-#          default.
+#          default. A full request under push-first also
+#          takes CI where these coverage checks pass. --record reports
+#          verdict=pending, never a CI pass. Submit's exact-head wait proves CI.
 #          Anywhere else it runs the command a range request runs, records
 #          the mode that ran, and names why as the ci-fallback= line of start.
 #          Without a repository selector it hands that command the class,
@@ -176,8 +180,7 @@
 #                                MERGED, confirmed by pr-view-json
 #            base-unresolved     the pull request lookup, response or base
 #                                encoding failed
-#            rules-unread        a rule read failed and neither read that
-#                                answered names the context
+#            rules-unread        either required-context read failed
 #            context-unrequired  both reads answered and neither names it
 #            class-uncovered     a class other than micro, small or
 #                                standard, a docs-only diff, failed class
@@ -253,14 +256,15 @@
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME] [ci-fallback=CAUSE]   (--record)
+#   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|pending|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [tree=SHA] [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME] [ci-fallback=CAUSE]   (--record)
 #   validate-mode=full|range|ci                                               (--resolve-mode)
 #   run-dir=… head=SHA tree=SHA                                               (--last-pass)
 #   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
 #   run-dir=… pid=N                                                           (--live)
 #   live=none                                                                 (--live, exit 1)
 #
-# --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
+# --record's verdict is pending for a ci run. A local run is pass only for
+# a sentinel of guard-exit=0, no-verdict
 # for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
 # unfinished where no sentinel exists: a run still going, past its cap or lost.
 # Only pass is a passing validation. The timing fields follow every verdict a
@@ -512,6 +516,7 @@ classify() { # [ROUND_BASE] — a commit; the origin base branch where empty
     : > "$class_scratch/class.log"
   fi
   class=standard docs_only=false class_fallback="" snapshot_tree=""
+  : > "$class_scratch/class.log"
   : > "$class_scratch/paths"
   if [[ -z "$base" ]]; then
     base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
@@ -676,6 +681,7 @@ CI_CLASSIC_JQ='if has("protection") then .protection.required_status_checks | ((
 # fallback runs CI's conservative lanes, so it does not need a measured size.
 # This is a local coverage check, not a change to the classifier's policy.
 ci_class_covered() {
+  [[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || return 1
   [[ -z "$class_fallback" && "$docs_only" == false ]] || return 1
   case "$class" in
     standard) return 0 ;;
@@ -686,7 +692,9 @@ ci_class_covered() {
 
 # Whether the pull request CI validates the change, as --help's ci mode states
 # it: the current directory's project names the context, and the base branch
-# of the current branch's open pull request requires it. Where it does not, sets ci_fallback to the cause --help names.
+# of the open pull request requires it, or push-first's resolved base does
+# before a pull request exists.
+# Where it does not, sets ci_fallback to the cause --help names.
 # A read that fails is no proof, and the run validates locally; its stderr
 # goes to ci.log in the class scratch directory, which the run directory
 # keeps.
@@ -707,23 +715,31 @@ ci_runs_validation() {
     ci_fallback=base-unresolved
     return 1
   fi
-  case "$pr_state" in
-    NO_PR|CLOSED|MERGED) ci_fallback=pr-not-open; return 1 ;;
-  esac
-  if ! base_branch="$(jq -er '.baseRefName | select(type == "string" and length > 0)' <<<"$pr_json" 2>>"$log")" \
-    || ! uri="$(jq -rn --arg v "$base_branch" '$v | @uri' 2>>"$log")"; then
+  if [[ "$pr_state" == NO_PR && "$pr_order" == push-first ]]; then
+    base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$log")" || {
+      ci_fallback=base-unresolved
+      return 1
+    }
+  else
+    case "$pr_state" in
+      NO_PR|CLOSED|MERGED) ci_fallback=pr-not-open; return 1 ;;
+    esac
+    base_branch="$(jq -er '.baseRefName | select(type == "string" and length > 0)' <<<"$pr_json" 2>>"$log")" || {
+      ci_fallback=base-unresolved
+      return 1
+    }
+  fi
+  if ! uri="$(jq -rn --arg v "$base_branch" '$v | @uri' 2>>"$log")"; then
     ci_fallback=base-unresolved
     return 1
   fi
   if ! rules="$(gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate --jq "$CI_RULES_JQ" 2>>"$log")"; then
-    rules=""
     unread=true
   fi
   if ! classic="$(gh api "repos/{owner}/{repo}/branches/$uri" --jq "$CI_CLASSIC_JQ" 2>>"$log")"; then
-    classic=""
     unread=true
   fi
-  if grep -Fxq -- "$context" <<<"$rules"$'\n'"$classic"; then
+  if [[ "$unread" == false ]] && grep -Fxq -- "$context" <<<"$rules"$'\n'"$classic"; then
     ci_fallback=""
     return 0
   fi
@@ -756,7 +772,13 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   orphaned_sha=""
   cmd=""
   requested_mode="$validate_mode"
+  # pr-order owns the setting. A failed resolution retains review-first.
+  pr_order=review-first
+  if order_line="$("$SCRIPT_DIR/pr-order" "$worktree")"; then
+    pr_order="${order_line#pr-order=}"
+  fi
   selection_previewed=false
+  ci_admission_attempted=false
   selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
     || die unreadable-setting setting=DEV_VALIDATE_SELECTION_CMD
   if [[ "$validate_mode" != full ]]; then
@@ -781,8 +803,10 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   classify "$class_base"
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
-  if [[ "$validate_mode" == ci ]]; then
-    validate_mode=range
+  if [[ "$validate_mode" == ci || "$pr_order" == push-first ]]; then
+    ci_admission_attempted=true
+    classify ""
+    [[ "$requested_mode" == full ]] || validate_mode=range
     ci_fallback=class-uncovered
     if ci_class_covered && ci_runs_validation; then
       if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then
@@ -793,7 +817,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         # CI eligibility uses the branch. The repository's local bound uses
         # the fix round, which --base names, before CI can bypass its checks.
         if [[ -z "$orphaned_sha" ]]; then
-          class_base="$base_sha"
+          class_base=""
+          [[ "$requested_mode" == full ]] || class_base="$base_sha"
           classify "$class_base"
           if [[ -z "$class_fallback" ]] && preview_selection; then
             case "$selection" in
@@ -803,6 +828,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         fi
       fi
     fi
+    [[ "$validate_mode" == ci ]] || classify "$class_base"
   fi
   if [[ "$validate_mode" != full ]]; then
     [[ "$validate_mode" == ci ]] || resolve_range_mode
@@ -827,11 +853,17 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     if [[ -n "${selection_cmd//[[:space:]]/}" ]]; then
       if preview_selection && { [[ "$selection" == selection=all ]] \
           || [[ "$requested_mode" == range && "$selection" == selection=subset ]]; }; then
-        ci_fallback=class-uncovered
-        if ci_class_covered && ci_runs_validation; then
+        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered
+        if [[ "$ci_admission_attempted" == false ]]; then
+          classify ""
+        fi
+        if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then
           validate_mode=ci
           class_base=""
-        elif [[ "$ci_fallback" == pr-not-open && "$selection" == selection=all ]]; then
+        else
+          classify "$class_base"
+        fi
+        if [[ "$ci_fallback" == pr-not-open && "$selection" == selection=all ]]; then
           # The selector owns scoped execution too; no second suite map
           # or project-specific command lives in this runner.
           scoped=true
@@ -928,8 +960,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   }
   launch_rc=0
   if [[ "$validate_mode" == ci ]]; then
-    # A ci run starts nothing: the pull request CI on the pushed head is its
-    # validation, so it passes here, through the writer the child uses.
+    # The local round can finish before publication. CI remains pending;
+    # submit-pr's existing exact-head wait supplies the validation proof.
     ci_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'runner=none class=%s: the pull request CI on the pushed head validates this change\n' "$class" > "$run_dir/log"
     write_verdict "$ci_at" "$ci_at" 0 "guard-exit=0 at=$ci_at"
@@ -1170,6 +1202,7 @@ if [[ "$mode" == record ]]; then
   if [[ -s "$run_dir/exit" ]]; then
     read_sentinel
     record_verdict="$SENTINEL_VERDICT"
+    [[ "$record_mode" != ci || "$record_verdict" != pass ]] || record_verdict=pending
     [[ -f "$run_dir/timing" ]] || die timing-unreadable "path=$run_dir/timing"
     timing_started="$(start_field "$run_dir/timing" started-at)"
     timing_ended="$(start_field "$run_dir/timing" ended-at)"
@@ -1178,6 +1211,12 @@ if [[ "$mode" == record ]]; then
     [[ "$timing_started" =~ $utc && "$timing_ended" =~ $utc && "$timing_seconds" =~ ^[0-9]+$ ]] \
       || die timing-unreadable "path=$run_dir/timing"
     record_timing=" seconds=$timing_seconds started-at=$timing_started ended-at=$timing_ended"
+  fi
+  # CI has no executed validation. Bind the pending receipt to the same
+  # worktree snapshot the classifier judged, even when the round commits later.
+  if [[ "$record_mode" == ci ]]; then
+    record_tree="$(start_field "$run_dir/start" tree)"
+    record_timing="${record_tree:+ tree=$record_tree}$record_timing"
   fi
   record_orphaned="$(start_field "$run_dir/start" validate-base-orphaned)"
   record_class_base="$(start_field "$run_dir/start" class-base)"

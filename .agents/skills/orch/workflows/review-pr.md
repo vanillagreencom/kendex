@@ -1,6 +1,6 @@
 # PR Review Workflow
 
-Pre-submission review, bounded fixes, QA, and issue audit. `review-pr [PR#]` resolves that PR's worktree; `start-worktree` supplies managed caller context. After [start-worktree.md](start-worktree.md) § 2.1 opened the PR early, this review runs on the pushed head and its fix rounds stay local until submit-pr pushes them.
+Pre-submission review, bounded fixes, QA, and issue audit. `review-pr [PR#]` resolves that PR's worktree; `start-worktree` supplies managed caller context. After [start-worktree.md](start-worktree.md) § 2.1 opened the PR early, this review runs on the pushed head and its fix rounds stay local until submit-pr pushes them. Under `push-first`, the PR stays draft until this internal review passes. A `ci` fix receipt accepts local edits and leaves required CI pending on the combined published head.
 
 **Caller context** (via `⤵`): `worktree`; `agents` — an explicit reviewer panel, default the first-cycle panel § 2 selects from the diff; `lifecycle` — `"managed"` (return at § 9) or `"self"` (default); `dev_agent` — a live dev agent for fix delegation; `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
@@ -22,7 +22,7 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD 
 
 A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. No committed diff after that check → report "No committed changes to review" and **END**.
 
-**Review line.** In a lane whose brief names a status file, a review that starts with workflow state `pr_order` reading `open-first` writes `Review: pending PR #[PR_NUMBER]` to that file before any reviewer starts, `[PR_NUMBER]` from `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state`; a read that gives no number writes no line. [submit-pr.md](submit-pr.md) § 2 step 1 replaces the line once the push carrying this review's fix round lands.
+**Review line.** In a lane whose brief names a status file, a review that starts with workflow state `pr_order` reading `open-first` or `push-first` writes `Review: pending PR #[PR_NUMBER]` to that file before any reviewer starts, `[PR_NUMBER]` from `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state`; a read that gives no number writes no line. [submit-pr.md](submit-pr.md) § 2 step 1 replaces the line once the push carrying this review's fix round lands.
 
 **Trivial diffs skip review by rule, not by asking.** Trivial is the shared CI classifier's class for the whole branch:
 
@@ -510,6 +510,8 @@ After delegating children, apply the § 4 bounded re-review rule to their diff.
   ```bash
   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-returned
   ```
+
+- **`push-first`**: keep the pending review line and the draft until `[VERDICT]` is `pass`. Only a `pass` records `push-first-returned` with `workflow-state set [ISSUE_ID] pr_order push-first-returned`. Submit publishes the combined fixes and marks the draft ready before it requests Copilot or arms auto-merge.
 
 - **Any other value, or absent**: in a lane whose brief names a status file, write its review line, `Review: [VERDICT]`. Record no workflow state: a review-first lane, a re-submit review and a trivial-diff skip leave `pr_order` as they found it.
 

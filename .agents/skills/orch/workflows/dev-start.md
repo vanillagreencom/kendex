@@ -188,7 +188,7 @@ A round that meets the Stalled round conditions of [references/skill-rules.md §
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. With `validate_mode` `ci`, acceptance completes local edits and leaves required PR CI pending; submit's existing exact-head wait supplies the proof. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |

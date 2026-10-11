@@ -47,6 +47,7 @@ clock_now() { cat "$STUB_CLOCK"; }
 # A project whose settings carry one validation command and one bound. The
 # environment is passed explicitly so a developer's own DEV_VALIDATE_* never
 # reaches the run: orch-env reads the process environment first.
+# Runner refusal fixtures have no GitHub repository, so fix their publication order.
 make_proj() { # NAME CMD TIMEOUT_SECS
   local dir="$TMP_ROOT/$1"
   git init -q "$dir"
@@ -54,6 +55,7 @@ make_proj() { # NAME CMD TIMEOUT_SECS
   git -C "$dir" config maintenance.auto false
   {
     printf '[env]\n'
+    printf 'ORCH_PR_ORDER = "review-first"\n'
     printf 'DEV_VALIDATE_CMD = "%s"\n' "$2"
     printf 'DEV_VALIDATE_TIMEOUT_SECS = "%s"\n' "$3"
   } > "$dir/kendex.settings.toml"
@@ -90,7 +92,7 @@ run_script() { # SCRIPT ARG...
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_FINDING_PREFIX \
-    -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+    -u ORCH_PR_ORDER -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -344,7 +346,7 @@ fi
 # --- With no bound set, the script's own default is the one that applies -------
 proj_default="$TMP_ROOT/proj-default"
 git init -q "$proj_default"
-printf '[env]\nDEV_VALIDATE_CMD = "echo x"\n' > "$proj_default/kendex.settings.toml"
+printf '[env]\nORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_CMD = "echo x"\n' > "$proj_default/kendex.settings.toml"
 run_script "$RUN" --worktree "$proj_default" --poll 1
 assert_eq "$(sed -n 's/^state=started .* \(timeout-secs=[0-9]*\) .*$/\1/p' <<<"$OUT")" "timeout-secs=3600" \
   "a project that sets no bound gets the documented hour" "$ERR"
@@ -466,7 +468,7 @@ ORPHAN_ROWS=(
   "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1||$rebased_b1"
 )
 # One field of a --record line, empty where the line carries none.
-record_field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
+record_field() { awk -v key="$1=" '{for (i=1; i<=NF; i++) if (index($i,key)==1) {print substr($i,length(key)+1); exit}}' <<<"$2"; }
 for row in "${ORPHAN_ROWS[@]}"; do
   IFS='|' read -r label base want_range want_base want_orphaned want_class_base <<<"$row"
   run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
@@ -676,7 +678,7 @@ assert_eq "$RC" "2" "and exits 2"
 # selectors straight off the log.
 LAYOUT="$TMP_ROOT/layout"
 mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts"
-cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$SCRIPTS_DIR/pr-view-json" "$LAYOUT/orch/scripts/"
+cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$SCRIPTS_DIR/pr-view-json" "$SCRIPTS_DIR/pr-order" "$LAYOUT/orch/scripts/"
 cp -R "$SCRIPTS_DIR/lib/." "$LAYOUT/orch/scripts/lib/"
 # Exercise the installed PR lookup chain; only its external gh calls are stubs.
 mkdir -p "$LAYOUT/github"
@@ -700,6 +702,15 @@ esac
 # The classifier's own measured marker, where the row names one.
 [[ -z "${STUB_MEASURED:-}" ]] \
   || printf 'class: class=%s measured=%s cause=stub\n' "${STUB_ANSWER#change_class=}" "$STUB_MEASURED" >&2
+# PR coverage reads this machine line. The branch-only row gives the round
+# base a different queue answer, as a fix after earlier queue work does.
+queue="${STUB_QUEUE:-queue_only=false cause=no-queue-path}"
+if [[ "$queue" == branch-only ]]; then
+  base="$(sed -n '/^--base$/{n;p;}' "$STUB_ARGS")"
+  queue='queue_only=false cause=no-queue-path'
+  [[ "$base" != origin/main ]] || queue='queue_only=true cause=queue-lane'
+fi
+[[ "$queue" == absent ]] || printf 'queue-only: %s\n' "$queue" >&2
 SH
 cat > "$LAYOUT/harness-ci/scripts/harness-only" <<'SH'
 #!/usr/bin/env bash
@@ -863,7 +874,8 @@ case "$path" in
     [[ -z "${STUB_PR_STDERR:-}" ]] || printf '%s\n' "$STUB_PR_STDERR" >&2
     ;;
   'repos/{owner}/{repo}/rules/branches/feature%2Fparent')
-    payload='[]'
+    payload="$(jq -cn --argjson req "$(list "${STUB_PARENT_RULES:-}")" '
+      [{type: "required_status_checks", parameters: {required_status_checks: ($req | map({context: .}))}}]')"
     status=0
     ;;
   'repos/{owner}/{repo}/branches/feature%2Fparent')
@@ -888,6 +900,7 @@ case "$path" in
     ;;
   *) exit 9 ;;
 esac
+[[ -z "${STUB_CI_LOG:-}" || "$path" == pr-view ]] || printf '%s\n' "$path" >> "$STUB_CI_LOG"
 if [[ -n "$filter" ]]; then jq -r "$filter" <<<"$payload" || exit $?; else printf '%s\n' "$payload"; fi
 exit "$status"
 SH
@@ -903,12 +916,13 @@ chmod +x "$GH_STUB_BIN/gh"
 #   classic-fail    the classic read prints CI, then fails
 #   stacked         main requires CI; the pull request's base,
 #                   feature/parent, requires nothing
+#   stacked-required  only the pull request's feature/parent base requires CI
 #   pr-no-pr        gh reports no pull request; pr-view-json confirms no_pr
 #   pr-closed/merged  the branch's older pull request is CLOSED/MERGED
 #   pr-unread/network  the PR lookup fails with an auth/network error
 #   pr-invalid/state/empty/uri  the response or base encoding cannot be read
 ci_world() {
-  export STUB_RULES=Lint STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0 \
+  export STUB_RULES=Lint STUB_PARENT_RULES="" STUB_OTHER="" STUB_CLASSIC="" STUB_CLASSIC_CHECKS="" STUB_RULES_EXIT=0 STUB_CLASSIC_EXIT=0 \
     STUB_PR_BASE=main STUB_PR_STATE=OPEN STUB_PR_EXIT=0 STUB_PR_PAYLOAD="" STUB_PR_STDERR="" STUB_URI_EXIT=0
   case "$1" in
     rules) STUB_RULES=Lint,CI ;;
@@ -920,6 +934,7 @@ ci_world() {
     classic-absent) STUB_CLASSIC=absent ;;
     classic-fail) STUB_CLASSIC=CI STUB_CLASSIC_EXIT=1 ;;
     stacked) STUB_RULES=Lint,CI STUB_PR_BASE=feature/parent ;;
+    stacked-required) STUB_PARENT_RULES=CI STUB_PR_BASE=feature/parent ;;
     pr-no-pr) STUB_PR_EXIT=1 STUB_PR_STDERR='no pull requests found for branch' ;;
     pr-closed) STUB_RULES=Lint,CI STUB_PR_STATE=CLOSED ;;
     pr-merged) STUB_RULES=Lint,CI STUB_PR_STATE=MERGED ;;
@@ -1039,7 +1054,7 @@ assert_eq "$RC $(sed -n 2p <<<"$OUT" | sed 's/ at=[^ ]* / at=T /')" \
   "a ci run passes, and its done line names the run directory and the log" "$ERR"
 run_script "$CI_SCRIPT" --record --run-dir "$ci_dir"
 assert_eq "$(sed -E 's/started-at=[^ ]+ ended-at=[^ ]+$/started-at=T ended-at=T/' <<<"$OUT")" \
-  "validate-mode=ci selection=unreported verdict=pass head=$ci_head start=$(start_of "$ci_dir") seconds=0 started-at=T ended-at=T" \
+  "validate-mode=ci selection=unreported verdict=pending head=$ci_head start=$(start_of "$ci_dir") tree=$(git -C "$proj_ci" rev-parse HEAD^{tree}) seconds=0 started-at=T ended-at=T" \
   "its record names the ci mode, a pass, the HEAD it started at and no wall time" "$ERR"
 # Under --attached a ci run still prints its started line first, then the done
 # line, since no child runs to print it before.
@@ -1060,7 +1075,11 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW [EXPECT]
   cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
   mutate_file "$CI_SCRIPT.mutant" "$2" "$3"
   got_line="$(ci_rows "$CI_SCRIPT.mutant" "$4")"
-  IFS=$'\t' read -r _ _ got <<<"$got_line"
+  if [[ -n "$got_line" ]]; then
+    IFS=$'\t' read -r _ _ got <<<"$got_line"
+  else
+    got="$(push_rows "$CI_SCRIPT.mutant" "$4")"
+  fi
   assert_eq "$got" "${5:-state=done guard-exit=0 validate=pass |ci|}" "control: with $1, '$4' fails"
 }
 # shellcheck disable=SC2016 # the script's own text, not expansions
@@ -1071,10 +1090,8 @@ ci_control 'the required contexts unread' 'grep -Fxq -- "$context" <<<"$rules"$'
   'a context the base does not require runs the range command'
 ci_control 'every rule type read' 'select(.type == "required_status_checks") | ' '' \
   'a context only a rule of another type names runs the range command'
-ci_control 'a failed ruleset read kept' $'    rules=""\n    unread=true\n' $'    unread=true\n' \
+ci_control 'an unread API treated as coverage' '[[ "$unread" == false ]] && ' '' \
   'a ruleset read that fails runs the range command'
-ci_control 'a failed classic read kept' $'    classic=""\n    unread=true\n' $'    unread=true\n' \
-  'a classic read that fails runs the range command'
 ci_control 'a missing protection read as empty' 'error("protection unreadable")' 'empty' \
   'a branch payload with no protection runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|context-unrequired'
@@ -1099,7 +1116,7 @@ ci_control 'an empty pull request base accepted' \
 ci_control 'an unread rule named as unrequired' 'if [[ "$unread" == true ]]; then' 'if false; then' \
   'a ruleset read that fails runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|context-unrequired'
-ci_control 'the class cause unrecorded' $'    validate_mode=range\n    ci_fallback=class-uncovered\n' $'    validate_mode=range\n' \
+ci_control 'the class cause unrecorded' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n' \
   'a render diff, whose checks CI stands down, runs the range command' \
   'state=done guard-exit=0 validate=pass range|range|'
 ci_control 'render among the covered classes' \
@@ -1112,6 +1129,142 @@ ci_control 'the measured marker unread' '[[ "$CHANGE_CLASS_MEASURED" == true ]]'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
 }
+# Push-first uses an open PR's base, or the resolved base before any PR exists.
+# Each row runs the production runner against real commits; its output proves local
+# fallback, and the record proves which exact head remains pending.
+PUSH_ROWS=(
+  'implement before PR|push-first|pr-no-pr|standard|CI|full|none|ci||pending'
+  'implement subset before PR|push-first|pr-no-pr|standard|CI|full|subset|ci||pending'
+  'implement default order|review-first|pr-no-pr|standard|CI|full|all|full|pr-not-open|pass'
+  'unrequired base|push-first|unrequired|standard|CI|full|none|full|context-unrequired|pass'
+  'fix unrequired full fallback|push-first|unrequired|standard|CI|ci|none|full|context-unrequired|pass|unset'
+  'fix subset unrequired full fallback|push-first|unrequired|standard|CI|ci|subset|full|context-unrequired|pass|unset'
+  'uncovered class|push-first|rules|render|CI|full|none|full|class-uncovered|pass'
+  'unread rules|push-first|rules-fail|standard|CI|full|none|full|rules-unread|pass'
+  'unset context|push-first|rules|standard||full|none|full|setting-empty|pass'
+  'internal fix before publication|push-first|pr-no-pr|standard|CI|ci|none|ci||pending'
+  'Copilot fix before publication|push-first|rules|standard|CI|ci|none|ci||pending'
+  'range subset on open PR|push-first|rules|standard|CI|range|subset|ci||pending'
+  'stacked full request|push-first|stacked|standard|CI|full|none|full|context-unrequired|pass||range'
+  'stacked fix subset|push-first|stacked|standard|CI|ci|subset|range|context-unrequired|pass||range'
+  'stacked required base|push-first|stacked-required|standard|CI|ci|none|ci||pending||ci'
+  'unread PR under push-first|push-first|pr-unread|standard|CI|full|none|full|base-unresolved|pass'
+  'invalid PR under push-first|push-first|pr-invalid|standard|CI|full|none|full|base-unresolved|pass'
+  'closed PR under push-first|push-first|pr-closed|standard|CI|full|none|full|pr-not-open|pass'
+  'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
+  'queue work before PR|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=true cause=queue-lane'
+  'absent queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||absent'
+  'malformed queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=unknown'
+  'queue range subset|review-first|rules|standard|CI|range|subset|range|class-uncovered|pass|||queue_only=true cause=queue-lane'
+  'branch queue work before fix|push-first|pr-no-pr|standard|CI|range|subset|range|class-uncovered|pass|||branch-only'
+)
+push_rows() { # SCRIPT [LABEL]
+  local row label order world class context request selector want_mode fallback verdict local_range want_resolve queue resolved proj args dir head n=0
+  for row in "${PUSH_ROWS[@]}"; do
+    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve queue <<<"$row"
+    [[ -z "${2:-}" || "$label" == "$2" ]] || continue
+    n=$((n + 1))
+    proj="$(ci_proj "push-${label// /-}-${1##*/}-${3:-live}" "$context")"
+    sed "s/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = \"$order\"/" "$proj/kendex.settings.toml" > "$proj/settings.next"
+    mv "$proj/settings.next" "$proj/kendex.settings.toml"
+    if [[ "$local_range" == unset ]]; then
+      sed '/^DEV_VALIDATE_RANGE_CMD =/d' "$proj/kendex.settings.toml" > "$proj/settings.next"
+      mv "$proj/settings.next" "$proj/kendex.settings.toml"
+    fi
+    [[ "$selector" == none ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+    git -C "$proj" add kendex.settings.toml
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m policy
+    head="$(git -C "$proj" rev-parse HEAD)"
+    ci_world "$world"
+    # A pre-PR branch still has required base CI under push-first.
+    [[ "$order" != push-first || "$world" != pr-no-pr ]] || STUB_RULES=CI
+    if [[ -n "$want_resolve" ]]; then
+      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true \
+        run_script "$1" --resolve-mode --worktree "$proj" --base HEAD
+      resolved="$RC $OUT"
+      if [[ "${3:-}" == resolve ]]; then
+        printf '%s\n' "$resolved"
+        continue
+      fi
+      [[ -n "${2:-}" ]] || assert_eq "$resolved" "0 validate-mode=$want_resolve" "$label resolves the actual PR base" "$ERR"
+    fi
+    args=(--worktree "$proj" --poll 1 --validate-mode "$request")
+    [[ "$request" == full ]] || args+=(--base HEAD)
+    : > "$TMP_ROOT/push-rule-reads"
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_CI_LOG="$TMP_ROOT/push-rule-reads" STUB_QUEUE="$queue" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true run_script "$1" "${args[@]}"
+    dir="$(run_dir_of "$OUT")"
+    run_script "$1" --record --run-dir "$dir"
+    if [[ -z "${2:-}" ]]; then
+      assert_eq "$RC $(record_field validate-mode "$OUT") $(record_field ci-fallback "$OUT") $(record_field verdict "$OUT") $(record_field head "$OUT")" \
+        "0 $want_mode $fallback $verdict $head" "$label" "$ERR"
+      if [[ "$local_range" == unset ]]; then
+        assert_eq "$(paste -sd, "$TMP_ROOT/push-rule-reads")" 'repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main' \
+          "$label reads each required-context source once" "$ERR"
+      fi
+      if [[ "$want_mode" == ci ]]; then
+        assert_eq "$([[ -f "$dir/log" && -f "$dir/cmd" && ! -s "$dir/cmd" ]] && echo no-command || echo wrong-run)" no-command "$label starts no validation command"
+        run_script "$1" --last-pass --worktree "$proj"
+        assert_eq "$RC $OUT" '1 last-pass=none' "$label provides no passing validation run" "$ERR"
+      fi
+    else
+      if [[ "${3:-}" == rule-reads ]]; then
+        paste -sd, "$TMP_ROOT/push-rule-reads"
+      else
+        printf '%s|%s|%s\n' "$(record_field validate-mode "$OUT")" "$(record_field ci-fallback "$OUT")" "$(record_field verdict "$OUT")"
+      fi
+    fi
+  done
+}
+push_rows "$CI_SCRIPT"
+# shellcheck disable=SC2016 # production guard mutations
+{
+for queue_row in 'queue work before PR' 'absent queue line' 'malformed queue line' 'queue range subset'; do
+  ci_control 'the queue result unread' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || return 1' ':' "$queue_row" 'ci||pending'
+done
+ci_control 'admission classified over the round' $'    ci_admission_attempted=true\n    classify ""' $'    ci_admission_attempted=true\n    classify "$class_base"' \
+  'branch queue work before fix' 'ci||pending'
+}
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'ci_admission_attempted=true' $'ci_admission_attempted=true\n    ci_runs_validation || :'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'fix unrequired full fallback' rule-reads)" \
+  'repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main,repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main' \
+  'control: repeated CI admission breaks the single required-context read'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
+  'selection=all|selection=subset) validate_mode=ci; [[ "$requested_mode" != full || "$selection" != selection=subset ]] || validate_mode=full; class_base="" ;;'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement subset before PR' full-subset)" 'full|selection-unread|pass' \
+  'control: dropping full subset admission breaks the implement CI record while range admission stays intact'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" '|| record_verdict=pending' '|| true'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement before PR' pending-record)" 'ci||pass' \
+  'control: a pending CI record cannot report a passing validation'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'grep -Fxq -- "$context" <<<"$rules"$'"'"'\n'"'"'"$classic"' true
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'unrequired base')" 'ci||pending' \
+  'control: dropping the base requirement breaks the unrequired-base fallback'
+# A resolver mutation forbidding the no-PR path must turn the implement row local.
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'if [[ "$pr_state" == NO_PR && "$pr_order" == push-first ]]; then' 'if false; then'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement before PR' pr-state)" 'full|pr-not-open|pass' \
+  'control: using PR state again breaks implement-before-PR CI'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" \
+  "jq -er '.baseRefName | select(type == \"string\" and length > 0)' <<<\"\$pr_json\"" \
+  '"$SCRIPT_DIR/resolve-base-branch" "$worktree"'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked full request' default-base)" 'ci||pending' \
+  'control: checking the default base instead of the open PR base skips required local validation'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+# Keep the PR read and actual-base getter; only resolution uses the wrong base.
+# shellcheck disable=SC2016
+mutate_file "$CI_SCRIPT.mutant" \
+  '  if ! uri="$(jq -rn --arg v "$base_branch" '\''$v | @uri'\'' 2>>"$log")"; then' \
+  $'  if [[ "$mode" == resolve && "$pr_order" == push-first && "$pr_state" == OPEN ]]; then\n    base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$log")"\n  fi\n  if ! uri="$(jq -rn --arg v "$base_branch" \'$v | @uri\' 2>>"$log")"; then'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked fix subset' resolve)" '0 validate-mode=ci' \
+  'control: default-base resolution skips local validation on an unrequired PR base'
+assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked required base' resolve)" '0 validate-mode=range' \
+  'control: default-base resolution misses CI required only on the PR base'
+rm -f -- "${CI_SCRIPT:?}.mutant"
+
 # The rules read names the base branch: a read of another branch's rules is
 # one the stub fails, so the micro row runs range.
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
@@ -1133,7 +1286,7 @@ assert_eq "$([[ -f "$(run_dir_of "$OUT")/ci.log" ]] && echo kept || echo dropped
 # A ci run left to CI reads neither command, so a project that sets neither
 # passes it. Control: resolving the range mode first, as a range run does,
 # reads the empty DEV_VALIDATE_CMD and refuses.
-printf '[env]\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' > "$proj_ci/kendex.settings.toml"
+printf '[env]\nORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_TIMEOUT_SECS = "20"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' > "$proj_ci/kendex.settings.toml"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" '[[ "$validate_mode" == ci ]] || resolve_range_mode' 'resolve_range_mode'
 ci_run "$CI_SCRIPT"
@@ -1257,12 +1410,12 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 }
 # shellcheck disable=SC2016 # private production mutations
 {
-ci_extension_control 'if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' 'if true; then' \
+ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered && ci_runs_validation; then\n      if true; then'  \
   'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
-ci_extension_control $'          class_base="$base_sha"\n          classify "$class_base"' $'          class_base="$base_sha"\n          classify ""' \
+ci_extension_control $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify "$class_base"' $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify ""' \
   'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'
-ci_extension_control 'selection=all|selection=subset) validate_mode=ci;' \
-  'selection=all) validate_mode=ci;' \
+ci_extension_control $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
+  $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all) validate_mode=ci; class_base="" ;;' \
   'guarded crate fix' 'range|selection-unread|crates/orders/src/lib.rs|orders:risk|yes'
 ci_extension_control '&& preview_selection; then' '&& { preview_selection || selection=selection=all; }; then' \
   'failed selector' 'ci||tests/widget.sh|none|yes'
@@ -1780,7 +1933,7 @@ live_rows() { # SCRIPT
     git init -q "$proj"
     git -C "$proj" config gc.auto 0
     git -C "$proj" config maintenance.auto false
-    printf '[env]\nDEV_VALIDATE_CMD = "true"\nDEV_VALIDATE_TIMEOUT_SECS = "30"\n' > "$proj/kendex.settings.toml"
+    printf '[env]\nORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_CMD = "true"\nDEV_VALIDATE_TIMEOUT_SECS = "30"\n' > "$proj/kendex.settings.toml"
     run_script "$1" --worktree "$proj" --poll 1
     if [[ "$RC" == 2 ]]; then
       result="refused $(sed -n 1p <"$ERR" | sed "s|$proj|PROJ|; s|pid=$PLANTED\$|pid=PLANTED|")"
@@ -2107,8 +2260,8 @@ selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
-  $'        ci_fallback=class-uncovered\n        if ci_class_covered && ci_runs_validation; then' \
-  $'        ci_fallback=class-uncovered\n        if ci_runs_validation; then # ci_class_covered' \
+  'if [[ "$ci_admission_attempted" == false ]] && ci_class_covered && ci_runs_validation; then' \
+  'if [[ "$ci_admission_attempted" == false ]] && ci_runs_validation; then # ci_class_covered' \
   'an all selection CI does not cover retains local execution'
 selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
@@ -2117,7 +2270,7 @@ selection_control 'rejecting a conservative standard fallback turns explicit CI 
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
   'a ci standard fallback all selection uses required PR CI'
 selection_control 'omitting the automatic class fallback turns its record red' \
-  $'        ci_fallback=class-uncovered\n' '' \
+  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n' '' \
   'an all selection CI does not cover retains local execution'
 for row in "${SELECTION_ROWS[@]}"; do
   IFS='|' read -r label requested _ selected _ _ _ _ _ want_launch want_rc _ <<<"$row"

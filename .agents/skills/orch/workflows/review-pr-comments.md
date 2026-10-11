@@ -29,7 +29,7 @@ On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries
 
 ## 1. Fetch And Parse
 
-Triage what exists on the PR. The one bounded bot wait is [Copilot work in flight on the current head](../references/copilot-wait.md): run it before the `pr-data` read below. Other bots do not hold this read. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
+Triage what exists on the PR. The one bounded bot wait is [Copilot work in flight on the current head](../references/copilot-wait.md): run it before the `pr-data` read below. Skip that Copilot wait while the pull request is draft; triage its existing human threads. Other bots do not hold this read. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"
@@ -235,7 +235,7 @@ Group the `fix set` by `agent`. Before stamping each group's round, read the tar
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] [PR_NUMBER] --json state
 ```
 
-Then stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+Run [dev-fix.md § 2's base-freshness gate](dev-fix.md#2-delegate) before stamping this direct fix round. Then stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
@@ -327,7 +327,7 @@ Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/
 git -C "[WORKTREE_PATH]" push origin HEAD
 ```
 
-With workflow state `pr_order` reading `open-first-returned`, publish through `.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]` in place of that command, routing its exit code and `sha-reconcile:` line by `worktree-push --help`, so [submit-pr.md](submit-pr.md) § 2 step 1 pushes next and GitHub receives one combined head. That push may rebase this round's fix commits, whose SHAs come from the dev return and sit in no record it rewrites: resolve each through workflow state's `.rebase_map`, following the chain until no key matches, before § 6.3's `Fixed in` reply and § 8's `pr_comment_review.fixes` entry use it, and a chain ending in `dropped` puts no SHA in the reply and the `dropped:[COMMIT_SHA]` marker in the entry.
+With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, publish through `.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]` in place of that command, routing its exit code and `sha-reconcile:` line by `worktree-push --help`, so [submit-pr.md](submit-pr.md) § 2 step 1 pushes next and GitHub receives one combined head. That push may rebase this round's fix commits, whose SHAs come from the dev return and sit in no record it rewrites: resolve each through workflow state's `.rebase_map`, following the chain until no key matches, before § 6.3's `Fixed in` reply and § 8's `pr_comment_review.fixes` entry use it, and a chain ending in `dropped` puts no SHA in the reply and the `dropped:[COMMIT_SHA]` marker in the entry.
 
 **A round ends with the description matching its head.** The PR body describes the commits actually on the PR head and names every issue § 6.2 filed this round; nothing else regenerates it after round one, so rebuild it per [`submit-pr.md` § 2](submit-pr.md) step 3 and post it with `pr-edit-body` until both hold.
 
@@ -367,7 +367,7 @@ Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_I
 
 PR-level comments and human-only threads stay deferred to § 7.
 
-This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Run [the bounded current-head Copilot wait](../references/copilot-wait.md) before the `pr-data` read below. This is the one exception to checking once without waiting for bots to re-review. Then check for comments that arrived while fixes were being applied and loop or exit.
+This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Run [the bounded current-head Copilot wait](../references/copilot-wait.md) before the `pr-data` read below, except while the pull request is draft. This is the one exception to checking once without waiting for bots to re-review. Then check for comments that arrived while fixes were being applied and loop or exit.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
@@ -407,9 +407,9 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-Run [the current-head Copilot wait](../references/copilot-wait.md) before the body check, any review request or any head notice in this step. Keep `[COPILOT_WAIT]` for the head routing below. Skip this wait when `pr_order` reads `open-first-returned`, as the step's skip rule directs.
+Run [the current-head Copilot wait](../references/copilot-wait.md) before the body check, any review request or any head notice in this step. Keep `[COPILOT_WAIT]` for the head routing below. Skip this wait when the step's skip rule below holds.
 
-**Skip if** workflow state `pr_order` reads `open-first-returned`, with no notice and no request: on a PR [start-worktree.md](start-worktree.md) § 2.1 opened, the lane's `Review:` line still reads pending, and [submit-pr.md](submit-pr.md) § 2 step 1 routes the head once its push lands. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+**Skip if** workflow state `pr_order` reads `open-first-returned`, `push-first` or `push-first-returned`, with no notice and no request. For `push-first-returned`, complete [submit-pr.md § 2 step 4](submit-pr.md#2-push-and-submit)'s ready-head request route first, including an already ready head with no request recorded. It changes the order to `push-first-pushed` before this wait. Other skipped orders still have the lane's `Review:` line pending and use submit's publication route. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]

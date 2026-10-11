@@ -45,6 +45,18 @@ approval_message() {
       printf 'approval-wait: rules-unreadable branch=%q repo=%s\n' "$RULES_BRANCH" "$REPO"
       printf '%s\n' "approval-wait: could not read the rules GitHub applies to branch '$RULES_BRANCH' in $REPO, so no gate mode is available"
       ;;
+    ready-failed)
+      printf 'approval-wait: ready-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' 'Could not mark the open draft ready. No review request went out.'
+      ;;
+    request-head-unreadable)
+      printf 'approval-wait: request-head-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' 'Could not read an open pull request head and draft flag. No review request went out.'
+      ;;
+    ready-head-moved)
+      printf 'approval-wait: ready-head-moved pr=%s repo=%s head=%s\n' "$PR_NUM" "$REPO" "$request_head"
+      printf '%s\n' 'The head changed during the ready transition. Use the current-head request route.'
+      ;;
     copilot-reviews-failed)
       printf 'approval-wait: copilot-reviews-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' 'Could not read Copilot review identities for this head.'
@@ -192,7 +204,7 @@ Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      --mode approval [--on-timeout block|proceed]
                      [--item ID] [--base-checkout PATH]
        approval-wait <PR#> --resolve-mode --base-checkout PATH
-       approval-wait <PR#> --request-review --base-checkout PATH
+       approval-wait <PR#> --request-review [--mark-ready] --base-checkout PATH
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 2 and 5 emits
 a final result on stdout: a stable status line with English below, or a JSON
@@ -235,6 +247,15 @@ stop: stdout stays empty and stderr says why.
                                                    (copilot-request-refused on stderr)
                  The caller then asks the overseer for the head approval, naming
                  the cause, and waits for no Copilot review.
+
+  --mark-ready   With --request-review only, mark an open draft ready through
+                 gh pr ready, confirm that head, then use the request route above.
+                 An already ready head uses the same request route. The caller
+                 skips a head recorded in pr_approval.copilot_rerequest_head.
+                 A failed ready command or changed
+                 head returns nonzero and sends no request. Without this flag,
+                 an approval request on a draft prints fallback cause=draft and
+                 sends no request. Drafts take no Copilot wait or fallback notice.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -469,6 +490,7 @@ JSON_OUTPUT=false
 MODE=""
 RESOLVE_MODE=false
 REQUEST_REVIEW=false
+MARK_READY=false
 BASE_CHECKOUT=""
 ON_TIMEOUT_FLAG=""
 ITEM=""
@@ -482,6 +504,7 @@ while [[ $# -gt 0 ]]; do
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
     --request-review) REQUEST_REVIEW=true; shift ;;
+    --mark-ready) MARK_READY=true; shift ;;
     --base-checkout)
       [[ -n "${2:-}" ]] || { approval_message base-checkout-invalid >&2; exit 2; }
       BASE_CHECKOUT="$2"
@@ -529,6 +552,10 @@ if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
 fi
 [[ -n "$MODE" ]] || $RESOLVE_MODE || $REQUEST_REVIEW || { approval_message missing-mode >&2; exit 2; }
 PR_NUM="${POSITIONAL[0]}"
+if $MARK_READY && ! $REQUEST_REVIEW; then
+  approval_message action-options >&2
+  exit 2
+fi
 if $REQUEST_REVIEW || $RESOLVE_MODE; then
   if [[ ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG$ITEM" ]] \
     || $JSON_OUTPUT || { $REQUEST_REVIEW && $RESOLVE_MODE; } \
@@ -904,6 +931,18 @@ refresh_review_route() {
     '.head.ref == $branch and .user.login == $author and .user.type == "Bot"' >/dev/null <<<"$pull" || return 1
 }
 
+# The publication workflow calls this request owner for the ready transition.
+# A head read after ready prevents a request for a head the transition replaced.
+read_request_head() {
+  local view
+  view=$(gh pr view "$PR_NUM" --repo "$REPO" --json state,isDraft,headRefOid 2>"$GH_ERR_FILE") \
+    && request_fields=$(jq -er 'select(.state == "OPEN" and (.isDraft | type) == "boolean"
+        and (.headRefOid | type) == "string" and (.headRefOid | length) > 0)
+        | [.isDraft, .headRefOid] | @tsv' <<<"$view") \
+    || { approval_message request-head-unreadable >&2; return 1; }
+  IFS=$'\t' read -r request_draft request_head <<<"$request_fields"
+}
+
 if $RESOLVE_MODE || $REQUEST_REVIEW; then
   resolve_gate_mode || exit 2
   answer="$GATE_MODE"
@@ -915,13 +954,31 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
       answer='fallback cause=refresh'
     elif [[ "$COPILOT_REQUESTS" == off ]]; then
       answer='fallback cause=off'
-    else
-      request_rc=0
-      gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
-      if [[ "$request_rc" -ne 0 ]]; then
-        approval_message copilot-request-refused >&2
-        answer="fallback cause=refused exit=$request_rc"
+    fi
+  fi
+  if $MARK_READY; then
+    read_request_head || exit 2
+    if [[ "$request_draft" == true ]]; then
+      ready_head="$request_head"
+      gh pr ready "$PR_NUM" --repo "$REPO" >&2 || { approval_message ready-failed >&2; exit 2; }
+      read_request_head || exit 2
+      [[ "$request_draft" == false && "$request_head" == "$ready_head" ]] \
+        || { approval_message ready-head-moved >&2; exit 2; }
+    fi
+  fi
+  if $REQUEST_REVIEW && [[ "$answer" == approval ]]; then
+    if ! $MARK_READY; then
+      read_request_head || exit 2
+      if [[ "$request_draft" == true ]]; then
+        printf 'fallback cause=draft\n'
+        exit 0
       fi
+    fi
+    request_rc=0
+    gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
+    if [[ "$request_rc" -ne 0 ]]; then
+      approval_message copilot-request-refused >&2
+      answer="fallback cause=refused exit=$request_rc"
     fi
   fi
   printf '%s\n' "$answer"

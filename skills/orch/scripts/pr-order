@@ -1,65 +1,53 @@
 #!/usr/bin/env bash
-# pr-order — when a standard or small lane opens its pull request: after the
-# agent review (review-first), or at once after the implement round's
-# validated commit, the one review then running on the open pull request
-# beside Copilot's (open-first).
+# Resolve the consumer's publication order through orch-env.
 #
-# open-first runs where GitHub reports the repository private and nowhere
-# else: an early pull request draws a Copilot review per fix push, a cost the
-# owner accepted as a trial on private repositories alone. GitHub's own fact
-# decides, never a list kept by hand, and every other visibility, public and
-# internal alike, keeps review-first.
+# Usage: pr-order [WORKTREE]
+# WORKTREE defaults to the current directory.
 #
-# Usage:
-#   pr-order [WORKTREE]
+# stdout, exit 0: pr-order=review-first|open-first|push-first
+# An explicit setting wins without a visibility read. When unset, private
+# repositories use open-first; public and internal use review-first.
+# review-first: validate, review, then publish.
+# open-first: validate, publish, then review.
+# push-first: publish a draft, then run internal review while CI may be pending.
+# Submit verifies required CI on the published head before merge.
+# Review completes before merge in every order.
 #
-# WORKTREE (default .) is the checkout whose repository is read, resolved by
-# scripts/lib/gh-repo.sh: GH_REPO first, then `gh repo view` in that checkout,
-# then its origin remote.
-#
-# stdout, exit 0, one line:
-#   pr-order=open-first|review-first visibility=VALUE repo=OWNER/NAME
-# VALUE is GitHub's visibility lowercased: private, public or internal.
-#
-# Exit 2 prints no order and one `pr-order-error: cause=CAUSE` line on stderr:
-#   worktree-missing       WORKTREE is no directory
-#   repo-unresolved        no repository resolved, or one that is not owner/name
-#   visibility-unreadable  gh could not read the repository's visibility
-#   visibility-unknown     gh answered something other than the three values
+# Exit 2 prints pr-order-error: cause=CAUSE on stderr and no order:
+# worktree-missing, setting-unreadable, setting-unknown, repo-unresolved,
+# visibility-unreadable, visibility-unknown.
+# Callers keep review-first on a failed read.
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
-
-die() { # CAUSE DETAIL
+die() {
   printf 'pr-order-error: cause=%s %s\n' "$1" "$2" >&2
   exit 2
 }
-
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
-
 worktree="${1:-.}"
 [[ -d "$worktree" ]] || die worktree-missing "path=$worktree"
-
-# shellcheck source=lib/gh-repo.sh
-source "$SCRIPT_DIR/lib/gh-repo.sh"
-
-# `gh repo view` answers for the working directory, so the resolver runs in
-# the worktree.
 cd -- "$worktree"
-repo="$(orch_resolve_gh_repo "$PWD")" || die repo-unresolved "repo=${repo:-none}"
-
-visibility="$(gh repo view "$repo" --json visibility --jq .visibility 2>/dev/null)" \
-  || die visibility-unreadable "repo=$repo"
-visibility="$(printf '%s' "$visibility" | tr '[:upper:]' '[:lower:]')"
-
-case "$visibility" in
-  private) order=open-first ;;
-  public|internal) order=review-first ;;
-  *) die visibility-unknown "repo=$repo visibility=${visibility:-none}" ;;
+order="$("$SCRIPT_DIR/orch-env" ORCH_PR_ORDER "")" \
+  || die setting-unreadable setting=ORCH_PR_ORDER
+case "$order" in
+  review-first|open-first|push-first) ;;
+  '')
+    # An unset setting must not change a consumer's publication order.
+    # shellcheck source=lib/gh-repo.sh
+    source "$SCRIPT_DIR/lib/gh-repo.sh"
+    repo="$(orch_resolve_gh_repo "$PWD")" || die repo-unresolved "repo=${repo:-none}"
+    visibility="$(gh repo view "$repo" --json visibility --jq .visibility 2>/dev/null)" \
+      || die visibility-unreadable "repo=$repo"
+    visibility="$(printf '%s' "$visibility" | tr '[:upper:]' '[:lower:]')"
+    case "$visibility" in
+      private) order=open-first ;;
+      public|internal) order=review-first ;;
+      *) die visibility-unknown "repo=$repo visibility=${visibility:-none}" ;;
+    esac
+    ;;
+  *) die setting-unknown "value=${order:-empty}" ;;
 esac
-
-printf 'pr-order=%s visibility=%s repo=%s\n' "$order" "$visibility" "$repo"
+printf 'pr-order=%s\n' "$order"

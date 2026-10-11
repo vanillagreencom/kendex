@@ -24,19 +24,30 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    No issue worktree means hand back. On conflicts, resolve every listed file, stage it, and run `worktree restack continue [ISSUE]` until complete. Never force-push over an unresolved base.
 
-   Then validate the restacked head before step 3 pushes it. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, or one the skip check below matched to a passing run, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
+   Then resolve validation for the restacked head before step 3 pushes it. Under `push-first`, a covered `ci` route records completed local edits with required CI pending and starts no local range command. Step 4's existing exact-head CI wait proves the published head. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, or one the skip check below matched to a passing run, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [WT_PATH]
    ```
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH]
+   RESTACK_MODE_ARGS=()
+   if ! PR_ORDER="$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/pr-order [WT_PATH])"; then
+     PR_ORDER=pr-order=review-first
+   fi
+   [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
    ```
 
    A non-zero exit from `resolve-base-branch`, `--resolve-mode`, or the `--record` read below hands back with that command's stderr and pushes nothing.
 
-   `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` first asks whether the last passing run in the worktree already validated the restacked head:
+   For the `ci` mode, record the pending run through the existing runner:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH]
+   ```
+
+   `validate-mode=ci` runs that command with `--validate-mode ci`, records its pending CI result through the existing `--record` owner, then goes to step 3 with no local range run or skip check. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` first asks whether the last passing run in the worktree already validated the restacked head:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
@@ -64,7 +75,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    A start refused as `run-live` ran nothing and is no result: take [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate)'s route for that refusal, then start the range run again.
 
-   Only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches step 4.
+   A `validate-mode=ci` record with `verdict=pending` goes on to step 3. It is no CI pass. For local runs, only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches step 4.
 
 3. Push through the guarded owner:
 
@@ -74,7 +85,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    This step is not skippable and no other push replaces it: the restack in step 2 rewrote every branch commit, and this command is the only thing that reconciles the SHAs workflow state recorded before it. A non-zero exit hands back, because republishing `Fixed in <sha>` replies or a closing comment over unreconciled SHAs publishes commits the branch no longer has. What it reconciles from and what its summary lines mean are in `worktree-push --help`.
 
-   After a range run, compare the pushed head with the `head=` value of that run's record; after a skip, with the `head=` value of the skip line:
+   A `ci` record goes straight to step 4 after the push. Its proof is the exact published head, including any head the push rebased. After a local range run, compare the pushed head with the `head=` value of that run's record; after a skip, with the `head=` value of the skip line:
 
    ```bash
    git -C [WT_PATH] rev-parse HEAD

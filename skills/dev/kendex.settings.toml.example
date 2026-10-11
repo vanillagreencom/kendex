@@ -11,14 +11,17 @@ DEV_VALIDATE_CMD = "" # required
 # since the commit it reads from $DEV_VALIDATE_BASE, for example
 # "tools/check --since $DEV_VALIDATE_BASE". Empty runs DEV_VALIDATE_CMD.
 # An orch restack also runs it, as orch's merge-pr-restack.md sets out.
-# Submit reuses only a DEV_VALIDATE_CMD result.
+# Submit can reuse a current-head pending CI receipt; uncovered work keeps
+# local validation. dev-validate-run --help defines coverage and fallback.
 DEV_VALIDATE_RANGE_CMD = ""
 
 # The status check context whose pull request run covers DEV_VALIDATE_CMD,
-# for example "CI". A review-comment fix round on an open pull request then
-# leaves its validation to that check where the pull request's base branch
-# requires it, through a ruleset or classic branch protection. Empty
-# validates every fix round locally.
+# for example "CI". Covered fix rounds on an open pull request can defer to
+# that check. Explicit ORCH_PR_ORDER=push-first also permits covered
+# implementation and internal-fix rounds to defer before publication.
+# Their receipts accept local edits with CI pending; submit verifies the
+# published head before merge. Uncovered work keeps local validation.
+# Empty validates locally. dev-validate-run --help defines coverage.
 DEV_VALIDATE_CI_CONTEXT = ""
 
 # The prefix both commands print each finding line with, such as "guard: ".

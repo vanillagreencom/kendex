@@ -194,6 +194,8 @@ Before stamping or delegating the round, check its base:
    git -C "[WORKTREE_PATH]" log -1 --oneline
    ```
 
+   A `ci` receipt accepts the local edits on the current commit. Required CI remains pending until the combined push and submit's existing § 5 wait. Acceptance starts no wait on the unpublished head.
+
    `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and made no commit.
 
    A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.

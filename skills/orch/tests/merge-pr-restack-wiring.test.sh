@@ -141,6 +141,9 @@ live() {
   line="$(command_at "$1" "$2")"
   [[ -n "$line" ]] || { printf 'live: no live command holds %s\n' "$2" >&2; return 1; }
   line="${line#*$'\t'}"
+  if [[ "$2" == "$RESOLVE" ]]; then
+    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /dev-validate-run --resolve-mode/ {exit}' "$1")"
+  fi
   line="${line//\[MAIN_REPO_ROOT\]\/.agents\/skills\/orch\/scripts\//${6:-$REPO_ROOT/skills/orch/scripts}/}"
   line="${line//\[WT_PATH\]/$3}"
   line="${line//\[BASE_BRANCH\]/$4}"
@@ -149,7 +152,7 @@ live() {
   [[ "$2" != "$RANGE" ]] || line="$line --poll 1"
   (cd "$3" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH \
-    -u ORCH_STATE_DIR ORCH_WORKTREE_BIN="$NETWORK_PUSH" "$BASH" -c "$line")
+    -u ORCH_STATE_DIR -u ORCH_PR_ORDER ORCH_WORKTREE_BIN="$NETWORK_PUSH" "$BASH" -c "set -u; $line")
 }
 
 fixture_failed() { echo "merge-pr-restack-wiring: fixture=failed step=$1" >&2; exit 1; }
@@ -274,6 +277,114 @@ MUTANT_SCRIPTS="$(mutant_scripts publishing-record-mode worktree-push)" || fixtu
 mutate_file "$MUTANT_SCRIPTS/worktree-push" $'\texit 0\nfi\n\n# Every rewrite' $'\t:\nfi\n\n# Every rewrite'
 live "$RESTACK_DOC" "$POST_RECORD" "$WT" "$BASE" "$POST_RUN_DIR" "$MUTANT_SCRIPTS" > "$TMP_ROOT/control-publication.out" || fixture_failed control-publication
 assert_eq "$(cat "$WT/tmp/network-pushes")" $'push\npush' 'control: dropping the recording-only exit fails the no-second-publication assertion'
+
+# The restack's real mode read and CI command use the same required-context
+# owner. This branch changes shell source so the classifier covers it.
+CI_WT="$(make_worktree ci-restack)" || fixture_failed ci-worktree
+# A declared queue path lets the real classifier prove this shell change has
+# no queue work. Undeclared queue paths cannot prove PR coverage.
+printf 'HARNESS_CI_QUEUE_PATHS = "queued/**"\n' >> "$CI_WT/kendex.settings.toml"
+git -C "$CI_WT" add -f kendex.settings.toml
+git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m coverage
+git -C "$CI_WT" update-ref refs/remotes/origin/main HEAD
+# Policy variations exercise the workflow order without adding a settings
+# change to the classifier's snapshot.
+git -C "$CI_WT" update-index --skip-worktree kendex.settings.toml
+printf '#!/bin/sh\nprintf changed\\n\n' > "$CI_WT/check.sh"
+git -C "$CI_WT" add check.sh
+git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m source
+printf 'ORCH_PR_ORDER = "push-first"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$CI_WT/kendex.settings.toml"
+mkdir -p "$TMP_ROOT/ci-bin"
+cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$2" in
+  status) exit 0 ;;
+  view) printf '{"state":"OPEN","baseRefName":"main"}\n' ;;
+  'repos/{owner}/{repo}/rules/branches/main') printf 'CI\n' ;;
+  'repos/{owner}/{repo}/branches/main') : ;;
+  *) exit 9 ;;
+esac
+SH
+chmod +x "$TMP_ROOT/ci-bin/gh"
+CI_COMMAND='dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH]'
+CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed ci-resolve
+assert_eq "$CI_RESOLVED" validate-mode=ci 'push-first restack resolves to pending CI'
+CI_OUT="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main -)" || fixture_failed ci-start
+CI_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$CI_OUT")"
+CI_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$CI_WT" main "$CI_DIR")" || fixture_failed ci-record
+assert_contains "$CI_RECORD" 'validate-mode=ci selection=unreported verdict=pending' 'restack records pending proof, not a local pass'
+assert_contains "$CI_RECORD" "head=$(git -C "$CI_WT" rev-parse HEAD)" 'restack CI record binds the restacked head'
+assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
+MUTANT_SCRIPTS="$(mutant_scripts ci-restack-mode dev-validate-run)" || fixture_failed ci-mutant
+mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '"$validate_mode" == ci || "$pr_order" == push-first' '"$validate_mode" == ci || false'
+CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main - "$MUTANT_SCRIPTS")" || fixture_failed ci-control
+assert_eq "$CI_RESOLVED" validate-mode=range 'control: dropping automatic CI breaks the push-first restack mode'
+
+# Execute the workflow's mode block for every order under a covered subset.
+for order in review-first open-first push-first; do
+  sed '/^ORCH_PR_ORDER =/d; /^DEV_VALIDATE_SELECTION_CMD =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
+  mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
+  printf 'ORCH_PR_ORDER = "%s"\nDEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' "$order" >> "$CI_WT/kendex.settings.toml"
+  want=range
+  [[ "$order" != push-first ]] || want=ci
+  CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-resolve
+  assert_eq "$CI_RESOLVED" "validate-mode=$want" "$order keeps its restack validation order with subset CI coverage"
+done
+cp "$RESTACK_DOC" "$TMP_ROOT/restack-order-mutant.md"
+mutate_file "$TMP_ROOT/restack-order-mutant.md" '[[ "$PR_ORDER" != pr-order=push-first ]] ||' 'false ||'
+sed '/^ORCH_PR_ORDER =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
+mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
+printf 'ORCH_PR_ORDER = "review-first"\n' >> "$CI_WT/kendex.settings.toml"
+CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-order-mutant.md" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-control
+assert_eq "$CI_RESOLVED" validate-mode=ci 'control: applying the opt-in base to every order breaks review-first restack validation'
+
+cp "$RESTACK_DOC" "$TMP_ROOT/restack-array-mutant.md"
+mutate_file "$TMP_ROOT/restack-array-mutant.md" '${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}' '"${RESTACK_MODE_ARGS[@]}"'
+if (( BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2 )); then
+  array_rc=0
+  LC_ALL=C PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-array-mutant.md" "$RESOLVE" "$CI_WT" main - > "$TMP_ROOT/array-control.out" 2> "$TMP_ROOT/array-control.err" || array_rc=$?
+  array_error="$(sed 's/^[^:]*: line [0-9][0-9]*: //' "$TMP_ROOT/array-control.err")"
+  printf 'control: bare-array diagnostic=%s\n' "$array_error"
+  assert_eq "$array_rc" 127 'control: bare empty-array expansion fails review-first under Bash 3.2 nounset' "$TMP_ROOT/array-control.err"
+  assert_eq "$array_error" 'RESTACK_MODE_ARGS[@]: unbound variable' 'control: bare empty-array failure names the target array' "$TMP_ROOT/array-control.err"
+else
+  printf 'control: bare-array requires Bash 3.2; current=%s\n' "$BASH_VERSION"
+fi
+
+# Pending validation comes from an accepted receipt or a run submit starts.
+# Execute the workflow's binding and no-CI check against the real run record.
+submit_none_check() { # DOC SOURCE
+  local block binding mode=ci
+  block="$(awk '/^```bash/ {inside=1; block=""; next} /^```/ && inside {if (index(block, "submit-pr: ci-uncovered")) {printf "%s", block; exit} inside=0} inside {block=block $0 ORS}' "$1")"
+  [[ -n "$block" ]] || return 2
+  if [[ "$2" == run ]]; then
+    binding="$(awk '/^```bash/ {inside=1; block=""; next} /^```/ && inside {if (index(block, "SUBMIT_VALIDATE_RECORD=")) {printf "%s", block; exit} inside=0} inside {block=block $0 ORS}' "$1")"
+    [[ -n "$binding" ]] || return 2
+    binding="${binding//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
+    binding="${binding//\[RUN_DIR\]/$CI_DIR}"
+    block="$binding"$'\n'"$block"
+    mode=
+  fi
+  env -i PATH="$PATH" SUBMIT_VALIDATE_MODE="$mode" "$BASH" -uc "$block"
+}
+SUBMIT_DOC="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
+for source in receipt run; do
+  none_rc=0
+  submit_none_check "$SUBMIT_DOC" "$source" > "$TMP_ROOT/submit-none-$source.out" 2> "$TMP_ROOT/submit-none-$source.err" || none_rc=$?
+  # Submit's caller consumes this keyed refusal, not the runner's read errors.
+  assert_eq "$none_rc $(sed -n 's/^submit-pr: ci-uncovered cause=//p' "$TMP_ROOT/submit-none-$source.err")" '1 no-required-ci' "a pending ci $source blocks submit when the live CI wait has verdict=none"
+done
+cp "$SUBMIT_DOC" "$TMP_ROOT/submit-none-mutant.md"
+mutate_file "$TMP_ROOT/submit-none-mutant.md" '[[ "$SUBMIT_VALIDATE_MODE" == ci ]]' '[[ "$SUBMIT_VALIDATE_MODE" == full ]]'
+none_rc=0
+submit_none_check "$TMP_ROOT/submit-none-mutant.md" receipt > "$TMP_ROOT/submit-none-control.out" 2> "$TMP_ROOT/submit-none-control.err" || none_rc=$?
+assert_eq "$none_rc" 0 'control: dropping the ci receipt check permits an uncovered submit'
+cp "$SUBMIT_DOC" "$TMP_ROOT/submit-mode-mutant.md"
+mutate_file "$TMP_ROOT/submit-mode-mutant.md" 'SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"' 'SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"; SUBMIT_VALIDATE_MODE=full'
+none_rc=0
+submit_none_check "$TMP_ROOT/submit-mode-mutant.md" run > "$TMP_ROOT/submit-mode-control.out" 2> "$TMP_ROOT/submit-mode-control.err" || none_rc=$?
+assert_eq "$none_rc" 0 'control: discarding the pending run mode permits an uncovered submit'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

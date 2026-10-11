@@ -37,7 +37,17 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful validation result for the current commit whose mode is `full` and whose class covered the whole branch, from an accepted dev completion artifact's `validate_mode` with a `null` `validate_class_base` or a `validate_selection` of `battery`, or this submit session. A `range` pass, or any other `full` pass with a `validate_class_base`, is never reused, because it covers one fix round's changes and not the branch: submit then runs `DEV_VALIDATE_CMD` for the current commit as when no dev result exists. A failing dev validation artifact blocks submission and is reported without another validation run. A dev `no-verdict` result for the current commit, `full` or `range`, is not re-run: its battery already hit the bound, its `validate_note` names the scoped suites that passed, and CI is the full record. A run submit starts that ends `no-verdict` takes the fallback [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) gives the dev round: its scoped suites once each, one red blocking the push and all green pushing with those suites named in the PR body; a diff whose fallback selects no suite file is a failing result and blocks the push. When no dev result exists, run the project's `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run`, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out, the same route [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) takes. A start refused as `run-live` ran nothing: it blocks no push and returns nothing to the caller; take that section's route for that refusal, then start again. What the runner hands the command, and whose failure a full battery the class does not need is, are that section's. A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
+Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Read any already accepted dev receipt through `dev-artifact-check --file [WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json`; this same acceptance reader refuses a `ci` receipt for an earlier HEAD. A valid `ci` receipt for the current commit accepts completed local edits with required CI pending on the head about to be published. Start no `DEV_VALIDATE_CMD` for that receipt. After publication, § 5 and its existing § 5.1 CI-fix route prove required CI on the exact published head. Reuse a successful local validation result for the current commit whose mode is `full` and whose class covered the whole branch, from an accepted dev completion artifact's `validate_mode` with a `null` `validate_class_base` or a `validate_selection` of `battery`, or this submit session. A `range` pass, or any other `full` pass with a `validate_class_base`, is never reused, because it covers one fix round's changes and not the branch: submit then runs `DEV_VALIDATE_CMD` for the current commit as when no dev result exists. A failing dev validation artifact blocks submission and is reported without another validation run. A dev `no-verdict` result for the current commit, `full` or `range`, is not re-run: its battery already hit the bound, its `validate_note` names the scoped suites that passed, and CI is the full record. A run submit starts that ends `no-verdict` takes the fallback [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) gives the dev round: its scoped suites once each, one red blocking the push and all green pushing with those suites named in the PR body; a diff whose fallback selects no suite file is a failing result and blocks the push. When no dev result exists, run the project's `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run`, started and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out, the same route [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) takes. A start refused as `run-live` ran nothing: it blocks no push and returns nothing to the caller; take that section's route for that refusal, then start again. What the runner hands the command, and whose failure a full battery the class does not need is, are that section's. A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
+
+Retain the mode of the validation result this section accepts as `SUBMIT_VALIDATE_MODE`. For an accepted dev receipt, use its `validate_mode`. For a run this submit starts or reuses, read its existing metadata below. Bind `[RUN_DIR]` to that accepted run's directory, including a `ci` run with `verdict=pending`:
+
+```bash
+if ! SUBMIT_VALIDATE_RECORD="$(.agents/skills/orch/scripts/dev-validate-run --record --run-dir "[RUN_DIR]")"; then
+  exit 1
+fi
+SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_RECORD%% *}"
+SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"
+```
 
 ### 1.2 Local Pre-PR Review
 
@@ -74,9 +84,11 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 ## 2. Push And Submit
 
-When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed. While workflow state `pr_order` reads `open-first`, an armed read is a PR armed before its internal review returned: unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1, whose hand-back pushes nothing and returns to the caller. After § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
+When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed. While workflow state `pr_order` reads `open-first` or `push-first`, an armed read is a PR armed before its internal review returned: unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1, whose hand-back pushes nothing and returns to the caller. After § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
 
-1. **Push**. With workflow state `pr_order` reading `open-first-returned`, the first pass after the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened, first run § 3's triage pass, `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context, `[PR_NUMBER]` being the `number` this section's opening `pr-view-json` read printed: its fix round commits on top of the internal review's, its push through `worktree-push` by that workflow's § 6.1 carries both, and that workflow resolves its own fix SHAs through `.rebase_map` before its replies cite them, and the push below sends what remains. The triage returns to the `worktree-push` command below, never to this step's start, whose condition still holds.
+With `pr_order` reading `push-first`, read the existing PR's draft flag before any interim push. Keep or convert an open PR to draft with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr ready [PR_NUMBER] --undo` from `[WORKTREE_PATH]`. Keep it draft until internal review returns `pass`.
+
+1. **Push**. With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened, first run § 3's triage pass (under `push-first-returned`, skip its bounded Copilot wait while the PR is draft), `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context, `[PR_NUMBER]` being the `number` this section's opening `pr-view-json` read printed: its fix round commits on top of the internal review's, its push through `worktree-push` by that workflow's § 6.1 carries both, and that workflow resolves its own fix SHAs through `.rebase_map` before its replies cite them, and the push below sends what remains. The triage returns to the `worktree-push` command below, never to this step's start, whose condition still holds.
 
    ```bash
    .agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
@@ -142,6 +154,8 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-create --title "[PREFIX]([ISSUE_ID]): [ISSUE_TITLE]" --body-file "$BODY_FILE"
    ```
 
+   With `pr_order` reading `push-first`, add `--draft` to that create command. Keep a push-first PR draft until internal review returns `pass`.
+
    With an existing PR, update the body instead:
 
    ```bash
@@ -150,7 +164,24 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
 
    `[ISSUE_TITLE]` comes from `linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
-5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** workflow state `pr_order` reads `open-first`: the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened has not returned, and the pass after [review-pr.md](review-pr.md) § 9 arms it, as a review-first PR is armed once its review returns.
+   **Push-first ready head.** With `pr_order` reading `push-first-returned`, confirm the internal review's verdict is `pass`. Read the draft flag and head before marking it ready:
+
+   ```bash
+   .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,isDraft,headRefOid
+   ```
+
+   Bind the open PR's head as `[HEAD_SHA]`. A closed PR stops this pass. From `[WORKTREE_PATH]`, read the existing request record and request an unrecorded head. A failed record read stops this pass before the request. This includes a PR a person made ready, or a retry after the ready transition succeeded but the request failed. Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing).
+
+   ```bash
+   COPILOT_REQUESTED_HEAD="$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_approval.copilot_rerequest_head // empty')"
+   if [[ "$COPILOT_REQUESTED_HEAD" != "[HEAD_SHA]" ]]; then
+     env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --base-checkout [REVIEW_BASE_CHECKOUT]
+   fi
+   ```
+
+   The existing request owner checks the request policy before marking a draft ready. It confirms the head and requests it, including an already ready head with no recorded request. Route its answer by [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass and leaves the request record unset, so the next pass resumes here. A head already recorded takes no request. Then move `pr_order` to `push-first-pushed` with `workflow-state set`, and write the lane's `Review: pass` line. Complete this request route before [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route)'s later wait. A draft pass before internal review sends no request and never runs the head route.
+
+5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** workflow state `pr_order` reads `open-first` or `push-first`: the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened has not returned, and the pass after [review-pr.md](review-pr.md) § 9 arms it, as a review-first PR is armed once its review returns.
 
    Read the bot token as [merge-pr.md § 4](merge-pr.md#4-prepare) does. `.configured: false` arms nothing here: whose name a merge lands under is the decision [merge-pr.md](merge-pr.md) § 4 owns, and § 4-§ 5 there make the arm.
 
@@ -326,11 +357,20 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 | Result | Action |
 |--------|--------|
 | `status=complete`, `verdict=pass` | → § 6 |
-| `status=complete`, `verdict=none` | Repo has no CI configured. Record `ci: none` in workflow state and → § 6 |
+| `status=complete`, `verdict=none` | Run the coverage check below. Only exit 0 permits recording `ci: none` in workflow state and → § 6 |
 | `status=complete`, `verdict=fail` | → § 5.1 |
 | `status=timeout` or `status=error` | Re-run once. If it repeats, `auto-recommended` records `ci-status-unconfirmed`; `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended |
 
 A PR already green when the wait started reaches the first row, never this one: `ci-wait --help` pairs `verdict=pass` with `status=complete` alone.
+
+For `verdict=none`, use `SUBMIT_VALIDATE_MODE` retained by § 1.1. A pending `ci` result requires CI proof, including a run submit started without a dev receipt. With no required CI, stop before § 6:
+
+```bash
+if [[ "$SUBMIT_VALIDATE_MODE" == ci ]]; then
+  printf 'submit-pr: ci-uncovered cause=no-required-ci\n' >&2
+  exit 1
+fi
+```
 
 ### 5.1 CI Failure Recovery
 
@@ -355,7 +395,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 | # | Gate | Check |
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
-| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` (satisfied with a `CI: none configured` note in the summary) |
+| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` after its coverage check passes (satisfied with a `CI: none configured` note in the summary) |
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) AND `check-review-replies` exits 0 |
 | 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets it. `off`: not applicable |
 

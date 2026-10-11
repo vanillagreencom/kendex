@@ -25,7 +25,7 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
 # reads the process environment first: a developer's own range command would
 # otherwise decide every fix row.
-unset DEV_VALIDATE_RANGE_CMD
+unset DEV_VALIDATE_RANGE_CMD ORCH_PR_ORDER
 VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
@@ -51,6 +51,9 @@ new_repo() {
   git -C "$d" config user.email test@example.com
   git -C "$d" config user.name Test
   git -C "$d" config commit.gpgsign false
+  # These receipt fixtures exercise review-first modes, not repository visibility.
+  printf '[env]\nORCH_PR_ORDER = "review-first"\n' > "$d/kendex.settings.toml"
+  git -C "$d" add kendex.settings.toml
   git -C "$d" commit -q --allow-empty -m base
   init_growth_state "$STATE" "$d" "$2" "${3:-seed}" ${4:+"$4"} >/dev/null
   mkdir -p "$d/.cache/tracker-fixture"
@@ -427,8 +430,8 @@ MODE_WRITTEN="$(cat "$MODE_RECEIPT")"
 MODE_HEAD="$(git -C "$MW" rev-parse HEAD)"
 MODE_FAKE_SHA="${MODE_HEAD:0:8}00000000000000000000000000000000"
 mode_row() { # RANGE_CMD MODE_FILTER [RECORD_FILTER] — the project's setting, the receipt's mode, the round's record
-  rm -f "$MW/kendex.settings.toml"
-  [[ -z "$1" ]] || printf '[env]\nDEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" > "$MW/kendex.settings.toml"
+  printf '[env]\nORCH_PR_ORDER = "review-first"\n' > "$MW/kendex.settings.toml"
+  [[ -z "$1" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" >> "$MW/kendex.settings.toml"
   jq -c "$2" <<<"$MODE_WRITTEN" > "$MODE_RECEIPT"
   jq "${3:-.}" <<<"$MODE_RECORD_WRITTEN" > "$MODE_RECORD"
 }
@@ -469,7 +472,7 @@ ci_mode_control() { # NAME LABEL ANCHOR REPLACEMENT RECORD_FILTER EXPECT
   assert_eq "$(observe "$6")" "$6" "control: $2" "$ERR"
 }
 ci_mode_control ci-mode "without the ci exception an open PR's review ci run is a mode mismatch" \
-  '      ci) if' '      no-ci) if' "." "rc=1 reason=mode_mismatch"
+  '      ci)' '      no-ci)' "." "rc=1 reason=mode_mismatch"
 ci_mode_control ci-pr "with the PR state unread a ci run on a round with no open PR is valid" \
   "'.pr_open == true'" "'true'" '.pr_open=false' "rc=0 reason=valid validate_mode=ci"
 ci_mode_control ci-pr-type "with the PR state type unchecked a string reaches the mode gate" \
@@ -604,6 +607,75 @@ CHECK="$(mutant_scripts ci-kind dev-artifact-check)/dev-artifact-check" || exit 
 mutate_file "$CHECK" 'or .validate_mode == "ci")' 'or (.validate_mode == "ci" and $k == "fix"))'
 receipt_table "control: the fix-only rule turns implement CI admission red^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=retry reason=invalid"
 CHECK="$CHECK_SHIPPED"
+
+# An internal fix and a Copilot fix complete locally before their combined
+# publication. Submit § 1.1 consumes --file from this same production reader.
+PF="$(new_repo pending-ci issue-3231 seed 1000000)"
+printf '[env]\nORCH_PR_ORDER = "push-first"\nDEV_VALIDATE_CMD = "touch tmp/validation-ran"\nDEV_VALIDATE_TIMEOUT_SECS = "20"\n' > "$PF/kendex.settings.toml"
+git -C "$PF" add kendex.settings.toml
+git -C "$PF" commit -q -m policy
+for source in pr-review pr-comments; do
+  rid="pending-$source"
+  round_write --worktree "$PF" --issue issue-3231 --round-id "$rid" --source "$source" --pr-open false \
+    --item 1 'fix local edits' 'published branch reviewed by the existing review owner' >/dev/null
+  printf '%s\n' "$source" > "$PF/edits.md"
+  git -C "$PF" add edits.md
+  git -C "$PF" commit -q -m "$source"
+  pending_run="$(round_run_dir "$TMP_ROOT/run-$rid" "$PF" issue-3231 "$rid" ci)"
+  printf 'tree=%s\n' "$(git -C "$PF" rev-parse HEAD^{tree})" >> "$pending_run/start"
+  "$WRITE" --worktree "$PF" --kind fix --issue issue-3231 --round-id "$rid" --branch b \
+    --commit "$(git -C "$PF" rev-parse HEAD)" --validate pass \
+    --validate-run-dir "$pending_run" --item 1 Applied done >/dev/null
+  receipt="$PF/tmp/dev-return-issue-3231-$rid.json"
+  for reader in round submit; do
+    if [[ "$reader" == round ]]; then
+      run_check --worktree "$PF" --issue issue-3231 --round-id "$rid" --expect-items-from-round
+    else
+      run_check --file "$receipt"
+    fi
+    assert_eq "$RC $(json .verdict) $(json .validate_mode)" '0 accept ci' "$source $reader accepts completed local edits with CI pending" "$ERR"
+    assert_eq "$([[ ! -e "$PF/tmp/validation-ran" ]] && echo idle || echo started)" idle "$source $reader starts no local validation command"
+  done
+  # A later committed head makes both paths refuse the earlier CI receipt.
+  git -C "$PF" commit -q --allow-empty -m next-head
+  for reader in round submit; do
+    if [[ "$reader" == round ]]; then
+      run_check --worktree "$PF" --issue issue-3231 --round-id "$rid" --expect-items-from-round
+    else
+      run_check --file "$receipt"
+    fi
+    assert_eq "$RC $(json .reason)" '1 ci_head_mismatch' "$source $reader refuses an earlier pending head" "$ERR"
+  done
+  CI_HEAD_CHECK="$CHECK"
+  CHECK="$(mutant_scripts stale-ci-head dev-artifact-check)/dev-artifact-check" || exit 1
+  mutate_file "$CHECK" '[[ "$commit" != "$(git -C "$repo" rev-parse HEAD)" ]]' 'false'
+  run_check --file "$receipt"
+  assert_eq "$RC $(json .verdict)" '0 accept' 'control: ignoring HEAD breaks the stale CI receipt rejection' "$ERR"
+  CHECK="$CI_HEAD_CHECK"
+done
+# If acceptance starts the real runner, the configured command marks that
+# publication now waits for local work. The live reuse reader leaves it idle.
+CHECK="$(mutant_scripts pending-ci-command dev-artifact-check)/dev-artifact-check" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CHECK" $'    if jq -e \'.validate_mode == "ci"\' "$file"' \
+  $'    if "$SCRIPT_DIR/dev-validate-run" --worktree "$repo" --poll 1 >/dev/null && jq -e \'.validate_mode == "ci"\' "$file"'
+jq --arg head "$(git -C "$PF" rev-parse HEAD)" '.commit=$head' "$receipt" > "$receipt.next"
+mv "$receipt.next" "$receipt"
+run_check --file "$receipt"
+assert_eq "$RC $([[ -f "$PF/tmp/validation-ran" ]] && echo started || echo idle)" '0 started' \
+  'control: starting the command breaks pending receipt reuse' "$ERR"
+rm -f -- "${PF:?}/tmp/validation-ran"
+CHECK="$CI_HEAD_CHECK"
+# The resolver is the permission owner. Removing its push-first admission
+# must refuse the no-PR fix whose ordinary mode is full.
+CHECK="$(mutant_scripts pending-ci-order dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$CHECK" '[[ "$order_line" == pr-order=push-first ]]' 'false'
+# Refresh only the receipt commit to isolate the mode rule from the head rule.
+jq --arg head "$(git -C "$PF" rev-parse HEAD)" '.commit=$head' "$receipt" > "$receipt.next"
+mv "$receipt.next" "$receipt"
+run_check --worktree "$PF" --issue issue-3231 --round-id "$rid" --expect-items-from-round
+assert_eq "$RC $(json .reason)" '1 mode_mismatch' 'control: dropping push-first permission rejects the local pending fix' "$ERR"
+CHECK="$CI_HEAD_CHECK"
 
 echo "=== the validation wall time reaches the orchestrator ==="
 # The lane status file and the overseer's report show minutes per round from
