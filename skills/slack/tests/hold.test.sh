@@ -31,12 +31,36 @@ fresh() { touch -- "$JARVIS_SESSION" && aged 10; }
 stale() { aged 600; } # the default SLACK_JARVIS_SESSION_MAX_AGE: the hold ends as this runs
 count() { sk_state "[(.messages.${1} // [])[] | select(.text | contains(\"$2\"))] | length"; } # CHANNEL TEXT
 holds() { jq -r 'select(.t == "hold" or .t == "resume") | .t' "$(sk_journal "$1")" | tr '\n' ' '; } # ROOT
-ask() { sk_lm "$1" ask --item overseer --to owner --file "$(sk_text "$2" "$3")" --options a,b --recommend a | sed 's/^id=//'; } # ROOT NAME TEXT
+ask() { # ROOT NAME TEXT [ASK FORM ARGS]
+  local root="$1" name="$2" text="$3"
+  shift 3
+  [ "$#" -gt 0 ] || set -- --recommend a
+  sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$name" "$text")" --options a,b "$@" | sed 's/^id=//'
+}
 notice() { sk_lm "$1" notice --item overseer --to owner --file "$(sk_text "$2" "$3")" >/dev/null; } # ROOT NAME TEXT
 last_id() { tail -n 1 "$(sk_box "$1")/to-overseer.jsonl" | jq -r .id; } # ROOT — the newest envelope's id
 old_resumes() { jq -s '[.[] | select(.t == "resume" and (.at | fromdateiso8601) < now - 31536000)] | length' "$(sk_journal "$1")"; } # ROOT — resumes ending over a year ago
 row() { sk_run -- listen --status --root "$1"; LINE="$(printf '%s' "$OUT" | sed -n '1p')"; } # ROOT
 refuse_next_post() { sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null; }
+# A status timestamp acknowledges a completed poll. The parent suite bounds
+# this wait even if the relay or the settings reader stops making progress.
+polled_after() { # ROOT LAST_POLL
+  local tries=0 value
+  while [ "$tries" -lt 100 ]; do
+    value="$(jq -r --argjson after "$2" '.last_poll > $after' "$1/tmp/slack/status.json" 2>/dev/null)"
+    [ "$value" != true ] || return 0
+    tries=$((tries + 1)); sleep 0.1
+  done
+  bad "running relay did not complete its next poll" "$1"
+  return 1
+}
+polls() { # ROOT: two completed polls, the first of which may predate a change
+  local n after
+  for n in 1 2; do
+    after="$(jq -r .last_poll "$1/tmp/slack/status.json")"
+    polled_after "$1" "$after" || exit 1
+  done
+}
 
 ROOT="$(sk_new_root alpha)"
 sk_bind "$ROOT"
@@ -246,21 +270,36 @@ ROWS
 
 # --- a resume skips an ask the Jarvis session read and mentions the owners on a later one ---
 # The control posts every open ask whatever its line, the rule before asks were read.
-while read -r name control; do
+while read -r name control reserved expires; do
   R="$(sk_new_root "ask-seen-$name")"
   sk_bind "$R"
   sk_poll "$R" "$HOLD"
   fresh
-  READ_ASK="$(ask "$R" "read-$name" "Read by the session in $name?")"
+  if [ "$reserved" = yes ]; then
+    READ_ASK="$(ask "$R" "read-$name" "Read by the session in $name?" --reserved --wait 30)"
+  else
+    READ_ASK="$(ask "$R" "read-$name" "Read by the session in $name?")"
+  fi
   sk_jarvis_read "$R" "$(wc -l < "$(sk_box "$R")/to-overseer.jsonl")"
-  UNREAD_ASK="$(ask "$R" "unread-$name" "Unread by the session in $name?")"
+  if [ "$reserved" = yes ]; then
+    UNREAD_ASK="$(ask "$R" "unread-$name" "Unread by the session in $name?" --reserved --wait 30)"
+  else
+    UNREAD_ASK="$(ask "$R" "unread-$name" "Unread by the session in $name?")"
+  fi
   sk_poll "$R" "$HOLD"
   stale
-  [ "$control" = real ] || sk_mutant every-ask relay.py 'kind in \("notice", "ask"\) and' 'kind == "notice" and'
+  case "$control" in
+    every-ask) sk_mutant every-ask relay.py 'kind in \("notice", "ask"\) and' 'kind == "notice" and' ;;
+    overdue) sk_mutant skipped-overdue relay.py '\n\s+and \(env_id in state\.by_envelope or env_id in state\.unknown\)' '' ;;
+  esac
+  if [ "$expires" = before ]; then
+    jq -c --arg id "$READ_ASK" 'if .id == $id then .deadline = "2000-01-01T00:00:00Z" else . end' "$(sk_box "$R")/to-overseer.jsonl" > "$SK_TMP/expired.jsonl"
+    mv "$SK_TMP/expired.jsonl" "$(sk_box "$R")/to-overseer.jsonl"
+  fi
   sk_poll "$R" "$HOLD"
   CH_R="$(sk_channel "$R")"
   READ_ROW="$RC=$(count "$CH_R" "Read by the session in $name?")=$(jq -r 'select(.t == "resume") | .skipped | join(",")' "$(sk_journal "$R")")"
-  if [ "$control" != real ]; then
+  if [ "$control" = every-ask ]; then
     sk_assert_red "$READ_ROW" "0=0=$READ_ASK" "$name: posting every open ask fails the read-ask row"
     sk_bin_reset
     continue
@@ -270,10 +309,34 @@ while read -r name control; do
     "$name: an ask past the seen count posts and is journaled landed"
   assert_eq "$(sk_state ".messages.${CH_R}[] | select(.text | contains(\"Unread by the session in $name?\")) | .text | startswith(\"<@U001> <@U002> \")")" \
     "true" "$name: the ask past the count carries the owners' mention"
+  if [ "$reserved" = yes ]; then
+    # Poll with the same relay state, then replay after compaction. The mailbox's
+    # deadline is fixture input, so expiry needs no elapsed-time wait.
+    jq -c --arg read "$READ_ASK" --arg unread "$UNREAD_ASK" 'if .id == $read or .id == $unread then .deadline = "2000-01-01T00:00:00Z" else . end' "$(sk_box "$R")/to-overseer.jsonl" > "$SK_TMP/expired.jsonl"
+    mv "$SK_TMP/expired.jsonl" "$(sk_box "$R")/to-overseer.jsonl"
+    sk_relay_start "$R" "$HOLD"
+    polled_after "$R" 0 || exit 1
+    polls "$R"
+    sk_relay_stop
+    RESERVED_ROW="$(count "$CH_R" "Read by the session in $name?")=$(sk_state "[.messages.${CH_R}[] | select(.thread_ts != null and (.text | startswith(\"<@U001> <@U002> \")))] | length")"
+    case "$control" in
+      overdue) sk_assert_red "$RESERVED_ROW" "0=1" "$name: carried seen asks must not become overdue mentions" ;;
+      *) assert_eq "$RESERVED_ROW" "0=1" "$name: later polls remind only the posted unread reserved ask" ;;
+    esac
+    sk_run -- compact --root "$R"
+    sk_poll "$R" "$HOLD"
+    case "$control" in
+      overdue) sk_assert_red "$(count "$CH_R" "Read by the session in $name?")" 0 "$name: replay must keep a seen reserved ask out of overdue mentions" ;;
+      *) assert_eq "$(count "$CH_R" "Read by the session in $name?")=$(sk_state "[.messages.${CH_R}[] | select(.thread_ts != null and (.text | startswith(\"<@U001> <@U002> \")))] | length")" "0=1" "$name: compaction and replay preserve suppression and the single unread reminder" ;;
+    esac
+  fi
   sk_bin_reset
 done <<'ROWS'
-real real
-every-ask-control every-ask
+real real no after
+every-ask-control every-ask no after
+reserved-expired real yes before
+reserved-later real yes after
+reserved-overdue-control overdue yes after
 ROWS
 
 # --- root-local settings through the real launcher and one two-root poll ----------
@@ -475,19 +538,6 @@ assert_eq "$RC" "2" "an unreadable root setting refuses startup instead of disab
 assert_has "$ERR1" "slack: setting-invalid=root=$R settings-reader=" "the root settings failure names its root and reader"
 
 # --- changed files update a running relay, without restarting it -------------------
-# A status timestamp is the poll acknowledgement. Wait for a later completed
-# poll of both roots, bounded by the parent suite's timeout.
-polled_after() { # ROOT LAST_POLL
-  local tries=0 value
-  while [ "$tries" -lt 100 ]; do
-    value="$(jq -r --argjson after "$2" '.last_poll > $after' "$1/tmp/slack/status.json" 2>/dev/null)"
-    [ "$value" != true ] || return 0
-    tries=$((tries + 1)); sleep 0.1
-  done
-  bad "running relay did not complete its next poll" "$1"
-  return 1
-}
-
 # An installed package update re-executes the relay with its original caller
 # environment. Retired keys keep their hold and warnings across that re-exec.
 while read -r name control; do
@@ -612,13 +662,6 @@ ROWS
 # At the end the new file is stale and the old one is aged OLD_END: stale, so
 # both files are; or fresh, so only the drop of the old path once the new one
 # was fresh lets the hold end. Each control reds one rule.
-polls() { # ROOT — wait for two completed polls, the first of which may predate a change
-  local n after
-  for n in 1 2; do
-    after="$(jq -r .last_poll "$1/tmp/slack/status.json")"
-    polled_after "$1" "$after" || exit 1
-  done
-}
 while read -r name control old_end; do
   R="$(sk_new_root "rename-$name")"
   sk_bind "$R"
@@ -629,6 +672,7 @@ while read -r name control old_end; do
   case "$control" in
     new-only) sk_mutant rename-new-only relay.py 'if self\.replaced_session_file and not' 'if False and not' ;;
     keep) sk_mutant rename-keep relay.py 'if self\.replaced_session_file and not presence_fresh\(touched, self\.presence, now\):' 'if self.replaced_session_file:' ;;
+    post) sk_mutant rename-post verbs.py 'if jarvis_session_held\(root, presence, time.time\(\)\):' 'if __import__("relay").presence_fresh(__import__("relay").touched_at(presence.jarvis_session_file), presence, time.time()):' ;;
   esac
   sk_relay_start "$R"
   polled_after "$R" 0 || exit 1
@@ -642,11 +686,22 @@ while read -r name control old_end; do
     *) assert_eq "$RENAMED" "jarvis=0" "$name: the replaced fresh file holds while the new one is absent" ;;
   esac
   if [ "$control" != new-only ]; then
+    sk_run -- post --root "$R" --text "Explicit across rename $name." --mention
+    POST_ROW="$RC=$(sk_state ".messages.${CHANNEL}[-1].text | startswith(\"<@\")")=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')"
+    case "$control" in
+      post) sk_assert_red "$POST_ROW" "0=false=1" "$name: reading only the current presence path mentions during a held rename" ;;
+      *) assert_eq "$POST_ROW" "0=false=1" "$name: explicit post uses the retained hold and prints one mention-held line" ;;
+    esac
+  fi
+  if [ "$control" != new-only ]; then
     touch -- "$NEW"; sk_age_file "$NEW" 10
     polls "$R"
     row "$R"
     assert_eq "$(field "$LINE" held-by)=$(count "$CHANNEL" "Asked across the rename in $name?")" "jarvis=0" \
       "$name: the new file written fresh keeps the hold"
+    sk_run -- post --root "$R" --text "Explicit after takeover $name." --mention
+    assert_eq "$RC=$(sk_state ".messages.${CHANNEL}[-1].text | startswith(\"<@\")")=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')" "0=false=1" \
+      "$name: explicit post keeps holding after the new file takes ownership"
     sk_age_file "$NEW" 900; sk_age_file "$OLD" "$old_end"
     polls "$R"
     row "$R"
@@ -655,6 +710,11 @@ while read -r name control old_end; do
       keep) sk_assert_red "$ENDED" "=1" "control: keeping the replaced path after the new file was fresh holds past its end" ;;
       *) assert_eq "$ENDED" "=1" "$name: the hold ends with the new file stale and the old one aged $old_end, and the ask posts once" ;;
     esac
+    if [ "$control" != keep ]; then
+      sk_run -- post --root "$R" --text "Explicit after release $name." --mention
+      assert_eq "$RC=$(sk_state ".messages.${CHANNEL}[-1].text | startswith(\"<@U001> <@U002> \")")=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')" "0=true=0" \
+        "$name: explicit post restores mentions after the relay releases its hold"
+    fi
   fi
   sk_relay_stop
   sk_bin_reset
@@ -663,6 +723,7 @@ both-stale real 900
 dropped real 10
 read-new-control new-only 900
 keep-control keep 10
+post-control post 10
 ROWS
 
 # Count calls through the real Relay start and poll owners. A stub returns

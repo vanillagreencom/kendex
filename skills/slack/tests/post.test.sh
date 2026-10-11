@@ -43,6 +43,22 @@ touch -- "$JARVIS_SESSION"
 sk_run "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION" -- post --root "$ROOT" --text 'Plain held.' --channel C779
 assert_eq "$RC=$(last C779)=$ERR" "0=top | UBOT | Plain held.=" "a post without --mention is unchanged under a fresh file"
 
+# A stopped relay's stale record cannot keep explicit mentions suppressed
+# after the presence file expires.
+sk_poll "$ROOT" "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION"
+sk_age_file "$JARVIS_SESSION" 900
+sk_run "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION" -- post --root "$ROOT" --text 'Recorded hold.' --channel C779 --mention
+assert_eq "$RC=$(last C779)=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')" "0=top | UBOT | Recorded hold.=1" \
+  "a fresh relay hold record suppresses explicit mentions"
+jq '.last_poll = 0' "$ROOT/tmp/slack/status.json" > "$SK_TMP/stale-status.json"
+mv "$SK_TMP/stale-status.json" "$ROOT/tmp/slack/status.json"
+sk_run "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION" -- post --root "$ROOT" --text 'Stale record.' --channel C779 --mention
+assert_eq "$RC=$(last C779)=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')" "0=top | UBOT | <@U001> <@U002> Stale record.=0" \
+  "a stale relay hold record falls back to the stale presence file"
+sk_poll "$ROOT" "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION"
+assert_eq "$(held_post between-polls 10)" "0=top | UBOT | Alert between-polls.=1" \
+  "a fresh presence file suppresses mentions before the relay updates its unheld record"
+
 sk_run -- post --root "$ROOT" --text 'In the thread.' --thread "$TS"
 assert_eq "$RC=$(last C001)" "0=$TS | UBOT | In the thread." "--thread replies under the message"
 assert_eq "$(sk_state '.messages.C001[-1].reply_broadcast')" "false" "a plain thread post does not broadcast"
@@ -114,8 +130,18 @@ assert_eq "$ERR1" "slack: slack-api-failed=chat.postMessage error=msg_blocks_too
   "control: the length check gone, a text past the cap reaches Slack, which refuses it"
 sk_bin_reset
 
-sk_mutant mention-hold verbs.py 'if presence_fresh\(touched_at' 'if False and presence_fresh(touched_at'
+sk_mutant mention-hold verbs.py 'if jarvis_session_held\(' 'if False and jarvis_session_held('
 sk_assert_red "$(held_post control 10)" "0=top | UBOT | Alert control.=1" "control: the hold check gone, a held post mentions the owners"
+sk_bin_reset
+
+sk_mutant stale-hold relay.py 'record is not None and status_fresh\(record, now\)' 'record is not None'
+sk_poll "$ROOT" "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION"
+sk_age_file "$JARVIS_SESSION" 900
+jq '.last_poll = 0' "$ROOT/tmp/slack/status.json" > "$SK_TMP/stale-status.json"
+mv "$SK_TMP/stale-status.json" "$ROOT/tmp/slack/status.json"
+sk_run "SLACK_JARVIS_SESSION_FILE=$JARVIS_SESSION" -- post --root "$ROOT" --text 'Stale record control.' --channel C779 --mention
+sk_assert_red "$RC=$(last C779)=$(printf '%s\n' "$ERR" | grep -c '^slack: mention-held=')" "0=top | UBOT | <@U001> <@U002> Stale record control.=0" \
+  "control: without record freshness a stopped relay keeps suppressing mentions"
 sk_bin_reset
 
 sk_mutant file-bytes secret.py 'check\(data, what\)\n    return data' 'check(b"", what)\n    return data'

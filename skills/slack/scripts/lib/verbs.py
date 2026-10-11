@@ -15,7 +15,7 @@ from typing import List, Optional
 from api import Slack, markdown_checked
 from markup import outbound, plain
 from refusals import Refusal, keyed, notice
-from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, mention, presence_fresh, resolve_owner_ids, touched_at
+from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, jarvis_session_held, mention, resolve_owner_ids, status_fresh
 from secret import check as secret_check
 from secret import checked_file
 from settings import CALLER_ENV, Settings, load, load_presence, user_handle
@@ -237,7 +237,7 @@ def post(
     if mention_owners:
         # The relay's hold: while a Jarvis session answers, the owners are not paged.
         presence = load_presence(root)
-        if presence_fresh(touched_at(presence.jarvis_session_file), presence, time.time()):
+        if jarvis_session_held(root, presence, time.time()):
             notice("mention-held", f"{root} file={presence.jarvis_session_file}", file=sys.stderr)
         elif binding is not None and binding.owner_ids:
             prefix = mention(binding) + " "
@@ -341,7 +341,7 @@ def status(roots: List[Path], now: float) -> int:
             print(keyed("slack-relay", f"{root} state=never fix=start the relay with `slack listen --root {root}`"))
             continue
         age = now - float(record["last_poll"])
-        fresh = age <= 2 * int(record["poll_seconds"]) + 5
+        fresh = status_fresh(record, now)
         # A record the pre-Socket-Mode relay wrote has no connection fields:
         # its state comes from freshness and last_poll_ok alone.
         last_poll_at = format_at(float(record["last_poll"]))

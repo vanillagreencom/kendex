@@ -68,8 +68,8 @@ skips notices and open asks on lines at or below that count, with no post and
 no mention, and journals their ids; later ones post. A missing or unreadable
 seen file skips nothing. The count is clamped to the lines listed. Held answers
 still post; closure records update thread state independently of post age.
-`slack post --mention` reads the same presence file and drops the mention while
-it holds.
+`slack post --mention` reads the root's fresh relay hold record, including a
+renamed file's hold. Its current presence file also holds a post between polls.
 
 A relay imports its modules once, so a package update reaches a running relay
 only through a new image. The relay fingerprints its code at start and again
@@ -235,6 +235,19 @@ def touched_at(path: str) -> Optional[float]:
 def presence_fresh(touched: Optional[float], presence: Presence, now: float) -> bool:
     """Whether a presence file touched at `touched` holds posts at `now`."""
     return touched is not None and now - touched < presence.jarvis_session_max_age
+
+
+def status_fresh(record: Dict, now: float) -> bool:
+    return now - float(record["last_poll"]) <= 2 * int(record["poll_seconds"]) + 5
+
+
+def jarvis_session_held(root: Path, presence: Presence, now: float) -> bool:
+    """The relay's fresh record retains a renamed file's hold. The current
+    file can also start a hold between polls."""
+    record = read_status(root)
+    if record is not None and status_fresh(record, now) and record.get("held_by") == JARVIS_SESSION:
+        return True
+    return presence_fresh(touched_at(presence.jarvis_session_file), presence, now)
 
 
 def mention(binding: Binding) -> str:
@@ -620,8 +633,8 @@ class RootRelay:
 
     def jarvis_session_touched(self) -> Optional[float]:
         """SLACK_JARVIS_SESSION_FILE's mtime, or the replaced file's while it
-        is fresh and the new one is not; the replaced file is dropped once
-        either holds no longer."""
+        is fresh and the new one is not. Drop the replaced file when the
+        new file is fresh or the replaced file is stale."""
         touched = touched_at(self.presence.jarvis_session_file)
         now = self.clock()
         if self.replaced_session_file and not presence_fresh(touched, self.presence, now):
@@ -671,7 +684,8 @@ class RootRelay:
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
         `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume,
-        `overdue` for a carried reserved ask open past its deadline, or `skip`
+        `overdue` for a reserved ask with a posted thread or unresolved post
+        open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record."""
         closures = {str(e["id"]): e for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
@@ -693,7 +707,10 @@ class RootRelay:
                     routed.append((envelope, "resolution", {}))
                 if envelope["kind"] == "resolution":
                     continue
+            # A resume carries skipped asks without a post. A reminder needs
+            # a posted thread or a post whose response remains unknown.
             if (envelope.get("reserved") is True and env_id in state.carried and env_id not in closed
+                    and (env_id in state.by_envelope or env_id in state.unknown)
                     and env_id not in answered and overdue_id(env_id) not in state.carried
                     and at_epoch(str(envelope["deadline"])) <= self.clock()):
                 routed.append((envelope, "overdue", {}))
