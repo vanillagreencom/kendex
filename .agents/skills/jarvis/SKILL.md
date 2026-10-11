@@ -4,6 +4,8 @@ description: "Load when acting for the user on their computer, browser, accounts
 summary: "Guides a delegated desktop assistant through user decisions, checked results and communication. Includes a persona for the user's standing instructions."
 license: MIT
 user-invocable: true
+dependencies:
+  agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch]
 metadata:
   author: vanillagreen
   source: kendex
@@ -28,7 +30,7 @@ kendex does not insert package text into `AGENTS.md`. The fixed persona path is 
 
 ### Plain folder
 
-The persona loads on every turn only when its text is in the folder's `AGENTS.md`, which Claude Code, Codex, Copilot CLI and Pi read through their instruction-loading settings. Check that the harness loaded those instructions. When that file lacks the persona, offer once to add the text from [persona.md](persona.md), then add it only after the user agrees.
+On first load, check the folder's `AGENTS.md`. If it lacks the persona, offer once, in one line, to add the text from [persona.md](persona.md). Add it only after the user agrees. The persona then loads on every turn through the harness's instruction-loading settings. Check that the harness loaded those instructions.
 
 ### App-managed home
 

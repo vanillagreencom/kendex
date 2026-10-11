@@ -4,31 +4,40 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 
 ## Features
 
-- A persona defines how the assistant works and answers you.
-- Task references cover decisions, result checks and communication.
+- A [persona](persona.md) defines how the assistant works and answers you.
+- [Decision guidance](references/decisions.md) defines which actions need your approval.
+- [Result checks](references/verification.md) keep completion claims tied to evidence.
+- [Communication guidance](references/communication.md) covers replies, decision requests and progress reports.
+- [Session guidance](references/long-session.md) keeps open work available when another assistant takes control.
+- [Memory guidance](references/memory.md) keeps checked facts and preferences apart from unfinished work.
+- [Computer guidance](references/computer-use.md) covers desktop control, recovery and scratch files.
+- [Browser guidance](references/browser.md) covers forms, private profiles and bot checks.
+- [Account guidance](references/accounts-and-secrets.md) covers credentials, sign-in and official records.
+- [Research guidance](references/research.md) covers source checks, legal answers and audits.
+- `cpa` prepares finance and tax work for your decision.
+- `legal` prepares legal answers with sources and the conditions that require another check.
+- `operator` carries out an approved browser or account step and checks the result.
+- `auditor` compares source evidence with a stated standard and reports gaps.
+- `researcher` produces research reports with sources for each claim.
+- `scout` finds code and explains the facts another assistant needs.
+- `reviewer-arch` checks a design against the project's architecture rules.
 - Your own skills and private notes add task knowledge and personal context.
 
 ## Install
 
+One command installs the persona, references, workflows and agents:
+
 ```sh
 kendex add --skill jarvis --harness claude,codex,copilot,pi --yes
-kendex verify --scope project
 ```
 
 ## How it works
 
 Your assistant reads the Jarvis skill when you delegate a task. It follows the reading routes in [SKILL.md](SKILL.md) to load the reference that the task needs.
 
-| File | Use |
-|---|---|
-| [persona.md](persona.md) | Standing work and response instructions |
-| [references/decisions.md](references/decisions.md) | Actions the assistant can take, approval requests and deferred work |
-| [references/verification.md](references/verification.md) | Evidence for claims, completion checks and recurring tools |
-| [references/communication.md](references/communication.md) | Replies, decisions, progress reports and communication preferences |
-
 ## Customise
 
-Use [SKILL.md § Setup](SKILL.md#setup) to enable the persona. Keep your own instructions in the folder's `AGENTS.md`. Name your decision owners, permitted work, reporting cadence and quiet hours there.
+Keep your own instructions in the folder's `AGENTS.md`. Name your decision owners, permitted work, reporting cadence and quiet hours there.
 
 For a skill you write, create `skills/my-task/SKILL.md` in your own catalog folder. Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Install it beside Jarvis for the assistant you use:
 
