@@ -2352,19 +2352,52 @@ table \
   "control: without the per-row reset the measured account carries the refused one's 403|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-refused-then-ok.tsv|host-accounts --harness claude --json|rc=0 eclaude.status=ok eclaude.detail=http-403-permission_error"
 LANES="$LANES_PATCHED"
 
-# The verb is OPTIONAL: a provider without it gives no answer, which is not a
-# failure. Both listings are captured whole and compared, because the claim is
-# that the verb-absent listing is EXACTLY the no-provider one rather than merely
-# one row long, and that nothing at all reaches stderr — the shipped reference
-# provider answers an unknown verb with its parser's whole usage message, and an
-# overseer runs this listing constantly.
-run_lanes "ORCH_LANE_HOST=local" list --harness claude --json
-NO_PROVIDER_OUT="$OUT"
-NO_PROVIDER_ERR="$(cat "$ERR")"
-run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1" list --harness claude --json
-assert_eq "rc=$RC json=$([[ "$OUT" == "$NO_PROVIDER_OUT" ]] && echo same || echo differs) stderr=$([[ "$(cat "$ERR")" == "$NO_PROVIDER_ERR" ]] && echo same || echo "$(cat "$ERR")")" \
-  "rc=0 json=same stderr=same" \
-  "a provider without the verb lists exactly what the no-provider reading lists, and says nothing"
+# Live credentials keep login renewal out of the optional-verb comparison.
+HOSTED_HOME="$H"; HOSTED_FIXTURE_DIR="$FIXTURE_DIR"
+new_home provider-absence
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+provider_absence_comparison() {
+  local extra="${1:-}" baseline_out baseline_rc baseline_err diagnostic
+  run_lanes "ORCH_LANE_HOST=local${extra:+;$extra}" list --harness claude --json
+  baseline_out="$OUT"; baseline_rc="$RC"; baseline_err="$ERR"
+  run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1${extra:+;$extra}" list --harness claude --json
+  diagnostic="$RUN/provider-absence-stderr"
+  { printf 'no-provider-stderr:\n'; cat "$baseline_err"
+    printf 'verb-absent-stderr:\n'; cat "$ERR"; } > "$diagnostic"
+  assert_eq "no-provider-rc=$baseline_rc verb-absent-rc=$RC json=$([[ "$OUT" == "$baseline_out" ]] && echo same || echo differs) no-provider-stderr=$([[ ! -s "$baseline_err" ]] && echo empty || echo nonempty) verb-absent-stderr=$([[ ! -s "$ERR" ]] && echo empty || echo nonempty)" \
+    "no-provider-rc=0 verb-absent-rc=0 json=same no-provider-stderr=empty verb-absent-stderr=empty" \
+    "a provider without the verb lists exactly what the no-provider reading lists, and says nothing" "$diagnostic"
+}
+provider_absence_comparison
+
+# Control: identical failed renewals leave the listings equal, but the first
+# token request alone writes stderr. The same assertion must reject that pair.
+new_home provider-absence-renewal
+make_lane "$H" claude -60
+NOISY_TOKEN="$TMP_ROOT/token-first-stderr"
+cat > "$NOISY_TOKEN" <<'STUB'
+#!/usr/bin/env bash
+if [[ ! -f "$RENEWAL_MARKER" ]]; then
+  printf 'renewal-first-run\n' >&2
+  : > "$RENEWAL_MARKER"
+fi
+exec "$TOKEN_BAD"
+STUB
+chmod +x "$NOISY_TOKEN"
+control_rc=0
+( FAIL=0
+  provider_absence_comparison "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$NOISY_TOKEN;TOKEN_BAD=$TOKEN_BAD;RENEWAL_MARKER=$H/renewal-marker"
+  [[ "$FAIL" == 0 ]]
+) > "$TMP_ROOT/provider-absence-control.log" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 'the provider-absence assertion rejects first-run renewal stderr'
+CONTROL_OUT="$(cat "$TMP_ROOT/provider-absence-control.log")"
+assert_contains "$CONTROL_OUT" 'no-provider-rc=0 verb-absent-rc=0 json=same no-provider-stderr=nonempty' \
+  'the control reaches equal successful listings with baseline stderr'
+assert_contains "$CONTROL_OUT" $'no-provider-stderr:\n          renewal-first-run' \
+  'the mismatch reports the baseline stderr stream'
+assert_contains "$CONTROL_OUT" 'verb-absent-stderr:' 'the mismatch reports the second stderr stream'
+H="$HOSTED_HOME"; FIXTURE_DIR="$HOSTED_FIXTURE_DIR"
 
 # --local is what the launcher's own lookups pass: resolving a config dir by
 # alias must cost no provider round trip. Each half writes its own call log, so
