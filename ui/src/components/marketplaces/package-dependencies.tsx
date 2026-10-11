@@ -12,6 +12,7 @@ import {
   REQUIRES_HEADING,
   REQUIRES_NOTE,
 } from "@/lib/copy-marketplaces";
+import { kindLabel } from "@/lib/labels";
 
 /** What a dependency's state adds to its name, or nothing when it is
  *  simply on offer. A package already here is not installed twice, one the
@@ -61,8 +62,11 @@ export function DependencyFacts({
           </h3>
           <ul className="space-y-0.5">
             {dependencies.required.map((dep) => (
-              <li key={dep.name}>
+              <li key={`${dep.kind}:${dep.name}`}>
                 {dep.shown}
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  {kindLabel(dep.kind)}
+                </span>
                 <DependencyNote state={dep.state} />
               </li>
             ))}
@@ -76,8 +80,11 @@ export function DependencyFacts({
           </h3>
           <ul className="space-y-0.5">
             {dependencies.optional.map((dep) => (
-              <li key={dep.name}>
+              <li key={`${dep.kind}:${dep.name}`}>
                 {dep.shown}
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  {kindLabel(dep.kind)}
+                </span>
                 <DependencyNote state={dep.state} />
               </li>
             ))}
@@ -116,8 +123,11 @@ export function DependencyChoice({
           </p>
           <ul className="pb-2">
             {dependencies.required.map((dep) => (
-              <li key={dep.name}>
+              <li key={`${dep.kind}:${dep.name}`}>
                 {dep.shown}
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  {kindLabel(dep.kind)}
+                </span>
                 <DependencyNote state={dep.state} />
               </li>
             ))}
@@ -132,7 +142,7 @@ export function DependencyChoice({
           <div className="flex flex-col gap-2">
             {dependencies.optional.map((dep) => (
               <Label
-                key={dep.name}
+                key={`${dep.kind}:${dep.name}`}
                 className="flex items-center gap-2 font-normal"
               >
                 <Checkbox
@@ -143,6 +153,9 @@ export function DependencyChoice({
                   onCheckedChange={() => toggle(dep.name)}
                 />
                 {dep.shown}
+                <span className="text-xs text-muted-foreground">
+                  {kindLabel(dep.kind)}
+                </span>
                 <DependencyNote state={dep.state} />
               </Label>
             ))}

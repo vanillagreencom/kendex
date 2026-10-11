@@ -84,7 +84,7 @@ A description is never guessed: an empty one stays empty and is a check finding.
 
 ## Skill dependencies
 
-`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses. Agents have no optional dependency list. Skills cannot declare hook dependencies.
+`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses that support agents at the install scope. A harness that cannot install the agent gets a warning on the skill. The skill still installs there. Agents have no optional dependency list. Skills cannot declare hook dependencies.
 
 ```yaml
 dependencies:

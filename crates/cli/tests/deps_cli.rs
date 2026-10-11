@@ -156,6 +156,144 @@ fn a_skills_required_agents_render_refresh_and_sweep() {
     }
 }
 
+/// Antigravity accepts project skills but only global agents. The CLI
+/// installs the skill and derives the agent only on the supported tool.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_skill_keeps_unsupported_agents_off_antigravity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    skill(&home, "team", "dependencies:\n  agents: [helper]\n");
+    agent(&home, "helper");
+    let output = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            home.join("catalog").to_str().unwrap(),
+            "--skill",
+            "team",
+            "--harness",
+            "claude,antigravity",
+            "-y",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    for harness in [
+        kendex_core::model::HarnessId::Claude,
+        kendex_core::model::HarnessId::Antigravity,
+    ] {
+        assert!(
+            lock.entries
+                .values()
+                .any(|entry| entry.kind == kendex_core::model::ItemKind::Skill
+                    && entry.name == "team"
+                    && entry.harness == harness)
+        );
+        assert_eq!(
+            lock.entries
+                .values()
+                .any(|entry| entry.kind == kendex_core::model::ItemKind::Agent
+                    && entry.name == "helper"
+                    && entry.harness == harness),
+            harness == kendex_core::model::HarnessId::Claude
+        );
+    }
+    assert!(project.join(".claude/agents/helper.md").is_file());
+    let manifest = kendex_core::manifest::load_current(&project.join("kendex.toml"))
+        .unwrap()
+        .unwrap();
+    assert!(!manifest.agents.contains_key("helper"));
+}
+
+/// The consumer's explicit source owns a same-named required agent. A
+/// dependency adds a reason and does not replace that source or content.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_consumer_agent_source_wins_and_stays_after_the_skill_leaves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join("agents")).unwrap();
+    fs::write(project.join("agents/operator.md"),
+        "---\nname: operator\ndescription: follows the consumer\n---\nFollow the consumer instructions.\n").unwrap();
+    fs::write(project.join("kendex.toml"),
+        "schema = 7\n[sources.consumer]\npath = \".\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[agents.operator]\nsource = \"consumer\"\n").unwrap();
+    skill(&home, "team", "dependencies:\n  agents: [operator]\n");
+    agent(&home, "operator");
+    let catalog = home.join("catalog");
+    let output = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            catalog.to_str().unwrap(),
+            "--skill",
+            "team",
+            "--harness",
+            "claude",
+            "-y",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    println!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let installed = project.join(".claude/agents/operator.md");
+    let bytes = fs::read_to_string(&installed).unwrap();
+    assert!(bytes.contains("Follow the consumer instructions."));
+    assert!(!bytes.contains("Follow the operator instructions."));
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    let entry = &lock.entries["agent:operator:claude"];
+    assert_eq!(entry.source, "consumer");
+    assert_eq!(entry.source_repo, ".");
+    assert!(
+        entry
+            .reasons
+            .contains(&kendex_core::lock::Reason::Requested)
+    );
+    assert!(entry.reasons.iter().any(|reason| matches!(reason,
+        kendex_core::lock::Reason::RequiredBy { by }
+            if by.kind == kendex_core::model::ItemKind::Skill && by.name == "team"
+    )));
+    let output = kendex(
+        &home,
+        &project,
+        &["remove", "team", "--kind", "skill", "--sweep"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(installed).unwrap(), bytes);
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    let entry = &lock.entries["agent:operator:claude"];
+    assert_eq!(entry.source, "consumer");
+    assert_eq!(entry.source_repo, ".");
+    assert_eq!(
+        entry.reasons,
+        std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested])
+    );
+    let manifest = kendex_core::manifest::load_current(&project.join("kendex.toml"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(manifest.agents["operator"].source, "consumer");
+}
+
 #[allow(clippy::unwrap_used)]
 pub(super) fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();

@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PackageDependencies } from "@/bindings";
 import {
   DEPENDENCY_AMBIGUOUS_NOTE,
@@ -8,16 +10,33 @@ import {
   DEPENDENCY_REMOVED_NOTE,
   DEPENDENCY_UNKNOWN_NOTE,
 } from "@/lib/copy-marketplaces";
+import { kindLabel } from "@/lib/labels";
+import { mount } from "@/test/dom";
 import { DependencyChoice, DependencyFacts } from "./package-dependencies";
 
 const declared: PackageDependencies = {
   required: [
-    { name: "code-quality", shown: "code-quality", state: "installed" },
-    { name: "dup", shown: "dup", state: "offered-more-than-once" },
+    {
+      kind: "skill",
+      name: "code-quality",
+      shown: "code-quality",
+      state: "installed",
+    },
+    {
+      kind: "skill",
+      name: "dup",
+      shown: "dup",
+      state: "offered-more-than-once",
+    },
   ],
   optional: [
-    { name: "linear", shown: "linear", state: "available" },
-    { name: "removed", shown: "removed", state: "removed-by-you" },
+    { kind: "skill", name: "linear", shown: "linear", state: "available" },
+    {
+      kind: "skill",
+      name: "removed",
+      shown: "removed",
+      state: "removed-by-you",
+    },
   ],
 };
 
@@ -78,9 +97,16 @@ describe("a package's declared dependencies on both surfaces", () => {
 describe("a dependency landing where the records cannot be read", () => {
   const unknown: PackageDependencies = {
     required: [
-      { name: "code-quality", shown: "code-quality", state: "unknown" },
+      {
+        kind: "skill",
+        name: "code-quality",
+        shown: "code-quality",
+        state: "unknown",
+      },
     ],
-    optional: [{ name: "linear", shown: "linear", state: "unknown" }],
+    optional: [
+      { kind: "skill", name: "linear", shown: "linear", state: "unknown" },
+    ],
   };
 
   it("says why on both surfaces, rather than calling it not offered", () => {
@@ -96,5 +122,72 @@ describe("a dependency landing where the records cannot be read", () => {
     const html = picker(unknown);
     expect(html).not.toContain('data-checked=""');
     expect(html.match(/data-disabled=""/g)).toHaveLength(1);
+  });
+});
+
+// The catalog can require a skill and an agent with the same declared name.
+// Each must keep its own kind and install state on both dependency surfaces.
+describe("required dependencies with the same name across kinds", () => {
+  const dependencies: PackageDependencies = {
+    required: [
+      { kind: "skill", name: "review", shown: "review", state: "installed" },
+      { kind: "agent", name: "review", shown: "review", state: "available" },
+    ],
+    optional: [
+      { kind: "skill", name: "linear", shown: "linear", state: "available" },
+    ],
+  };
+
+  it.each(["facts", "choice"] as const)(
+    "keeps each required kind and state distinct in %s",
+    (surface) => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const host = mount(
+          surface === "facts" ? (
+            <DependencyFacts dependencies={dependencies} />
+          ) : (
+            <DependencyChoice
+              dependencies={dependencies}
+              chosen={[]}
+              onChange={() => {}}
+            />
+          ),
+        );
+        const required = host.querySelector("ul");
+        const rows = required?.querySelectorAll("li");
+        expect(rows).toHaveLength(dependencies.required.length);
+        for (const [index, dependency] of dependencies.required.entries()) {
+          const row = rows?.[index];
+          expect(row?.firstChild?.textContent).toBe(dependency.shown);
+          expect(row?.querySelector("span")?.textContent).toBe(
+            kindLabel(dependency.kind),
+          );
+          expect(row?.querySelector("span")?.hidden).toBe(false);
+          expect(row?.querySelectorAll("span")).toHaveLength(
+            dependency.state === "installed" ? 2 : 1,
+          );
+        }
+        expect(required?.querySelector("input, button")).toBeNull();
+        expect(errors).not.toHaveBeenCalled();
+      } finally {
+        errors.mockRestore();
+      }
+    },
+  );
+
+  it("chooses only the optional skill by declared name", async () => {
+    const onChange = vi.fn();
+    const host = mount(
+      <DependencyChoice
+        dependencies={dependencies}
+        chosen={[]}
+        onChange={onChange}
+      />,
+    );
+    const checkbox = host.querySelector<HTMLElement>('[role="checkbox"]');
+    expect(checkbox).not.toBeNull();
+    await userEvent.click(checkbox!);
+    expect(onChange).toHaveBeenCalledWith(["linear"]);
   });
 });

@@ -9,7 +9,7 @@ use super::*;
 use crate::test_util::rooted;
 
 /// A skill whose frontmatter declares what it needs.
-fn needing(catalog: &Path, name: &str, required: &[&str], optional: &[&str]) {
+fn needing(catalog: &Path, name: &str, required: &[&str], optional: &[&str], agents: &[&str]) {
     let home = catalog.join("skills").join(name);
     fs::create_dir_all(&home).unwrap();
     let list = |names: &[&str]| {
@@ -22,9 +22,10 @@ fn needing(catalog: &Path, name: &str, required: &[&str], optional: &[&str]) {
     fs::write(
         home.join("SKILL.md"),
         format!(
-            "---\nname: {name}\ndescription: does {name} things\ndependencies:\n  required: [{}]\n  optional: [{}]\n---\nbody\n",
+            "---\nname: {name}\ndescription: does {name} things\ndependencies:\n  required: [{}]\n  optional: [{}]\n  agents: [{}]\n---\nbody\n",
             list(required),
             list(optional),
+            list(agents),
         ),
     )
     .unwrap();
@@ -58,6 +59,7 @@ fn declared_dependencies_carry_their_state_where_the_install_lands() {
         "dev",
         &["code-quality", "dup"],
         &["linear", "removed"],
+        &[],
     );
     for name in ["code-quality", "linear", "removed", "dup"] {
         skill(&catalog, "plugins/tools/skills", name, "body");
@@ -138,7 +140,13 @@ fn a_dependency_landing_where_the_lock_cannot_be_read_is_unknown() {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let catalog = root.join("catalog");
-    needing(&catalog, "dev", &["code-quality"], &["linear", "removed"]);
+    needing(
+        &catalog,
+        "dev",
+        &["code-quality"],
+        &["linear", "removed"],
+        &[],
+    );
     for name in ["code-quality", "linear", "removed"] {
         skill(&catalog, "skills", name, "body");
     }
@@ -184,4 +192,74 @@ fn a_dependency_landing_where_the_lock_cannot_be_read_is_unknown() {
             ("removed", InstallState::RemovedByYou),
         ]
     );
+}
+
+/// Agents use their own catalog and scope records, even when a skill has
+/// the same name or the requiring skill names an agent after itself.
+#[test]
+fn required_agents_keep_their_kind_and_scope_state_on_both_browse_paths() {
+    for unreadable in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let catalog = root.join("catalog");
+        needing(
+            &catalog,
+            "dev",
+            &["helper"],
+            &[],
+            &["helper", "dev", "removed", "missing"],
+        );
+        skill(&catalog, "skills", "helper", "body");
+        fs::create_dir_all(catalog.join("agents")).unwrap();
+        for name in ["helper", "dev", "removed"] {
+            fs::write(
+                catalog.join(format!("agents/{name}.md")),
+                format!("---\nname: {name}\ndescription: does {name} things\n---\nbody\n"),
+            )
+            .unwrap();
+        }
+        let declarations = format!(
+            "{}\n[suppressed]\nagent = [\"removed\"]\n",
+            sources_decl(&catalog)
+        );
+        let (env, scope) = project(&root, &declarations);
+        save_lock(&env, &scope, &[(ItemKind::Agent, "helper")]);
+        if unreadable {
+            fs::write(crate::lock::lock_path(&env, &scope), "{not json").unwrap();
+        }
+        let rows = packages(&env, &cat(&scope)).unwrap();
+        let dev = rows
+            .iter()
+            .find(|row| row.kind == ItemKind::Skill && row.name == "dev")
+            .unwrap();
+        let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "dev", None).unwrap();
+        assert_eq!(dev.dependencies, preview.dependencies);
+        assert!(preview.dependencies.optional.is_empty());
+        let actual: Vec<_> = preview
+            .dependencies
+            .required
+            .iter()
+            .map(|dep| (dep.kind, dep.name.as_str(), dep.state))
+            .collect();
+        let offered = if unreadable {
+            InstallState::Unknown
+        } else {
+            InstallState::Available
+        };
+        let installed = if unreadable {
+            InstallState::Unknown
+        } else {
+            InstallState::Installed
+        };
+        assert_eq!(
+            actual,
+            vec![
+                (ItemKind::Skill, "helper", offered),
+                (ItemKind::Agent, "helper", installed),
+                (ItemKind::Agent, "dev", offered),
+                (ItemKind::Agent, "removed", InstallState::RemovedByYou),
+                (ItemKind::Agent, "missing", InstallState::NotOffered),
+            ]
+        );
+    }
 }

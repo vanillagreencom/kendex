@@ -285,6 +285,65 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
     }
 }
 
+/// A skill's tools can hold agents at different scopes. Dependencies use
+/// the capability table and report an unavailable companion on the skill.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn required_agents_only_land_where_the_tool_installs_agents() {
+    for global in [false, true] {
+        let mut f = fixture("");
+        if global {
+            f.scope = Scope::Global;
+        }
+        skill(&f.source, "dev", "dependencies:\n  agents: [helper]\n");
+        fs::create_dir_all(f.source.join("agents")).unwrap();
+        fs::write(
+            f.source.join("agents/helper.md"),
+            "---\nname: helper\ndescription: assists dev\n---\nFollow the helper instructions.\n",
+        )
+        .unwrap();
+        let path = manifest::manifest_path(&f.env, &f.scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!(
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"antigravity\"]\n[skills.dev]\nsource = \"cat\"\n",
+            source_path(&f.source),
+        )).unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        let warnings: Vec<_> = report
+            .warnings
+            .iter()
+            .filter(|warning| warning.kind == ItemKind::Skill && warning.name == "dev")
+            .collect();
+        assert_eq!(warnings.is_empty(), global, "{warnings:?}");
+        for warning in warnings {
+            assert!(warning.remediation.is_some());
+        }
+        apply::execute(&f.env, &report.plan).unwrap();
+        let lock = lock_of(&f);
+        let agents: BTreeSet<_> = lock
+            .entries
+            .values()
+            .filter(|entry| entry.kind == ItemKind::Agent && entry.name == "helper")
+            .map(|entry| entry.harness)
+            .collect();
+        let expected = if global {
+            BTreeSet::from([HarnessId::Claude, HarnessId::Antigravity])
+        } else {
+            BTreeSet::from([HarnessId::Claude])
+        };
+        assert_eq!(agents, expected);
+        for harness in [HarnessId::Claude, HarnessId::Antigravity] {
+            assert!(
+                lock.entries
+                    .values()
+                    .any(|entry| entry.kind == ItemKind::Skill
+                        && entry.name == "dev"
+                        && entry.harness == harness)
+            );
+        }
+    }
+}
+
 /// Two skills that need each other are a co-install their authors meant, so
 /// both install and the note says what that means for the reader: the name
 /// they declared, and what taking it takes along.
