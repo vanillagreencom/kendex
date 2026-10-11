@@ -23,6 +23,7 @@ verifying_parse() { # SAFE_ROW
 }
 
 verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT GH_CLI
+  # GH_CLI follows reconciliation's existing command-word contract.
   local row="$1" merged="$2" merged_repos="$3" now="$4" boxes="$5" errf="$6" release_limit="$7" gh_cli="$8"
   local id blocked release_rows repo glob merge_row oid releases resolved release tag compare_tag comparison box
   id="$(jq -r '.id' <<<"$row")" || return 1
@@ -41,7 +42,7 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
         oid="$(jq -er '.mergeCommit.oid | select(type == "string") | select(test("^[0-9a-fA-F]{40}$"))' <<<"$merge_row" 2>"$errf")" \
           || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
       fi
-      releases="$("$gh_cli" release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
+      releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
         || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
       releases="$(jq -c --argjson merged "$merged" --argjson limit "$release_limit" '
         if type != "array" or length >= $limit then error("release-list-incomplete") else . end
@@ -62,7 +63,7 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
         # within that merge's repository; another repository has no such commit.
         if [[ -n "$oid" ]]; then
           compare_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')" || { verifying_error verifying-invalid "issue=$id"; return 1; }
-          comparison="$("$gh_cli" api "repos/$repo/compare/$oid...$compare_tag" --jq .status 2>"$errf")" \
+          comparison="$($gh_cli api "repos/$repo/compare/$oid...$compare_tag" --jq .status 2>"$errf")" \
             || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo" "tag=$tag"; return 2; }
           case "$comparison" in
             ahead|identical) ;;

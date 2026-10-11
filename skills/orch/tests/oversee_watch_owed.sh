@@ -529,6 +529,9 @@ SH
 cat >"$TMP_ROOT/bin/reconcile-gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${X:-}" == 1 ]]; then
+  printf '%s X=%s\n' "$1 $2" "$X" >>"$STUB_DIR/command.calls"
+fi
 if [[ "$1 $2" == 'pr list' ]]; then
   [[ ! -f "$STUB_DIR/reconcile-pr-fail" ]] || { echo 'HTTP 502' >&2; exit 1; }
   head=''
@@ -544,14 +547,16 @@ fi
 SH
 chmod +x "$TMP_ROOT/shared-reconcile/linear/scripts/linear.sh" "$TMP_ROOT/bin/reconcile-gh"
 reconcile_same_world() {
-  local scripts="${1:-$RECONCILE_SCRIPTS}"
+  local scripts="${1:-$RECONCILE_SCRIPTS}" gh_command="${2:-$TMP_ROOT/bin/reconcile-gh}"
   RECONCILE_RC=0
   RECONCILE_OUT="$(cd "$TMP_ROOT/repo" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" STUB_DIR="$STUB_DIR" \
-    OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" RECONCILE_GH_CLI="$TMP_ROOT/bin/reconcile-gh" \
+    OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" RECONCILE_GH_CLI="$gh_command" \
     "$scripts/reconcile-work-items" 2>"$STUB_DIR/reconcile.err")" || RECONCILE_RC=$?
 }
 while IFS='|' read -r name trigger blockers now deadline status control merge_at; do
   verifying_one "shared_$name" "$trigger" "$blockers"
+  gh_command="$TMP_ROOT/bin/reconcile-gh"
+  [[ "$control" != arguments ]] || gh_command="env X=1 $gh_command"
   jq --arg d "$deadline" 'map(if .id == "KEN-1" then .description |= sub("Deadline: [^;]+$"; "Deadline: " + $d) else . end)' \
     "$STUB_DIR/tracker.out" >"$STUB_DIR/shared.json"
   mv -- "$STUB_DIR/shared.json" "$STUB_DIR/tracker.out"
@@ -564,7 +569,7 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   printf '%s\n' '[{"tagName":"v1","publishedAt":"2026-10-02T00:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json"
   case "$control" in
     cutoff|waiting|fractional) echo '[]' >"$STUB_DIR/releases.owner_releases.json" ;;
-    containment)
+    containment|arguments)
       printf '%s\n' '[{"tagName":"v3","publishedAt":"2026-10-02T00:00:00Z","isDraft":false},{"tagName":"v2","publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_repo.json"
       printf '%s\n' '{"status":"behind"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json"
       printf '%s\n' '{"status":"ahead"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v3.json"
@@ -590,7 +595,7 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   expected="verifying KEN-1 box=1 trigger=\"$trigger\" status=$status deadline=$deadline blocked_by="
   case "$control" in
     release) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=KEN-99" ;;
-    containment) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=-" ;;
+    containment|arguments) expected="${expected%deadline=*}deadline=2026-10-03T00:00:00Z blocked_by=-" ;;
     cutoff|waiting|fractional) expected="${expected%deadline=*}deadline=2026-10-04T00:00:00Z blocked_by=-" ;;
     *) [[ "$blockers" != '[]' ]] && expected+=KEN-99 || expected+=- ;;
   esac
@@ -600,8 +605,13 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
     expected_watch='verifying KEN-0 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'$'\n'"$expected"
   fi
   assert_eq "$watch_lines" "$expected_watch" "$name status, date and blockers" "$ERR"
-  reconcile_same_world
+  reconcile_same_world "$RECONCILE_SCRIPTS" "$gh_command"
   assert_eq "$(awk '/^verifying /' <<<"$RECONCILE_OUT")" "$expected" "$name callers print identical lines for readable local merge evidence" "$STUB_DIR/reconcile.err"
+  if [[ "$control" == arguments ]]; then
+    assert_eq "$RECONCILE_RC" 0 "command arguments reach a complete release judgement" "$STUB_DIR/reconcile.err"
+    assert_eq "$(cat "$STUB_DIR/command.calls")" $'pr list X=1\nrelease list X=1\napi repos/owner/repo/compare/1111111111111111111111111111111111111111...v2 X=1\napi repos/owner/repo/compare/1111111111111111111111111111111111111111...v3 X=1' \
+      "command arguments reach the probe, release list and containment calls" "$STUB_DIR/reconcile.err"
+  fi
   if [[ "$control" == missing ]]; then
     assert_eq "$RECONCILE_RC" 1 "a missing local merge is an item finding" "$STUB_DIR/reconcile.err"
     assert_contains "$RECONCILE_OUT" 'verifying-merge-unread issue=KEN-0' "the missing merge item is named"
@@ -624,20 +634,28 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   # Restore each old failure in a disposable production copy. Each row
   # observes the contract above fail while the fixture still reaches it.
   MUTANT_DIR="$TMP_ROOT/shared-old-$name"
-  if [[ "$control" == fractional || "$control" == missing || "$control" == containment ]]; then
+  if [[ "$control" == fractional || "$control" == missing || "$control" == containment || "$control" == arguments ]]; then
     MUTANT_RW="$(mutant_scripts "shared-old-$name/orch" reconcile-work-items)/reconcile-work-items" || exit 1
     ln -s "$TMP_ROOT/shared-reconcile/linear" "$MUTANT_DIR/linear"
     case "$control" in
       fractional) mutate_file "$MUTANT_RW" 'sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 'fromdateiso8601' ;;
       missing) mutate_file "$MUTANT_RW" 'if [ "$merge_epoch" = none ]; then' 'if [ "$merge_epoch" = none ]; then config_error verifying-merge-unread "issue=$iid"' ;;
       containment) mutate_file "$MUTANT_RW" 'read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"' 'read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"; merged_repos="{}"' ;;
+      arguments)
+        mutate_verifying "$MUTANT_RW" '$gh_cli release list' '"$gh_cli" release list'
+        mutate_verifying "$MUTANT_RW" '$gh_cli api' '"$gh_cli" api'
+        : >"$STUB_DIR/command.calls"
+        ;;
     esac
-    reconcile_same_world "${MUTANT_RW%/*}"
+    reconcile_same_world "${MUTANT_RW%/*}" "$gh_command"
     if [[ "$control" == containment ]]; then
       assert_eq "$RECONCILE_RC" 0 "control: dropped merge evidence still reaches a release judgement" "$STUB_DIR/reconcile.err"
       assert_contains "$RECONCILE_OUT" 'deadline=2026-10-02T12:00:00Z' "control: dropped merge evidence chooses the tag without the merge"
     else
       assert_eq "$RECONCILE_RC" 2 "control: $name stops before the required result" "$STUB_DIR/reconcile.err"
+    fi
+    if [[ "$control" == arguments ]]; then
+      assert_eq "$(cat "$STUB_DIR/command.calls")" 'pr list X=1' "control: quoting the command keeps the probe but loses the release calls" "$STUB_DIR/reconcile.err"
     fi
     assert_not_contains "$RECONCILE_OUT" "$expected" "control: $name loses the independently expected box line"
     continue
@@ -669,6 +687,7 @@ invalid_then_due|merge|[]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|due|invalid
 fractional_merge|release owner/releases v*|[]|2026-10-02T00:00:01Z|+24h|waiting|fractional|2026-10-01T00:00:00.123Z
 missing_merge_then_due|merge|[]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|due|missing
 release_contains_merge|release owner/repo v*|[]|2026-10-02T00:00:01Z|+24h|due|containment
+command_arguments|release owner/repo v*|[]|2026-10-02T00:00:01Z|+24h|due|arguments
 ROWS
 
 release_world release_first
@@ -857,9 +876,9 @@ MUTANT_DIR="$TMP_ROOT/release-read-mutant"
 MUTANT_WATCH="$(mutant_scripts "release-read-mutant/orch" oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
 ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-old='releases="$("$gh_cli" release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
+old='releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
         || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }'
-new='releases="$("$gh_cli" release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" || :'
+new='releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" || :'
 mutate_verifying "$MUTANT_WATCH" "$old" "$new"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: ignoring the release read failure fabricates waiting" "$ERR"
