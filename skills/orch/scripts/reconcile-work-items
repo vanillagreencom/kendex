@@ -19,17 +19,25 @@
 #   done-unchecked    a Done item whose description still carries unchecked
 #                     `- [ ]` acceptance criteria — a partial-scope PR's
 #                     `Closes` magic word closed it
-#   verifying-overdue a Verifying post-merge box whose UTC deadline has passed
+#   verifying         open post-merge boxes, with their status and UTC date
+#   verifying-counts  totals for due, overdue, blocked and waiting boxes
 #   verifying-empty   a Verifying issue with no open post-merge box
 #   verifying-invalid a Verifying description missing required box metadata or
 #                     still holding open branch-provable work
+#   verifying-merge-unread a release item with no merged PR on its local branch;
+#                     its boxes are skipped, and the sweep continues
 #
 # Exit codes: 0 nothing to reconcile; 1 findings; 2 config/collection error.
 #
 # RECONCILE_STALE_HOURS   started-stale threshold (default 24)
-# RECONCILE_GH_CLI        PR-probe command (default gh); absent/failing gh
-#                         reports pr-probe-failed at any age; stale items also
-#                         retain started-stale with PR state unverified
+# RECONCILE_GH_CLI        PR-probe command (default gh). A started-item read
+#                         failure reports pr-probe-failed; stale items retain
+#                         started-stale with PR state unverified. A Verifying
+#                         release-item read failure exits 2. A successful read
+#                         with no local branch merge reports verifying-merge-unread
+#                         and continues without reading that item's boxes.
+#                         The watch reads such items through its own connected-
+#                         repository and title/body merge lookup.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,7 +84,7 @@ message() {
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
     verifying-invalid) printf 'The Verifying checklist has invalid metadata or an open branch-provable box. Correct the item with evidence.\n' ;;
     verifying-empty) printf 'The Verifying item has no open post-merge box. Complete the item.\n' ;;
-    verifying-overdue) printf 'The post-merge box has passed its deadline. Read its evidence and complete it, or keep Verifying and file a blocking peer fix item.\n' ;;
+    verifying-merge-unread) printf 'The sweep cannot read this item\047s release boxes from its local branch merge evidence.\n' ;;
     findings) printf 'The tracker state differs from the work.\n' ;;
     clean) printf 'Every issue state matches its work.\n' ;;
   esac
@@ -107,6 +115,12 @@ CHECKLIST_LIB="$SCRIPT_DIR/../../linear/scripts/lib/issue-validation.sh"
 [ -r "$CHECKLIST_LIB" ] || config_error missing-linear "path=$CHECKLIST_LIB"
 # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
 source "$CHECKLIST_LIB"
+FORMATTERS_LIB="$SCRIPT_DIR/../../linear/scripts/lib/formatters.sh"
+[ -r "$FORMATTERS_LIB" ] || config_error missing-linear "path=$FORMATTERS_LIB"
+# shellcheck source=../../../linear/scripts/lib/formatters.sh
+source "$FORMATTERS_LIB"
+# shellcheck source=lib/verifying.sh
+source "$SCRIPT_DIR/lib/verifying.sh"
 TMPD="$(mktemp -d)" || config_error temporary-directory command=mktemp
 trap 'rm -rf -- "${TMPD:?}"' EXIT
 # A failed or partial read refuses: the linear skill reads every page or
@@ -157,6 +171,8 @@ done <"$TMPD/containers"
 # probe_prs BRANCH prints "OPEN MERGED CLOSED-UNMERGED LATEST-MERGED-AT" for
 # this repository's PRs from BRANCH; it fails when the probe cannot answer, and
 # the caller then reports the PR state unverified rather than nothing.
+# Verifying adds repository evidence and its latest merge epoch. GitHub can
+# emit fractional mergedAt seconds; normalize them once, as lane_merged does.
 probe_prs() {
   command -v "${GH_CLI%% *}" >/dev/null 2>&1 || {
     message missing-command "command=${GH_CLI%% *}" >&2
@@ -166,14 +182,21 @@ probe_prs() {
   # PR and must not vouch for this item. The probe answers for THIS checkout:
   # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
   # repository's same-named branch vouch for this item.
-  local listed
-  listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json state,mergedAt,isCrossRepository)" || return 1
-  jq -er '[.[] | select(.isCrossRepository | not)]
-    | [(map(select(.state == "OPEN")) | length),
-       (map(select(.state == "MERGED")) | length),
-       (map(select(.state != "OPEN" and .state != "MERGED")) | length),
-       (map(select(.state == "MERGED") | .mergedAt) | max // "none")]
-    | map(tostring) | join(" ")' <<<"$listed"
+  local listed fields=state,mergedAt,isCrossRepository
+  [[ "${2:-}" != verifying ]] || fields+=,mergeCommit,url
+  listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json "$fields")" || return 1
+  jq -er --arg mode "${2:-}" '[.[] | select(.isCrossRepository | not)] as $rows
+    | ($rows | map(select(.state == "MERGED"))
+       | if $mode == "verifying" then map(. + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}) else . end) as $merged
+    | [($rows | map(select(.state == "OPEN")) | length),
+       ($merged | length),
+       ($rows | map(select(.state != "OPEN" and .state != "MERGED")) | length),
+       ($merged | map(.mergedAt) | max // "none")]
+    | map(tostring) | join(" ")
+    | . + (if $mode != "verifying" then "" else " " +
+        ($merged | sort_by(.at) | reduce .[] as $pr ({};
+             . + {($pr.url | capture("^https://github.com/(?<repo>[^/]+/[^/]+)/pull/[0-9]+$").repo | ascii_downcase): $pr}) | tojson)
+        + " " + ($merged | map(.at) | max // "none" | tostring) end)' <<<"$listed"
 }
 
 now_epoch="$(date -u +%s)" || config_error clock-failed command=date
@@ -229,29 +252,55 @@ done <"$TMPD/started"
 # --- verifying ---------------------------------------------------------------
 jq -c '.[] | select((.trashed // false) == false and .archivedAt == null and .state.name == "Verifying")' \
   "$ISSUES" >"$TMPD/verifying" || config_error scan-failed scan=verifying
+verifying_counts='{"due":0,"overdue":0,"blocked":0,"waiting":0,"items":0}'
 while IFS= read -r row; do
   [ -n "$row" ] || continue
-  iid="$(jq -r '.identifier' <<<"$row")" || config_error scan-failed scan=verifying
-  description="$(jq -r '(.description // "") + "."' <<<"$row")" || config_error scan-failed scan=verifying
-  checklist="$(done_when_parse "${description%.}" '[]')" || config_error scan-failed scan=verifying
-  if ! jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<"$checklist" >/dev/null; then
+  safe="$(jq -c '{issues:{nodes:[.]}}' <<<"$row")" || config_error scan-failed scan=verifying
+  safe="$(format_issues_list "$safe" | jq -c '.[0]')" || config_error scan-failed scan=verifying
+  iid="$(jq -r '.id' <<<"$safe")" || config_error scan-failed scan=verifying
+  verifying_counts="$(jq -c '.items += 1' <<<"$verifying_counts")" || config_error scan-failed scan=verifying
+  if ! boxes="$(verifying_parse "$safe" 2>"$TMPD/verifying.err")"; then
     note verifying-invalid "issue=$iid"
+    cat -- "$TMPD/verifying.err" >&2
     continue
   fi
-  open_count="$(jq '[.boxes[] | select(.post_merge and (.checked | not))] | length' <<<"$checklist")" \
-    || config_error scan-failed scan=verifying
+  open_count="$(jq length <<<"$boxes")" || config_error scan-failed scan=verifying
   if [ "$open_count" -eq 0 ]; then
     note verifying-empty "issue=$iid"
     continue
   fi
-  overdue="$(jq -r --argjson now "$now_epoch" '.boxes[]
-    | select(.post_merge and (.checked | not) and .deadline_epoch != null and .deadline_epoch <= $now)
-    | "box=\(.number) deadline=\(.deadline)"' <<<"$checklist")" || config_error scan-failed scan=verifying
-  while IFS= read -r box; do
-    [ -n "$box" ] || continue
-    note verifying-overdue "issue=$iid" "$box"
-  done <<<"$overdue"
+  merge_epoch=null
+  merged_repos='{}'
+  if jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
+    branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
+    prs="$(probe_prs "$branch" verifying 2>"$TMPD/pr-probe-error")" || {
+      cat -- "$TMPD/pr-probe-error" >&2
+      config_error verifying-merge-unread "issue=$iid"
+    }
+    read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"
+    # A cross-repository or cloud-session merge can be absent from this
+    # successful local branch read. Keep it as an item finding, not a date.
+    if [ "$merge_epoch" = none ]; then
+      note verifying-merge-unread "issue=$iid"
+      continue
+    fi
+  fi
+  rc=0
+  boxes="$(verifying_judge "$safe" "$merge_epoch" "$merged_repos" "$now_epoch" "$boxes" "$TMPD/release.err" 1000 "$GH_CLI" 2>"$TMPD/verifying.err")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cat -- "$TMPD/verifying.err" >&2
+    [ "$rc" -eq 1 ] || config_error scan-failed scan=verifying "issue=$iid"
+    note verifying-invalid "issue=$iid"
+    continue
+  fi
+  verifying_lines "$iid" "$boxes" "$safe" || config_error scan-failed scan=verifying
+  verifying_counts="$(jq -c --argjson boxes "$boxes" 'reduce $boxes[] as $box (. ; .[$box.status] += 1)' <<<"$verifying_counts")" \
+    || config_error scan-failed scan=verifying
+  overdue_count="$(jq '[.[] | select(.status == "overdue")] | length' <<<"$boxes")" || config_error scan-failed scan=verifying
+  findings=$((findings + overdue_count))
 done <"$TMPD/verifying"
+jq -r '"verifying-counts due=\(.due) overdue=\(.overdue) blocked=\(.blocked) waiting=\(.waiting) items=\(.items)"' <<<"$verifying_counts" \
+  || config_error scan-failed scan=verifying
 
 # --- done-unchecked ----------------------------------------------------------
 jq -r '
