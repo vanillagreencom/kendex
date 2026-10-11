@@ -29,7 +29,7 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 
 ## Unread alerts
 
-`security-alerts-unread reads=[SOURCE]:[CAUSE]`, by cause:
+`security-alerts-unread reads=[SOURCE]:[CAUSE]` prints on the long pass whose set of failed reads differs from the last pass's, and not again while that set stands, so each line is new. By cause:
 
 - `permission` means `vanillagreen-overseer` lacks one of § Credential's alert permissions, an owner step on the app or installation: tell the owner once.
 - `credential`, source `installation-token`, means the fleet has not supplied a usable token through `ORCH_SECURITY_ALERT_TOKEN_FILE`: the control VM for a hosted overseer, the fleet worker for a local one. Restore the token supply. The watch makes no alert API call and retains the prior rows.

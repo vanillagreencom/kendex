@@ -2,7 +2,7 @@
 # oversee-watch security-alert events: that each open alert of every kind is
 # reported, then repeated on every pass until the fleet state records its
 # verdict, and not at all once it does; that
-# a failed read is one unread line per pass; that a Dependabot pull request is
+# a failed read is one unread line each time the set of failed reads changes; that a Dependabot pull request is
 # named on its alert's line and in the heartbeat; and what turns the check off.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -151,7 +151,7 @@ for shape in unset missing empty whitespace multiline; do
   calls="$(awk -F'\t' '$2 == "api" && ($3 == "graphql" || ($3 == "--paginate" && $4 ~ /\/alerts\?/)) { n++ } END { print n+0 }' "$STUB_DIR/gh.auth")" || exit 1
   printf 'ghs_fixture_renewed\n' > "$STUB_DIR/alert-token"
   run --
-  assert_eq "$refused|$retained|$calls|$RC|$(unread)|$(firsts)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|EVENT security-alerts-unread reads=installation-token:credential|none|1|owner/repo	bot-fix pr=12 alert=7|0|0|none|none" \
+  assert_eq "$refused|$retained|$calls|$RC|$(unread)|$(firsts)" "0|EVENT security-alerts-unread reads=installation-token:credential|none|0|none|none|1|owner/repo	bot-fix pr=12 alert=7|0|0|none|none" \
     "unusable token refuses fallback, retains the mapping during the outage and recovers with no alert a first report again: $shape" "$ERR"
 done
 
@@ -228,22 +228,43 @@ printf '[%s]\n' "$CODE_SCANNING" > "$STUB_DIR/code-scanning.json"
 run --
 assert_eq "$RC|$(events)" "0|$LINE_CODE" "an alert closed and reopened is reported again" "$ERR"
 
-# A failed read is one unread line per pass naming the source and GitHub's
-# status, and the other lists are still read. The first pass with the failure
-# ends the run; a pass on which it stands still prints it, and the heartbeat
-# follows.
-new_case security_unread
-one_of_each
-printf '%s\n' "$HTTP_403" > "$STUB_DIR/dependabot-fail"
-run --
-assert_eq "$RC|$(unread)|$(events)|$(heartbeats)" \
-  "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|$LINE_CODE
-$LINE_SECRET|0" "a failed read of one list is the unread line, and the other lists are reported" "$ERR"
-assert_eq "$(grep -c '^oversee-watch: security-alerts-read-failed source=owner/repo/dependabot cause=permission$' "$ERR" || true)" "1" \
-  "the failed read is named on stderr with its cause" "$ERR"
-run --
-assert_eq "$RC|$(unread)|$(heartbeats)" "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|1" \
-  "a standing failure prints the unread line again and the heartbeat still comes" "$ERR"
+# A failed read is one unread line naming the source and GitHub's status, and
+# the other lists are still read. The first pass with the failure ends the run;
+# a pass on which the same set stands prints no unread line, so an overseer
+# following the log through a push wake is not woken for it again, and the
+# heartbeat follows; a pass whose set changes prints the new set and ends the
+# run. The control row runs a copy that prints the line on every pass a read
+# fails, and shows the standing pass's line.
+SECURITY_REPEAT_LIB="$(mutant_scripts security-unread-repeat/orch lib/security-alerts.sh)/lib/security-alerts.sh" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-unread-repeat/github"
+mutate_file "$SECURITY_REPEAT_LIB" \
+  '      echo "EVENT security-alerts-unread reads=$SECURITY_UNREAD"' '      :'
+mutate_file "$SECURITY_REPEAT_LIB" \
+  '    if [[ "$prior" != "$SECURITY_UNREAD" ]]; then' \
+  '    echo "EVENT security-alerts-unread reads=$SECURITY_UNREAD"; if [[ "$prior" != "$SECURITY_UNREAD" ]]; then'
+for mutant in "" repeat; do
+  new_case security_unread
+  one_of_each
+  watch="$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  [[ -z "$mutant" ]] || watch="$TMP_ROOT/security-unread-repeat/orch/scripts/oversee-watch"
+  printf '%s\n' "$HTTP_403" > "$STUB_DIR/dependabot-fail"
+  WATCH_BIN="$watch" run --
+  assert_eq "$RC|$(unread)|$(events)|$(heartbeats)" \
+    "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|$LINE_CODE
+$LINE_SECRET|0" "${mutant:+control $mutant: }a failed read of one list is the unread line, and the other lists are reported" "$ERR"
+  assert_eq "$(grep -c '^oversee-watch: security-alerts-read-failed source=owner/repo/dependabot cause=permission$' "$ERR" || true)" "1" \
+    "${mutant:+control $mutant: }the failed read is named on stderr with its cause" "$ERR"
+  WATCH_BIN="$watch" run --
+  want="none|1"
+  [[ -z "$mutant" ]] || want="EVENT security-alerts-unread reads=owner/repo/dependabot:permission|1"
+  assert_eq "$RC|$(unread)|$(heartbeats)" "0|$want" \
+    "${mutant:+control $mutant: }a standing failure prints no unread line and the heartbeat comes" "$ERR"
+  printf 'gh: Bad Gateway (HTTP 502)\n' > "$STUB_DIR/code-scanning-fail"
+  WATCH_BIN="$watch" run --
+  assert_eq "$RC|$(unread)|$(heartbeats)" \
+    "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission,owner/repo/code-scanning:http-502|0" \
+    "${mutant:+control $mutant: }a changed set of failed reads is the unread line again, and ends the run" "$ERR"
+done
 
 # A read that fails keeps the rows of its source: the alert reported before it
 # is a repeat, not news, once the read comes back.

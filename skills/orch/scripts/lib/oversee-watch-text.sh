@@ -336,9 +336,9 @@ The long pass's events, checked and reported in this order:
                              feature-off, Dependabot alerts turned off on
                              that repository; http-<status> or
                              exit-<N> for any other failure; or invalid.
-                             Printed on every long pass a read fails, and
-                             ends the run only when the set of failed reads
-                             changes. Code or secret scanning answering
+                             Printed, and ends the run, only on a long pass
+                             whose set of failed reads differs from the last
+                             pass's. Code or secret scanning answering
                              feature-off, as on a repository without GitHub's
                              paid security products, is off: no line, on
                              stdout or stderr. The rows of a failed source stand

@@ -133,15 +133,14 @@ security_unread() { # SOURCE CAUSE [ERR_FILE]
 # that leaves the open list takes its row with it. An alert whose row stands is
 # printed again, `report=repeat` at its end, on every pass that reads the
 # verdict record and the alert's own list, so an overseer that loses the first
-# line, by succession or lost context, still judges it; like the unread line,
-# a repeat rides the pass's output and does not itself end the run. A read
-# that fails keeps
+# line, by succession or lost context, still judges it; a repeat rides the
+# pass's output and does not itself end the run. A read that fails keeps
 # every row of its source, so a failure never reports its alerts again nor
-# drops a pull request's mapping. The unread line goes out on every pass a
-# read fails, and ends the run only when the set of failed reads changes: a
-# standing failure rides each pass's output without holding the heartbeat
-# off. The event lines print before the rows are committed, so a failed commit
-# repeats an event and never loses one.
+# drops a pull request's mapping. The unread line goes out, and ends the run,
+# only when the set of failed reads changes: a standing failure is handled
+# once, and an overseer following the log is not woken by it each pass. The
+# event lines print before the rows are committed, so a failed commit repeats
+# an event and never loses one.
 check_security_alerts() {
   [[ "$SECURITY_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/security.err" state="${PW_SEEN[0]}" events="" new_rows="" rc
@@ -288,15 +287,17 @@ security_lines_valid() { # KIND LIST PRS
   done <<<"$3"
 }
 
-# The pass's one security-alerts-unread line, and the row that says whether
-# its set of failed reads is news.
+# The pass's security-alerts-unread line, printed only when its set of failed
+# reads differs from the row's, and the row that holds that set.
 security_unread_commit() { # STATE
   local state="$1" prior
   prior="$(lane_row_get security-alerts-unread "$state" fleet)" \
     || die state-read-failed "" "row=security-alerts-unread"
   if [[ -n "$SECURITY_UNREAD" ]]; then
-    echo "EVENT security-alerts-unread reads=$SECURITY_UNREAD"
-    [[ "$prior" == "$SECURITY_UNREAD" ]] || PASS_EVENT=1
+    if [[ "$prior" != "$SECURITY_UNREAD" ]]; then
+      echo "EVENT security-alerts-unread reads=$SECURITY_UNREAD"
+      PASS_EVENT=1
+    fi
     state="$(lane_row_set security-alerts-unread "$state" fleet "$SECURITY_UNREAD")"
   else
     state="$(lane_row_clear security-alerts-unread "$state" fleet)"
