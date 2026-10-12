@@ -390,7 +390,8 @@ closes (false on new owner answers; absent on legacy closing answers),
 draft (a draft ask only: recipient, medium, text and text_hash),
 reserved (true on a reserved ask only), issue (a configured item ask),
 tracker_posted (a boolean projected by mailbox reads after the complete tracker
-question is confirmed),
+question is confirmed), tracker_label (the confirmed label used for close
+when settings change or cannot be read),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close). kind is ask, notice, answer, resolution or directive;
 at is UTC; id is <epoch>-<pid>-<random>. from
@@ -1381,15 +1382,13 @@ lm_objects() { # FILE [BOX [AFTER]]
   # Posting is confirmed after the immutable ask. Fold that evidence before
   # cursor selection, while keeping the ask's original logical position.
   jq -c -R -n --arg box "${2:-}" --arg after "${3:-}" --argjson count "$count" \
-    --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ"'
+    --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
     [inputs | input_line_number as $physical | (fromjson? // empty) | objects
       | {physical: $physical, envelope: .}] as $rows
     | [$rows[].envelope | select(.kind == "tracker-posted")] as $posted
     | $rows[] | .physical as $physical | .envelope
     | select(.kind != "tracker-posted")
-    | if .kind == "ask" and .to == "owner" and .issue != null then
-        . as $ask | .tracker_posted = any($posted[]; .re == $ask.id and .issue == $ask.issue)
-      else . end
+    | owner_tracker_record($posted)
     | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end)
@@ -1959,7 +1958,7 @@ if [ "$FAST_READ" -eq 1 ]; then
     exec 6>&1
     READ_DELIVER=1
   fi
-  READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ" "$READ_DELIVER")
+  READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
   if [ "$HOST" -eq 1 ]; then
     # read-many already fetched the host's files once. Copy its raw pair and
     # numbering into this helper's world, without starting a snapshot per file.
@@ -2084,7 +2083,12 @@ case "$VERB" in
     OWNER_TRACKER_ACTIVE=0
     if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ]; then
       # Linear is optional. An unconfigured tracker leaves the chat ask intact.
-      if owner_tracker_settings "$SCRIPT_DIR"; then OWNER_TRACKER_ACTIVE=1; else ISSUE=""; fi
+      if owner_tracker_settings "$SCRIPT_DIR"; then
+        OWNER_TRACKER_ACTIVE=1
+      else
+        owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_SETTINGS_CAUSE"
+        ISSUE=""
+      fi
     fi
     LINE="$(lm_envelope "$VERB")"
     [ "$VERB" != notice ] || lm_receipt_fields "$LINE"
@@ -2101,8 +2105,8 @@ case "$VERB" in
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
       owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR"
       if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then
-        POSTED_LINE="$(jq -c '{id: (.id + "-tracker"), kind: "tracker-posted", at, from,
-          re: .id, issue, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
+        POSTED_LINE="$(jq -c --arg label "$OWNER_TRACKER_LABEL" '{id: (.id + "-tracker"), kind: "tracker-posted", at, from,
+          re: .id, issue, tracker_label: $label, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
         lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
       fi
     fi
@@ -2201,8 +2205,10 @@ case "$VERB" in
     if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
       lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
       if [ "$(jq -r '.issue // empty' <<<"$ASK_JSON")" != "" ]; then
-        if owner_tracker_settings "$SCRIPT_DIR"; then
+        if owner_tracker_settings "$SCRIPT_DIR" "$ASK_JSON"; then
           owner_tracker_close "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$ASK_JSON" "$CLOSE_ID" "$WORK_DIR"
+        else
+          owner_tracker_unwritten "$(jq -r '.issue' <<<"$ASK_JSON")" "$OWNER_TRACKER_SETTINGS_CAUSE"
         fi
       fi
     else

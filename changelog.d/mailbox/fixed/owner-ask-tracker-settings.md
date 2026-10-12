@@ -1,0 +1,1 @@
+- Item owner asks reach Linear without a team setting. Close retains the applied label for cleanup, and unavailable tracker settings report their cause while the chat ask remains available.

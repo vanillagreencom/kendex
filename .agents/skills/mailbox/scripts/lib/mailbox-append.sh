@@ -176,23 +176,43 @@ mailbox_warn_legacy() { # FILE
 # The mailbox owns the ask. Tracker writes are advisory: a failed write must
 # leave that ask available on its existing chat route.
 
-owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY
+owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY [ASK TO CLOSE]
+  local root configured=0 recorded_label=""
+  OWNER_TRACKER_SETTINGS_CAUSE=settings-unreadable
+  OWNER_TRACKER_EMAIL=""
+  OWNER_TRACKER_LABEL=""
   # shellcheck source=kendex-env.sh
-  . "$1/lib/kendex-env.sh" || return 1
-  local root
   # shellcheck source=common-root.sh
-  . "$1/lib/common-root.sh" || return 1
-  root="$(mailbox_common_root .)" || return 1
-  kendex_load_project_env "$root" || return 1
-  OWNER_TRACKER_EMAIL="${ORCH_OWNER_EMAIL:-${KENDEX_USER_EMAIL:-}}"
-  OWNER_TRACKER_LABEL="${ORCH_OWNER_ASK_LABEL:-}"
-  OWNER_TRACKER_TEAM="${LINEAR_TEAM:-}"
-  [[ -n "$OWNER_TRACKER_LABEL" && -n "$OWNER_TRACKER_TEAM" && -n "$OWNER_TRACKER_EMAIL" ]]
+  if . "$1/lib/kendex-env.sh" && . "$1/lib/common-root.sh" &&
+     root="$(mailbox_common_root .)" && kendex_load_project_env "$root"; then
+    OWNER_TRACKER_SETTINGS_CAUSE=settings-unset
+    OWNER_TRACKER_EMAIL="${ORCH_OWNER_EMAIL:-${KENDEX_USER_EMAIL:-}}"
+    OWNER_TRACKER_LABEL="${ORCH_OWNER_ASK_LABEL:-}"
+    [[ -z "$OWNER_TRACKER_LABEL" || -z "$OWNER_TRACKER_EMAIL" ]] || configured=1
+  fi
+  # Posting evidence keeps the label that this ask applied. A close needs
+  # that label even after settings disappear or name a different label.
+  if [[ -n "${2:-}" ]]; then
+    recorded_label="$(jq -r 'select(.tracker_posted == true) | .tracker_label // empty' <<<"$2")" || return 1
+    if [[ -n "$recorded_label" ]]; then
+      OWNER_TRACKER_LABEL="$recorded_label"
+      return 0
+    fi
+  fi
+  [[ "$configured" -eq 1 ]]
 }
 
 owner_tracker_unwritten() { # ISSUE CAUSE
   printf 'lane-mail: tracker-unwritten issue=%s cause=%s\n' "$1" "$2" >&2
 }
+
+# Both mailbox readers fold posting evidence before selecting asks or cursors.
+OWNER_TRACKER_JQ='def owner_tracker_record($posted):
+  if .kind == "ask" and .to == "owner" and .issue != null then
+    . as $ask | ([$posted[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
+    | .tracker_posted = ($record != null)
+    | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
+  else . end;'
 
 # One description format serves the ask, its close and the watch's existing read.
 # The Linear file reader trims trailing newlines. Use --description and keep

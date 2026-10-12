@@ -22,9 +22,7 @@ def objects($box):
   | [range(0; $box.raw | length) as $i
       | ($box.raw[$i] | (fromjson? // empty) | objects)
       | select(.kind != "tracker-posted")
-      | if .kind == "ask" and .to == "owner" and .issue != null then
-          . as $ask | .tracker_posted = any($posted[]; .re == $ask.id and .issue == $ask.issue)
-        else . end
+      | owner_tracker_record($posted)
       | {line: $box.numbers[$i], envelope: .}];
 . as $in | objects(.lane) as $lane | objects(.over) as $over
 | [$lane[].envelope | select(.kind == "answer") | .re // empty] as $answered
