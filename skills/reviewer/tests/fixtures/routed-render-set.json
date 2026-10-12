@@ -1,0 +1,35 @@
+{
+  "replay": {
+    "repository": "vanillagreencom/kendex",
+    "pull_request": 4871,
+    "base": "7626e9c4c2abed0bd4edea746897dfbd701deedf",
+    "head": "19086ef72e868c980d322880c5b68617e4684917",
+    "delegation": "Worktree: a detached checkout of head. Diff-range: base..head. Issue: the operator and auditor agents read their work from a task file the launch names and write their Output to a result file.",
+    "reviewers": ["reviewer-quality", "reviewer-doc"]
+  },
+  "diff_files": [
+    "agents/operator.md", "agents/auditor.md",
+    ".claude/agents/operator.md", ".claude/agents/auditor.md",
+    ".codex/agents/operator.toml", ".codex/agents/auditor.toml",
+    ".pi/agents/operator.md", ".pi/agents/auditor.md",
+    "changelog.d/operator/changed/task-result-files.md", "changelog.d/auditor/changed/task-result-files.md"
+  ],
+  "diff_excerpt": "diff --git a/agents/operator.md b/agents/operator.md\n@@ -17,6 +17,7 @@\n ## Discipline\n \n+- Read the approved step from the task file the launch names. A launch that names no task file is attached: take the step from the launch prompt.\n",
+  "routes": {
+    "AGENTS.md": "When working under `skills/`, `agents/` or `hooks/`: `skills/AGENTS.md`, and `hooks/AGENTS.md` for a hook script."
+  },
+  "routed_rule": {
+    "doc": "skills/AGENTS.md",
+    "text": "Land a changed source and its tracked render in the same commit. A render the change adds or removes joins or leaves `.kendex-generated.json`, the committed inventory every reader of a render path consults."
+  },
+  "untouched_at_head": {
+    ".kendex-generated.json": [".github/agents/auditor.agent.md", ".github/agents/operator.agent.md"]
+  },
+  "expected_finding": {
+    "class": "blockers",
+    "location": ".github/agents/operator.agent.md, .github/agents/auditor.agent.md",
+    "names": ["skills/AGENTS.md", ".kendex-generated.json"],
+    "defect": "Both agents' tracked Copilot renders are listed in the inventory and left unchanged, so a Copilot launch never gets the task-file and result-file lines."
+  },
+  "control": "With the reviewer text before this fixture's change, the quality reviewer compares the source with the three renders the diff touches and reports no finding on the Copilot renders."
+}
