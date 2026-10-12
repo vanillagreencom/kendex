@@ -1,0 +1,1 @@
+- Jarvis keeps only session state in the handoff, in four sections: State, Sub-agents, Instructions in force and Progress log. Tasks and checks go to the tracker, facts and rulings to memory notes, and open exchanges stay in their mailboxes, so a successor reads three short sections before its first decision.
