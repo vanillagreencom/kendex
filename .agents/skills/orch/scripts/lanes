@@ -39,7 +39,11 @@
 #         that threshold or its default. The verdict is the reading's, a wall
 #         that lifts at binding_resets_at; `burn_pct_per_lane_hour` and
 #         `projected_headroom_pct` beside it are the projection `pick` also
-#         drops a lane on. Each record carries `retire_date`: the
+#         drops a lane on. Claims charge only their spending pool: Claude and
+#         Codex windows count plan claims, Copilot counts Copilot claims, and
+#         API grants carry no in-flight burn. An older claim without a pool is
+#         a plan claim. Pick records name that allowance in `pool`.
+#         Each record carries `retire_date`: the
 #         ORCH_LANE_RETIRE date as YYYY-MM-DD, past or future, or null where
 #         no entry names the account.
 #         A weekly wall oversee-watch recorded from a lane's harness banner
@@ -197,8 +201,8 @@
 #         at a reset. And `seats=N` counts accounts judged `seat-reserve`,
 #         each named on a `lanes: pick-seat-omitted lane=DIR projected-headroom=N
 #         reserve=N` line. They return when their projected room exceeds the
-#         reserve. Copilot and Pi pool picks keep seats and charge their claims
-#         at the monthly burn; they read no fleet state or provider seat marks. Under --json that exit
+#         reserve. Copilot pool picks, through Copilot or Pi, keep seats and
+#         charge their pool claims at the monthly burn; they read no fleet state or provider seat marks. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
 #         "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}]}` on stdout,
 #         the same counts, so a caller
@@ -404,7 +408,11 @@
 #                    maps that account to the remote Pi root. API and Copilot
 #                    rows are separate candidates. No local host or Copilot
 #                    override measures API credit. An unread API row names
-#                    its detail and exits 5 as pick-provider-unmeasured.
+#                    its detail and exits 5: the automatic form prints
+#                    pick-provider-unmeasured; --lane prints
+#                    cloud-credit-refused with cause=api-credit. Both become
+#                    lane-provider-unmeasured at launch. A failed accounts
+#                    command exits 1 with its original busy or timeout cause.
 #                    Any other provider, and a Pi pick naming no model, exits 5 as
 #                    `pick-provider-unmeasured` in both forms, before any lane
 #                    is read: nothing measures what it spends.
@@ -705,8 +713,8 @@
 # pruned on read). A claim counts against the account its launch named, the
 # alias `list` gives that spelling (`1claude` for `~/.1claude`), as well as
 # against its canonical config dir: a store several homes share sees one
-# account under each home's path, and every claim on it, whichever home wrote
-# it, counts and is charged once against that account. A dir named the bare
+# account under each home's path. Claims in the same spending pool, whichever
+# home wrote them, count and are charged once against that account. A dir named the bare
 # harness word (`~/.claude`) is each home's own default login and keys by its
 # path alone, unless ORCH_LANE_ALIASES names it. A claim on a lane this machine
 # lists is that lane's by its path alone: an alias is not unique, and two
@@ -1970,7 +1978,7 @@ usage_serve_max_age() {
 # half a record.
 write_usage_cache() {
 	local file tmp prior=null sample_claims=1
-	[[ "$1" == host-accounts || "$LANE_CLAIMS_RC" -ne 0 ]] || sample_claims="$(account_claims "$2")" || return 1
+	[[ "$1" == host-accounts || "$LANE_CLAIMS_RC" -ne 0 ]] || sample_claims="$(account_claims "$2" "$1")" || return 1
 	USAGE_SAMPLE_CLAIMS="$sample_claims"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
@@ -2424,7 +2432,7 @@ emit_lane() {
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
-	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(account_claims "$dir")"
+	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(account_claims "$dir" "$harness" "$buckets")"
 	lane_canon "$dir" || return 1
 	jq -nc \
 		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" --arg id "$LANE_CANON" \
@@ -2480,7 +2488,7 @@ emit_lane() {
 # command substitution, and a read failure recorded there would die with the
 # subshell instead of reaching the decision.
 load_lane_claims() {
-	local line cfg named h d own=$'\n' key
+	local line cfg named pool rest h d own=$'\n' key
 	LANE_CLAIMS_RC=0
 	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" fleet)" || LANE_CLAIMS_RC=$?
 	LANE_CLAIM_ACCOUNTS=""
@@ -2497,15 +2505,17 @@ load_lane_claims() {
 			own+="$LANE_CANON"$'\n'
 		done < <(lane_dirs "$h" all)
 	done
-	# The canonical config dir is the first field and the named spelling the
-	# last, empty on a record written before claims carried it.
+	# Fleet mode ends in named spelling and pool. The reader supplies plan
+	# for an older claim, so empty fleet and named fields keep their positions.
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		cfg="${line%%$'\t'*}"
-		named="${line##*$'\t'}"
+		pool="${line##*$'\t'}"
+		rest="${line%$'\t'*}"
+		named="${rest##*$'\t'}"
 		key=""
 		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *) key="$(lane_account_name "${named:-$cfg}")" ;; esac
-		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$key"$'\n'
+		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$key"$'\t'"$pool"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
 }
 
@@ -2527,11 +2537,21 @@ lane_account_name() { # DIR
 # `/home/b/.eclaude`), so a claim counts against DIR where its canonical config
 # dir is DIR's, or where lane_account_name of the spelling its launch named is
 # DIR's and not empty, which load_lane_claims leaves only on another home's
-# claim. One account is charged every claim on it whichever home wrote each. Reads LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
-account_claims() { # DIR
+# claim. Plan windows count only plan claims; Copilot counts its monthly
+# pool claims. Pi USD grants have no in-flight charge. Reads
+# LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
+account_claims() { # DIR [HARNESS [BUCKETS]]
+	local pool=plan unit=""
+	case "${2:-claude}" in
+		copilot | pi) pool=copilot ;;
+	esac
+	if [[ "${2:-}" == pi && -n "${3:-}" ]]; then
+		unit="$(jq -r '.credits.unit // empty' <<<"$3")" || return 1
+		[[ "$unit" != usd ]] || { printf '0\n'; return 0; }
+	fi
 	lane_canon "$1" || return 1
-	LANE_CLAIMS_CANON_Q="$LANE_CANON" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" \
-		awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"]) { n++ }
+	LANE_CLAIMS_CANON_Q="$LANE_CANON" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" LANE_CLAIMS_POOL_Q="$pool" \
+		awk -F'\t' '$3 == ENVIRON["LANE_CLAIMS_POOL_Q"] && ($1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"])) { n++ }
 			END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
 }
 
@@ -3162,7 +3182,12 @@ render_table() {
 pick_host_rows() { # HARNESS [MODEL]
 	host_lane_rows "$1" readings
 	if [[ "$1" == pi ]]; then
-		HOSTED_ROWS="$(jq -c --arg pool "$(lane_pick_pool "$1" "${2:-}")" \
+		local pool
+		pool="$(lane_pick_pool "$1" "${2:-}")" || return 1
+		# A failed command returned no reading to repair. Both pick forms
+		# preserve its busy or timeout diagnostic and fail as a command.
+		[[ "$pool" != api-credit || "$HOSTED_READ" != failed ]] || return 1
+		HOSTED_ROWS="$(jq -c --arg pool "$pool" \
 			'def api_credit: .credits != null or ((.detail // "") | startswith("api-credit-"));
 			 map(select(if $pool == "api-credit" then api_credit else (api_credit | not) end))' <<<"$HOSTED_ROWS")" || return 1
 	fi

@@ -72,6 +72,7 @@ case "$1" in
   append)
     [[ -z "${LANE_HOST_STUB_NO_APPEND:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=append\n' >&2; exit 2; } ;;
   accounts)
+    [[ -z "${LANE_HOST_STUB_ACCOUNTS_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_ACCOUNTS_DELAY"
     [[ -z "${LANE_HOST_STUB_NO_ACCOUNTS:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=accounts\n' >&2; exit 2; }
     [[ "${LANE_HOST_STUB_ACCOUNTS_STATUS:-0}" -eq 0 ]] \
       || { printf 'lane-host-fixture: accounts-failed\n' >&2; exit "$LANE_HOST_STUB_ACCOUNTS_STATUS"; } ;;

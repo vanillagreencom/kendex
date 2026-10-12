@@ -21,7 +21,7 @@ unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_L
 # rows assert the script's default, and a row that wants a setting passes it.
 # The two direct $LANES calls below, in stage_cache and in the renewal ceiling,
 # run from the checkout and assert no threshold.
-unset ORCH_LANE_MAX_PCT ORCH_HANDOFF_HEADROOM_PCT
+unset ORCH_LANE_MAX_PCT ORCH_HANDOFF_HEADROOM_PCT ORCH_LANE_CLOUD_CREDIT_FLOOR
 # The renewal's own settings, for the same reason: with one of these exported a
 # developer runs a different suite from CI, where a baseline expired-token row
 # renews, or a row reaches a live helper or the real token endpoint.
@@ -595,6 +595,10 @@ api_rows 150 "$API_EXPIRES_SOON"
 api_case 'a credit-only provider row keeps its own balance and spent figure' "$API_ENV" "$API_PICK" \
   '[.config_dir, .status, .credits.unit, .credits.remaining_dollars, .credits.used_dollars]' \
   "0:[\"$H/.eclaude\",\"ok\",\"usd\",150,37.52]"
+api_rows 10 "$API_EXPIRES_SOON"
+api_case 'the default shared floor refuses an API grant at ten dollars' "${API_ENV%;ORCH_LANE_CLOUD_CREDIT_FLOOR=5}" "$API_PICK" \
+  '[.walled, .refusals[0].refusal.cause]' '3:[1,"api-credit"]'
+api_rows 150 "$API_EXPIRES_SOON"
 table "the plain pick uses Pi's account prefix|$API_ENV|pick --harness pi --model anthropic/claude-opus-5-5|rc=0 out=PI_CODING_AGENT_DIR=$H/.eclaude"
 printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=0\tcredit-remaining=150\tcredit-expires=%s\n' "$H/.lateclaude" "$API_EXPIRES_LATE" >> "$API_ROWS"
 api_case 'equal balances spend the grant with the earlier expiry' "$API_ENV" "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
@@ -626,6 +630,22 @@ api_case 'an API-credit row is not a Copilot candidate' "$API_ENV" 'pick --harne
 table \
   "an unsupported provider stays unmeasured|$API_ENV|pick --harness pi --model openai/gpt-6|rc=5 key=pick-provider-unmeasured,harness=pi,model=openai/gpt-6" \
   "a local host measures no API credit even with a Copilot override|ORCH_LANE_HOST=local;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10|$API_PICK|rc=5 key=pick-provider-unmeasured,harness=pi,model=anthropic/claude-opus-5-5"
+# The lane-host dispatcher returns 69 at its short-call cap. A slow provider
+# reaches the native accounts timeout. Neither command failure returned a row.
+API_COMMAND_ROW="a failed API accounts command is never an unread grant|$API_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=69|$API_PICK|rc=1 key=lane-host-busy,step=accounts,item=-"
+table "$API_COMMAND_ROW"
+for args in "$API_PICK" "$API_PICK --lane $H/.eclaude"; do
+  table \
+    "busy API accounts keeps its command failure|$API_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=69|$args|rc=1 key=lane-host-busy,step=accounts,item=-" \
+    "slow API accounts keeps its timeout cause|$API_ENV;LANE_HOST_STUB_ACCOUNTS_DELAY=2;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=1|$args|rc=1 key=host-accounts-unreadable,host=$API_HOST,exit=124"
+done
+API_COMMAND_MUTANT="$(mutant_scripts api-command-failure lanes)" || exit 1
+mutate_file "$API_COMMAND_MUTANT/lanes" '[[ "$pool" != api-credit || "$HOSTED_READ" != failed ]] || return 1' ':'
+API_COMMAND_SHIPPED="$LANES"; API_COMMAND_FAIL="$FAIL"
+LANES="$API_COMMAND_MUTANT/lanes"; FAIL=0
+table "$API_COMMAND_ROW" > "$TMP_ROOT/api-command-failure.out"
+API_COMMAND_RED="$FAIL"; FAIL="$API_COMMAND_FAIL"; LANES="$API_COMMAND_SHIPPED"
+assert_eq "$API_COMMAND_RED" 1 'control: the prior failed-read classification makes the unchanged command row fail'
 api_control() { # NAME FILE OLD NEW ARGS FILTER EXPECT
   local shipped="$LANES" mutant saved="$FAIL" got
   mutant="$(mutant_scripts "$1" "$2")" || exit 1
@@ -1397,6 +1417,75 @@ claims_table() {
   done
 }
 
+# The provider bills an Anthropic Pi lane on its Claude home. Drive the real
+# pick and claim writer on that same home, without fleet metadata to infer a
+# pool from. The legacy row is the older eight-field claim writer's output.
+same_home_claim_result() { # NAME SCRIPTS CLAIM_POOL QUERY
+  (
+    local scope="$TMP_ROOT/pool-$1" scripts="$2" claim="$3" query="$4" account record pool rc=0
+    local CLAUDE_USAGE_SESSION_RESET args=() filter='[.claims, .projected_headroom_pct]'
+    CLAUDE_USAGE_SESSION_RESET="$(jq -nr 'now + 3600 | todateiso8601')"
+    account="$scope/home/.poolclaude"
+    mkdir -p "$scope/store/claims"
+    make_lane "$scope/home" poolclaude 3600
+    claude_usage 92 10 5 Opus > "$FIXTURE_DIR/.poolclaude.json"
+    printf '%s %%1\n' "$LIVE_PID" > "$scope/panes"
+    printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=50\tcredit-remaining=150\tcredit-expires=2099-10-06T00:00:00Z\n' "$account" > "$scope/accounts"
+    local world=(env "GIT_CEILING_DIRECTORIES=$TMP_ROOT" "LANES_HOME=$scope/home" "ORCH_LANE_DIRS=$account"
+      "ORCH_LANES_FETCH_CMD=$FETCHER" "OVERSEE_WATCH_STATE_DIR=$scope/store" "ORCH_STATE_DIR=$scope/fleet"
+      "TMUX_PANES_FILE=$scope/panes" "PATH=$CLAIM_BIN:$PATH" "LANE_HOST_STUB_ACCOUNTS=$scope/accounts"
+      "LANE_HOST_STUB_LOG=$scope/host.log")
+    if [[ "$claim" == api-credit ]]; then
+      record="$(cd "$NOSETTINGS" && "${world[@]}" "ORCH_LANE_HOST=$API_HOST" "$scripts/lanes" \
+        pick --harness pi --model anthropic/claude-opus-5-5 --json)" || return 1
+    else
+      record="$(cd "$NOSETTINGS" && "${world[@]}" ORCH_LANE_HOST=local "$scripts/lanes" \
+        pick --harness claude --json)" || return 1
+    fi
+    pool="$(jq -er '.pool' <<<"$record")" || return 1
+    # shellcheck source=/dev/null
+    source "$scripts/lib/lane-claims.sh"
+    if [[ "$claim" == legacy ]]; then
+      printf '%s\t%%1\t%s\tlegacy\t2026-10-11T00:00:00Z\t\t\tssh\n' "$LIVE_PID" "$account" > "$scope/store/claims/legacy.claim"
+    else
+      lane_claim_write "$scope/store/claims" "$LIVE_PID" %1 "$account" lane "" ssh "$pool" || return 1
+    fi
+    args=(pick --harness claude --json)
+    case "$query" in
+      named) args+=(--lane "$account" --projected) ;;
+      legacy) args+=(--lane "$account" --projected); filter='[.claims]' ;;
+      api) args=(pick --harness pi --model anthropic/claude-opus-5-5 --json); filter='[.claims, .credits.remaining_dollars, .pool]' ;;
+    esac
+    record="$(cd "$NOSETTINGS" && "${world[@]}" \
+      "ORCH_LANE_HOST=$([[ "$query" == api ]] && printf '%s' "$API_HOST" || printf local)" \
+      "$scripts/lanes" "${args[@]}" 2>"$scope/err")" || rc=$?
+    printf '%s:%s' "$rc" "$(jq -c "$filter" <<<"$record")"
+  )
+}
+SAME_HOME_EXPECT='0:[0,8]'
+assert_eq "$(same_home_claim_result api-plan "$SCRIPTS_DIR" api-credit auto)" "$SAME_HOME_EXPECT" \
+  'Claude session 92 keeps projected headroom 8 after a native Pi API claim on the same home'
+assert_eq "$(same_home_claim_result api-named "$SCRIPTS_DIR" api-credit named)" "$SAME_HOME_EXPECT" \
+  'the projected named Claude launch ignores the API claim on its home'
+assert_eq "$(same_home_claim_result plan-api "$SCRIPTS_DIR" plan api)" '0:[0,150,"api-credit"]' \
+  'the reverse Claude plan claim neither charges nor refuses the API grant'
+assert_eq "$(same_home_claim_result legacy-plan "$SCRIPTS_DIR" legacy legacy)" '3:[1]' \
+  'a claim with no pool field remains a charged plan claim'
+POOL_READER_MUTANT="$(mutant_scripts mutant-claim-pool-reader lanes)" || exit 1
+mutate_file "$POOL_READER_MUTANT/lanes" '$3 == ENVIRON["LANE_CLAIMS_POOL_Q"] && (' '('
+POOL_FAIL="$FAIL"; FAIL=0
+assert_eq "$(same_home_claim_result old-reader "$POOL_READER_MUTANT" api-credit auto)" "$SAME_HOME_EXPECT" \
+  'Claude session 92 keeps projected headroom 8 after a native Pi API claim on the same home' > "$TMP_ROOT/claim-pool-control.out"
+POOL_RED="$FAIL"; FAIL="$POOL_FAIL"
+assert_eq "$POOL_RED" 1 'control: the prior reader makes the unchanged same-home assertion fail'
+POOL_LEGACY_MUTANT="$(mutant_scripts mutant-claim-pool-legacy lib/lane-claims.sh)" || exit 1
+mutate_file "$POOL_LEGACY_MUTANT/lib/lane-claims.sh" 'printf '\''\t%s'\'' "${pool:-plan}"' 'printf '\''\t%s'\'' "$pool"'
+POOL_FAIL="$FAIL"; FAIL=0
+assert_eq "$(same_home_claim_result lost-legacy "$POOL_LEGACY_MUTANT" legacy legacy)" '3:[1]' \
+  'a claim with no pool field remains a charged plan claim' > "$TMP_ROOT/claim-legacy-control.out"
+POOL_RED="$FAIL"; FAIL="$POOL_FAIL"
+assert_eq "$POOL_RED" 1 'control: dropping the older claim default makes the unchanged plan assertion fail'
+
 PICK='pick --harness claude'
 claims_table \
   "with nothing in flight, pick still takes the most headroom|live:%1,live:%2|||$PICK|out=CLAUDE_CONFIG_DIR=$H/.claude" \
@@ -1452,7 +1541,7 @@ mutate_file "$claims_scripts/lanes" '"$(lane_account_name "${named:-$cfg}")"' '"
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
-mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" "${8:-}" > "$tmp"' '"$7" "" "${8:-}" > "$tmp"'
+mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" "${8:-}" "${9:-plan}" > "$tmp"' '"$7" "" "${8:-}" "${9:-plan}" > "$tmp"'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: a writer that drops the named spelling keys the claim by its target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-default-merged lanes)" || exit 1

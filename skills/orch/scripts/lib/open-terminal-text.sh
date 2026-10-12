@@ -441,10 +441,15 @@ Options:
                     host is this machine's, sent again. The provider's
                     `accounts` answer is what says which accounts it holds, and
                     nothing here reads the secret itself.
-                    WHAT THE ANSWER DECIDES. On a named lane, cloud-credit
-                    refusal is judged first and reported as lane-credit-refused.
-                    The credential and unreadable answers below apply only
-                    where that refusal is absent. Both --lane forms judge the
+                    WHAT THE ANSWER DECIDES. Cloud and API credit refusals
+                    are judged first and reported as lane-credit-refused.
+                    An unread Anthropic API grant reports
+                    lane-provider-unmeasured and needs its provider reading
+                    repaired. A failed accounts command reports a failed
+                    judge or account selection with its original cause.
+                    The local-reading and held-account relaunch rules below
+                    apply only to non-API routes after these checks.
+                    Both --lane forms judge the
                     account on the provider's accounts row as `lanes --help`
                     (pick) states. A row carrying neither a status nor a
                     percentage, an absent verb and a failed one each leave

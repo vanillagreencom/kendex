@@ -393,8 +393,8 @@ api_launch_result() { # no host create is accepted on a refused credit
 }
 api_launch_room() {
   run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-3747
-  assert_eq "rc=$RC account=$(awk '/^create / { for(i=1;i<=NF;i++) if($i == "--account") print $(i+1) }' "$RUN/host.log") launched=$(typed "clear; ssh 'lane.example'")" \
-    "rc=0 account=$H/.eclaude launched=1" 'the API-credit pick passes its Claude home to the provider create route'
+  assert_eq "rc=$RC account=$(awk '/^create / { for(i=1;i<=NF;i++) if($i == "--account") print $(i+1) }' "$RUN/host.log") launched=$(typed "clear; ssh 'lane.example'") pool=$(awk -F'\t' '{print $9}' "$RUN"/state/claims/*.claim 2>/dev/null)" \
+    "rc=0 account=$H/.eclaude launched=1 pool=api-credit" 'the API-credit pick passes its Claude home and spending pool to create and the claim'
 }
 api_hosted_rows 150
 api_launch_room
@@ -413,6 +413,18 @@ for detail in api-credit-tokens-unreadable api-credit-tokens-undated api-credit-
     "rc=1 calls=accounts detail=detail=$detail" 'an unread provider API row names its detail and creates nothing'
 done
 api_hosted_rows 150
+for lane in auto "$H/.eclaude"; do
+  for failure in busy timeout; do
+    failure_env=LANE_HOST_STUB_ACCOUNTS_STATUS=69
+    [[ "$failure" != timeout ]] || failure_env='LANE_HOST_STUB_ACCOUNTS_DELAY=2;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=1;OT_SLEEP_INSTANT='
+    run_ot "$API_ENV;$failure_env" --host "$HOST_STUB" --harness pi --lane "$lane" --repo o/r KEN-3747
+    failure_key=lane-resolution-failed
+    [[ "$lane" == auto ]] || failure_key=lane-judge-failed
+    assert_eq "rc=$RC creates=$(grep -c '^create ' "$RUN/host.log" || true) failed=$(awk -v key="$failure_key" '$2 == key {n++} END {print n+0}' <<<"$OUT") repair=$(awk '$2 == "lane-provider-unmeasured" {n++} END {print n+0}' <<<"$OUT")" \
+      'rc=1 creates=0 failed=1 repair=0' 'failed API accounts returns a command failure and opens no lane'
+  done
+done
+api_hosted_rows 150
 API_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-api-unmeasured/orch lib/lane-launch.sh)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-api-unmeasured/orch"
@@ -421,6 +433,15 @@ API_SAVED_FAIL="$FAIL"; FAIL=0
 api_launch_room > "$TMP_ROOT/api-unmeasured-control.out"
 API_CONTROL="$FAIL"; FAIL="$API_SAVED_FAIL"; OPEN_TERMINAL="$API_OT_SHIPPED"
 assert_eq "$API_CONTROL" 1 'control: the prior unmeasured Anthropic mapping fails the unchanged hosted launch row'
+OPEN_TERMINAL="$(mutant_scripts ctl-api-claim-pool/orch lib/lane-claims.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-claim-pool/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-claims.sh" \
+  'lane_claim_put "$1" claim "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" "${8:-plan}"' \
+  'lane_claim_put "$1" claim "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" "plan"'
+API_SAVED_FAIL="$FAIL"; FAIL=0
+api_launch_room > "$TMP_ROOT/api-claim-pool-control.out"
+API_CONTROL="$FAIL"; FAIL="$API_SAVED_FAIL"; OPEN_TERMINAL="$API_OT_SHIPPED"
+assert_eq "$API_CONTROL" 1 'control: dropping the picked pool makes the unchanged hosted claim assertion fail'
 # The refusal cause must reach the launcher even when the chooser works.
 OPEN_TERMINAL="$(mutant_scripts ctl-api-refusal/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-api-refusal/orch"

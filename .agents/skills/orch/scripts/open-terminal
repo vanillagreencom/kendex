@@ -2346,7 +2346,9 @@ tmux_window_open() { # DIR TITLE
   # identity — and never fatal: a launch that worked is not a failure because
   # its bookkeeping did not.
   if [[ -n "$LANE_ENV" && -n "$server" ]]; then
-    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET" "$HOST_KIND"; then
+    local claim_pool
+    if ! claim_pool="$(jq -r '.pool // "plan"' <<<"${LANE_PICK_RECORD:-null}")" \
+      || ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET" "$HOST_KIND" "$claim_pool"; then
       # This launch stands, but the next `auto` pick cannot see it: the batch
       # stops at the top of the next item rather than stacking blind.
       CLAIM_WRITE_FAILED=true

@@ -113,8 +113,9 @@ stage() {
         for ((i = 0; i < n; i++)); do
           PANE_SEQ=$((PANE_SEQ + 1))
           printf '%s %%%s\n' "$$" "$PANE_SEQ" >> "$RUN/panes"
-          printf '%s\t%%%s\t%s\tken-%s\t2026-09-28T00:00:00Z\t%s\n' \
-            "$$" "$PANE_SEQ" "$H/.${lane}${ACCOUNT_HARNESS:-claude}" "$PANE_SEQ" "$fleet" > "$STORE/claims/$PANE_SEQ.claim"
+          printf '%s\t%%%s\t%s\tken-%s\t2026-09-28T00:00:00Z\t%s\t\t\t%s\n' \
+            "$$" "$PANE_SEQ" "$H/.${lane}${ACCOUNT_HARNESS:-claude}" "$PANE_SEQ" "$fleet" \
+            "$([[ "${ACCOUNT_HARNESS:-claude}" == copilot || "${ACCOUNT_HARNESS:-claude}" == pi ]] && printf copilot || printf plan)" > "$STORE/claims/$PANE_SEQ.claim"
         done
         ;;
       *) echo "stage: unknown token in $item" >&2; exit 1 ;;
@@ -301,7 +302,7 @@ mutate_file "$CTRL/lib/lane-model.sh" 'then (.usage_rate_pct_per_min * 60) / (if
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=codex table \
   "control: charging the whole account rate walls the twelve-claim account|ORCH_LANE_DIRS=$H/.1codex|claim:1:12|1:22:20:12:628|pick --harness codex --model gpt-6.1-sol --json|rc=3 walled=1"
 CTRL="$(mutant_scripts mutant-sample-count lanes)" || exit 1
-mutate_file "$CTRL/lanes" 'sample_claims="$(account_claims "$2")"' 'sample_claims=1'
+mutate_file "$CTRL/lanes" 'sample_claims="$(account_claims "$2" "$1")"' 'sample_claims=1'
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=codex table \
   "control: omitting the sampled count records one instead of twelve|ORCH_LANE_DIRS=$H/.1codex|claim:1:12||list --harness codex --json|rc=0 sample_claims=1"
 

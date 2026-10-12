@@ -46,7 +46,7 @@ run_lanes() {
   # tmux server is this suite's own process, so the claim counts.
   if [[ -n "${CLAIM_ON:-}" ]]; then
     mkdir -p "$run/store/claims"
-    printf '%s\t%%5\t%s\tcop\t2026-09-28T00:00:00Z\n' "$$" "$CLAIM_ON" > "$run/store/claims/cop.claim"
+    printf '%s\t%%5\t%s\tcop\t2026-09-28T00:00:00Z\t\t\t\tcopilot\n' "$$" "$CLAIM_ON" > "$run/store/claims/cop.claim"
   fi
   OUT="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
     ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$run/fetch.log" OVERSEE_WATCH_STATE_DIR="$run/store" \
