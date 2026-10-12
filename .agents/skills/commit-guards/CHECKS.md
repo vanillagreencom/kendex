@@ -253,3 +253,16 @@ One message, from FILE or stdin (FILE absent or `-`). Every applicable rule repo
 Both lists are read from `--raw` with rename detection pinned, against the parent the commit will have: HEAD, or HEAD's parent for an amend. An amend is read off the argv of the nearest `git` ancestor in `/proc/<pid>/cmdline`, only when `GIT_INDEX_FILE` says git started this hook; where nothing is readable (every macOS host) the parent is HEAD. `--amend` counts only where no value-taking option could have consumed it (`--mess --amend`, `-am --amend`, `--status --amend` are not amends); `--no-amend` counts wherever it stands; a bare `--` stops the scan. A rebase `reword` and an `edit` stop are amends; an all-`pick` rebase and an autosquash fixup are not.
 
 Git-generated headers (Merge, Revert, Reapply, `fixup!`, `squash!`, `amend!`) skip shape and length and keep the changelog rule.
+
+## The run log
+
+Each batch run appends one row per check it runs to `commit-guards-runs.tsv` in the repository's common git directory (`git rev-parse --git-common-dir`), so a linked worktree's runs land beside the main checkout's and no row reaches a working tree. No setting turns it on and nothing leaves the machine. A row is six tab-separated fields:
+
+1. The start: whole epoch seconds when the check started.
+2. The check's name.
+3. The batch scope: `staged`, `all`, `base` or `against`.
+4. The outcome: `clean` for exit 0, `violations` for exit 1, `incomplete` for any other exit.
+5. The wall time in seconds to three decimals, or `unmeasured` where the clock could not be read. The clock is GNU `date`, else perl's `Time::HiRes`, else whole seconds.
+6. The commit: HEAD when the run started, `unborn` before the first commit, so the parent of the commit being made under `--staged`. A range batch names its range on byte-ceiling's dots: `REF...HEAD` under `--base REF`, `REF..HEAD` under `--against REF`.
+
+A check run by name, a withheld check and a package-incomplete check write no row. A log that cannot be appended prints `commit-guards: run-log-unwritten=<path>` and the verdict stands. The file only grows; deleting it starts a new log.

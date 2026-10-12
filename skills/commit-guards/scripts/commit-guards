@@ -356,6 +356,27 @@ if [ "$SKIP_UNSCOPED" -eq 1 ]; then
   esac
 fi
 
+# The run log, ../CHECKS.md § The run log. Bash 3.2 has no subsecond clock
+# and BSD date no %N, so perl's Time::HiRes stands in where GNU date cannot
+# answer, and a host with neither records whole seconds.
+clock() { # -> seconds since the epoch on stdout
+  local now
+  now="$(date +%s.%N 2>/dev/null)" || now=""
+  case "$now" in
+    "" | *[!0-9.]*) perl -MTime::HiRes=time -e 'printf "%.6f", time' 2>/dev/null || date +%s ;;
+    *) printf '%s' "$now" ;;
+  esac
+}
+RUN_HEAD="$(git rev-parse -q --verify HEAD)" || RUN_HEAD=unborn
+case "$SCOPE_MODE" in
+  base) RUN_TARGET="$BASE_REF...$RUN_HEAD" ;;
+  against) RUN_TARGET="$BASE_REF..$RUN_HEAD" ;;
+  *) RUN_TARGET="$RUN_HEAD" ;;
+esac
+RUN_TARGET="$(gg_scrubbed "$RUN_TARGET")" || exit 2
+RUN_TARGET="${RUN_TARGET//$GG_TAB/?}"
+RUN_ROWS=""
+
 had_violations=0
 had_errors=0
 for c in $CHECKS; do
@@ -364,16 +385,36 @@ for c in $CHECKS; do
   [ "${#SCOPE[@]}" -eq 0 ] || scope_desc=" ${SCOPE[*]}"
   gg_message step "$c$scope_desc" "Run the configured check."
   check_status=0
+  started="$(clock)" || started=""
   "$SCRIPT_DIR/$c" ${SCOPE[@]+"${SCOPE[@]}"} || check_status=$?
+  ended="$(clock)" || ended=""
   case "$check_status" in
-    0) ;;
-    1) had_violations=1 ;;
+    0) outcome=clean ;;
+    1)
+      had_violations=1
+      outcome=violations
+      ;;
     *)
       had_errors=1
+      outcome=incomplete
       gg_message incomplete "$c:$check_status" "The check did not complete."
       ;;
   esac
+  RUN_ROWS="$RUN_ROWS$started$GG_TAB$c$GG_TAB$SCOPE_MODE$GG_TAB$outcome$GG_TAB$ended$GG_TAB$RUN_TARGET$GG_NL"
 done
+
+# Under the common git directory, so a linked worktree's runs land beside the
+# main checkout's and no row reaches a working tree. A log that cannot be
+# written is named and changes no verdict.
+RUN_LOG=""
+gg_git_path RUN_LOG . rev-parse --git-common-dir || RUN_LOG=""
+if [ -z "$RUN_LOG" ]; then
+  gg_message run-log-unwritten git-common-dir "The git directory could not be resolved, so no run row was written; the verdict below stands."
+elif ! printf '%s' "$RUN_ROWS" | LC_ALL=C awk 'BEGIN { FS = OFS = "\t" }
+  { $5 = ($1 == "" || $5 == "") ? "unmeasured" : sprintf("%.3f", $5 - $1); sub(/\..*/, "", $1); print }' \
+  2>/dev/null >>"$RUN_LOG/commit-guards-runs.tsv"; then
+  gg_message run-log-unwritten "$(gg_shown "$RUN_LOG/commit-guards-runs.tsv")" "The run log could not be appended; the verdict below stands."
+fi
 
 if [ "$had_errors" -eq 1 ]; then
   gg_message result 2 "Could not complete every check. Fix the errors above."

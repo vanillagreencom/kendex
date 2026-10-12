@@ -1,0 +1,1 @@
+- Each commit-guards batch run records one row per guard, with its outcome and how long it took, in a log under the repository's git directory.
