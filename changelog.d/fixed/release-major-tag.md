@@ -1,0 +1,1 @@
+- Publishing a stable kendex release moves its major tag, such as `v1`, to the release commit, so a consumer calling the shared refresh workflow at that tag runs the new release.
