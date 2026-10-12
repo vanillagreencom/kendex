@@ -1153,7 +1153,7 @@ if [[ "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB
   # Unset removes the real-time counter before the virtual assignment.
   unset SECONDS
   SECONDS=$((_virtual_now - WATCH_EPOCH + WATCH_SECONDS))
-  if [[ "$BASH_COMMAND" == MAIL_DUE=* && -z "${_mail_clock_paused:-}" ]]; then
+  if [[ "$BASH_COMMAND" == MAIL_DUE=* && "${OWED_MAIL_TEST:-}" != 1 && -z "${_mail_clock_paused:-}" ]]; then
     _mail_clock_paused=1
     "$STUB_REAL_SLEEP" 1
   fi
