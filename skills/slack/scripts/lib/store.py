@@ -146,6 +146,8 @@ class Thread:
     missing: bool = False
     # Per reader generation, the newest message of this thread it was delivered.
     reads: Dict[int, str] = field(default_factory=dict)
+    # Answers deliver their own text, without the earlier thread context.
+    answers: Dict[int, Set[str]] = field(default_factory=dict)
 
 
 
@@ -208,9 +210,15 @@ class State:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=str(line["id"]), kind=line["kind"])
             self.threads[thread_ts].active = max(self.threads[thread_ts].active, float(ts))
             if "generation" in line:
-                reads = self.threads[thread_ts].reads
+                thread = self.threads[thread_ts]
                 generation = int(line["generation"])
-                reads[generation] = max(reads.get(generation, ts), ts, key=float)
+                if line["kind"] == "directive":
+                    thread.reads[generation] = max(thread.reads.get(generation, ts), ts, key=float)
+                    if generation in thread.answers:
+                        thread.answers[generation] = {answer for answer in thread.answers[generation]
+                                                      if float(answer) > float(thread.reads[generation])}
+                elif line["kind"] == "answer" and float(ts) > float(thread.reads.get(generation, "0")):
+                    thread.answers.setdefault(generation, set()).add(ts)
             self.by_envelope[str(line["id"])] = thread_ts
         elif kind == "out":
             env_id = str(line["id"])
@@ -310,7 +318,10 @@ def compact(root: Path, cutoff_ts: float) -> int:
     last, every hold line but a standing one, every resume line whose end
     is older than the cutoff, and every connection line older than it; keep every open thread, and the `in` and
     `mark` lines of a directive or answer not yet marked READ, whatever its
-    age: one with no mark, which the relay marks SEEN on its next poll, and one
+    age. Keep each generation's latest context delivery and its individually
+    delivered answers beyond that mark, with their receipt marks, so an
+    old thread's later live reply does not repeat received messages.
+    An unread delivery has no mark, which the relay marks SEEN on its next poll, or one
     marked SEEN, which it swaps for READ once the overseer reads it.
     Returns the lines dropped. An `out` line and a `resume` line are judged
     by the `at` they journal. A resume's skipped ids stay carried while its
@@ -327,6 +338,10 @@ def compact(root: Path, cutoff_ts: float) -> int:
     last_hold = max((i for i, line in enumerate(lines) if line.get("t") in ("hold", "resume")), default=-1)
     live = {ts for ts, thread in state.threads.items()
             if thread.open or max(float(ts), float(thread.seen), thread.active) >= cutoff_ts}
+    # Live replies have no age limit. Keep only the context marks and the
+    # answers beyond them, with their receipt marks, after history expires.
+    received = {ts for thread in state.threads.values() for ts in thread.reads.values()}
+    received.update(ts for thread in state.threads.values() for answers in thread.answers.values() for ts in answers)
     kept: List[str] = []
     dropped = 0
     for index, (raw, line) in enumerate(zip(raws, lines)):
@@ -334,6 +349,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
         old = "ts" in line and _ts_float(str(line["ts"])) < cutoff_ts
         aged = (kind in ("out", "resume") or kind in CONNECTION_KINDS) and parse_at(str(line["at"])) < cutoff_ts
         pending = kind in ("in", "mark") and str(line["ts"]) in state.delivered and state.marks.get(str(line["ts"])) != READ
+        retained = kind in ("in", "mark") and str(line["ts"]) in received
         drop = False
         if kind == "seen":
             drop = index != last_seen
@@ -344,7 +360,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
         elif kind in CONNECTION_KINDS:
             drop = aged
         elif kind == "in" and old:
-            drop = line["kind"] == "ignored" or not (pending or str(line.get("thread", "")) in live)
+            drop = line["kind"] == "ignored" or not (pending or retained or str(line.get("thread", "")) in live)
         elif kind == "out" and line["state"] == "inflight":
             # A later outcome owns retention; its redundant pre-send line
             # must not become unknown when that outcome leaves the journal.
@@ -361,7 +377,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
         elif kind in ("bound", "thread", "parent") and old:
             drop = str(line["ts"]) not in live
         elif kind == "mark" and old:
-            drop = not pending
+            drop = not (pending or retained)
         if drop:
             dropped += 1
         else:

@@ -81,11 +81,13 @@ post      one message to the bound channel, or --channel for another, its
           ts. Text and file bytes are refused when they match the
           secret-value pattern
 thread    print the requested thread as plain text, oldest first, each
-          message headed by its author (owner or app) and UTC time; TS names
+          message headed by its author (owner or app, or another person's
+          Slack user id) and UTC time; TS names
           its root or a reply; --limit caps the messages printed, otherwise
           all cursor pages are read. No thread is read by default
 compact   drop journal lines resolved or ignored longer ago than
-          SLACK_THREAD_DAYS; open questions and positions stay. The relay runs
+          SLACK_THREAD_DAYS; open questions, positions and reader delivery
+          marks stay. The relay runs
           it once a day; a root whose relay is running is refused
 install   write the systemd user unit for `listen` over the roots given, then
           daemon-reload, enable and restart it, so a running relay takes the

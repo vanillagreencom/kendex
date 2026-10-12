@@ -106,4 +106,127 @@ production
 truncated-page-control
 ROWS
 
+# An old read thread keeps only the delivery rows needed by its generations.
+# Live replies still arrive after its history and parent cache are pruned.
+while read -r mode; do
+  ROOT="$(sk_new_root "compact-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  RECORD="$ROOT/tmp/workflow-state-oversee.json"
+  read -r OLD O1 O2 O3 <<< "$(python3 -c 'import time; t = time.time() - 9 * 86400; print(" ".join("%.6f" % (t + n) for n in range(4)))')"
+  ROOT_TS="$(sk_inject "$CH" UBOT 'Old app topic.' '' "\"ts\":\"$OLD\",\"bot_id\":\"B01\"")"
+  R1="$(sk_inject "$CH" U001 'First old reply.' "$ROOT_TS" "\"ts\":\"$O1\"")"
+  sk_event "$ROOT" "$CH" "$R1"
+  assert_eq "$RC" 0 "$mode: the first old reply reaches the mailbox"
+  R2="$(sk_inject "$CH" U001 'Second old reply.' "$ROOT_TS" "\"ts\":\"$O2\"")"
+  sk_event "$ROOT" "$CH" "$R2"
+  generation 1
+  R3="$(sk_inject "$CH" U001 'Successor old reply.' "$ROOT_TS" "\"ts\":\"$O3\"")"
+  sk_event "$ROOT" "$CH" "$R3"
+  sk_lm "$ROOT" inbox --item overseer > "$SK_TMP/old-inbox" || exit 1
+  sk_poll "$ROOT"
+  assert_eq "$RC=$(sk_reactions "$CH" "$R2")" '0=white_check_mark' "$mode: the old delivered reply is read before compaction"
+  case "$mode" in
+    retention-control) sk_mutant retention store.py 'retained = kind in \("in", "mark"\) and str\(line\["ts"\]\) in received' 'retained = False' ;;
+    receipt-control) sk_mutant retained-receipt store.py 'drop = not \(pending or retained\)' 'drop = not pending' ;;
+  esac
+  sk_run -- compact --root "$ROOT"
+  assert_eq "$RC" 0 "$mode: old history compacts"
+  assert_eq "$(jq -sr --arg ts "$R1" '[.[] | select((.t == "in" or .t == "mark") and .ts == $ts)] | length' "$(sk_journal "$ROOT")")" \
+    0 "$mode: compaction removes the superseded old delivery and its receipt marks"
+  assert_eq "$(jq -sr '[.[] | select(.t == "parent" or .t == "thread")] | length' "$(sk_journal "$ROOT")")" \
+    0 "$mode: compaction removes expired parent caches and thread scan positions"
+  sk_ctl /_test/calls-reset >/dev/null
+  sk_poll "$ROOT"
+  GOT="$(sk_state '[.calls[] | select(. == "reactions.add" or . == "reactions.remove")] | length')"
+  if [ "$mode" = receipt-control ]; then
+    sk_assert_red "$GOT" 0 'control: dropping the retained read receipt repeats reaction writes after compaction'
+  else
+    assert_eq "$RC=$GOT" '0=0' "$mode: compacted read deliveries cause no new reaction writes"
+  fi
+  generation 0
+  reply 'Continue the old topic.' "$ROOT_TS"; R4="$REPLY"
+  GOT="$(carried "$R4")"
+  WANT="$(pairs "owner $R3" "owner $R4")"
+  if [ "$mode" = retention-control ]; then
+    sk_assert_red "$GOT" "$WANT" 'control: dropping generation marks repeats old context in a later live reply'
+  else
+    assert_eq "$RC=$GOT" "0=$WANT" "$mode: the original generation receives only its unseen old reply and new reply after compaction"
+    generation 1
+    reply 'The successor continues.' "$ROOT_TS"
+    assert_eq "$RC=$(carried "$REPLY")" "0=$(pairs "owner $R4" "owner $REPLY")" \
+      "$mode: the successor delivery mark also survives old-thread compaction"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+production
+retention-control
+receipt-control
+ROWS
+
+# Answers deliver only themselves. A successor must still receive earlier
+# app messages and an answer delivered to the previous generation.
+while read -r mode; do
+  ROOT="$(sk_new_root "answer-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  RECORD="$ROOT/tmp/workflow-state-oversee.json"
+  sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "question-$mode" 'Proceed with this task?')" --options yes,no --recommend no > "$SK_TMP/ask-receipt" || exit 1
+  ASK="$(jq -r 'select(.kind == "ask") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
+  sk_poll "$ROOT"
+  ROOT_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed with this task?\")) | .ts")"
+  BEFORE="$(post 'Earlier unseen progress.' "$ROOT_TS")"
+  reply yes "$ROOT_TS"; FIRST="$REPLY"
+  sk_lm "$ROOT" inbox --item overseer > "$SK_TMP/first-answer" || exit 1
+  assert_eq "$(jq -sc '[.[] | {kind,text}]' "$SK_TMP/first-answer")" '[{"kind":"answer","text":"yes"}]' \
+    "$mode: the first generation reads the real mailbox answer"
+  generation 1
+  BETWEEN="$(post 'More unseen progress.' "$ROOT_TS")"
+  case "$mode" in
+    answer-watermark-control) sk_mutant answer-watermark store.py 'if line\["kind"\] == "directive":' 'if line["kind"] in ("directive", "answer"):' ;;
+  esac
+  reply no "$ROOT_TS"; SECOND="$REPLY"
+  reply yes "$ROOT_TS"; THIRD="$REPLY"
+  sk_lm "$ROOT" inbox --item overseer > "$SK_TMP/next-answers" || exit 1
+  assert_eq "$(jq -sc '[.[] | {kind,text}]' "$SK_TMP/next-answers")" '[{"kind":"answer","text":"no"},{"kind":"answer","text":"yes"}]' \
+    "$mode: the successor reads both accepted answers through the real inbox"
+  sk_lm "$ROOT" resolve --item overseer --id "$ASK" >/dev/null || exit 1
+  sk_poll "$ROOT"
+  assert_eq "$RC=$(sk_reactions "$CH" "$THIRD")" '0=white_check_mark' "$mode: resolution and answer receipts settle before compaction"
+  case "$mode" in
+    answer-pruning-control) sk_mutant answer-pruning store.py 'retained = kind in \("in", "mark"\) and str\(line\["ts"\]\) in received' 'retained = False' ;;
+    repeat-answer-control) sk_mutant repeat-answer relay.py ' and str\(message\["ts"\]\) not in answers:' ':' ;;
+  esac
+  # The production compactor accepts a cutoff. Advance that cutoff past
+  # these settled deliveries without waiting for their retention horizon.
+  python3 - "${SK_BIN%/*}/lib" "$ROOT" "$THIRD" <<'PY' || exit 1
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from store import compact
+compact(Path(sys.argv[2]), float(sys.argv[3]) + 1)
+PY
+  reply 'Continue after resolution.' "$ROOT_TS"
+  GOT="$(carried "$REPLY")"
+  WANT="$(pairs "app $ROOT_TS" "app $BEFORE" "owner $FIRST" "app $BETWEEN" "owner $REPLY")"
+  if [ "$mode" = production ]; then
+    assert_eq "$RC=$GOT" "0=$WANT" 'after answer resolution and compaction, the successor receives all unseen earlier messages but no accepted answer twice'
+    reply 'Continue again.' "$ROOT_TS"
+    assert_eq "$(carried "$REPLY")" "$(pairs "owner $REPLY")" 'a later directive repeats neither earlier context nor accepted answers'
+    generation 2
+    reply 'A new reader takes over.' "$ROOT_TS"
+    assert_has "$(carried "$REPLY")" "$SECOND" 'an answer delivered to the previous generation reaches a new generation'
+  else
+    sk_assert_red "$GOT" "$WANT" "$mode: losing exact answer delivery knowledge or advancing the context mark breaks complete unseen context"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+production
+repeat-answer-control
+answer-watermark-control
+answer-pruning-control
+ROWS
+
 sk_summary

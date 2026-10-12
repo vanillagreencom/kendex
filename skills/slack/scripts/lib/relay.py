@@ -463,11 +463,12 @@ class RootRelay:
                        page: Optional[Page] = None) -> Dict:
         """The parent pointer of the reply at `ts`, its `thread` every message
         up to that reply, both sides, which `generation` has not been
-        delivered, oldest first: the whole thread for a generation with no
-        mark in it. One read supplies both, a catch-up's own `page` where it
+        delivered, oldest first. Individually delivered answers do not mark
+        earlier context as received. One read supplies both, a catch-up's own `page` where it
         reaches back to the mark; the text is never journaled."""
         thread = self.state.threads.get(thread_ts)
         mark = thread.reads.get(generation) if thread is not None else None
+        answers = thread.answers.get(generation, set()) if thread is not None else set()
         if page is not None and (page[0] is None or mark is not None and float(mark) >= float(page[0])):
             messages = page[1]
         else:
@@ -480,7 +481,7 @@ class RootRelay:
         unseen = []
         for message in messages:
             author = author_of(message, self.binding.owner_ids.values(), bot_user)
-            if author is not None and float(mark or 0) < float(message["ts"]) <= float(ts):
+            if author is not None and float(mark or 0) < float(message["ts"]) <= float(ts) and str(message["ts"]) not in answers:
                 unseen.append({"ts": str(message["ts"]), "author": author,
                                "text": plain(str(message.get("text") or "").strip(), self.user_name)})
         return dict(self.parent_context(thread_ts, root, retries), thread=unseen)
@@ -608,19 +609,20 @@ class RootRelay:
         text = "\n".join(lines)
         delivery = f"{self.channel}:{ts}"
         thread = self.state.threads.get(thread_ts) if thread_ts != ts else None
+        generation = reader_generation(self.path)
         # The mailbox judges whether an ask is still open; the journal's own
         # flag only decides how often the thread is read.
         if thread is not None and thread.kind == "ask":
             outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
             if outcome == "answered":
-                self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts)
+                self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts,
+                                    generation=generation)
                 notice("delivered", f"ts={ts} id={answer_id} path={path}")
                 self.mark_seen([ts])
                 return
         # A directive's `in` line marks the thread up to it as delivered to
-        # this reader generation. An answer carries no thread, so it marks
-        # nothing and the ask thread before it still reaches a later reply.
-        generation = reader_generation(self.path)
+        # this reader generation. An answer marks only its own timestamp,
+        # so earlier unseen messages still reach a later directive.
         parent = None
         if thread_ts != ts:
             parent = self.thread_context(thread_ts, ts, generation, bot_user,
