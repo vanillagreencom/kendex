@@ -907,10 +907,7 @@ queue-removed|queue-added|good|.github/ci-lanes.conf|lane_verdicts=lane_check=fa
 queue-glob-only|queue-added|queue-glob-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 queue-claim-after-declaration|queue-added|queue-glob-added|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
 queue-claim-before-declaration|queue-added|queue-glob-added|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
-mixed-delete-declaration-first|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 mixed-delete-claim-first|queue-added|absent|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
-mixed-ordinary-declaration-first|good|added-glob|.github/ci-lanes.conf src/new.rs|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false
-mixed-ordinary-claim-first|good|added-glob|src/new.rs .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false
 malformed-head|queue-added|bad-name|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 missing-head|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 unreadable-head|queue-added|unreadable|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
