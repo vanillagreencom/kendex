@@ -39,6 +39,7 @@ import {
 	QolEditor,
 } from "./qol/editor.js";
 import { runHandoff } from "./qol/handoff.js";
+import { registerGatewayPrivacy } from "./qol/gateway-privacy.js";
 import { imageContentsForPaths, resolveSubmittedImagePaths } from "./qol/images.js";
 import {
 	clearTmuxWindowMark,
@@ -109,6 +110,7 @@ export default function qol(pi: ExtensionAPI): void {
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 	if (!settingBoolean("enabled", true)) return;
+	registerGatewayPrivacy(pi);
 
 	installThinkingTimerPatch();
 	const thinkingTimerStore: ThinkingTimerStore = {

@@ -34,6 +34,15 @@
           "requiresReload": true
         },
         {
+          "key": "gatewayPrivacy.enabled",
+          "label": "Require gateway privacy controls",
+          "description": "Require zero data retention and no prompt training for OpenRouter and Vercel AI Gateway requests. Overrides weaker request privacy values and keeps other routing options. Requests fail when the gateway has no compliant provider.",
+          "type": "boolean",
+          "default": false,
+          "category": "Privacy",
+          "apply": "live"
+        },
+        {
           "key": "glyphStyle",
           "label": "Glyph style",
           "description": "Glyphs for kendex-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",

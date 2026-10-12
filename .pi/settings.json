@@ -1,0 +1,11 @@
+{
+  "kendex": {
+    "extensionManager": {
+      "config": {
+        "@vanillagreen/pi-qol": {
+          "gatewayPrivacy.enabled": true
+        }
+      }
+    }
+  }
+}
