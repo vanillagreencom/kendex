@@ -237,6 +237,24 @@ err="$("$WS" --state-dir "$sd" update KEN-1 --arg loc "$LOC" 2>&1 >/dev/null)" &
   && pass "bindings with no expression are refused" \
   || fail "bindings with no expression are refused" "rc=$rc err=$err"
 
+# --- the filter's output must be exactly one JSON value ---------------------
+# A filter yielding a stream or nothing is refused under its count, and the
+# state file keeps its bytes. Row: count|filter.
+sdv="$TMP_ROOT/state-value-count"
+"$WS" --state-dir "$sdv" init KEN-6 --worktree "$REPO_ROOT" --branch ken-6 >/dev/null
+sfv="$sdv/workflow-state-KEN-6.json"
+cp "$sfv" "$TMP_ROOT/value-count-before.json"
+while IFS='|' read -r want filter; do
+  err="$("$WS" --state-dir "$sdv" update KEN-6 "$filter" 2>&1 >/dev/null)" && rc=0 || rc=$?
+  [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: value-count count=$want"* ]] \
+    && cmp -s "$sfv" "$TMP_ROOT/value-count-before.json" \
+    && pass "a filter yielding $want values is refused and the state file is unchanged" \
+    || fail "a filter yielding $want values is refused and the state file is unchanged" "rc=$rc err=$err"
+done <<'ROWS'
+2|., .
+0|empty
+ROWS
+
 # A bare expression with no bindings still works — the old call shape.
 "$WS" --state-dir "$sd" update KEN-1 '.cycles = 4' >/dev/null
 cycles="$("$WS" --state-dir "$sd" get KEN-1 .cycles)"
@@ -264,6 +282,18 @@ for scalar in false null; do
 done
 [[ "$refused" -eq 2 ]] && pass "the -e form refuses both false and null, which this fix accepts" \
   || fail "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
+
+# Without the count check, only parsing gates the write, as `jq empty` did: a
+# filter yielding two values replaces the state with two root objects.
+STREAM="$(mutant_scripts value-count workflow-state)/workflow-state" || exit 1
+mutate_file "$STREAM" 'if [[ "$count" != 1 ]]; then' 'if false; then'
+sds="$TMP_ROOT/state-stream"
+"$STREAM" --state-dir "$sds" init KEN-7 --worktree "$REPO_ROOT" --branch ken-7 >/dev/null
+"$STREAM" --state-dir "$sds" update KEN-7 '., .' >/dev/null 2>&1 && rc=0 || rc=$?
+roots="$(jq -s length "$sds/workflow-state-KEN-7.json")"
+[[ "$rc" -eq 0 ]] && [[ "$roots" == "2" ]] \
+  && pass "without the count check, a two-value filter writes two root objects" \
+  || fail "without the count check, a two-value filter writes two root objects" "rc=$rc roots=$roots"
 
 # The form review-pr documented before this change pasted the location into a
 # single-quoted shell word. The apostrophe closes that word and the stray

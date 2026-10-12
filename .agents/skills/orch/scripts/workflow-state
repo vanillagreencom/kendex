@@ -30,6 +30,10 @@ state_message() {
       printf 'workflow-state: invalid-json path=%s\n' "$tmp_file"
       printf '%s\n' "Error: jq produced invalid JSON"
       ;;
+    value-count)
+      printf 'workflow-state: value-count count=%s\n' "$count"
+      printf '%s\n' "Error: jq expression must produce exactly one JSON value"
+      ;;
     unknown-option)
       printf 'workflow-state: unknown-option arg1=%s\n' "$1"
       printf '%s\n' "Unknown option: $1"
@@ -329,9 +333,16 @@ atomic_update() {
             exit 1
         fi
 
-        # Validate output is valid JSON
-        if ! jq empty "$tmp_file" 2>/dev/null; then
+        # Exactly one JSON value: `jq empty` passes a stream of several, or
+        # none, and either would replace the state file.
+        local count
+        if ! count=$(jq -s length "$tmp_file" 2>/dev/null); then
             state_message invalid-json "$@" >&2
+            rm -f "$tmp_file"
+            exit 1
+        fi
+        if [[ "$count" != 1 ]]; then
+            state_message value-count "$@" >&2
             rm -f "$tmp_file"
             exit 1
         fi
