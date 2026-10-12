@@ -159,9 +159,16 @@ if ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_process_env_readable ); th
 wrong-account|$SCRIPTS_DIR/open-terminal|{"rc":1,"account":".claude","pane":false,"record":"none"}
 control-unchecked|$CONTROL/open-terminal|{"rc":0,"account":".claude","pane":true,"record":"running"}
 ROWS
+  RAW_CONTROL="$(mutant_scripts raw-harness open-terminal)"
+  orch_fixture_shared_libs "${RAW_CONTROL%/scripts}"
+  mutate_file "$RAW_CONTROL/open-terminal" \
+    'launch_form="$(lane_launch_form "$cmd" "$LAUNCH_HARNESS" "$launch_home" "$CMD_TEMPLATE")"' \
+    'launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")"'
   while IFS='|' read -r harness account; do
     run_case "auto-$harness-wrong" "$SCRIPTS_DIR/open-terminal" auto-wrong \
       "{\"rc\":1,\"account\":\"$account\",\"pane\":false,\"record\":\"none\"}" "$harness"
+    run_case "control-auto-$harness-unchecked" "$RAW_CONTROL/open-terminal" auto-wrong \
+      "{\"rc\":0,\"account\":\"$account\",\"pane\":true,\"record\":\"running\"}" "$harness"
   done <<'ROWS'
 claude|.claude
 codex|.codex

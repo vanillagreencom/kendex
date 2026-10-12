@@ -2938,10 +2938,10 @@ launch_finish() {
     # A launch with none has no account to check and keeps the `unchecked` the
     # check reads as skip, whatever prefix the line below carries.
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
-    cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
+    cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form" "$CMD_TEMPLATE")" || return 1
   else
     launch_form="$(lane_launch_form "$cmd" "$HARNESS" "" "$CMD_TEMPLATE")" || return 1
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" "$launch_form")" || return 1
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" "$launch_form" "$CMD_TEMPLATE")" || return 1
   fi
   if [[ "$LANE_HOST" == local ]]; then
     cmd="export KENDEX_USER_EMAIL='' && $cmd"

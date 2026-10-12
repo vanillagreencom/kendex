@@ -1253,9 +1253,9 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
   return 0
 }
 
-# The ONE decision about how a resolved lane reaches the launched harness, made
-# once per launch and read both by the launch line and by the account check that
-# follows the pane open. Prints one of:
+# How a resolved account is delivered and observed. Rendering caller shell
+# text is lane_launch_line's decision and does not enable account checks.
+# Prints one of:
 #   launcher:<path>  launch through that file, with no env prefix
 #   prefix           launch under the env prefix, and check the pane
 #   custom           keep the caller's command and check its account;
@@ -1311,11 +1311,11 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # on another machine. It keeps its caller's form and has no local account read.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
-  if [[ -n "$template" ]]; then printf 'custom\n'; return; fi
   if [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi
+  if [[ -n "$template" ]]; then printf 'custom\n'; return; fi
   if [[ -z "$dir" ]]; then printf 'unchecked\n'; return; fi
   name="$(basename -- "$dir")" || { printf 'prefix\n'; return; }
   name="${name#.}"
@@ -1423,7 +1423,8 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
   else LANE_LAUNCH_SHELL_ARGV+=(-l); fi
 }
 
-# The complete command under the form lane_launch_form picked for it. Empty
+# The complete command under the form lane_launch_form picked for it. TEMPLATE
+# retains caller shell text independently of whether its account is checked. Empty
 # account words keep the caller's account, or the provider's on a host. Every
 # line that opens on `env` clears LANE_LAUNCH_SCRUB there. A custom command
 # that takes no env words is the caller's shell text and stays as written: it
@@ -1450,8 +1451,9 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
 # because a launcher that exports COPILOT_HOME for its own name exports
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
-lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
+lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE]
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words scrub
+  [[ -z "${6:-}" ]] || form=custom
   printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
   scrub="env$scrub"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1

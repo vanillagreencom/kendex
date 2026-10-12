@@ -188,6 +188,26 @@ run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:hi
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "pi's level named on the model value inside the --cmd template names the effort too"
+assert_eq "$(counted '^capture-pane ' "$RUN/tmux.log")" 0 \
+  'a custom Pi lane starts without waiting for an account readiness screen'
+
+# Rendering caller shell text must not enable account observation on Pi.
+PI_ACCOUNT_CONTROL="$(mutant_scripts pi-account-control lib/lane-launch.sh)" || exit 1
+orch_fixture_shared_libs "${PI_ACCOUNT_CONTROL%/scripts}"
+mutate_file "$PI_ACCOUNT_CONTROL/lib/lane-launch.sh" \
+  'if [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then' \
+  'if [[ -z "$template" && ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then'
+PI_ACCOUNT_LIVE_OT="$OPEN_TERMINAL"
+OPEN_TERMINAL="$PI_ACCOUNT_CONTROL/open-terminal"
+run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:high $QUESTION_OFF_ALL" KEN-96
+PI_ACCOUNT_SAVED_FAIL="$FAIL"
+FAIL=0
+assert_eq "$(counted '^capture-pane ' "$RUN/tmux.log")" 0 \
+  'control: treating a Pi template as an observed account waits for its screen' > "$TMP_ROOT/pi-account-control.out"
+PI_ACCOUNT_CONTROL_FAIL="$FAIL"
+FAIL="$PI_ACCOUNT_SAVED_FAIL"
+assert_eq "$PI_ACCOUNT_CONTROL_FAIL" 1 'control: the Pi readiness regression detects the added account check'
+OPEN_TERMINAL="$PI_ACCOUNT_LIVE_OT"
 
 echo "=== a named Copilot CLI lane uses its pool reading ==="
 mkdir -p "$H/.namedcopilot/session-state"
