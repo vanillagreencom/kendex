@@ -144,7 +144,7 @@ run() { # EDIT [ARGS...]
 }
 
 echo "=== the stamps and wall times of a merged PR ==="
-WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","merge_decision":null,"stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
+WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","merge_decision":null,"stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_head_spans":[{"start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z"},{"start":"2026-09-20T10:21:00Z","end":"2026-09-20T10:40:00Z"},{"start":"2026-09-20T10:22:00Z","end":"2026-09-20T10:45:00Z"}],"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
 assert_eq "$(run .) $(cat "$TMP_ROOT/stdout")" "rc=0 $WANT" \
   "the force-pushed-over head's gate is the first pass, the merge group's runs stay out of the head's CI, the author's own review is no bot's, and the pushes are the branch log's for this life of the name"
 
@@ -365,11 +365,27 @@ a later all-skipped run keeps the substantive run current@$(extra_run "$HEAD_PAT
 a later run that failed leaves CI never green@$(extra_run "$HEAD_PATH" 9999 pull_request FAILURE 10:46 10:47)@[null,1500,900]
 ROWS
 
+echo "=== every check run on the head is a span, a superseded run's included ==="
+# oversee-cycle splits the gap before CI green by these spans, so a span
+# from a run the current one superseded is still time a check ran.
+span_rows() {
+  local label edit want
+  while IFS='@' read -r label edit want; do
+    [[ -n "$label" ]] || continue
+    run "$edit" >/dev/null
+    assert_eq "$(jq -c '[.ci_head_secs, (.ci_head_spans | map(.start[11:16] + "-" + .end[11:16]) | join(" "))]' "$TMP_ROOT/stdout")" "$want" "spans: $label"
+  done <<SPANS
+a superseded run keeps its span beside the current run's@$STALE_HEAD@[1500,"10:05-10:06 10:20-10:30 10:21-10:40 10:22-10:45"]
+a check still running has no span@$HEAD_PATH.checkSuites.nodes[1].checkRuns.nodes[0] |= (.status = "IN_PROGRESS" | .conclusion = null | .completedAt = null)@[1200,"10:20-10:30 10:21-10:40"]
+SPANS
+}
+span_rows
+
 echo "=== review check runs do not extend CI ==="
 COPILOT_CHECK="$HEAD_PATH.checkSuites.nodes += [suite(null; [run(\"copilot-pull-request-reviewer\"; \"10:46\"; \"11:10\")])]"
 run "$COPILOT_CHECK" >/dev/null
-assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs]' "$TMP_ROOT/stdout")" \
-  '["2026-09-20T10:45:00Z",1500,1500]' "a later Copilot review check does not extend either CI span"
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs, (.ci_head_spans | map(.end) | max)]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:45:00Z",1500,1500,"2026-09-20T10:45:00Z"]' "a later Copilot review check does not extend either CI span or the check spans"
 EMPTY_RUN="$HEAD_PATH.checkSuites.nodes += [suite(\"push\"; [])]"
 run "$EMPTY_RUN" >/dev/null
 assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" 'null' "a workflow run with no jobs yet cannot prove a clean span"
@@ -657,8 +673,8 @@ PR_SELECTOR='pullRequest(number'
 # changed decision is removed from a private source copy.
 mutate '| select(is_review_check | not)' '| select(true)'
 run "$COPILOT_CHECK" >/dev/null
-assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs]' "$TMP_ROOT/stdout")" \
-  '["2026-09-20T11:10:00Z",3000,3000]' "control: counting the review check extends both CI spans"
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_head_clean_secs, (.ci_head_spans | map(.end) | max)]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T11:10:00Z",3000,3000,"2026-09-20T11:10:00Z"]' "control: counting the review check extends both CI spans and the check spans"
 
 mutate 'clean_checks=$(jq -c '\''._checks.head'\'' <<<"$result" | latest_attempt_checks "$owner" "$name")' \
   'clean_checks=$(jq -c '\''._checks.head'\'' <<<"$result")'
@@ -734,6 +750,16 @@ mutate "head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run
 run "$STALE_HEAD" >/dev/null
 assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs]' "$TMP_ROOT/stdout")" '[null,2400]' \
   "control: without scope_current_run the superseded failed run is read and timed"
+
+# The spans read from the scoped checks lose the superseded run.
+mutate '._checks.head as $runs' '$head as $runs'
+if (FAIL=0; span_rows; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/spans-control.out"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  spans read from the scoped checks did not redden the suite\n'
+else
+  assert_eq "$(grep -c '^  FAIL  spans: a superseded run keeps its span' "$TMP_ROOT/spans-control.out")" '1' \
+    'control: spans read from the scoped checks drop the superseded run'
+fi
 
 # The rounds without the author filter: the author's own thread reply on
 # the new head ends its review round.

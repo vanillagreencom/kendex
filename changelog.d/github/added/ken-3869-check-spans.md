@@ -1,0 +1,1 @@
+- pr-timeline prints `ci_head_spans`: the start and end of each check run on the final head, including a superseded workflow run's.

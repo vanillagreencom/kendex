@@ -63,6 +63,10 @@ Output, one JSON object on stdout:
                          final head,
   "ci_head_clean_secs":  the same over each workflow run's latest attempt
                          on that head; null unless every attempt passed,
+  "ci_head_spans":       each check run on the final head with a start and
+                         an end, {start, end}, ascending by start: the
+                         latest run per name in every check suite on that
+                         head, a superseded workflow run's included,
   "ci_merge_group_secs": the same over the merge commit's merge_group runs,
   "open_secs":           created to merged,
   "bot_reviews":         reviews submitted by Bot accounts other than the
@@ -337,6 +341,7 @@ def rounds($reviews; $pushed):
       stamps: $stamps,
       ci_head_secs: null,
       ci_head_clean_secs: null,
+      ci_head_spans: null,
       ci_merge_group_secs: null,
       _checks: {head: rollup($head_suites), group: rollup($group_suites),
                 pending_run: any($head_suites[]; .workflowRun != null and (.checkRuns.nodes | length) == 0)},
@@ -437,9 +442,11 @@ pr_timeline() {
             else (map(.completedAt | fromdate) | max) - (map(.startedAt | fromdate) | min) end;
         def green($r): if ($r | length) > 0 and all($r[]; bucket | IN("pass", "skipping"))
           then ($r | map(.completedAt) | max) else null end;
-        ._checks.pending_run as $pending_run | del(._checks) | .stamps.ci_green = green($head)
+        ._checks.pending_run as $pending_run | ._checks.head as $runs | del(._checks) | .stamps.ci_green = green($head)
         | .ci_head_secs = span($head)
         | .ci_head_clean_secs = (if ($pending_run | not) and green($clean) != null then span($clean) else null end)
+        | .ci_head_spans = ([$runs[] | select(.startedAt != null and .completedAt != null)
+            | {start: .startedAt, end: .completedAt}] | sort_by(.start))
         | .ci_merge_group_secs = span($group)' <<<"$result") \
         || { github_error 'pr-timeline: unreadable checks'; exit 1; }
 

@@ -128,13 +128,16 @@
 #             PR opened in
 #   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
 #             paused winning a tie, where the phase is gate_green. Where the
-#             phase is ci_green, the larger part of its gap split at
+#             phase is ci_green, the largest part of its gap split at
 #             pr-timeline's last_push: work, the rounds pushed before the
-#             final head, or ci, the final head's checks after its push minus
-#             clean CI seconds, floored at 0;
-#             work wins a tie, a push before the gap opened leaves it all
-#             ci, and the cause is null where last_push is null or after
-#             ci_green. On a merged miss at every tier, compare the raw
+#             final head; ci, the time after that push in which a check run
+#             in pr-timeline's ci_head_spans was in progress, minus clean CI
+#             seconds, floored at 0; or wait, the rest of the time after the
+#             push, when no check on the final head ran.
+#             Work wins a tie, then wait: ci only where it is the larger
+#             part. A push before the gap opened leaves the gap no work,
+#             and the cause is null where last_push or ci_head_spans is
+#             null or last_push is after ci_green. On a merged miss at every tier, compare the raw
 #             merge gap's paused seconds, merge-group CI seconds and the
 #             remaining wait. Paused wins a tie, then merge_group. Where
 #             the remaining wait wins, use the recorded merge decision's
@@ -567,14 +570,15 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   # covers is paused, any other is the wait the latest push or bot review at
   # or before it opened, bot_wait where neither came yet. A push and a bot
   # review in one second read the push first.
-  # The same pause union measures gate holds and merge holds. This local
-  # calculation adds no merge policy or new lane record.
-  def paused_seconds($from; $to):
-    ($pauses | map({a: ([.from, $from] | max), b: ([.to // $to, $to] | min)})
+  # The same union measures gate holds, merge holds and the time a check
+  # ran. This local calculation adds no merge policy or new lane record.
+  def covered_seconds($spans; $from; $to):
+    ($spans | map({a: ([.from, $from] | max), b: ([.to // $to, $to] | min)})
      | map(select(.b > .a)) | sort_by(.a)
      | reduce .[] as $p ([]; if length > 0 and $p.a <= .[-1].b
          then .[-1].b = ([.[-1].b, $p.b] | max) else . + [$p] end)) as $union
     | [$union[] | .b - .a] | add // 0;
+  def paused_seconds($from; $to): covered_seconds($pauses; $from; $to);
   def gate_waits($from; $to):
     ([$t.push_times[] | {at: fromdate, wait: "bot_wait"}] + [$t.bot_review_times[] | {at: fromdate, wait: "thread_fix"}]
      | sort_by(.at, .wait)) as $events
@@ -613,9 +617,15 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if ($gate // 0) == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | ($seq // [] | map(.name) | index("ci_green")) as $ci
-  | (if ($ci // 0) == 0 or $s.last_push == null then null
+  | (if ($ci // 0) == 0 or $s.last_push == null or $t.ci_head_spans == null then null
      else $seq[$ci - 1].at as $from | $seq[$ci].at as $to | ($s.last_push | fromdate) as $push
-     | if $push > $to then null elif ([$push - $from, 0] | max) >= ([$to - ([$push, $from] | max) - ($ci_clean // 0), 0] | max) then "work" else "ci" end end) as $ci_cause
+     | if $push > $to then null
+       else ([$push, $from] | max) as $final
+       | covered_seconds([$t.ci_head_spans[] | {from: (.start | fromdate), to: (.end | fromdate)}]; $final; $to) as $running
+       | ([$push - $from, 0] | max) as $work
+       | ([$running - ($ci_clean // 0), 0] | max) as $checks
+       | ($to - $final - $running) as $wait
+       | if $work >= $checks and $work >= $wait then "work" elif $checks > $wait then "ci" else "wait" end end end) as $ci_cause
   | (if $t.commit == null then {pr: $t.pr} else {commit: $t.commit} end)
     + {class: $class, class_cause: (if $cause == "" then null else $cause end),
      class_reason: (if $class_reason == "" then null else $class_reason end),
