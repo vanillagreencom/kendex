@@ -65,3 +65,13 @@ control_expect "a bulk-update equals long description names the rule, the line a
 control_replace scripts/commands/issues.sh 1 \
 	'    [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1' \
 	'    [[ "$description_set" != "true" ]] || :'
+
+control_expect "an owner action before the outcome exits zero"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
+	'		| ($content | first) as $first'
+
+control_expect "an owner-shaped opening **Brad, what you do:** Run the check. Comment the result. followed by a header is refused"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
+	'		| ($content | if length > 0 and (.[0].text | owner_action) then [] else . end | first) as $first'

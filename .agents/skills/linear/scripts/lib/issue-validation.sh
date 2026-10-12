@@ -241,8 +241,8 @@ require_issue_reach() {
 
 # require_issue_header_shape DESCRIPTION — 0 to proceed, 1 + a JSON error on
 # stderr naming the line and its length. The issue template puts the outcome
-# first and keeps each `**Key**:` or `Reached by:` header to one short
-# sentence; a body opening with a header, or carrying one over
+# first, after an optional owner action line, and keeps each header to one short
+# sentence; any other header opening, or a header over
 # ISSUE_HEADER_MAX characters, is refused. It is held by the reach guard's
 # setting so one key turns the filing bar on or off.
 ISSUE_HEADER_MAX=500
@@ -252,9 +252,11 @@ require_issue_header_shape() {
 	local refusal
 	refusal=$(jq -cn --arg desc "$1" --argjson max "$ISSUE_HEADER_MAX" '
 		def header: test("^(\\*\\*[^*]+(\\*\\*:|:\\*\\*)|[Rr]eached [Bb]y:)");
+		def owner_action: test("^\\*\\*[^*\\s]+, what you do:\\*\\* [^\\r\\n]*$");
 		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
 			| {line: (.key + 1), length: (.value | length), text: .value}] as $lines
-		| ([$lines[] | select(.text | test("\\S"))] | first) as $first
+		| [$lines[] | select(.text | test("\\S"))] as $content
+		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first
 		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long
 		| if $first != null and ($first.text | header) then
 			{error: "issue-header-opening line=\($first.line) length=\($first.length)\nRefusing an issue body that opens with a header line. Open with the outcome sentence; the **Key**: and Reached by: headers follow it.",

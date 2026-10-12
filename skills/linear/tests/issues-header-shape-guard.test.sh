@@ -2,7 +2,8 @@
 # Tests for the header-shape guard. Under the reach guard's key, `issues
 # create`, `issues update --description` / `--description-file`, and `issues
 # bulk-update --description` refuse,
-# before any API call, a body whose first non-empty line is a `**Key**:` or
+# before any API call, an opening header other than an owner action, a
+# header after the owner action instead of an outcome, and a `**Key**:` or
 # `Reached by:` header, and one with a header line over 500 characters; each
 # refusal names the line and its length. `issues complete` ticking boxes in an
 # already filed body is not new authored text and still writes.
@@ -92,6 +93,35 @@ assert_refused "a create opening with a **Source**: line" issue-header-opening 1
 body '' '' 'Reached by: kendex apply' '' "$OUTCOME"
 run_linear issues create --title "Reach first" --description-file "$TMP_ROOT/body.md"
 assert_refused "a create whose first non-empty line is Reached by:" issue-header-opening 3 24
+
+echo "=== owner action: the next non-empty line opens the body ==="
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+source "$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh"
+ACTION_LINE='**Brad, what you do:** Run the check. Comment the result.'
+OWNER_BODY="$(jq -nr --arg body "$OUTCOME" "$OWNER_ACTION_JQ"'
+  $body | owner_action_line("Brad Owner"; "Run the check. Comment the result.")')"
+assert_eq "the owner ask builds the accepted description" "$OWNER_BODY" "$(printf '%s\n\n%s' "$ACTION_LINE" "$OUTCOME")"
+run_linear issues update CC-1 --description "$OWNER_BODY"
+assert_written "an owner action before the outcome" issueUpdate
+assert "the owner action update writes the exact description" \
+  jq -s -e --arg desc "$OWNER_BODY" \
+  'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
+
+for opening in "$ACTION_LINE" '**Brad, what you do**: Run the check.' '**Brad, what you do:**Run the check.'; do
+  run_linear issues update CC-1 --description "$(printf '%s\n\n%s' "$opening" "$SOURCE_LINE")"
+  if [ "$opening" = "$ACTION_LINE" ]; then line=3; length="${#SOURCE_LINE}"
+  else line=1; length="${#opening}"; fi
+  assert_refused "an owner-shaped opening $opening followed by a header" issue-header-opening "$line" "$length"
+done
+body '' "$ACTION_LINE" '' "$OUTCOME"
+run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
+assert_written "an owner action as the first non-empty line" issueUpdate
+for length in 500 501; do
+  body "$(pad '**Brad, what you do:** ' "$length")" '' "$OUTCOME"
+  run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
+  if [ "$length" -eq 500 ]; then assert_written "a 500-character owner action" issueUpdate
+  else assert_refused "a 501-character owner action" issue-header-length 1 501; fi
+done
 
 echo "=== create: the header length ==="
 LONG="$(pad '**Symptom**: ' 501)"
