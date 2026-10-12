@@ -489,7 +489,7 @@ jobs:
     # release — pays the whole build. Its duration on a runner is unmeasured,
     # so a leg that builds kendex takes the macOS ceiling until a figure is
     # recorded here; the expression below is the list of legs that take it,
-    # and `review-gate`, which builds kendex too, is not on it.
+    # and `refresh`, which builds kendex too, is not on it.
     # The `guards-hooks`, `guards-hooks-tail`, `guards-tools` and
     # `guards-tools-tail` legs are cut
     # to the targets the file header states, eight minutes on Linux and
@@ -854,15 +854,13 @@ jobs:
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the
       # culprits instead of showing only the later suites passing.
-      # ---- shards: guards-scans, guards-commit, guards-hooks, guards-hooks-tail,
-      # guards-tools, guards-tools-tail: the repository-wide scans and the
-      # guard packages' own suites, in six. One `guards` shard held all of it and ran
+      # Repository-wide scans and guard package suites.
+      # One `guards` shard held all of it and ran
       # 901-1061s on the macOS leg against roughly a third of that on Linux.
       # `guards-scans` is the scans below, each one pass over a tracked-file
       # roster or the shell roster; the document-set and work-marker scans run
       # in the bot-instructions job instead, which every class runs, on a pull
-      # request. The suite files after them are the other five shards' work,
-      # and the ruff install rides with the two shards that run a suite
+      # request. The ruff install rides with the two shards that run a suite
       # needing it: commit-guards' own py-names.test.sh in `guards-commit`,
       # and its install-git-hooks.test.sh in `guards-hooks`.
       #
