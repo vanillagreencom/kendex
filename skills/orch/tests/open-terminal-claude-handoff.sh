@@ -70,6 +70,11 @@ BRIEFN='/orch+start+CC-737'   # the brief as a needle: `+` reads as a space
 UNATTENDED="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
 PROMPT="$BRIEF $UNATTENDED"
 PROMPTN="${PROMPT// /+}"
+# The env words every rendered line opens with, clearing the launching
+# session's identity (lib/lane-launch.sh LANE_LAUNCH_SCRUB), spaces as `+`.
+SCRUB_ENV="$(bash -c 'source "$1" && printf "env" && printf " -u %s" "${LANE_LAUNCH_SCRUB[@]}"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ "$SCRUB_ENV" == "env -u "* ]] || { echo "open-terminal-claude-handoff: LANE_LAUNCH_SCRUB unread" >&2; exit 1; }
+SCRUBN="${SCRUB_ENV// /+}"
 RESEND="loaded-text $PROMPT"
 
 # Stub bin: ghostty captures its final argument (the composed `cd ... && claude
@@ -381,7 +386,7 @@ launch_table \
   "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$PROMPTN'=true stderr~open-terminal:+permission-prompt=false" \
   "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42+${UNATTENDED// /+}'=true" \
   "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model claude-sonnet-4-6 --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'claude-sonnet-4-6'+'--permission-mode'+'bypassPermissions'+'$PROMPTN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
-  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=export+KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-737'+&&+export+KENDEX_USER_EMAIL=''+&&+claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$PROMPTN' stderr~open-terminal:+permission-prompt+flags==true" \
+  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=export+KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-737'+&&+export+KENDEX_USER_EMAIL=''+&&+$SCRUBN+claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$PROMPTN' stderr~open-terminal:+permission-prompt+flags==true" \
   "an unflagged codex launch warns for the same unattended prompt|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt+flags==true" \
   "codex's unattended permission word suppresses the warning|gui-codex|-|--dangerously-bypass-approvals-and-sandbox|-|rc=0 cmd~--dangerously-bypass-approvals-and-sandbox=true stderr~open-terminal:+permission-prompt=false" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$PROMPTN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
@@ -497,8 +502,8 @@ orch_fixture_shared_libs "$TMP_ROOT/local-rm-first-command"
 rm -- "${COMPOUND_OT%/*}/lib/lane-launch.sh"
 cp -- "$SCRIPTS_DIR/lib/lane-launch.sh" "${COMPOUND_OT%/*}/lib/lane-launch.sh"
 mutate_file "${COMPOUND_OT%/*}/lib/lane-launch.sh" \
-  "printf 'env %s %s -c %s\\n' \"\$launch_env\" \"\$(lane_single_quote \"\$BASH\")\" \"\$(lane_single_quote \"\$cmd\")\"" \
-  "printf 'env %s %s\\n' \"\$launch_env\" \"\$cmd\" # printf 'env %s %s -c %s\\n'"
+  "printf '%s %s %s -c %s\\n' \"\$scrub\" \"\$launch_env\" \"\$(lane_single_quote \"\$BASH\")\" \"\$(lane_single_quote \"\$cmd\")\"" \
+  "printf '%s %s %s\\n' \"\$scrub\" \"\$launch_env\" \"\$cmd\" # printf '%s %s %s -c %s\\n'"
 OT_UNDER_TEST="$COMPOUND_OT"
 for mode in compound compound-account; do
   SAVED_FAIL="$FAIL"

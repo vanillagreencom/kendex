@@ -82,7 +82,7 @@ OT="$REPO/scripts/open-terminal"
 # the command after the pane's `cd ... && ` (none when nothing launched), and
 # CREATED, whether a worktree was made for ITEM.
 launch() {
-  local item="$1" cap="$TMP_ROOT/cap-$1" origin operator_env
+  local item="$1" cap="$TMP_ROOT/cap-$1" origin operator_env scrub
   shift
   [[ ! -e "$cap" ]] || rm -- "$cap"
   RC=0
@@ -101,9 +101,12 @@ launch() {
       CMD="${CMD#* && }"
       operator_env="${CMD%% && *}"
       CMD="${CMD#* && }"
-      CMD="${CMD#env CODEX_HOME=* }"
+      # The scrub words stay; the codex account words after them go.
+      scrub=""
+      [[ "$CMD" != "$SCRUB_ENV "* ]] || { scrub="$SCRUB_ENV "; CMD="${CMD#"$scrub"}"; }
+      CMD="${CMD#CODEX_HOME=* }"
       CMD="${CMD#ORCH_COMPACTION_OVERRIDES=* }"
-      CMD="$origin && $operator_env && $CMD"
+      CMD="$origin && $operator_env && $scrub$CMD"
     fi
   fi
   CREATED=no
@@ -114,6 +117,10 @@ launch() {
 # the text LAUNCH_UNATTENDED_TEXT open-terminal renders and judges them from,
 # so no suite holds a second copy of the text.
 UNATTENDED_TEXT="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+# The env words every rendered line opens with, clearing the launching
+# session's identity (lib/lane-launch.sh LANE_LAUNCH_SCRUB).
+SCRUB_ENV="$(bash -c 'source "$1" && printf "env" && printf " -u %s" "${LANE_LAUNCH_SCRUB[@]}"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ "$SCRUB_ENV" == "env -u "* ]] || { echo "open-terminal-question-tool: LANE_LAUNCH_SCRUB unread" >&2; exit 1; }
 [[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 
 echo "=== every command open-terminal builds takes the question tool away ==="
@@ -141,7 +148,7 @@ for row in \
     item="${item#*#}"
     root="$TMP_ROOT/wt/issue-$item"
   fi
-  want="export KENDEX_LANE_ORIGIN='$root' && export KENDEX_USER_EMAIL='' && $want"
+  want="export KENDEX_LANE_ORIGIN='$root' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $want"
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
   case "$harness:$item" in
@@ -256,19 +263,19 @@ done
 # No rewrite at all: the id is judged and the bare alias written.
 lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
 launch CC-9 --harness claude --launch-flags '--model sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-9' && export KENDEX_USER_EMAIL='' && claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-9' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
   "control: without the rewrite a claude alias reaches the command as named"
 # The attached form missed: the alias runs as named, judged so, and keeps its
 # compaction on, the attached row's value and words both gone.
 ATTACHED='      words="${words//"$nl$spelling$model$nl"/$nl$spelling$model_id$nl}"'
 lead_control "$ATTACHED" '      :'
 launch CC-21 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-21' && export KENDEX_USER_EMAIL='' && claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-21' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
   "control: an attached alias the rewrite misses keeps its compaction on"
 # The same miss with no judge after it: compaction off on the bare alias.
 lead_control "$ATTACHED" '      :' '      || model_id="$model"' '      || :'
 launch CC-22 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-22' && export KENDEX_USER_EMAIL='' && claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
+assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-22' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
   "control: without the check after it, that miss turns compaction off on the bare alias"
 # The unattended words gone from the text LAUNCH_UNATTENDED_TEXT: a claude
 # --cmd launch carrying none of them then launches, which the gate row above

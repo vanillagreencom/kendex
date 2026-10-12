@@ -143,12 +143,16 @@ UNATTENDED_Q="$(printf '%q' "$UNATTENDED")"
 LEAD="'--autopilot' '--max-autopilot-continues' '3' '--context' 'long_context' '--no-auto-update' '--no-ask-user' '--model' 'claude-opus-5' '--reasoning-effort' 'high' '--allow-all'"
 # The environment every copilot command carries, ahead of the account, and
 # the account a launch naming no lane runs on: the default copilot home.
+# The env words every rendered line opens with, clearing the launching
+# session's identity (lib/lane-launch.sh LANE_LAUNCH_SCRUB), ahead of the policy.
+SCRUB_ENV="$(bash -c 'source "$1" && printf "env" && printf " -u %s" "${LANE_LAUNCH_SCRUB[@]}"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ "$SCRUB_ENV" == "env -u "* ]] || { echo "open-terminal-copilot: LANE_LAUNCH_SCRUB unread" >&2; exit 1; }
 COP_ENV="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL=true"
 COP_AMBIENT="COPILOT_HOME='$FLEET_HOME/.copilot'"
 
 echo "=== a copilot lane starts with its brief as the value of -i ==="
 launch linear --harness copilot --launch-flags "$FLAGS" cc-737
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-737' && export KENDEX_USER_EMAIL='' && $COP_ENV $COP_AMBIENT copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737. $UNATTENDED'" \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-737' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $COP_ENV $COP_AMBIENT copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737. $UNATTENDED'" \
   "linear:copilot emits the prose kickoff after its launch settings, question-off word and flags, under its launch environment and the pane's own account"
 assert_not_contains "$CMD" '$' "the linear:copilot command contains no \$"
 assert_not_contains "$CMD" '--dangerously-bypass-hook-trust' "a Copilot launch carries no Codex hook flag"
@@ -181,11 +185,11 @@ assert_eq "$(grep -o "'--context'" <<<"$CMD" | wc -l | tr -d '[:space:]')" "1" \
 # environment all the same, on a named account or the default one.
 CMD_T="copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-{item} $UNATTENDED_Q"
 launch cmd-bare --harness copilot --cmd "$CMD_T" CC-750
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-750' && export KENDEX_USER_EMAIL='' && $COP_ENV $COP_AMBIENT copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-750" \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-750' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $COP_ENV $COP_AMBIENT copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-750" \
   "a --cmd launch naming no lane carries the launch environment on the default account"
 mkdir -p "$TMP_ROOT/.1copilot"
 launch cmd-lane --harness copilot --lane "$TMP_ROOT/.1copilot" --cmd "$CMD_T" CC-751
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-751' && export KENDEX_USER_EMAIL='' && $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-751" \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-751' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-751" \
   "a --cmd launch under --lane carries the named account and the launch environment"
 
 # Folder trust rides the caller's own allow-all posture: COPILOT_ALLOW_ALL
@@ -193,19 +197,19 @@ assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-751' && ex
 # it empty beside the shared skills and keeps its permission prompts.
 SKILLS_ONLY="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$FLEET_HOME/.agents/skills' COPILOT_ALLOW_ALL= $COP_AMBIENT"
 launch no-allow --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-752' && export KENDEX_USER_EMAIL='' && $SKILLS_ONLY copilot " \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-752' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $SKILLS_ONLY copilot " \
   "a launch naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
 assert_eq "$(grep -c '^open-terminal: permission-prompt ' <<<"$ERR" || true)" "1" \
   "and it still warns that the lane can stop at a permission prompt"
 assert_eq "$(grep -c '^open-terminal: launch-trusted ' <<<"$OUT" || true)" "0" \
   "and it reports no folder trust, which its empty COPILOT_ALLOW_ALL does not grant"
 launch yolo --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --yolo" cc-753
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-753' && export KENDEX_USER_EMAIL='' && $COP_ENV $COP_AMBIENT copilot " "--yolo, the other full allow-all spelling, carries COPILOT_ALLOW_ALL"
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-753' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $COP_ENV $COP_AMBIENT copilot " "--yolo, the other full allow-all spelling, carries COPILOT_ALLOW_ALL"
 launch tools-only --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --allow-all-tools" cc-754
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-754' && export KENDEX_USER_EMAIL='' && $SKILLS_ONLY copilot " \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-754' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $SKILLS_ONLY copilot " \
   "the tools-only --allow-all-tools leaves paths and URLs asking, so it carries an empty COPILOT_ALLOW_ALL"
 launch cmd-narrow --harness copilot --cmd "copilot --model claude-opus-5 --reasoning-effort high --no-ask-user -i start-{item} $UNATTENDED_Q" CC-755
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-755' && export KENDEX_USER_EMAIL='' && $SKILLS_ONLY copilot --model claude-opus-5" \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-755' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $SKILLS_ONLY copilot --model claude-opus-5" \
   "a --cmd template naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
 
 echo "=== a copilot relaunch resumes the session whose record names the lane's worktree ==="
@@ -249,7 +253,7 @@ session 44444444-dddd-4ddd-8ddd-444444444444 "$TMP_ROOT/wt/CC-741" 200001010300 
 launch relaunch-lane --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
 assert_contains "$CMD" "--resume=44444444-dddd-4ddd-8ddd-444444444444 -i" \
   "a relaunch under --lane resumes from that account's own session store"
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-741' && export KENDEX_USER_EMAIL='' && $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot $LEAD --resume=" \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-741' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $COP_ENV COPILOT_HOME='$TMP_ROOT/.1copilot' copilot $LEAD --resume=" \
   "the resume runs under the named account and the launch environment"
 session 55555555-eeee-4eee-8eee-555555555555 "$TMP_ROOT/wt/CC-742" 200001010400 "$TMP_ROOT/.envcopilot"
 ROW_ENV=(COPILOT_HOME="$TMP_ROOT/.envcopilot")
@@ -394,7 +398,7 @@ while IFS='|' read -r label lane words; do
   else
     launch "env-$N" --harness copilot --lane "$lane" --launch-flags "$FLAGS" "cc-$N"
   fi
-  assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-$N' && export KENDEX_USER_EMAIL='' && $words $LEAD -i" "$label"
+  assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-$N' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $words $LEAD -i" "$label"
   assert_eq "$(probe_launch)" "unset|app-token|actions-token|true" \
     "$label: the launched copilot sees no COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN reach it, and it trusts the folder"
 done <<ROWS
@@ -491,7 +495,7 @@ assert_eq "$(grep -c 'COPILOT_ALLOW_ALL=true' <<<"$CMD" || true)" "0" \
 stage "$TMP_ROOT/allow-ctrl"
 mutate_file "$TMP_ROOT/allow-ctrl/scripts/lib/lane-launch.sh" '  ! lane_copilot_allows_all "$1" || allow="COPILOT_ALLOW_ALL=true"' '  allow="COPILOT_ALLOW_ALL=true"'
 OT="$TMP_ROOT/allow-ctrl/scripts/open-terminal" launch allow-ctrl --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" cc-752
-assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-752' && export KENDEX_USER_EMAIL='' && $COP_ENV $COP_AMBIENT copilot " \
+assert_contains "$CMD" "&& export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-752' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $COP_ENV $COP_AMBIENT copilot " \
   "control: without the allow-all judge a launch naming no allow-all spelling carries COPILOT_ALLOW_ALL"
 # The route's allow-all judge cut: a launch naming no allow-all spelling
 # reports a folder trust nothing granted.
@@ -552,7 +556,7 @@ assert_eq "$(cat "$TMP_ROOT/form-ctrl.out")" "COPILOT_HOME=$TMP_ROOT/.1copilot|u
 # The environment rules, each cut from a private copy: the policy in the
 # launcher arm, and a launch naming no lane given no environment.
 stage "$TMP_ROOT/launcher-ctrl"
-mutate_file "$TMP_ROOT/launcher-ctrl/scripts/lib/lane-launch.sh" "launcher:*) printf '%s %s %s\\n' \"\$env_words\"" "launcher:*) printf 'env %s %s\\n'"
+mutate_file "$TMP_ROOT/launcher-ctrl/scripts/lib/lane-launch.sh" "launcher:*) printf '%s %s %s %s\\n' \"\$scrub\" \"\$env_words\"" "launcher:*) printf '%s env %s %s\\n' \"\$scrub\""
 OT="$TMP_ROOT/launcher-ctrl/scripts/open-terminal" launch launcher-ctrl --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" cc-755
 assert_contains "$CMD" "'$BIN/1copilot' $LEAD -i" "the control's launch renders its command"
 assert_not_contains "$CMD" "-u COPILOT_GITHUB_TOKEN" "control: without the policy in its arm a launcher runs with the ambient COPILOT_GITHUB_TOKEN"
