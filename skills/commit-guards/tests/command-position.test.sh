@@ -166,7 +166,7 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
   done <<'CONTROLS'
 arguments|ordinary argument
 heredoc-owner|last shell heredoc
-heredoc-pipe|grouped later shell receiver
+heredoc-pipe|grouped shell heredoc
 heredoc-simple-pipe|pipeline shell heredoc
 heredoc-rest|process substitution receiver body
 control-words|else arm
