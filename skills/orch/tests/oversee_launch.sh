@@ -694,6 +694,11 @@ FRESH_PANE="$(copilot_pane 10 node binary.sh)"
 register_on() { # PANE [OVERSEE_BIN] [ARGS...]
   local pane="$1" bin="${2:-}"
   shift 2
+  # Identity cases do not claim a second overseer while its holder runs.
+  if [[ "$(recorded pane)" != "$pane" ]]; then
+    jq '.overseer.server_start = 0' "$FLEET_STATE" > "$FLEET_STATE.identity"
+    mv -- "$FLEET_STATE.identity" "$FLEET_STATE"
+  fi
   OVERSEE_BIN="$bin" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$pane" CLAUDE_CONFIG_DIR="$H/.claude" -- register "$@"
 }
 # A real wait: each pane's program starts its children a moment after the
@@ -1373,6 +1378,35 @@ mutate_file "$CWDCTL/oversee" 'inventory="$(cd -- "$PROJECT_ROOT" && kendex list
 OVERSEE_BIN="$CWDCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_DIR="$WORK_REAL" -- register
 assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing harness=claude exit=1 ' <<<"$OUT" || true)" '0|1' \
   "control: an inventory asked from the start row's cwd reads the installed hook as missing"
+
+test_register_live_holder() {
+  local holder candidate before control
+  cp -- "$FLEET_STATE" "$TMP_ROOT/register-live.saved"
+  jq '.overseer = null' "$FLEET_STATE" > "$TMP_ROOT/register-live.state"
+  mv -- "$TMP_ROOT/register-live.state" "$FLEET_STATE"
+  holder="$(tm new-window -d -t fleet -n register-holder -P -F '#{pane_id}' 'exec sleep 100000')"
+  candidate="$(tm new-window -d -t fleet -n register-candidate -P -F '#{pane_id}' 'exec sleep 100000')"
+  run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$holder" -- register
+  assert_eq "$RC|$(recorded pane)|$(recorded generation)" "0|$holder|1" "register records the first holder"
+  before="$(cat "$FLEET_STATE")"
+  run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$candidate" -- register
+  assert_eq "$RC|$(field "$(keyed overseer-live "$OUT")" session)|$(field "$(keyed overseer-live "$OUT")" generation)|$(cat "$FLEET_STATE")" \
+    "1|$holder|1|$before" "register refuses the live holder and leaves the whole state unchanged"
+  run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$holder" -- register
+  assert_eq "$RC|$(recorded pane)|$(recorded generation)" "0|$holder|1" "the recorded live pane registers again without a new generation"
+  control="$(mutant_scripts register-live-control oversee)" || exit 1
+  mutate_file "$control/oversee" '[[ -z "$live_pane" || -n "$PREDECESSOR" ]]' \
+    '[[ -z "$live_pane" || -n "$PREDECESSOR" || "$COMMAND" == register ]]'
+  OVERSEE_BIN="$control/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$candidate" -- register
+  assert_eq "$RC|$(recorded pane)|$(recorded generation)" "0|$candidate|2" "control: without refusal register replaces the live holder"
+  printf '%s\n' "$before" > "$FLEET_STATE"
+  tm kill-pane -t "$holder"
+  run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$candidate" -- register
+  assert_eq "$RC|$(recorded pane)|$(recorded generation)" "0|$candidate|2" "register succeeds after the recorded pane ends"
+  tm kill-pane -t "$candidate"
+  mv -- "$TMP_ROOT/register-live.saved" "$FLEET_STATE"
+}
+test_register_live_holder
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
