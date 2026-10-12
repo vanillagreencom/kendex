@@ -64,7 +64,7 @@ inputs:
   lanes-from:
     description: >-
       The default branch's checkout, whose .github/ci-lanes.conf declares the
-      workflow's lanes and the paths each reads. Refused where it is the
+      workflow's base lanes and the paths each reads. Refused where it is the
       checkout `repo` names, whose author could stand a lane down. Empty
       declares no lane and leaves lane_verdicts empty.
     required: false
@@ -186,9 +186,11 @@ outputs:
     value: ${{ steps.classify.outputs.record_dir }}
   lane_verdicts:
     description: >-
-      One lane_<name>=true|false line per lane the declaration names, decided
-      as skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
-      Empty where no declaration was read. A workflow republishes the lines as
+      One lane_<name>=true|false line per default-branch lane, plus head-only
+      lanes on a valid declaration comparison. This is the union of lane names.
+      Other paths use default-branch claims, as
+      skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
+      Empty where no base declaration was read. A workflow republishes the lines as
       step outputs of its own, since a composite action publishes only the
       outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}

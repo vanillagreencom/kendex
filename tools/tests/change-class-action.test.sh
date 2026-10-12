@@ -900,10 +900,10 @@ removed-lane|good|removed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=fa
 renamed-lane|good|renamed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false,lane_terminal=true
 queue-added|good|queue-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 queue-removed|queue-added|good|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
-malformed-head|good|bad-name|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
-missing-head|good|absent|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
-unreadable-head|good|unreadable|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
-unreadable-revision|good|invalid|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+malformed-head|queue-added|bad-name|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+missing-head|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+unreadable-head|queue-added|unreadable|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+unreadable-revision|queue-added|invalid|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 malformed-base|bad-name|good|.github/ci-lanes.conf|lane_verdicts=
 missing-base|absent|good|.github/ci-lanes.conf|lane_verdicts=
 unreadable-base|unreadable|good|.github/ci-lanes.conf|lane_verdicts=
@@ -954,6 +954,7 @@ done <<'ROWS'
 [ "${queues[$other]}" != "${lane_queue[$index]}" ]@false@queue-added
 [ "$found" = true ] || printf@[ "$found" = false ] || printf@removed-lane
         every="cause=lane-declaration-unreadable path=$path"@        every=""@malformed-head
+  elif [[ $every == cause=lane-declaration-unreadable\ * ]]; then@  elif false; then@missing-head
             lane_count=$((lane_count + 1))@            :@added-lane
 [[ ${lane_hits[$index]} == cause=claimed\ * ]]@[ -n "${lane_hits[$index]}" ]@queue-removed
 ROWS
