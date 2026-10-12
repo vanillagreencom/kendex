@@ -263,6 +263,6 @@ Each batch run appends one row per check it runs to `commit-guards-runs.tsv` in 
 3. The batch scope: `staged`, `all`, `base` or `against`.
 4. The outcome: `clean` for exit 0, `violations` for exit 1, `incomplete` for any other exit.
 5. The wall time in seconds to three decimals, or `unmeasured` where the clock could not be read. The clock is GNU `date`, else perl's `Time::HiRes`, else whole seconds.
-6. The commit: HEAD when the run started, `unborn` before the first commit, so the parent of the commit being made under `--staged`. A range batch names its range on byte-ceiling's dots: `REF...HEAD` under `--base REF`, `REF..HEAD` under `--against REF`.
+6. The commit: HEAD when the batch started, or `unborn` before the first commit. A range batch names its range on byte-ceiling's dots: `REF...HEAD` under `--base REF`, `REF..HEAD` under `--against REF`.
 
 A check run by name, a withheld check and a package-incomplete check write no row. A log that cannot be appended prints `commit-guards: run-log-unwritten=<path>` and the verdict stands. The file only grows; deleting it starts a new log.
