@@ -247,6 +247,9 @@
 # bound-ended run. start records it as the pass-run= line, the sentinel is
 # guard-exit=0, the log names it and carries its last validate: line, so
 # --record reports that run's lanes and a pass, and the wall time is zero.
+# Run order comes from start's epoch second, never from a directory's process
+# ID. A nonpassing run in the same second as a pass, or with an unreadable
+# start second, prevents pass reuse: those records cannot prove their order.
 # Neither answer is evidence of its own. A ci run is never one, since its
 # route is the caller's to request. --fresh ignores the evidence and runs the command: the
 # runner cannot see a setting the command reads beyond its own text, such as
@@ -485,7 +488,7 @@ BOUND_RUN_DIR=""
 BOUND_RUN_EXIT=""
 PASS_RUN_DIR=""
 find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE FINDING_PREFIX TREE
-  local start_file dir secs line rc guard_exit ran
+  local start_file dir secs line rc guard_exit ran started pass_start=-1 red_start=-1 order_unknown=false bound_start=-1
   BOUND_RUN_DIR="" BOUND_RUN_EXIT="" PASS_RUN_DIR=""
   for start_file in "$1"/tmp/dev-validate-*/start; do
     [[ -f "$start_file" ]] || continue
@@ -498,19 +501,30 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE F
     [[ -z "$(start_field "$start_file" bound-run)" ]] || continue
     [[ -z "$(start_field "$start_file" pass-run)" ]] || continue
     ran="$(cat "$dir/cmd" 2>/dev/null)" && [[ "$ran" == "$4" ]] || continue
+    line="$(cat "$dir/exit" 2>/dev/null)" || line=""
+    started="$(start_field "$start_file" start)"
+    # --fresh and --stop produce failures and unfinished records under another
+    # range or selection. They cancel a pass before candidate filters apply.
+    if [[ -n "$9" && "$(start_field "$start_file" tree)" == "$9" ]]; then
+      if [[ ! "$line" =~ ^guard-exit=0\ at=[^\ ]+$ ]]; then
+        if [[ "$started" =~ ^[0-9]+$ ]]; then
+          (( 10#$started <= red_start )) || red_start=$(( 10#$started ))
+        else
+          order_unknown=true
+        fi
+      fi
+    fi
     [[ "$(start_field "$start_file" class)" == "$5" ]] || continue
     [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue
     [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue
     [[ "$(start_field "$start_file" finding-prefix)" == "$8" ]] || continue
-    line="$(cat "$dir/exit" 2>/dev/null)" || line=""
-    # The newest run over this tree decides: a pass stands only while no later
-    # run of the same command over it failed, ran out or is unfinished.
     if [[ -n "$9" && "$(start_field "$start_file" tree)" == "$9" ]]; then
-      PASS_RUN_DIR=""
-      if [[ "$line" =~ ^guard-exit=0\ at=[^\ ]+$ ]]; then
+      if [[ "$line" =~ ^guard-exit=0\ at=[^\ ]+$ && "$started" =~ ^[0-9]+$ ]] && (( 10#$started > pass_start )); then
         rc=0
         grep -Fxvq -f "$dir/paths" -- "$3" 2>/dev/null || rc=$?
-        [[ "$rc" != 1 ]] || PASS_RUN_DIR="$dir"
+        if (( rc == 1 )); then
+          PASS_RUN_DIR="$dir" pass_start=$(( 10#$started ))
+        fi
       fi
     fi
     [[ "$line" =~ ^guard-exit=([0-9]+)\ at=[^\ ]+\ verdict=no-verdict$ ]] || continue
@@ -522,8 +536,16 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE F
     grep -Fxvq -f "$3" -- "$dir/paths" 2>/dev/null || rc=$?
     (( rc == 1 )) || continue
     ! run_has_finding "$dir" || continue
-    BOUND_RUN_DIR="$dir" BOUND_RUN_EXIT="$guard_exit"
+    # Old timeout records remain evidence even without a recorded second.
+    # All qualifying bounds give the same no-verdict result.
+    if [[ -z "$BOUND_RUN_DIR" ]] || { [[ "$started" =~ ^[0-9]+$ ]] && (( 10#$started > bound_start )); }; then
+      BOUND_RUN_DIR="$dir" BOUND_RUN_EXIT="$guard_exit"
+      [[ ! "$started" =~ ^[0-9]+$ ]] || bound_start=$(( 10#$started ))
+    fi
   done
+  if [[ "$order_unknown" == true ]] || (( red_start >= pass_start )); then
+    PASS_RUN_DIR=""
+  fi
 }
 
 # The worktree's diff against the base branch, or against the round's base
@@ -1200,8 +1222,7 @@ if [[ "$mode" == live ]]; then
 fi
 
 # --- Last pass: the newest run that validated a known tree, read-only --------
-# Run directories are named for the UTC second they started, so the last match
-# in name order is the newest. A full or range run after that pass that did
+# The recorded start second orders runs. A full or range run after that pass that did
 # not pass, one unfinished or whose sentinel cannot be read included, is red:
 # the newest pass no longer speaks for the worktree. A no-verdict run whose
 # log holds no finding line is passed over.
@@ -1209,6 +1230,7 @@ if [[ "$mode" == last-pass ]]; then
   worktree="$(cd "$worktree" && pwd)"
   found=""
   red=""
+  found_start=-1 red_start=-1 order_unknown=false
   for start_file in "$worktree"/tmp/dev-validate-*/start; do
     [[ -f "$start_file" ]] || continue
     run_dir="${start_file%/start}"
@@ -1224,8 +1246,13 @@ if [[ "$mode" == last-pass ]]; then
     if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then
       continue
     fi
+    started="$(start_field "$start_file" start)"
     if [[ "$verdict" != pass ]]; then
-      red="$run_dir"
+      if [[ ! "$started" =~ ^[0-9]+$ ]]; then
+        order_unknown=true red="$run_dir"
+      elif (( 10#$started > red_start )); then
+        red_start=$(( 10#$started )) red="$run_dir"
+      fi
       continue
     fi
     pass_head="" pass_tree=""
@@ -1233,10 +1260,13 @@ if [[ "$mode" == last-pass ]]; then
       || [[ -z "$pass_head" || -z "$pass_tree" ]]; then
       continue
     fi
-    found="run-dir=$run_dir head=$pass_head tree=$pass_tree"
-    red=""
+    [[ "$started" =~ ^[0-9]+$ ]] || continue
+    if (( 10#$started > found_start )); then
+      found="run-dir=$run_dir head=$pass_head tree=$pass_tree"
+      found_start=$(( 10#$started ))
+    fi
   done
-  if [[ -n "$red" ]]; then
+  if [[ "$order_unknown" == true ]] || { [[ -n "$red" ]] && (( red_start >= found_start )); }; then
     echo "last-pass=red run-dir=$red"
     exit 1
   fi
