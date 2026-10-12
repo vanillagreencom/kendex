@@ -161,7 +161,7 @@ environment_dump() { # command kind; arguments are already decoded data
       # Reserved-word spelling ends selection, not merely one forwarding
       # step. No function name, case pattern or option can restart it.
       case "${args[$pos]}" in
-        if | then | elif | else | fi | time | for | in | until | while | do | done | case | esac | 'coproc' | select | function | '{' | '}' | '[[' | ']]' | '!')
+        if | then | elif | else | fi | time | for | in | until | while | do | done | case | 'coproc' | select | function | '{' | '}' | '[[' | ']]' | '!')
           syntax_head=${arg_unquoted[$pos]} ;;
         exec | builtin) syntax_head=1 ;;
       esac
