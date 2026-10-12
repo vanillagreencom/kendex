@@ -430,6 +430,15 @@ assert_eq "$(recorded launch_line)" "$LINE" "and the line a successor of it woul
 ROWS_PATH="$CASE_REPO_ROOT/tmp/lane-mail/overseer/session-7000-${PANE#%}.jsonl"
 assert_eq "$(recorded session_rows)" "$ROWS_PATH" "and the file its session rows land in" "$ERR"
 assert_eq "$(recorded server_start)" "1790000000" "and the start of the server holding the pane" "$ERR"
+assert_eq "$(recorded server_socket)" "fake" "and the socket its tmux calls reach" "$ERR"
+SOCKETREC_CTL="$(mutant_scripts socketrec-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/socketrec-ctl/github"
+mutate_file "$SOCKETREC_CTL/lib/watch-overseer-record.sh" '+ {server_socket: $socket}' '+ {}'
+overseer_case record_first_start_socket_control idle
+printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+WATCH_BIN="$SOCKETREC_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+assert_eq "$(recorded server_socket)" "none" "control: a watch start without the socket cannot identify a foreign server" "$ERR"
 # The controls: a start that records no rows file leaves a hand-started
 # overseer judged from its pane alone, and one that drops the server start
 # records none.

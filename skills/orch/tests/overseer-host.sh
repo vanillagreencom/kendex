@@ -155,6 +155,20 @@ run_tmux inspect --session "$SHELL_PANE"
 assert_eq "$RC|$(field "$OUT" state)" \
   "0|exited" \
   "inspect reads a bare shell with nothing under it as exited"
+SERVER_START="$(tm display-message -p '#{start_time}')"
+for row in "$SERVER_START|exited" '0|gone'; do
+  IFS='|' read -r start want <<<"$row"
+  run_tmux inspect --session "$SHELL_PANE" --server-socket "${TMUX_ADDR%%,*}" \
+    --server "$SERVER_PID" --server-start "$start"
+  assert_eq "$RC|$(field "$OUT" state)" "0|$want" "inspect binds the socket to the recorded server start $start"
+done
+STARTCTL="$(mutant_scripts inspect-start-control overseer-host-tmux)" || exit 1
+mutate_file "$STARTCTL/overseer-host-tmux" \
+  'tmux_pane_live "$RECORDED_SERVER" "$RECORDED_START" "$SESSION"' \
+  'tmux_pane_live "$RECORDED_SERVER" "" "$SESSION"'
+PROVIDER_BIN="$STARTCTL/overseer-host-tmux" run_tmux inspect --session "$SHELL_PANE" \
+  --server-socket "${TMUX_ADDR%%,*}" --server "$SERVER_PID" --server-start 0
+assert_eq "$RC|$(field "$OUT" state)" '0|exited' "control: ignoring the recorded start reads a different server identity as live"
 run_tmux inspect --session %999
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
   "0|session=%999 window=none server=none state=gone;" \

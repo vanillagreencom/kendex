@@ -8,13 +8,16 @@
 #   overseer-host-tmux create --cwd DIR (--after SESSION | --session NAME)
 #                             [--name NAME] --line COMMAND
 #   overseer-host-tmux inspect --session SESSION [--launch]
+#                             [--server-socket PATH --server PID --server-start EPOCH]
 #   overseer-host-tmux deliver --session SESSION
 #   overseer-host-tmux stop --session SESSION [--successor SESSION]
 #
 #   SESSION is a tmux pane id, %N: the one exact session the runtime holds.
-#   Every verb reaches the tmux server the caller's tmux calls reach: the one
+#   Without --server-socket, each verb reaches the caller's tmux server: the one
 #   $TMUX names, or the person's own at the socket tmux derives from their
 #   uid when $TMUX is unset.
+#   inspect with --server-socket reads the recorded server and verifies its
+#   pid and start time. An ended server or a different start answers gone.
 #
 #   create   opens a window named NAME (default overseer) with its shell in
 #            DIR, at the base index of SESSION's tmux session or the named
@@ -122,9 +125,10 @@ case "$VERB" in
 esac
 
 CWD="" AFTER="" TMUX_SESSION_NAME="" NAME=overseer LINE="" SESSION="" SUCCESSOR="" LAUNCH=0
+SERVER_SOCKET="" RECORDED_SERVER="" RECORDED_START=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cwd|--after|--session|--name|--line|--successor)
+    --cwd|--after|--session|--name|--line|--successor|--server-socket|--server|--server-start)
       [[ $# -ge 2 ]] || die_status 2 unknown-option "arg=$1"
       case "$1" in
         --cwd) CWD="$2" ;;
@@ -132,6 +136,9 @@ while [[ $# -gt 0 ]]; do
         --session) if [[ "$VERB" == create ]]; then TMUX_SESSION_NAME="$2"; else SESSION="$2"; fi ;;
         --name) NAME="$2" ;;
         --line) LINE="$2" ;;
+        --server-socket) SERVER_SOCKET="$2" ;;
+        --server) RECORDED_SERVER="$2" ;;
+        --server-start) RECORDED_START="$2" ;;
         *) SUCCESSOR="$2" ;;
       esac
       shift 2 ;;
@@ -263,6 +270,20 @@ case "$VERB" in
     ;;
   inspect)
     require_session "$SESSION"
+    start=""
+    if [[ -n "$SERVER_SOCKET" ]]; then
+      matches "$RECORDED_SERVER" '^[0-9]+$' || die_status 2 option-missing option=--server verb=inspect
+      [[ -z "$RECORDED_START" ]] || matches "$RECORDED_START" '^[0-9]+$' \
+        || die_status 2 option-missing option=--server-start verb=inspect
+      # Pane ids repeat across servers. Read the recorded socket and bind it
+      # to the recorded pid and tmux start before reading its pane.
+      export TMUX="$SERVER_SOCKET,$RECORDED_SERVER,0"
+      probe=0
+      tmux_pane_live "$RECORDED_SERVER" "$RECORDED_START" "$SESSION" || probe=$?
+      [[ "$probe" -ne 1 ]] || inspect_gone
+      [[ "$probe" -eq 0 ]] || die session-unreadable "session=$SESSION" "server=$RECORDED_SERVER"
+      inspect_field start start_time '^[0-9]+$' '#{start_time}'
+    fi
     pane_listed "$SESSION" || inspect_gone
     inspect_field window window_id '^@[0-9]+$' '#{window_id}'
     inspect_field server pid '^[0-9]+$' '#{pid}'
@@ -281,7 +302,7 @@ case "$VERB" in
         state=idle
       fi
       inspect_settled
-      printf 'session=%s window=%s server=%s state=%s\n' "$SESSION" "$window" "$server" "$state"
+      printf 'session=%s window=%s server=%s state=%s%s\n' "$SESSION" "$window" "$server" "$state" "${start:+ server_start=$start}"
     else
       inspect_field obs pane_pid '^[0-9]+[[:blank:]]+[^[:space:]]' '#{pane_pid} #{pane_current_command}'
       pid="${obs%%[[:blank:]]*}"
@@ -294,8 +315,8 @@ case "$VERB" in
       lane_state state listed "$cmd" "$pid" "$screen" || cause=",limit-scan"
       [[ "$LANE_PROBE_RC" -le 1 ]] || cause="$cause,process-probe probe=$LANE_PROBE_RC"
       inspect_settled
-      printf 'session=%s window=%s server=%s state=%s%s%s\n' "$SESSION" "$window" "$server" "$state" \
-        "${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}" "${cause:+ cause=${cause#,}}"
+      printf 'session=%s window=%s server=%s state=%s%s%s%s\n' "$SESSION" "$window" "$server" "$state" \
+        "${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}" "${cause:+ cause=${cause#,}}" "${start:+ server_start=$start}"
     fi
     printf '%s\n' "$screen"
     ;;

@@ -43,7 +43,7 @@ overseer_launch_args() {
 # state; `unread` where the record, or the pane key or server start that
 # names it, was not read. Always returns 0.
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line detail errf rows start rc=0 held=unread
+  local pane="${TMUX_PANE:-}" key server window line detail errf rows start socket rc=0 held=unread
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
@@ -116,8 +116,12 @@ overseer_command_record() {
   # The pane's own event rows file, the one path its hooks write to and every
   # reader of this record reads (lib/session-rows.sh).
   rows="$(session_rows_overseer_file "$PWD" "$server" "$pane")"
+  socket="$(tmux_server_socket)" || {
+    overseer_record_notice "" "$held" overseer-unrecorded "pane=$pane" "step=server-socket"
+    return 0
+  }
   # A start is a live session, so no exit a record carries stands.
-  # The six fields this watch observes replace the prior's; the launcher's
+  # The fields this watch observes replace the prior's; the launcher's
   # own, runtime, generation and the launch identity (harness, account, home,
   # model, effort and cwd), stay only where the prior names THIS pane on THIS
   # server, started when this one was, or names this pane on this server with
@@ -141,11 +145,11 @@ overseer_command_record() {
   # off the account.
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
-      --arg rows "$rows" --arg start "$start" "$OL_JQ_DEFS"'
+      --arg rows "$rows" --arg start "$start" --arg socket "$socket" "$OL_JQ_DEFS"'
       .overseer = ((((.overseer // {})
         | if ol_owns($server; $start; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line, session_rows: $rows,
-           server_start: ($start | tonumber)})
+           server_start: ($start | tonumber)}) + {server_socket: $socket}
         | del(.pending, .exit)
         | if (.harness // "claude") == "claude" and (.account // "") != "" and (.home // "") == ""
           then .home = .account else . end)' 2>&1)" \

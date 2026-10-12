@@ -899,21 +899,40 @@ ol_session_from_out() {
 # ol_session_inspect SESSION [--launch] — the runtime's `inspect`, which the
 # launch's live-overseer check, the succession's read of its caller and its
 # wait for the caller to close, and the watch's per-pass overseer read take.
+# The caller's captured OL_PRIOR supplies recorded routing. Bootstrap and
+# fresh-pane verification need no record to inspect their caller-server pane.
 # The keyed line's state, server, window, cause and probe go into
 # OL_INSPECT_STATE, OL_INSPECT_SERVER, OL_INSPECT_WINDOW, OL_INSPECT_CAUSE and
 # OL_INSPECT_PROBE; wall_kind goes into OL_INSPECT_WALL_KIND. Each is empty
-# where the line names none, and window and
-# server the word `none` for a session the runtime no longer lists; the line
+# where absent. OL_INSPECT_START is the start read from a different recorded
+# socket, so a caller never reads that start on its own server. Window and
+# server are `none` for a session the runtime no longer lists; the line
 # itself into OL_INSPECT_LINE and the snapshot under it into OL_DETAIL.
 # OL_INSPECT_CAUSE is the comma-separated scans the judge could not run, and
 # OL_INSPECT_PROBE the child probe's exit status where one of them is
 # `process-probe`. Returns 1 with OL_REASON=inspect-failed; the provider's own
 # line is in DEP_ERR.
-OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
+OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_START="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
 ol_session_inspect() { # SESSION [--launch]
-  local out word
-  OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
-  out="$("$SCRIPT_DIR/overseer-host" inspect --session "$1" ${2:+"$2"} 2>"$DEP_ERR")" \
+  local out word record socket caller_socket server start args=()
+  OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_START="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
+  record="${OL_PRIOR:-null}"
+  socket=""
+  # --launch verifies the fresh pane create just opened. A pane number from
+  # an earlier server can repeat there, so its prior record cannot route it.
+  if [[ "${2:-}" != --launch ]]; then
+    socket="$(jq -r --arg pane "$1" 'if (.pane // "") == $pane then .server_socket // empty else empty end' <<<"$record" 2>"$DEP_ERR")" \
+      || { OL_REASON=inspect-failed; return 1; }
+  fi
+  if [[ -n "$socket" ]]; then
+    caller_socket="$(tmux_server_socket)" || { OL_REASON=inspect-failed; return 1; }
+    if [[ "$socket" != "$caller_socket" ]]; then
+      server="$(jq -r '.server // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
+      start="$(jq -r '.server_start // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
+      args=(--server-socket "$socket" --server "$server" --server-start "$start")
+    fi
+  fi
+  out="$("$SCRIPT_DIR/overseer-host" inspect --session "$1" ${2:+"$2"} ${args[@]+"${args[@]}"} 2>"$DEP_ERR")" \
     || { OL_REASON=inspect-failed; return 1; }
   OL_INSPECT_LINE="${out%%$'\n'*}"
   for word in $OL_INSPECT_LINE; do
@@ -921,6 +940,7 @@ ol_session_inspect() { # SESSION [--launch]
       state=*) OL_INSPECT_STATE="${word#state=}" ;;
       wall_kind=*) OL_INSPECT_WALL_KIND="${word#wall_kind=}" ;;
       server=*) OL_INSPECT_SERVER="${word#server=}" ;;
+      server_start=*) OL_INSPECT_START="${word#server_start=}" ;;
       window=*) OL_INSPECT_WINDOW="${word#window=}" ;;
       cause=*) OL_INSPECT_CAUSE="${word#cause=}" ;;
       probe=*) OL_INSPECT_PROBE="${word#probe=}" ;;
@@ -1123,7 +1143,7 @@ ol_record_get() {
 # words in DEP_ERR.
 OL_GENERATION="" OL_RECORD_RETAINED="" OL_RECORD_FRESH=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" result record cwd rows="" start="" fields
+  local prior="${OL_PRIOR:-null}" result record cwd rows="" start="" socket="" fields
   OL_GENERATION="" OL_RECORD_RETAINED="" OL_RECORD_FRESH=""
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
@@ -1132,10 +1152,12 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       printf 'the start of tmux server %s holding pane %s could not be read\n' "$4" "$2" > "$DEP_ERR"
       return 1
     fi
+    socket="$(tmux_server_socket)" || return 1
+    [[ -n "$socket" ]] || return 1
   fi
   result="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
     --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" \
-    --arg start "$start" "$OL_JQ_DEFS"'
+    --arg start "$start" --arg socket "$socket" "$OL_JQ_DEFS"'
       def nonempty: with_entries(select(.value != null and .value != ""));
       def field_names: keys | if length == 0 then "none" else join(",") end;
       ($prior // {}) as $p
@@ -1145,7 +1167,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       | ($identity | nonempty) as $known
       | ($known + {runtime: $runtime, server: $server, window: $window, generation: $next}
          + (if $runtime == "tmux"
-            then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)}
+            then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)} + {server_socket: $socket}
             else {session: $session} end)
          + (if $line == "" then {} else {launch_line: $line} end)) as $fresh
       | (if $same then $p | del(.pending, .exit) else $identity | map_values(null) end) as $base

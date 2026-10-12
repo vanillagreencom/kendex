@@ -43,6 +43,8 @@ mkdir -p "$TMUX_DIR"
 cleanup() {
   [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   TMUX_TMPDIR="$TMUX_DIR" tmux -L default kill-server 2>/dev/null || true
+  TMUX_TMPDIR="$TMUX_DIR" tmux -L server-a kill-server 2>/dev/null || true
+  TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
@@ -405,7 +407,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)|$(recorded server_start)" \
-  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude retained=none fresh=account,cwd,generation,harness,home,pane,runtime,server,server_start,session_rows,window|tmux|$H/.eclaude|none|$SERVER_START" \
+  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude retained=none fresh=account,cwd,generation,harness,home,pane,runtime,server,server_socket,server_start,session_rows,window|tmux|$H/.eclaude|none|$SERVER_START" \
   "register with no SessionStart row reads the pane as the named fallback, says so, writes the record one generation past it with its server's start, and drops the launch line the record held"
 HAND_IDENTITY="claude|$H/.eclaude|$H/.eclaude|none|none|$(tm display-message -p -t "$HAND" '#{pane_current_path}')|"
 assert_eq "$(identity)" "$HAND_IDENTITY" \
@@ -826,7 +828,7 @@ for row in \
     "$TMP_ROOT/state.full" > "$FLEET_STATE"
   register_on "$UNNAMED_PANE" ''
   assert_eq "$RC|$(identity)$(recorded launch_line)|$(recorded generation)|$(recorded pending)|$(recorded exit)|$(field "$(keyed registered "$OUT")" retained)|$(field "$(keyed registered "$OUT")" fresh)" \
-    "0|$want_harness|$H/.claude|$H/.claude|$want_model|$want_effort|$UNNAMED_CWD|$want_line|$want_gen|none|none|$want_retained|account,cwd,generation,home,pane,runtime,server,server_start,session_rows,window" \
+    "0|$want_harness|$H/.claude|$H/.claude|$want_model|$want_effort|$UNNAMED_CWD|$want_line|$want_gen|none|none|$want_retained|account,cwd,generation,home,pane,runtime,server,server_socket,server_start,session_rows,window" \
     "register with no start row over $what replaces proven fields and retains only that pane's unread fields"
 done
 # The control reinstates the blanking writer's merge: empty identity values
@@ -1301,7 +1303,7 @@ git -C "$TMP_ROOT/work" switch -q --detach || exit 1
 BEFORE="$(work_head)"
 OVERSEE_BIN="$DETACHCTL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(work_head)|$(git -C "$TMP_ROOT/work" rev-parse main)|$(unsynced '[^ ]*')" "0|$BEFORE|$WANT|0" \
-  "control: a sync without the detached-head check leaves a detached checkout behind unreported"
+  "control: a sync without the detached-head check leaves a detached checkout behind unreported" "$OUT"
 tm kill-window -t "$(recorded window)"
 git -C "$TMP_ROOT/work" switch -q main || exit 1
 # Its control for the relay of sync-base's key: a parse that finds no key
@@ -1407,6 +1409,113 @@ test_register_live_holder() {
   mv -- "$TMP_ROOT/register-live.saved" "$FLEET_STATE"
 }
 test_register_live_holder
+
+test_recorded_server() {
+  local a_addr b_addr b_server holder candidate before verb control old file mode="${1:-register}" fresh_control decoy predecessor_control panes
+  cp -- "$FLEET_STATE" "$TMP_ROOT/two-server.saved"
+  for name in server-a server-b; do
+    env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" -f /dev/null \
+      new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" set-option -g default-shell /bin/sh
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
+  done
+  a_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-a display-message -p '#{socket_path},#{pid},0')"
+  b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{socket_path},#{pid},0')"
+  b_server="${b_addr#*,}" b_server="${b_server%%,*}"
+  holder="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-a display-message -p '#{pane_id}')"
+  candidate="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{pane_id}')"
+  assert_eq "$holder" "$candidate" "the two servers reuse the same pane id"
+  jq '.overseer = null' "$FLEET_STATE" > "$TMP_ROOT/two-server.state"
+  mv -- "$TMP_ROOT/two-server.state" "$FLEET_STATE"
+  run_oversee TMUX="$a_addr" TMUX_PANE="$holder" -- "$mode" --wait-secs 20
+  holder="$(recorded pane)"
+  assert_eq "$RC|$(recorded server_socket)" "0|${a_addr%%,*}" "$mode stores the overseer's socket"
+  before="$(cat "$FLEET_STATE")"
+  if [[ "$mode" == launch ]]; then
+    decoy="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b new-window -d -t fleet -n foreign-predecessor -P -F '#{pane_id}' 'exec sleep 100000')"
+    assert_eq "$decoy" "$holder" "B's unrelated pane repeats A's launched overseer number"
+    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- launch --predecessor "$holder" --wait-secs 20
+    panes="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b list-panes -a -F '#{pane_id}')"
+    assert_eq "$RC|$(field "$(keyed predecessor-not-live "$OUT")" live)|$(cat "$FLEET_STATE")|$(grep -cxF -- "$decoy" <<<"$panes" || true)" \
+      "1|none|$before|1" "a foreign recorded predecessor cannot authorize creation or stop on B"
+    predecessor_control="$(mutant_scripts foreign-predecessor-control oversee)" || exit 1
+    mutate_file "$predecessor_control/oversee" \
+      '[[ "$OL_INSPECT_SERVER" != "$predecessor_server" ]] || named_pane="$live_pane"' 'named_pane="$live_pane"'
+    OVERSEE_BIN="$predecessor_control/oversee" run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- launch --predecessor "$holder" --wait-secs 20
+    panes="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b list-panes -a -F '#{pane_id}')"
+    assert_eq "$RC|$(recorded server)|$(grep -cxF -- "$decoy" <<<"$panes" || true)" "0|$b_server|0" \
+      "control: a foreign predecessor accepted opens on B and closes B's unrelated pane" "$OUT"
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-window -t "$(recorded window)"
+    printf '%s\n' "$before" > "$FLEET_STATE"
+  fi
+  control="$(mutant_scripts two-server-control oversee)" || exit 1
+  # Restore the pre-change inspect routing and pane-only register bypass.
+  for file in lib/overseer-launch.sh; do
+    [[ ! -L "$control/$file" ]] || rm -- "$control/$file"
+    cp -p -- "$SRC_DIR/$file" "$control/$file"
+  done
+  mutate_file "$control/lib/overseer-launch.sh" \
+    'args=(--server-socket "$socket" --server "$server" --server-start "$start")' 'args=()'
+  mutate_file "$control/oversee" 'if [[ -n "$live_pane" && "$register_self" == 0 ]]; then
+  ol_session_inspect' 'if [[ -n "$live_pane" && ( "$COMMAND" != register || "$live_pane" != "${TMUX_PANE:-}" ) ]]; then
+  ol_session_inspect'
+  mutate_file "$control/oversee" '[[ "$register_self" == 0 ]] || live_pane=""' \
+    '[[ "$COMMAND" != register || "$live_pane" != "${TMUX_PANE:-}" ]] || live_pane=""'
+  for verb in register launch; do
+    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+    assert_eq "$RC|$(field "$(keyed overseer-live "$OUT")" session)|$(cat "$FLEET_STATE")" \
+      "1|$holder|$before" "$verb from B refuses while A lives and preserves the record"
+    OVERSEE_BIN="$control/oversee" run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+    old="$(recorded server)"
+    assert_eq "$RC|$old" "0|$b_server" "control: pre-change $verb replaces the live A record" \
+      "$OUT"
+    if [[ "$verb" == launch && "$RC" == 0 ]]; then
+      TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-window -t "$(recorded window)"
+    fi
+    printf '%s\n' "$before" > "$FLEET_STATE"
+  done
+  # A changed tmux start is a different server identity even at a live pid.
+  jq '.overseer.server_start = 0' <<<"$before" > "$FLEET_STATE"
+  run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register
+  assert_eq "$RC|$(recorded server)" "0|$b_server" "a different recorded server start permits takeover"
+  TMUX_TMPDIR="$TMUX_DIR" tmux -L server-a kill-server
+  for verb in register launch; do
+    # A fresh B repeats A's launched pane number when it opens its overseer.
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-server
+    env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b -f /dev/null \
+      new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b set-option -g default-shell /bin/sh
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
+    b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{socket_path},#{pid},0')"
+    b_server="${b_addr#*,}" b_server="${b_server%%,*}"
+    candidate="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{pane_id}')"
+    printf '%s\n' "$before" > "$FLEET_STATE"
+    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+    assert_eq "$RC|$(recorded server)|$(recorded server_socket)" \
+      "0|$b_server|${b_addr%%,*}" "$verb from B succeeds after A's server stops" "$OUT"
+    if [[ "$verb" == launch && "$RC" == 0 ]]; then
+      [[ "$mode" != launch ]] || assert_eq "$(recorded pane)" "$holder" "fresh launch verifies its own pane when the prior server used the same number"
+      TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-window -t "$(recorded window)"
+    fi
+  done
+  if [[ "$mode" == launch ]]; then
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-server
+    env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b -f /dev/null \
+      new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b set-option -g default-shell /bin/sh
+    TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
+    b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{socket_path},#{pid},0')"
+    fresh_control="$(mutant_scripts fresh-server-control lib/overseer-launch.sh)" || exit 1
+    mutate_file "$fresh_control/lib/overseer-launch.sh" 'if [[ "${2:-}" != --launch ]]; then' 'if true; then'
+    printf '%s\n' "$before" > "$FLEET_STATE"
+    OVERSEE_BIN="$fresh_control/oversee" run_oversee TMUX="$b_addr" -- launch --wait-secs 20
+    assert_eq "$RC|$(recorded pane)|$(recorded server_socket)" "1|$holder|${a_addr%%,*}" \
+      "control: routing fresh verification through the prior record rejects B's new same-numbered pane" "$OUT"
+  fi
+  TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-server
+  mv -- "$TMP_ROOT/two-server.saved" "$FLEET_STATE"
+}
+for recorded_mode in register launch; do test_recorded_server "$recorded_mode"; done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
