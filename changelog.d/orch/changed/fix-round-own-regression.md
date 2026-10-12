@@ -1,0 +1,1 @@
+- A fix round whose own change brings a new blocker gets one correction past the review cap per pull request; a second such blocker ends the fix rounds in a cut round or a design review.
