@@ -44,7 +44,8 @@
 # proc_table_install DIR — write the stub pair into DIR. Put DIR on the PATH of
 # the wake under test and export these three beside it:
 #
-#   PROC_TABLE        the file `ps` prints, one `PID PPID COMM` row per line
+#   PROC_TABLE        the input table, one `PID PPID COMM` row per line; ps
+#                     prints the requested columns and selected pid
 #   PROC_CWD_FILE     optional `PID<TAB>CWD` lines; a pid listed here gets that
 #                     cwd from `readlink`, which is how a row states a process
 #                     sitting in the lane's worktree without starting one
@@ -71,7 +72,27 @@ proc_table_install() { # DIR
   {
     printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do'
     printf '  [[ "$a" != stat= && "$a" != lstart= ]] || exec "%s" "$@"\n' "$real_ps"
-    printf '%s\n' 'done' 'cat -- "${PROC_TABLE:?proc-table: PROC_TABLE names no file}"'
+    printf '%s\n' 'done'
+    cat <<'PS_TABLE'
+format=full
+target=""
+case "$*" in
+  '-A -o pid= -o comm=') format=pid-comm ;;
+  '-o comm= -p '*) format=comm; target="$4" ;;
+esac
+awk -v format="$format" -v target="$target" '
+  target != "" && $1 != target { next }
+  {
+    found = 1
+    if (format == "full") { print; next }
+    pid = $1
+    sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+/, "")
+    if (format == "pid-comm") print pid " " $0
+    else print
+  }
+  END { if (target != "" && !found) exit 1 }
+' < "${PROC_TABLE:?proc-table: PROC_TABLE names no file}"
+PS_TABLE
   } > "$1/ps"
   cat > "$1/readlink" <<'READLINK_STUB'
 #!/usr/bin/env bash
