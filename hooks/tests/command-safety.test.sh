@@ -401,8 +401,12 @@ environment_rows() {
 [0,"printf '%s' 'env'","quoted-argument-data"]
 [0,"# env\ngit status","comment-data"]
 [2,"\"env\"","quoted-producer"]
+[2,"'env'","single-quoted-producer"]
 [2,"e'n'v","split-producer"]
 [2,"en\\v","escaped-producer"]
+[2,"printf '%s' ready # ignored text\nsystemctl --user show-environment","comment-boundary-producer"]
+[0,"printf '%s' 'ordinary text $NAME `env` # | ; \\ data' \"ordinary text # | ;\"","quoted-span-markers-are-data"]
+[0,"printf '%s' \"\" '' 'env'","empty-quotes-remain-data"]
 [2,"/usr/bin/env","absolute-producer"]
 [2,"en\\\nv","continued-producer"]
 [2,"env | grep 'NAME","unclosed-filter"]
@@ -427,6 +431,8 @@ environment_rows() {
 [2,["printenv"],"array-dump"]
 [0,["printenv","NAME"],"array-named"]
 [0,["printf","%s","env"],"array-data"]
+[0,["env","","printenv"],"array-empty-launcher-target"]
+[2,["printenv","NAME\\cDATA"],"array-backslash-name-is-not-literal"]
 [2,["systemctl","--user","show-environment","|","grep","NAME"],"array-pipe-is-data"]
 [2,["env","NAME=value"],"array-assignment-only"]
 [2,["env","--","NAME=value"],"array-options-end-assignment"]
@@ -491,6 +497,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "quoted-head" { swap("syntax_head=${arg_unquoted[$pos]}", "syntax_head=1") }
       defect == "array-head" { swap("if [ -n \"$syntax_head\" ]; then", "if [ -n \"$syntax_head\" ] || [ \"$1\" = argv ]; then") }
+      defect == "literal-span" { swap("word=$word$span", "word=$word") }
+      defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
+      defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -537,6 +546,11 @@ suffix-stage-only|FAIL environment: unsupported-pipe-evidence: exit=0 expected=2
 head-basename|FAIL environment: pathname-basename-is-not-syntax: exit=2 expected=0
 quoted-head|FAIL environment: quoted-head-is-an-executable: exit=2 expected=0
 array-head|FAIL environment: array-function-is-an-executable: exit=2 expected=0
+literal-span|FAIL environment: bare-env: exit=0 expected=2
+literal-span|FAIL environment: single-quoted-producer: exit=0 expected=2
+literal-span|FAIL environment: quoted-producer: exit=0 expected=2
+comment-boundary|FAIL environment: comment-boundary-producer: exit=0 expected=2
+array-decoding|FAIL environment: array-backslash-name-is-not-literal: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in

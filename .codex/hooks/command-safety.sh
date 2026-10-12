@@ -19,11 +19,13 @@ set -euo pipefail
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1
   local j start=0 end n fd target proc output input_redirect pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 opaque text options_ended null_output syntax_head opaque_from
+  local mode pattern_count pattern filter_ok stage=0 opaque text text_length span span_re comment_span options_ended null_output syntax_head opaque_from
   local continuation=$'\\\n'
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local opaque_re='(^|[^A-Za-z0-9_])(env|printenv|set|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)|/proc/[^[:space:]]*/environ'
+  local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
+  local single_span_re="^[^']+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() origins=() evidence=()
   local starts=() ends=() separators=() decisions=()
   if [ "$1" = argv ]; then
@@ -31,14 +33,27 @@ environment_dump() { # command kind; arguments are already decoded data
     for ((i=0; i<${#tokens[@]}; i++)); do kinds[i]=literal; unquoted_words[i]=""; done
   else
     text=$command_text
-    while [ "$i" -lt "${#text}" ]; do
+    text_length=${#text}
+    while [ "$i" -lt "$text_length" ]; do
+      case "$quote" in
+        "'") span_re=$single_span_re ;;
+        '"') span_re=$double_span_re ;;
+        *) span_re=$ordinary_span_re ;;
+      esac
+      # Copy literal spans once. Marker handlers keep the quote and routing
+      # decisions; growing a word byte by byte exceeds the hook budget.
+      if [[ ${text:$i} =~ $span_re ]]; then
+        span=${BASH_REMATCH[0]}; word=$word$span; active=1
+        i=$((i + ${#span}))
+        continue
+      fi
       c=${text:$i:1}; i=$((i + 1)); next=${text:$i:1}
       if [ "$quote" = "'" ]; then
         if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
         continue
       fi
       if [ "$c" = '\' ]; then
-        if [ "$i" -ge "${#text}" ]; then kind=unknown; break; fi
+        if [ "$i" -ge "$text_length" ]; then kind=unknown; break; fi
         i=$((i + 1))
         [ "$next" = $'\n' ] || bare=""
         if [ "$quote" = '"' ]; then
@@ -73,7 +88,9 @@ environment_dump() { # command kind; arguments are already decoded data
         '$') kind=unknown; word=$word$c; active=1; bare=""; continue ;;
         '#')
           if [ -z "$active" ]; then
-            while [ "$i" -lt "${#text}" ] && [ "${text:$i:1}" != $'\n' ]; do i=$((i + 1)); done
+            if [[ ${text:$i} =~ $comment_span_re ]]; then
+              comment_span=${BASH_REMATCH[0]}; i=$((i + ${#comment_span}))
+            fi
             continue
           fi ;;
       esac
@@ -433,24 +450,26 @@ fields="$(jq -er '
 ' <<<"$input" 2>/dev/null)" || refuse payload invalid-json
 [ -n "$fields" ] || exit 0
 # TSV escapes tabs, newlines and backslashes, so only the field boundary is
-# a literal tab. printf decodes data without evaluating shell syntax.
+# a literal tab. Read each field once instead of repeatedly copying and
+# matching the remaining line. printf decodes data without shell evaluation.
 # Bash 3.2 can unset the target of an empty %b assignment. Keep empty fields
 # as ordinary assignments and decode only nonempty text.
-cwd=${fields%%$'\t'*}
-fields=${fields#*$'\t'}
-command_text=${fields%%$'\t'*}; fields=${fields#*$'\t'}
-[ -n "$command_text" ] || exit 0
-[ -z "$cwd" ] || printf -v cwd '%b' "$cwd"
-printf -v command_text '%b' "$command_text"
-cwd_state=${fields%%$'\t'*}; fields=${fields#*$'\t'}
-command_kind=${fields%%$'\t'*}; fields=${fields#*$'\t'}
-argument_count=${fields%%$'\t'*}; fields=${fields#*$'\t'}
-command_argv=()
-for ((argument_index=0; argument_index<argument_count; argument_index++)); do
-  argument=${fields%%$'\t'*}; fields=${fields#*$'\t'}
-  [ -z "$argument" ] || printf -v argument '%b' "$argument"
-  command_argv[argument_index]=$argument
-done
+{
+  IFS= read -r -d $'\t' cwd || refuse payload invalid-json
+  IFS= read -r -d $'\t' command_text || refuse payload invalid-json
+  [ -n "$command_text" ] || exit 0
+  [ -z "$cwd" ] || printf -v cwd '%b' "$cwd"
+  printf -v command_text '%b' "$command_text"
+  IFS= read -r -d $'\t' cwd_state || refuse payload invalid-json
+  IFS= read -r -d $'\t' command_kind || refuse payload invalid-json
+  IFS= read -r -d $'\t' argument_count || refuse payload invalid-json
+  command_argv=()
+  for ((argument_index=0; argument_index<argument_count; argument_index++)); do
+    IFS= read -r -d $'\t' argument || refuse payload invalid-json
+    [ -z "$argument" ] || printf -v argument '%b' "$argument"
+    command_argv[argument_index]=$argument
+  done
+} <<<"$fields"$'\t'
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
