@@ -1,0 +1,1 @@
+- `pr-watch.sh` reads every watched pull request in one GraphQL request per repository and reduces them in one `jq` run, so a pass starts the same few processes whatever the pull request count: 12 where it started 667 at 16 pull requests.

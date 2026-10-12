@@ -6,6 +6,9 @@
 # sitting steadily over an open thread TRANSITIONS NOTHING, so a watcher keyed
 # on state transitions idles for hours over a thread posted minutes after its
 # last pass; this reducer reports the standing state on every call.
+# A pass is one GraphQL read per repository and one jq reduction: every
+# overseer runs it on each long pass, so its process count must not grow with
+# the pull requests it watches.
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
 # Stdout is the whole-text attention protocol consumed by orch oversee-watch
@@ -77,10 +80,11 @@ Attention kinds:
                      current-head CI aggregate completed successfully.
                      Reported immediately, without a quiet period or lane.
                      The overseer still proves the render before approval
-  head-moved         the head changed while this PR was being reduced —
-                     the findings (or the silence) describe the OLD head;
-                     re-run. Attention, not an error: the race is
-                     ordinary, the response is one more poll
+  head-moved         the head commit read beside the PR is not the PR's
+                     head: a push landed during the read, so the findings
+                     (or the silence) describe the OLD head; re-run.
+                     Attention, not an error: the race is ordinary, the
+                     response is one more poll
   error              this PR could not be reduced (a read failed or
                      answered malformed data) — fail LOUD, never silently
                      skipped
@@ -94,6 +98,9 @@ A null reviewDecision, which GitHub answers on a base no approval rule
 targets (a stacked PR's base among them), is not an approval: that PR gets
 neither a disarmed nor an awaiting-stale line.
 
+One pass reads every PR in one GraphQL request per repository, plus one
+request per further page of review threads shared by every PR that has one.
+
 Output: one tab-separated line per finding on stdout:
   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
 
@@ -102,7 +109,8 @@ Exit codes:
   1  at least one attention line
   2  read failure, in two shapes: per-PR failures carry `error` lines on
      stdout (attention lines may also be present), while GLOBAL failures
-     (missing GH_REPO, a broken open-PR listing) report on stderr only
+     (missing GH_REPO, a broken open-PR listing, which a GraphQL error
+     anywhere in it is) report on stderr only
      with no per-PR lines — surface stderr, not just stdout
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
@@ -183,555 +191,296 @@ if [ -z "$AWAITING_AFTER" ]; then
     exit 2
   fi
 fi
-attention=0
-errored=0
 
-emit() { # pr, head, kind, detail
-  printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
-  emitted_this_pr=1
+# --- one read ------------------------------------------------------------
+# Every pull request comes from one GraphQL request per repository, so its
+# head, review state, threads, head commit, CI aggregate and timeline describe
+# one moment rather than the seconds a per-PR walk of REST reads spans. A push
+# that lands during the request shows as a head commit that is not the PR's
+# head, which reads as head-moved. The reduction is one jq program; nothing
+# here starts a process per pull request or per output line.
+PR_FIELDS='number state isDraft headRefOid headRefName createdAt author{login __typename}
+  autoMergeRequest{mergeMethod} isInMergeQueue mergeQueueEntry{position} reviewDecision
+  reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}
+  commits(last:1){totalCount nodes{commit{oid committedDate
+    checkSuites(first:10,filterBy:{checkName:"CI"}){pageInfo{hasNextPage}
+      nodes{checkRuns(first:20,filterBy:{checkName:"CI",checkType:LATEST}){pageInfo{hasNextPage} nodes{name status conclusion}}}}}}}
+  timelineItems(last:10,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT,REVIEW_REQUESTED_EVENT]){nodes{
+    ... on ReadyForReviewEvent{createdAt} ... on ReopenedEvent{createdAt} ... on ReviewRequestedEvent{createdAt}}}'
+owner="${GH_REPO%%/*}"
+name="${GH_REPO#*/}"
+now="$(date +%s)" || {
+  rg_message error watch-clock-failed "" "::error::pr-watch: could not read the clock" >&2
+  exit 2
 }
 
-# Queue membership and GitHub's review decision, in one read. The answer is
-# two words: queued or unqueued, then APPROVED, CHANGES_REQUESTED,
-# REVIEW_REQUIRED, or NONE for a null reviewDecision, which GitHub answers on
-# a base no approval rule targets. GraphQL errors, a missing field, or a value outside
-# either enum is a malformed read, never an unqueued or unreviewed PR: read
-# as unqueued it would print a false disarmed line and drop the dequeue note.
-REVIEW_STATE_QUERY='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position} reviewDecision}}}'
-REVIEW_STATE_JQ='if ((.errors? // []) | length) > 0 then error("graphql errors present")
-  else .data.repository.pullRequest as $p
-  | if ($p | type) != "object"
-       or (($p.isInMergeQueue | type) != "boolean")
-       or ((($p.mergeQueueEntry | type) != "null") and (($p.mergeQueueEntry | type) != "object"))
-       or (($p | has("reviewDecision")) | not)
-       or ((($p.reviewDecision | type) != "null")
-           and (($p.reviewDecision | IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED")) | not))
-    then error("malformed review-state envelope")
-    else (if $p.isInMergeQueue or ($p.mergeQueueEntry != null) then "queued" else "unqueued" end)
-         + " " + ($p.reviewDecision // "NONE")
-    end
-  end'
-read_review_state() { # pr, head, what — sets queued (the annotation) and decision; returns 1 after emitting an error
-  local resp words queue_word
-  resp="$(gh api graphql -f query="$REVIEW_STATE_QUERY" \
-      -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F number="$1" 2>/dev/null)" || {
-    emit "$1" "$2" error "$3 failed"
-    errored=1
-    return 1
-  }
-  if [ -z "$resp" ]; then
-    emit "$1" "$2" error "$3 produced zero bytes (broken read)"
-    errored=1
-    return 1
-  fi
-  words="$(jq -r "$REVIEW_STATE_JQ" <<<"$resp" 2>/dev/null)" || {
-    emit "$1" "$2" error "$3 is malformed (GraphQL errors, a missing field, or a value outside the queue or reviewDecision enums)"
-    errored=1
-    return 1
-  }
-  queue_word="${words%% *}"
-  decision="${words#* }"
-  case "$queue_word" in
-    queued) queued=" (QUEUED: dequeue before pushing)" ;;
-    unqueued) queued="" ;;
-    *)
-      emit "$1" "$2" error "$3 produced no usable sentinel (broken read)"
-      errored=1
-      return 1
-      ;;
-  esac
-  return 0
-}
-# An ISO-8601 UTC timestamp as epoch seconds; non-zero when it does not parse.
-# date -d is GNU; BSD/macOS uses -u -j -f (the -u is load-bearing: the
-# trailing Z is a LITERAL in this format string, so without -u BSD date reads
-# the timestamp in the machine's local zone and the silence clock shifts by
-# the UTC offset in either direction).
-to_epoch() { # timestamp
-  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
-}
-
-# Whether the decision read last is an approval. NONE is not: a base no
-# approval rule targets, such as a stacked PR's, reads null before any
-# review, so counting it as met would nudge an unreviewed PR to arm.
-classify_decision() { # pr, head, where — sets review_met; returns 1 after emitting an error
-  case "$decision" in
-    APPROVED) review_met=1 ;;
-    NONE|CHANGES_REQUESTED|REVIEW_REQUIRED) review_met=0 ;;
-    *)
-      emit "$1" "$2" error "reviewDecision '$decision' reached the $3 unhandled — read_review_state admits only APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED and NONE"
-      errored=1
-      return 1
-      ;;
-  esac
-  return 0
-}
-
-# --- enumerate ----------------------------------------------------------
-# Enumeration yields PR NUMBERS ONLY; every PR object is fetched FRESH at
-# reduction time. A snapshot row would be a TOCTOU hazard: a push between
-# the listing and this PR's reduction would leave the loop evaluating an
-# old head (and old auto-merge state) while the queue/thread reads observe
-# the replacement — an approved OLD head reading as healthy right after an
-# unreviewed push. A zero-byte or non-array page is a broken read, never an
-# empty repo.
+# Named PRs are aliased into one request. A failed or empty answer is every
+# named PR's error line, never a global refusal: the caller asked about those
+# PRs. The open-PR listing pages inside the same gh process; gh follows the
+# first pageInfo in the answer, which is the listing's, so it comes before
+# the PR fields.
+main_read=ok
 if [ -n "$PR_ARGS" ]; then
-  pr_numbers="$PR_ARGS"
+  mode=named
+  selection=""
+  for number in $PR_ARGS; do
+    selection="$selection p$number:pullRequest(number:$number){...PR}"
+  done
+  main="$(gh api graphql -f owner="$owner" -f name="$name" \
+      -f query="query(\$owner:String!,\$name:String!){repository(owner:\$owner,name:\$name){$selection}} fragment PR on PullRequest{$PR_FIELDS}" \
+      2>/dev/null)" || main_read=failed
+  [ "$main_read" = failed ] || [ -n "$main" ] || main_read=empty
 else
-  raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
+  mode=list
+  main="$(gh api graphql --paginate -f owner="$owner" -f name="$name" \
+      -f query="query(\$owner:String!,\$name:String!,\$endCursor:String){repository(owner:\$owner,name:\$name){pullRequests(states:OPEN,first:50,after:\$endCursor,orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{...PR}}}} fragment PR on PullRequest{$PR_FIELDS}")" || {
     rg_message error watch-list-failed "$GH_REPO" "::error::pr-watch: could not list open PRs" >&2
     exit 2
   }
-  if [ -z "$raw_prs" ]; then
+  if [ -z "$main" ]; then
     rg_message error watch-list-empty "$GH_REPO" "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
     exit 2
   fi
-  pr_numbers="$(jq -rs 'if (length > 0) and all(type == "array")
-      then (add | map(if (.number | type) != "number" then error("row without a number") else .number end) | join(" "))
-      else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
-    rg_message error watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
-    exit 2
-  }
 fi
 
-# --- per-PR reduction ---------------------------------------------------
-for number in $pr_numbers; do
-  emitted_this_pr=0
-  row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
-    emit "$number" "--------" error "could not read PR #$number"
-    errored=1
-    continue
-  }
-  if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
-      and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
-      and ((.state? // null) | type) == "string"
-      and (has("draft") and (.draft | type) == "boolean")
-      and (has("auto_merge") and ((.auto_merge | type) == "null" or ((.auto_merge | type) == "object" and ((.auto_merge.merge_method? // null) | type) == "string")))
-      and ((.created_at? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
-    emit "$number" "--------" error "PR #$number response is not a well-formed PR object (broken read)"
-    errored=1
-    continue
-  fi
-  head="$(jq -r '.head.sha' <<<"$row")"
-  state="$(jq -r '.state' <<<"$row")"
-  draft="$(jq -r '.draft | tostring' <<<"$row")"
-  armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
-  created_at="$(jq -r '.created_at' <<<"$row")"
-  # Closed/merged PRs need nothing (reachable via explicit PR args). The
-  # REST enum is open|closed — anything else is malformed data, and a
-  # malformed state must never read as "closed, skip silently".
-  case "$state" in
-    open) ;;
-    closed) continue ;;
-    *)
-      emit "$number" "$head" error "PR state '$state' is outside the open|closed enum (malformed response)"
-      errored=1
-      continue
-      ;;
-  esac
+# The reduction. Input: the main read's pages on stdin; $read, the named
+# read's status; $ARGS.positional, one (status, request, answer) triple per
+# thread-page round. Output: a control line, then the attention protocol.
+# The control line is `exit<TAB>code`, `global<TAB>key` for a listing that
+# cannot be trusted, or `walk<TAB>request`, the GraphQL request body for the
+# next thread page of every PR whose count needs one. A malformed answer is that
+# PR's error line, never health: a node read as unqueued, unreviewed or
+# threadless would print a false disarmed line or drop a dequeue note.
+REDUCE_JQ='
+def sha: type == "string" and test("^[0-9a-fA-F]{40}$");
+# Epoch seconds of an ISO-8601 time in UTC or with an offset (a commit time
+# keeps its author offset); null when it does not parse.
+def epoch:
+  if type != "string" then null
+  else ([capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<z>Z|(?<s>[+-])(?<h>[0-9]{2}):(?<m>[0-9]{2}))$")] | first) as $c
+  | if $c == null then null
+    else (try (($c.t + "Z") | fromdateiso8601) catch null) as $base
+    | if $base == null or $c.z == "Z" then $base
+      else $base - (if $c.s == "-" then -1 else 1 end) * (($c.h | tonumber) * 3600 + ($c.m | tonumber) * 60)
+      end
+    end
+  end;
+def finding($n; $head; $kind; $detail): {n: $n, head: $head[0:8], kind: $kind, detail: $detail};
 
-  # Pushes to a queued PR's branch are rejected, so every attention line on
-  # a queued PR carries the queue annotation this read sets.
-  read_review_state "$number" "$head" "review-state read" || continue
+# The unresolved count across pages. Past 20 pages, or at a truthy
+# hasNextPage whose cursor cannot advance, the count fails closed as
+# overflow: long-lived PRs keep hundreds of resolved threads, so a bound at
+# the first page would make attention permanent.
+def thread_page_ok:
+  type == "object" and (.nodes | type) == "array"
+  and all(.nodes[]; type == "object" and (.isResolved | type) == "boolean");
+def threads($first; $later):
+  def step($page; $rest; $count; $used; $pages):
+    if ($page | thread_page_ok | not) then {error: "thread response malformed (non-boolean isResolved) or unparsable"}
+    elif ($page.pageInfo.hasNextPage | type) != "boolean" then {error: "thread pagination metadata malformed (non-boolean hasNextPage)"}
+    else ($count + ([$page.nodes[] | select(.isResolved == false)] | length)) as $total
+    | if ($page.pageInfo.hasNextPage | not) then {unresolved: $total}
+      else ($page.pageInfo.endCursor // "") as $next
+      | if ($next | type) != "string" or $next == "" or $next == $used or $pages >= 20 then {overflow: true}
+        elif ($rest | length) == 0 then {walk: $next}
+        elif $rest[0].status == "failed" then {error: "thread read failed"}
+        elif $rest[0].status == "empty" then {error: "thread read produced zero bytes (broken read)"}
+        else step($rest[0].page; $rest[1:]; $total; $next; $pages + 1)
+        end
+      end
+    end;
+  step($first; $later; 0; ""; 1);
 
-  # Thread transitions have no webhook anywhere, which is the watcher's whole
-  # reason to exist. The count PAGINATES (long-lived PRs accumulate hundreds
-  # of RESOLVED threads; failing closed at 100 total made attention permanent
-  # regardless of unresolved count) — the fail-closed overflow posture starts
-  # at the 20-page/2000-thread bound, or at a truthy hasNextPage whose cursor
-  # cannot advance.
-  unresolved=0
-  overflow=false
-  t_cursor=""
-  t_pages=0
-  t_error=""
-  while :; do
-    t_pages=$((t_pages + 1))
-    if [ "$t_pages" -gt 20 ]; then
-      overflow=true
-      break
-    fi
-    # The cursor rides a proper GraphQL VARIABLE, never string
-    # interpolation — an opaque cursor must not be able to break query
-    # syntax. $after:String is nullable: on the first page it is simply
-    # not passed and resolves to null (page one).
-    if [ -n "$t_cursor" ]; then
-      threads_resp="$(gh api graphql \
-        -f query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
-        -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F number="$number" -f after="$t_cursor" 2>/dev/null)" || {
-        t_error="thread read failed"
-        break
-      }
-    else
-      threads_resp="$(gh api graphql \
-        -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
-        -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F number="$number" 2>/dev/null)" || {
-        t_error="thread read failed"
-        break
-      }
-    fi
-    if [ -z "$threads_resp" ]; then
-      t_error="thread read produced zero bytes (broken read)"
-      break
-    fi
-    # A node whose isResolved is not a boolean (or a non-boolean
-    # hasNextPage) is a malformed response — counting it as resolved would
-    # report health from untrustworthy data.
-    page_unresolved="$(jq -r 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
-        elif (.data.repository.pullRequest.reviewThreads | type) != "object"
-           or (.data.repository.pullRequest.reviewThreads.nodes | type) != "array"
-        then error("malformed thread container")
-        elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
-        then error("malformed thread node")
-        else [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length end' <<<"$threads_resp" 2>/dev/null)" || {
-      t_error="thread response malformed (non-boolean isResolved) or unparsable"
-      break
-    }
-    page_next="$(jq -r 'if (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean"
-        then error("malformed pageInfo")
-        else .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage end' <<<"$threads_resp" 2>/dev/null)" || {
-      t_error="thread pagination metadata malformed (non-boolean hasNextPage)"
-      break
-    }
-    unresolved=$((unresolved + page_unresolved))
-    [ "$page_next" = "true" ] || break
-    t_cursor_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$threads_resp" 2>/dev/null)"
-    if [ -z "$t_cursor_next" ] || [ "$t_cursor_next" = "$t_cursor" ]; then
-      # hasNextPage with no ADVANCING cursor (missing, or identical to the
-      # page just read): cannot verify the remainder — fail closed as
-      # overflow immediately instead of burning the page budget on
-      # re-reads of the same page.
-      overflow=true
-      break
-    fi
-    t_cursor="$t_cursor_next"
-  done
-  if [ -n "$t_error" ]; then
-    emit "$number" "$head" error "$t_error"
-    errored=1
-    continue
-  fi
-  threads_open=0
-  if [ "$overflow" = "true" ] || [ "$unresolved" -gt 0 ]; then
-    if [ "$overflow" = "true" ]; then
-      emit "$number" "$head" threads-open "review threads beyond the pagination bound (count overflow — fail closed)$queued"
-    else
-      emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
-    fi
-    attention=1
-    threads_open=1
-  fi
-
-  # GitHub's reviewDecision is the review verdict: the base's rules count the
-  # approvals, dismiss a stale one on push and name a standing objection. One
-  # line PER FINDING: open threads do not suppress an objection.
-  if [ "$decision" = "CHANGES_REQUESTED" ]; then
-    emit "$number" "$head" changes-requested "a reviewer requested changes (reviewDecision CHANGES_REQUESTED)$queued"
-    attention=1
-    continue
-  fi
-  # An open thread holds the merge under the base's thread rule, so neither
-  # a re-arm nudge nor a stale-review nudge applies until it is answered.
-  if [ "$threads_open" = "1" ]; then
-    continue
-  fi
-  classify_decision "$number" "$head" reduction || continue
-
-  refresh_head=false
-  if jq -e "$REFRESH_IDENTITY_JQ" >/dev/null 2>&1 <<<"$row"; then
-    refresh_head=true
-  fi
-  if [ "$refresh_head" = "true" ] && [ "$draft" = "false" ] && [ "$decision" = REVIEW_REQUIRED ]; then
-    # The refresh workflow creates no lane. Its current-head aggregate
-    # wakes the overseer, which independently proves the render before it
-    # approves. Pending or unsuccessful CI never starts a review wait.
-    ci_pages="$(gh api "repos/$GH_REPO/commits/$head/check-runs?check_name=CI&filter=latest&per_page=100" --paginate 2>/dev/null)" || {
-      emit "$number" "$head" error "refresh CI read failed"
-      errored=1
-      continue
-    }
-    ci_green="$(jq -rs --arg head "$head" '
-      if length == 0 or any(.[]; type != "object" or (.check_runs | type) != "array")
-      then error("malformed check-run pages")
-      else [.[].check_runs[]] as $runs
-      | if any($runs[]; (.name | type) != "string"
-          or (.head_sha | type) != "string"
+# The refresh aggregate: every check named CI on the head commit completed
+# successfully. Pending or unsuccessful CI never starts a review wait.
+def refresh_ci($commit; $n; $head; $queued):
+  $commit.checkSuites as $s
+  | if ($s | type) != "object" or ($s.nodes | type) != "array" or ($s.pageInfo.hasNextPage | type) != "boolean"
+       or any($s.nodes[]; type != "object" or (.checkRuns | type) != "object"
+         or (.checkRuns.nodes | type) != "array" or (.checkRuns.pageInfo.hasNextPage | type) != "boolean")
+    then [finding($n; $head; "error"; "refresh CI response malformed")]
+    elif $s.pageInfo.hasNextPage or any($s.nodes[]; .checkRuns.pageInfo.hasNextPage)
+    then [finding($n; $head; "error"; "refresh CI read is past one page (fail loud, never a refresh line)")]
+    else [$s.nodes[].checkRuns.nodes[]] as $runs
+    | if any($runs[]; type != "object" or (.name | type) != "string"
           or (.status | type) != "string" or (has("conclusion") | not)
           or ((.conclusion | type) != "null" and (.conclusion | type) != "string"))
-        then error("malformed check run")
-        else [$runs[] | select(.name == "CI")] as $ci
-        | ($ci | length) > 0 and all($ci[];
-            .head_sha == $head and .status == "completed" and .conclusion == "success")
-        end
-      end' <<<"$ci_pages" 2>/dev/null)" || {
-      emit "$number" "$head" error "refresh CI response malformed"
-      errored=1
-      continue
-    }
-    if [ "$ci_green" = "true" ]; then
-      refresh_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
-        emit "$number" "$head" error "refresh reviewability recheck failed"
-        errored=1
-        continue
-      }
-      if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
-          and ((.state == "open") or (.state == "closed"))
-          and (.draft | type) == "boolean"
-          and (.head.sha | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$"))' >/dev/null 2>&1 <<<"$refresh_row"; then
-        emit "$number" "$head" error "refresh reviewability recheck malformed"
-        errored=1
-        continue
-      fi
-      refresh_now="$(jq -r '.head.sha' <<<"$refresh_row")" || {
-        emit "$number" "$head" error "refresh head recheck failed"
-        errored=1
-        continue
-      }
-      if [ "$refresh_now" != "$head" ]; then
-        emit "$number" "$head" head-moved "the head changed during refresh CI reduction (now $(printf %.8s "$refresh_now")); re-run"
-        attention=1
-        continue
-      fi
-      read_review_state "$number" "$head" "refresh review-state recheck" || continue
-      if [ "$decision" = REVIEW_REQUIRED ] && jq -e "($REFRESH_IDENTITY_JQ) and .state == \"open\" and .draft == false" >/dev/null 2>&1 <<<"$refresh_row"; then
-        emit "$number" "$head" refresh-ready "current-head CI passed; prove the render and approve as the overseer app$queued"
-        attention=1
-      fi
-      continue
-    fi
-  fi
+      then [finding($n; $head; "error"; "refresh CI response malformed")]
+      else [$runs[] | select(.name == "CI")] as $ci
+      | if ($ci | length) > 0 and all($ci[]; .status == "COMPLETED" and .conclusion == "SUCCESS")
+        then [finding($n; $head; "refresh-ready"; "current-head CI passed; prove the render and approve as the overseer app\($queued)")]
+        else [] end
+      end
+    end;
 
-  # Disarmed: an approved, un-queued, non-draft PR with auto-merge unarmed is
-  # mergeable, but nothing will merge it. Ownership and the decision are
-  # re-read JUST-IN-TIME (auto-merge, queue membership and the approval all
-  # move during a reduction — a queue ejection mid-reduction must not read
-  # healthy, and a concurrent arm must not false-alert).
-  if [ "$review_met" = "1" ] && [ "$draft" != "true" ]; then
-    ownership_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
-      emit "$number" "$head" error "auto-merge recheck failed (broken read)"
-      errored=1
-      continue
-    }
-    # Same schema discipline as the initial fetch: auto_merge must be
-    # null|object (a missing field is null in jq and would silently coerce
-    # to unarmed — a false disarmed from a broken envelope), and the row
-    # must still describe THE SAME HEAD (a push mid-reduction cleared
-    # auto-merge on a new head; recommending re-arm against stale reads
-    # would arm an unreviewed head).
-    if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
-        and (has("auto_merge"))
-        and ((.auto_merge | type) == "null" or ((.auto_merge | type) == "object" and ((.auto_merge.merge_method? // null) | type) == "string"))
-        and ((.state? // null) == "open" or (.state? // null) == "closed")
-        and ((.draft | type) == "boolean")
-        and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))' >/dev/null 2>&1 <<<"$ownership_row"; then
-      emit "$number" "$head" error "auto-merge recheck returned a malformed PR object (broken read)"
-      errored=1
-      continue
-    fi
-    # A PR that closed or merged mid-reduction needs nothing — never a
-    # re-arm nudge for a completed PR; drafts likewise re-load (a PR
-    # converted to draft mid-reduction stopped being re-armable).
-    if [ "$(jq -r '.state' <<<"$ownership_row")" != "open" ]; then
-      continue
-    fi
-    draft="$(jq -r '.draft | tostring' <<<"$ownership_row")"
-    ownership_head="$(jq -r '.head.sha' <<<"$ownership_row")"
-    if [ "$ownership_head" != "$head" ]; then
-      emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$ownership_head")) — findings describe the old head; re-run"
-      attention=1
-      continue
-    fi
-    armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$ownership_row")"
-    read_review_state "$number" "$head" "review-state recheck" || continue
-    classify_decision "$number" "$head" recheck || continue
-    if [ "$review_met" = "1" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
-      emit "$number" "$head" disarmed "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
-      attention=1
-    fi
-  fi
+# Reviewer silence counts from when this head became the head. GitHub exposes
+# no head-transition time, so the clock starts at the newer of the head
+# commit time and the PR creation, which covers an old commit opened in a
+# fresh PR. A ready-for-review, reopen or re-review request restarts it. The
+# commit time is author-controlled: beyond a small skew a future time is an
+# error, never silence. A push of an old commit onto an old PR still reads
+# stale early, which errs toward a nudge, never toward a stall.
+def stale($p; $commit; $n; $head; $queued):
+  $commit.committedDate as $at
+  | if $at == null or $at == "" then [finding($n; $head; "error"; "head commit has no usable committer date (broken read)")]
+    elif ($at | epoch) == null then [finding($n; $head; "error"; "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata")]
+    elif ($p.createdAt | epoch) == null then [finding($n; $head; "error"; "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed")]
+    else ([($at | epoch), ($p.createdAt | epoch)] | max) as $from
+    | ($now - $from) as $age
+    | if $age < -300 then [finding($n; $head; "error"; "silence clock is in the future by \(-$age)s (author-controlled committer timestamp) — silence age unprovable")]
+      elif $age <= $wait then []
+      elif ($p.timelineItems | type) != "object" or ($p.timelineItems.nodes | type) != "array"
+        or any($p.timelineItems.nodes[]; type != "object" or (.createdAt | type) != "string")
+      then [finding($n; $head; "error"; "timeline pages malformed while confirming staleness (fail loud, not a stale alert)")]
+      else ([$p.timelineItems.nodes[].createdAt] | sort | last) as $ready
+      | (if $ready == null then {age: $age}
+         elif ($ready | epoch) == null then {error: "readiness/reopen timestamp unparsable while confirming staleness (fail loud, not a stale alert)"}
+         elif ($ready | epoch) > $from then ($now - ($ready | epoch)) as $since
+           | if $since < -300 then {error: "silence clock is in the future by \(-$since)s (timeline event timestamp) — silence age unprovable"}
+             else {age: $since} end
+         else {age: $age} end) as $r
+      | if $r.error then [finding($n; $head; "error"; $r.error)]
+        elif $r.age > $wait then [finding($n; $head; "awaiting-stale"; "no approval for \($r.age)s (reviewDecision REVIEW_REQUIRED, quiet period \($wait)s) — trigger a re-review, or apply the fallback approval\($queued)")]
+        else [] end
+      end
+    end;
 
-  # Awaiting-stale: no approval of this head within the quiet period. Drafts
-  # are not awaiting REVIEW — they are awaiting readiness: the silence clock
-  # skips them, or a long-lived draft pins the watcher at exit 1 asking for
-  # re-reviews nobody owes it.
-  if [ "$decision" = "REVIEW_REQUIRED" ] && [ "$draft" != "true" ] && [ "$refresh_head" != "true" ]; then
-    # Quiet-period clock: reviewer silence counts from when this head
-    # BECAME the head. GitHub exposes no head-transition timestamp, so
-    # the approximation is max(head commit's committer date, PR
-    # created_at) — the PR floor covers a cherry-picked or long-prepared
-    # commit landing in a freshly opened PR (its commit date can be days
-    # old); a future-dated commit clamps to "not stale yet" rather than
-    # "stale forever" because the age simply goes negative. A push of an
-    # OLD commit onto an old PR still reads stale early — accepted:
-    # over-reporting silence errs toward a nudge, never toward a stall.
-    head_at="$(gh api "repos/$GH_REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)" || {
-      emit "$number" "$head" error "head-commit read failed"
-      errored=1
-      continue
-    }
-    case "$head_at" in
-      ''|null)
-        emit "$number" "$head" error "head commit has no usable committer date (broken read)"
-        errored=1
-        continue
-        ;;
-    esac
-    head_epoch="$(to_epoch "$head_at")" || head_epoch=""
-    if [ -z "$head_epoch" ]; then
-      emit "$number" "$head" error "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata"
-      errored=1
-      continue
-    fi
-    created_epoch=""
-    if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
-      created_epoch="$(to_epoch "$created_at")" || created_epoch=""
-      if [ -z "$created_epoch" ]; then
-        emit "$number" "$head" error "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed"
-        errored=1
-        continue
-      fi
-    fi
-    if [ -n "$created_epoch" ] && { [ -z "$head_epoch" ] || [ "$created_epoch" -gt "$head_epoch" ]; }; then
-      head_epoch="$created_epoch"
-    fi
-    if [ -n "$head_epoch" ]; then
-      age=$(( $(date +%s) - head_epoch ))
-      # The committer timestamp is AUTHOR-CONTROLLED: a future-dated head
-      # would keep age negative and read healthy forever — the exact
-      # stall this reducer exists to prevent. Beyond a small skew
-      # allowance it is a loud error, never silence. (created_at is
-      # server-stamped, so the floor above cannot be forged forward past
-      # real PR creation.)
-      if [ "$age" -lt -300 ]; then
-        emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (author-controlled committer timestamp) — silence age unprovable"
-        errored=1
-      elif [ "$age" -gt "$AWAITING_AFTER" ]; then
-        # A draft marked ready keeps its old commit/creation timestamps,
-        # so the first post-readiness poll would read stale instantly.
-        # The readiness event is the true start of the review wait —
-        # consulted only when the cheap clock already says stale (one
-        # timeline read per would-be-stale PR, not per poll).
-        timeline_pages="$(gh api "repos/$GH_REPO/issues/$number/timeline?per_page=100" --paginate \
-            -H "Accept: application/vnd.github+json" 2>/dev/null)" || {
-          emit "$number" "$head" error "timeline read failed while confirming staleness (fail loud, not a stale alert)"
-          errored=1
-          continue
-        }
-        if [ -z "$timeline_pages" ]; then
-          emit "$number" "$head" error "timeline read produced zero bytes while confirming staleness (broken read)"
-          errored=1
-          continue
-        fi
-        # The reviewable period restarts at readiness, at reopening, AND
-        # at a re-review request (the exact action the awaiting-stale
-        # line recommends — without this floor the next poll would nudge
-        # again immediately, forever) — each marks "the review wait
-        # started over" without a new head.
-        # A matching event whose created_at is not a string is malformed
-        # data, not an ignorable row (fail loud, never a stale alert
-        # from untrustworthy input).
-        ready_at="$(jq -rs 'if (length > 0) and all(type == "array")
-            then ([.[] | .[] | select((.event? == "ready_for_review") or (.event? == "reopened") or (.event? == "review_requested"))
-                   | if (.created_at | type) != "string" then error("event without a timestamp") else .created_at end]
-                  | sort | last // "")
-            else error("not a timeline page") end' <<<"$timeline_pages" 2>/dev/null)" || {
-          emit "$number" "$head" error "timeline pages malformed while confirming staleness (fail loud, not a stale alert)"
-          errored=1
-          continue
-        }
-        if [ -n "$ready_at" ] && [ "$ready_at" != "null" ]; then
-          ready_epoch="$(to_epoch "$ready_at")" || ready_epoch=""
-          if [ -z "$ready_epoch" ]; then
-            emit "$number" "$head" error "readiness/reopen timestamp unparsable while confirming staleness (fail loud, not a stale alert)"
-            errored=1
-            continue
-          fi
-          if [ "$ready_epoch" -gt "$head_epoch" ]; then
-            age=$(( $(date +%s) - ready_epoch ))
-            # Same skew rule as the head clock: a future-dated event must
-            # not buy silent health until wall-clock catches up.
-            if [ "$age" -lt -300 ]; then
-              emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (timeline event timestamp) — silence age unprovable"
-              errored=1
-              continue
-            fi
-          fi
-        fi
-        if [ "$age" -gt "$AWAITING_AFTER" ]; then
-          # Head-bind the stale claim: a push after the initial fetch
-          # would make every timestamp above describe the OLD head while
-          # the new head's quiet period just began. The recheck runs
-          # here (the emission below would skip the end-of-loop one).
-          stale_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
-            emit "$number" "$head" error "reviewability recheck failed while confirming staleness (broken read)"
-            errored=1
-            continue
-          }
-          if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
-              and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
-              and ((.state? // null) == "open" or (.state? // null) == "closed")
-              and (has("draft") and (.draft | type) == "boolean")' >/dev/null 2>&1 <<<"$stale_row"; then
-            emit "$number" "$head" error "reviewability recheck returned a malformed PR object while confirming staleness (broken read)"
-            errored=1
-            continue
-          fi
-          # Closed or drafted mid-reduction: not awaiting review —
-          # silence, per the same rules as the initial reduction.
-          if [ "$(jq -r '.state' <<<"$stale_row")" != "open" ] || [ "$(jq -r '.draft' <<<"$stale_row")" = "true" ]; then
-            continue
-          fi
-          stale_head_now="$(jq -r '.head.sha' <<<"$stale_row")" || stale_head_now=""
-          if [ -z "$stale_head_now" ]; then
-            emit "$number" "$head" error "reviewability recheck head could not be read while confirming staleness (broken read)"
-            errored=1
-            continue
-          fi
-          if [ "$stale_head_now" != "$head" ]; then
-            emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$stale_head_now")) — findings describe the old head; re-run"
-            attention=1
-            continue
-          fi
-          emit "$number" "$head" awaiting-stale "no approval for ${age}s (reviewDecision REVIEW_REQUIRED, quiet period ${AWAITING_AFTER}s) — trigger a re-review, or apply the fallback approval$queued"
-          attention=1
-        fi
-      fi
-    else
-      # Neither timestamp parsed: silence age is unprovable, and
-      # unprovable must never read as healthy (fail-loud contract).
-      emit "$number" "$head" error "silence clock has no parsable timestamp (head commit and created_at both unusable) — silence age unprovable"
-      errored=1
-    fi
-  fi
+def reduce_pr($n; $p; $later):
+  if ($p | type) != "object" or $p.number != $n or ($p.headRefOid | sha | not)
+     or ($p.state | type) != "string" or ($p | has("isDraft") | not) or ($p.isDraft | type) != "boolean"
+     or ($p | has("autoMergeRequest") | not)
+     or (($p.autoMergeRequest | type) != "null"
+         and (($p.autoMergeRequest | type) != "object" or ($p.autoMergeRequest.mergeMethod | type) != "string"))
+     or ($p.createdAt | type) != "string"
+  then [finding($n; "--------"; "error"; "PR #\($n) response is not a well-formed PR object (broken read)")]
+  else $p.headRefOid as $head
+  # Closed and merged PRs need nothing (reachable through named PRs); a
+  # state outside the enum must never read as closed.
+  | if $p.state == "CLOSED" or $p.state == "MERGED" then []
+    elif $p.state != "OPEN" then [finding($n; $head; "error"; "PR state '\''\($p.state)'\'' is outside the open|closed enum (malformed response)")]
+    elif ($p.isInMergeQueue | type) != "boolean"
+      or (($p.mergeQueueEntry | type) != "null" and ($p.mergeQueueEntry | type) != "object")
+      or ($p | has("reviewDecision") | not)
+      or (($p.reviewDecision | type) != "null"
+          and ($p.reviewDecision | IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") | not))
+    then [finding($n; $head; "error"; "review-state read is malformed (GraphQL errors, a missing field, or a value outside the queue or reviewDecision enums)")]
+    # Pushes to a queued branch are rejected, so every attention line on a
+    # queued PR carries the dequeue note. A null reviewDecision, which GitHub
+    # answers on a base no approval rule targets, is NONE: never an approval.
+    else (if $p.isInMergeQueue or $p.mergeQueueEntry != null then " (QUEUED: dequeue before pushing)" else "" end) as $queued
+    | ($p.reviewDecision // "NONE") as $decision
+    | threads($p.reviewThreads; $later) as $t
+    | if $t.walk then [{n: $n, walk: $t.walk}]
+      elif $t.error then [finding($n; $head; "error"; $t.error)]
+      else (if $t.overflow then [finding($n; $head; "threads-open"; "review threads beyond the pagination bound (count overflow — fail closed)\($queued)")]
+            elif $t.unresolved > 0 then [finding($n; $head; "threads-open"; "\($t.unresolved) unresolved review thread(s)\($queued)")]
+            else [] end) as $threads
+      # One line per finding: open threads do not suppress an objection, but
+      # an open thread holds the re-arm and stale-review nudges.
+      | $threads + (
+        if $decision == "CHANGES_REQUESTED" then [finding($n; $head; "changes-requested"; "a reviewer requested changes (reviewDecision CHANGES_REQUESTED)\($queued)")]
+        elif ($threads | length) > 0 then []
+        elif ($decision | IN("APPROVED", "CHANGES_REQUESTED", "NONE", "REVIEW_REQUIRED") | not)
+        then [finding($n; $head; "error"; "reviewDecision '\''\($decision)'\'' reached the reduction unhandled — the review-state read admits only APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED and NONE")]
+        else (try $p.commits.nodes[0].commit catch null) as $commit
+        | if ($commit | type) != "object" or ($commit.oid | sha | not)
+          then [finding($n; $head; "error"; "head commit read returned no usable sha (broken read)")]
+          # GitHub lists only the first 250 commits of a PR, so past them the
+          # last listed commit is not the head: unreadable, not a push.
+          elif $p.commits.totalCount >= 250 and $commit.oid != $head
+          then [finding($n; $head; "error"; "head commit is past the 250 commits GitHub lists for a PR (broken read)")]
+          elif $commit.oid != $head
+          then [finding($n; $head; "head-moved"; "the head changed during this reduction (now \($commit.oid[0:8])) — findings describe the old head; re-run")]
+          # GraphQL names an app author without the [bot] suffix REST gives
+          # it, and the identity rule is written against the REST shape.
+          else ((try ({head: {ref: $p.headRefName},
+                       user: ($p.author | if type == "object"
+                         then {login: (if .__typename == "Bot" then "\(.login)[bot]" else .login end), type: .__typename}
+                         else null end)} | refresh_identity) catch false) == true) as $refresh
+          | if $refresh and ($p.isDraft | not) and $decision == "REVIEW_REQUIRED"
+            then refresh_ci($commit; $n; $head; $queued)
+            # Approved, unarmed, unqueued and ready: nothing will merge it.
+            elif $decision == "APPROVED" and ($p.isDraft | not) and $p.autoMergeRequest == null and $queued == ""
+            then [finding($n; $head; "disarmed"; "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)")]
+            # Drafts await readiness, not review: the clock skips them.
+            elif $decision == "REVIEW_REQUIRED" and ($p.isDraft | not) and ($refresh | not)
+            then stale($p; $commit; $n; $head; $queued)
+            else [] end
+          end
+        end)
+      end
+    end
+  end;
 
-  # Final head recheck — only when this PR would otherwise report healthy:
-  # a push DURING the reduction leaves every read above describing the old
-  # head, and silence would claim the new, unreviewed head needs nothing.
-  # A moved head is attention (re-run), never silence.
-  if [ "$emitted_this_pr" = "0" ]; then
-    head_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq '.head.sha' 2>/dev/null)" || {
-      emit "$number" "$head" error "head recheck failed (broken read)"
-      errored=1
-      continue
-    }
-    case "$head_now" in
-      ''|null|*[!0-9a-fA-F]*)
-        emit "$number" "$head" error "head recheck returned no usable sha (broken read)"
-        errored=1
-        continue
-        ;;
-    esac
-    if [ "${#head_now}" -ne 40 ]; then
-      emit "$number" "$head" error "head recheck returned a non-sha value (broken read)"
-      errored=1
-      continue
-    fi
-    if [ "$head_now" != "$head" ]; then
-      emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$head_now")) — findings describe the old head; re-run"
-      attention=1
-    fi
-  fi
+def page_of($n): try .data.repository["p\($n)"] catch null;
+
+[try inputs catch null] as $pages
+| [range(0; $ARGS.positional | length; 3) as $i
+   | {status: $ARGS.positional[$i],
+      numbers: ($ARGS.positional[$i + 1] | fromjson | .variables | keys_unsorted | map(select(startswith("c")) | ltrimstr("c"))),
+      answer: (try ($ARGS.positional[$i + 2] | fromjson) catch null)}] as $rounds
+| (if $mode == "list" then
+     if ($pages | length) == 0
+        or any($pages[]; type != "object" or (try (.data.repository.pullRequests.nodes | type) catch null) != "array")
+        or any($pages[].data.repository.pullRequests.nodes[]; type != "object" or (.number | type) != "number")
+     then null
+     else [$pages[].data.repository.pullRequests.nodes[] | {n: .number, p: .}] end
+   else [$numbers | split(" ")[] | select(. != "") | tonumber as $n
+     | if $read != "ok" then {n: $n, unread: true}
+       else {n: $n, p: (if ($pages | length) == 1 then $pages[0] | page_of($n) else null end)} end]
+   end) as $prs
+| if $prs == null then "global\twatch-list-malformed"
+  else [$prs[] | . as $e
+    | if $e.unread then [finding($e.n; "--------"; "error"; "could not read PR #\($e.n)")]
+      else reduce_pr($e.n; $e.p;
+        [$rounds[] | select(any(.numbers[]; . == ($e.n | tostring)))
+         | {status, page: (.answer | page_of($e.n) | try .reviewThreads catch null)}])
+      end | .[]] as $all
+  | [$all[] | select(.walk)] as $walks
+  | if ($walks | length) > 0 then $walks | unique_by(.n)
+    # The cursor rides a GraphQL variable, never the query text.
+    | "walk\t" + ({query: "query($owner:String!,$name:String!\([.[] | ",$c\(.n):String!"] | join(""))){repository(owner:$owner,name:$name){\([.[] | "p\(.n):pullRequest(number:\(.n)){reviewThreads(first:100,after:$c\(.n)){pageInfo{hasNextPage endCursor} nodes{isResolved}}}"] | join(" "))}}",
+        variables: ({owner: $owner, name: $name} + ([.[] | {key: "c\(.n)", value: .walk}] | from_entries))} | tojson)
+    else "exit\t\(if any($all[]; .kind == "error") then 2 elif ($all | length) > 0 then 1 else 0 end)",
+      ($all[] | "\(.n)\t\(.head)\t\(.kind)\t\(.detail)")
+    end
+  end'
+
+# A PR whose threads run past a page gets its next page in one request shared
+# by every such PR, so a pass grows with the deepest thread history, not with
+# the PR count.
+rounds=()
+while :; do
+  reduced="$(jq -nr --arg mode "$mode" --arg numbers "$PR_ARGS" --arg read "$main_read" \
+      --arg owner "$owner" --arg name "$name" --argjson now "$now" --argjson wait "$AWAITING_AFTER" \
+      "def refresh_identity: $REFRESH_IDENTITY_JQ; $REDUCE_JQ" \
+      --args ${rounds[@]+"${rounds[@]}"} <<<"$main")" || {
+    rg_message error watch-reduce-failed "$GH_REPO" "::error::pr-watch: the reduction failed" >&2
+    exit 2
+  }
+  control="${reduced%%$'\n'*}"
+  case "$control" in
+    walk$'\t'*) request="${control#walk$'\t'}" ;;
+    *) break ;;
+  esac
+  round_read=ok
+  round="$(gh api graphql --input - <<<"$request" 2>/dev/null)" || round_read=failed
+  [ "$round_read" = failed ] || [ -n "$round" ] || round_read=empty
+  rounds+=("$round_read" "$request" "$round")
 done
 
-if [ "$errored" = "1" ]; then exit 2; fi
-if [ "$attention" = "1" ]; then exit 1; fi
-exit 0
+case "$control" in
+  exit$'\t'[012]) ;;
+  global$'\t'watch-list-malformed)
+    rg_message error watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
+    exit 2
+    ;;
+  *)
+    rg_message error watch-reduce-unexpected "$control" "::error::pr-watch: the reduction answered no known control line" >&2
+    exit 2
+    ;;
+esac
+if [ "$reduced" != "$control" ]; then
+  printf '%s\n' "${reduced#*$'\n'}"
+fi
+exit "${control#*$'\t'}"

@@ -27,199 +27,147 @@ cp "$SKILL_ROOT/scripts/lib/settings.sh" "$SKILL_ROOT/scripts/lib/diagnostics.sh
   "$SKILL_ROOT/scripts/lib/refresh-identity.sh" "$TMP_ROOT/scripts/lib/"
 chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 
-# Parametrized gh stub:
-#   STUB_OPEN_PRS       array for pulls?state=open ("emptybytes" = broken read)
-#   STUB_PR_<N>         object for pulls/<N> (explicit-arg fetches)
-#   STUB_QUEUED         "yes" -> every review-state read answers a queue entry
-#   STUB_DECISION       reviewDecision of every review-state read: APPROVED
-#                       (the default), CHANGES_REQUESTED, REVIEW_REQUIRED, or
-#                       null, GitHub's answer on a base no approval rule
-#                       targets
-#   STUB_DECISION_AFTER reviewDecision from the SECOND review-state read of a
-#                       number on (the just-in-time recheck)
-#   STUB_REVIEW_RAW     the whole review-state answer ("emptybytes" = broken)
-#   STUB_UNRESOLVED     count for the graphql reviewThreads read
-#   STUB_HEAD_DATE      commit.committer.date for commits/<sha>
-#   STUB_CI_RAW         paginated check-runs envelope for the requested head
+# Parametrized gh stub. It answers the watcher's three GraphQL reads (the
+# paged open-PR listing, the aliased named-PR read and a thread-page round)
+# from REST-shaped rows, as GitHub would, in one jq run per call, so a pass's
+# process count is the watcher's and not the stub's per PR:
+#   STUB_OPEN_PRS       array of pulls rows ("fail" = a failed read,
+#                       "emptybytes" = a zero-byte answer)
+#   STUB_PR_<N>         row for a named PR, else its STUB_OPEN_PRS row
+#   STUB_QUEUED         "yes" -> every PR answers a queue entry
+#   STUB_DECISION       reviewDecision of every PR: APPROVED (the default),
+#                       CHANGES_REQUESTED, REVIEW_REQUIRED, or null, GitHub's
+#                       answer on a base no approval rule targets
+#   STUB_REVIEW_RAW     a whole single-PR review-state answer whose fields
+#                       every PR takes; one carrying errors fails the read the
+#                       way gh does ("emptybytes" = a zero-byte answer)
+#   STUB_REVIEW_FAIL    "yes" -> the PR read fails
+#   STUB_UNRESOLVED     unresolved threads on the first page
+#   STUB_THREADS_NEXTPAGE  hasNextPage of a generated first page (no cursor)
+#   STUB_THREADS_RAW    a single-PR thread answer, served for every page
+#   STUB_THREADS_PAGE2  the page a cursor gets, before STUB_THREADS_RAW
+#   STUB_THREADS_PAGES  N distinct advancing resolved pages, CURk asking k+1
+#   STUB_ROUND          "fail" or "emptybytes" for a thread-page round
+#   STUB_HEAD_DATE      the head commit's committedDate ("null" = null)
+#   STUB_HEAD_AFTER     the head commit's oid when it is not the PR's head
+#   STUB_COMMITS        the PR's listed commit count (default 1)
+#   STUB_CI_RAW         check-runs pages for the head commit
+#   STUB_CI_MORE        "yes" -> the CI suites answer another page
+#   STUB_READY_AT, STUB_REOPENED_AT, STUB_REREQUEST_AT  one timeline event
+#   STUB_TIMELINE_RAW   the timeline nodes as given
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
-cmd="${1:-}"
-shift || true
-args="$*"
-[[ "$cmd" == "api" ]] || { echo "unexpected gh command: $cmd $args" >&2; exit 1; }
-case "$args" in
-  graphql*reviewDecision*)
-    if [[ "${STUB_REVIEW_FAIL:-}" == "yes" ]]; then
-      echo "HTTP 500" >&2
-      exit 1
-    fi
-    if [[ "${STUB_REVIEW_RAW:-}" == "emptybytes" ]]; then exit 0; fi
-    if [[ -n "${STUB_REVIEW_RAW:-}" ]]; then
-      printf '%s\n' "$STUB_REVIEW_RAW"
-      exit 0
-    fi
-    decision="${STUB_DECISION:-APPROVED}"
-    if [[ -n "${STUB_DECISION_AFTER:-}" ]]; then
-      n="${args##*number=}"
-      n="${n%% *}"
-      cf="${STUB_PR_CALLS_DIR:?}/review-$n"
-      if [[ -f "$cf" ]]; then decision="$STUB_DECISION_AFTER"; else : > "$cf"; fi
-    fi
-    jq -n --arg q "${STUB_QUEUED:-no}" --arg d "$decision" \
-      '{data:{repository:{pullRequest:{isInMergeQueue:($q == "yes"),
-        mergeQueueEntry:(if $q == "yes" then {position:1} else null end),
-        reviewDecision:(if $d == "null" then null else $d end)}}}}'
-    ;;
-  graphql*reviewThreads*)
-    if [[ "${STUB_THREADS_FAIL:-}" == "yes" ]]; then
-      echo "HTTP 500" >&2
-      exit 1
-    fi
-    if [[ "${STUB_THREADS_RAW:-}" == "emptybytes" ]]; then exit 0; fi
-    if [[ -n "${STUB_THREADS_PAGES:-}" ]]; then
-      # Deep-walk mode: serve STUB_THREADS_PAGES distinct ADVANCING pages
-      # (all resolved), cursor CURn requesting page n+1, terminal page
-      # final. The single-PAGE2 shape below cannot reach the page budget —
-      # its second read never advances — so the 20-page bound needs pages
-      # that genuinely differ per cursor.
-      page=1
-      if [[ "$args" == *"after=CUR"* ]]; then
-        page="${args##*after=CUR}"
-        page="${page%% *}"
-        page=$((page + 1))
-      fi
-      if (( page < STUB_THREADS_PAGES )); then
-        jq -n --arg c "CUR$page" \
-          '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:$c}, nodes:[{isResolved:true}]}}}}}'
-      else
-        jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false}, nodes:[{isResolved:true}]}}}}}'
-      fi
-      exit 0
-    fi
-    if [[ "$args" == *"after="* && -n "${STUB_THREADS_PAGE2:-}" ]]; then
-      # Cursor-dependent page: a call passing the after= CLI variable
-      # (`-f after=CURSOR` — the watcher sends the cursor as a GraphQL
-      # variable, never interpolated) gets page two, so tests prove the
-      # walk advances instead of refetching page one.
-      printf '%s\n' "$STUB_THREADS_PAGE2"
-      exit 0
-    fi
-    if [[ -n "${STUB_THREADS_RAW:-}" ]]; then
-      printf '%s\n' "$STUB_THREADS_RAW"
-      exit 0
-    fi
-    n="${STUB_UNRESOLVED:-0}"
-    next="${STUB_THREADS_NEXTPAGE:-false}"
-    jq -n --argjson n "$n" --argjson next "$next" \
-      '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:$next}, nodes:[range($n) | {isResolved:false}]}}}}}'
-    ;;
-  *"pulls?state=open"*)
-    if [[ "${STUB_OPEN_PRS:-[]}" == "fail" ]]; then
-      echo "HTTP 500" >&2
-      exit 1
-    fi
-    if [[ "${STUB_OPEN_PRS:-[]}" == "emptybytes" ]]; then exit 0; fi
-    printf '%s\n' "${STUB_OPEN_PRS:-[]}"
-    ;;
-  *pulls/*)
-    n="${args##*pulls/}"
-    n="${n%% *}"
-    var="STUB_PR_${n}"
-    if [[ -n "${!var:-}" ]]; then
-      pr_row_json="${!var}"
-    elif [[ -n "${STUB_OPEN_PRS:-}" && "${STUB_OPEN_PRS}" != "emptybytes" ]]; then
-      pr_row_json="$(jq -e --argjson n "$n" '.[] | select((.number? // null) == $n)' <<<"$STUB_OPEN_PRS")" || { echo "HTTP 404" >&2; exit 1; }
-    else
-      echo "HTTP 404" >&2
-      exit 1
-    fi
-    if [[ "$args" == *"--jq .head.sha"* ]]; then
-      # The recheck read: STUB_HEAD_AFTER simulates a mid-reduction push.
-      if [[ -n "${STUB_HEAD_AFTER:-}" ]]; then
-        printf '%s\n' "$STUB_HEAD_AFTER"
-      else
-        jq -r '.head.sha' <<<"$pr_row_json"
-      fi
-    else
-      # Row fetches: STUB_ARMED_AFTER flips auto_merge from the SECOND
-      # fetch of a number (the just-in-time ownership recheck), via a
-      # per-number counter.
-      if [[ -n "${STUB_REFRESH_HEAD_AFTER:-}" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
-        cf="$STUB_PR_CALLS_DIR/$n"
-        if [[ -f "$cf" ]]; then
-          jq --arg head "$STUB_REFRESH_HEAD_AFTER" '.head.sha = $head' <<<"$pr_row_json"
-        else
-          : > "$cf"
-          printf '%s\n' "$pr_row_json"
-        fi
-      elif [[ "${STUB_DRAFT_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
-        cf="$STUB_PR_CALLS_DIR/$n"
-        if [[ -f "$cf" ]]; then
-          jq '.draft = true' <<<"$pr_row_json"
-        else
-          : > "$cf"
-          printf '%s\n' "$pr_row_json"
-        fi
-      elif [[ "${STUB_CLOSED_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
-        cf="$STUB_PR_CALLS_DIR/$n"
-        if [[ -f "$cf" ]]; then
-          jq '.state = "closed"' <<<"$pr_row_json"
-        else
-          : > "$cf"
-          printf '%s\n' "$pr_row_json"
-        fi
-      elif [[ -n "${STUB_ARMED_AFTER:-}" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
-        cf="$STUB_PR_CALLS_DIR/$n"
-        if [[ -f "$cf" ]]; then
-          if [[ "$STUB_ARMED_AFTER" == "false" ]]; then
-            jq '.auto_merge = null' <<<"$pr_row_json"
-          else
-            jq '.auto_merge = {merge_method:"merge"}' <<<"$pr_row_json"
-          fi
-        else
-          : > "$cf"
-          printf '%s\n' "$pr_row_json"
-        fi
-      else
-        printf '%s\n' "$pr_row_json"
-      fi
-    fi
-    ;;
-  *"/timeline?per_page=100"*)
-    if [[ "${STUB_TIMELINE_FAIL:-}" == "yes" ]]; then
-      echo "HTTP 500" >&2
-      exit 1
-    fi
-    if [[ "${STUB_TIMELINE_EMPTYBYTES:-}" == "yes" ]]; then exit 0; fi
-    if [[ -n "${STUB_REREQUEST_AT:-}" ]]; then
-      jq -n --arg at "$STUB_REREQUEST_AT" '[{event:"review_requested", created_at:$at}]'
-    elif [[ -n "${STUB_REOPENED_AT:-}" ]]; then
-      jq -n --arg at "$STUB_REOPENED_AT" '[{event:"reopened", created_at:$at}]'
-    elif [[ -n "${STUB_READY_AT:-}" ]]; then
-      jq -n --arg at "$STUB_READY_AT" '[{event:"ready_for_review", created_at:$at}]'
-    else
-      printf '[]\n'
-    fi
-    ;;
-  *commits/*/check-runs*)
-    expected="repos/acme/widgets/commits/${STUB_EXPECT_CI_HEAD:?}/check-runs?check_name=CI&filter=latest&per_page=100 --paginate"
-    [[ "$args" == "$expected" ]] || { printf 'wrong CI read: %s\n' "$args" >&2; exit 1; }
-    case "${STUB_CI_RAW:-}" in
-      fail) exit 1 ;;
+[[ "${1:-}" == api && "${2:-}" == graphql ]] || { echo "unexpected gh command: $*" >&2; exit 1; }
+query="" prev="" request=""
+for arg in "$@"; do
+  [[ "$prev" != -f || "$arg" != query=* ]] || query="${arg#query=}"
+  prev="$arg"
+done
+case "$*" in
+  *"--input -"*)
+    kind=round
+    request="$(cat)"
+    case "${STUB_ROUND:-}" in
+      fail) echo "HTTP 500" >&2; exit 1 ;;
       emptybytes) exit 0 ;;
-      '') printf '{"check_runs":[]}\n' ;;
-      *) printf '%s\n' "$STUB_CI_RAW" ;;
     esac
     ;;
-  *commits/*)
-    printf '%s\n' "${STUB_HEAD_DATE:-2026-01-01T00:00:00Z}"
+  *--paginate*)
+    kind=list
+    [[ "$query" == *"pullRequests("* ]] || { echo "unexpected paged read: $query" >&2; exit 1; }
+    case "${STUB_OPEN_PRS:-[]}" in
+      fail) echo "HTTP 500" >&2; exit 1 ;;
+      emptybytes) exit 0 ;;
+    esac
     ;;
   *)
-    echo "unexpected gh api: $args" >&2
-    exit 1
+    kind=named
+    [[ "$query" == *"fragment PR on PullRequest"* ]] || { echo "unexpected gh api graphql: $query" >&2; exit 1; }
     ;;
 esac
+if [[ "$kind" != round ]]; then
+  [[ "${STUB_REVIEW_FAIL:-}" != yes ]] || { echo "HTTP 500" >&2; exit 1; }
+  [[ "${STUB_REVIEW_RAW:-}" != emptybytes ]] || exit 0
+fi
+ci="${STUB_CI_RAW:-}"
+[[ -n "$ci" ]] || ci='{"check_runs":[]}'
+answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" --arg request "$request" '
+  def opt($v): if $v == "null" then null else $v end;
+  def rows: ($ENV.STUB_OPEN_PRS // "[]") | try fromjson catch [];
+  def generated: {pageInfo: {hasNextPage: (($ENV.STUB_THREADS_NEXTPAGE // "false") == "true")},
+    nodes: [range(($ENV.STUB_UNRESOLVED // "0") | tonumber) | {isResolved: false}]};
+  def deep($k): if $k < ($ENV.STUB_THREADS_PAGES | tonumber)
+    then {pageInfo: {hasNextPage: true, endCursor: "CUR\($k)"}, nodes: [{isResolved: true}]}
+    else {pageInfo: {hasNextPage: false}, nodes: [{isResolved: true}]} end;
+  def raw_threads($v): $v | fromjson | .data.repository.pullRequest.reviewThreads;
+  def first_threads:
+    if $ENV.STUB_THREADS_PAGES then deep(1)
+    elif $ENV.STUB_THREADS_RAW then raw_threads($ENV.STUB_THREADS_RAW)
+    else generated end;
+  def later_threads($cursor):
+    if $ENV.STUB_THREADS_PAGES then deep(($cursor | ltrimstr("CUR") | tonumber) + 1)
+    elif $ENV.STUB_THREADS_PAGE2 then raw_threads($ENV.STUB_THREADS_PAGE2)
+    elif $ENV.STUB_THREADS_RAW then raw_threads($ENV.STUB_THREADS_RAW)
+    else generated end;
+  def review_raw: $ENV.STUB_REVIEW_RAW | fromjson;
+  def review_state:
+    if $ENV.STUB_REVIEW_RAW then review_raw | .data.repository.pullRequest
+      | with_entries(select(.key | IN("isInMergeQueue", "mergeQueueEntry", "reviewDecision")))
+    else {isInMergeQueue: ($ENV.STUB_QUEUED == "yes"),
+      mergeQueueEntry: (if $ENV.STUB_QUEUED == "yes" then {position: 1} else null end),
+      reviewDecision: opt($ENV.STUB_DECISION // "APPROVED")} end;
+  def run: if type == "object"
+    then with_entries(if (.key | IN("status", "conclusion")) and (.value | type) == "string" then .value |= ascii_upcase else . end)
+    else . end;
+  def suite: if type == "object"
+    then {checkRuns: {pageInfo: {hasNextPage: false}, nodes: (.check_runs | if type == "array" then map(run) elif type == "object" then map_values(run) else . end)}}
+    else . end;
+  def timeline: {nodes: (
+    if $ENV.STUB_TIMELINE_RAW then $ENV.STUB_TIMELINE_RAW | fromjson
+    elif $ENV.STUB_REREQUEST_AT then [{createdAt: $ENV.STUB_REREQUEST_AT}]
+    elif $ENV.STUB_REOPENED_AT then [{createdAt: $ENV.STUB_REOPENED_AT}]
+    elif $ENV.STUB_READY_AT then [{createdAt: $ENV.STUB_READY_AT}]
+    else [] end)};
+  [try inputs catch "unparsable"] as $ci_pages
+  | def node: if type != "object" then . else . as $r
+    | (if has("number") then {number} else {} end)
+      + (if has("state") then {state: (.state | if . == "open" then "OPEN" elif . == "closed" then "CLOSED" else . end)} else {} end)
+      + (if has("draft") then {isDraft: .draft} else {} end)
+      + (if (.head | type) == "object" and (.head | has("sha")) then {headRefOid: .head.sha} else {} end)
+      + {headRefName: (.head.ref? // null)}
+      + (if has("created_at") then {createdAt: .created_at} else {} end)
+      + (if has("user") then {author: (.user | if type == "object"
+          then {login: (if .type == "Bot" then .login | sub("\\[bot\\]$"; "") else .login end), __typename: (.type // "User")}
+          else . end)} else {} end)
+      + (if has("auto_merge") then {autoMergeRequest: (.auto_merge | if type == "object"
+          then (if has("merge_method") then {mergeMethod: (.merge_method | ascii_upcase)} else {} end) else . end)} else {} end)
+      + review_state
+      + {reviewThreads: first_threads,
+         commits: {totalCount: (($ENV.STUB_COMMITS // "1") | tonumber), nodes: [{commit: {
+           oid: (if $ENV.STUB_HEAD_AFTER then opt($ENV.STUB_HEAD_AFTER) else $r.head.sha? end),
+           committedDate: opt($ENV.STUB_HEAD_DATE // "2026-01-01T00:00:00Z"),
+           checkSuites: {pageInfo: {hasNextPage: ($ENV.STUB_CI_MORE == "yes")}, nodes: ($ci_pages | map(suite))}}}]},
+         timelineItems: timeline}
+    end;
+  (if $kind == "list" then
+     {data: {repository: {pullRequests: {pageInfo: {hasNextPage: false, endCursor: null},
+       nodes: (rows | if type == "array" then map(node) else . end)}}}}
+   elif $kind == "named" then
+     [$query | scan("p([0-9]+):pullRequest") | .[0] | tonumber | . as $n
+      | {key: "p\($n)", value: ($ENV["STUB_PR_\($n)"] as $own
+          | if $own then ($own | try fromjson catch $own)
+            else [rows[] | select(type == "object" and .number == $n)] | first end)}] as $found
+     | if any($found[]; .value == null)
+       then {errors: [{message: "Could not resolve to a PullRequest"}], data: {repository: ($found | from_entries)}}
+       else {data: {repository: ($found | map(.value |= node) | from_entries)}} end
+   else ($request | fromjson | .variables | to_entries | map(select(.key | test("^c[0-9]+$")))) as $cursors
+     | {data: {repository: ($cursors | map({key: "p\(.key | ltrimstr("c"))", value: {reviewThreads: later_threads(.value)}}) | from_entries)}}
+   end) as $answer
+  | if $kind != "round" and $ENV.STUB_REVIEW_RAW and (review_raw | has("errors"))
+    then {errors: review_raw.errors} + $answer else $answer end')" || exit 1
+printf '%s\n' "$answer"
+[[ "$answer" != '{"errors"'* ]] || exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
@@ -254,22 +202,17 @@ P7="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"
 
 # run_watch ENV FLAGS... — runs the sandboxed pr-watch with the stub PATH and
 # GH_REPO set; ENV is a semicolon-separated list of `env` arguments (JSON
-# values carry commas). Every run gets its own per-number fetch counter under
-# $RUN. OUT is stdout and stderr together, the way the scheduler sees it; RC
-# the exit status.
-RUN_SEQ=0
+# values carry commas). OUT is stdout and stderr together, the way the
+# scheduler sees it; RC the exit status.
 WATCH_BIN="$TMP_ROOT/scripts/pr-watch.sh"   # a mutant row swaps this
 LIVE_WATCH="$WATCH_BIN"
 run_watch() {
   local env_list="$1" env_args=()
   shift
   [[ -z "$env_list" ]] || IFS=';' read -ra env_args <<<"$env_list"
-  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
-  mkdir -p "$RUN/prcalls"
   set +e
   OUT=$(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
-    env GH_REPO=acme/widgets STUB_PR_CALLS_DIR="$RUN/prcalls" \
-        ${env_args[@]+"${env_args[@]}"} "$WATCH_BIN" "$@" 2>&1)
+    env GH_REPO=acme/widgets ${env_args[@]+"${env_args[@]}"} "$WATCH_BIN" "$@" 2>&1)
   RC=$?
   set -e
 }

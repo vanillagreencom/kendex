@@ -23,7 +23,10 @@ PR9EMPTYARM="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", draft:false
 R_ERRORS='{"errors":[{"message":"rate limited"}],"data":{"repository":{"pullRequest":{"isInMergeQueue":false,"mergeQueueEntry":null,"reviewDecision":"APPROVED"}}}}'
 R_NODECISION='{"data":{"repository":{"pullRequest":{"isInMergeQueue":false,"mergeQueueEntry":null}}}}'
 R_QUEUEWORD='{"data":{"repository":{"pullRequest":{"isInMergeQueue":"no","mergeQueueEntry":null,"reviewDecision":"APPROVED"}}}}'
+# The same instant written with the author's +02:00 offset.
+OFFSET_NOW="$(date -u -d "@$((WATCH_NOW + 7200))" +%Y-%m-%dT%H:%M:%S+02:00 2>/dev/null || date -u -r "$((WATCH_NOW + 7200))" +%Y-%m-%dT%H:%M:%S+02:00)"
 R_MALFORMED='review-state+read+is+malformed+(GraphQL+errors,+a+missing+field,+or+a+value+outside+the+queue+or+reviewDecision+enums)'
+T_PAGE1='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true}]}}}}}'
 T_NULLNODE='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":null}]}}}}}'
 T_BADPAGEINFO='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}'
 T_NONARRAY='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":{"item":{"isResolved":true}}}}}}}'
@@ -50,41 +53,47 @@ table \
   "a non-object listing element||STUB_OPEN_PRS=[42]|rc=2 kinds=none diagnostic=review-gate-error=watch-list-malformed+value=acme/widgets" \
   "an empty-object listing element||STUB_OPEN_PRS=[{}]|rc=2 kinds=none diagnostic=review-gate-error=watch-list-malformed+value=acme/widgets" \
   "a ghost author reduces like any other PR||STUB_OPEN_PRS=$P7GHOST|rc=0 kinds=none" \
-  "a failed review-state read||STUB_OPEN_PRS=$P7;STUB_REVIEW_FAIL=yes|rc=2 kinds=error protocol=7~aaaaaaaa~error~review-state+read+failed" \
-  "a zero-byte review-state read||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=emptybytes|rc=2 kinds=error protocol=7~aaaaaaaa~error~review-state+read+produced+zero+bytes+(broken+read)" \
-  "a review-state answer carrying GraphQL errors||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_ERRORS|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
+  "a failed named read is each named PR's error line|7 9|STUB_OPEN_PRS=$P7;STUB_PR_9=$PR9CLOSED;STUB_REVIEW_FAIL=yes|rc=2 kinds=error,error protocol=7~--------~error~could+not+read+PR+#7;9~--------~error~could+not+read+PR+#9" \
+  "a zero-byte named read is the named PR's error line|7|STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=emptybytes|rc=2 kinds=error protocol=7~--------~error~could+not+read+PR+#7" \
+  "an unknown named PR fails the read with its neighbours|7 8|STUB_OPEN_PRS=$P7|rc=2 kinds=error,error" \
+  "a listing answer carrying GraphQL errors is no listing||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_ERRORS|rc=2 kinds=none diagnostic=review-gate-error=watch-list-failed+value=acme/widgets" \
   "a review-state answer without reviewDecision||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_NODECISION|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
   "a reviewDecision outside the enum||STUB_OPEN_PRS=$P7;STUB_DECISION=DISMISSED|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
   "a queue membership that is not a boolean||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_QUEUEWORD|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
   "a null isResolved node||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_NULLNODE|rc=2 kinds=error protocol=7~aaaaaaaa~error~thread+response+malformed+(non-boolean+isResolved)+or+unparsable" \
   "malformed pagination metadata is an error, never overflow||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_BADPAGEINFO|rc=2 kinds=error protocol=7~aaaaaaaa~error~thread+pagination+metadata+malformed+(non-boolean+hasNextPage)" \
   "a non-array nodes container||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_NONARRAY|rc=2 kinds=error protocol=7~aaaaaaaa~error~thread+response+malformed+(non-boolean+isResolved)+or+unparsable" \
-  "a zero-byte thread read||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=emptybytes|rc=2 kinds=error protocol=7~aaaaaaaa~error~thread+read+produced+zero+bytes+(broken+read)" \
+  "a failed thread page read||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_PAGE1;STUB_ROUND=fail|rc=2 kinds=error protocol=7~aaaaaaaa~error~thread+read+failed" \
+  "a zero-byte thread page read||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_PAGE1;STUB_ROUND=emptybytes|rc=2 kinds=error protocol=7~aaaaaaaa~error~thread+read+produced+zero+bytes+(broken+read)" \
   "a future-dated committer timestamp is unprovable silence|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=2030-01-01T00:00:00Z|rc=2 kinds=error protocol=7~aaaaaaaa~error~silence+clock+is+in+the+future+by+${FUTURE_SKEW}s+(author-controlled+committer+timestamp)+—+silence+age+unprovable" \
   "unparsable timestamps|--awaiting-after 60|STUB_OPEN_PRS=$P7BADTIMES;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=also-garbage|rc=2 kinds=error protocol=7~aaaaaaaa~error~head+committer+date+unparsable+(broken+read)+—+the+silence+clock+never+substitutes+the+creation+time+for+broken+head+metadata" \
   "an unparsable creation timestamp|--awaiting-after 60|STUB_OPEN_PRS=$P7BADCREATED;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=error protocol=7~aaaaaaaa~error~PR+creation+timestamp+unparsable+(broken+read)+—+the+silence+floor+cannot+be+computed" \
   "a head commit without a committer date|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=null|rc=2 kinds=error protocol=7~aaaaaaaa~error~head+commit+has+no+usable+committer+date+(broken+read)" \
-  "a timeline failure while confirming staleness|--awaiting-after 60|STUB_TIMELINE_FAIL=yes;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=error" \
-  "a zero-byte timeline response|--awaiting-after 60|STUB_TIMELINE_EMPTYBYTES=yes;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=error protocol=7~aaaaaaaa~error~timeline+read+produced+zero+bytes+while+confirming+staleness+(broken+read)" \
+  "a timeline event without a time while confirming staleness|--awaiting-after 60|STUB_TIMELINE_RAW=[{}];STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=error protocol=7~aaaaaaaa~error~timeline+pages+malformed+while+confirming+staleness+(fail+loud,+not+a+stale+alert)" \
+  "a commit time with an offset is read in UTC|--awaiting-after 3600|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OFFSET_NOW|rc=0 kinds=none" \
   "an unparsable readiness timestamp|--awaiting-after 60|STUB_READY_AT=garbage-timestamp;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=error" \
   "a future-dated timeline event|--awaiting-after 60|STUB_READY_AT=2030-01-01T00:00:00Z;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=error protocol=7~aaaaaaaa~error~silence+clock+is+in+the+future+by+${FUTURE_SKEW}s+(timeline+event+timestamp)+—+silence+age+unprovable" \
-  "a recheck returning no usable sha||STUB_HEAD_AFTER=null;STUB_OPEN_PRS=$P7|rc=2 kinds=error protocol=7~aaaaaaaa~error~head+recheck+returned+no+usable+sha+(broken+read)" \
-  "a non-sha recheck value is a broken read, never head-moved||STUB_HEAD_AFTER=42;STUB_OPEN_PRS=$P7|rc=2 kinds=error"
+  "a head commit without a sha||STUB_HEAD_AFTER=null;STUB_OPEN_PRS=$P7|rc=2 kinds=error protocol=7~aaaaaaaa~error~head+commit+read+returned+no+usable+sha+(broken+read)" \
+  "a non-sha head commit is a broken read, never head-moved||STUB_HEAD_AFTER=42;STUB_OPEN_PRS=$P7|rc=2 kinds=error" \
+  "a head past the listed 250 commits is a broken read, never head-moved||STUB_HEAD_AFTER=$HEAD_B;STUB_COMMITS=250;STUB_OPEN_PRS=$P7|rc=2 kinds=error protocol=7~aaaaaaaa~error~head+commit+is+past+the+250+commits+GitHub+lists+for+a+PR+(broken+read)" \
+  "a moved head under the listed 250 commits is head-moved||STUB_HEAD_AFTER=$HEAD_B;STUB_COMMITS=249;STUB_OPEN_PRS=$P7|rc=1 kinds=head-moved"
 
 echo "=== must-fail controls for the review-state read ==="
 # One control per rule the read refuses on, each against a copy of the
 # reducer with that rule planted wrong: the row it holds above must move from
 # its error record to what the unguarded read makes of the same answer.
-mutant_watch review-zero-bytes 's#if \[ -z "$resp" \]; then#if false; then#' 'if [ -z "$resp" ]; then'
-table "must-fail: without the zero-byte check the empty answer reaches the sentinel||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=emptybytes|rc=2 kinds=error protocol=7~aaaaaaaa~error~review-state+read+produced+no+usable+sentinel+(broken+read)"
-mutant_watch review-errors $'s#REVIEW_STATE_JQ=\'if ((.errors? // \\[\\]) | length) > 0#REVIEW_STATE_JQ=\'if false#' "REVIEW_STATE_JQ='if ((.errors? // []) | length) > 0"
-table "must-fail: without the errors check a partial answer reads as healthy||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_ERRORS|rc=0 kinds=none"
-mutant_watch review-has-decision 's#(($p | has("reviewDecision")) | not)#false#' '(($p | has("reviewDecision")) | not)'
+mutant_watch named-zero-bytes 's#\[ "$main_read" = failed \] || \[ -n "$main" \] || main_read=empty#:#' '[ "$main_read" = failed ] || [ -n "$main" ] || main_read=empty'
+table "must-fail: without the zero-byte check the empty answer reads as a malformed PR|7|STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=emptybytes|rc=2 kinds=error protocol=7~--------~error~PR+#7+response+is+not+a+well-formed+PR+object+(broken+read)"
+mutant_watch review-has-decision 's#($p | has("reviewDecision") | not)#false#' '($p | has("reviewDecision") | not)'
 table "must-fail: without the field check a missing decision reads as no review required||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_NODECISION|rc=0 kinds=none"
-mutant_watch review-decision-enum 's#IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED")#IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", "DISMISSED")#' 'IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"))'
-table "must-fail: without the enum check an unknown decision reaches the reduction||STUB_OPEN_PRS=$P7;STUB_DECISION=DISMISSED|rc=2 kinds=error protocol=7~aaaaaaaa~error~reviewDecision+'DISMISSED'+reached+the+reduction+unhandled+—+read_review_state+admits+only+APPROVED,+CHANGES_REQUESTED,+REVIEW_REQUIRED+and+NONE"
-mutant_watch review-queue-boolean 's#(($p.isInMergeQueue | type) != "boolean")#false#' '(($p.isInMergeQueue | type) != "boolean")'
+mutant_watch review-decision-enum 's#IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") | not#IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", "DISMISSED") | not#' 'IN("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") | not'
+table "must-fail: without the enum check an unknown decision reaches the reduction||STUB_OPEN_PRS=$P7;STUB_DECISION=DISMISSED|rc=2 kinds=error protocol=7~aaaaaaaa~error~reviewDecision+'DISMISSED'+reached+the+reduction+unhandled+—+the+review-state+read+admits+only+APPROVED,+CHANGES_REQUESTED,+REVIEW_REQUIRED+and+NONE"
+mutant_watch review-queue-boolean 's#($p.isInMergeQueue | type) != "boolean"#false#' '($p.isInMergeQueue | type) != "boolean"'
 table "must-fail: without the boolean check a string membership reads as queued and healthy||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_QUEUEWORD|rc=0 kinds=none"
+mutant_watch commit-cap 's#elif $p.commits.totalCount >= 250 and#elif false and#' 'elif $p.commits.totalCount >= 250 and'
+table "must-fail: without the commit cap a long PR reads as a push forever||STUB_HEAD_AFTER=$HEAD_B;STUB_COMMITS=250;STUB_OPEN_PRS=$P7|rc=1 kinds=head-moved"
+mutant_watch offset-sign 's#if $c.s == "-" then -1 else 1 end#if $c.s == "-" then 1 else -1 end#' 'if $c.s == "-" then -1 else 1 end'
+table "must-fail: with the offset applied the wrong way the commit reads four hours ahead|--awaiting-after 3600|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OFFSET_NOW|rc=2 kinds=error"
 WATCH_BIN="$LIVE_WATCH"
 
 echo "=== configuration errors refuse to reduce ==="
