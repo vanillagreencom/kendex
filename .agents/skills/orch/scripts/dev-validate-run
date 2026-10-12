@@ -220,7 +220,8 @@
 #
 # A start reads the worktree's earlier runs before it runs anything. An
 # earlier full or range run counts as evidence when all of these hold:
-#   - its command ran and the bound ended it: no bound-run= line in its start;
+#   - its command ran and the bound ended it: no bound-run= or pass-run= line
+#     in its start;
 #   - it ran the exact command text this run would run, so a changed
 #     DEV_VALIDATE_CMD or DEV_VALIDATE_RANGE_CMD is new work;
 #   - it handed its command the class and docs verdict this run hands it,
@@ -236,8 +237,18 @@
 # nothing: start records the newest such run as the bound-run= line, the
 # sentinel carries that run's guard-exit and verdict=no-verdict, the log names
 # it, and the wall time is zero. The caller takes the route a no-verdict run
-# takes, the scoped suites. A ci run is never one, since its route is the
-# caller's to request. --fresh ignores the evidence and runs the command: the
+# takes, the scoped suites.
+# An earlier full or range run that passed answers this run the same way when
+# it ran the same command text, handed the same class, docs verdict, base and
+# finding prefix, over the tree this run would validate, its tree= line, and
+# read every changed path this run reads; a later run of that command over
+# that tree that did not pass, an unfinished one included, voids it. That pass
+# is what this run would find: one tree, one run of its lanes. It wins over a
+# bound-ended run. start records it as the pass-run= line, the sentinel is
+# guard-exit=0, the log names it and carries its last validate: line, so
+# --record reports that run's lanes and a pass, and the wall time is zero.
+# Neither answer is evidence of its own. A ci run is never one, since its
+# route is the caller's to request. --fresh ignores the evidence and runs the command: the
 # runner cannot see a setting the command reads beyond its own text, such as
 # a workload switch, so a caller who changed one asks for a fresh run.
 # A finding line is the one
@@ -300,7 +311,8 @@
 # The sentinel file holds exactly one line, `guard-exit=N at=TIME`, with
 # ` verdict=no-verdict` after it for a timeout, or
 # ` verdict=no-verdict cause=host` for command exit 3. The detached child writes
-# both. The start path writes a timeout reuse result or a ci pending result.
+# both. The start path writes a timeout or pass reuse result or a ci pending
+# result.
 # A harness that kills the launching shell or drops its completion notice changes neither the verdict
 # nor where it is recorded.
 #
@@ -463,15 +475,18 @@ run_has_finding() { # RUN_DIR
   (( rc != 1 ))
 }
 
-# The newest earlier full or range run of the worktree that says a run of CMD
-# over PATHS_FILE under TIMEOUT_SECS, handed CLASS, DOCS_ONLY and BASE, would
-# end at the bound, as --help states it, in BOUND_RUN_DIR and its sentinel's exit in BOUND_RUN_EXIT; both empty
-# where there is none.
+# The newest earlier full or range runs of the worktree that answer a run of
+# CMD over PATHS_FILE and TREE under TIMEOUT_SECS, handed CLASS, DOCS_ONLY and
+# BASE, as --help states it: one that passed over TREE in PASS_RUN_DIR, empty
+# where none did or a later such run over TREE did not pass, and one that says
+# the run would end at the bound in BOUND_RUN_DIR, its sentinel's exit in
+# BOUND_RUN_EXIT, both empty where there is none.
 BOUND_RUN_DIR=""
 BOUND_RUN_EXIT=""
-find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE FINDING_PREFIX
+PASS_RUN_DIR=""
+find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE FINDING_PREFIX TREE
   local start_file dir secs line rc guard_exit ran
-  BOUND_RUN_DIR="" BOUND_RUN_EXIT=""
+  BOUND_RUN_DIR="" BOUND_RUN_EXIT="" PASS_RUN_DIR=""
   for start_file in "$1"/tmp/dev-validate-*/start; do
     [[ -f "$start_file" ]] || continue
     dir="${start_file%/start}"
@@ -481,12 +496,23 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE F
     esac
     # A run this rule answered ran nothing, so it is no evidence of its own.
     [[ -z "$(start_field "$start_file" bound-run)" ]] || continue
+    [[ -z "$(start_field "$start_file" pass-run)" ]] || continue
     ran="$(cat "$dir/cmd" 2>/dev/null)" && [[ "$ran" == "$4" ]] || continue
     [[ "$(start_field "$start_file" class)" == "$5" ]] || continue
     [[ "$(start_field "$start_file" docs-only)" == "$6" ]] || continue
     [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue
     [[ "$(start_field "$start_file" finding-prefix)" == "$8" ]] || continue
-    line="$(cat "$dir/exit" 2>/dev/null)" || continue
+    line="$(cat "$dir/exit" 2>/dev/null)" || line=""
+    # The newest run over this tree decides: a pass stands only while no later
+    # run of the same command over it failed, ran out or is unfinished.
+    if [[ -n "$9" && "$(start_field "$start_file" tree)" == "$9" ]]; then
+      PASS_RUN_DIR=""
+      if [[ "$line" =~ ^guard-exit=0\ at=[^\ ]+$ ]]; then
+        rc=0
+        grep -Fxvq -f "$dir/paths" -- "$3" 2>/dev/null || rc=$?
+        [[ "$rc" != 1 ]] || PASS_RUN_DIR="$dir"
+      fi
+    fi
     [[ "$line" =~ ^guard-exit=([0-9]+)\ at=[^\ ]+\ verdict=no-verdict$ ]] || continue
     guard_exit="${BASH_REMATCH[1]}"
     secs="$(start_field "$start_file" timeout-secs)"
@@ -921,12 +947,18 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   if ! finding_prefix="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_FINDING_PREFIX "")"; then
     die unreadable-setting setting=DEV_VALIDATE_FINDING_PREFIX
   fi
-  # An earlier run of this command that the bound ended over no more paths
-  # than this one reads answers it: --help states which run counts.
+  # An earlier run of this command that passed over this tree, or that the
+  # bound ended over no more paths than this one reads, answers it: --help
+  # states which run counts.
   bound_ended=false
+  passed_before=false
   if [[ "$validate_mode" != ci && "$fresh" == false && -z "$class_fallback" ]]; then
-    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd" "$class" "$docs_only" "$base_sha" "$finding_prefix"
-    [[ -z "$BOUND_RUN_DIR" ]] || bound_ended=true
+    find_bound_run "$worktree" "$timeout_secs" "$class_scratch/paths" "$cmd" "$class" "$docs_only" "$base_sha" "$finding_prefix" "$snapshot_tree"
+    if [[ -n "$PASS_RUN_DIR" ]]; then
+      passed_before=true
+    elif [[ -n "$BOUND_RUN_DIR" ]]; then
+      bound_ended=true
+    fi
   fi
 
   # Without a timeout command the run carries no bound, which is the unbounded
@@ -977,6 +1009,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     [[ "$validate_mode" == ci || -z "$ci_fallback" ]] || printf 'ci-fallback=%s\n' "$ci_fallback"
     [[ -z "$class_base" ]] || printf 'class-base=%s\n' "$class_base"
     [[ "$bound_ended" == false ]] || printf 'bound-run=%s\n' "$BOUND_RUN_DIR"
+    [[ "$passed_before" == false ]] || printf 'pass-run=%s\n' "$PASS_RUN_DIR"
     [[ -z "$finding_prefix" || "$finding_prefix" == *$'\n'* ]] || printf 'finding-prefix=%s\n' "$finding_prefix"
     printf 'head=%s\n' "$head_sha"
     [[ -z "$snapshot_tree" ]] || printf 'tree=%s\n' "$snapshot_tree"
@@ -1002,6 +1035,15 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     printf 'runner=none bound-run=%s: that run reached the %ss bound over every path this run reads\n' \
       "$BOUND_RUN_DIR" "$timeout_secs" > "$run_dir/log"
     write_verdict "$bound_at" "$bound_at" 0 "guard-exit=$BOUND_RUN_EXIT at=$bound_at verdict=no-verdict"
+  elif [[ "$passed_before" == true ]]; then
+    # An earlier run of this command already passed over this tree, so this
+    # one starts nothing and carries that pass and the lanes it reported.
+    pass_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    {
+      printf 'runner=none pass-run=%s: that run passed this command over the same tree\n' "$PASS_RUN_DIR"
+      LC_ALL=C awk '/^validate:/ { last = $0 } END { if (last != "") print last }' "$PASS_RUN_DIR/log" 2>/dev/null || :
+    } > "$run_dir/log"
+    write_verdict "$pass_at" "$pass_at" 0 "guard-exit=0 at=$pass_at"
   elif [[ "$attached" == true ]]; then
     # Printed first, since the call below returns only once the run has ended:
     # a harness that cuts the call off has already been told the directory.
@@ -1020,7 +1062,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     4) die launch-failed "$JOB_UNIT_ERROR" ;;
     *) die launch-failed "status=$launch_rc" ;;
   esac
-  [[ "$attached" == true && "$validate_mode" != ci && "$bound_ended" == false ]] || started_line
+  [[ "$attached" == true && "$validate_mode" != ci && "$bound_ended" == false && "$passed_before" == false ]] || started_line
   # Blocking form: the same poll --wait runs, with no per-call budget, so a
   # foreground caller returns only with the verdict.
   mode=wait

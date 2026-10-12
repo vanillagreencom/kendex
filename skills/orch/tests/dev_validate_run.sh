@@ -1200,6 +1200,9 @@ ci_rows() {
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     proj="$proj_ci"
     [[ "$named" == yes ]] || proj="$proj_ci_unset"
+    # Each row starts on a worktree with no earlier run: a pass of the same
+    # command over the same tree would answer it.
+    rm -rf -- "${proj:?}"/tmp/dev-validate-*
     ci_world "$world"
     RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE="$queue" STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
       run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD
@@ -1266,7 +1269,7 @@ assert_eq "$RC $(sed -n 1p <<<"$OUT" | cut -d' ' -f1) $(verdict_of "$OUT")" \
   "0 state=started state=done guard-exit=0 validate=pass" \
   "an attached ci run prints its started line, then its done line" "$ERR"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
-mutate_file "$CI_SCRIPT.mutant" '[[ "$attached" == true && "$validate_mode" != ci && "$bound_ended" == false ]]' '[[ "$attached" == true ]]'
+mutate_file "$CI_SCRIPT.mutant" '[[ "$attached" == true && "$validate_mode" != ci && "$bound_ended" == false && "$passed_before" == false ]]' '[[ "$attached" == true ]]'
 ci_run "$CI_SCRIPT.mutant" --attached
 assert_eq "$(sed -n 1p <<<"$OUT" | cut -d' ' -f1)" "state=done" \
   "control: an attached ci run that skips its started line opens on the done line" "$ERR"
@@ -2663,6 +2666,104 @@ run_script "$CI_SCRIPT" --record --run-dir "$bound_rec_dir"
 assert_eq "$(sed -E 's/ head=[^ ]* start=[0-9]+ / /; s/started-at=[^ ]+ ended-at=[^ ]+$/T/' <<<"$OUT")" \
   "validate-mode=full selection=unreported verdict=no-verdict seconds=0 T" \
   "a run an earlier run's bound ended records no verdict and no wall time" "$ERR"
+
+# --- A pass over the same tree answers a later run of the same command -------
+# Each row's project counts the range command's starts in tmp/ran, which the
+# tree ignores, and fails it while tmp/fail exists. A fix round's lanes pass
+# once on the tree, the round then asks for its range receipt, and the row's
+# step between the two either leaves the tree alone or changes what the
+# second start judges. A ci request falls back to range here: the project
+# names no context.
+pass_proj() { # NAME
+  local dir
+  dir="$(make_mode_proj "$1" 'printf x >> tmp/ran; test ! -e tmp/fail && echo validate: lanes=a,b selection=subset')"
+  printf 'DEV_VALIDATE_FINDING_PREFIX = "echo: "\n' >> "$dir/kendex.settings.toml"
+  printf 'tmp/\n' > "$dir/.gitignore"
+  git -C "$dir" add -A
+  git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q -m ignore
+  git -C "$dir" update-ref refs/remotes/origin/main HEAD
+  mkdir -p "$dir/tmp"
+  printf '%s\n' "$dir"
+}
+pass_start() { # SCRIPT WORKTREE PATHS ARG...
+  local script="$1" proj="$2" paths="$3"
+  shift 3
+  RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true STUB_PATHS="$paths" \
+    run_script "$script" --worktree "$proj" --poll 1 "$@"
+}
+# pass_row SCRIPT STEP PATHS REQUEST — the starts of the range command, the
+# second start's verdict, the run its pass-run= line names and its --record
+# fields, after a range pass over docs/a.md and the row's STEP:
+#   none     nothing between the two starts
+#   edit     an untracked file changes the tree
+#   failed   a --fresh run of the command over the same tree fails
+# The count of projects made lives in a file: pass_rows runs in a subshell.
+pass_row() {
+  local script="$1" step="$2" paths="$3" request="$4" proj n first dir
+  n=$(( $(cat "$TMP_ROOT/pass-n" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\n' "$n" > "$TMP_ROOT/pass-n"
+  proj="$(pass_proj "proj-pass-$n")"
+  pass_start "$script" "$proj" docs/a.md --validate-mode range --base HEAD
+  first="$(run_dir_of "$OUT")"
+  case "$step" in
+    none) ;;
+    edit) printf 'draft\n' > "$proj/docs-b.md" ;;
+    failed)
+      : > "$proj/tmp/fail"
+      pass_start "$script" "$proj" docs/a.md --validate-mode range --base HEAD --fresh
+      rm -f -- "$proj/tmp/fail"
+      ;;
+  esac
+  pass_start "$script" "$proj" "$paths" --validate-mode "$request" --base HEAD
+  dir="$(run_dir_of "$OUT")"
+  printf '%s|%s|%s|' "$(cat "$proj/tmp/ran")" "$(verdict_of "$OUT")" \
+    "$([[ "$(start_line "$dir" pass-run 2>/dev/null)" == "$first" ]] && echo first || echo none)"
+  run_script "$script" --record --run-dir "$dir"
+  printf '%s %s %s %s\n' "$(record_field validate-mode "$OUT")" "$(record_field lanes "$OUT")" \
+    "$(record_field verdict "$OUT")" "$(record_field seconds "$OUT")"
+}
+# label|step|paths the second start reads|its mode|want
+PASS_ROWS=(
+  "a fix round whose lanes passed on a tree asks for a range receipt on it and starts no second command|none|docs/a.md|range|x|$OK|first|range a,b pass 0"
+  "a ci request that falls back to range after the round's pass on the tree starts no second command|none|docs/a.md|ci|x|$OK|first|range a,b pass 0"
+  "a changed tree after the pass still runs the range command|edit|docs/a.md|range|xx|$OK|none|range a,b pass 0"
+  "a later failed run over the tree voids the pass and the range command runs|failed|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
+  "a pass that read fewer paths than this run reads still runs the range command|none|docs/a.md,docs/b.md|range|xx|$OK|none|range a,b pass 0"
+)
+pass_rows() { # SCRIPT [LABEL]
+  local row label step paths request
+  for row in "${PASS_ROWS[@]}"; do
+    IFS='|' read -r label step paths request _ <<<"$row"
+    [[ -z "${2:-}" || "$label" == "$2" ]] || continue
+    printf '%s\t%s\n' "$label" "$(pass_row "$1" "$step" "$paths" "$request")"
+  done
+}
+PASS_GOT="$(pass_rows "$CI_SCRIPT")"
+for row in "${PASS_ROWS[@]}"; do
+  IFS='|' read -r label _ _ _ want <<<"$row"
+  assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$PASS_GOT")" "$want" "$label"
+done
+# pass_control LABEL ANCHOR REPLACEMENT ROW — ROW under a copy with one rule
+# removed must answer otherwise than it does with the rule.
+pass_control() {
+  local want got
+  cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+  mutate_file "$CI_SCRIPT.mutant" "$2" "$3"
+  want="$(awk -F'\t' -v want="$4" '$1 == want { print $2 }' <<<"$PASS_GOT")"
+  got="$(pass_rows "$CI_SCRIPT.mutant" "$4" | cut -f2)"
+  assert_eq "$([[ "$got" != "$want" ]] && echo turned || echo "held:$got")" "turned" "control: with $1, '$4' turns"
+}
+# shellcheck disable=SC2016 # the script's own text, not expansions
+{
+pass_control 'no pass evidence, the runner before KEN-3828' '[[ "$rc" != 1 ]] || PASS_RUN_DIR="$dir"' ':' \
+  'a fix round whose lanes passed on a tree asks for a range receipt on it and starts no second command'
+pass_control 'no tree rule' 'if [[ -n "$9" && "$(start_field "$start_file" tree)" == "$9" ]]; then' 'if true; then' \
+  'a changed tree after the pass still runs the range command'
+pass_control 'no later-run rule' $'      PASS_RUN_DIR=""\n' '' \
+  'a later failed run over the tree voids the pass and the range command runs'
+pass_control 'no path rule' '[[ "$rc" != 1 ]] || PASS_RUN_DIR="$dir"' 'PASS_RUN_DIR="$dir"' \
+  'a pass that read fewer paths than this run reads still runs the range command'
+}
 
 # --- A no-verdict run with no finding leaves the last pass standing ----------
 # A run the bound ended after the pass, planted under a name that sorts after
