@@ -3,8 +3,7 @@
 # formal review verdicts (`gh pr view --json reviewDecision,latestReviews`)
 # and the unresolved review-thread count, never emoji reactions, sticky
 # comments or checklist prose; and it resolves its mode from the approval
-# count GitHub's rulesets require on the PR's base branch and the PR's own
-# reviewDecision.
+# count GitHub's rulesets require on the PR's base branch and classic protection.
 #
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. A row's `expect` names the fields it pins; `observe`
@@ -53,10 +52,10 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   STUB_AUTHOR_COUNT_FILE), `pr view --json author`
 #   answers "app/pr-author", and the latestReviews rows spell the same
 #   account "pr-author".
-#   Mode resolution: `pr view --json baseRefName,reviewDecision` answers
-#   STUB_BASE_REF and STUB_BASE_DECISION (default empty, as GitHub answers a
-#   base that requires no review); STUB_BASE_MODE=fail fails it, empty
-#   answers an empty base, and not_string a reviewDecision that is no string;
+#   Mode resolution: the REST pull object answers STUB_BASE_REF;
+#   STUB_BASE_MODE=fail fails it, empty answers an empty base, and
+#   not_string answers a numeric base. STUB_CLASSIC_MODE selects the branch's
+#   protection flag and full classic review requirement;
 #   `api
 #   repos/*/rules/branches/<base>` answers one pull_request rule requiring
 #   STUB_REQUIRED_APPROVALS (default 1) beside a deletion rule, and appends
@@ -141,6 +140,28 @@ case "${1:-}" in
     fi
     ;;
   api)
+    if [[ "${2:-}" == repos/*/pulls/*/requested_reviewers ]]; then
+      printf '%s\n' "$*" >> "$STUB_REQUEST_LOG"
+      exit "${STUB_REQUEST_EXIT:-0}"
+    fi
+    if [[ "${2:-}" == repos/*/branches/*/protection ]]; then
+      case "${STUB_CLASSIC_MODE:-off}" in
+        fail) echo 'HTTP 403: Forbidden' >&2; exit 1 ;;
+        malformed) echo '{"required_pull_request_reviews":{"required_approving_review_count":"1"}}' ;;
+        review) printf '{"required_pull_request_reviews":{"required_approving_review_count":%s}}\n' "${STUB_CLASSIC_COUNT:-1}" ;;
+        *) echo '{"required_pull_request_reviews":null}' ;;
+      esac
+      exit 0
+    fi
+    if [[ "${2:-}" == repos/*/branches/* && "${2:-}" != repos/*/rules/branches/* ]]; then
+      case "${STUB_CLASSIC_MODE:-off}" in
+        branch_fail) echo 'HTTP 403: Forbidden' >&2; exit 1 ;;
+        missing) echo '{}' ;;
+        off) echo '{"protection":{"enabled":false}}' ;;
+        *) echo '{"protection":{"enabled":true}}' ;;
+      esac
+      exit 0
+    fi
     if [[ "${2:-}" == repos/*/commits/*/check-runs\?* ]]; then
       mode="${STUB_COPILOT_FLIGHT:-completed}"
       count=0
@@ -319,7 +340,17 @@ case "${1:-}" in
         http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
         flaky_503) _stub_flaky_503 "${STUB_AUTHOR_COUNT_FILE:?}" ;;
       esac
-      jq -nc --arg login "$login" '{user: {login: $login}, head: {user: {login: "fork-owner"}}}' \
+      base="${STUB_BASE_REF:-main}"
+      if [[ "$filter" == . ]]; then
+        case "${STUB_BASE_MODE:-ok}" in
+          fail) echo 'HTTP 404: Not Found' >&2; exit 1 ;;
+          empty) base='' ;;
+          not_string) base=1 ;;
+        esac
+      fi
+      jq -nc --arg login "$login" --arg base "$base" --arg mode "${STUB_BASE_MODE:-ok}" \
+        '{state:"open",draft:false,base:{ref:(if $mode == "not_string" then 1 else $base end)},
+          user:{login:$login},head:{sha:"headsha1",user:{login:"fork-owner"}}}' \
         | jq -r "$filter"
       exit 0
     fi
@@ -343,10 +374,6 @@ case "${1:-}" in
     fi
     ;;
   pr)
-    if [[ "${2:-}" == edit ]]; then
-      printf '%s\n' "$*" >> "$STUB_REQUEST_LOG"
-      exit "${STUB_REQUEST_EXIT:-0}"
-    fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       if [[ "$*" == *"--json state,isDraft,headRefOid"* ]]; then
@@ -359,17 +386,6 @@ case "${1:-}" in
       # the poll head so a stable wait confirms and proceeds.
       if [[ "$*" == *"-q .headRefOid"* ]]; then
         printf '%s\n' "${STUB_CONFIRM_HEAD:-headsha1}"
-        exit 0
-      fi
-      # Mode resolution's read: `--json baseRefName,reviewDecision`.
-      if [[ "$*" == *"--json baseRefName,reviewDecision"* ]]; then
-        case "${STUB_BASE_MODE:-ok}" in
-          fail) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
-          empty) echo '{"baseRefName":"","reviewDecision":""}' ;;
-          not_string) jq -nc --arg base "${STUB_BASE_REF:-main}" '{baseRefName: $base, reviewDecision: 1}' ;;
-          *) jq -nc --arg base "${STUB_BASE_REF:-main}" --arg decision "${STUB_BASE_DECISION:-}" \
-               '{baseRefName: $base, reviewDecision: $decision}' ;;
-        esac
         exit 0
       fi
       if [[ "$*" == *reviewDecision* ]]; then
@@ -622,12 +638,11 @@ table() {
 APPROVAL='1 1 3 --json --mode approval'
 RESOLVE='1 --resolve-mode --base-checkout .'
 
-echo "=== --resolve-mode: the base's rulesets and the PR's reviewDecision decide ==="
+echo "=== --resolve-mode: rulesets and classic protection decide ==="
 # At least one approval the base's rulesets require is approval, and the
-# largest count over every page wins. The rules read does not show classic
-# branch protection, so a non-empty reviewDecision, which GitHub sets only
-# where the base requires a review, is approval too. Off needs both: no
-# required approval in the rules and an empty reviewDecision. A read that
+# largest count over every page wins. With no ruleset approval requirement,
+# classic review protection decides. Off needs both: no
+# required approval in the rules and no classic review requirement. A read that
 # fails, answers nothing, answers a non-list or a count that is not a number
 # is no mode: exit 2, a diagnostic naming the branch, and nothing on stdout,
 # never an off that would skip the wait. The base is read from the PR, and a
@@ -637,8 +652,14 @@ table "$RESOLVE" \
   'rules requiring 2 approvals resolve approval||STUB_REQUIRED_APPROVALS=2|rc=0 mode=approval' \
   'rules requiring 0 approvals resolve off||STUB_REQUIRED_APPROVALS=0|rc=0 mode=off' \
   'a base with no pull_request rule resolves off||STUB_RULES_MODE=none|rc=0 mode=off' \
-  'rules requiring 0 beside a REVIEW_REQUIRED decision resolve approval, as classic protection reads||STUB_REQUIRED_APPROVALS=0,STUB_BASE_DECISION=REVIEW_REQUIRED|rc=0 mode=approval' \
-  'no pull_request rule beside an APPROVED decision resolves approval||STUB_RULES_MODE=none,STUB_BASE_DECISION=APPROVED|rc=0 mode=approval' \
+  'classic review requirement resolves approval||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=review|rc=0 mode=approval' \
+  'classic review requirement with zero count resolves approval||STUB_RULES_MODE=none,STUB_CLASSIC_MODE=review,STUB_CLASSIC_COUNT=0|rc=0 mode=approval' \
+  'classic protection with no review requirement resolves off||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=no_review|rc=0 mode=off' \
+  'rules requiring approval need no classic read||STUB_CLASSIC_MODE=branch_fail|rc=0 mode=approval' \
+  'classic branch read refusal is no mode||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=branch_fail|rc=2 stdout=empty' \
+  'missing classic protection evidence is no mode||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=missing|rc=2 stdout=empty' \
+  'classic protection read refusal is no mode||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=fail|rc=2 stdout=empty' \
+  'classic approval count must be whole||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=malformed|rc=2 stdout=empty' \
   'a count on a later page is read, and the largest wins||STUB_RULES_MODE=paged,STUB_REQUIRED_APPROVALS=0,STUB_REQUIRED_APPROVALS_PAGE2=1|rc=0 mode=approval' \
   'the base is the one the PR names, URL-encoded||STUB_BASE_REF=release/1.x|rc=0 mode=approval rules_url=repos/owner/repo/rules/branches/release%2F1.x' \
   'a failed rules read is no mode||STUB_RULES_MODE=fail|rc=2 stdout=empty stderr_line=approval-wait:+rules-unreadable+branch=main+repo=owner/repo' \
@@ -648,7 +669,7 @@ table "$RESOLVE" \
   'a count that is not a whole number is a failed read||STUB_RULES_MODE=fraction|rc=2 stdout=empty' \
   'a failed base read is no mode, and no rules are read||STUB_BASE_MODE=fail|rc=2 stdout=empty rules_reads=0 stderr_line=approval-wait:+base-unreadable+pr=1+repo=owner/repo' \
   'an empty base is a failed read||STUB_BASE_MODE=empty|rc=2 stdout=empty rules_reads=0' \
-  'a reviewDecision that is no string is a failed read||STUB_BASE_MODE=not_string|rc=2 stdout=empty rules_reads=0 stderr_line=approval-wait:+base-unreadable+pr=1+repo=owner/repo' \
+  'a base that is not a string is a failed read||STUB_BASE_MODE=not_string|rc=2 stdout=empty rules_reads=0 stderr_line=approval-wait:+base-unreadable+pr=1+repo=owner/repo' \
   'an auth failure is no mode and prints nothing on stdout||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=empty'
 
 echo "=== waits require a resolved mode ==="
@@ -745,7 +766,7 @@ echo "=== Copilot error answers retry once through the request owner ==="
 # KEN-3421 produced duplicate error reviews for one request. The first snapshot
 # consumes one retry; unchanged IDs are not new answers. A later ID is terminal.
 table "$APPROVAL" \
-  'the error retries once and an approval ends the continued wait||STUB_APPROVAL_MODE=copilot_error_approved|rc=0 status=approved requests=1 approval_polls=3 request_argv=pr+edit+1+--repo+owner/repo+--add-reviewer+@copilot' \
+  'the error retries once and an approval ends the continued wait||STUB_APPROVAL_MODE=copilot_error_approved|rc=0 status=approved requests=1 approval_polls=3 request_argv=api+repos/owner/repo/pulls/1/requested_reviewers+--method+POST+-f+reviewers[]=copilot-pull-request-reviewer[bot]' \
   'a dismissed success does not consume the later error retry||STUB_APPROVAL_MODE=copilot_error_approved,STUB_DISMISSED_SUCCESS=1,STUB_ERROR_ID=2|rc=0 status=approved requests=1 approval_polls=3' \
   'a new error after unchanged polls ends early||STUB_APPROVAL_MODE=copilot_error_twice|rc=1 status=copilot-error requests=1 approval_polls=3 head_sha=headsha1 copilot_fallback_cause=error elapsed_seconds=2' \
   'duplicate errors in the initial snapshot still permit one retry||STUB_APPROVAL_MODE=copilot_error_twice,STUB_DUPLICATE_ERRORS=1|rc=1 status=copilot-error requests=1 approval_polls=3' \
@@ -895,8 +916,8 @@ echo "=== must-fail controls: each resolution rule and the route's two orderings
 #                          answers off
 #   threshold-down         the approval branch needs 0, so 0 required
 #                          answers approval
-#   decision-ignored       the reviewDecision is dropped, so 0 required
-#                          beside REVIEW_REQUIRED answers off
+#   classic-ignored        classic review protection is dropped, so 0 ruleset
+#                          approvals beside classic review protection answers off
 #   fail-open              a failed rules read yields a count of 0 and
 #                          answers off
 #   approved-first         an approval no longer waits for its threads to
@@ -965,17 +986,23 @@ control() {
 }
 
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
-control threshold-up '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then' \
-  '  if [ "$required" -ge 2 ] || [ -n "$decision" ]; then' \
+control threshold-up '  if [ "$required" -ge 1 ]; then' \
+  '  if [ "$required" -ge 2 ]; then' \
   "$RESOLVE" 'STUB_REQUIRED_APPROVALS=1' 'rc=0 mode=approval'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
-control threshold-down '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then' \
-  '  if [ "$required" -ge 0 ] || [ -n "$decision" ]; then' \
+control threshold-down '  if [ "$required" -ge 1 ]; then' \
+  '  if [ "$required" -ge 0 ]; then' \
   "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0' 'rc=0 mode=off'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
-control decision-ignored '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then' \
-  '  if [ "$required" -ge 1 ]; then' \
-  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_BASE_DECISION=REVIEW_REQUIRED' 'rc=0 mode=approval'
+control classic-ignored '  if [ "$enabled" = false ]; then printf '\''0\n'\''; return 0; fi' \
+  '  if true; then printf '\''0\n'\''; return 0; fi # [ "$enabled" = false ]' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=review' 'rc=0 mode=approval'
+control classic-fail-open '  raw=$(gh api "repos/$REPO/branches/$uri/protection" 2>"$GH_ERR_FILE") || return 1' \
+  '  raw=$(gh api "repos/$REPO/branches/$uri/protection" 2>"$GH_ERR_FILE") || raw="{}"' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=fail' 'rc=2 stdout=empty'
+control classic-missing '  enabled=$(jq -er '\''.protection.enabled | select(type == "boolean") | tostring'\'' <<<"$raw" 2>/dev/null) || return 1' \
+  '  enabled=$(jq -er '\''.protection.enabled | select(type == "boolean") | tostring'\'' <<<"$raw" 2>/dev/null) || enabled=false' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=missing' 'rc=2 stdout=empty'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control fail-open '  if ! required=$(read_required_approvals "$RULES_BRANCH"); then' \
   '  if ! required=$(read_required_approvals "$RULES_BRANCH" || echo 0); then' \

@@ -1,0 +1,1 @@
+- Approval request actions read the base, review requirement and head through REST and request Copilot through REST. GitHub's draft-to-ready operation still requires GraphQL.

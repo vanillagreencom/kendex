@@ -6,6 +6,9 @@
 # an off gate or requesting Copilot, or a fallback line with its cause when
 # no request went out. --json stdout is consumed by their gate routing.
 # The error field contains a diagnostic key/value first line and English below.
+# Request actions use REST for gate and head reads and the Copilot request.
+# gh pr ready / markPullRequestReadyForReview is the sole required GraphQL
+# exception: GitHub REST has no draft-to-ready operation.
 set -euo pipefail
 
 # Each diagnostic keeps its stable fields and explanation in one place.
@@ -39,14 +42,14 @@ approval_message() {
       ;;
     base-unreadable)
       printf 'approval-wait: base-unreadable pr=%s repo=%s\n' "$PR_NUM" "$REPO"
-      printf '%s\n' "approval-wait: could not read the base branch and review decision of PR #$PR_NUM in $REPO, so no gate mode is available"
+      printf '%s\n' "approval-wait: could not read the base branch of PR #$PR_NUM in $REPO, so no gate mode is available"
       ;;
     rules-unreadable)
       printf 'approval-wait: rules-unreadable branch=%q repo=%s\n' "$RULES_BRANCH" "$REPO"
       printf '%s\n' "approval-wait: could not read the rules GitHub applies to branch '$RULES_BRANCH' in $REPO, so no gate mode is available"
       ;;
     ready-failed)
-      printf 'approval-wait: ready-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf 'approval-wait: ready-failed pr=%s repo=%s operation=markPullRequestReadyForReview\n' "$PR_NUM" "$REPO"
       printf '%s\n' 'Could not mark the open draft ready. No review request went out.'
       ;;
     request-head-unreadable)
@@ -228,7 +231,7 @@ stop: stdout stays empty and stderr says why.
   --item ID      the lane whose new mail exits 5; no mail check without it
                  Request actions read this item's saved error retry outcome.
   --resolve-mode print the gate mode the PR's base branch sets, read from
-                 its rulesets and the PR's reviewDecision (approval |
+                 its rulesets and classic branch protection (approval |
                  off), and exit: see Mode resolution
   --base-checkout PATH
                  waits use this trusted consumer base for error-review retries.
@@ -309,19 +312,17 @@ Mode resolution requires --base-checkout; waits require --mode approval.
 Committed REVIEW_GATE_MODE=off prints off before native resolution; enforce (default) uses it.
 Missing context, a missing trusted reader, unreadable settings or invalid policy exits 2.
 
-Native resolution: under enforce, read the PR's base branch and
-reviewDecision in one call (gh pr view --json baseRefName,reviewDecision),
-then every ruleset rule GitHub applies to that branch, organization rulesets
-included (repos/<repo>/rules/branches/<base>, every page). That rules read
-does not show classic branch protection; the reviewDecision does, since
-GitHub sets it only where the base requires a review, whether a ruleset or
-classic protection asks for it. "approval" prints when the base's
-pull_request rules require at least one approval OR the reviewDecision is
-non-empty; "off" prints only when both say no approval is required (no
-pull_request rule or one requiring 0, and an empty reviewDecision). A failed
-read of the base, the reviewDecision or the rules, or a rule whose
-required_approving_review_count is not a whole number, is no mode: exit 2
-with a diagnostic and nothing on stdout.
+Native resolution: under enforce, read the PR's base branch through REST
+(repos/<repo>/pulls/<n> .base.ref), then every ruleset rule GitHub applies to
+that branch, organization rulesets included (rules/branches/<base>, every
+page). At least one required approval prints "approval". Otherwise read
+branches/<base> .protection.enabled. A false value proves no classic
+protection. A true value requires branches/<base>/protection:
+required_pull_request_reviews present as an object prints "approval", even
+with a zero count; null or absent prints "off". This replaces reviewDecision
+for mode resolution. Missing protection evidence, a failed read or an invalid
+approval count is no mode: exit 2 with nothing on stdout. Classic protection
+reads require repository Administration read permission.
 Callers read the mode only through this resolution, and never auto-detect it
 from the requested-reviewer list.
 
@@ -861,33 +862,45 @@ REPO_NAME="${REPO#*/}"
 # --- native approval requirement on the PR's base branch ---
 # rules/branches answers every active ruleset rule that applies to the branch, organization
 # rulesets included, which a repository ruleset listing does not show; it does
-# not answer classic branch protection. The PR's reviewDecision covers that
-# case: GitHub sets it only where the base requires a review, classic
-# protection included, and reading it needs no admin permission, which the
-# classic protection endpoint does. Each read is checked: a failed or
+# not answer classic branch protection. If no ruleset requires an approval,
+# the branch's protection.enabled and full classic protection supply the
+# missing requirement through REST. Each read is checked: a failed or
 # unparseable answer is no mode, never "off", since off skips the wait.
 
 # Print the largest required_approving_review_count among BRANCH's
-# pull_request rules, 0 when it has none. Returns 1 on a failed read, a
+# pull_request rules, or 1 for a classic review requirement when rulesets
+# require none. Classic review protection can require code-owner review even
+# with a zero count. Returns 1 on a failed read, a
 # zero-byte answer, a page that is not a list, or a count that is not a whole
 # number, since the -ge test below reads anything else as neither mode.
 read_required_approvals() { # BRANCH
-  local uri raw
+  local uri raw required enabled
   uri=$(jq -rn --arg v "$1" '$v | @uri') || return 1
   raw=$(gh api "repos/$REPO/rules/branches/$uri" --paginate 2>"$GH_ERR_FILE") || return 1
   [ -n "$raw" ] || return 1
-  jq -s -r 'if length > 0 and all(.[]; type == "array")
+  required=$(jq -s -r 'if length > 0 and all(.[]; type == "array")
     then add | [.[] | select(.type == "pull_request") | .parameters.required_approving_review_count]
       | if all(.[]; type == "number" and . >= 0 and . == floor) then (max // 0)
         else error("a required approval count is not a whole number") end
-    else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null
+    else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null) || return 1
+  if [ "$required" -ge 1 ]; then printf '%s\n' "$required"; return 0; fi
+  raw=$(gh api "repos/$REPO/branches/$uri" 2>"$GH_ERR_FILE") || return 1
+  enabled=$(jq -er '.protection.enabled | select(type == "boolean") | tostring' <<<"$raw" 2>/dev/null) || return 1
+  if [ "$enabled" = false ]; then printf '0\n'; return 0; fi
+  raw=$(gh api "repos/$REPO/branches/$uri/protection" 2>"$GH_ERR_FILE") || return 1
+  jq -er 'if type != "object" then error("classic protection")
+    elif .required_pull_request_reviews == null then "0"
+    elif (.required_pull_request_reviews | type) == "object"
+      and (.required_pull_request_reviews.required_approving_review_count
+        | type == "number" and . >= 0 and . == floor) then "1"
+    else error("classic review requirement") end' <<<"$raw" 2>/dev/null
 }
 
 # Consumer context and policy precede every native approval read.
 # Source the caller's trusted reader, never an unapproved stacked base's code.
 GATE_MODE=""
 resolve_gate_mode() {
-  local required base_json decision policy settings_lib
+  local required base_json policy settings_lib
   [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }
   settings_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
   if [[ ! -r "$settings_lib" ]]; then
@@ -902,9 +915,8 @@ resolve_gate_mode() {
     enforce) ;;
     *) approval_message policy-mode-invalid >&2; return 1 ;;
   esac
-  if ! base_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName,reviewDecision 2>"$GH_ERR_FILE") \
-    || ! RULES_BRANCH=$(jq -er '.baseRefName | strings | select(length > 0)' <<<"$base_json" 2>/dev/null) \
-    || ! decision=$(jq -er '.reviewDecision // "" | strings' <<<"$base_json" 2>/dev/null); then
+  if ! base_json=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE") \
+    || ! RULES_BRANCH=$(jq -er '.base.ref | strings | select(length > 0)' <<<"$base_json" 2>/dev/null); then
     RULES_BRANCH=""
     approval_message base-unreadable >&2
     return 1
@@ -913,7 +925,7 @@ resolve_gate_mode() {
     approval_message rules-unreadable >&2
     return 1
   fi
-  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then
+  if [ "$required" -ge 1 ]; then
     GATE_MODE=approval
   else
     GATE_MODE=off
@@ -954,10 +966,10 @@ refresh_review_route() {
 # A head read after ready prevents a request for a head the transition replaced.
 read_request_head() {
   local view
-  view=$(gh pr view "$PR_NUM" --repo "$REPO" --json state,isDraft,headRefOid 2>"$GH_ERR_FILE") \
-    && request_fields=$(jq -er 'select(.state == "OPEN" and (.isDraft | type) == "boolean"
-        and (.headRefOid | type) == "string" and (.headRefOid | length) > 0)
-        | [.isDraft, .headRefOid] | @tsv' <<<"$view") \
+  view=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE") \
+    && request_fields=$(jq -er 'select(.state == "open" and (.draft | type) == "boolean"
+        and (.head.sha | type) == "string" and (.head.sha | length) > 0)
+        | [.draft, .head.sha] | @tsv' <<<"$view") \
     || { approval_message request-head-unreadable >&2; return 1; }
   IFS=$'\t' read -r request_draft request_head <<<"$request_fields"
 }
@@ -990,6 +1002,8 @@ run_review_action() (
     read_request_head || exit 2
     if [[ "$request_draft" == true ]]; then
       ready_head="$request_head"
+      # GitHub exposes draft-to-ready only through GraphQL. REST's update
+      # pull request endpoint has no draft field. Keep this required mutation.
       gh pr ready "$PR_NUM" --repo "$REPO" >&2 || { approval_message ready-failed >&2; exit 2; }
       read_request_head || exit 2
       [[ "$request_draft" == false && "$request_head" == "$ready_head" ]] \
@@ -1044,7 +1058,8 @@ run_review_action() (
       exit 0
     fi
     request_rc=0
-    gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2 || request_rc=$?
+    gh api "repos/$REPO/pulls/$PR_NUM/requested_reviewers" --method POST \
+      -f "reviewers[]=${COPILOT_REVIEWER}[bot]" >&2 || request_rc=$?
     if [[ "$request_rc" -ne 0 ]]; then
       approval_message copilot-request-refused >&2
       answer="fallback cause=refused exit=$request_rc"

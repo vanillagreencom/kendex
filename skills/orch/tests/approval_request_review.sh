@@ -13,6 +13,10 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home" "$TMP_ROOT/catalog" "$TMP_ROOT/consumer base/.agents/skills/orch/scripts"
 BASE="$TMP_ROOT/consumer base"
+git -C "$BASE" init -q
+git -C "$BASE" config gc.auto 0
+git -C "$BASE" config maintenance.auto false
+git -C "$BASE" remote add origin https://github.com/consumer/repo.git
 printf '[env]\nREVIEW_GATE_MODE = "enforce"\n' > "$TMP_ROOT/catalog/kendex.settings.toml"
 cat > "$BASE/.agents/skills/orch/scripts/approval-wait" <<'EOF'
 #!/usr/bin/env bash
@@ -26,8 +30,12 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 case "$1 $2" in
   'auth status'|'api user') exit "${AUTH_EXIT:-0}" ;;
-  'repo view') echo consumer/repo ;;
+  'repo view')
+    [[ "${DENY_GRAPHQL:-false}" != true ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
+    echo consumer/repo
+    ;;
   'pr view')
+    [[ "${DENY_GRAPHQL:-false}" != true ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
     if [[ "$*" == *'--json state,isDraft'* ]]; then
       [[ "${HEAD_READ_FAIL:-false}" != true ]] || exit 1
@@ -55,11 +63,22 @@ case "$1 $2" in
     ;;
   'api repos/consumer/repo/rules/branches/feature%2Fbase')
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
-    echo '[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]'
+    printf '[{"type":"pull_request","parameters":{"required_approving_review_count":%s}}]\n' "${REQUIRED_APPROVALS:-1}"
+    ;;
+  'api repos/consumer/repo/branches/feature%2Fbase')
+    echo '{"protection":{"enabled":false}}'
     ;;
   'api repos/consumer/repo/pulls/42')
     [[ "$PULL_JSON" != fail ]] || exit 1
-    printf '%s\n' "$PULL_JSON"
+    [[ "${BASE_READ_FAIL:-false}" != true ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
+    [[ "${HEAD_READ_FAIL:-false}" != true ]] || exit 1
+    [[ "${HEAD_READ_FAIL_AFTER_READY:-false}" != true || ! -s "$TRANSITION_LOG" ]] || exit 1
+    draft=false
+    [[ ! -f "$DRAFT_FILE" ]] || draft="$(cat "$DRAFT_FILE")"
+    head=current-head
+    [[ ! -f "$HEAD_FILE" ]] || head="$(cat "$HEAD_FILE")"
+    jq -c --argjson draft "$draft" --arg sha "$head" --arg state "${PR_STATE:-open}" \
+      '. + {base:{ref:"feature/base"},state:($state|ascii_downcase),draft:$draft} | .head.sha=$sha' <<<"$PULL_JSON"
     ;;
   api\ repos/consumer/repo/commits/*/check-runs*)
     [[ "${CHECKS_FAIL:-false}" != true ]] || exit 1
@@ -73,12 +92,14 @@ case "$1 $2" in
     [[ "${REVIEWS_FAIL:-false}" != true ]] || exit 1
     printf '%s\n' "$REVIEWS_JSON"
     ;;
-  'pr edit')
+  'api repos/consumer/repo/pulls/42/requested_reviewers'|'pr edit')
+    if [[ "$1" == pr && "${DENY_GRAPHQL:-false}" == true ]]; then echo 'HTTP 403: Forbidden' >&2; exit 1; fi
     printf '%s\n' "$PWD|$*" >> "$REQUEST_LOG"
     printf 'request head=%s draft=%s\n' "$(cat "$HEAD_FILE" 2>/dev/null || echo current-head)" "$(cat "$DRAFT_FILE" 2>/dev/null || echo false)" >> "$TRANSITION_LOG"
     [[ "$REQUEST_EXIT" == 0 ]] || exit "$REQUEST_EXIT"
     echo 'https://github.com/consumer/repo/pull/42'
     ;;
+  'api graphql') echo 'HTTP 403: Forbidden' >&2; exit 1 ;;
   *) printf 'gh: unexpected argv=%s\n' "$*" >&2; exit 9 ;;
 esac
 EOF
@@ -125,7 +146,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
   REQUESTS="$(wc -l < "$REQUEST_LOG" | tr -d ' ')"
 }
 
-# Columns: label|action|consumer gate|caller PR_COPILOT_REQUESTS|base PR_COPILOT_REQUESTS|gh pr edit exit|rc|stdout|requests|stderr line the caller copies into its notice
+# Columns: label|action|consumer gate|caller PR_COPILOT_REQUESTS|base PR_COPILOT_REQUESTS|request exit|rc|stdout|requests|stderr line the caller copies into its notice
 for row in \
   'disabled request|--request-review|"off"|||0|0|off|0|' \
   'disabled resolution|--resolve-mode|"off"|||0|0|off|0|' \
@@ -152,7 +173,7 @@ done
 write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' ''
 write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
 run_action "$RUN" 0 --request-review --base-checkout "$BASE"
-assert_eq "$(cat "$REQUEST_LOG")" "$BASE|pr edit 42 --repo consumer/repo --add-reviewer @copilot" \
+assert_eq "$(cat "$REQUEST_LOG")" "$BASE|api repos/consumer/repo/pulls/42/requested_reviewers --method POST -f reviewers[]=copilot-pull-request-reviewer[bot]" \
   'the request names the consumer repository, not the inherited catalog' "$ERR"
 assert_contains "$(cat "$QUERY_LOG")" "$BASE|api repos/consumer/repo/rules/branches/feature%2Fbase --paginate" \
   'the trusted native owner reads stacked-base rules from the consumer directory' "$ERR"
@@ -169,6 +190,52 @@ done
 # real request owner holds the draft until that command and confirms its head.
 write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' ''
 write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
+# REST reads and requests do not need GraphQL. The ready command is an
+# upstream GraphQL mutation with no REST equivalent; this fixture allows it
+# explicitly, and a separate row proves its refusal stops the request.
+for row in \
+  'REST request after ready|false|1|false|0|0|approval|1|false|request head=current-head draft=false|' \
+  'REST reads around ready mutation|true|1|false|0|0|approval|1|false|ready,request head=current-head draft=false|' \
+  'REST off mode|true|0|false|0|0|off|0|false|ready|' \
+  'REST base refusal|true|1|true|0|2||0|true||base-unreadable' \
+  'ready mutation refusal|true|1|false|1|2||0|true|ready|ready-failed'; do
+  IFS='|' read -r label draft required failed ready_exit want_rc want_out requests want_draft transitions diagnostic <<<"$row"
+  printf '%s\n' "$draft" > "$DRAFT_FILE"
+  printf 'current-head\n' > "$HEAD_FILE"
+  RUN_ENV=(DENY_GRAPHQL=true "REQUIRED_APPROVALS=$required" "BASE_READ_FAIL=$failed" "READY_EXIT=$ready_exit")
+  run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$DRAFT_FILE")|$(paste -sd, "$TRANSITION_LOG")" \
+    "$want_rc|$want_out|$requests|$want_draft|$transitions" "$label" "$ERR"
+  [[ -z "$diagnostic" ]] || assert_contains "$(cat "$ERR")" "approval-wait: $diagnostic pr=42 repo=consumer/repo" "$label key" "$ERR"
+  [[ "$diagnostic" != ready-failed ]] || assert_contains "$(cat "$ERR")" 'operation=markPullRequestReadyForReview' "$label operation" "$ERR"
+done
+# The old gate read still reaches base-unreadable under the identical fixture.
+scripts="$(mutant_scripts rest-base-control approval-wait)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
+ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
+mutate_file "$scripts/approval-wait" 'base_json=$(gh api "repos/$REPO/pulls/$PR_NUM"' \
+  'base_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName,reviewDecision'
+printf 'true\n' > "$DRAFT_FILE"
+RUN_ENV=(DENY_GRAPHQL=true)
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$DRAFT_FILE")" '2||0|true' 'control: old gate read blocks draft completion' "$ERR"
+assert_contains "$(cat "$ERR")" 'approval-wait: base-unreadable pr=42 repo=consumer/repo' 'control: old gate refusal key' "$ERR"
+scripts="$(mutant_scripts rest-refusal-control approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" 'base_json=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE")' \
+  'base_json=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE" || printf '\''{"base":{"ref":"feature/base"}}'\'')'
+RUN_ENV=(DENY_GRAPHQL=true BASE_READ_FAIL=true)
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_not_contains "$(cat "$ERR")" 'approval-wait: base-unreadable ' 'control: defaulting failed REST base read breaks its refusal' "$ERR"
+assert_contains "$(cat "$ERR")" 'approval-wait: request-head-unreadable ' 'control: failed base read reaches the later head read' "$ERR"
+scripts="$(mutant_scripts ready-refusal-control approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" 'gh pr ready "$PR_NUM" --repo "$REPO" >&2 || { approval_message ready-failed >&2; exit 2; }' \
+  'gh pr ready "$PR_NUM" --repo "$REPO" >&2 || : # { approval_message ready-failed >&2; exit 2; }'
+RUN_ENV=(DENY_GRAPHQL=true READY_EXIT=1)
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_not_contains "$(cat "$ERR")" 'approval-wait: ready-failed ' 'control: ignoring ready refusal drops its mutation cause' "$ERR"
+assert_contains "$(cat "$ERR")" 'approval-wait: ready-head-moved ' 'control: ignoring ready refusal reaches the later head guard' "$ERR"
+RUN_ENV=()
+rm -- "$DRAFT_FILE" "$HEAD_FILE"
 # The publication command supplies these arguments; run its real owner.
 ready_doc_args() { # DOC
   local line field
@@ -243,8 +310,6 @@ cp "$PUBLICATION_SCRIPT" "$TMP_ROOT/publication-mutant.sh"
 mutate_file "$TMP_ROOT/publication-mutant.sh" 'if [[ "$COPILOT_REQUESTED_HEAD" != "current-head" ]]; then' 'if true; then'
 run_action "$TMP_ROOT/publication-mutant.sh" 0
 assert_eq "$REQUESTS" 1 'control: ignoring the request record duplicates the ready head request' "$ERR"
-ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
 # GitHub produces queued/running checks, timeline-only requests and submitted
 # head reviews. approval is the request answer consumed by submit-pr and the
 # review workflow; stderr records the cause and head for the caller's log.
@@ -530,16 +595,16 @@ assert_eq "$(cat "$DRAFT_FILE")" false 'control: ignoring the refresh failure cr
 write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
 rm -f -- "${DRAFT_FILE:?}" "${HEAD_FILE:?}"
 
-# Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~gh pr edit exit~old~new~rc~stdout~requests~action (default --request-review)
+# Columns: label~consumer gate~caller PR_COPILOT_REQUESTS~base PR_COPILOT_REQUESTS~request exit~old~new~rc~stdout~requests~action (default --request-review)
 for row in \
   'off-gate~"off"~~~0~if $REQUEST_REVIEW && [[ "$answer" == approval ]]; then~if $REQUEST_REVIEW && [[ "$answer" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
   'settings-failure~["off"]~~~0~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0~--resolve-mode' \
   'unknown-policy~"junk"~~~0~*) approval_message policy-mode-invalid >&2; return 1 ;;~*) approval_message policy-mode-invalid >&2; return 0 ;;~2~~0' \
   'base-directory~"off"~~~0~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
   'stacked-base-execution~"enforce"~~~0~  policy=$(rg_setting REVIEW_GATE_MODE enforce)~  "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
-  'stdout-isolation~"enforce"~~~0~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1' \
+  'stdout-isolation~"enforce"~~~0~-f "reviewers[]=${COPILOT_REVIEWER}[bot]" >&2~-f "reviewers[]=${COPILOT_REVIEWER}[bot]"~0~approval~1' \
   'copilot-off~"enforce"~off~~0~    elif [[ "$COPILOT_REQUESTS" == off ]]; then~    elif false; then~0~fallback cause=off~0' \
-  'refused-request~"enforce"~~~8~--add-reviewer @copilot >&2 || request_rc=$?~--add-reviewer @copilot >&2 || exit $?~0~fallback cause=refused exit=8~1' \
+  'refused-request~"enforce"~~~8~-f "reviewers[]=${COPILOT_REVIEWER}[bot]" >&2 || request_rc=$?~-f "reviewers[]=${COPILOT_REVIEWER}[bot]" >&2 || exit $?~0~fallback cause=refused exit=8~1' \
   'caller-setting~"enforce"~~off~0~COPILOT_REQUESTS="$("$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || return 2~COPILOT_REQUESTS="$(cd -- "$BASE_CHECKOUT" && "$SCRIPT_DIR/orch-env" PR_COPILOT_REQUESTS on)" || return 2~0~approval~1' \
   'copilot-setting-invalid~"enforce"~junk~~0~*) approval_message copilot-requests-invalid >&2; return 2 ;;~*) ;;~2~~0' \
   'copilot-setting-unreadable~"enforce"~\"off~~0~PR_COPILOT_REQUESTS on)" || return 2~PR_COPILOT_REQUESTS on)" || COPILOT_REQUESTS=on~2~~0' \
