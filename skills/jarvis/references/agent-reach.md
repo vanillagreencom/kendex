@@ -39,7 +39,7 @@ Report each refusal in plain words. Do not retry it or work around it.
 
 | Key | Meaning | Next step |
 |---|---|---|
-| `overseer-absent` | No session is registered to read that repository's mail; nothing was sent. A second line saying orch is not installed means the repository has mailbox alone. | Offer the [directive install](#install). With orch installed, the agent's session runs orch's `oversee register` in its own tmux pane. |
+| `overseer-absent` | No session is registered to read that repository's mail; nothing was sent. A second line saying orch is not installed means the repository has mailbox alone. | Without orch, offer the [directive install](#install). With orch, say that the agent's session must run orch's `oversee register` in its own tmux pane. |
 | `overseer-unreadable` | The repository's fleet record could not be read; nothing was sent. | Report the cause `lane-mail` printed. |
 | `command-missing`, `file-unreadable` | A command `lane-mail` needs is absent, or the message file is unreadable. | Name the command or file. |
 
