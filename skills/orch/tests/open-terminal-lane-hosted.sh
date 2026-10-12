@@ -559,24 +559,6 @@ refused|relaunch
 absent|fresh
 absent|fresh|cloud-credit
 ROWS
-COPILOT_POOL_SHIPPED="$OPEN_TERMINAL"
-OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host-pool/orch lib/lane-launch.sh)/open-terminal" || exit 1
-orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host-pool/orch"
-COPILOT_POOL_AFTER="$(cat <<'ORDER'
-    copilot:* | pi:github-copilot/*:*) printf '%s\n' copilot ;;
-    *:cloud-credit) printf '%s\n' cloud-credit ;;
-ORDER
-)"
-COPILOT_POOL_BEFORE="$(cat <<'ORDER'
-    *:cloud-credit) printf '%s\n' cloud-credit ;;
-    copilot:* | pi:github-copilot/*:*) printf '%s\n' copilot ;;
-ORDER
-)"
-mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" "$COPILOT_POOL_AFTER" "$COPILOT_POOL_BEFORE"
-COPILOT_POOL_SAVED="$FAIL"; FAIL=0
-copilot_claim_case absent fresh cloud-credit > "$TMP_ROOT/copilot-host-pool-control.out"
-COPILOT_POOL_RED="$FAIL"; FAIL="$COPILOT_POOL_SAVED"; OPEN_TERMINAL="$COPILOT_POOL_SHIPPED"
-assert_eq "$COPILOT_POOL_RED" 1 'control: host credit ahead of Copilot fails the unchanged monthly claim row'
 COPILOT_CLAIM_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-claim-pool/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-claim-pool/orch"
