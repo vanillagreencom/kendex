@@ -1,0 +1,1 @@
+- Overseer handoffs use State, Sub-agents, Instructions in force and Progress log. Standing procedures, rulings and verification evidence stay in their existing homes.

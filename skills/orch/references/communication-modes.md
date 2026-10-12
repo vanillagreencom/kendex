@@ -235,22 +235,31 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 
 Every hold in the handoff, the report's Next row or lane state names its items and an open owner ask id or a blocking pull request or tracker item. At each start, read the named ask from `lane-mail pending --item overseer --to owner` and the named blocker from GitHub or the live tracker. Drop a hold with no id, a resolved or absent ask, or a blocker whose live state is terminal. Count its items as ready, then apply `oversee.md` § 2 Select Work.
 
-```text
+```markdown
 Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
-Instructions in force: [TEMPORARY OWNER OR JARVIS SESSION INSTRUCTION, WHO GAVE IT, WHEN, AND WHEN IT ENDS]
-Standing rulings: [EACH STANDING RULING AND WHO MADE IT]
-In flight: [ITEM, ITS PULL REQUEST, ITS NEXT STEP]
-Open asks and directives: [EACH OPEN OWNER OR PEER ANSWER, WITH ITS LANE-MAIL ID]
-Owed items: [EACH ITEM AND ITS ACCEPTANCE LINE]
-Context: [OPEN ITEM, CAUSE NOT FIXED, MEASURED FACT, FAILED APPROACH AND WHY, OR HALF-FINISHED OPERATION]
-Traps: [WHAT WOULD BREAK IF THE NEXT SESSION MISSED IT]
+
+## State
+Session: [HOST, SESSION STATUS, HOLDS WITH THEIR ASK OR BLOCKER IDS, AND STATE CHECK TIME]
 Watch: [ONE REPEAT WATCH, LOG TAIL AND NATIVE WAIT, RE-ARM RULE, RUN DIRECTORY AND NEXT LOG LINE; AFTER STOP, `stopped` AND RUN DIRECTORY. SINGLE PASSES: `single passes`]
-Progress log: [CURRENT SESSION'S OPEN PROGRESS ONLY]
+Next report: [WHEN THE REPORT IS DUE]
+Open owner asks: [LANE-MAIL IDS ONLY]
+In flight: [EACH TRACKER ID WITH ONE NEXT ACTION]
+
+## Sub-agents
+[EACH RUNNING CONTROL-HOST SUBAGENT'S TASK FILE AND RESULT PATH; FLEET LANES STAY IN THE FLEET RECORD]
+
+## Instructions in force
+[EACH TEMPORARY OWNER INSTRUCTION, ITS SOURCE, RECORDED TIME AND END EVENT; LINK THE HOME OF A STANDING RULE]
+
+## Progress log
+[CURRENT SESSION'S OPEN PROGRESS ONLY: ONE LINE PER ACTION WITH ITS TIME, OPERATION, OBSERVED RESULT AND DECISION REASON]
 ```
 
 The handoff is a current snapshot. At every rewrite, replace the file, never prepend. Use the exact UTC write time and the writer's fleet generation. For live self-succession, `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. Dead and walled recovery use the existing handoff plus bounded live records, even when the handoff is stale or absent: their callers cannot write a live snapshot. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
 
-Drop each done item. Keep a line only when the successor would act wrongly or redo work without it, including lane facts held in another record. Instructions in force holds instructions no skill states; move a lasting instruction to its owning file. Each Context line names the open item it serves. Account, PID and watch facts otherwise stay in their own records. Hosted idle wakes use [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)'s Pane paste.
+Drop each closed tracker id from State. Keep its completion evidence on the item. Keep a line only when the successor would act wrongly or redo work without it. Remove a temporary instruction when its end event occurs or its standing home states it. An unresolved checkout condition belongs in State until its cause clears. Account, PID and lane facts stay in their own records. Hosted idle wakes use [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)'s Pane paste.
+
+Standing procedures and traps go to the orch skill through a lane. Record rulings and filing history in the fleet log under [§ Recording](#recording). Verifying checks and readings stay on their tracker items; `oversee-watch` prints them. Owed items and acceptance lines stay in the tracker, with dispatch order in `launch_queue`. Item context, measured facts and failed approaches stay on the item they serve. Open exchanges stay in their mailboxes, read live. Before replacing a predecessor handoff, move records outside session state to these homes or confirm that their homes already retain them. A failed destination read or write leaves the handoff and progress log untouched.
 
 [oversee.md](../workflows/oversee.md) § 5 uses this shape. This file's stance is not copied into a handoff. Its owner summary uses [§ Owner messages](#owner-messages).
 
