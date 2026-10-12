@@ -591,7 +591,7 @@ lane_stop_reset() {
   LANE_STOP_PID=""
 }
 # ROOT, where given, is the directory each process must still hold before
-# each signal. Without ROOT, saved start times protect against reused pids.
+# each signal. Saved start times protect both stop rules against reused pids.
 lane_stop_signal() { # PIDS [ROOT]
   local pid current state signal pids="$1" count=0 signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
   local starts=()
@@ -603,16 +603,14 @@ lane_stop_signal() { # PIDS [ROOT]
         state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
         [[ -n "$state" && "$state" != Z ]] || continue
       fi
-      if [[ -z "${2:-}" ]]; then
-        current="$(lane_process_start "$pid")" || { LANE_STOP_CAUSE=start-read-failed; return 1; }
-        if [[ -z "$current" ]]; then
-          state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
-          [[ -z "$state" || "$state" == Z ]] && continue
-          LANE_STOP_CAUSE=start-read-failed; return 1
-        fi
-        if [[ "$signal" == TERM ]]; then starts[$pid]="$current"
-        elif [[ "$current" != "${starts[$pid]}" ]]; then continue; fi
+      current="$(lane_process_start "$pid")" || { LANE_STOP_CAUSE=start-read-failed; return 1; }
+      if [[ -z "$current" ]]; then
+        state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+        [[ -z "$state" || "$state" == Z ]] && continue
+        LANE_STOP_CAUSE=start-read-failed; return 1
       fi
+      if [[ "$signal" == TERM ]]; then starts[$pid]="$current"
+      elif [[ "$current" != "${starts[$pid]}" ]]; then continue; fi
       if [[ -n "${2:-}" ]]; then
         if ! current="$(lane_process_cwd "$pid")"; then
           state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }

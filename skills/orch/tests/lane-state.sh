@@ -1200,20 +1200,23 @@ done
 # changes the start time before the KILL phase reads it again.
 stop_identity_row() (
   source "$1"
-  local start=original signals="" rc=0 stopped=no
+  local start=original signals="" rc=0 stopped=no root="${2:-}"
   lane_process_start() { printf '%s\n' "$start"; }
+  lane_process_cwd() { printf '%s\n' "$root"; }
   lane_process_state() { [[ "$stopped" == yes ]] || printf 'S\n'; }
   sleep() { start=reused; }
   kill() { signals+="${signals:+ }$1"; [[ "$1" != -KILL ]] || stopped=yes; }
   LANE_STOP_WAIT_PASSES=1
   lane_stop_reset
-  lane_stop_signal 4242 || rc=$?
+  lane_stop_signal 4242 "$root" || rc=$?
   printf '%s|%s|%s|%s\n' "$rc" "$LANE_STOP_CAUSE" "$LANE_STOP_COUNT" "$signals"
 )
-assert_eq "$(stop_identity_row "$SCRIPTS_DIR/lib/lane-state.sh")" '0||1|-TERM' \
-  "a reused pid receives no KILL after the TERM wait"
-assert_eq "$(stop_identity_row "$STOP_IDENTITY_MUTANT")" '0||1|-TERM -KILL' \
-  "control: removing the identity recheck sends KILL to the reused pid"
+for stop_root in '' /same-worktree; do
+  assert_eq "$(stop_identity_row "$SCRIPTS_DIR/lib/lane-state.sh" "$stop_root")" '0||1|-TERM' \
+    "a reused pid receives no KILL after the TERM wait: root=[$stop_root]"
+  assert_eq "$(stop_identity_row "$STOP_IDENTITY_MUTANT" "$stop_root")" '0||1|-TERM -KILL' \
+    "control: removing the identity recheck kills the reused pid: root=[$stop_root]"
+done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
