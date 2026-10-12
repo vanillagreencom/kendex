@@ -1475,18 +1475,69 @@ assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-75)" \
   "a notice the reader refuses is reported under its exit status, the record untouched, and the turn ends"
 assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the reader's own words under it"
 
-# No hook reads a lane's words: the question rule that read the final
-# assistant text and the turn's opening stamp out of the transcript is gone
-# from the hook and from every render of it, and no jq program in them selects
-# a transcript's text blocks. RENDERS names the copies this repository tracks;
-# a must-fail control below plants the text read back into a copy.
+# The reviewed claude_attached_agents fallback reads only Agent-return ids
+# and matching task-notification ids/statuses. Pin that one jq read site;
+# a change to its fields, another site in that function, or a read in another
+# tracked hook must remain forbidden. The block is inventory data, not a
+# second executable parser. Normalize CRLF before comparing source lines.
+PERMITTED_AGENT_READ="$TMP_ROOT/permitted-agent-id-status-read"
+cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
+    agents=$(jq -Rnr '
+      def text: if type == "string" then . elif type == "array" then
+        [.[] | select(.type == "text") | .text] | join("\n") else "" end;
+      reduce (inputs | fromjson | .message? | objects) as $m ({};
+        if $m.role == "user" then
+          reduce ($m.content | if type == "array" then .[] else empty end
+            | select(.type == "tool_result") | .content | text
+            | select(startswith("Async agent launched successfully"))
+            | capture("agentId: (?<id>[A-Za-z0-9_-]+)")?) as $a
+            (. ; .[$a.id] = "running")
+          | reduce ($m.content | text
+            | scan("<task-notification>[\\s\\S]*?<task-id>([A-Za-z0-9_-]+)</task-id>[\\s\\S]*?<status>([a-z_]+)</status>[\\s\\S]*?</task-notification>")) as $n
+            (. ; if has($n[0]) then .[$n[0]] = $n[1] else . end)
+        else . end)
+      | to_entries[] | [.key, .value] | @tsv
+    ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || {
+AGENT_ID_STATUS_READ
 text_reads() { # FILE...
-  grep -c -E 'asks_the_person|transcript_turn_start|transcript_final_line|select\(\.type == "text"\)' "$@" |
-    awk -F: '{ n += $NF } END { print n + 0 }'
+  awk '
+    FNR == NR { sub(/\r$/, ""); permitted = permitted $0 "\n"; next }
+    FNR == 1 { in_agent = 0; reading = 0; block = ""; block_hits = 0; admitted = 0 }
+    {
+      sub(/\r$/, "")
+      if ($0 == "claude_attached_agents() {") in_agent = 1
+      hit = ($0 ~ /asks_the_person|transcript_turn_start|transcript_final_line|select\(\.type == "text"\)|\.message\.content.*\.text/)
+      forbidden += hit
+      quote = sprintf("%c", 39)
+      if (in_agent && $0 == "    agents=$(jq -Rnr " quote) reading = 1
+      if (reading) {
+        block = block $0 "\n"; block_hits += hit
+        if ($0 == "    " quote " <\"$TRANSCRIPT\" 2>\"$WORK_DIR/agents.err\") || {") {
+          if (FILENAME ~ /\/lane-mail-check\.sh$/ && !admitted && block == permitted) {
+            forbidden -= block_hits; admitted = 1
+          }
+          reading = 0; block = ""; block_hits = 0
+        }
+      }
+      if ($0 == "}") in_agent = 0
+    }
+    END { print forbidden + 0 }
+  ' "$PERMITTED_AGENT_READ" "$@"
 }
-RENDERS=("$HOOK" "$REPO_ROOT/.claude/hooks/lane-mail-check.sh" "$REPO_ROOT/.codex/hooks/lane-mail-check.sh" \
-  "$REPO_ROOT/.pi/kendex/hooks/lane-mail-check.sh")
-assert_eq "$(text_reads "${RENDERS[@]}")" "0" "no copy of the hook reads a lane's message text"
+# The inventory includes every tracked source hook and harness render.
+# A failed discovery cannot stand for an empty set.
+HOOK_INVENTORY="$TMP_ROOT/tracked-hook-inventory"
+git -C "$REPO_ROOT" ls-files -- ':(glob)hooks/*.sh' ':(glob).claude/hooks/*.sh' \
+  ':(glob).codex/hooks/*.sh' ':(glob).github/hooks/*.sh' ':(glob).pi/kendex/hooks/*.sh' > "$HOOK_INVENTORY" || exit 1
+RENDERS=()
+while IFS= read -r tracked_hook; do
+  [ -n "$tracked_hook" ] || continue
+  RENDERS+=("$REPO_ROOT/$tracked_hook")
+done < "$HOOK_INVENTORY"
+assert_eq "$([ "${#RENDERS[@]}" -gt 0 ] && echo discovered || echo empty)" discovered \
+  "the tracked-hook inventory is nonempty"
+assert_eq "$(text_reads "${RENDERS[@]}")" "0" \
+  "only the named Agent-id and task-notification status read is permitted"
 
 # --- the overseer's own turn end ------------------------------------------
 # The fleet's overseer is no lane: it carries no launch marker, no claim and no
@@ -3081,12 +3132,32 @@ stop_active
 stop
 expect 0 "$GAP" "control: with the notice uncounted the lane's next idle turn passes"
 
-# The text read planted back into a copy of the hook: the inventory row counts
-# it, so that row reads what it claims to.
-mutant text-read -e 's@^idle_check() {$@idle_check() { : jq -r '"'"'select(.type == "text")'"'"';@'
-assert_eq "$(text_reads "$MUTANT_PATH")" "1" "control: a copy that reads the transcript's text is counted"
+# Each row plants one forbidden read or broadens the accepted read fields.
+# The same inventory assertion rejects every row, including a second read
+# inside claude_attached_agents but outside its one permitted jq block.
+PLANTED_TEXT_READ="jq -r 'select(.type == \"text\")';"
+for read_case in outside-function outside-site changed-fields other-hook; do
+  copy_name=lane-mail-check.sh
+  case "$read_case" in
+    outside-function)
+      mutant "text-$read_case" -e "s@^idle_check() {\$@idle_check() { $PLANTED_TEXT_READ@" ;;
+    outside-site)
+      mutant "text-$read_case" -e "s@^  local agents row id status output\$@&; $PLANTED_TEXT_READ@" ;;
+    changed-fields)
+      mutant "text-$read_case" -e 's@agentId: (?<id>@agentId: (?<words>@' ;;
+    other-hook)
+      MUTANT_SOURCE="$REPO_ROOT/hooks/lane-mail-halt.sh"
+      mutant "text-$read_case" -e "s@^set -euo pipefail\$@&; $PLANTED_TEXT_READ@"
+      unset MUTANT_SOURCE
+      copy_name=lane-mail-halt.sh ;;
+  esac
+  mkdir -p "$TMP_ROOT/text-inventory-$read_case"
+  cp "$MUTANT_PATH" "$TMP_ROOT/text-inventory-$read_case/$copy_name"
+  assert_eq "$(text_reads "$TMP_ROOT/text-inventory-$read_case/$copy_name")" "1" \
+    "control: inventory rejects $read_case"
+done
 
-# A words-reading judge under a spelling the inventory row does not know:
+# A words-reading judge outside the allowed Agent-id/status read site:
 # it passes a turn whose final assistant text is no question. The transcript
 # rows hold the lane that wrote a statement and sent nothing.
 WORDS_READ='idle_check() { [ -n "$TRANSCRIPT" ] \&\& tail -n 1 -- "$TRANSCRIPT" | jq -r ".message.content[]?.text" | grep -q "?$" || return 0;'
