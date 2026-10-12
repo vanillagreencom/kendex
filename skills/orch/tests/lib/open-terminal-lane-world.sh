@@ -32,6 +32,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
+# The env words every launch line opens with, clearing the launching session's
+# identity (lib/lane-launch.sh LANE_LAUNCH_SCRUB): `env -u NAME ...`.
+SCRUB_ENV="$(bash -c 'source "$1/lib/lane-launch.sh" && printf "env"; printf " -u %s" "${LANE_LAUNCH_SCRUB[@]}"' _ "$SCRIPTS_DIR")"
+[[ "$SCRUB_ENV" == "env -u "* ]] || { echo "open-terminal-lane-world: LANE_LAUNCH_SCRUB unread" >&2; exit 1; }
+# The same list where the line is shell text, a hosted lane's remote command.
+SCRUB_UNSET="$(bash -c 'source "$1/lib/lane-launch.sh" && printf "unset %s &&" "${LANE_LAUNCH_SCRUB[*]}"' _ "$SCRIPTS_DIR")"
+[[ "$SCRUB_UNSET" == "unset "?*" &&" ]] || { echo "open-terminal-lane-world: LANE_LAUNCH_SCRUB unread" >&2; exit 1; }
 CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 
 # shellcheck source=lib/assertions.sh
@@ -251,7 +258,7 @@ lane_names() {
 # the run launched none. The value is single-quoted inside the launch line the
 # pane's shell reads, which is where the tmux stub logs it.
 launched_codex_home() {
-  sed -nE "s/.*env CODEX_HOME='([^']*)'.*/\\1/p" "$RUN/tmux.log" 2>/dev/null | sed -n 1p || true
+  sed -nE "s/.* CODEX_HOME='([^']*)'.*/\\1/p" "$RUN/tmux.log" 2>/dev/null | sed -n 1p || true
 }
 
 # counted PATTERN FILE — matching lines, or `nolog` when the stub never wrote
@@ -331,12 +338,12 @@ observe() {
       cmd_model)
         # The tmux stub logs events before the command; the model reader takes
         # one command line, not the complete event log.
-        value="$(sed -n '/^clear; .*env CLAUDE_CONFIG_DIR=/{p;q;}' "$RUN/tmux.log")" || return 1
+        value="$(sed -n '/^clear; .* CLAUDE_CONFIG_DIR=/{p;q;}' "$RUN/tmux.log")" || return 1
         value="$(launch_choice_launch_model claude "$value")" || return 1
         value="${value:-none}"
         ;;
-      cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
-      pi_root) value="$(grep -oE "env PI_CODING_AGENT_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env PI_CODING_AGENT_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
+      cmd_lane) value="$(grep -oE " CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^ CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
+      pi_root) value="$(grep -oE " PI_CODING_AGENT_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^ PI_CODING_AGENT_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       copilot_home) value="$(grep -oE "COPILOT_HOME='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^COPILOT_HOME='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       compactionon)
         value="$(awk '$1 == "open-terminal:" && $2 == "compaction-on" { print $4; exit }' <<<"$OUT")"

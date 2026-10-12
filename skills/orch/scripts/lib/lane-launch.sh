@@ -1380,8 +1380,42 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
   esac
 }
 
+# The variables that name the session a launch is made from, cleared from every
+# child a launcher starts so the child never writes that session's records or
+# answers as it: lane_launch_line opens every command it renders with them, and
+# open-terminal's run_detached clears them from the detached terminal or wake.
+# A tmux window takes the server's environment rather than the launcher's, so
+# the scrub rides in the command and not in the caller's process. Account and
+# home variables are not listed: a launch sets the child's own after this scrub,
+# and KENDEX_LANE_ORIGIN, exported ahead of the command, stays.
+#   Claude Code  CLAUDECODE, the nested-session marker; CLAUDE_CODE_SESSION_ID,
+#                the session id it exports to its tools (2.1.x), and
+#                CLAUDE_SESSION_ID, the spelling a SessionStart hook can export
+#                through CLAUDE_ENV_FILE; CLAUDE_PROJECT_DIR, the root the
+#                lane-mail-check hook resolves a lane from.
+#   Codex        CODEX_THREAD_ID, the session it exports to its tools;
+#                CODEX_SANDBOX and CODEX_SANDBOX_NETWORK_DISABLED, which
+#                second-opinion reads as running inside Codex.
+#   Pi           PI_SUBAGENT_PARENT_SESSION_ID and PI_BRIDGE_PARENT_SESSION_ID,
+#                pi-agents-tmux's parent session for a subagent.
+#   Jarvis       JARVIS_RECORD and JARVIS_GENERATION, the runtime record a
+#                SessionStart writes its native identity into
+#                (lib/session-rows.sh session_rows_jarvis_write).
+# Copilot is not listed: kendex reads a Copilot session's id from its hook
+# payload alone.
+LANE_LAUNCH_SCRUB=(
+  CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_PROJECT_DIR
+  CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
+  PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
+  JARVIS_RECORD JARVIS_GENERATION
+)
+
 # The complete command under the form lane_launch_form picked for it. Empty
-# account words keep the caller's account, or the provider's on a host.
+# account words keep the caller's account, or the provider's on a host. Every
+# form clears LANE_LAUNCH_SCRUB first: as `env -u` words where the line is
+# argv, and with `unset` ahead of a custom command that takes no env words,
+# which is shell text a host's login shell runs, so no local bash path reaches
+# that host.
 #
 # The prefix value is quoted by lane_single_quote, not wrapped in bare quotes:
 # lane dirs are paths, an unquoted space would split the env assignment inside
@@ -1404,7 +1438,10 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words scrub shell_scrub
+  printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
+  scrub="env$scrub"
+  shell_scrub="unset ${LANE_LAUNCH_SCRUB[*]} &&"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex && -n "$var" ]]; then
     [[ "$form" != unchecked && "$form" != custom ]] || verified=false
@@ -1418,27 +1455,31 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
         # quoted -c argument keeps operators, expansions and comments intact,
         # and remains executable argv for overseer-run and other consumers.
         if [[ -n "$launch_env" ]]; then
-          printf 'env %s %s -c %s\n' "$launch_env" "$(lane_single_quote "$BASH")" "$(lane_single_quote "$cmd")"
+          printf '%s %s %s -c %s\n' "$scrub" "$launch_env" "$(lane_single_quote "$BASH")" "$(lane_single_quote "$cmd")"
         else
-          printf '%s\n' "$cmd"
+          printf '%s %s\n' "$shell_scrub" "$cmd"
         fi
         ;;
-      launcher:*) printf '%s%s %s\n' "${launch_env:+env $launch_env }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+      launcher:*) printf '%s%s %s %s\n' "$scrub" "${launch_env:+ $launch_env}" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
       *)
         if [[ -n "$var" ]]; then
-          printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${launch_env:+$launch_env }" "$cmd"
+          printf '%s %s=%s %s%s\n' "$scrub" "$var" "$(lane_single_quote "$dir")" "${launch_env:+$launch_env }" "$cmd"
         else
-          printf '%s%s\n' "${launch_env:+env $launch_env }" "$cmd"
+          printf '%s %s%s\n' "$scrub" "${launch_env:+$launch_env }" "$cmd"
         fi
         ;;
     esac
     return
   fi
-  if [[ -z "$var" ]]; then printf '%s\n' "$cmd"; return; fi
+  if [[ -z "$var" ]]; then
+    [[ "$form" != custom ]] || scrub="$shell_scrub"
+    printf '%s %s\n' "$scrub" "$cmd"
+    return
+  fi
   env_words="$(lane_copilot_env "$cmd" "$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills")")"
   case "$form" in
-    launcher:*) printf '%s %s %s\n' "$env_words" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-    *) printf '%s %s=%s %s\n' "$env_words" "$var" "$(lane_single_quote "$dir")" "$cmd" ;;
+    launcher:*) printf '%s %s %s %s\n' "$scrub" "$env_words" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+    *) printf '%s %s %s=%s %s\n' "$scrub" "$env_words" "$var" "$(lane_single_quote "$dir")" "$cmd" ;;
   esac
 }
 

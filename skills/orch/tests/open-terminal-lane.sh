@@ -202,18 +202,18 @@ lane_launch() {
   # command, not the harness word, so the prefix is all this row matches on.
   # The value the prefix must name: the lane itself, or the home `home=` gives
   # a row whose launch builds one.
-  local want="&& env $var='$prefix_home' "
+  local want="&& $SCRUB_ENV $var='$prefix_home' "
   if [[ -z "$template" ]]; then
     [[ "$harness" != codex ]] || want+="ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' "
     want+="$harness "
   fi
   grep -qF "$want" "$runs/tmux.log" && form=prefix
-  grep -qF "&& '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
+  grep -qF "&& $SCRUB_ENV '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
   for f in $fields; do
     case "$f" in
       rc) value="$rc" ;;
       form) value="$form" ;;
-      bare) value="$(grep -cF "&& '$launcher' " "$runs/tmux.log" || true)" ;;
+      bare) value="$(grep -cF "&& $SCRUB_ENV '$launcher' " "$runs/tmux.log" || true)" ;;
       verified) value="$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" ;;
       mismatch) value="$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" ;;
       closed) value="$(grep -c '^kill-window' "$runs/tmux.log" || true)" ;;
@@ -271,8 +271,8 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - 
 ACCOUNT_FORM_CONTROL="$(mutant_scripts account-form lib/lane-launch.sh)" || exit 1
 orch_fixture_shared_libs "${ACCOUNT_FORM_CONTROL%/scripts}"
 mutate_file "$ACCOUNT_FORM_CONTROL/lib/lane-launch.sh" \
-  '"${launch_env:+env $launch_env }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }"' \
-  '"${launch_env:+env $launch_env }" "$(lane_single_quote "${form##*/}")" "${cmd#"$harness" }"'
+  '"${launch_env:+ $launch_env}" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }"' \
+  '"${launch_env:+ $launch_env}" "$(lane_single_quote "${form##*/}")" "${cmd#"$harness" }"'
 ACCOUNT_FORM_OBS="$(lane_launch "$ACCOUNT_FORM_CONTROL/open-terminal" account-form-control claude "$LNLANE" "$LNLANE" - "rc form bare" clock=virtual)"
 assert_eq "$ACCOUNT_FORM_OBS" "rc=0 form=none bare=1" \
   "control: an unresolved launcher is read as bare instead of the account's absolute path"

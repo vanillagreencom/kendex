@@ -1342,8 +1342,8 @@ resolve_repo() {
 # render its OWN account onto that item and spend it there, with no claim taken
 # on it. The test names the LAUNCHER and not the terminal mode: a --wake reaches
 # open_wake in tmux mode too, since the gate above exempts a wake from the
-# tmux-only settings and not from the mode, and run_detached scrubs CLAUDECODE,
-# TMUX and TMUX_PANE while keeping CODEX_HOME. That child is the one launch here
+# tmux-only settings and not from the mode, and run_detached scrubs the
+# session identity, TMUX and TMUX_PANE while keeping CODEX_HOME. That child is the one launch here
 # that really does inherit this process's environment.
 #
 # WHICH tmux scope, and in what order. tmux keeps a session environment beside a
@@ -2585,14 +2585,17 @@ open_gui() {
 }
 
 # Detached through lib/lane-launch.sh's lane_run_detached, which owns how a
-# child outlives this script. The environment is scrubbed: a child started
-# from inside tmux or Claude Code otherwise inherits TMUX, TMUX_PANE and
-# CLAUDECODE, reads as a tmux pane or a nested session, and pane-aware tools in
-# it act on the controller's server.
+# child outlives this script. The environment is scrubbed of the launching
+# session's identity (lib/lane-launch.sh LANE_LAUNCH_SCRUB) and of TMUX and
+# TMUX_PANE: a child started from inside tmux otherwise reads as a tmux pane,
+# and pane-aware tools in it act on the controller's server. A tmux window
+# gets a pane identity of its own, so those two are cleared here alone.
 run_detached() { # LOG COMMAND...
-  local log="$1"
+  local log="$1" name
+  local -a scrub=()
   shift
-  lane_run_detached "$log" "$log" env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@"
+  for name in "${LANE_LAUNCH_SCRUB[@]}" TMUX TMUX_PANE; do scrub+=(-u "$name"); done
+  lane_run_detached "$log" "$log" env "${scrub[@]}" "$@"
 }
 
 # A resumed turn can run for a long time, so it runs detached from the caller,

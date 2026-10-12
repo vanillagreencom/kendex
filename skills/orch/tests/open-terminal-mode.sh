@@ -33,9 +33,10 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
-# Stub bin. A GUI terminal stub logs its own name, its argv and the tmux
+# Stub bin. A GUI terminal stub logs its own name, its argv, the tmux
 # identity it was handed (`<unset>` when the variable is absent, which is what a
-# scrub must produce and what an empty value would fake). The $TERMINAL stub
+# scrub must produce and what an empty value would fake) and which names in
+# $OT_SCRUB_NAMES it holds (`-` for none). The $TERMINAL stub
 # `term` is on every run's PATH and named in $TERMINAL unless a row says
 # otherwise, so no case resolves the developer's own terminal; the
 # xdg-terminal-exec and ghostty stubs sit in bins of their own, on PATH only for
@@ -48,7 +49,9 @@ gui_stub() {
   cat > "$1" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "${0##*/}" "$*" >> "$OT_TERM_LOG"
-printf 'env TMUX=%s TMUX_PANE=%s\n' "${TMUX-<unset>}" "${TMUX_PANE-<unset>}" >> "$OT_TERM_LOG"
+held=""
+for name in ${OT_SCRUB_NAMES:-}; do [[ -z "${!name+set}" ]] || held+="$name,"; done
+printf 'env TMUX=%s TMUX_PANE=%s identity=%s\n' "${TMUX-<unset>}" "${TMUX_PANE-<unset>}" "${held:--}" >> "$OT_TERM_LOG"
 exit 0
 STUB
   chmod +x "$1"
@@ -114,6 +117,16 @@ stage() {
 REPO="$TMP_ROOT/repo"
 stage "$REPO"
 
+# The launching session's identity, read from the list under test, with the
+# names KEN-3859 requires as its floor. A row that sets RUN_PARENT hands every
+# one of them to open-terminal, as a launch from inside such a session does.
+SCRUB_NAMES="$(bash -c 'source "$1/scripts/lib/lane-launch.sh" && printf "%s " "${LANE_LAUNCH_SCRUB[@]}"' _ "$REPO")" \
+  || { echo "fixture: LANE_LAUNCH_SCRUB unread" >&2; exit 2; }
+for name in CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID JARVIS_RECORD; do
+  assert_contains " $SCRUB_NAMES" " $name " "the scrub list names $name"
+done
+RUN_PARENT=false
+
 # run NAME OT WHERE ARGS... — WHERE is `in` (a tmux controller: TMUX and
 # TMUX_PANE set), `out` (neither present, whatever this suite itself runs
 # under) or `setting` (neither present, ORCH_TMUX_SESSION naming the fleet
@@ -138,9 +151,13 @@ run() {
     *) echo "run: WHERE must be in, out or setting, got '$where'" >&2; exit 2 ;;
   esac
   [[ -z "$RUN_TERMINAL" ]] || launch_env+=("TERMINAL=$RUN_TERMINAL")
+  local name
+  if [[ "$RUN_PARENT" == true ]]; then
+    for name in $SCRUB_NAMES; do launch_env+=("$name=parent-$name"); done
+  fi
   set +e
   "${launch_env[@]}" PATH="${RUN_PATH:-$BIN:$PATH}" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" \
-    OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \
+    OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" OT_SCRUB_NAMES="$SCRUB_NAMES" \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
   RC=$?
   set -e
@@ -233,14 +250,15 @@ assert_eq "$TMUX_LOG_TEXT" "" "control: without auto-detection tmux is never rea
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "control: and a GUI terminal opens instead"
 
 echo
-echo "=== a GUI terminal opened from inside tmux inherits no tmux identity, on every launcher arm ==="
+echo "=== a GUI terminal opened from inside tmux inherits no tmux or session identity, on every launcher arm ==="
 
 # One row per open_gui arm: the PATH and $TERMINAL that reach it, and the argv
 # the stub must log. Every arm detaches through run_detached, which owns the
-# scrub.
+# scrub. The parent holds every name LANE_LAUNCH_SCRUB lists.
 ARM_ROWS="terminal|$BIN:$PATH|term|term -e bash -lc
 xdg|$XDG_BIN:$BIN:$PATH|-|xdg-terminal-exec bash -lc
 ghostty|$GHOSTTY_BIN:$BIN:$NO_XDG_PATH|-|ghostty --working-directory="
+RUN_PARENT=true
 while IFS='|' read -r arm path terminal argv; do
   [[ -n "$arm" ]] || continue
   RUN_PATH="$path"
@@ -248,11 +266,23 @@ while IFS='|' read -r arm path terminal argv; do
   run "scrub-$arm" "$REPO/scripts/open-terminal" in --ghostty CC-1
   assert_eq "$RC" "0" "$arm arm: the override launch succeeds"
   assert_contains "$TERM_LOG_TEXT" "$argv" "$arm arm: the launch went through this arm"
-  assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset>" \
-    "$arm arm: the GUI terminal receives neither TMUX nor TMUX_PANE"
+  assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset> identity=-" \
+    "$arm arm: the GUI terminal receives neither TMUX, TMUX_PANE nor the session identity"
 done <<<"$ARM_ROWS"
 RUN_PATH=""
 RUN_TERMINAL="term"
+
+# Must-fail control: run_detached clearing TMUX and TMUX_PANE alone hands the
+# terminal every identity name the parent held.
+MUTANT_SCRUB_REPO="$TMP_ROOT/mutant-scrub"
+MUTANT_SCRUB_OT="$(mutant_scripts mutant-scrub open-terminal)/open-terminal" || exit 1
+git -C "$MUTANT_SCRUB_REPO" init -q
+orch_fixture_shared_libs "$MUTANT_SCRUB_REPO"
+mutate_file "$MUTANT_SCRUB_OT" 'for name in "${LANE_LAUNCH_SCRUB[@]}" TMUX TMUX_PANE; do' 'for name in TMUX TMUX_PANE; do'
+run mut_scrub "$MUTANT_SCRUB_OT" in --ghostty CC-1
+assert_eq "$RC" "0" "control: the unscrubbed launch still opens"
+assert_contains "$TERM_LOG_TEXT" "identity=${SCRUB_NAMES// /,}" "control: without the scrub the terminal holds every identity name"
+RUN_PARENT=false
 
 echo "=== the GUI launch happens on a host with no setsid ==="
 
