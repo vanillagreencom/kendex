@@ -165,9 +165,11 @@ EOF
     rm -- "${RETRY_ROOT:?}/tmp/send-refused"
   fi
   RETRY_TEXT="$(landed "$RETRY_ROOT" "$RETRY_CH:$RETRY_REPLY" "$tries")"
+  # KEN-3856 requires the unseen owner root and reply in parent.thread,
+  # each with its complete text, author and timestamp in order.
   if [ -f "$(sk_box "$RETRY_ROOT")/to-lane.jsonl" ]; then
-    RETRY_POINTER="$(jq -s --arg d "$RETRY_CH:$RETRY_REPLY" --arg ts "$RETRY_PARENT" \
-      '[.[] | select(.delivery_id == $d and .text == "Retry this old thread." and .thread_ts == $ts and .parent == {ts:$ts,author:"owner",excerpt:"Old retry topic."})] | length' "$(sk_box "$RETRY_ROOT")/to-lane.jsonl")"
+    RETRY_POINTER="$(jq -s --arg d "$RETRY_CH:$RETRY_REPLY" --arg ts "$RETRY_PARENT" --arg reply "$RETRY_REPLY" \
+      '[.[] | select(.delivery_id == $d and .text == "Retry this old thread." and .thread_ts == $ts and .parent == {ts:$ts,author:"owner",excerpt:"Old retry topic.",thread:[{ts:$ts,author:"owner",text:"Old retry topic."},{ts:$reply,author:"owner",text:"Retry this old thread."}]})] | length' "$(sk_box "$RETRY_ROOT")/to-lane.jsonl")"
   else
     RETRY_POINTER=0
   fi
@@ -224,10 +226,11 @@ EOF
   fi
   rmdir "$STATUS_ROOT/tmp/slack/status.json"
   STATUS_RETRIED="$(landed "$STATUS_ROOT" "$STATUS_CH:$STATUS_REPLY" "$tries")"
-  # Count exact delivery values, including the old reply's parent pointer.
+  # KEN-3856 requires complete ordered unseen thread entries beside the
+  # old reply's pointer, even after delivery and status refusals.
   if [ -f "$(sk_box "$STATUS_ROOT")/to-lane.jsonl" ]; then
-    STATUS_COUNTS="$(jq -s --arg d "$STATUS_CH:$STATUS_REPLY" --arg ts "$STATUS_PARENT" \
-      '[.[] | select(.delivery_id == $d and .text == "Retry after status failure." and .thread_ts == $ts and .parent == {ts:$ts,author:"owner",excerpt:"Old status topic."})] | length' "$(sk_box "$STATUS_ROOT")/to-lane.jsonl")" || exit 1
+    STATUS_COUNTS="$(jq -s --arg d "$STATUS_CH:$STATUS_REPLY" --arg ts "$STATUS_PARENT" --arg reply "$STATUS_REPLY" \
+      '[.[] | select(.delivery_id == $d and .text == "Retry after status failure." and .thread_ts == $ts and .parent == {ts:$ts,author:"owner",excerpt:"Old status topic.",thread:[{ts:$ts,author:"owner",text:"Old status topic."},{ts:$reply,author:"owner",text:"Retry after status failure."}]})] | length' "$(sk_box "$STATUS_ROOT")/to-lane.jsonl")" || exit 1
   else
     # No mailbox is created when the control stops before any delivery.
     STATUS_COUNTS=0
@@ -469,8 +472,23 @@ while read -r kind author reply_calls excerpt; do
     assert_eq "$RC=$(printf '%s\n' "$PROBE" | jq -r '[.error, ([.polls[] | [.[] | select(.method == "conversations.history")] | length] | join("/")), .polls[1][0].oldest] | join("|")')" \
       "0=|3/1|$LAST" "$kind/$variant: reconnect history uses the saved position, not discovery pages"
     FIRST_ID="$(jq -r --arg d "$FC:$FR" 'select(.delivery_id == $d) | .id' "$(sk_box "$FIRST")/to-lane.jsonl")"
+    # KEN-3856 requires every unseen owner/app entry, including the app's
+    # rejection of an ignored root. A non-owner root stays excluded.
+    # Rejection timestamps and text come from the Slack producer, not the
+    # delivered parent being tested; role, order and membership are explicit.
+    case "$kind" in
+      text|file)
+        FIRST_THREAD="$(jq -nc --arg root "$FP" --arg text "$excerpt" --arg reply "$FR" \
+          '[{ts:$root,author:"app",text:$text},{ts:$reply,author:"owner",text:"First offline reply."}]')" ;;
+      not-owner|no-text)
+        REJECTION_TS="$(sk_state ".messages.${FC}[] | select(.bot_id and .thread_ts == \"$FP\") | .ts")"
+        REJECTION_TEXT="$(sk_state ".messages.${FC}[] | select(.bot_id and .thread_ts == \"$FP\") | .text")"
+        FIRST_THREAD="$(jq -nc --arg kind "$kind" --arg root "$FP" --arg rejection "$REJECTION_TS" --arg text "$REJECTION_TEXT" --arg reply "$FR" \
+          '(if $kind == "no-text" then [{ts:$root,author:"owner",text:""}] else [] end) + [{ts:$rejection,author:"app",text:$text},{ts:$reply,author:"owner",text:"First offline reply."}]')" ;;
+    esac
     FIRST_CONTEXT="$(jq -s --arg d "$FC:$FR" --arg ts "$FP" --arg a "$author" --arg e "$excerpt" \
-      '[.[] | select(.delivery_id == $d) | {text,thread_ts,parent}] == [{text:"First offline reply.",thread_ts:$ts,parent:{ts:$ts,author:$a,excerpt:$e}}]' "$(sk_box "$FIRST")/to-lane.jsonl")"
+      --argjson thread "$FIRST_THREAD" \
+      '[.[] | select(.delivery_id == $d) | {text,thread_ts,parent}] == [{text:"First offline reply.",thread_ts:$ts,parent:{ts:$ts,author:$a,excerpt:$e,thread:$thread}}]' "$(sk_box "$FIRST")/to-lane.jsonl")"
     FIRST_LOGS="$(printf '%s\n' "$OUT" | grep -Fxc "slack: delivered=ts=$FR id=$FIRST_ID path=catch-up")"
     RESULT="$FIRST_CONTEXT|$(sk_reactions "$FC" "$FR")|$FIRST_LOGS"
     if [ "$variant" = normal ]; then

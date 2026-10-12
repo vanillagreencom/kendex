@@ -474,16 +474,18 @@ for mode in production control; do
     sk_mutant discovery relay.py 'if thread_ts not in self\.state\.threads:' 'if thread_ts not in self.state.threads and False:'
   fi
   sk_poll "$DISCOVERY"
+  # KEN-3856 requires complete unseen app/owner entries in parent.thread,
+  # in order with text, author and timestamp, alongside the cached pointer.
   if [ -f "$(sk_box "$DISCOVERY")/to-lane.jsonl" ]; then
-    DISCOVERED="$(jq -s --arg d "$DISCOVERY_CH:$DISCOVERY_REPLY" --arg ts "$DISCOVERY_PARENT" \
-      '[.[] | select(.delivery_id == $d and .text == "Missed while disconnected." and .thread_ts == $ts and .parent == {ts:$ts,author:"bot",excerpt:"An external topic."})] | length' "$(sk_box "$DISCOVERY")/to-lane.jsonl")"
+    DISCOVERED="$(jq -s --arg d "$DISCOVERY_CH:$DISCOVERY_REPLY" --arg ts "$DISCOVERY_PARENT" --arg reply "$DISCOVERY_REPLY" \
+      '[.[] | select(.delivery_id == $d and .text == "Missed while disconnected." and .thread_ts == $ts and .parent == {ts:$ts,author:"bot",excerpt:"An external topic.",thread:[{ts:$ts,author:"app",text:"An external topic."},{ts:$reply,author:"owner",text:"Missed while disconnected."}]})] | length' "$(sk_box "$DISCOVERY")/to-lane.jsonl")"
   else
     DISCOVERED=0
   fi
   if [ "$mode" = control ]; then
     sk_assert_red "$RC=$DISCOVERED" '0=1' 'control: disabled external-parent discovery breaks reply delivery'
   else
-    assert_eq "$RC=$DISCOVERED" '0=1' 'catch-up discovers an unknown external parent and carries the reply pointer'
+    assert_eq "$RC=$DISCOVERED" '0=1' 'KEN-3856: catch-up discovers an external parent and carries its pointer and complete unseen thread'
   fi
   sk_bin_reset
 done
@@ -540,6 +542,8 @@ ROWS
 
 # --- daily compaction: envelope age and thread activity are separate ------------------
 # Each old owner root is read, so an unread receipt cannot keep it alive.
+# KEN-3856 requires its last generation delivery mark to stay independently
+# of outbound envelope age, even when the thread has no recent reply.
 # The controls use the same cases: bypass the age gate on an unposted notice,
 # or drop an aged post despite recent activity in its thread.
 # CASE AGE POSTED RECENT_REPLY MUTANT OUTCOMES ROOT_LINES POSTS
@@ -585,9 +589,9 @@ while read -r name age posted active mutant want_out want_root want_posts; do
 done <<'ROWS'
 young-post-old-root young 1 0 none 1 1 1
 aged-post-live-thread old 1 1 none 1 1 1
-aged-post-inactive-thread old 1 0 none 0 0 1
-aged-unposted-envelope old 0 0 none 0 0 0
-control-envelope-horizon old 0 0 horizon 1 0 1
+aged-post-inactive-thread old 1 0 none 0 1 1
+aged-unposted-envelope old 0 0 none 0 1 0
+control-envelope-horizon old 0 0 horizon 1 1 1
 control-live-thread-retention old 1 1 retain 0 1 1
 ROWS
 
@@ -696,8 +700,10 @@ while IFS=$'\t' read -r error methods <&3; do
   assert_eq "$(sk_state '[.calls[] | select(startswith("reactions."))] | length')" "0" "a swap settled by $error is not made again"
 done 3<<<"$(settle_rows)"
 stop_rows() { # NAME<TAB>THE LINE A STOP FOLLOWS OR REPLACES<TAB>ITS REPLACEMENT<TAB>REACTIONS AT THE STOP, one line per point
+  # KEN-3856 requires the generation on the directive delivery record.
+  # The stop follows that complete append, before the receipt mark.
   printf '%s\t%s\t%s\t%s\n' \
-    after-in 'self\.journal\.append\(t="in", channel=self\.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts\)' '\g<0>; os._exit(9)' '' \
+    after-in 'self\.journal\.append\(t="in", channel=self\.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts,\n[ ]+generation=generation\)' '\g<0>; os._exit(9)' '' \
     after-react 'self\.journal\.append\(t="mark", ts=ts, name=SEEN\)' 'os._exit(9)' eyes
 }
 while IFS=$'\t' read -r stop pattern repl before <&3; do
@@ -705,6 +711,9 @@ while IFS=$'\t' read -r stop pattern repl before <&3; do
   MX="$(sk_inject "$IOTA_CH" U001 "stopped $stop")"
   sk_poll "$IOTA"
   STOPPED="$RC|$(sk_reactions "$IOTA_CH" "$MX")|$(mark_of "$IOTA" "$MX")"
+  if [ "$stop" = after-in ]; then
+    sk_assert_red "$STOPPED" '0|eyes|eyes' 'control: stopping after the generation-bearing append fails successful poll and seen-receipt delivery'
+  fi
   sk_bin_reset
   sk_poll "$IOTA"
   RESTARTED="$RC|$(sk_reactions "$IOTA_CH" "$MX")|$(mark_of "$IOTA" "$MX")"
