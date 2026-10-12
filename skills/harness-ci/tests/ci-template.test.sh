@@ -37,7 +37,8 @@
 #      PR adds a row excluding every path.
 #   7. concurrency: two heads of one PR share a group and cancel, while
 #      merge-group and default-branch runs each keep their own group.
-#   8. checkout: every discovered checkout uses the adopted current major.
+#   8. action pins: every GitHub-owned or third-party action in a source or
+#      rendered consumer template uses a full SHA and release-version comment.
 # Must-fail arms plant a lane condition without its status function, one
 # running only on a true verdict, one without its `lanes` term, CI without
 # the waiver, a lane output forwarding the action's `lanes` in place of the
@@ -496,20 +497,45 @@ status=0
 (FAIL=0; check_missing_aggregate "$SANDBOX/no-missing-helper-error.yml") >"$SANDBOX/no-missing-helper-error.log" 2>&1 || status=$?
 assert_eq "must-fail: missing-helper evidence rejects an absent annotation guard" 1 "$status"
 
-# Discover every checkout, so a new step also follows the adoption policy.
-check_checkout_major() { # TEMPLATE
+# Dependabot reads release-version comments when updating commit pins.
+# The organization-owned refs follow wiring.md's default-branch rule.
+check_action_pins() { # TEMPLATE
   local refs
-  refs="$(awk '/^[[:space:]-]*uses: actions\/checkout@/ { for (i = 1; i <= NF; i++) if ($i ~ /^actions\/checkout@/) print $i }' "$1")" || return 1
-  [ -n "$refs" ] || return 1
-  assert_eq "every discovered checkout uses the current major" "" \
-    "$(printf '%s\n' "$refs" | grep -vxF actions/checkout@v7 || true)"
+  refs="$(awk '
+    /^[[:space:]-]*uses: / {
+      sub(/^[[:space:]-]*uses: /, "")
+      if ($0 ~ /^[^ /]+\/[^ ]+@/ && $0 !~ /^vanillagreencom\//) print
+    }
+  ' "$1")" || return 1
+  [ -n "$refs" ] || return 0
+  assert_eq "action pins in $1 use a full SHA and release-version comment" "" \
+    "$(printf '%s\n' "$refs" | grep -vE '^[^ /]+/[^ @]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+[[:space:]]*$' || true)"
   [ "$FAIL" -eq 0 ]
 }
-check_checkout_major "$TEMPLATE"
-plant "$TEMPLATE" actions/checkout@v7 actions/checkout@v4 "$SANDBOX/old-checkout.yml" test
-status=0
-(FAIL=0; check_checkout_major "$SANDBOX/old-checkout.yml") >"$SANDBOX/old-checkout.log" 2>&1 || status=$?
-assert_eq "must-fail: the checkout policy rejects an old major" 1 "$status"
+template_rows=0
+for template_root in "$TEST_DIR/../.." "$TEST_DIR/../../../.agents/skills"; do
+  for workflow in "$template_root"/*/templates/*.yml "$template_root"/*/templates/*.yaml; do
+    [ -f "$workflow" ] || continue
+    template_rows=$((template_rows + 1))
+    check_action_pins "$workflow"
+  done
+done
+require_rows template "$template_rows"
+check_action_pins "$TEMPLATE"
+checkout_pin="$(awk '/^[[:space:]-]*uses: actions\/checkout@/ { sub(/^[[:space:]-]*uses: /, ""); print; exit }' "$TEMPLATE")"
+[ -n "$checkout_pin" ] || { echo "checkout pin extractor is broken" >&2; exit 1; }
+while IFS='|' read -r name pin; do
+  plant "$TEMPLATE" "$checkout_pin" "$pin" "$SANDBOX/action-pin-$name.yml" test
+  status=0
+  (FAIL=0; check_action_pins "$SANDBOX/action-pin-$name.yml") >"$SANDBOX/action-pin-$name.log" 2>&1 || status=$?
+  assert_eq "must-fail: action pin form rejects $name" 1 "$status"
+done <<'ROWS'
+major-tag|actions/checkout@v7 # v7.0.1
+short-sha|actions/checkout@3d3c42e # v7.0.1
+no-version|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+major-version|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+third-party-tag|other/action@v7 # v7.0.1
+ROWS
 
 # Both the installer and scanner in the PR are no-ops, and its exclusion
 # list excludes every path. The credential is assembled at runtime, so the

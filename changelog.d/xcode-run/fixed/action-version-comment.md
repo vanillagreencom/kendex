@@ -1,0 +1,1 @@
+- The macOS workflow template names the exact release version of its pinned artifact-upload action.

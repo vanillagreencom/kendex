@@ -81,7 +81,7 @@ jobs:
           } 2>&1 | tee "$GITHUB_WORKSPACE/logs/$STEP.log"
       - name: Upload logs and screenshots
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mac-run
           path: |

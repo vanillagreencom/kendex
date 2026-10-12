@@ -10,8 +10,7 @@ Every classifier checkout uses `fetch-depth: 0`. The classifier diffs two real c
 
 Review holds these rules when a consumer adopts or changes a workflow:
 
-- GitHub-owned `actions/*` use a major tag, such as `actions/checkout@v7`. A moved tag can execute changed code without a consumer commit. A harmful move by GitHub is unlikely. The cost is trust in GitHub's tag updates and review of major upgrades.
-- Third-party actions use a full commit SHA with the version in a trailing comment. A moved third-party tag can execute unreviewed code with the job's permissions. Its likelihood depends on the publisher and its account security. The cost is a reviewed pin update for each release.
+- GitHub-owned and third-party actions use a full commit SHA with the release version in a trailing comment, such as `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`. A moved tag cannot change the code a pinned job runs. A harmful release still needs a reviewed pin update. Its likelihood depends on the publisher and its account security.
 - This organization's own actions use the default-branch ref, such as `vanillagreencom/kendex/.github/actions/change-class@main`. That ref has the same trust as the default-branch checkout. A harmful change needs an incorrect or compromised merge to that branch. The cost is accepting its reviewed updates before the consumer's next refresh.
 
 Enable GitHub's Dependabot `github-actions` ecosystem in the consumer's `.github/dependabot.yml`. Dependabot opens update pull requests for action tags and commit pins. Review those updates under the rules above. Add this entry to an existing `updates` list, or use this file when none exists:
@@ -73,7 +72,7 @@ jobs:
     outputs:
       harness_only: ${{ steps.classify.outputs.harness_only }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: classify
@@ -125,7 +124,7 @@ jobs:
     name: CI
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: classify
@@ -162,7 +161,7 @@ Two rules, both about a check that never appears.
     if: always()
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: guards
@@ -215,12 +214,12 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
     steps:
       - name: the classifier, from the default branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: classifier
       - name: the tree under judgement
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           path: subject
