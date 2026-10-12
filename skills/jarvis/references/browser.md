@@ -8,6 +8,7 @@
 
 ## Forms and captures
 
+- Use an absolute capture path under the home's scratch folder in [computer-use.md:Scratch files](computer-use.md#scratch-files).
 - Check the site, signed-in account and destination before filling a form. Fill from the approved source values. Leave an unknown value unresolved rather than guessing it.
 - Read back entered values before submission without revealing protected fields. Apply [decisions.md:Authority](decisions.md#authority) to submission and any external commitment.
 - Keep secrets out of snapshots and screenshots. Disable capture while a protected field, recovery code or credential is visible. Move the value through [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer).

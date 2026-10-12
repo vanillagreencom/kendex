@@ -20,6 +20,7 @@ The user's facts about their entity, accounts and people live in the user's own 
 
 ## Discipline
 
+- Use an absolute capture path under the home's scratch folder in the `jarvis` skill's `references/computer-use.md` § Scratch files.
 - Read the approved action and source values. Check the service, signed-in account and destination before acting.
 - Follow the `jarvis` skill's `references/browser.md` for the automation profile, forms, protected fields and bot checks. Keep secrets out of captures and reports.
 - Follow the `jarvis` skill's `references/accounts-and-secrets.md` § Remote sign-in when access requires sign-in. Check the target session's account after the service confirms access.
