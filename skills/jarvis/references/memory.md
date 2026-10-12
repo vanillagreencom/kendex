@@ -10,7 +10,7 @@
 ## Notes
 
 - Put each note under its own `###` heading naming one subject.
-- At the step that acts on a subject, read only that heading's section, not the whole memory file.
+- When you create or update a note, add or update its reading route in the user's standing instructions. Name the note's file and subject heading. Require the step that acts on that subject to read only that section.
 
 | Field | Content |
 |---|---|
