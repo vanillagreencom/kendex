@@ -67,7 +67,7 @@ tmux_server_start() { # PANE SERVER
   printf '%s\n' "${out#* }"
 }
 
-# tmux_pane_live SERVER START PANE — whether the pane PANE on the tmux server
+# tmux_pane_live SERVER START PANE [SOCKET] — whether the pane PANE on the tmux server
 # whose process id is SERVER and whose start time is START still runs: the
 # `<server pid> <pane id>` key the fleet record names its overseer by, since a
 # pane id alone repeats on every server, bound to the server's start, since
@@ -76,23 +76,44 @@ tmux_server_start() { # PANE SERVER
 # process reaches is SERVER, started at START, and lists PANE; 1 where SERVER
 # runs no tmux, or that server started at another time or lists no PANE; and 2
 # where SERVER runs a tmux that is not the server this process reaches, or
-# the pane list could not be read: nothing here can judge a pane on a server
-# it cannot ask. SERVER is read back off disk, so the pid may run anything;
+# a required process read failed, or the pane list could not be read: nothing
+# here can judge a pane on a server it cannot ask. SERVER is read back off disk,
+# so the pid may run anything;
 # only a process named tmux can be the server it recorded. An empty START is
 # a record carrying no start, which names the session in PANE on SERVER
 # whatever that server's start: the pane is judged on SERVER alone. Which
 # record carries no start is the caller's to ask of lib/overseer-launch.sh §
 # OL_JQ_DEFS (ol_unstarted), the rule's one owner, never an empty field read
-# here.
-tmux_pane_live() { # SERVER START PANE
-  local comm panes nl='
+# here. SOCKET is the recorded socket used by overseer inspect. Only its
+# confirmed absence proves the recorded server ended; another socket's
+# absence cannot judge that server. TMUX_PANE_DETAIL holds a failed read's cause.
+TMUX_PANE_DETAIL=""
+tmux_pane_live() { # SERVER START PANE [SOCKET]
+  local comm panes rc=0 nl='
 '
-  comm="$(ps -o comm= -p "$1" 2>/dev/null)" || return 1
+  TMUX_PANE_DETAIL=""
+  comm="$(ps -o comm= -p "$1" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # ps reports an absent pid with status 1 and no output. Errors, including
+    # a missing executable, cannot grant takeover of a fleet record.
+    [ "$rc" -ne 1 ] || [ -n "$comm" ] || return 1
+    TMUX_PANE_DETAIL="process-read server=$1 status=$rc${comm:+$'\n'$comm}"
+    return 2
+  fi
   case "${comm##*/}" in
     tmux*) ;;
     *) return 1 ;;
   esac
-  panes="$(tmux list-panes -a -F '#{pid} #{start_time} #{pane_id}' 2>/dev/null)" || return 2
+  panes="$(LC_ALL=C tmux list-panes -a -F '#{pid} #{start_time} #{pane_id}' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ -n "${4:-}" ]; then
+      case "$panes" in
+        "no server running on $4" | "error connecting to $4 (No such file or directory)" | "error connecting to $4 (Connection refused)") return 1 ;;
+      esac
+    fi
+    TMUX_PANE_DETAIL="pane-list-read server=$1 status=$rc${panes:+$'\n'$panes}"
+    return 2
+  fi
   if [ -n "$2" ]; then
     case "$nl$panes$nl" in
       *"$nl$1 $2 $3$nl"*) return 0 ;;

@@ -1411,7 +1411,7 @@ test_register_live_holder() {
 test_register_live_holder
 
 test_recorded_server() {
-  local a_addr b_addr b_server holder candidate before verb control old file mode="${1:-register}" fresh_control decoy predecessor_control panes
+  local a_addr b_addr b_server holder candidate before verb control old file mode="${1:-register}" fresh_control decoy predecessor_control panes form expected key snapshot fail_bin real_ps process_control legacy_control
   cp -- "$FLEET_STATE" "$TMP_ROOT/two-server.saved"
   for name in server-a server-b; do
     env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" -f /dev/null \
@@ -1474,6 +1474,50 @@ test_recorded_server() {
     fi
     printf '%s\n' "$before" > "$FLEET_STATE"
   done
+  fail_bin="$TMP_ROOT/process-fail-$mode"
+  mkdir -p "$fail_bin"
+  real_ps="$(command -v ps)"
+  cat > "$fail_bin/ps" <<STUB
+#!/bin/sh
+case "\$*" in '-o comm= -p '*) echo process-read=failed >&2; exit 2 ;; esac
+exec "$real_ps" "\$@"
+STUB
+  chmod +x "$fail_bin/ps"
+  process_control="$(mutant_scripts process-fail-control-$mode lib/tmux-server.sh)" || exit 1
+  mutate_file "$process_control/lib/tmux-server.sh" '    return 2
+  fi
+  case "${comm##*/}"' '    return 1
+    return 2
+  fi
+  case "${comm##*/}"'
+  legacy_control="$(mutant_scripts legacy-control-$mode lib/overseer-launch.sh)" || exit 1
+  mutate_file "$legacy_control/lib/overseer-launch.sh" \
+    'args=(--server "$server" --server-start "$start")' \
+    'args=(--server "$server" --server-start "$start"); args=()'
+  for verb in register launch; do
+    for form in legacy process-failed; do
+      snapshot="$before"
+      [[ "$form" != legacy ]] || snapshot="$(jq 'del(.overseer.server_socket)' <<<"$before")"
+      printf '%s\n' "$snapshot" > "$FLEET_STATE"
+      if [[ "$form" == legacy ]]; then
+        run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+      else
+        run_oversee PATH="$fail_bin:$BIN:$PATH" TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+      fi
+      assert_eq "$RC|$(field "$(keyed launch-failed "$OUT")" step)|$(cat "$FLEET_STATE")" \
+        "1|inspect|$snapshot" "$verb from B preserves A's $form record when evidence cannot be read" "$OUT"
+      if [[ "$form" == legacy ]]; then
+        OVERSEE_BIN="$legacy_control/oversee" run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+      else
+        OVERSEE_BIN="$process_control/oversee" run_oversee PATH="$fail_bin:$BIN:$PATH" TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+      fi
+      assert_eq "$RC|$(recorded server)" "0|$b_server" "control: ignoring $form evidence lets $verb replace A" "$OUT"
+      if [[ "$verb" == launch && "$RC" == 0 ]]; then
+        TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-window -t "$(recorded window)"
+      fi
+    done
+  done
+  printf '%s\n' "$before" > "$FLEET_STATE"
   # A changed tmux start is a different server identity even at a live pid.
   jq '.overseer.server_start = 0' <<<"$before" > "$FLEET_STATE"
   run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register
@@ -1489,12 +1533,19 @@ test_recorded_server() {
     b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{socket_path},#{pid},0')"
     b_server="${b_addr#*,}" b_server="${b_server%%,*}"
     candidate="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b display-message -p '#{pane_id}')"
-    printf '%s\n' "$before" > "$FLEET_STATE"
-    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
-    assert_eq "$RC|$(recorded server)|$(recorded server_socket)" \
-      "0|$b_server|${b_addr%%,*}" "$verb from B succeeds after A's server stops" "$OUT"
+    for form in socket legacy; do
+      snapshot="$before"
+      [[ "$form" != legacy ]] || snapshot="$(jq 'del(.overseer.server_socket)' <<<"$before")"
+      printf '%s\n' "$snapshot" > "$FLEET_STATE"
+      run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
+      assert_eq "$RC|$(recorded server)|$(recorded server_socket)" \
+        "0|$b_server|${b_addr%%,*}" "$verb from B succeeds after A's server stops with a $form record" "$OUT"
+      if [[ "$verb" == launch && "$RC" == 0 && "$form" == socket && "$mode" == launch ]]; then
+        assert_eq "$(recorded pane)" "$holder" "fresh launch verifies its own pane when the prior server used the same number"
+      fi
+      [[ "$verb" != launch || "$RC" != 0 || "$form" != socket ]] || TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-window -t "$(recorded window)"
+    done
     if [[ "$verb" == launch && "$RC" == 0 ]]; then
-      [[ "$mode" != launch ]] || assert_eq "$(recorded pane)" "$holder" "fresh launch verifies its own pane when the prior server used the same number"
       TMUX_TMPDIR="$TMUX_DIR" tmux -L server-b kill-window -t "$(recorded window)"
     fi
   done

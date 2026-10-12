@@ -156,12 +156,67 @@ assert_eq "$RC|$(field "$OUT" state)" \
   "0|exited" \
   "inspect reads a bare shell with nothing under it as exited"
 SERVER_START="$(tm display-message -p '#{start_time}')"
-for row in "$SERVER_START|exited" '0|gone'; do
-  IFS='|' read -r start want <<<"$row"
-  run_tmux inspect --session "$SHELL_PANE" --server-socket "${TMUX_ADDR%%,*}" \
+PROBE_BIN="$TMP_ROOT/probe-bin"
+mkdir -p "$PROBE_BIN"
+REAL_TMUX="$(command -v tmux)"
+REAL_PS="$(command -v ps)"
+cat > "$PROBE_BIN/tmux" <<STUB
+#!/bin/sh
+if [ "\$*" = 'list-panes -a -F #{pid} #{start_time} #{pane_id}' ]; then
+  echo pane-list-read=failed >&2
+  exit 2
+fi
+exec "$REAL_TMUX" "\$@"
+STUB
+cat > "$PROBE_BIN/ps" <<STUB
+#!/bin/sh
+if [ "\$*" = '-o comm= -p $SERVER_PID' ]; then
+  echo process-read=failed >&2
+  exit 2
+fi
+exec "$REAL_PS" "\$@"
+STUB
+chmod +x "$PROBE_BIN/tmux" "$PROBE_BIN/ps"
+PS_BIN="$TMP_ROOT/ps-bin"
+LIST_BIN="$TMP_ROOT/list-bin"
+mkdir -p "$PS_BIN" "$LIST_BIN"
+cp "$PROBE_BIN/ps" "$PS_BIN/ps"
+cp "$PROBE_BIN/tmux" "$LIST_BIN/tmux"
+# A closed Unix listener leaves a real refused socket, beside a missing one.
+python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$TMP_ROOT/refused"
+while IFS='|' read -r name start socket run_path want_rc want_state want_error; do
+  RUN_PATH="$run_path" run_tmux inspect --session "$SHELL_PANE" --server-socket "$socket" \
     --server "$SERVER_PID" --server-start "$start"
-  assert_eq "$RC|$(field "$OUT" state)" "0|$want" "inspect binds the socket to the recorded server start $start"
-done
+  category="$(sed -n '1s/^overseer-host-tmux: \([^ ]*\).*/\1/p' <<<"$OUT")"
+  assert_eq "$RC|$(field "$OUT" state)|$category" "$want_rc|$want_state|$want_error" \
+    "recorded server inspect: $name" "$OUT"
+  if [[ "$want_error" == session-unreadable ]]; then
+    assert_eq "$(field "$OUT" server)" "$SERVER_PID" "unreadable $name names the recorded server"
+    assert_eq "$(grep -cF -- "$name=failed" <<<"$OUT" || true)" "1" "unreadable $name keeps its cause"
+  fi
+done <<EOF
+same-start|$SERVER_START|${TMUX_ADDR%%,*}|$PATH|0|exited|
+different-start|0|${TMUX_ADDR%%,*}|$PATH|0|gone|
+process-read|$SERVER_START|${TMUX_ADDR%%,*}|$PS_BIN:$PATH|1||session-unreadable
+pane-list-read|$SERVER_START|${TMUX_ADDR%%,*}|$LIST_BIN:$PATH|1||session-unreadable
+missing-socket|$SERVER_START|$TMP_ROOT/missing|$PATH|0|gone|
+refused-socket|$SERVER_START|$TMP_ROOT/refused|$PATH|0|gone|
+EOF
+UNREADCTL="$(mutant_scripts inspect-unread-control overseer-host-tmux)" || exit 1
+mutate_file "$UNREADCTL/overseer-host-tmux" \
+  '[[ "$probe" -eq 0 ]] || die session-unreadable "session=$SESSION" "server=$RECORDED_SERVER"' \
+  'true || [[ "$probe" -eq 0 ]] || die session-unreadable "session=$SESSION" "server=$RECORDED_SERVER"'
+PROVIDER_BIN="$UNREADCTL/overseer-host-tmux" RUN_PATH="$LIST_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE" \
+  --server-socket "${TMUX_ADDR%%,*}" --server "$SERVER_PID" --server-start "$SERVER_START"
+assert_eq "$RC|$(field "$OUT" state)" '0|exited' "control: disabling only the probe refusal lets later working reads accept unreadable evidence"
+SOCKETCTL="$(mutant_scripts inspect-dead-socket-control lib/tmux-server.sh)" || exit 1
+mutate_file "$SOCKETCTL/lib/tmux-server.sh" \
+  '      case "$panes" in' '      TMUX_PANE_DETAIL="$panes"; return 2
+      case "$panes" in'
+PROVIDER_BIN="$SOCKETCTL/overseer-host-tmux" run_tmux inspect --session "$SHELL_PANE" \
+  --server-socket "$TMP_ROOT/missing" --server "$SERVER_PID" --server-start "$SERVER_START"
+assert_eq "$RC|$(sed -n '1s/^overseer-host-tmux: \([^ ]*\).*/\1/p' <<<"$OUT")" \
+  '1|session-unreadable' "control: without dead-socket classification a reused live tmux pid blocks takeover"
 STARTCTL="$(mutant_scripts inspect-start-control overseer-host-tmux)" || exit 1
 mutate_file "$STARTCTL/overseer-host-tmux" \
   'tmux_pane_live "$RECORDED_SERVER" "$RECORDED_START" "$SESSION"' \

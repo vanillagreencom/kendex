@@ -914,22 +914,33 @@ ol_session_from_out() {
 # line is in DEP_ERR.
 OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_START="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
 ol_session_inspect() { # SESSION [--launch]
-  local out word record socket caller_socket server start args=()
+  local out word record socket caller_socket caller_server server start recorded_pane args=()
   OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_START="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
   record="${OL_PRIOR:-null}"
   socket=""
+  recorded_pane=""
   # --launch verifies the fresh pane create just opened. A pane number from
   # an earlier server can repeat there, so its prior record cannot route it.
   if [[ "${2:-}" != --launch ]]; then
-    socket="$(jq -r --arg pane "$1" 'if (.pane // "") == $pane then .server_socket // empty else empty end' <<<"$record" 2>"$DEP_ERR")" \
+    recorded_pane="$(jq -r '.pane // empty' <<<"$record" 2>"$DEP_ERR")" \
       || { OL_REASON=inspect-failed; return 1; }
   fi
-  if [[ -n "$socket" ]]; then
-    caller_socket="$(tmux_server_socket)" || { OL_REASON=inspect-failed; return 1; }
-    if [[ "$socket" != "$caller_socket" ]]; then
-      server="$(jq -r '.server // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
-      start="$(jq -r '.server_start // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
-      args=(--server-socket "$socket" --server "$server" --server-start "$start")
+  if [[ "$recorded_pane" == "$1" ]]; then
+    socket="$(jq -r '.server_socket // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
+    server="$(jq -r '.server // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
+    start="$(jq -r '.server_start // empty' <<<"$record" 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
+    # Shipped records can lack a socket. Their server identity still binds
+    # the inspection: an unrelated caller pane cannot prove the holder dead.
+    if [[ -z "$socket" ]]; then
+      caller_server="$(tmux display-message -p '#{pid}' 2>"$DEP_ERR")" || { OL_REASON=inspect-failed; return 1; }
+      if [[ "$server" != "$caller_server" ]]; then
+        args=(--server "$server" --server-start "$start")
+      fi
+    else
+      caller_socket="$(tmux_server_socket)" || { OL_REASON=inspect-failed; return 1; }
+      if [[ "$socket" != "$caller_socket" ]]; then
+        args=(--server-socket "$socket" --server "$server" --server-start "$start")
+      fi
     fi
   fi
   out="$("$SCRIPT_DIR/overseer-host" inspect --session "$1" ${2:+"$2"} ${args[@]+"${args[@]}"} 2>"$DEP_ERR")" \

@@ -6,7 +6,7 @@
 # `display-message` the same way from its own file, for tmux_server_start: the
 # start a record binds its server by. A running
 # server is a copy of sleep named tmux, a pid reused by another program is
-# this suite's own shell, and a gone server a child that has exited.
+# this suite's own shell. A ps fixture supplies absent and failed reads.
 # The must-fail controls close the file, one per rule, each on a library copy.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -48,9 +48,19 @@ cp -- "$(command -v sleep)" "$TMP_ROOT/server/tmux"
 "$TMP_ROOT/server/tmux" 600 &
 LIVE=$!
 REUSED=$$
-sleep 0 &
-GONE=$!
-wait "$GONE" || :
+REAL_PS="$(command -v ps)"
+cat > "$STUB_BIN/ps" <<STUB
+#!/bin/sh
+case "\$TMUX_TEST_PS" in
+  absent) exit 1 ;;
+  failed) echo process-read=failed >&2; exit 2 ;;
+  denied) echo process-read=denied >&2; exit 1 ;;
+  empty-error) exit 2 ;;
+  unavailable) exit 127 ;;
+  *) exec "$REAL_PS" "\$@" ;;
+esac
+STUB
+chmod +x "$STUB_BIN/ps"
 
 LIB="$TEST_DIR/../scripts/lib/tmux-server.sh"
 # The answer for SERVER, started at START, and PANE with the pane list
@@ -58,9 +68,9 @@ LIB="$TEST_DIR/../scripts/lib/tmux-server.sh"
 # E an earlier server's that was handed the same pid.
 S=1790000000
 E=1780000000
-live_rc() { # LIB SERVER START PANE LISTING
+live_rc() { # LIB SERVER START PANE LISTING [PROCESS_READ]
   if [ "$5" = - ]; then rm -f -- "$PANES"; else printf '%s' "$5" > "$PANES"; fi
-  PATH="$STUB_BIN:$PATH" bash -c '. "$1"; rc=0; tmux_pane_live "$2" "$3" "$4" || rc=$?; echo "$rc"' \
+  TMUX_TEST_PS="${6:-normal}" PATH="$STUB_BIN:$PATH" bash -c '. "$1"; rc=0; tmux_pane_live "$2" "$3" "$4" || rc=$?; echo "$rc"' \
     _ "$1" "$2" "$3" "$4"
 }
 
@@ -71,22 +81,26 @@ OTHER="4242 $S %9
 "
 NL='
 '
-while IFS='|' read -r want server start pane listing label; do
+while IFS='|' read -r want server start pane listing process_read label; do
   listing="${listing//\\n/$NL}"
-  assert_eq "$(live_rc "$LIB" "$server" "$start" "$pane" "$listing")" "$want" "$label"
+  assert_eq "$(live_rc "$LIB" "$server" "$start" "$pane" "$listing" "$process_read")" "$want" "$label"
 done <<EOF
-0|$LIVE|$S|%9|$LIVE $S %1\n$LIVE $S %9|the server this shell reaches, started at the recorded start, lists the pane
-1|$LIVE|$E|%9|$LIVE $S %1\n$LIVE $S %9|the server this shell reaches was handed the recorded pid and started later
-1|$LIVE|$S|%4|$LIVE $S %1\n$LIVE $S %9|the server this shell reaches lists no such pane
-1|$GONE|$S|%9|4242 $S %9|no process runs the server pid
-1|$REUSED|$S|%9|4242 $S %9|the server pid runs a program that is not tmux
-1|$REUSED|$S|%9|-|the server pid runs a program that is not tmux, and no pane list answers
-2|$LIVE|$S|%9|4242 $S %9|the server runs and is not the one this shell reaches
-2|$LIVE|$S|%9|-|the pane list cannot be read
-0|$LIVE||%9|$LIVE $E %1\n$LIVE $E %9|with no start, the server this shell reaches lists the pane, whatever its start
-1|$LIVE||%4|$LIVE $S %1\n$LIVE $S %9|with no start, the server this shell reaches lists no such pane
-1|$LIVE||%9|$LIVE $S %1\n4242 $S %9|with no start, a pane listed under another server pid is not the recorded one
-2|$LIVE||%9|4242 $S %9|with no start, the server runs and is not the one this shell reaches
+0|$LIVE|$S|%9|$LIVE $S %1\n$LIVE $S %9|normal|the server this shell reaches, started at the recorded start, lists the pane
+1|$LIVE|$E|%9|$LIVE $S %1\n$LIVE $S %9|normal|the server this shell reaches was handed the recorded pid and started later
+1|$LIVE|$S|%4|$LIVE $S %1\n$LIVE $S %9|normal|the server this shell reaches lists no such pane
+1|$LIVE|$S|%9|4242 $S %9|absent|ps confirms no process runs the server pid
+1|$REUSED|$S|%9|4242 $S %9|normal|the server pid runs a program that is not tmux
+1|$REUSED|$S|%9|-|normal|the server pid runs a program that is not tmux, and no pane list answers
+2|$LIVE|$S|%9|4242 $S %9|normal|the server runs and is not the one this shell reaches
+2|$LIVE|$S|%9|-|normal|the pane list cannot be read
+0|$LIVE||%9|$LIVE $E %1\n$LIVE $E %9|normal|with no start, the server this shell reaches lists the pane, whatever its start
+1|$LIVE||%4|$LIVE $S %1\n$LIVE $S %9|normal|with no start, the server this shell reaches lists no such pane
+1|$LIVE||%9|$LIVE $S %1\n4242 $S %9|normal|with no start, a pane listed under another server pid is not the recorded one
+2|$LIVE||%9|4242 $S %9|normal|with no start, the server runs and is not the one this shell reaches
+2|$LIVE|$S|%9|$LIVE $S %9|failed|a failed process read cannot prove a held server stopped
+2|$LIVE|$S|%9|$LIVE $S %9|denied|status 1 with error output is unreadable evidence
+2|$LIVE|$S|%9|$LIVE $S %9|empty-error|an error with no output is still unreadable evidence
+2|$LIVE|$S|%9|$LIVE $S %9|unavailable|an unavailable process reader cannot prove the server stopped
 EOF
 assert_eq "$(live_rc "$LIB" "$LIVE" "$S" "%1" "$LIVE $S %11")" "1" "a pane id is matched whole, never as a prefix of another"
 
@@ -122,9 +136,18 @@ mutant_lib unstarted-reads-gone "'\$1 == s && \$3 == p { f = 1 } END { exit !f }
 assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "" "%9" "$OWN")" "1" \
   "control: without the match on the server alone a record carrying no start reads its live pane gone"
 
-mutant_lib gone-reads-other '  comm="$(ps -o comm= -p "$1" 2>/dev/null)" || return 1' '  comm=tmux'
-assert_eq "$(live_rc "$MUTANT_LIB" "$GONE" "$S" "%9" "$OTHER")" "2" \
+mutant_lib gone-reads-other '  comm="$(ps -o comm= -p "$1" 2>&1)" || rc=$?' '  comm="$(ps -o comm= -p "$1" 2>&1)" || rc=$?; comm=tmux; rc=0'
+assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "$S" "%9" "$OTHER" absent)" "2" \
   "control: without the process test a gone server reads as one this shell cannot ask"
+
+mutant_lib process-error-gone '    return 2
+  fi
+  case "${comm##*/}"' '    return 1
+    return 2
+  fi
+  case "${comm##*/}"'
+assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "$S" "%9" "$OWN" failed)" "1" \
+  "control: a failed process read classified as absent grants takeover"
 
 mutant_lib reused-reads-other '    *) return 1 ;;' '    *) ;;'
 assert_eq "$(live_rc "$MUTANT_LIB" "$REUSED" "$S" "%9" "$OTHER")" "2" \

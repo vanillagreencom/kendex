@@ -8,7 +8,7 @@
 #   overseer-host-tmux create --cwd DIR (--after SESSION | --session NAME)
 #                             [--name NAME] --line COMMAND
 #   overseer-host-tmux inspect --session SESSION [--launch]
-#                             [--server-socket PATH --server PID --server-start EPOCH]
+#                             [--server PID --server-start EPOCH [--server-socket PATH]]
 #   overseer-host-tmux deliver --session SESSION
 #   overseer-host-tmux stop --session SESSION [--successor SESSION]
 #
@@ -18,6 +18,7 @@
 #   uid when $TMUX is unset.
 #   inspect with --server-socket reads the recorded server and verifies its
 #   pid and start time. An ended server or a different start answers gone.
+#   With --server alone, an unreadable recorded server refuses inspection.
 #
 #   create   opens a window named NAME (default overseer) with its shell in
 #            DIR, at the base index of SESSION's tmux session or the named
@@ -271,16 +272,17 @@ case "$VERB" in
   inspect)
     require_session "$SESSION"
     start=""
-    if [[ -n "$SERVER_SOCKET" ]]; then
+    if [[ -n "$RECORDED_SERVER" || -n "$SERVER_SOCKET" ]]; then
       matches "$RECORDED_SERVER" '^[0-9]+$' || die_status 2 option-missing option=--server verb=inspect
       [[ -z "$RECORDED_START" ]] || matches "$RECORDED_START" '^[0-9]+$' \
         || die_status 2 option-missing option=--server-start verb=inspect
       # Pane ids repeat across servers. Read the recorded socket and bind it
       # to the recorded pid and tmux start before reading its pane.
-      export TMUX="$SERVER_SOCKET,$RECORDED_SERVER,0"
+      [[ -z "$SERVER_SOCKET" ]] || export TMUX="$SERVER_SOCKET,$RECORDED_SERVER,0"
       probe=0
-      tmux_pane_live "$RECORDED_SERVER" "$RECORDED_START" "$SESSION" || probe=$?
+      tmux_pane_live "$RECORDED_SERVER" "$RECORDED_START" "$SESSION" "$SERVER_SOCKET" || probe=$?
       [[ "$probe" -ne 1 ]] || inspect_gone
+      printf '%s' "$TMUX_PANE_DETAIL" > "$DEP_ERR"
       [[ "$probe" -eq 0 ]] || die session-unreadable "session=$SESSION" "server=$RECORDED_SERVER"
       inspect_field start start_time '^[0-9]+$' '#{start_time}'
     fi
