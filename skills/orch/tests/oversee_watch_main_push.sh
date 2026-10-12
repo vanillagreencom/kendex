@@ -10,7 +10,7 @@ main_watch() {
   MAIN_RC=0
   : > "$STUB_DIR/gh.calls"
   run_watch -- --max-loops 1 >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || MAIN_RC=$?
-  MAIN_EVENTS="$(awk '/^EVENT main-push-failing /' "$STUB_DIR/out")"
+  MAIN_EVENTS="$(awk '/^EVENT main-push-(failing|budget) /' "$STUB_DIR/out")"
   MAIN_NOTICES="$(awk '/^oversee-watch: main-push-unread / { n++ } END { print n+0 }' "$STUB_DIR/err")"
 }
 
@@ -188,6 +188,66 @@ WATCH_BIN="$MUTANT" main_watch
 CONTROL_RC=0
 ( assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'unchanged-suite event oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
 assert_eq "watch=$MAIN_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' 'control rejects raw diagnostics in failure identity' "$STUB_DIR/err"
+
+new_case main_push_budget
+BUDGET='run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=dev_validate_run seconds=883 bound=900 review=600 margin-percent=125'
+BUDGET_EVENT="EVENT main-push-budget owner/repo workflow=skill-tests.yml run=202 evidence=[\"$BUDGET\"]"
+printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
+printf '{"jobs":[]}\n' >"$STUB_DIR/main-jobs.202.json"
+for row in \
+  'within-budget|quiet|0|' \
+  'unread-before-warning|unread|1|' \
+  "first-warning|warning|0|$BUDGET_EVENT" \
+  'same-warning|raw|0|' \
+  'unread-after-warning|unread|1|' \
+  'restored-warning|warning|0|'; do
+  IFS='|' read -r name log_case notices expected <<<"$row"
+  rm -f -- "$STUB_DIR/main-log.202.err"
+  case "$log_case" in
+    quiet) printf 'suite=dev_validate_run seconds=1 pass=4 fail=0\n' >"$STUB_DIR/main-log.202.txt" ;;
+    unread) printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-log.202.err" ;;
+    warning) printf 'Job\tSuite\t2026-10-08T08:00:00Z ##[warning]%s\n' "$BUDGET" >"$STUB_DIR/main-log.202.txt" ;;
+    raw) printf '::warning::%s\n::warning::%s\n' "$BUDGET" "$BUDGET" >"$STUB_DIR/main-log.202.txt" ;;
+  esac
+  main_watch
+  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=$expected" "$name" "$STUB_DIR/err"
+done
+assert_eq "$(awk '/^run view 202 .* --log$/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")" 1 'green read requests full log, not failed steps'
+
+# A later green run reports its own event. Reading an older reported run
+# again must not recreate an event after the latest run changed.
+for run in 203 202; do
+  jq -cn --argjson run "$run" '[{databaseId:$run,headBranch:"main",event:"push",status:"completed",conclusion:"success"}]' >"$STUB_DIR/main-push.owner_repo.json"
+  printf '{"jobs":[]}\n' >"$STUB_DIR/main-jobs.$run.json"
+  printf '::warning::%s\n' "${BUDGET/run=202/run=$run}" >"$STUB_DIR/main-log.$run.txt"
+  main_watch
+  expected=""
+  if [[ "$run" == 203 ]]; then expected="${BUDGET_EVENT//run=202/run=203}"; fi
+  assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$expected" "budget history run=$run" "$STUB_DIR/err"
+done
+
+for rule in annotation dedup unread; do
+  MUTANT="$(mutant_scripts "budget-control-$rule/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/budget-control-$rule/github"
+  case "$rule" in
+    annotation) mutate_file "$MUTANT" 'sub(/^(::warning::|##\[warning\])/, ""); print' 'sub(/^(::warning::|##\[warning\])/, ""); if (0) print' ;;
+    dedup) mutate_file "$MUTANT" '          if [[ -z "$prior" ]]; then' '          if true; then' ;;
+    unread) mutate_file "$MUTANT" $'        if (( rc != 0 )); then\n          ow_message main-push-unread' $'        if false; then\n          ow_message main-push-unread' ;;
+  esac
+  new_case "main_push_budget_control_$rule"
+  printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
+  printf '{"jobs":[]}\n' >"$STUB_DIR/main-jobs.202.json"
+  printf '::warning::%s\n' "$BUDGET" >"$STUB_DIR/main-log.202.txt"
+  expected="$BUDGET_EVENT" notices=0
+  case "$rule" in
+    dedup) main_watch; expected="" ;;
+    unread) printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-log.202.err"; expected="" notices=1 ;;
+  esac
+  WATCH_BIN="$MUTANT" main_watch
+  CONTROL_RC=0
+  ( assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=$expected" "$rule budget oracle"; [[ "$FAIL" -eq 0 ]] ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
+  assert_eq "watch=$MAIN_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "$rule control turns maintenance oracle red" "$STUB_DIR/err"
+done
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

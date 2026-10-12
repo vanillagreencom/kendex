@@ -242,6 +242,25 @@ fi
 # cleanup among them, before KILL.
 STOP_GRACE=10
 
+# CI supplies its review policy. Local batteries have no timing policy.
+REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
+if [ -n "$REVIEW_SECS" ]; then
+  for value in "$REVIEW_SECS" "${RUN_ALL_MARGIN_PERCENT:-}" "${RUN_ALL_JOB_SECS:-}" "${RUN_ALL_JOB_STARTED_EPOCH:-}"; do
+    case "$value" in
+      '' | *[!0-9]* | 0*) echo "run-all.sh: budget-input value=$value" >&2; exit 1 ;;
+    esac
+  done
+fi
+
+budget_warning() { # SUITE SECONDS CAP
+  [ -n "$REVIEW_SECS" ] || return 0
+  if [ "$2" -gt "$REVIEW_SECS" ] || [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then
+    printf '::warning::run-all-budget run=%s attempt=%s os=%s shard=%s suite=%s seconds=%s bound=%s review=%s margin-percent=%s\n' \
+      "${GITHUB_RUN_ID:-unknown}" "${GITHUB_RUN_ATTEMPT:-unknown}" "${RUNNER_OS:-unknown}" \
+      "${RUN_ALL_SHARD:-$BATTERY}" "$1" "$2" "$3" "$REVIEW_SECS" "$RUN_ALL_MARGIN_PERCENT"
+  fi
+}
+
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
 trap 'rm -rf -- "$OUT_DIR"' EXIT
@@ -301,6 +320,9 @@ report() { # BASE STATUS SECONDS [STOP LAST]
   TOTAL_PASS=$((TOTAL_PASS + pass))
   TOTAL_FAIL=$((TOTAL_FAIL + fail))
   printf 'suite=%s seconds=%s pass=%s fail=%s\n' "$1" "$3" "$pass" "$fail"
+  if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]]; then
+    budget_warning "$1" "$3" "$SUITE_SECS"
+  fi
 }
 
 # A live process's start time, which with its pid names that one process: a
@@ -472,6 +494,10 @@ echo "============================================"
 printf 'total suites=%d seconds=%d pass=%d fail=%d\n' \
   "$RUN" "$((SECONDS - started))" "$TOTAL_PASS" "$TOTAL_FAIL"
 if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then
+  if [ -n "$REVIEW_SECS" ]; then
+    now="$(date +%s)" || { echo 'run-all.sh: budget-clock=unread' >&2; exit 1; }
+    budget_warning job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"
+  fi
   printf '%s tests: all %d file(s) passed\n' "$BATTERY" "$RUN"
   exit 0
 else

@@ -286,6 +286,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
 #   main-push-failing<TAB><repo><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
+#   main-push-budget<TAB><repo>@<run><TAB>reported
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
@@ -1887,6 +1888,35 @@ check_main_push() {
     if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
       rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
         || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+      if [[ "$conclusion" == success ]]; then
+        rc=0
+        log="$(gh run view "$run" --repo "$repo" --log 2>"$errf")" || rc=$?
+        if (( rc == 0 )); then
+          # GitHub renders workflow warnings as ##[warning] in downloaded
+          # logs. Read that annotation, never infer policy from summaries.
+          log="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
+            /^(::warning::|##\[warning\])run-all-budget / {
+              sub(/^(::warning::|##\[warning\])/, ""); print
+            }' <<<"$log")" || rc=$?
+        fi
+        if (( rc != 0 )); then
+          ow_message main-push-unread "repo=$repo" "read=annotations" "run=$run" "exit=$rc" >&2
+          continue
+        fi
+        if [[ -n "$log" ]]; then
+          key="$repo@$run"
+          prior="$(lane_row_get main-push-budget "$rows" "$key")" \
+            || die state-read-failed "" "repo=$repo" "row=main-push-budget"
+          if [[ -z "$prior" ]]; then
+            log="$(jq -Rsc 'split("\n") | map(select(length > 0)) | unique' <<<"$log")" \
+              || die state-read-failed "" "repo=$repo" "row=main-push-budget"
+            printf 'EVENT main-push-budget %s workflow=skill-tests.yml run=%s evidence=%s\n' "$repo" "$run" "$log"
+            PASS_EVENT=1
+            rows="$(lane_row_set main-push-budget "$rows" "$key" reported)" \
+              || die state-read-failed "" "repo=$repo" "row=main-push-budget"
+          fi
+        fi
+      fi
       continue
     fi
     rc=0

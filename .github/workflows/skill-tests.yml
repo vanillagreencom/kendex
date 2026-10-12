@@ -510,6 +510,9 @@ jobs:
     # claude-model-classes.sh, whose core contract rows ask a real kendex
     # tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
+      RUN_ALL_REVIEW_SECS: ${{ matrix.os == 'macos-latest' && '600' || '300' }}
+      RUN_ALL_MARGIN_PERCENT: '125'
+      RUN_ALL_SHARD: ${{ matrix.shard }}
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
@@ -524,7 +527,11 @@ jobs:
       - name: the run-all.sh deadline, inside this leg's job ceiling
         env:
           CEILING_MINUTES: *skill-suite-timeout
-        run: echo "RUN_ALL_DEADLINE_EPOCH=$(( $(date +%s) + CEILING_MINUTES * 60 - 60 ))" >>"$GITHUB_ENV"
+        run: |
+          started="$(date +%s)"
+          echo "RUN_ALL_JOB_STARTED_EPOCH=$started" >>"$GITHUB_ENV"
+          echo "RUN_ALL_JOB_SECS=$((CEILING_MINUTES * 60))" >>"$GITHUB_ENV"
+          echo "RUN_ALL_DEADLINE_EPOCH=$((started + CEILING_MINUTES * 60 - 60))" >>"$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
