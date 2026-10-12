@@ -3,14 +3,248 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings warn and allow the call. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# summary: Refuses command text matching the project deny pattern or the default systemd-run memory-cap rule. Missing tools and unreadable input, settings or support warn once and allow the call.
-# safety: Matches raw command text and text with backslash-newline continuations joined, including quoted examples and comments. Actual policy matches refuse at exit 2. Missing tools, unreadable payload, installed support or project settings, and invalid or empty patterns produce one keyed warning and allow the call. The settings loader reads its whole table, so an unrelated malformed key also warns and allows. Every diagnostic starts with command-safety: <key>=<value>; captured support or command output follows that line.
+# description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
+# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. It preserves argument-array boundaries and executes no submitted text. Known nested dumps can refuse even with a filter; general heredocs, process substitutions, shell programs and env split strings have no interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
+
+# This rule belongs to this hook, not the replaceable project pattern. No
+# harness output-rewrite interface can remove secrets before the transcript.
+# Only a proven direct pipe grants permission. Nested syntax is detection
+# evidence, never proof of routing; unseen program semantics are not judged.
+environment_dump() { # command kind; arguments are already decoded data
+  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound=""
+  local j start=0 end n fd target proc output input_redirect pos program value named flags
+  local mode pattern_count pattern filter_ok stage=0 opaque text
+  local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
+  local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
+  local opaque_re='(^|[^A-Za-z0-9_])(env|printenv|set|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)|/proc/[^[:space:]]*/environ'
+  local tokens=() kinds=() saved_quotes=() closers=() args=() arg_kinds=()
+  local starts=() ends=() separators=() decisions=()
+  if [ "$1" = argv ]; then
+    tokens=(${command_argv[@]+"${command_argv[@]}"})
+    for ((i=0; i<${#tokens[@]}; i++)); do kinds[i]=literal; done
+  else
+    text=$command_text
+    while [ "$i" -lt "${#text}" ]; do
+      c=${text:$i:1}; i=$((i + 1)); next=${text:$i:1}
+      if [ "$quote" = "'" ]; then
+        if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
+        continue
+      fi
+      if [ "$c" = '\' ]; then
+        if [ "$i" -ge "${#text}" ]; then kind=unknown; break; fi
+        i=$((i + 1))
+        if [ "$quote" = '"' ]; then
+          case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) word=$word$c ;; esac
+        fi
+        [ "$next" = $'\n' ] || { word=$word$next; active=1; }
+        continue
+      fi
+      # A substitution's known producer must remain visible inside double
+      # quotes. Saving only the enclosing quote grants no inner permission.
+      if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
+        if [ -n "$active" ]; then tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        word=""; active=""; kind=literal; compound=1
+        n=${#closers[@]}
+        if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
+          quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
+        else
+          saved_quotes[n]=$quote; quote=""
+          if [ "$c" = '$' ]; then closers[n]=')'; i=$((i + 1)); else closers[n]='`'; fi
+        fi
+        tokens[${#tokens[@]}]=';'; kinds[${#kinds[@]}]=operator
+        continue
+      fi
+      if [ "$quote" = '"' ]; then
+        if [ "$c" = '"' ]; then quote=""; else word=$word$c; [ "$c" != '$' ] || kind=unknown; fi
+        continue
+      fi
+      case "$c" in
+        "'" | '"') quote=$c; active=1; continue ;;
+        '$') kind=unknown; word=$word$c; active=1; continue ;;
+        '#')
+          if [ -z "$active" ]; then
+            while [ "$i" -lt "${#text}" ] && [ "${text:$i:1}" != $'\n' ]; do i=$((i + 1)); done
+            continue
+          fi ;;
+      esac
+      case "$c" in
+        ' ' | $'\t' | $'\r' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>')
+          if [ -n "$active" ]; then tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+          word=""; active=""; kind=literal
+          case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
+          case "$c" in
+            '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
+            ')')
+              compound=1; n=${#closers[@]}
+              if [ "$n" -gt 0 ]; then quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'; fi
+              c=';' ;;
+            $'\n') c=';' ;;
+            *)
+              case "$c$next" in
+                '&&' | '||' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
+              esac
+              [ "$c" != '<<' ] || compound=1 ;;
+          esac
+          tokens[${#tokens[@]}]=$c; kinds[${#kinds[@]}]=operator ;;
+        *) word=$word$c; active=1 ;;
+      esac
+    done
+    [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
+    if [ -n "$active" ]; then tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+  fi
+  n=${#tokens[@]}
+  for ((i=0; i<=n; i++)); do
+    if [ "$i" -lt "$n" ]; then
+      [ "${kinds[$i]}" = operator ] || continue
+      case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
+    fi
+    starts[stage]=$start; ends[stage]=$i
+    separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
+  done
+  for ((stage=0; stage<${#starts[@]}; stage++)); do
+    start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=()
+    proc=""; output=""; input_redirect=""; mode=other; program=""
+    for ((j=start; j<end; j++)); do
+      if [ "${kinds[$j]}" = operator ]; then
+        fd=""; n=${#args[@]}
+        if [ "$n" -gt 0 ] && [[ ${args[$((n - 1))]} =~ ^[0-9]+$ ]]; then
+          fd=${args[$((n - 1))]}; unset 'args[n-1]' 'arg_kinds[n-1]'
+        fi
+        j=$((j + 1)); target=${tokens[$j]:-}
+        case "${tokens[$((j - 1))]}" in
+          '<')
+            input_redirect=1
+            [[ $target != /proc/*/environ ]] || proc=1 ;;
+          '<&' | '<<') input_redirect=1 ;;
+          '>' | '>>' | '>&') [ "$fd" = 2 ] || output=1 ;;
+          '&>') output=1 ;;
+        esac
+        continue
+      fi
+      args[${#args[@]}]=${tokens[$j]}; arg_kinds[${#arg_kinds[@]}]=${kinds[$j]}
+    done
+    pos=0
+    while [ "$pos" -lt "${#args[@]}" ] && [[ ${args[$pos]} =~ $name_re ]] && [[ ${args[$pos]} == *=* ]]; do pos=$((pos + 1)); done
+    # Only these literal forwarding forms are part of the input contract.
+    # Unsupported executable-string arguments get conservative detection.
+    while [ "$pos" -lt "${#args[@]}" ]; do
+      [ "${arg_kinds[$pos]}" = literal ] || break
+      program=${args[$pos]##*/}; pos=$((pos + 1))
+      case "$program" in
+        command)
+          case "${args[$pos]:-}" in -v | -V) pos=${#args[@]}; break ;; -p) pos=$((pos + 1)) ;; esac
+          [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
+          continue ;;
+        sudo)
+          while [ "$pos" -lt "${#args[@]}" ]; do
+            case "${args[$pos]}" in
+              -u | -g | --user | --group) pos=$((pos + 2)) ;;
+              --user=* | --group=* | -n | -E | -H) pos=$((pos + 1)) ;;
+              --) pos=$((pos + 1)); break ;;
+              *) break ;;
+            esac
+          done
+          continue ;;
+        env)
+          while [ "$pos" -lt "${#args[@]}" ]; do
+            value=${args[$pos]}
+            case "$value" in
+              -i | --ignore-environment | -0 | --null) pos=$((pos + 1)) ;;
+              -u | --unset | -C | --chdir) pos=$((pos + 2)) ;;
+              --unset=* | --chdir=*) pos=$((pos + 1)) ;;
+              --help | --version) pos=${#args[@]}; program=""; break ;;
+              --) pos=$((pos + 1)); break ;;
+              -S | --split-string | --split-string=*) program=opaque; break ;;
+              -*) mode=dump; break ;;
+              *)
+                if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then pos=$((pos + 1)); else break; fi ;;
+            esac
+          done
+          if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then mode=dump; fi
+          if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then mode=dump; fi
+          [ "$program" = env ] && [ "$mode" != dump ] || break
+          continue ;;
+        *) break ;;
+      esac
+    done
+    case "${program:-}" in
+      printenv)
+        named=""
+        for ((j=pos; j<${#args[@]}; j++)); do
+          value=${args[$j]}
+          case "$value" in --help | --version) named=1 ;; -* | '') ;;
+            *) [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1 ;;
+          esac
+        done
+        [ -n "$named" ] || mode=dump ;;
+      export | declare | typeset)
+        named=""; flags=""
+        for ((j=pos; j<${#args[@]}; j++)); do
+          value=${args[$j]}
+          case "$value" in -*) flags=$flags$value ;; *)
+            [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1 ;;
+          esac
+        done
+        if [ -z "$named" ]; then
+          case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump ;; esac
+        fi ;;
+      set)
+        named=""
+        for ((j=pos; j<${#args[@]}; j++)); do [ "${arg_kinds[$j]}" != literal ] || named=1; done
+        [ -n "$named" ] || mode=dump ;;
+      systemctl)
+        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump; done ;;
+      cat | tr | strings | xargs)
+        for ((j=pos; j<${#args[@]}; j++)); do [[ ${args[$j]} != /proc/*/environ ]] || proc=1; done
+        [ -z "$proc" ] || mode=dump
+        if [ "$program" = tr ] && [ "$mode" != dump ] && [ -z "$input_redirect$output" ] && [ "$((${#args[@]} - pos))" -eq 2 ]; then
+          case "${args[$pos]}:${args[$((pos + 1))]}" in '\0:\n' | '\000:\n') mode=convert ;; esac
+        fi ;;
+      grep)
+        filter_ok=1; pattern_count=0; pattern=""
+        for ((j=pos; j<${#args[@]}; j++)); do
+          value=${args[$j]}
+          [ "${arg_kinds[$j]}" = literal ] || filter_ok=""
+          case "$value" in
+            --) pos=$((j + 1)); break ;;
+            -e) j=$((j + 1)); value=${args[$j]:-}; [ "${arg_kinds[$j]:-}" = literal ] || filter_ok="" ;;
+            -*) [[ $value =~ ^-[EFazq]+$ ]] || filter_ok=""; continue ;;
+          esac
+          pattern_count=$((pattern_count + 1)); pattern=$value
+        done
+        if [ "${value:-}" = -- ]; then
+          for ((j=pos; j<${#args[@]}; j++)); do
+            pattern_count=$((pattern_count + 1)); pattern=${args[$j]}; [ "${arg_kinds[$j]}" = literal ] || filter_ok=""
+          done
+        fi
+        if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
+      opaque | bash | sh | dash | zsh | ksh | eval | source | .)
+        for ((j=pos; j<${#args[@]}; j++)); do
+          opaque=${args[$j]//[\'\"\\]/}
+          if [[ $opaque =~ $opaque_re ]]; then mode=dump; compound=1; fi
+        done ;;
+    esac
+    if [ "$mode" = dump ] && [ -n "$output" ]; then mode=unrouted; fi
+    decisions[stage]=$mode
+  done
+  for ((stage=0; stage<${#decisions[@]}; stage++)); do
+    case "${decisions[$stage]}" in
+      unrouted) return 0 ;;
+      dump)
+        [ -z "$compound" ] || return 0
+        j=$stage
+        if [ "${separators[$j]}" = '|' ] && [ "${decisions[$((j + 1))]:-}" = convert ]; then j=$((j + 1)); fi
+        if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != filter ]; then return 0; fi ;;
+    esac
+  done
+  return 1
+}
 
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `command-safety: <key>=<value>`: a
@@ -41,6 +275,10 @@ refuse() { # KEY VALUE [CAUSE]
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
+      refused=environment-dump)
+        echo "the command contains a recognized whole-environment read without a proven direct filter that names a variable"
+        echo "read named variables, for example: systemctl --user show-environment | grep '^NAME='"
+        echo "nested or unsupported routing can refuse conservatively; use the direct filtered form" ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
         echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
@@ -82,7 +320,9 @@ MISSING=""
 for dependency in jq git grep cat dirname mktemp rm; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
-[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
+if ! command -v jq >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1; then
+  refuse missing-tools "${MISSING#,}"
+fi
 input="$(cat 2>&1)" || refuse payload unreadable "$input"
 fields="$(jq -er '
   def command_arg:
@@ -95,26 +335,42 @@ fields="$(jq -er '
   | [.tool_input.command, .tool_input.cmd, (.toolArgs | command_arg), .command, .cmd]
   | map(select(. != null))
   | if length == 0 then error("missing command") else .[0] end
+  | . as $submitted
   | if type == "string" then .
     elif type == "array" and all(.[]; type == "string") then join(" ")
     else error("invalid command") end
   | sub("\n+$"; "") as $command
-  | if $command == "" then "\t"
-    elif $payload.cwd != null and ($payload.cwd | type) != "string"
-    then "invalid-cwd"
-    else [($payload.cwd // "" | sub("\n+$"; "")), $command] | @tsv end
+  | (if $payload.cwd != null and ($payload.cwd | type) != "string" then "invalid-cwd" else "valid-cwd" end) as $cwd_state
+  | [(if $cwd_state == "invalid-cwd" then "" else ($payload.cwd // "" | sub("\n+$"; "")) end),
+     $command, $cwd_state,
+     (if ($submitted | type) == "array" then "argv" else "shell" end),
+     (if ($submitted | type) == "array" then ($submitted | length), $submitted[] else 0 end)] | @tsv
 ' <<<"$input" 2>/dev/null)" || refuse payload invalid-json
 [ -n "$fields" ] || exit 0
-[ "$fields" != invalid-cwd ] || refuse payload invalid-cwd
 # TSV escapes tabs, newlines and backslashes, so only the field boundary is
 # a literal tab. printf decodes data without evaluating shell syntax.
 # Bash 3.2 can unset the target of an empty %b assignment. Keep empty fields
 # as ordinary assignments and decode only nonempty text.
 cwd=${fields%%$'\t'*}
-command_text=${fields#*$'\t'}
+fields=${fields#*$'\t'}
+command_text=${fields%%$'\t'*}; fields=${fields#*$'\t'}
 [ -n "$command_text" ] || exit 0
 [ -z "$cwd" ] || printf -v cwd '%b' "$cwd"
 printf -v command_text '%b' "$command_text"
+cwd_state=${fields%%$'\t'*}; fields=${fields#*$'\t'}
+command_kind=${fields%%$'\t'*}; fields=${fields#*$'\t'}
+argument_count=${fields%%$'\t'*}; fields=${fields#*$'\t'}
+command_argv=()
+for ((argument_index=0; argument_index<argument_count; argument_index++)); do
+  argument=${fields%%$'\t'*}; fields=${fields#*$'\t'}
+  [ -z "$argument" ] || printf -v argument '%b' "$argument"
+  command_argv[argument_index]=$argument
+done
+if environment_dump "$command_kind"; then
+  refuse refused environment-dump
+fi
+[ "$cwd_state" != invalid-cwd ] || refuse payload invalid-cwd
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 [ -n "$cwd" ] || cwd="$PWD"
 # The requested path is kept: the substitution below holds cd's own words when
 # the directory cannot be entered, and the physical path when it can, so the
