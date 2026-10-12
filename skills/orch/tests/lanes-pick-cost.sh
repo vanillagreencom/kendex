@@ -195,3 +195,52 @@ done
 LANES="$ORIGINAL_LANES"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
+
+# The overseer chooses a model before its launch. Count the capabilities
+# interpreter independently of the accounts verb and compare stdout bytes.
+CAPABILITY_PROVIDER="$TMP_ROOT/capability-provider"
+cat > "$CAPABILITY_PROVIDER" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" != capabilities ]] || printf 'capabilities\n' >> "$COST_COUNTER"
+exec "$COST_PROVIDER" "$@"
+STUB
+chmod +x "$CAPABILITY_PROVIDER"
+capability_pick() { # LANES
+  : > "$TMP_ROOT/counter"
+  RC=0
+  (cd "$TMP_ROOT/home" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+    COST_COUNTER="$TMP_ROOT/counter" COST_REAL_DATE="$REAL_DATE" COST_PROVIDER="$TMP_ROOT/provider" \
+    LANES_HOME="$TMP_ROOT/home" ORCH_LANE_HOST="$CAPABILITY_PROVIDER" \
+    ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0 ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/capability-state" \
+    "$1" pick --harness claude --model sonnet --json > "$TMP_ROOT/capability.out" 2> "$TMP_ROOT/capability.err") || RC=$?
+  CAPABILITY_STARTS="$(awk '$0 == "capabilities" {n++} END {print n+0}' "$TMP_ROOT/counter")"
+}
+capability_pick "$LANES"
+assert_eq "$RC" 0 'cold overseer-form pick reaches the chooser' "$TMP_ROOT/capability.err"
+assert_eq "$CAPABILITY_STARTS" 1 'cold overseer-form pick starts the capability provider once'
+cp -- "$TMP_ROOT/capability.out" "$TMP_ROOT/capability.cold"
+capability_pick "$LANES"
+assert_eq "$RC" 0 'warm overseer-form pick reaches the chooser' "$TMP_ROOT/capability.err"
+assert_eq "$CAPABILITY_STARTS" 0 'warm overseer-form pick starts no capability provider'
+cmp_rc=0; cmp -s -- "$TMP_ROOT/capability.out" "$TMP_ROOT/capability.cold" || cmp_rc=$?
+assert_eq "$cmp_rc" 0 'warm overseer-form pick keeps cold stdout bytes'
+printf 'capability-cost: cold=1 warm=%s\n' "$CAPABILITY_STARTS"
+CONTROL_PARENT="$("$TEST_DIR/../scripts/git-context" common-root "$TEST_DIR")"
+mkdir -p "${CONTROL_PARENT%/*}/tmp"
+CAPABILITY_CONTROL_ROOT="$(mktemp -d "${CONTROL_PARENT%/*}/tmp/capability-cost-control.XXXXXX")" || { echo 'lanes-pick-cost: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $CAPABILITY_CONTROL_ROOT && ! -L $CAPABILITY_CONTROL_ROOT ]] || { echo 'lanes-pick-cost: scratch=not-a-directory' >&2; exit 1; }
+CAPABILITY_CONTROL_ROOT="$(cd -- "$CAPABILITY_CONTROL_ROOT" && pwd -P)" || { echo 'lanes-pick-cost: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}" "${CAPABILITY_CONTROL_ROOT:?}"' EXIT
+CONTROL="$(TMP_ROOT="$CAPABILITY_CONTROL_ROOT" mutant_scripts capability-cost lib/lane-capabilities.sh)"
+mutate_file "$CONTROL/lib/lane-capabilities.sh" \
+  'LANE_CAPABILITIES="$(lane_capabilities_answer "$@")"' \
+  'LANE_CAPABILITIES="$(cd -- "${3:-.}" && ORCH_LANE_HOST="$2" "$1" capabilities)" # LANE_CAPABILITIES="$(lane_capabilities_answer "$@")"'
+capability_pick "$CONTROL/lanes"
+assert_eq "$RC" 0 'base-reader control reaches the chooser' "$TMP_ROOT/capability.err"
+assert_eq "$CAPABILITY_STARTS" 1 'base-reader control starts the capability provider once'
+rc=0
+( FAIL=0; assert_eq "$CAPABILITY_STARTS" 0 'warm capability starts'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-capability-cost.log" || rc=$?
+assert_eq "$rc" 1 'warm count assertion rejects the base capability reader'
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" == 0 ]]
