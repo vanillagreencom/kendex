@@ -873,11 +873,23 @@ rm -f "$R/Cargo.toml"
 echo "=== missing suite peers have no verdict while assertions still block ==="
 mkdir -p "$R/pi-extensions/peers"
 printf '{"scripts":{"test":"node test.mjs"}}\n' >"$R/pi-extensions/peers/package.json"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$PEER_SUITE_OUTPUT"\nexit 1\n' >"$R/fake-bin/npm"
+cat >"$R/fake-bin/npm" <<'SH'
+#!/usr/bin/env bash
+[ -z "${PEER_LAUNCHER_LOG:-}" ] || printf '%s\n' "$*" >>"$PEER_LAUNCHER_LOG"
+if [ "${MISSING_NPM_NODE:-0}" = 1 ]; then
+  printf '%s\n' "/usr/bin/env: ‘node’: No such file or directory" >&2
+  exit 127
+fi
+[ "$*" != --version ] || exit 0
+printf '%s\n' "$PEER_SUITE_OUTPUT"
+exit 1
+SH
 chmod +x "$R/fake-bin/npm"
 # Complete shipped Bun producers: pi-qol npm test, renderer code-blocks,
 # and tmux trace-layout. Checkout roots and trailing spaces are normalized.
-BUN_PEER=$(cat <<'OUTPUT'
+# Bash 3.2 scans quotes inside substitution here-documents. Read these
+# outside a substitution; EOF is the expected nonzero read status.
+IFS= read -r -d '' BUN_PEER <<'OUTPUT' || :
 bun test v1.4.2 (744846f84)
 
 extensions/__tests__/code-blocks.test.ts:
@@ -893,8 +905,7 @@ error: Cannot find module '@earendil-works/pi-tui' from '/package/extensions/__t
  1 error
 Ran 1 test across 1 file. [7.00ms]
 OUTPUT
-)
-TMUX_PEER=$(cat <<'OUTPUT'
+IFS= read -r -d '' TMUX_PEER <<'OUTPUT' || :
 bun test v1.4.2 (744846f84)
 
 pi-extensions/pi-agents-tmux/tests/trace-layout.test.ts:
@@ -910,8 +921,7 @@ error: Cannot find module '@earendil-works/pi-tui' from '/package/tests/trace-la
  1 error
 Ran 1 test across 1 file. [23.00ms]
 OUTPUT
-)
-QOL_PEER=$(cat <<'OUTPUT'
+IFS= read -r -d '' QOL_PEER <<'OUTPUT' || :
 
 > @vanillagreen/pi-qol@2.4.0 test
 > bun test ./tests
@@ -1314,7 +1324,6 @@ tests/statusline-provider.test.ts:
  810 expect() calls
 Ran 275 tests across 34 files. [7.16s]
 OUTPUT
-)
 INDEPENDENT=$'error: expect(received).toBe(expected)\nExpected: true\nReceived: false\n(fail) an independent behavior check'
 UNKNOWN=$'# Unhandled error between tests\n-------------------------------\nTypeError: undefined is not an object\n-------------------------------'
 # The producer reports its own outcome. Summary rows can repeat it or expose
@@ -1365,6 +1374,7 @@ PEER_ROWS=(
   "peers installed but module missing|$BUN_PEER|1|suite|present"
   'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|suite|absent'
 )
+PEER_BASE=$(git -C "$R" rev-parse HEAD) || exit 1
 for script in test test:ci; do
   printf '{"scripts":{"%s":"bun test ./tests"}}\n' "$script" >"$R/pi-extensions/peers/package.json"
   for row in "${PEER_ROWS[@]}"; do
@@ -1379,6 +1389,37 @@ for script in test test:ci; do
     [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
       && ok "$script: $label" || bad "$script: $label" "rc=$RC out=$OUT"
     if [ "$peers" = present ]; then rmdir "$R/pi-extensions/peers/node_modules"; fi
+  done
+  # command resolution and env's missing Node diagnostic are the two host
+  # producers that prevent npm from starting a declared suite at all.
+  for mode in full range; do
+    mode_args=(--full)
+    [ "$mode" = full ] || mode_args=(--range "$PEER_BASE")
+    for launcher in npm node; do
+      launcher_env=(MISSING_NPM_NODE=1)
+      expected_call=--version
+      if [ "$launcher" = npm ]; then
+        launcher_env=('BASH_FUNC_command%%=() { if [ "$*" = "-v npm" ]; then return 1; fi; builtin command "$@"; }')
+        expected_call=""
+      fi
+      : >"$TMP/npm-launcher-calls"
+      OUT=""; RC=0
+      OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" PEER_LAUNCHER_LOG="$TMP/npm-launcher-calls" \
+        PEER_SUITE_OUTPUT="$INDEPENDENT" "${launcher_env[@]}" "$GUARD" "${mode_args[@]}" 2>&1 </dev/null)" || RC=$?
+      launcher_calls=$(cat "$TMP/npm-launcher-calls")
+      [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-tool=npm'* ]] \
+        && [[ "$OUT" != *'guard: suite='* ]] && [ "$launcher_calls" = "$expected_call" ] \
+        && ok "$mode $script: missing $launcher prevents suite start and has no verdict" \
+        || bad "$mode $script: missing $launcher launcher" "rc=$RC out=$OUT calls=$launcher_calls"
+      if mutant_guard 's#if ! command -v npm .*; then#if false; then#'; then
+        OUT=""; RC=0
+        OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$INDEPENDENT" \
+          "${launcher_env[@]}" "$MUTANT_TOOLS/guard" "${mode_args[@]}" 2>&1 </dev/null)" || RC=$?
+        [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
+          && ok "control: $mode $script without launcher availability misjudges missing $launcher" \
+          || bad "launcher availability control: $mode $script $launcher" "rc=$RC out=$OUT"
+      else bad "launcher availability control changed nothing: $mode $script $launcher"; fi
+    done
   done
 done
 if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then

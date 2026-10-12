@@ -1749,6 +1749,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 "
     fi
   done <<<"$touched"
+  npm_available=unchecked
   for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
     case "$d" in
       pi-extensions/*)
@@ -1760,12 +1761,24 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           continue
         fi
         if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null; then
-          suite_out=$(cd "$d" && npm run test:ci 2>&1) || pi_suite_failed "$d" "$suite_out"
-          [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
+          npm_args=(run test:ci)
         elif jq -e '.scripts.test' "$d/package.json" >/dev/null; then
-          suite_out=$(cd "$d" && npm test 2>&1) || pi_suite_failed "$d" "$suite_out"
-          [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
+          npm_args=(test)
+        else
+          continue
         fi
+        # Prove the npm launcher can start, including its Node interpreter,
+        # once for the selected Pi suites before interpreting suite output.
+        if [ "$npm_available" = unchecked ]; then
+          npm_available=ready
+          if ! command -v npm >/dev/null 2>&1 || ! npm --version >/dev/null 2>&1; then
+            unrun missing-tool npm
+            npm_available=unavailable
+          fi
+        fi
+        [ "$npm_available" = ready ] || continue
+        suite_out=$(cd "$d" && npm "${npm_args[@]}" 2>&1) || pi_suite_failed "$d" "$suite_out"
+        [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
         ;;
       *)
         [ -d "$d/tests" ] || continue
