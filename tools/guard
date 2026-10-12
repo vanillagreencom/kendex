@@ -1330,6 +1330,11 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
       else behavior = 1
       unhandled = 0; report = ""; next
     }
+    # A relative or absolute specifier names a shipped file, which no peer
+    # install supplies; only a bare package specifier can be a missing peer.
+    /^(Error \[ERR_MODULE_NOT_FOUND\]: |Error: |error: )Cannot find (module|package) [^[:alnum:]@]?(\.\.?\/|\/|[[:alpha:]]:)/ {
+      behavior = 1; report = "failure"; next
+    }
     /^(Error \[ERR_MODULE_NOT_FOUND\]|Error: Cannot find module |error: Cannot find (package|module) |sh: .*: (command )?not found)/ ||
     /^(\+ ")?runtime-copy-peers: peer-unresolved peer=/ {
       missing = 1

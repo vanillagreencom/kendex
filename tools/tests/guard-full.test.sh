@@ -1324,6 +1324,35 @@ tests/statusline-provider.test.ts:
  810 expect() calls
 Ran 275 tests across 34 files. [7.16s]
 OUTPUT
+# Bun 1.4.2 on a shipped relative import whose file is gone, at load and
+# inside a test; a missing file is a source defect, never a peer.
+IFS= read -r -d '' BUN_RELATIVE <<'OUTPUT' || :
+bun test v1.4.2 (744846f84)
+
+tests/diagnostics.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find module '../extensions/diagnostics.ts' from '/package/tests/diagnostics.test.ts'
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [51.00ms]
+OUTPUT
+IFS= read -r -d '' BUN_RELATIVE_IN_TEST <<'OUTPUT' || :
+bun test v1.4.2 (744846f84)
+
+tests/diagnostics.test.ts:
+error: Cannot find module './nope.ts' from '/package/tests/diagnostics.test.ts'
+(fail) dyn [12.24ms]
+
+ 0 pass
+ 1 fail
+Ran 1 test across 1 file. [12.00ms]
+OUTPUT
 INDEPENDENT=$'error: expect(received).toBe(expected)\nExpected: true\nReceived: false\n(fail) an independent behavior check'
 UNKNOWN=$'# Unhandled error between tests\n-------------------------------\nTypeError: undefined is not an object\n-------------------------------'
 # The producer reports its own outcome. Summary rows can repeat it or expose
@@ -1361,6 +1390,12 @@ $INDEPENDENT
 Ran 2 tests across 2 files. [7.00ms]"
 PEER_ROWS=(
   'Node missing peer|Error [ERR_MODULE_NOT_FOUND]: Cannot find package @earendil-works/pi-ai|3|no-verdict|absent'
+  "Node quoted missing peer|Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-ai' imported from /package/tests/a.mjs|3|no-verdict|absent"
+  "Bun unhandled missing relative file|$BUN_RELATIVE|1|suite|absent"
+  "Bun missing relative file inside a test|$BUN_RELATIVE_IN_TEST|1|suite|absent"
+  "Node missing absolute file|Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/package/extensions/a.mjs' imported from /package/tests/a.mjs|1|suite|absent"
+  "Node missing drive-letter file|Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'C:\\package\\extensions\\a.mjs' imported from C:\\package\\tests\\a.mjs|1|suite|absent"
+  "Node require of a missing relative file|Error: Cannot find module '../extensions/a'|1|suite|absent"
   "renderer unhandled missing peer|$BUN_PEER|3|no-verdict|absent"
   "tmux unhandled missing peer|$TMUX_PEER|3|no-verdict|absent"
   "unhandled missing peer beside an assertion|$BUN_MIXED|1|suite|absent"
@@ -1428,6 +1463,12 @@ if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then
     && ok 'control: losing missing-peer classification turns its row red' \
     || bad 'missing-peer control' "rc=$RC out=$OUT"
 else bad 'missing-peer control changed nothing'; fi
+if mutant_guard 's/)Cannot find (module|package) /)never-matches /'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_RELATIVE"
+  [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-peers=pi-extensions/peers'* ]] \
+    && ok 'control: reading a relative specifier as a peer turns the relative-file row red' \
+    || bad 'relative specifier control' "rc=$RC out=$OUT"
+else bad 'relative specifier control changed nothing'; fi
 if mutant_guard 's/exit !(missing \&\& !behavior)/exit !missing/'; then
   GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_MIXED"
   [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-peers=pi-extensions/peers'* ]] \
