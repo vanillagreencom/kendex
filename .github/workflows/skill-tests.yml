@@ -472,7 +472,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -679,22 +679,22 @@ jobs:
       # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
       # checkout ships, `orch-rest`, for claude-model-classes.sh, whose core
       # contract rows hold the Claude plugin's fixtures to this checkout's
-      # `tier-model`, and `review-gate`, for refresh-consumer's held-render
+      # `tier-model`, and `refresh`, for refresh-consumer's held-render
       # rows. The macOS legs keep the binary-dependent skips. A pull request
       # restores the cache and never saves it.
       - uses: dtolnay/rust-toolchain@stable
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
       - uses: Swatinem/rust-cache@v2
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         with:
           key: change-class-kendex
           save-if: ${{ github.event_name != 'pull_request' }}
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
       - name: kendex from this checkout
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: |
           set -euo pipefail
           cargo build -p kendex-cli --locked
@@ -711,15 +711,25 @@ jobs:
           set -u
           fail=0
           review=()
-          refresh=()
-          for t in skills/review-gate/tests/*.test.sh refresh/tests/*.test.sh; do
+          for t in skills/review-gate/tests/*.test.sh; do
             base="${t##*/}"
-            case "$t" in
-              skills/*) review+=("=${base%.sh}") ;;
-              refresh/*) refresh+=("=${base%.sh}") ;;
-            esac
+            review+=("=${base%.sh}")
           done
           bash skills/orch/tests/run-all.sh --battery skills/review-gate/tests "${review[@]}" || fail=1
+          exit "$fail"
+
+      # Run 38141581913 spent 287s in review-gate then 365s in refresh on
+      # macOS. The package seam removes that serial sum from either job.
+      - name: refresh suites
+        if: matrix.shard == 'refresh'
+        run: |
+          set -u
+          fail=0
+          refresh=()
+          for t in refresh/tests/*.test.sh; do
+            base="${t##*/}"
+            refresh+=("=${base%.sh}")
+          done
           bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" || fail=1
           exit "$fail"
       # ---- shards: orch-terminal, orch-oversee, orch-oversee-watch,
@@ -865,7 +875,7 @@ jobs:
       # md-refs at 53s therefore left `guards-commit`, giving 34 files at 499s
       # against 34 at 475s; on the Linux leg that is 226s against 233s of the
       # undivided 459s. `guards-hooks` keeps install-git-hooks, while
-      # `guards-hooks-tail` spells md-refs. `guards-commit` reads their paths
+      # `guards-commit-tail` spells md-refs. `guards-commit` reads their paths
       # from this file, as `rest` reads the roster `worktree` claims. A
       # removed path returns its suite to a fallback instead of losing it.
       #
@@ -1010,8 +1020,9 @@ jobs:
           fi
           exit "$fail"
 
-      # The hooks name seam moves lane-mail-* and reviewer-* with md-refs
-      # into guards-hooks-tail. PR runs 38075283555 and 38079248844 sum
+      # The hooks name seam moves lane-mail-* and reviewer-* into
+      # guards-hooks-tail. Before md-refs moved to guards-commit-tail,
+      # PR runs 38075283555 and 38079248844 sum
       # 777s and 696s on macOS for guards-hooks, 778s and 749s for its tail.
       # The first run sums 301s and 389s on Linux. Both halves meet the
       # eight-minute Linux and fourteen-minute macOS summed-suite targets.
@@ -1055,29 +1066,36 @@ jobs:
           fi
           exit "$fail"
 
-      - name: lane-mail, reviewer and md-refs suites
+      - name: lane-mail and reviewer suites
         if: matrix.shard == 'guards-hooks-tail'
         run: |
           set -u
           hooks=()
-          guards=()
           for t in hooks/tests/lane-mail-*.test.sh \
-            hooks/tests/reviewer-*.test.sh \
-            skills/commit-guards/tests/md-refs.test.sh; do
+            hooks/tests/reviewer-*.test.sh; do
             base="${t##*/}"
-            case "$t" in
-              hooks/*) hooks+=("=${base%.sh}") ;;
-              skills/*) guards+=("=${base%.sh}") ;;
-            esac
+            hooks+=("=${base%.sh}")
           done
           fail=0
           # The pending-reading row removes its marker inside the hook's real wait.
           bash skills/orch/tests/run-all.sh --battery hooks/tests \
             --alone lane-mail-usage.test "${hooks[@]}" || fail=1
-          if [ "${#guards[@]}" -gt 0 ]; then
-            bash skills/orch/tests/run-all.sh --battery skills/commit-guards/tests "${guards[@]}" || fail=1
-          fi
           exit "$fail"
+
+      # Run 38145396867 spent 301s in pre-push, started near the end of
+      # guards-commit. Run 38142822481 added 179s of md-refs after 420s of
+      # hooks. Their shared package lets this battery start both together.
+      - name: pre-push and md-refs suites
+        if: matrix.shard == 'guards-commit-tail'
+        run: |
+          set -u
+          set --
+          for t in skills/commit-guards/tests/pre-push.test.sh \
+            skills/commit-guards/tests/md-refs.test.sh; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          bash skills/orch/tests/run-all.sh --battery skills/commit-guards/tests "$@"
       # ---- shard: linear — the linear suites, and the two mid-sized
       # packages that balance the shard against the guard shards ----------
       # The linear CLI's contract is Bash 4 or newer (skills/linear/scripts
@@ -1144,11 +1162,19 @@ jobs:
           set --
           for t in skills/worktree/tests/*.sh; do
             base="${t##*/}"
+            case "$base" in *restack*) continue ;; esac
             set -- "$@" "=${base%.sh}"
           done
           # The held-mutex row must reach the guard before its outer timeout.
           bash skills/orch/tests/run-all.sh --battery skills/worktree/tests \
             --alone worktree_session_guard_lifecycle "$@"
+
+      # Run 38145396867 measured create_restack at 443s, restack_hook_hold
+      # at 299s and restack_replay at 86s. The name seam starts these
+      # together without first waiting for the other worktree suites.
+      - name: worktree restack suites
+        if: matrix.shard == 'worktree-restack'
+        run: bash skills/orch/tests/run-all.sh --battery skills/worktree/tests restack
       # Slack's process-heavy suites run separately from the other packages.
       # A package glob places new Slack suites here without another roster.
       - name: Mailbox suites
@@ -1538,7 +1564,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "worktree", "worktree-restack", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout

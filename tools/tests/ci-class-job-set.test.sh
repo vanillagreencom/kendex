@@ -39,9 +39,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
-# build input runs `rest`, `review-gate` and `orch-rest` for real kendex
+# build input runs `rest`, `refresh` and `orch-rest` for real kendex
 # rows, and a tools/ path its suites' two shards and the scans.
-BUILD_ROW="$(measured both false true true '["review-gate","orch-rest","rest"]' '["review-gate","orch-rest","rest"]')"
+BUILD_ROW="$(measured both false true true '["refresh","orch-rest","rest"]' '["refresh","orch-rest","rest"]')"
 TOOL_ROW="$(measured both false true false '["guards-scans","guards-tools","guards-tools-tail"]' '["guards-scans","guards-tools","guards-tools-tail"]')"
 # Where a shard runs, and where none does. A shard runs on both runners
 # unless the diff is prose alone.
@@ -50,7 +50,7 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -linear -linear-controls-a -linear-controls-b -worktree -rest -slack -mailbox -node -pi-claude-bridge"
+NO_SKILL="-review-gate -refresh -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -guards-commit-tail -linear -linear-controls-a -linear-controls-b -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
 ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-watch +orch-oversee-succeed +orch-dev +orch-state +orch-rest"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
@@ -109,7 +109,7 @@ trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
 trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
-micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+review-gate +orch-rest +rest
+micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|$ORCH_ALL +guards-scans +guards-tools
 micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
 micro|false|skills/orch/tests/dev-future.sh|$SHARD_CODE|$ORCH_ALL
@@ -542,18 +542,18 @@ while IFS='|' read -r path expected; do
     "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | field shards)"
 done <<ROWS
 skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/github/scripts/lib/gh-auth.sh|["review-gate",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","rest"]
-skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
+skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
+skills/orch/scripts/lib/branch-growth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
+skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["review-gate","orch-rest","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","node"]
+crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","node"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 docs/x/policy.md|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
-docs/guard/refs.md|["guards-commit","guards-hooks","guards-hooks-tail"]
+docs/guard/refs.md|["guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
 skills/AGENTS.md|["guards-scans","guards-tools-tail"]
 docs/cite.md|["guards-tools-tail"]
@@ -561,7 +561,7 @@ kendex.toml|[]
 agents/reviewer.md|[]
 .kendex-lock.json|[]
 skills/CLAUDE.md|["guards-scans"]
-refresh/runner.sh|["review-gate","guards-scans"]
+refresh/runner.sh|["review-gate","refresh","guards-scans"]
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
@@ -595,7 +595,7 @@ s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="
 s/0) want_shard guards-tools-tail ;;/0) ;;/@docs/cite.md
 s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail ;;/@hooks/block-bare-cd.sh
 s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail node ;;/@hooks/block-bare-cd.sh
-s/skills\/commit-guards) want_shard guards-commit guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
+s/skills\/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
 s/skills\/mailbox) want_shard mailbox ;;/skills\/mailbox) : ;;/@skills/mailbox/tests/alone.sh
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
@@ -613,7 +613,7 @@ s/^      macos=\$platform$/      macos=true/@skills/price-handling/SKILL.md
 s/^      macos_shard "\$shards" || macos=false$/      :/@pi-extensions/pi-demo/src/x.ts
 s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-tools-tail node ;;/@hooks/block-bare-cd.sh
 s/^        want_shard guards-hooks guards-hooks-tail$/        want_shard guards-hooks/@skills/price-handling/scripts/x
-s/skills\/commit-guards) want_shard guards-commit guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit guards-hooks ;;/@docs/guard/refs.md
+s/skills\/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks ;;/@docs/guard/refs.md
 CONTROLS
 
 # Each refusal the shard selection makes, from a fixture or a planted copy.
@@ -650,7 +650,7 @@ while IFS='#' read -r edit path expected; do
   check "a planted fault is refused: $expected" "$expected" \
     "$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$path")"
 done <<'ROWS'
-s/skills\/worktree) want_shard worktree ;;/skills\/worktree) want_shard worktre ;;/#skills/worktree/scripts/worktree#exit=2 shard-undeclared shard=worktre
+s/skills\/worktree) want_shard worktree worktree-restack ;;/skills\/worktree) want_shard worktre worktree-restack ;;/#skills/worktree/scripts/worktree#exit=2 shard-undeclared shard=worktre
 s/^  awk -f "\$TOOLS_DIR\/lib\/skill-requirements.awk" "\$@"$/& \&\& false/#skills/price-handling/scripts/x#exit=2 requirements-failed
 s/files="\$(grep -lE /files="$(grep --no-such-option -lE /#kendex.settings.toml#exit=2 consumers-failed
 s/grep -qE -- "\$SHARD_CITATION"/grep --no-such-option -qE -- "$SHARD_CITATION"/#docs/cite.md#exit=2 citation-read-failed

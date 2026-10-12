@@ -771,10 +771,10 @@ shard_claims() { # WORKFLOW SHARD ; sorted suite files that shard runs
   done | sort
 }
 hook_tail_expected="$(cd "$ROOT" && printf '%s\n' hooks/tests/lane-mail-*.test.sh \
-  hooks/tests/reviewer-*.test.sh skills/commit-guards/tests/md-refs.test.sh | sort)"
+  hooks/tests/reviewer-*.test.sh | sort)"
 hook_tail_claims="$(shard_claims "$WORKFLOW" guards-hooks-tail)"
 hook_kept_claims="$(shard_claims "$WORKFLOW" guards-hooks)"
-check "the hooks tail claims the name seam and md-refs" "$hook_tail_expected" "$hook_tail_claims"
+check "the hooks tail claims the name seam" "$hook_tail_expected" "$hook_tail_claims"
 [[ -n "$hook_tail_claims" ]] && ok "the hooks tail claim set is non-empty" || bad "the hooks tail claims no suites"
 check "the hooks shard claim sets are disjoint" "" \
   "$(comm -12 <(printf '%s\n' "$hook_tail_claims") <(printf '%s\n' "$hook_kept_claims"))"
@@ -794,11 +794,11 @@ edited() { # edited <original> <copy> <arm> ; fails the arm whose edit matched n
 # received by the shim can establish the tail's ownership.
 wf_hook_noop="$TMP/wf-hook-tail-noop.yml"
 awk '
-  index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 1 }
-  tail && substr($0, 1, 8) == "      - " && !index($0, "- name: lane-mail, reviewer and md-refs suites") { tail = 0 }
+  index($0, "- name: lane-mail and reviewer suites") { tail = 1 }
+  tail && substr($0, 1, 8) == "      - " && !index($0, "- name: lane-mail and reviewer suites") { tail = 0 }
   tail && /bash skills\/orch\/tests\/run-all.sh --battery/ { sub(/bash skills\/orch\/tests\/run-all.sh/, ":"); hits++ }
   { print }
-  END { exit hits != 2 }
+  END { exit hits != 1 }
 ' "$WORKFLOW" > "$wf_hook_noop"
 edited "$WORKFLOW" "$wf_hook_noop" hook-tail-noop
 claims_file "$wf_hook_noop" "$TMP/claims-hook-noop"
@@ -811,7 +811,7 @@ check "must-fail: a tail with no suite calls has no shard claims" "" \
 # carrying either moved glob must not satisfy that fallback.
 wf_no_hook_tail="$TMP/wf-hook-tail-deleted.yml"
 awk '
-  index($0, "- name: lane-mail, reviewer and md-refs suites") { drop = 1; hits++; next }
+  index($0, "- name: lane-mail and reviewer suites") { drop = 1; hits++; next }
   drop && substr($0, 1, 8) == "      - " { drop = 0 }
   drop { next }
   { print }
@@ -832,6 +832,7 @@ while IFS= read -r glob; do
   awk -v glob="$glob" '
     index($0, "for t in hooks/tests/lane-mail-") { print "          # " glob }
     (i = index($0, glob " \\")) { $0 = substr($0, 1, i - 1) substr($0, i + length(glob) + 1); hits++ }
+    (i = index($0, glob "; do")) { $0 = substr($0, 1, i - 1) substr($0, i + length(glob)); hits++ }
     { print }
     END { exit hits != 1 }
   ' "$WORKFLOW" > "$wf_hook_prose"
@@ -957,7 +958,8 @@ while IFS='|' read -r moved loop; do
 done <<'ROWS'
 skills/commit-guards/tests/install-git-hooks.test.sh|for t in hooks/tests/*.sh
 tools/tests/harness-smoke.test.sh|for t in tools/tests/harness-smoke.test.sh
-skills/commit-guards/tests/md-refs.test.sh|for t in hooks/tests/lane-mail-*.test.sh
+skills/commit-guards/tests/md-refs.test.sh|for t in skills/commit-guards/tests/pre-push.test.sh
+skills/commit-guards/tests/pre-push.test.sh|for t in skills/commit-guards/tests/pre-push.test.sh
 ROWS
 [[ "$prose_rows" -ge 3 ]] || bad "the prose arm table missed a required path"
 
@@ -1309,16 +1311,18 @@ while IFS='|' read -r shard step battery stem; do
 done <<'POOLED'
 mailbox|Mailbox suites|skills/mailbox/tests|alone
 review-gate|review-gate suites|skills/review-gate/tests|validate-standard.test
-review-gate|review-gate suites|refresh/tests|refresh-report.test
+refresh|refresh suites|refresh/tests|refresh-report.test
 guards-commit|commit-guards suites|skills/commit-guards/tests|atomic-install.test
+guards-commit-tail|pre-push and md-refs suites|skills/commit-guards/tests|pre-push.test
 guards-hooks|hook and moved commit-guards suites|hooks/tests|dev-stop-check.test
 guards-hooks|hook and moved commit-guards suites|skills/commit-guards/tests|install-git-hooks.test
-guards-hooks-tail|lane-mail, reviewer and md-refs suites|hooks/tests|lane-mail-check.test
-guards-hooks-tail|lane-mail, reviewer and md-refs suites|skills/commit-guards/tests|md-refs.test
+guards-hooks-tail|lane-mail and reviewer suites|hooks/tests|lane-mail-check.test
+guards-commit-tail|pre-push and md-refs suites|skills/commit-guards/tests|md-refs.test
 linear|linear, bot-instructions and preflight suites|skills/linear/tests|bash4-runtime-contract.test
 linear|linear, bot-instructions and preflight suites|skills/bot-instructions/tests|bounds.test
 linear|linear, bot-instructions and preflight suites|skills/preflight/tests|precision.test
 worktree|worktree suites|skills/worktree/tests|worktree_output_prune
+worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
 POOLED
 
 unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<tab>path` the selection misses
@@ -1362,10 +1366,10 @@ else
   bad "must-fail: a table sending Slack elsewhere named nothing, so the selection check proves nothing"
 fi
 
-# The moved suites need the refresh path to reach the review-gate shard.
+# The moved suites need the refresh path to reach the refresh shard.
 awk '$0 ~ /^      refresh\/\*) want_package refresh ;;$/ { n++; next } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/owner-tools/ci-job-set" || bad "refresh selection control changed nothing"
-grep "^review-gate	refresh/tests/" "$OWNERS" >"$TMP/owners-refresh" ||
+grep "^refresh	refresh/tests/" "$OWNERS" >"$TMP/owners-refresh" ||
   bad "refresh selection control has no suite"
 if [[ -s "$TMP/owners-refresh" &&
   "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-refresh")" == "$(cat "$TMP/owners-refresh")" ]]; then
