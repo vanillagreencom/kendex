@@ -31,6 +31,16 @@ On first load, check the folder's `AGENTS.md`. If it lacks the persona, offer on
 
 The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.md` that routes to `persona.md` is the persona step here. Do not offer to paste the persona text into `AGENTS.md`. The text would load twice. `persona.md` must not exceed 3,072 bytes. An app that reads it directly can reject a larger file.
 
+### Reachable repositories
+
+At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints, a `(worktree of [MAIN])` line by `[MAIN]`:
+
+- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer` with the folder as the working directory. Exit 0 is reachable; a mailbox nobody has written yet prints no envelope at exit 0.
+- Anything else is unreachable. Its cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed, such as `command-missing python3` or `file-unreadable`.
+- A folder with no mailbox script but with `.agents/skills/orch/` has an orch older than the mailbox package. Its cause is "refresh needed", and the offer is `kendex refresh` in that folder.
+
+Report both lists in one message, each unreachable folder with its cause.
+
 ## Reading routes
 
 Read the linked workflow or reference for the task before acting.
@@ -48,3 +58,4 @@ Read the linked workflow or reference for the task before acting.
 | Handle credentials, account limits, sign-in or official records | [references/accounts-and-secrets.md](references/accounts-and-secrets.md) |
 | Connect Slack, Linear, GitHub or a fleet machine | [Slack](workflows/setup-slack.md), [Linear](workflows/setup-linear.md), [GitHub](workflows/setup-github.md), [Fleet machine](workflows/setup-fleet-machine.md) |
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
+| Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |

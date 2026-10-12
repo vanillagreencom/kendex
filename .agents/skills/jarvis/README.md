@@ -15,6 +15,7 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 - [Browser guidance](references/browser.md) covers forms, private profiles and bot checks.
 - [Account guidance](references/accounts-and-secrets.md) covers credentials, sign-in and official records.
 - [Research guidance](references/research.md) covers source checks, legal answers and audits.
+- [Agent reach](references/agent-reach.md) lets the assistant hear from and instruct the agent in each of your kendex projects that has the mailbox package, and offers to install it where it is missing.
 - `cpa` prepares finance and tax work for your decision.
 - `legal` prepares legal answers with sources and the conditions that require another check.
 - `operator` carries out an approved browser or account step and checks the result.

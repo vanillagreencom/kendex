@@ -1,0 +1,1 @@
+- Jarvis reaches the agent in each of your kendex projects through that repository's mailbox: its setup check lists the reachable and unreachable repositories, it offers the mailbox install where one is missing, and until then it answers from the agent's session transcript, labelled as such.
