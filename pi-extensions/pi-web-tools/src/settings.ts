@@ -78,7 +78,15 @@ export function readRawkendexConfig(cwd?: string): SettingsRecord {
 	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
 		if (file.kind !== "parsed") continue;
 		const config = packageConfigIn(file.settings, PACKAGE_ID);
-		if (config) mergeDeep(merged, config);
+		if (!config) continue;
+		// The settings screen writes a flat key; normalize it before file precedence applies.
+		const normalized = { ...config };
+		const flatModel = config["video.geminiModel"];
+		if (typeof flatModel === "string" && flatModel.trim()) {
+			normalized.video = { ...asRecord(config.video), geminiModel: flatModel };
+		}
+		delete normalized["video.geminiModel"];
+		mergeDeep(merged, normalized);
 	}
 	return merged;
 }
@@ -366,7 +374,7 @@ function resolveSettings(inputs: SettingsInputs, resolution: Resolution): WebToo
 		},
 		video: {
 			enabled: typeof video.enabled === "boolean" ? video.enabled : DEFAULT_SETTINGS.video.enabled,
-			geminiModel: stringSetting(raw, "video.geminiModel", stringSetting(video, "geminiModel", DEFAULT_SETTINGS.video.geminiModel)),
+			geminiModel: stringSetting(video, "geminiModel", DEFAULT_SETTINGS.video.geminiModel),
 		},
 		apiKeys: {
 			exa: resolveSecretRef(exaKey, "EXA_API_KEY", resolution),
