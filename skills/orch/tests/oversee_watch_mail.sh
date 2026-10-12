@@ -1150,7 +1150,13 @@ trap 'if [[ "$BASH_COMMAND" == tick_wait && "${OWED_MAIL_TEST:-}" == 1 && -n "${
 fi
 if [[ "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB_CLOCK:-}" ]]; then
   IFS= read -r _virtual_now <"$STUB_CLOCK" || [[ "$_virtual_now" =~ ^[0-9]+$ ]]
+  # Unset removes the real-time counter before the virtual assignment.
+  unset SECONDS
   SECONDS=$((_virtual_now - WATCH_EPOCH + WATCH_SECONDS))
+  if [[ "$BASH_COMMAND" == MAIL_DUE=* && -z "${_mail_clock_paused:-}" ]]; then
+    _mail_clock_paused=1
+    "$STUB_REAL_SLEEP" 1
+  fi
 fi' DEBUG
 EOF
 mail_idle_run() { # CASE [WATCH]
@@ -1177,6 +1183,11 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/idle-mutant/github"
 mutate_file "$IDLE_MUTANT" 'MAIL_DUE=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))' 'MAIL_DUE=$PASS_NOW'
 mail_idle_run mail_cadence_slow_host_control "$IDLE_MUTANT"
 assert_eq "$MAIL_IDLE" 0 'control: the base cadence starts the next read at once after an overrun' "$STUB_DIR/idle.err"
+SHORT_IDLE_MUTANT="$(mutant_scripts short-idle-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/short-idle-mutant/github"
+mutate_file "$SHORT_IDLE_MUTANT" 'MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))' 'MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL - 1))'
+mail_idle_run mail_cadence_slow_host_short_control "$SHORT_IDLE_MUTANT"
+assert_eq "$MAIL_IDLE" 1 'control: a shortened cadence waits one second less than the full interval' "$STUB_DIR/idle.err"
 
 # A completed long pass owes a final full read before the heartbeat. Hold the
 # first wait on its completion file so no ordinary mail deadline can cause
