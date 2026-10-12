@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # `workflow-state fleet-log takeover|audit`: the fleet log's two readers. The
-# takeover read is exactly the last ORCH_TAKEOVER_ROWS rows but cycle rows, the audit read
+# takeover read is exactly the last ORCH_TAKEOVER_ROWS rows but cycle and token rows, the audit read
 # every proposal and ruling row and no other kind, and any other reader is
 # refused.
 
@@ -88,6 +88,32 @@ csd="$TMP_ROOT/cycle-state"
 got="$(ORCH_TAKEOVER_ROWS=2 "$WS" --state-dir "$csd" fleet-log takeover | jq -rs 'map(.item) | join(",")')"
 [[ "$got" == "KEN-0,KEN-1" ]] && pass "takeover reads the last rows but the cycle rows" \
   || fail "takeover reads the last rows but the cycle rows" "got=$got"
+
+tsd="$TMP_ROOT/token-state"
+"$WS" --state-dir "$tsd" init oversee >/dev/null
+for kind in ruling ruling cycle token token token; do
+  printf '{"kind":"%s","item":"member","text":"event"}\n' "$kind" > "$TMP_ROOT/row.json"
+  "$WS" --state-dir "$tsd" append-file oversee fleet_log "$TMP_ROOT/row.json"
+done
+token_window() {
+  local got
+  got="$(ORCH_TAKEOVER_ROWS=2 "$1" --state-dir "$tsd" fleet-log takeover | jq -rs 'map(.kind) | join(",")')" || return 1
+  [[ "$got" == ruling,ruling ]]
+}
+token_window "$WS" && pass "token events leave earlier rulings in the takeover window" \
+  || fail "token events leave earlier rulings in the takeover window"
+got="$("$WS" --state-dir "$tsd" fleet-log audit | jq -rs 'map(.kind) | join(",")')"
+[[ "$got" == ruling,ruling ]] && pass "audit leaves out token and cycle rows" \
+  || fail "audit leaves out token and cycle rows" "got=$got"
+NO_TOKEN_FILTER="$(mutant_scripts no-token-filter workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_TOKEN_FILTER" 'select(.kind != "cycle" and .kind != "token")' 'select(.kind != "cycle")'
+got="$(ORCH_TAKEOVER_ROWS=2 "$NO_TOKEN_FILTER" --state-dir "$tsd" fleet-log takeover | jq -rs 'map(.kind) | join(",")')"
+[[ "$got" == token,token ]] || fail "control reaches token rows" "got=$got"
+if token_window "$NO_TOKEN_FILTER"; then
+  fail "control: the token window assertion rejects the missing token filter"
+else
+  pass "control: the token window assertion rejects the missing token filter"
+fi
 
 got="$("$WS" --state-dir "$sd" fleet-log audit | jq -rs 'map(.kind) | unique | join(",")')"
 count="$("$WS" --state-dir "$sd" fleet-log audit | jq -s 'length')"
