@@ -17,7 +17,7 @@ export MSYS=winsymlinks:nativestrict
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-unset WORKTREE_SETUP_CMD
+unset WORKTREE_SETUP_CMD WORKTREE_TEST_PR_HEAD
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
@@ -48,7 +48,13 @@ assert_eq() {
 # command returns, so a manager the command forked and did not wait for is
 # outside this suite; create has no such path.
 mkdir -p "$TMP_ROOT/bin"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
+cat >"$TMP_ROOT/bin/gh" <<'GH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}:${2:-}" == pr:view && -n "${WORKTREE_TEST_PR_HEAD:-}" ]]; then
+  printf 'feature\t%s\tfalse\n' "$WORKTREE_TEST_PR_HEAD"
+fi
+GH
 chmod +x "$TMP_ROOT/bin/gh"
 # shellcheck disable=SC2016
 for pm in npm pnpm yarn bun corepack npx; do
@@ -392,6 +398,53 @@ while IFS='|' read -r mode command rc calls out err stash consumer; do
   setup_row "$mode" "$command" "$rc" "$calls" "$out" "$err" "$stash" "$consumer"
 done <<<"$SETUP_ROWS"
 
+hosted_recovery_row() {
+  local route="$1" command="" mode=success stash=no git_dir="" record=missing
+  SETUP_CASE_SERIAL=$((SETUP_CASE_SERIAL + 1))
+  build "hosted-$route-$SETUP_CASE_SERIAL" repo
+  setup_fixture success
+  WT="$ROOT/.worktrees/repo/lane"
+  printf 'export SETUP_TEST_EXIT="1"\n' >"$MAIN/.env.local"
+  case "$route" in
+    branch) command='create issue-setup feature --hosted' ;;
+    from) command='create issue-setup feature --hosted --from main' ;;
+    base|pr)
+      git -C "$MAIN" branch feature
+      git -C "$MAIN" push -q origin feature
+      if [[ "$route" == pr ]]; then
+        WORKTREE_TEST_PR_HEAD="$(git -C "$MAIN" rev-parse feature)"
+        export WORKTREE_TEST_PR_HEAD
+        command='create issue-setup --hosted --pr 1'
+      else
+        command='create issue-setup --hosted --base feature'
+      fi
+      ;;
+    transfer)
+      git -C "$MAIN" checkout -q -b feature
+      printf 'preserved\n' >"$MAIN/base.txt"
+      printf 'staged\n' >"$MAIN/staged.txt"
+      git -C "$MAIN" add staged.txt
+      printf 'untracked\n' >"$MAIN/untracked.txt"
+      command='create issue-setup --hosted --transfer feature'
+      mode=transfer stash=yes
+      ;;
+  esac
+  assert_eq "$(setup_result "$mode" "$command")" \
+    'rc=1 out= err=worktree-setup-command-failed: path=<root>/.worktrees/repo/lane status=1 calls=1 marker=ok registered=yes stash='"$stash"' preserved=yes consumer=a7f4c9;b1d8e2' "$route: failed hosted setup keeps its files"
+  git_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  [[ ! -f "$git_dir/kendex-issue" ]] || record="$(cat "$git_dir/kendex-issue")"
+  assert_eq "$record" issue-setup "$route: failed hosted setup keeps its issue identity"
+  printf 'export SETUP_TEST_EXIT="0"\n' >"$MAIN/.env.local"
+  assert_eq "$(setup_result "$mode" 'create issue-setup --hosted --reuse')" \
+    'rc=0 out=<root>/.worktrees/repo/lane err=worktree-reuse-dirty: <root>/.worktrees/repo/lane calls=2 marker=ok registered=yes stash='"$stash"' preserved=yes consumer=a7f4c9;b1d8e2' "$route: hosted reuse retries setup in the retained tree"
+  assert_eq "$(git -C "$WT" branch --show-current)" feature "$route: hosted retry preserves its non-issue branch"
+  unset WORKTREE_TEST_PR_HEAD
+}
+echo '=== hosted setup recovery on non-issue branches ==='
+for route in branch from base pr transfer; do
+  hosted_recovery_row "$route"
+done
+
 # Mutants stay outside the worktree and install the bounded-runner dependency
 # beside the copied package. The same rows must reject each planted defect.
 setup_control() {
@@ -405,7 +458,10 @@ setup_control() {
   awk -v needle="$needle" -v replacement="$replacement" '{ if (index($0, needle)) print replacement; else print }' "$mutant" >"$copy/changed"
   cmp -s "$mutant" "$copy/changed" && { echo 'FIXTURE: setup mutation changed nothing' >&2; exit 2; }
   cat "$copy/changed" >"$mutant"
-  if (TMP_ROOT="$copy/rows"; ORIGINAL_WORKTREE_SCRIPT="$mutant"; PASS=0; FAIL=0; setup_row "$mode" 'create issue-setup' "$rc" "$calls" "$out" "$err" no; [[ "$FAIL" -gt 0 ]]); then
+  if (TMP_ROOT="$copy/rows"; ORIGINAL_WORKTREE_SCRIPT="$mutant"; PASS=0; FAIL=0
+      if [[ "$mode" == hosted-recovery ]]; then hosted_recovery_row from
+      else setup_row "$mode" 'create issue-setup' "$rc" "$calls" "$out" "$err" no; fi
+      [[ "$FAIL" -gt 0 ]]); then
     PASS=$((PASS + 1)); printf '  ok    must-fail: %s\n' "$name"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  must-fail: %s\n' "$name"
@@ -417,6 +473,7 @@ setup_control discarded-output \
   '  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >&2 || status=$?' \
   '  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >/dev/null 2>&1 || status=$?' \
   success 0 1 path -
+setup_control lost-identity 'record_worktree_issue "$wt" "$issue" || return 1' '      :' hosted-recovery 0 0 - -
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

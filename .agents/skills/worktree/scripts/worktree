@@ -1234,8 +1234,8 @@ issue_branch_name() { # ISSUE [OUT_VAR]
 # private git dir. It is the one route from an issue ID to a hosted tree that
 # does not go through HEAD: the hosted path carries no issue ID, and a paused
 # restack leaves the tree detached, so its branch is not registered to it.
-# Its presence is also how the worktree-session-claim hook knows `create`
-# returned the tree, without running this script.
+# Its presence also lets worktree-session-claim recognize a tree associated
+# with an issue, including one whose configured setup needs a retry.
 readonly WORKTREE_ISSUE_RECORD="kendex-issue"
 
 record_worktree_issue() { # WT ISSUE
@@ -1490,7 +1490,7 @@ materialize_worktree_claim() {
 # app-specific; it is the same setup `create` applies once git has made the
 # worktree, which is why both entry points share it.
 setup_app_worktree() {
-  local wt="$1" checkout="${2:-true}" command_requested="${3:-false}"
+  local wt="$1" checkout="${2:-true}" command_requested="${3:-false}" issue="${4:-}"
 
   # Push guards read the index; --no-checkout leaves it empty. Initialize
   # that metadata without writing the source files a cloud claim never uses.
@@ -1507,6 +1507,11 @@ setup_app_worktree() {
   # still gets a fully provisioned worktree.
   if [[ "$checkout" == true ]]; then install_worktree_autorepair_hooks; fi
   if [[ "$checkout" == true && "$command_requested" == true ]]; then
+    # A hosted tree's branch can differ from its issue. Retained setup
+    # failures need this identity before a reuse attempt can find them.
+    if [[ -n "${WORKTREE_SETUP_CMD:-}" && -n "$issue" ]]; then
+      record_worktree_issue "$wt" "$issue" || return 1
+    fi
     run_worktree_setup_command "$wt" || return 1
   fi
   return 0
@@ -3163,7 +3168,7 @@ case "${1:-}" in
         fi
       fi
       release_issue_claim_lock
-      setup_app_worktree "$WT_PATH" true true
+      setup_app_worktree "$WT_PATH" true true "$ISSUE"
       if [[ -n "$TRANSFER_STASH" && "$(git -C "$WT_PATH" rev-parse --verify refs/stash 2>/dev/null || true)" == "$TRANSFER_STASH" ]]; then
         git -C "$WT_PATH" stash drop 'stash@{0}' >/dev/null 2>&1 || \
           worktree_message transfer-stash-kept "$TRANSFER_STASH" "Warning: transfer succeeded, but its recovery stash could not be removed." >&2
@@ -3198,7 +3203,7 @@ case "${1:-}" in
       mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
       release_issue_claim_lock
-      setup_app_worktree "$WT_PATH" "$CHECKOUT" true
+      setup_app_worktree "$WT_PATH" "$CHECKOUT" true "$ISSUE"
       report_created_worktree
       exit 0
     fi
@@ -3293,7 +3298,7 @@ case "${1:-}" in
       fi
     fi
 
-    setup_app_worktree "$WT_PATH" "$CHECKOUT" true
+    setup_app_worktree "$WT_PATH" "$CHECKOUT" true "$ISSUE"
     report_created_worktree
     ;;
 
