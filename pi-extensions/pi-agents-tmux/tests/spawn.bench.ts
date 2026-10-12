@@ -4,10 +4,10 @@
 // deadline and kill escalation.
 import assert from "node:assert/strict";
 import { execCapture } from "../extensions/subagent/pane.js";
-import { cleanupTempRuntimes, importMainRuntime, tempRuntime } from "./browser-fixture.js";
+import { allocateTempRuntime, cleanupTempRuntimes, importMainRuntime } from "./browser-fixture.js";
 
 async function spawnMeasurement(capture: typeof execCapture) {
-	const root = tempRuntime();
+	const root = allocateTempRuntime();
 	// Real time measures process launch, deadline and OS reap. Main's unbounded
 	// capture needs the faux bridge's finite lifetime to finish without a bench-owned kill.
 	const script = 'process.on("SIGTERM", () => {}); console.log(process.pid); setTimeout(() => console.log("natural-exit"), 2000)';
@@ -23,7 +23,7 @@ async function spawnMeasurement(capture: typeof execCapture) {
 }
 
 try {
-	const main = await importMainRuntime();
+	const main = await importMainRuntime(undefined, allocateTempRuntime);
 	const before = await spawnMeasurement(main.pane.execCapture);
 	const after = await spawnMeasurement(execCapture);
 	console.log(`spawn-benchmark ${JSON.stringify({ main: main.ref, before, after, deadlineMs: 200 })}`);

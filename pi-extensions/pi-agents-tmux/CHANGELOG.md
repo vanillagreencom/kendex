@@ -9,7 +9,7 @@
 
 #### Fixed
 
-- Test runtime directories are removed after each test, pass or fail, so leaked fixtures no longer eject unrelated pull requests from the merge queue.
+- Test runtime directories are removed after each test, pass or fail, so leaked fixtures no longer eject unrelated pull requests from the merge queue. The standalone spawn benchmark keeps its runtime directories until its final cleanup.
 - Subagent model resolution sends the active registry through stdin, so large registries no longer block every spawn with `E2BIG`.
 
 ### 3.4.0

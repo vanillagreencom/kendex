@@ -20,7 +20,7 @@ import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import type { TaskRegistryReader } from "../extensions/subagent/task-records.js";
 import { patchTaskRecordUsage } from "../extensions/subagent/index.js";
 
-export { cleanupTempRuntimes, tempRuntime, writeSettings } from "./single-agent-fixture.js";
+export { allocateTempRuntime, cleanupTempRuntimes, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 
 export const ABSENT = "ABSENT";
 
@@ -162,14 +162,14 @@ export async function assertMissingArtifactStatus(runtime: typeof import("../ext
 export const BENCHMARK_BASELINE = "f8b9eff8b1aaf7c8698fdead68c00f6eb7c12382";
 
 /** Load baseline components from git objects without changing a checkout. */
-export async function importMainRuntime(repo = resolve(import.meta.dir, "../../..")): Promise<{
+export async function importMainRuntime(repo = resolve(import.meta.dir, "../../.."), allocateRuntime: () => string = tempRuntime): Promise<{
 	pane: typeof import("../extensions/subagent/pane.js");
 	dispatch: typeof import("../extensions/subagent/dispatch.js");
 	runner: typeof import("../extensions/subagent/runner.js");
 	config: typeof import("../extensions/subagent/package-config.js");
 	ref: string;
 }> {
-	const root = tempRuntime();
+	const root = allocateRuntime();
 	const env = { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root };
 	const ref = execFileSync("git", ["rev-parse", `${BENCHMARK_BASELINE}^{commit}`], { cwd: repo, env, encoding: "utf8" }).trim();
 	const archive = execFileSync("git", ["archive", ref, "pi-extensions/pi-agents-tmux/extensions", "pi-extensions/pi-agents-tmux/scripts", "pi-extensions/pi-agents-tmux/package.json"], { cwd: repo, env, maxBuffer: 16 * 1024 * 1024 });

@@ -37,12 +37,18 @@ export function withModelFixtureCapture(capture: NonNullable<Parameters<typeof i
 }
 
 export function tempRuntime(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-agents-lanes-"));
-	tempRuntimeDirs.add(dir);
+	const dir = allocateTempRuntime();
 	onTestFinished(() => {
 		rmSync(dir, { force: true, recursive: true });
 		tempRuntimeDirs.delete(dir);
 	});
+	return dir;
+}
+
+/** Standalone benchmarks release these allocations through cleanupTempRuntimes. */
+export function allocateTempRuntime(): string {
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-lanes-"));
+	tempRuntimeDirs.add(dir);
 	return dir;
 }
 
