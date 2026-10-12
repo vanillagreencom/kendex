@@ -153,9 +153,9 @@ assert_eq "$rc" 0 "a Write outside any repository passes"
 run_tool reviewer-test Write file_path "$SCRATCH/deeper/not/yet/fixture.rs"
 assert_eq "$rc" 0 "a Write under directories that do not exist yet, outside any repository, passes"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Write","tool_input":{"content":"x"}}'
-assert_eq "$rc" 0 "a Write naming no file_path is refused"
+assert_eq "$rc" 0 "a Write naming no file_path warns"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Write","tool_input":{"file_path":7}}'
-assert_eq "$rc" 0 "a file_path that is not a string is refused"
+assert_eq "$rc" 0 "a file_path that is not a string warns"
 
 echo "reviewer-read-only: a reviewer commits and pushes nothing"
 for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO commit -am x" \
@@ -165,7 +165,7 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-write" "refused: $cmd"
 done
 for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'git stash' 'git stash pop' \
- 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
+  'git stash list' 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-discard" "refused: $cmd"
   for agent in dev ''; do
@@ -174,7 +174,7 @@ for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'gi
   done
 done
 
-for cmd in 'git stash list' 'git log --grep=reset' 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
+for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
   'echo committed' 'grep -rn "git push" docs/' 'git rev-list --count HEAD' 'git worktree list'; do
   run_tool reviewer-security Bash command "$cmd"
@@ -183,16 +183,16 @@ done
 run_payload '{"agent_type":"reviewer-security","tool_name":"Bash","tool_input":{}}'
 assert_eq "$rc" 0 "a Bash payload naming no command passes"
 run_payload '{"agent_type":"reviewer-security","tool_name":"Bash","tool_input":{"command":["git","commit"]}}'
-assert_eq "$rc" 0 "a command that is not a string is refused"
+assert_eq "$rc" 0 "a command that is not a string warns"
 
 echo "reviewer-read-only: a payload it cannot read refuses"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Edit"'
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: payload=invalid-json" \
   "a truncated JSON payload refuses rather than skipping the guard"
 run_payload '{"agent_type":["reviewer-test"],"tool_name":"Edit"}'
-assert_eq "$rc" 0 "an agent_type that is not a string refuses"
+assert_eq "$rc" 0 "an agent_type that is not a string warns"
 run_payload '{"agent_type":"reviewer-test","tool_name":false}'
-assert_eq "$rc" 0 "a tool_name that is not a string refuses"
+assert_eq "$rc" 0 "a tool_name that is not a string warns"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Read","tool_input":{"file_path":"x"}}'
 assert_eq "$rc" 0 "a tool the hook does not judge passes"
 
@@ -217,8 +217,13 @@ assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read the repository confi
 echo "reviewer-read-only: without the tools it runs"
 # One world per declared dependency, each holding every other tool and not
 # that one: the refusal names the missing tool and nothing is judged without
-# it. A row per tool is what keeps the inventory honest — an absent jq does
+# it. A row per tool is what keeps the inventory honest — an absent grep does
 # not stall this hook, it passes the call through.
+# The shared payload runner measures the hook, not an early-closing pipe.
+. "$TEST_DIR/lib/payload-rows.sh"
+PAYLOAD_ROOT="$TMP_ROOT"
+PAYLOAD_PREFIX='reviewer-read-only: '
+PAYLOAD_BASH="$BASH_BIN"
 tools_table() { # TOOLS
   local tool other bin before=$((PASS + FAIL))
   for tool in $1; do
@@ -231,11 +236,10 @@ tools_table() { # TOOLS
       [ -n "$real" ] && [ -x "$real" ] || continue
       ln -sf "$real" "$bin/$other"
     done
-    run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
-    warnings=$(grep -c '^reviewer-read-only: ' "$ERR_FILE") || warnings=0
-    assert_eq "$warnings" 1 "without $tool the call warns once"
-    assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: missing-tools=$tool" \
-      "without $tool the call is refused, and the value names it"
+    got=$(payload_run "$HOOK" "$PWD" "$bin" '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}')
+    assert_eq "$got" "rc=0 first=missing-tools=$tool" \
+      "without $tool the call warns, and the value names it"
+    assert_eq "$(grep -cF -- "$PAYLOAD_PREFIX" "$TMP_ROOT/stderr")" 1 "without $tool warns once"
   done
   # A world holding none of them: the value is the whole list, in check order.
   # A row per tool cannot see an accumulator that overwrites instead of
@@ -243,93 +247,13 @@ tools_table() { # TOOLS
   bin="$TMP_ROOT/without-everything"
   rm -rf -- "$bin"
   mkdir -p "$bin"
-  run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
-  assert_eq "rc=$rc first=$(first_line)" "rc=0 first=reviewer-read-only: missing-tools=${1// /,}" \
+  got=$(payload_run "$HOOK" "$PWD" "$bin" '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}')
+  assert_eq "$got" "rc=0 first=missing-tools=${1// /,}" \
     "with none of them the value is the whole list, in check order"
+  assert_eq "$(grep -cF -- "$PAYLOAD_PREFIX" "$TMP_ROOT/stderr")" 1 "without all tools warns once"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
-tools_table "jq git cat dirname"
-# The shared reader is present in every disposable hook installation.
-ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
-run_hook() { run_tool reviewer-quality Bash command "$1"; }
-. "$TEST_DIR/lib/assert.sh"
-command_position_rows() {
-  first_table 'real git write|command|2|reviewer-read-only: refused=git-write|git commit -m x
-real git discard|command|2|reviewer-read-only: refused=git-discard|git reset --hard
-git stash list reads|command|0|-|git stash list
-quoted git text|command|0|-|echo '\''git commit; git reset --hard'\''
-git log text|command|0|-|git log --grep='\''git reset --hard'\''
-git heredoc data|command|0|-|cat <<'\''EOF'\''\ngit commit\ngit reset --hard\nEOF
-else command|command|2|reviewer-read-only: refused=git-write|if true; then true; else git commit -m x; fi
-brace command|command|2|reviewer-read-only: refused=git-write|{ git commit -m x; }
-timeout command|command|2|reviewer-read-only: refused=git-write|timeout 5 git commit -m x
-prefixed shell body|command|2|reviewer-read-only: refused=git-discard|true; bash <<EOF\ngit reset --hard\nEOF
-pipeline shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | bash\ngit reset --hard\nEOF
-prefixed data body|command|0|-|true; cat <<EOF\ngit reset --hard\nEOF
-pipeline data body|command|0|-|cat <<EOF | cat\ngit reset --hard\nEOF
-last shell body|command|2|reviewer-read-only: refused=git-discard|bash <<FIRST <<SECOND\ntrue\nFIRST\ngit reset --hard\nSECOND
-grouped shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (bash)\ngit reset --hard\nEOF
-redirection-first shell body|command|2|reviewer-read-only: refused=git-discard|<<EOF bash\ngit reset --hard\nEOF
-source-stdin shell body|command|2|reviewer-read-only: refused=git-discard|bash -c "source /dev/stdin" <<EOF\ngit reset --hard\nEOF
-remote shell body|command|2|reviewer-read-only: refused=git-discard|ssh host "bash -s" <<EOF\ngit reset --hard\nEOF
-later find action|command|2|reviewer-read-only: refused=git-discard|find . -exec echo {} + -exec sh -c "git reset --hard" sh {} +
-later find data|command|0|-|find . -exec echo {} + -exec echo "git reset --hard" {} +
-multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ngit reset --hard\nFIRST\ngit reset --hard\nSECOND
-grouped later shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (echo x; bash)\ngit reset --hard\nEOF
-grouped later brace body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | { echo x; bash; }\ngit reset --hard\nEOF
-grouped data guarded text|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (cat)\ngit reset --hard\nEOF
-pipe-and body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF |\0046 bash\ngit reset --hard\nEOF
-pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "git reset --hard"\nEOF
-redirection ampersand body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF 2>&1 | bash\ngit reset --hard\nEOF
-redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "git reset --hard"\nEOF
-backtick receiver body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | sed `x` | bash\ngit reset --hard\nEOF
-backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "git reset --hard"\nEOF
-lifted substitution receiver body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | cat "$(x)" | bash\ngit reset --hard\nEOF
-lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "git reset --hard"\nEOF
-process substitution receiver body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF > >(bash)\ngit reset --hard\nEOF
-process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "git reset --hard"\nEOF
-quoted find terminators|command|2|reviewer-read-only: refused=git-discard|find . -exec echo {} ";" -exec git reset --hard {} ";"
-quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "git reset --hard" {} ";"
-pending shell receiver|command|2|reviewer-read-only: refused=git-discard|cat <<'\''EOF'\'' |\ngit reset --hard\nEOF\nbash
-pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
-'
-}
-command_position_rows
-skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real git write'
-delivered_reader_rows() {
-  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' 'reviewer-read-only: refused=git-write'
-}
-delivered_reader_rows
-skill_load_control native-reader-lookup "$HOOK" \
-  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
-  '    case "$candidate" in */../../skills/*) continue ;; esac' \
-  HOOK delivered_reader_rows 'native-copy delivered reader'
-skill_load_control shared-reader-lookup "$HOOK" \
-  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
-  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
-  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
-
-. "$TEST_DIR/lib/process-count.sh"
-process_count_setup "$TMP_ROOT"
-reviewer_cost_rows() {
-  local command payload status
-  while IFS= read -r command; do
-    payload=$(jq -nc --arg c "$command" '{agent_type:"reviewer-perf",tool_name:"Bash",tool_input:{command:$c}}')
-    process_count_reset
-    status=0
-    env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$BASH_BIN" "$HOOK" \
-      <<<"$payload" >/dev/null 2>"$ERR_FILE" || status=$?
-    printf 'cost reviewer-read-only grep=%s processes=%s\n' "$(process_count_command grep)" "$(process_count_total)"
-    assert_eq "rc=$status grep=$(process_count_command grep) first=$(first_line)" 'rc=0 grep=0 first=-' "reviewer regex cost: $command"
-  done <<'COSTS'
-git status
-if rm "$X"; then echo done; fi
-COSTS
-}
-reviewer_cost_rows
-skill_load_control regex-processes "$HOOK" '      [ -n "$selected" ] || continue' \
-  '      grep -E -- "$GIT_WRITE" <<<"$selected" >/dev/null || :' \
-  HOOK reviewer_cost_rows 'reviewer regex cost: git status' 'reviewer regex cost: if rm "$X"; then echo done; fi'
+tools_table "jq git cat grep dirname"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

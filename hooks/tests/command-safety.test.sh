@@ -48,22 +48,6 @@ else
   printf 'FAIL payload read cost: exit=%s jq=%s\n' "$cost_status" "$jq_count"
   failed=$((failed + 1))
 fi
-# The shipped reader control-prefix fixture has several executable selections.
-# Its matching cost must stay the same as the single git-status command.
-single_grep=$(process_count_command grep)
-process_count_reset
-compound_payload=$(jq -nc --arg cwd "$repo" '{tool_input:{command:"if rm \"$X\"; then echo done; fi"},cwd:$cwd}')
-compound_status=0
-env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$BASH" "$hook" \
-  <<<"$compound_payload" >"$scratch/compound.out" 2>"$scratch/compound.err" || compound_status=$?
-compound_grep=$(process_count_command grep)
-printf 'cost command-safety compound-grep=%s single-grep=%s processes=%s\n' "$compound_grep" "$single_grep" "$(process_count_total)"
-if [ "$compound_status" -eq 0 ] && [ "$compound_grep" -eq "$single_grep" ]; then
-  passed=$((passed + 1))
-else
-  printf 'FAIL compound regex cost: exit=%s compound=%s single=%s\n' "$compound_status" "$compound_grep" "$single_grep"
-  failed=$((failed + 1))
-fi
 if [ "${1:-}" = --cost-row ]; then
   [ "$failed" -eq 0 ]
   exit
@@ -82,22 +66,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   else
     failed=$((failed + 1))
     printf 'FAIL duplicate payload read control: exit=%s\n' "$control_status"
-  fi
-fi
-if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  cost_mutant="$scratch/per-segment-regex.sh"
-  awk '/^  selections=\$selections\$COMMAND_TEXTS/ {
-    print; print "  LC_ALL=C grep -E -- \"^($pattern)\" <<<\"$COMMAND_TEXTS\" >/dev/null || :"; changed++; next
-  } { print } END { if (changed != 1) exit 1 }' "$hook_source" >"$cost_mutant" || exit 1
-  cmp -s -- "$hook_source" "$cost_mutant" && exit 1
-  control_status=0
-  env -i "HOME=$HOME" "PATH=$PATH" "HOOK_UNDER_TEST=$cost_mutant" "$BASH" "${BASH_SOURCE[0]}" --cost-row \
-    >"$scratch/per-segment-regex.log" 2>&1 || control_status=$?
-  if [ "$control_status" -eq 1 ] && grep -q '^FAIL compound regex cost:' "$scratch/per-segment-regex.log"; then
-    passed=$((passed + 1))
-  else
-    printf 'FAIL per-segment regex control: exit=%s\n' "$control_status"
-    failed=$((failed + 1))
   fi
 fi
 # `first` is line 1, the contract: the hook captures what a command it ran
@@ -193,8 +161,8 @@ cat >"$repo/kendex.settings.toml" <<'RAW_POLICY'
 [env]
 COMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS.$"
 RAW_POLICY
-check 0 $'printf \'%s\' \'BLOCK_THIS\\\nTAIL\'' 'raw quoted continuation'
-assert_first '-' 'quoted data passes silently'
+check 2 $'printf \'%s\' \'BLOCK_THIS\\\nTAIL\'' 'raw quoted continuation'
+assert_first 'command-safety: refused=policy' 'raw quoted data reaches the policy key'
 settings
 
 # A fresh install has no settings line, or no settings file at all; the
@@ -364,7 +332,7 @@ check 0 'qs -c vshell' 'policy is configured, not tied to Quickshell'
 check 2 'other-command' 'a different project policy takes effect'
 assert_first 'command-safety: refused=policy' 'a command the policy matches names the policy'
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$repo/kendex.settings.toml"
-check 0 "printf '%s' 'BLOCK_THIS'" 'matching quoted text passes'
+check 2 "printf '%s' 'BLOCK_THIS'" 'matching quoted text is refused'
 check 0 'git status' 'a command outside the policy passes'
 assert_first - 'a command it allows says nothing at all'
 
@@ -472,46 +440,6 @@ run_hook() {
   rc=0
   "$BASH" "$HOOK" <<<"$payload" >/dev/null 2>"$ERR_FILE" || rc=$?
 }
-command_position_rows() {
-  first_table 'real policy command|command|2|command-safety: refused=policy|qs -c vshell
-quoted policy text|command|0|-|echo "qs -c vshell"
-policy heredoc data|command|0|-|cat <<"EOF"\nqs -c vshell\nEOF
-else command|command|2|command-safety: refused=policy|if true; then true; else qs -c vshell; fi
-brace command|command|2|command-safety: refused=policy|{ qs -c vshell; }
-timeout command|command|2|command-safety: refused=policy|timeout 5 qs -c vshell
-prefixed shell body|command|2|command-safety: refused=policy|true; bash <<EOF\nqs -c vshell\nEOF
-pipeline shell body|command|2|command-safety: refused=policy|cat <<EOF | bash\nqs -c vshell\nEOF
-prefixed data body|command|0|-|true; cat <<EOF\nqs -c vshell\nEOF
-pipeline data body|command|0|-|cat <<EOF | cat\nqs -c vshell\nEOF
-last shell body|command|2|command-safety: refused=policy|bash <<FIRST <<SECOND\ntrue\nFIRST\nqs -c vshell\nSECOND
-grouped shell body|command|2|command-safety: refused=policy|cat <<EOF | (bash)\nqs -c vshell\nEOF
-redirection-first shell body|command|2|command-safety: refused=policy|<<EOF bash\nqs -c vshell\nEOF
-source-stdin shell body|command|2|command-safety: refused=policy|bash -c "source /dev/stdin" <<EOF\nqs -c vshell\nEOF
-remote shell body|command|2|command-safety: refused=policy|ssh host "bash -s" <<EOF\nqs -c vshell\nEOF
-later find action|command|2|command-safety: refused=policy|find . -exec echo {} + -exec sh -c "qs -c vshell" sh {} +
-later find data|command|0|-|find . -exec echo {} + -exec echo "qs -c vshell" {} +
-multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nqs -c vshell\nFIRST\nqs -c vshell\nSECOND
-grouped later shell body|command|2|command-safety: refused=policy|cat <<EOF | (echo x; bash)\nqs -c vshell\nEOF
-grouped later brace body|command|2|command-safety: refused=policy|cat <<EOF | { echo x; bash; }\nqs -c vshell\nEOF
-grouped data guarded text|command|2|command-safety: refused=policy|cat <<EOF | (cat)\nqs -c vshell\nEOF
-pipe-and body|command|2|command-safety: refused=policy|cat <<EOF |\0046 bash\nqs -c vshell\nEOF
-pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "qs -c vshell"\nEOF
-redirection ampersand body|command|2|command-safety: refused=policy|cat <<EOF 2>&1 | bash\nqs -c vshell\nEOF
-redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "qs -c vshell"\nEOF
-backtick receiver body|command|2|command-safety: refused=policy|cat <<EOF | sed `x` | bash\nqs -c vshell\nEOF
-backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "qs -c vshell"\nEOF
-lifted substitution receiver body|command|2|command-safety: refused=policy|cat <<EOF | cat "$(x)" | bash\nqs -c vshell\nEOF
-lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "qs -c vshell"\nEOF
-process substitution receiver body|command|2|command-safety: refused=policy|cat <<EOF > >(bash)\nqs -c vshell\nEOF
-process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "qs -c vshell"\nEOF
-quoted find terminators|command|2|command-safety: refused=policy|find . -exec echo {} ";" -exec qs -c vshell {} ";"
-quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "qs -c vshell" {} ";"
-pending shell receiver|command|2|command-safety: refused=policy|cat <<'\''EOF'\'' |\nqs -c vshell\nEOF\nbash
-pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
-'
-}
-command_position_rows
-skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real policy command'
 # Env::global_skills_dir and the harness adapters emit these installed roots.
 # One table covers native, shared, relocated, partial and unavailable support.
 global_reader_rows() {
@@ -542,7 +470,6 @@ global_reader_rows() {
     # A damaged installed support file, including a missing nested import,
     # must report one advisory key rather than a raw shell diagnostic.
     case "$state" in
-      syntax) printf 'if (\n' >"$home/$library/commit-guards/scripts/lib/command-position.sh" ;;
       return-two) printf 'return 2\n' >"$home/$library/commit-guards/scripts/lib/settings.sh" ;;
       exit-two) printf '%s\n' 'echo support-cause=installed-error >&2' 'exit 2' >"$home/$library/commit-guards/scripts/lib/common.sh" ;;
       nested-absent) rm "$home/$library/commit-guards/scripts/lib/paths.sh" ;;
@@ -558,7 +485,7 @@ global_reader_rows() {
     if [ "$state" = exit-two ]; then
       assert_eq "$(grep -c '^  support-cause=installed-error$' "$ERR_FILE")" 1 "$label replays cause"
     fi
-    case "$state" in syntax | return-two | exit-two | nested-absent)
+    case "$state" in return-two | exit-two | nested-absent)
       assert_eq "$(grep -c '^command-safety: ' "$ERR_FILE")" 1 "$label warns once" ;;
     esac
   done <<'LAYOUTS'
@@ -578,7 +505,6 @@ copilot-relocated-shared|relocated/copilot/hooks|.agents/skills|present|2|refuse
 partial-native|.codex/hooks|.agents/skills|partial|2|refused=default-policy
 absent-global|.codex/hooks|.agents/skills|absent|0|settings=no-loader
 bad-setting|.codex/hooks|.agents/skills|bad-setting|0|settings=unreadable
-reader-syntax|.codex/hooks|.agents/skills|syntax|0|support=unreadable
 settings-return|.codex/hooks|.agents/skills|return-two|0|support=unreadable
 common-exit|.codex/hooks|.agents/skills|exit-two|0|support=unreadable
 nested-absent|.codex/hooks|.agents/skills|nested-absent|0|support=unreadable
@@ -590,7 +516,6 @@ skill_load_control global-reader "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/c
 skill_load_control loader-boundary "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
   'lib="$root/.agents/skills/commit-guards/scripts/lib"' HOOK global_reader_rows 'absent-global project loader boundary'
 skill_load_control support-state "$HOOK" 'loading="$lib/common.sh"' 'loading=""' HOOK global_reader_rows 'common-exit installed reader' 'common-exit warns once'
-skill_load_control support-diagnostics "$HOOK" 'loading="$lib/command-position.sh"' 'source "$lib/command-position.sh" || refuse support unreadable "$loading"' HOOK global_reader_rows 'reader-syntax installed reader'
 skill_load_control support-cause "$HOOK" 'cause="$cause
   $detail"' 'cause=$loading' HOOK global_reader_rows 'common-exit replays cause'
 failed=$((failed + FAIL))

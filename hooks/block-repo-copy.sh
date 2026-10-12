@@ -4,9 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a copy (cp, rsync, tar, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
-# summary: Stops executable copies of .git or target into temporary folders. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-repo-copy: <key>=<value>.
-# requires-skills: [commit-guards]
+# summary: Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.
+# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not. Every refusal opens with `block-repo-copy: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
 
 set -euo pipefail
@@ -88,20 +87,65 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# Resolve only this hook's installed dependency, never a payload-selected path.
-reader=""
-for candidate in "${BASH_SOURCE[0]%/*}/../skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../skills/commit-guards/scripts/lib/command-position.sh" \
-  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do
-  if [ -f "$candidate" ]; then reader=$candidate; break; fi
-done
-[ -n "$reader" ] || refuse reader unavailable
-# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
-source "$reader" 2>/dev/null || refuse reader unreadable
-# The tar create-to-extract pipeline retains its destination.
+# The whole rule, in the order the words stand: a copy verb, then a word whose
+# last path component is `.git` or `target`, then a destination under a temp
+# root. ENDERS says where one command ends and the next begins. How far a scan
+# may REACH once inside one is the separate question RUN and GAP answer, and
+# both are derived from ENDERS, so the two answers cannot drift apart:
+#
+#   ENDERS    the characters that END one command here: `;`, `&` and a
+#             newline. The pipe is deliberately NOT one of them, because
+#             `tar -cf - SRC | tar -xf - -C DEST` is one copy written across a
+#             pipe and the scan has to reach the destination on its far side.
+#   CROSSABLE any character but ENDERS — the ordinary text a scan crosses to
+#             get from one part of the copy to the next.
+#   JOIN      the two newlines that do NOT end a command: one a backslash
+#             escapes, and one standing after a pipe. Each binds the words on
+#             either side of it into ONE command, so a copy wrapped over two
+#             lines — how a long tar or rsync is normally written — is one copy
+#             still. It SEPARATES those words as well: it stands between them
+#             the way a GAP does, and it is the only separator left when the
+#             continuation is not indented.
+#   RUN       CROSSABLE or JOIN, repeated: everything one command may hold
+#             between two of its own words. A BARE newline is in neither half,
+#             so three unrelated commands on three lines are three commands.
+#   GAP       the whitespace standing between two words of ONE command:
+#             horizontal whitespace and nothing else, since the only
+#             whitespace character in ENDERS is the newline.
+#
+# END_EDGE answers a different question and is NOT derived from ENDERS: where
+# the destination WORD ends, not where a command does. Every character that is
+# not part of a path answers it — the pipe ENDERS leaves out on purpose, a
+# subshell's closing parenthesis, the newline that is still whitespace here —
+# so it is stated as the negation of PATH_CHAR, what a path may hold. That way
+# a separator nobody has named yet ends the word without being listed.
+#
+# Both edges of the marker component are tested and both carry a case: the
+# `/?` and quote-or-GAP after it are what keep it last, so `target/debug/kendex`
+# — one binary out of a build tree — is not a tree copy; the optional RUN
+# ending in a slash, quote or GAP before it is what makes it a component of its
+# own, so a `…/bar.git` clone URL and a `build-target` directory are not the
+# marker. That run is OPTIONAL because the one mandatory separator after the
+# verb is itself the left edge when the marker is the first operand, as in
+# `git clone .git /tmp/scratch`; requiring a second separator there would let a
+# whole local clone through. The run before the destination is what keeps the
+# destination a word of its own, so `/home/tmp/x` is not `/tmp`. Every one of
+# those separators but the marker's RIGHT edge takes a JOIN as well as its own
+# class, because a binding newline is where a word ends when a wrapped line is
+# not indented, and without them the same copy reaches different verdicts for
+# its indentation alone. That right edge does not, and must not: a backslash
+# there has no blank before it, so bash removes the continuation and joins the
+# two words into one operand — `cp -r repo/.git\` and `/tmp/x` on the next line
+# is `cp -r repo/.git/tmp/x`, which names no destination and copies nothing.
+#
+# The shell tokenizer this replaced resolved every operand and stat-ed it for
+# marker directories, to catch a source spelled as a working-tree path or
+# reached through a variable. Those are not seen here, and that is the trade:
+# it is the frozen lexical-scanner class, and a finding of that shape against
+# this file is declined, not patched.
+# The ampersand leads so this string does not spell bash 4's case fall-through
+# operator, which tools/bash32-lint flags in string data too. A bracket
+# expression carries no order, so the set below is the set named above.
 ENDERS='&;'$'\n'
 CROSSABLE="[^${ENDERS}]"
 # BLANK is the class name as it is spelled INSIDE a bracket expression, so the
@@ -128,56 +172,20 @@ PATH_CHAR='[:alnum:]/'
 END_EDGE="[^${PATH_CHAR}]"
 MARKER='(\.git|target)'
 DEST='(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)'
-BLOCK_RE="(^)${VERB}(${GAP}|${JOIN})(${RUN}(${LEFT_EDGE}|${JOIN}))?${MARKER}/?${RIGHT_EDGE}(${RUN}(${GAP}|${JOIN}))?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
+BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}(${GAP}|${JOIN})(${RUN}(${LEFT_EDGE}|${JOIN}))?${MARKER}/?${RIGHT_EDGE}(${RUN}(${GAP}|${JOIN}))?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
 
-command_segments "$COMMAND" pipes
-while IFS= read -r segment; do
-  remaining=$segment
-  while :; do
-    command_text "${remaining%%|*}"
-    selected=${COMMAND_TEXTS%"$NL"}
-    selections=$COMMAND_TEXTS
-    if [[ $remaining == *"|"* ]]; then
-      receiver=${remaining#*|}
-      receiver_head=${receiver#"${receiver%%[![:space:]]*}"}
-      command_text "${receiver%%|*}"
-      if [[ $receiver_head == "$MASK_OPEN"* ]]; then
-        # Inspect the receiver with the same reader. Only actual cd and tar
-        # commands can connect the sender to a temporary extraction directory.
-        # Other copy commands in the group keep their own checks.
-        receiver_text=$COMMAND_TEXTS
-        directory=""
-        command_segments "$receiver_text"
-        while IFS= read -r receiving; do
-          command_text "$receiving"
-          selections=$selections$COMMAND_TEXTS
-          while IFS= read -r receiving_command; do
-            case "$receiving_command" in
-              cd[[:space:]]*) directory=$receiving_command ;;
-              tar[[:space:]]*)
-                if [[ $selected == tar[[:space:]]* ]]; then
-                  selections=$selections$selected" "$receiving_command" "$directory$NL
-                fi ;;
-            esac
-          done <<<"$COMMAND_TEXTS"
-        done <<<"$SEGMENTS"
-      elif [[ $selected == tar[[:space:]]* && $COMMAND_TEXTS == tar[[:space:]]* ]]; then
-        # A direct tar receiver carries its own destination argument.
-        command_text "$remaining"
-        selections=$COMMAND_TEXTS
-      fi
-    fi
-    while IFS= read -r selected; do
-      if [[ $selected =~ $BLOCK_RE ]]; then
-        VERB_HIT=${BASH_REMATCH[2]}
-        case "$VERB_HIT" in
-          *[[:space:]]*) VERB_HIT="${VERB_HIT%%[[:space:]]*} ${VERB_HIT##*[[:space:]]}" ;;
-        esac
-        refuse refused "$VERB_HIT"
-      fi
-    done <<<"$selections"
-    [[ $remaining == *"|"* ]] || break
-    remaining=${remaining#*|}
-  done
-done <<<"$SEGMENTS"
-exit 0
+if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
+  exit 0
+fi
+
+# VERB is the second group of the pattern above and the only one that carries
+# a copy verb, so the first line names the verb that matched. The value is a
+# finite set a reader matches on, so the two-word alternative is normalised to
+# one blank: the command may spell `git   clone` or a tab, and its own
+# whitespace is not part of the verb. First word and last word, taken from the
+# match itself, so the set is not written down a second time.
+VERB_HIT=${BASH_REMATCH[2]}
+case "$VERB_HIT" in
+  *[[:space:]]*) VERB_HIT="${VERB_HIT%%[[:space:]]*} ${VERB_HIT##*[[:space:]]}" ;;
+esac
+refuse refused "$VERB_HIT"

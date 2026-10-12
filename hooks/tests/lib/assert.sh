@@ -11,36 +11,6 @@ assert_eq() {
   fi
 }
 
-# Pi.scope_root emits kendex/hooks under the global Pi root. Its native
-# skill copy is beside kendex; Env::global_skills_dir keeps shared skills
-# under HOME even when PI_CODING_AGENT_DIR relocates the hook root.
-reader_layout_rows() { # SOURCE PAYLOAD REFUSAL-KEY
-  local source="$1" payload="$2" key="$3" mode home root library hook status line
-  while IFS='|' read -r mode root library; do
-    home="$TMP_ROOT/reader-layouts/$mode"
-    rm -rf -- "$home"
-    root="$home/$root"
-    library="$home/$library/commit-guards/scripts/lib"
-    hook="$root/kendex/hooks/$(basename "$source")"
-    mkdir -p "${hook%/*}" "$library"
-    cp -- "$source" "$hook"
-    if [ "$mode" = native-copy ]; then
-      cp -- "$TEST_DIR/../../skills/commit-guards/scripts/lib/command-position.sh" "$library/command-position.sh"
-    else
-      ln -s "$TEST_DIR/../../skills/commit-guards/scripts/lib/command-position.sh" "$library/command-position.sh"
-    fi
-    status=0
-    printf '%s' "$payload" | env HOME="$home" PI_CODING_AGENT_DIR="$root" "$BASH_BIN" "$hook" >/dev/null 2>"$home/stderr" || status=$?
-    line=""
-    IFS= read -r line <"$home/stderr" || :
-    assert_eq "rc=$status first=$line" "rc=2 first=$key" "$mode delivered reader"
-  done <<'LAYOUTS'
-native-copy|.pi/agent|.pi/agent/skills
-shared-skill|.pi/agent|.agents/skills
-relocated-shared|relocated/agent/root|.agents/skills
-LAYOUTS
-}
-
 # Run the suite's own row callback on a private mutant, not the whole suite.
 # The subshell keeps the override and assertion counts out of the parent.
 # Keep the matched code and remove only its effect.

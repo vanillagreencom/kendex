@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings warn and allow the call. Matching starts at executable command positions, and does not inspect the desktop or running processes.
-# summary: Applies the project deny pattern at executable command positions. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with command-safety: <key>=<value>.
+# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings warn and allow the call. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
+# summary: Refuses command text matching the project deny pattern or the default systemd-run memory-cap rule. Missing tools and unreadable input, settings or support warn once and allow the call.
+# safety: Matches raw command text and text with backslash-newline continuations joined, including quoted examples and comments. Actual policy matches refuse at exit 2. Missing tools, unreadable payload, installed support or project settings, and invalid or empty patterns produce one keyed warning and allow the call. The settings loader reads its whole table, so an unrelated malformed key also warns and allows. Every diagnostic starts with command-safety: <key>=<value>; captured support or command output follows that line.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -43,7 +43,7 @@ refuse() { # KEY VALUE [CAUSE]
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
-        echo "run it with no memory cap, or with a cap in gigabytes"
+        echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
         echo "a project that wants another policy sets COMMAND_SAFETY_DENY_PATTERN in kendex.settings.toml [env] to replace the default, and the value \"^\$\" turns matching off" ;;
       exit=*) echo "the command safety check could not complete" ;;
     esac
@@ -145,8 +145,7 @@ levels=0
 # above hooks. A wider walk can reach executable files outside the install.
 while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
   candidate="$at/skills/commit-guards/scripts/lib"
-  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ] \
-    && [ -f "$candidate/command-position.sh" ]; then
+  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then
     lib="$candidate"
     break
   fi
@@ -162,7 +161,7 @@ if [ -z "$lib" ]; then
     *) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}" ;;
   esac
 fi
-[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] && [ -f "$lib/command-position.sh" ] || refuse settings no-loader
+[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
 GG_CHECK=command-safety
 # Keep nested support reads under errexit. A source on the left of || would
 # continue past a failed nested import. EXIT owns the advisory outcome, and
@@ -180,9 +179,6 @@ source "$lib/common.sh" 2>&4
 loading="$lib/settings.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh" 2>&4
-loading="$lib/command-position.sh"
-# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
-source "$lib/command-position.sh" 2>&4
 loading=""
 exec 3>&- 4>&- 5<&-
 # cd runs twice on purpose: a substitution cannot move this shell, so the
@@ -207,25 +203,26 @@ default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
-# A project pattern applies from an executable word. Ordinary arguments cannot
-# become commands. A match must begin at that position, even for an unanchored
-# configured expression.
-command_segments "$command_text"
-selections=""
-while IFS= read -r segment; do
-  command_text "$segment"
-  [ -n "$COMMAND_TEXTS" ] || continue
-  selections=$selections$COMMAND_TEXTS
-done <<<"$SEGMENTS"
-selections=${selections%"$NL"}
 status=0
-GREP_ERR=$(LC_ALL=C grep -E -- "^($pattern)" <<<"$selections" 2>&1 >/dev/null) || status=$?
+# Shell line continuations can split a denied command or token. Keep the raw
+# text too: single quotes preserve backslash-newline pairs as literal text.
+# Bash 3.2 needs ANSI-C quoting expanded before the replacement pattern.
+continuation=$'\\\n'
+joined_command_text="${command_text//"$continuation"/}"
+# grep's words on a pattern it cannot read are captured: stderr becomes the
+# substitution's stdout and grep's own stdout is discarded, so the status still
+# decides and the cause reaches the refusal below its keyed line.
+GREP_ERR=$(printf '%s\n' "$command_text" "$joined_command_text" | LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null) || status=$?
 case "$status" in
   0)
-    [ -n "$selections" ] || exit 0
-    if [ "$pattern" = "$default_pattern" ]; then refuse refused default-policy; fi
-    refuse refused policy ;;
-  1) ;;
+    # The default's reason and remedy are known here; a project pattern's are
+    # its own. A project that sets the default's own value refuses for the
+    # default's reason, so it gets the default's text.
+    if [ "$pattern" = "$default_pattern" ]; then
+      refuse refused default-policy
+    fi
+    refuse refused policy
+    ;;
+  1) exit 0 ;;
   *) refuse settings invalid-pattern "$GREP_ERR" ;;
 esac
-exit 0

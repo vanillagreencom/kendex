@@ -190,7 +190,7 @@ assert_eq "$rc" 2 'and so is an rsync wrapped over three lines'
 # the same trade as the redirection row below, recorded here so revisiting the
 # pipe decision reds rather than moving this shape in silence.
 run_hook "$(printf 'cp -r %s/.git /srv/keep ||\n  echo /tmp' "$REPO")"
-assert_eq "$rc" 0 'an or-list ends the copy before another command'
+assert_eq "$rc" 2 'a wrapped or-list binds across the || as one command'
 
 echo "=== block-repo-copy: commands that are not copies at all ==="
 run_hook "git status --short";               assert_eq "$rc" 0 'a non-copy command passes'
@@ -233,12 +233,12 @@ assert_eq "$rc" 0 'a source reached through a variable is not seen'
 run_hook "tar -czf /tmp/repo.tgz $REPO/.git"
 assert_eq "$rc" 0 'a tar naming its destination before its source is not seen'
 run_hook "echo \"cp -r $REPO/.git /tmp/copy\" >>notes.md"
-assert_eq "$rc" 0 'a copy spelled inside a quoted string passes'
+assert_eq "$rc" 2 'a copy spelled inside a quoted string is refused as the copy it is not'
 # The comment tail is the same reading: the whole command text is read, so the
 # three parts count where they stand after a `#` and a read-only command
 # carrying a copy in its comment is refused as the copy it is not.
 run_hook "ls -la $REPO  # cp -r $REPO/.git /tmp/copy"
-assert_eq "$rc" 0 'a copy spelled in a comment tail passes'
+assert_eq "$rc" 2 'and so is one spelled in a comment tail'
 # The run between the marker and the destination crosses everything that is
 # not an ender, the pipe being only the one deliberately left out of ENDERS. A
 # redirection standing between them is crossed too, so a temp path that is a
@@ -251,77 +251,6 @@ assert_eq "$rc" 2 'a temp path reached across a redirection is read as the desti
 # refused, never one into it allowed — and widening PATH_CHAR reds this row.
 run_hook "cp -r $REPO/.git /tmp-old/x"
 assert_eq "$rc" 2 'a sibling of the temp root spelled with punctuation is refused with it'
-# The shared reader is present in every disposable hook installation.
-ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
-. "$TEST_DIR/lib/assert.sh"
-command_position_rows() {
-  first_table 'real cp|command|2|block-repo-copy: refused=cp|cp -r /repo/.git /tmp/copy
-quoted copy text|command|0|-|echo '\''cp -r /repo/.git /tmp/copy'\''
-copy heredoc data|command|0|-|cat <<'\''EOF'\''\ncp -r /repo/.git /tmp/copy\nEOF
-pipe argument is data|command|0|-|cp -r /repo/.git /srv/keep | echo /tmp
-receiver command|command|2|block-repo-copy: refused=cp|echo x | cp -r /repo/.git /tmp/copy
-else command|command|2|block-repo-copy: refused=cp|if true; then true; else cp -r /repo/.git /tmp/copy; fi
-brace command|command|2|block-repo-copy: refused=cp|{ cp -r /repo/.git /tmp/copy; }
-timeout command|command|2|block-repo-copy: refused=cp|timeout 5 cp -r /repo/.git /tmp/copy
-prefixed shell body|command|2|block-repo-copy: refused=cp|true; bash <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
-pipeline shell body|command|2|block-repo-copy: refused=cp|cat <<EOF | bash\ncp -r /repo/.git /tmp/copy\nEOF
-prefixed data body|command|0|-|true; cat <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
-pipeline data body|command|0|-|cat <<EOF | cat\ncp -r /repo/.git /tmp/copy\nEOF
-tar subshell receiver|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (cd /tmp/x && tar -xf -)
-tar brace receiver|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | { cd /tmp/x; tar -xf -; }
-tar multiline receiver|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (\ncd /tmp/x\ntar -xf -\n)
-tar receiver data|command|0|-|tar -cf - /repo/.git | (echo /tmp/x && tar -xf - -C /srv)
-tar command data|command|0|-|tar -cf - /repo/.git | (cd /tmp/x && echo tar -xf -)
-tar ordinary receiver|command|0|-|tar -cf - /repo/.git | (cd /srv/x && tar -xf -)
-copy receiver group|command|2|block-repo-copy: refused=cp|echo x | (cd /srv; cp -r /repo/.git /tmp/x)
-last shell body|command|2|block-repo-copy: refused=cp|bash <<FIRST <<SECOND\ntrue\nFIRST\ncp -r /repo/.git /tmp/copy\nSECOND
-grouped shell body|command|2|block-repo-copy: refused=cp|cat <<EOF | (bash)\ncp -r /repo/.git /tmp/copy\nEOF
-redirection-first shell body|command|2|block-repo-copy: refused=cp|<<EOF bash\ncp -r /repo/.git /tmp/copy\nEOF
-source-stdin shell body|command|2|block-repo-copy: refused=cp|bash -c "source /dev/stdin" <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
-remote shell body|command|2|block-repo-copy: refused=cp|ssh host "bash -s" <<EOF\ncp -r /repo/.git /tmp/copy\nEOF
-later find action|command|2|block-repo-copy: refused=cp|find . -exec echo {} + -exec sh -c "cp -r /repo/.git /tmp/copy" sh {} +
-later find data|command|0|-|find . -exec echo {} + -exec echo "cp -r /repo/.git /tmp/copy" {} +
-multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ncp -r /repo/.git /tmp/copy\nFIRST\ncp -r /repo/.git /tmp/copy\nSECOND
-grouped later shell body|command|2|block-repo-copy: refused=cp|cat <<EOF | (echo x; bash)\ncp -r /repo/.git /tmp/copy\nEOF
-grouped later brace body|command|2|block-repo-copy: refused=cp|cat <<EOF | { echo x; bash; }\ncp -r /repo/.git /tmp/copy\nEOF
-grouped data guarded text|command|2|block-repo-copy: refused=cp|cat <<EOF | (cat)\ncp -r /repo/.git /tmp/copy\nEOF
-or subshell copy|command|2|block-repo-copy: refused=cp|true || (cd /srv; cp -r /repo/.git /tmp/x)
-or brace copy|command|2|block-repo-copy: refused=cp|true || { echo x; cp -r /repo/.git /tmp/x; }
-tar receiver option|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (tar -xf - -C /tmp/x)
-tar receiver option after cd|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (cd /srv && tar -xf - -C /tmp/x)
-tar receiver ordinary option|command|0|-|tar -cf - /repo/.git | (tar -xf - -C /srv/x)
-tar receiver option data|command|0|-|tar -cf - /repo/.git | (echo "tar -xf - -C /tmp/x")
-pipe-and body|command|2|block-repo-copy: refused=cp|cat <<EOF |\0046 bash\ncp -r /repo/.git /tmp/copy\nEOF
-pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
-redirection ampersand body|command|2|block-repo-copy: refused=cp|cat <<EOF 2>&1 | bash\ncp -r /repo/.git /tmp/copy\nEOF
-redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
-backtick receiver body|command|2|block-repo-copy: refused=cp|cat <<EOF | sed `x` | bash\ncp -r /repo/.git /tmp/copy\nEOF
-backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
-lifted substitution receiver body|command|2|block-repo-copy: refused=cp|cat <<EOF | cat "$(x)" | bash\ncp -r /repo/.git /tmp/copy\nEOF
-lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
-process substitution receiver body|command|2|block-repo-copy: refused=cp|cat <<EOF > >(bash)\ncp -r /repo/.git /tmp/copy\nEOF
-process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "cp -r /repo/.git /tmp/copy"\nEOF
-quoted find terminators|command|2|block-repo-copy: refused=cp|find . -exec echo {} ";" -exec cp -r /repo/.git /tmp/copy {} ";"
-quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "cp -r /repo/.git /tmp/copy" {} ";"
-pending shell receiver|command|2|block-repo-copy: refused=cp|cat <<'\''EOF'\'' |\ncp -a .git /tmp/probe\nEOF\nbash
-pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
-'
-}
-command_position_rows
-skill_load_control tar-receiver-context "$HOOK" 'if [[ $selected == tar[[:space:]]* ]]; then' 'selected=""' HOOK command_position_rows 'tar receiver option' 'tar receiver option after cd'
-skill_load_control executable-selection "$HOOK" 'command_text "${remaining%%|*}"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real cp'
-delivered_reader_rows() {
-  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"cp -r /repo/.git /tmp/copy"}}' 'block-repo-copy: refused=cp'
-}
-delivered_reader_rows
-skill_load_control native-reader-lookup "$HOOK" \
-  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
-  '    case "$candidate" in */../../skills/*) continue ;; esac' \
-  HOOK delivered_reader_rows 'native-copy delivered reader'
-skill_load_control shared-reader-lookup "$HOOK" \
-  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
-  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
-  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

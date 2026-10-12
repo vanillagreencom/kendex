@@ -4,10 +4,9 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree.
-# summary: Stops executable pkill and killall commands. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-argv-kill: <key>=<value>.
+# summary: Stops a command that kills processes by name. On a machine running several agents, one name matches every lane using that tool. Names the safe form: kill a process id you started.
+# safety: One regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. Missing tools or unreadable payload produce one keyed warning and allow the call. Every refusal opens with `block-argv-kill: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
-# requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
@@ -100,25 +99,17 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# Resolve only this hook's installed dependency, never a payload-selected path.
-reader=""
-for candidate in "${BASH_SOURCE[0]%/*}/../skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../skills/commit-guards/scripts/lib/command-position.sh" \
-  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do
-  if [ -f "$candidate" ]; then reader=$candidate; break; fi
-done
-[ -n "$reader" ] || refuse reader unavailable
-# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
-source "$reader" 2>/dev/null || refuse reader unreadable
-KILL_RE='^(pkill|killall)($|[[:space:]])'
-command_segments "$COMMAND"
-while IFS= read -r segment; do
-  command_text "$segment"
-  while IFS= read -r selected; do
-    if [[ $selected =~ $KILL_RE ]]; then refuse refused "${BASH_REMATCH[1]}"; fi
-  done <<<"$COMMAND_TEXTS"
-done <<<"$SEGMENTS"
-exit 0
+# The word between two edges: the ends of the command or any character an
+# identifier cannot hold, so `/usr/bin/pkill`, `"pkill"` and `$(which pkill)`
+# are the verb and `unpkill`, `pkill-wrapper` and `killall.log` are not. `=~`
+# runs without REG_NEWLINE, so the edge classes admit a newline and a verb on
+# the second line of a multi-line call is found; `^` alone would not reach it.
+KILL_RE='(^|[^[:alnum:]_.-])(pkill|killall)($|[^[:alnum:]_.-])'
+
+if [[ ! $COMMAND =~ $KILL_RE ]]; then
+  exit 0
+fi
+
+# The verb the command spelled is the second group of the regex above, the
+# only one that carries it, so the first line names what was matched.
+refuse refused "${BASH_REMATCH[2]}"

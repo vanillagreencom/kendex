@@ -69,7 +69,7 @@ run_payload() { # raw-json -> rc, stderr in ERR_FILE
 # The hook's dependency list, in the order it checks them: the shared table
 # pins it as the value of the world that has none of them.
 PAYLOAD_ADVISORY=1
-PAYLOAD_TOOLS=jq,cat
+PAYLOAD_TOOLS=jq,cat,grep,sed
 
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
@@ -123,32 +123,32 @@ a here-string leaves later lines judged|command|2|block-bare-cd: refused=bare-cd
 a quoted marker with no terminator leaves later lines judged|command|2|block-bare-cd: refused=bare-cd|echo '<<EOF'\ncd /tmp
 spaces before a tab-stripped terminator do not close the body|command|2|block-bare-cd: refused=bare-cd|cat <<-EOF\ncd /tmp\n EOF
 an ordinary delimiter needs an exact terminator|command|2|block-bare-cd: refused=bare-cd|cat <<EOF\ncd /tmp\n\tEOF
-a second body on one opening line is data|command|0|-|cat <<FIRST <<SECOND\ntext\nFIRST\ncd /tmp\nSECOND
+a second body on one opening line keeps its judgement|command|2|block-bare-cd: refused=bare-cd|cat <<FIRST <<SECOND\ntext\nFIRST\ncd /tmp\nSECOND
 "
 
-# The shared reader is present in every disposable hook installation.
-ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
-. "$TEST_DIR/lib/assert.sh"
-command_position_rows() {
-  first_table 'real cd|command|2|block-bare-cd: refused=bare-cd|cd /tmp
-quoted cd text|command|0|-|echo '\''cd /tmp'\''
-grouped data guarded text|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | (cat)\ncd /tmp\nEOF
-cd heredoc data|command|0|-|cat <<'\''EOF'\''\ncd /tmp\nEOF
-pipe-and body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF |\0046 bash\ncd /tmp\nEOF
-pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "cd /tmp"\nEOF
-redirection ampersand body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF 2>&1 | bash\ncd /tmp\nEOF
-redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "cd /tmp"\nEOF
-backtick receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | sed `x` | bash\ncd /tmp\nEOF
-backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "cd /tmp"\nEOF
-lifted substitution receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | cat "$(x)" | bash\ncd /tmp\nEOF
-lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "cd /tmp"\nEOF
-process substitution receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF > >(bash)\ncd /tmp\nEOF
-process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "cd /tmp"\nEOF
-pending shell receiver|command|2|block-bare-cd: refused=bare-cd|cat <<'\''EOF'\'' |\ncd /tmp\nEOF\nbash
-pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
-'
-}
-command_position_rows
-skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real cd'
+# Each disposable hook runs this same suite. The legacy copy restores the
+# original whole-command judgement; the other copy skips every later line.
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  mkdir "$TMP_ROOT/legacy" "$TMP_ROOT/skip"
+  marker_count=$(grep -cF 'STRIPPED=$(echo "$JUDGED"' "$HOOK")
+  assert_eq "$marker_count" 1 'the legacy mutation has one target'
+  sed 's/echo "\$JUDGED"/echo "$COMMAND"/' "$HOOK" >"$TMP_ROOT/legacy/block-bare-cd.sh"
+  marker_count=$(grep -cF 'if [[ ${LINES[$i]} =~ $HEREDOC_RE ]]; then' "$HOOK")
+  assert_eq "$marker_count" 1 'the skip mutation has one target'
+  sed '/if \[\[ ${LINES\[\$i\]} =~ \$HEREDOC_RE \]\]; then/i\
+  if [[ ${LINES[$i]} == *"<<"* ]]; then break; fi
+' "$HOOK" >"$TMP_ROOT/skip/block-bare-cd.sh"
+  for mutant in legacy skip; do
+    if cmp -s "$HOOK" "$TMP_ROOT/$mutant/block-bare-cd.sh"; then
+      assert_eq unchanged changed "$mutant changes its disposable hook"
+      continue
+    fi
+    control_rc=0
+    env -i HOME="$HOME" PATH="$PATH" PWD="$PWD" HOOK_UNDER_TEST="$TMP_ROOT/$mutant/block-bare-cd.sh" "$BASH_BIN" "$TEST_DIR/block-bare-cd.test.sh" >"$TMP_ROOT/$mutant.log" 2>&1 || control_rc=$?
+    cat "$TMP_ROOT/$mutant.log"
+    assert_eq "$control_rc" 1 "$mutant turns this suite red"
+  done
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

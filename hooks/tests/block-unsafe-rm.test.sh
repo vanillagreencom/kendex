@@ -18,7 +18,6 @@ TMP_ROOT="$(mktemp -d)" || { echo 'block-unsafe-rm: scratch=mktemp-failed' >&2; 
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'block-unsafe-rm: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'block-unsafe-rm: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-ln -s "$(cd -- "$TEST_DIR/../.." && pwd)/skills" "$TMP_ROOT/skills"
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
 
@@ -113,7 +112,7 @@ shared_rows
 skill_load_control shared-variable "$HOOK" 'SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"' \
   "SHARED_RE='a^'" HOOK shared_rows 'incident guarded TMPDIR root'
 skill_load_control shared-literal "$HOOK" '${literal_root}${literal_end}"' \
-  "LITERAL_RE='a^'" HOOK shared_rows 'incident literal glob'
+  "SHARED_RE='a^'" HOOK shared_rows 'incident literal glob'
 skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
   "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
   'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
@@ -174,6 +173,12 @@ skill_load_control redirection-crossing "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${
 skill_load_control redirection-target "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"' \
   'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT})*"' HOOK redirection_rows \
   'redirection output spaced safe target'
+skill_load_control redirection-boundary "$HOOK" "ENDERS='&;|'" \
+  "ENDERS='' #" HOOK redirection_rows 'redirection semicolon boundary' \
+  'redirection and boundary' 'redirection or boundary' 'redirection pipe boundary'
+skill_load_control redirection-newline "$HOOK" 'GAP="[${BLANK}]"' \
+  'GAP="[${SPACE_ANY}]"' HOOK redirection_rows \
+  'redirection newline boundary'
 first_table 'unset and empty roots match no literal|payload|0|-|{"command":"rm -rf /home/method/dev/.scratch/agents /shared/tmp /shared/te(mp).+ /shared/agent /shared/home"}'
 PAYLOAD_HOME=/
 first_table 'filesystem root direct glob|payload|2|block-unsafe-rm: refused=shared-root|{"command":"rm -rf /tmp.*"}
@@ -264,66 +269,11 @@ assert_contains "$ERR_FILE" 'rm -- "${NAME:?}/file"' 'the guarded rewrite adds n
 assert_contains "$ERR_FILE" 'rm -- /absolute/literal/path' 'the literal rewrite adds no delete flags'
 assert_contains "$ERR_FILE" 'rm -rf $CACHE/$KEY' 'the refusal quotes the command it judged'
 
+first_table 'reported-adjacent-redirection|command|2|block-unsafe-rm: refused=shared-root|rm>/dev/null -rf "$HOME"'
+
 payload_table "$HOOK" 'rm -rf $X/sub' 'rm -rf -- "${X:?}/sub"'
 
 run_hook 'rm "-rf" "$X/sub"';         assert_eq "$rc" 2 'a quoted flag does not hide a variable root'
 
-# The shared reader is present in every disposable hook installation.
-. "$TEST_DIR/lib/assert.sh"
-command_position_rows() {
-  first_table 'real rm|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${TMPDIR:?}"
-quoted rm text|command|0|-|echo '\''rm -rf "$HOME"'\''
-rm heredoc data|command|0|-|cat <<'\''EOF'\''\nrm -rf $HOME\nEOF
-cached git removal|command|0|-|git rm --cached "$HOME"
-else command|command|2|block-unsafe-rm: refused=recursive-rm|if true; then true; else rm -rf $X/sub; fi
-brace command|command|2|block-unsafe-rm: refused=recursive-rm|{ rm -rf $X/sub; }
-timeout command|command|2|block-unsafe-rm: refused=recursive-rm|timeout 5 rm -rf $X/sub
-find shell command|command|2|block-unsafe-rm: refused=recursive-rm|find . -exec sh -c "rm -rf $X/sub" {} \\;
-xargs shell command|command|2|block-unsafe-rm: refused=recursive-rm|xargs sh -c "rm -rf $X/sub"
-prefixed shell body|command|2|block-unsafe-rm: refused=recursive-rm|true; bash <<EOF\nrm -rf $X/sub\nEOF
-pipeline shell body|command|2|block-unsafe-rm: refused=recursive-rm|cat <<EOF | bash\nrm -rf $X/sub\nEOF
-prefixed data body|command|0|-|true; cat <<EOF\nrm -rf $X/sub\nEOF
-pipeline data body|command|0|-|cat <<EOF | cat\nrm -rf $X/sub\nEOF
-last shell body|command|2|block-unsafe-rm: refused=shared-root|bash <<FIRST <<SECOND\ntrue\nFIRST\nrm -rf $HOME\nSECOND
-grouped shell body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (bash)\nrm -rf $HOME\nEOF
-redirection-first shell body|command|2|block-unsafe-rm: refused=shared-root|<<EOF bash\nrm -rf $HOME\nEOF
-source-stdin shell body|command|2|block-unsafe-rm: refused=shared-root|bash -c "source /dev/stdin" <<EOF\nrm -rf $HOME\nEOF
-remote shell body|command|2|block-unsafe-rm: refused=shared-root|ssh host "bash -s" <<EOF\nrm -rf $HOME\nEOF
-later find action|command|2|block-unsafe-rm: refused=shared-root|find . -exec echo {} + -exec sh -c "rm -rf $HOME" sh {} +
-later find data|command|0|-|find . -exec echo {} + -exec echo "rm -rf $HOME" {} +
-multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nrm -rf $HOME\nFIRST\nrm -rf $HOME\nSECOND
-grouped later shell body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (echo x; bash)\nrm -rf $HOME\nEOF
-grouped later brace body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | { echo x; bash; }\nrm -rf $HOME\nEOF
-grouped data guarded text|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (cat)\nrm -rf $HOME\nEOF
-pipe-and body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF |\0046 bash\nrm -rf $HOME\nEOF
-pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "rm -rf $HOME"\nEOF
-redirection ampersand body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF 2>&1 | bash\nrm -rf $HOME\nEOF
-redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "rm -rf $HOME"\nEOF
-backtick receiver body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | sed `x` | bash\nrm -rf $HOME\nEOF
-backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "rm -rf $HOME"\nEOF
-lifted substitution receiver body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | cat "$(x)" | bash\nrm -rf $HOME\nEOF
-lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "rm -rf $HOME"\nEOF
-process substitution receiver body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF > >(bash)\nrm -rf $HOME\nEOF
-process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "rm -rf $HOME"\nEOF
-quoted find terminators|command|2|block-unsafe-rm: refused=shared-root|find . -exec echo {} ";" -exec rm -rf $HOME {} ";"
-quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "rm -rf $HOME" {} ";"
-pending shell receiver|command|2|block-unsafe-rm: refused=shared-root|cat <<'\''EOF'\'' |\nrm -rf "$HOME"\nEOF\nbash
-pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
-'
-}
-command_position_rows
-skill_load_control executable-selection "$HOOK" 'command_text "$segment"' 'COMMAND_TEXTS=""' HOOK command_position_rows 'real rm'
-delivered_reader_rows() {
-  reader_layout_rows "$HOOK" '{"agent_type":"reviewer-quality","tool_name":"Bash","tool_input":{"command":"rm -rf $X/sub"}}' 'block-unsafe-rm: refused=recursive-rm'
-}
-delivered_reader_rows
-skill_load_control native-reader-lookup "$HOOK" \
-  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
-  '    case "$candidate" in */../../skills/*) continue ;; esac' \
-  HOOK delivered_reader_rows 'native-copy delivered reader'
-skill_load_control shared-reader-lookup "$HOOK" \
-  '  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do' \
-  '    case "$candidate" in "$HOME/.agents/"*) continue ;; esac' \
-  HOOK delivered_reader_rows 'shared-skill delivered reader' 'relocated-shared delivered reader'
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

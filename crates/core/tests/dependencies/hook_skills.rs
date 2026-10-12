@@ -113,7 +113,7 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
 
 /// The catalog's bare-cd guard needs a shell that persists between calls.
 /// A fresh install receives neither the hook nor its registration on the
-/// per-call Codex and Pi shells, while Claude receives its shared reader.
+/// per-call Codex and Pi shells, while Claude receives the hook.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn bare_cd_only_installs_on_shells_that_persist_between_calls() {
@@ -134,19 +134,12 @@ fn bare_cd_only_installs_on_shells_that_persist_between_calls() {
     apply_now(&f);
     let lock = lock_of(&f);
     assert!(lock.entries.contains_key("hook:block-bare-cd:claude"));
-    assert!(lock.entries.contains_key("skill:commit-guards:claude"));
     assert!(f.project.join(".claude/hooks/block-bare-cd.sh").is_file());
     for (tool, directory) in [(HarnessId::Codex, ".codex"), (HarnessId::Pi, ".pi/kendex")] {
         assert!(
             !lock
                 .entries
                 .contains_key(&format!("hook:block-bare-cd:{}", tool.name())),
-            "{tool:?}"
-        );
-        assert!(
-            !lock
-                .entries
-                .contains_key(&format!("skill:commit-guards:{}", tool.name())),
             "{tool:?}"
         );
         assert!(

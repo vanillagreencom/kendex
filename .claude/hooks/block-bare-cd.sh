@@ -3,11 +3,10 @@
 # name: block-bare-cd
 # event: PreToolUse
 # matcher: Bash
-# description: Not run on codex: each shell call starts a fresh process. Not run on pi: each shell call starts a fresh process. Not run on antigravity: its toolCall.args payload is not read. Refuse a command with a line that is only a `cd`. A here-document body read by a proven simple data command is not judged. Here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse when their bodies hold guarded text. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
-# summary: Stops a standalone cd on a shell that persists across calls. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-bare-cd: <key>=<value>.
+# description: Not run on codex: each shell call starts a fresh process. Not run on pi: each shell call starts a fresh process. Not run on antigravity: its toolCall.args payload is not read. Refuse a command with a line that is only a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
+# summary: Stops a command whose whole line is a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
+# safety: Reads command text using its local here-document check. Missing tools or unreadable payload produce one keyed warning and allow the call. A matching bare-cd line still refuses. Every refusal opens with `block-bare-cd: <key>=<value>`; captured command output follows that line.
 # harnesses: [claude, copilot, gemini, cursor, opencode]
-# requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
@@ -50,7 +49,7 @@ refuse() { # KEY VALUE [CAUSE]
 # has not read cannot be shown to scope its directory change. The value names
 # every one of them the PATH is missing, in the order checked.
 MISSING=""
-for dependency in jq cat; do
+for dependency in jq cat grep sed; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
@@ -76,25 +75,39 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# Resolve only this hook's installed dependency, never a payload-selected path.
-reader=""
-for candidate in "${BASH_SOURCE[0]%/*}/../skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../../.agents/skills/commit-guards/scripts/lib/command-position.sh" \
-  "${BASH_SOURCE[0]%/*}/../../skills/commit-guards/scripts/lib/command-position.sh" \
-  "${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh}"; do
-  if [ -f "$candidate" ]; then reader=$candidate; break; fi
-done
-[ -n "$reader" ] || refuse reader unavailable
-# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
-source "$reader" 2>/dev/null || refuse reader unreadable
-command_segments "$COMMAND" lines
-while IFS= read -r segment; do
-  command_text "$segment"
-  selected=${COMMAND_TEXTS%"$NL"}
-  if [[ $selected =~ ^cd([[:space:]]+[^\&\|\;\(\)]*)?$ ]]; then
-    refuse refused bare-cd
+# Only a matching later terminator makes the intervening lines command input.
+# This local text check needs no shell parser. It handles the first here-document
+# on a line; a second body's lines keep the existing judgement.
+LINES=()
+while IFS= read -r line; do LINES[${#LINES[@]}]=$line; done <<<"$COMMAND"
+HEREDOC_RE='(^|[^<])<<(-?)[[:blank:]]*("([^"]*)"|'"'"'([^'"'"']*)'"'"'|([^[:space:]<>&;|]+))'
+JUDGED=""
+for ((i=0; i<${#LINES[@]}; i++)); do
+  JUDGED=$JUDGED${LINES[$i]}$'\n'
+  if [[ ${LINES[$i]} =~ $HEREDOC_RE ]]; then
+    strip_tabs=${BASH_REMATCH[2]}
+    delimiter=${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}
+    for ((end=i+1; end<${#LINES[@]}; end++)); do
+      terminator=${LINES[$end]}
+      if [ "$strip_tabs" = - ]; then
+        while [[ $terminator == $'\t'* ]]; do terminator=${terminator#$'\t'}; done
+      fi
+      if [ "$terminator" = "$delimiter" ]; then i=$end; break; fi
+    done
   fi
-done <<<"$SEGMENTS"
+done
+
+# A line that is only a cd, its operand optional on both sides: a bare `cd`
+# goes to $HOME, the same move as `cd /tmp`. sed strips the leading whitespace
+# of every line so an indented one is read the same; grep reads the whole
+# command rather than stopping at the first match, since an early-exiting
+# reader turns its producer's SIGPIPE into status 141 under pipefail, read
+# here as "no bare cd".
+STRIPPED=$(echo "$JUDGED" | sed 's/^[[:space:]]*//')
+BARE_STATUS=0
+printf '%s\n' "$STRIPPED" | grep -E '^cd([[:space:]]+[^&|;]*)?$' >/dev/null || BARE_STATUS=$?
+if [ "$BARE_STATUS" -eq 0 ]; then
+  refuse refused bare-cd
+fi
+
 exit 0
