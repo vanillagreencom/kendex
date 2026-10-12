@@ -2,6 +2,7 @@ use crate::test_util::{exact_test, fixture_env, rooted};
 use kendex_core::env::{Env, sandboxed};
 use std::path::PathBuf;
 use std::process::Command;
+use std::process::Stdio;
 
 /// Portable installs and CLI fixtures must select their roots before OS
 /// discovery. The child has conflicting OS variables and no inherited env.
@@ -99,7 +100,9 @@ fn fixture_data_and_trash_stay_inside_each_home() {
             command
                 .env("HOME", home.parent().unwrap())
                 .env("KENDEX_REAL_HOME", "1")
-                .env("XDG_DATA_HOME", home.parent().unwrap());
+                .env("XDG_DATA_HOME", home.parent().unwrap())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
         }
         command.spawn().unwrap()
     };
@@ -112,8 +115,9 @@ fn fixture_data_and_trash_stay_inside_each_home() {
     // The previous system-home opt-in must fail the same containment checks.
     assert!(
         !launch(&rooted(&fixtures[0]), true)
-            .wait()
+            .wait_with_output()
             .unwrap()
+            .status
             .success()
     );
 }

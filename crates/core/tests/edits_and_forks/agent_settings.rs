@@ -96,7 +96,7 @@ fn catalog_role_access_survives_fork_beside_and_detach() {
                 .unwrap_or_default();
             let agent =
                 format!("---\nname: rev\ndescription: agent rev\n{role}---\nUpstream body.\n");
-            let w = agent_world("\"claude\", \"pi\"", &agent, rule.catalog, rule.project);
+            let w = local_agent_world("\"claude\", \"pi\"", &agent, rule.catalog, rule.project);
             let check = |name: &str| {
                 for (harness, key, expected) in [
                     (HarnessId::Claude, "disallowedTools:", rule.claude),

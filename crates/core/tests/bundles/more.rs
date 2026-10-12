@@ -26,15 +26,41 @@ fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
         .unwrap()
         .replace("\r\n", "\n");
 
+    let f = fixture("");
+    for (relative, bytes) in sealed
+        .rendered_item(ItemKind::Skill, &catalog.join("skills/worktree"))
+        .unwrap()
+        .into_files()
+    {
+        let target = f.source.join("skills/worktree").join(relative);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, bytes).unwrap();
+    }
+    for hook in ["worktree-session-claim", "worktree-prompt-claim"] {
+        let relative = format!("hooks/{hook}.sh");
+        write(
+            &f.source,
+            &relative,
+            &sealed.read_to_string(&catalog.join(&relative)).unwrap(),
+        );
+    }
+    let claim_hook = |name: &toml::Value| {
+        matches!(
+            name.as_str(),
+            Some("worktree-session-claim" | "worktree-prompt-claim")
+        )
+    };
     for bundle in ["workflow", "orchestration"] {
-        let f = fixture(&format!("[bundles.{bundle}]\nsource = \"cat\"\n"));
-        for directory in ["skills", "agents", "hooks"] {
-            for (relative, bytes) in sealed.collect_tree(&catalog.join(directory), &[]).unwrap() {
-                let target = f.source.join(directory).join(relative);
-                fs::create_dir_all(target.parent().unwrap()).unwrap();
-                fs::write(target, bytes).unwrap();
-            }
-        }
+        // Keep shipped hook declarations and membership. Unrelated package
+        // renders cannot establish session registration.
+        let mut selected: toml::Value = toml::from_str(&catalog_text).unwrap();
+        let declaration = selected["bundles"][bundle].as_table_mut().unwrap();
+        declaration.retain(|key, _| key == "hooks");
+        declaration["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .retain(claim_hook);
+        let catalog_text = toml::to_string(&selected).unwrap();
         catalog_bundles(&f.source, &catalog_text);
         write(
             &f.project,
@@ -77,17 +103,11 @@ fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
         }
 
         // The prompt companion requires the session hook, so both must leave.
-        let mut missing: toml::Value = toml::from_str(&catalog_text).unwrap();
-        missing["bundles"][bundle]["hooks"]
+        selected["bundles"][bundle]["hooks"]
             .as_array_mut()
             .unwrap()
-            .retain(|name| {
-                !matches!(
-                    name.as_str(),
-                    Some("worktree-session-claim" | "worktree-prompt-claim")
-                )
-            });
-        catalog_bundles(&f.source, &toml::to_string(&missing).unwrap());
+            .retain(|name| !claim_hook(name));
+        catalog_bundles(&f.source, &toml::to_string(&selected).unwrap());
         let report = audit(&f.env, &f.scope).unwrap();
         for tool in ["claude", "codex"] {
             assert_eq!(

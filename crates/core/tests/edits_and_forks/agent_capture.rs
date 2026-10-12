@@ -142,7 +142,7 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
     if additional.is_some() {
         project.push_str(&format!("[agent-additional-instructions]\n{entries}\n"));
     }
-    let w = agent_world(
+    let w = local_agent_world(
         &format!("\"{}\"", harness.name()),
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
         "",

@@ -18,7 +18,9 @@
 //! Not on Windows, for the reason `own_inventory.rs` gives: the tree a
 //! Windows checkout holds is not the tree that was committed.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::engine::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
@@ -236,22 +238,28 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
     let tmp = tempfile::tempdir().map_err(|error| format!("scratch directory: {error}"))?;
     let repository = crate::test_util::rooted(&tmp);
     let copy = repository.join("checkout");
-    let listed = crate::test_util::git(
-        root,
-        &[
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ],
-    );
+    // Every caller copies this checkout. Share its immutable file list;
+    // every planted defect still has a separate scratch tree.
+    static LISTED: OnceLock<String> = OnceLock::new();
+    let listed = LISTED.get_or_init(|| {
+        crate::test_util::git(
+            root,
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+        )
+    });
     // Git lists an untracked nested repository, such as a linked worktree,
     // as its directory with a trailing slash: none of its files is this
     // checkout's.
     let carried = listed
         .split('\0')
         .filter(|carried| !carried.is_empty() && !carried.ends_with('/'));
+    let mut directories = BTreeSet::new();
     for carried in carried {
         let from = root.join(carried);
         let meta = match std::fs::symlink_metadata(&from) {
@@ -263,6 +271,7 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
         let to = copy.join(carried);
         let copied = to
             .parent()
+            .filter(|parent| directories.insert(parent.to_path_buf()))
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| match meta.file_type().is_symlink() {
                 true => std::fs::read_link(&from)
@@ -333,7 +342,26 @@ impl Planted {
         let env = Env::detect().expect("the host environment is readable");
         let (tmp, copy) =
             committed_copy(&crate::test_util::checkout_root()).expect("the checkout copies");
-        let declared = declaration(&env, &copy).expect("the copy's manifest reads");
+        let mut declared = declaration(&env, &copy).expect("the copy's manifest reads");
+        // Refusal controls judge one skill. The passing test above still
+        // plans every declared installation and every committed render.
+        let skill = instructed_skill(&declared);
+        let mut item = declared.skills[&skill].clone();
+        item.harnesses = Some(vec![crate::model::HarnessId::Codex]);
+        declared = Manifest {
+            schema: declared.schema,
+            sources: declared.sources,
+            install: declared.install,
+            skills: std::collections::BTreeMap::from([(skill, item)]),
+            skill_instructions: declared.skill_instructions,
+            ..Manifest::default()
+        };
+        declared.install.harnesses = vec![crate::model::HarnessId::Codex];
+        std::fs::write(
+            copy.join("kendex-local.toml"),
+            toml::to_string(&declared).expect("the reduced declaration serializes"),
+        )
+        .expect("the private copy's declaration writes");
         let lock = record(&env, &copy).expect("the copy's install record reads");
         Planted {
             env,
