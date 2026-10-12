@@ -1562,13 +1562,15 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   now="$(date -u +%s)" || refuse write-failed "$BOX"
   id="$now-$$-$RANDOM"
   printf '%s\n' "$id" >"$WORK_DIR/id" || refuse write-failed "$WORK_DIR/id"
+  printf '%s\n' "$PARENT_JSON" >"$WORK_DIR/parent.json" || refuse write-failed "$WORK_DIR/parent.json"
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
-    --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
+    --arg thread "$THREAD_TS" --slurpfile parent "$WORK_DIR/parent.json" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
+      $parent[0] as $parent |
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
       + (if $halt == "1" then {halt: true} else {} end)
@@ -1589,7 +1591,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $draft == [] then {} else {draft: $draft[0]} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
-    2>"$WORK_DIR/jq.err")" || refuse file-unreadable "$FILE" "$(cat -- "$WORK_DIR/jq.err")"
+    2>"$WORK_DIR/jq.err")" || refuse write-failed "$BOX" "$(cat -- "$WORK_DIR/jq.err")"
   printf '%s\n' "$line"
 }
 BY=""

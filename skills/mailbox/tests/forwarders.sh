@@ -45,6 +45,24 @@ for script in "$OLD" "$NEW"; do
   first="$(sed -n '1p' "$TMP_ROOT/err")"
   if [ "$script" = "$OLD" ]; then refused="$first"; else assert_eq "$first" "$refused" 'forwarder keeps first refusal line'; fi
 done
+mkdir -p "$PROJECT/tmp"
+printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$PROJECT/tmp/workflow-state-oversee.json"
+for messages in 50 250; do
+jq -cn --argjson messages "$messages" '{ts:"1.1",author:"bot",excerpt:"Progress.",thread:
+  [range($messages) | {ts:(tostring),author:"bot",text:([range(4000) | "x"] | join(""))}]}' > "$TMP_ROOT/parent.json"
+for script in "$OLD" "$NEW"; do
+  rc=0
+  (cd -- "$PROJECT" && env -u ORCH_STATE_DIR "$script" send --item overseer --directive \
+    --delivery-id "$script:$messages" --thread-ts 1.1 --parent "$TMP_ROOT/parent.json" --file "$TMP_ROOT/message") \
+    >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+  assert_eq "$rc" 0 'a directive delivers its complete large thread parent' "$TMP_ROOT/err"
+  if [ "$rc" -eq 0 ]; then
+    tail -n 1 "$PROJECT/tmp/lane-mail/overseer/to-lane.jsonl" | jq -c .parent > "$TMP_ROOT/stored-parent.json"
+    assert_eq "$(cmp "$TMP_ROOT/parent.json" "$TMP_ROOT/stored-parent.json"; echo "$?")" 0 \
+      'the envelope preserves every parent byte'
+  fi
+done
+done
 for library in file-lock mailbox-append; do
   case "$library" in file-lock) function=orch_take_lock ;; *) function=mailbox_append_locked ;; esac
   out="$("$BASH" -c '. "$1"; declare -F "$2"' _ "$PROJECT/.agents/skills/orch/scripts/lib/$library.sh" "$function" 2>"$TMP_ROOT/err")"
@@ -57,11 +75,14 @@ rc=0
 assert_eq "$rc" 0 'TERM through the forwarder stops the watch and withdraws its record' "$TMP_ROOT/term.log"
 if [ -z "${FORWARDERS_UNDER_TEST:-}" ]; then
   # Fleet reads the first keyed stderr line. An unconditional warning breaks it.
-  for control in lane-mail file-lock mailbox-append no-exec; do
+  for control in lane-mail file-lock mailbox-append no-exec parent-argv; do
     mkdir -p "$TMP_ROOT/$control/skills"
     cp -R "$PROJECT/.agents/skills/." "$TMP_ROOT/$control/skills/"
     if [ "$control" = lane-mail ]; then
       mutate_file "$TMP_ROOT/$control/skills/orch/scripts/lane-mail" 'if [ -t 2 ]; then' 'if :; then'
+    elif [ "$control" = parent-argv ]; then
+      mutate_file "$TMP_ROOT/$control/skills/mailbox/scripts/lane-mail" \
+        '--slurpfile parent "$WORK_DIR/parent.json"' '--argjson parent "[$PARENT_JSON]"'
     elif [ "$control" = no-exec ]; then
       mutate_file "$TMP_ROOT/$control/skills/orch/scripts/lane-mail" \
         'exec "${BASH_SOURCE[0]%/*}/../../mailbox/scripts/lane-mail" "$@"' \

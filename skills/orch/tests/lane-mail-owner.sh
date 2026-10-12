@@ -1166,7 +1166,7 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.text')" "0=x" "control: 
 new_repo control_draft_argv
 mutant draft-argv '--slurpfile draft "$DRAFT_RECORD"' '--argjson draft "[$(cat -- "$DRAFT_RECORD")]"'
 draft_ask "$TMP_ROOT/large.json"
-assert_eq "$RC=${ERR%%=*}" "2=lane-mail: file-unreadable" "control: a draft record carried on jq's argv refuses the large draft"
+assert_eq "$RC=${ERR%%=*}" "2=lane-mail: write-failed" "control: a draft record carried on jq's argv refuses the large draft"
 
 new_repo control_draft_hash
 mutant draft-hash-trimmed 'jq -j .text -- "$DRAFT"' 'jq -j '"'"'.text | sub("\n$"; "")'"'"' -- "$DRAFT"'

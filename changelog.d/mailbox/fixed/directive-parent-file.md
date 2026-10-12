@@ -1,0 +1,1 @@
+- Mailbox directives preserve long Slack threads without exceeding the process argument limit. Envelope write failures report the write error and its cause.
