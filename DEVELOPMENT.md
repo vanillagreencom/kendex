@@ -73,7 +73,15 @@ A linked worktree carries its own `kendex-local.toml`, so a bare `kendex apply` 
 
 ## Packaging
 
-`cd crates/app && ../../ui/node_modules/.bin/tauri build` bundles deb and rpm anywhere; the AppImage step needs FUSE2 for linuxdeploy. Bundling signs updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`.
+`cd crates/app && ../../ui/node_modules/.bin/tauri build --no-sign` is the default local bundle command. It bundles deb and rpm anywhere; the AppImage step needs FUSE2 for linuxdeploy.
+
+For a signed local bundle, store `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as `op://` references in the project's private env file: `.env.local`, or the file `KENDEX_ENV_FILE` names. From `crates/app`, run this command with that file's absolute path:
+
+```sh
+op run --env-file "<private env file>" -- ../../ui/node_modules/.bin/tauri build
+```
+
+1Password's CLI resolves the references for that process only. The login environment (`~/.config/environment.d`, a shell profile, or `systemctl --user set-environment`) is not a supported source for a signing secret: any process that prints its environment prints the secret. A literal signing key in the private env file is not supported: every skill script loads that file.
 
 The command inside each installer comes from an overlay under `crates/app/release/`, one per platform, passed as `--config release/<platform>.json`; each reads the command staged under `target/bundle-cli/`. To bundle with the command locally: `cargo build --release -p kendex-cli`, copy `target/release/kendex` to `target/bundle-cli/kendex`, then `../../ui/node_modules/.bin/tauri build --bundles deb,rpm --no-sign --config release/linux.json` from `crates/app`.
 

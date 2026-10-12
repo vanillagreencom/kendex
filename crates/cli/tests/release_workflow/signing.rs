@@ -4,7 +4,8 @@
 //! an update every client turns away. That is a tag-run failure otherwise,
 //! because release.yml never runs on a pull request; here the real step
 //! runs the real script against a signer this test controls.
-//! Inputs: .github/workflows/release.yml and tools/release-digests.
+//! Inputs: .github/workflows/release.yml, tools/release-digests,
+//! .agents/skills/app-deploy/SKILL.md and DEVELOPMENT.md.
 
 #[cfg(unix)]
 use std::collections::BTreeMap;
@@ -362,6 +363,70 @@ fn the_step_signs_under_the_release_key() {
         "{lines}"
     );
     assert!(lines.contains("tools/release-digests"), "{lines}");
+}
+
+fn signing_env_uses_repository_secrets(workflow: &str) -> bool {
+    let mut key = false;
+    let mut password = false;
+    for line in workflow.lines() {
+        let Some((name, value)) = line.trim().split_once(':') else {
+            continue;
+        };
+        if !name.starts_with("TAURI_SIGNING_") {
+            continue;
+        }
+        if value.trim() != format!("${{{{ secrets.{name} }}}}") {
+            return false;
+        }
+        key |= name == "TAURI_SIGNING_PRIVATE_KEY";
+        password |= name == "TAURI_SIGNING_PRIVATE_KEY_PASSWORD";
+    }
+    key && password
+}
+
+#[test]
+fn every_tauri_signing_env_value_comes_from_its_repository_secret() {
+    let workflow = workflow();
+    assert!(signing_env_uses_repository_secrets(&workflow));
+    let wrong_source = format!("{workflow}\nTAURI_SIGNING_PRIVATE_KEY: ${{{{ env.KEY }}}}\n");
+    assert!(!signing_env_uses_repository_secrets(&wrong_source));
+}
+
+#[test]
+fn local_signing_docs_keep_secrets_in_the_private_env_file_as_references() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (path, heading) in [
+        (".agents/skills/app-deploy/SKILL.md", "## Secrets\n"),
+        ("DEVELOPMENT.md", "## Packaging\n"),
+    ] {
+        let document = std::fs::read_to_string(root.join(path))
+            .expect("read signing instructions")
+            .replace("\r\n", "\n");
+        let section = document
+            .split_once(heading)
+            .expect("signing section exists")
+            .1
+            .split("\n## ")
+            .next()
+            .expect("signing section has content");
+        assert!(local_signing_route(section), "{path}");
+    }
+    // KEN-3823 requires this documentation contract and its prior-text control.
+    assert!(!local_signing_route(
+        "Bundling signs updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`."
+    ));
+}
+
+fn local_signing_route(section: &str) -> bool {
+    [
+        "private env file",
+        "op://",
+        "op run",
+        "login environment",
+        "not a supported source",
+    ]
+    .iter()
+    .all(|part| section.contains(part))
 }
 
 /// The publish job downloads two signatures per lane, and its `add` globs

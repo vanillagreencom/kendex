@@ -1,0 +1,1 @@
+- Signed local bundle instructions use 1Password references in the project's private env file. Release signing stays in CI. Login environments and literal keys in the private env file are unsupported signing sources.
