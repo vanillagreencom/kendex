@@ -1185,7 +1185,7 @@ mail_idle_run mail_cadence_slow_host_control "$IDLE_MUTANT"
 assert_eq "$MAIL_IDLE" 0 'control: the base cadence starts the next read at once after an overrun' "$STUB_DIR/idle.err"
 SHORT_IDLE_MUTANT="$(mutant_scripts short-idle-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/short-idle-mutant/github"
-mutate_file "$SHORT_IDLE_MUTANT" 'MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))' 'MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL - 1))'
+mutate_file "$SHORT_IDLE_MUTANT" '    MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))' '    MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL - 1))'
 mail_idle_run mail_cadence_slow_host_short_control "$SHORT_IDLE_MUTANT"
 assert_eq "$MAIL_IDLE" 1 'control: a shortened cadence waits one second less than the full interval' "$STUB_DIR/idle.err"
 
