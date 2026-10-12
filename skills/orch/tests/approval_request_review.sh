@@ -91,7 +91,12 @@ case "$1 $2" in
     ;;
   'api repos/consumer/repo/issues/42/timeline?per_page=100')
     [[ "${TIMELINE_FAIL:-false}" != true ]] || exit 1
-    printf '%s\n' "$TIMELINE_JSON"
+    timeline="$TIMELINE_JSON"
+    if [[ "${LONG_TIMELINE:-false}" == true ]]; then
+      timeline=$(jq -c '[range(0;80) | [{event:"commented",body:("x" * 60000)}]] + .' <<<"$timeline") || exit 1
+      printf '%s\n' "${#timeline}" > "$TIMELINE_SIZE_LOG"
+    fi
+    printf '%s\n' "$timeline"
     ;;
   'api repos/consumer/repo/pulls/42/reviews')
     [[ "${REVIEWS_FAIL:-false}" != true ]] || exit 1
@@ -139,6 +144,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
   : > "$QUERY_LOG"
   : > "$EXECUTION_LOG"
   : > "$TRANSITION_LOG"
+  : > "$TMP_ROOT/timeline-bytes"
   printf '0\n' > "$PULL_READ_COUNT"
   RC=0
   (cd -- "${ACTION_CWD:-$TMP_ROOT/catalog}" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
@@ -146,6 +152,7 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
     REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review REVIEW_GATE_SETTINGS_FILE=/dev/null \
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
     DRAFT_FILE="$DRAFT_FILE" HEAD_FILE="$HEAD_FILE" TRANSITION_LOG="$TRANSITION_LOG" PULL_READ_COUNT="$PULL_READ_COUNT" \
+    TIMELINE_SIZE_LOG="$TMP_ROOT/timeline-bytes" \
     ORCH_STATE_DIR="$TMP_ROOT/state" REVIEW_BASE_FIXTURE="$BASE" \
     CHECKS_JSON='[{"check_runs":[]}]' TIMELINE_JSON='[[]]' REVIEWS_JSON='[]' \
     REQUEST_EXIT="$request_exit" PULL_JSON="$PULL_JSON" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
@@ -607,6 +614,28 @@ for row in \
     else
       pass "$label control turns its request assertion red"
     fi
+  fi
+done
+# Long GitHub comment bodies belong on stdin, even when the timeline has
+# enough evidence to request a review or retain a fresh one.
+for row in \
+  'large stale review timeline|2026-10-11T22:03:51Z|1' \
+  'large fresh review timeline|2026-10-11T22:06:58Z|0'; do
+  IFS='|' read -r label submitted requests <<<"$row"
+  timed_review=$(jq -c --arg at "$submitted" 'map(.submitted_at=$at)' <<<"$HEAD_REVIEW")
+  RUN_ENV=(LONG_TIMELINE=true "TIMELINE_JSON=$ARRIVAL_TIMELINE" "REVIEWS_JSON=$timed_review")
+  run_action "$RUN" 0 --request-review --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "0|approval|$requests" "$label" "$ERR"
+  if [[ "$(cat "$TMP_ROOT/timeline-bytes")" -gt 131072 ]]; then pass "$label exceeds the argument bound"; else fail "$label misses the argument bound"; fi
+  scripts="$(mutant_scripts timeline-argv-control approval-wait)" || exit 1
+  mutate_file "$scripts/approval-wait" 'request_arrival=$(jq -er --arg head "$request_head" "$HEAD_ARRIVAL_JQ" <<<"$request_timeline")' \
+    'request_arrival=$(jq -er --arg head "$request_head" --arg ignored "$request_timeline" "$HEAD_ARRIVAL_JQ" <<<"$request_timeline")'
+  run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+  assert_eq "$RC|$REQUESTS" '2|0' "$label control reaches the argument refusal" "$ERR"
+  if [[ "$RC|$(cat "$OUT")|$REQUESTS" == "0|approval|$requests" ]]; then
+    fail "$label control did not turn its request assertion red"
+  else
+    pass "$label control turns its request assertion red"
   fi
 done
 # Each exception and failed source keeps its own control. All use the real

@@ -179,9 +179,12 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == repos/*/issues/*/timeline\?* ]]; then
       if [[ -n "${STUB_HEAD_ARRIVAL:-}" ]]; then
-        jq -nc --arg at "$STUB_HEAD_ARRIVAL" --arg event "${STUB_ARRIVAL_EVENT:-head_ref_force_pushed}" '
+        timeline=$(jq -nc --arg at "$STUB_HEAD_ARRIVAL" --arg event "${STUB_ARRIVAL_EVENT:-head_ref_force_pushed}" --argjson large "${STUB_LONG_TIMELINE:-false}" '
           [[{event:"committed",sha:"headsha1",committer:{date:"2026-10-11T22:05:55Z"}}],
-           [{event:$event,commit_id:"headsha1",sha:"headsha1",created_at:$at,committer:{date:$at}}]]'
+           [{event:$event,commit_id:"headsha1",sha:"headsha1",created_at:$at,committer:{date:$at}}]]
+          + (if $large then [range(0;80) | [{event:"commented",body:("x" * 60000)}]] else [] end)') || exit 1
+        printf '%s\n' "${#timeline}" > "$STUB_TIMELINE_BYTES_FILE"
+        printf '%s\n' "$timeline"
       elif [[ "${STUB_COPILOT_FLIGHT:-completed}" == cycle-* ]]; then
         jq -nc --arg head "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" --arg current "${STUB_CONFIRM_HEAD:-headsha1}" --arg old "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" --arg mode "$STUB_COPILOT_FLIGHT" --argjson count "$(cat "$STUB_COPILOT_COUNT_FILE")" '
         def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
@@ -450,6 +453,9 @@ case "${1:-}" in
             decision="${STUB_REVIEW_DECISION-APPROVED}"
             reviews="$(jq -nc --arg state "${STUB_REVIEW_STATE:-APPROVED}" \
               '[{author:{login:"copilot-pull-request-reviewer"},state:$state}]')"
+            if [[ "${STUB_HUMAN_APPROVAL:-false}" == true ]]; then
+              reviews=$(jq -c '. + [{author:{login:"colleague"},state:"APPROVED"}]' <<<"$reviews") || exit 1
+            fi
             ;;
           approved_decision)
             decision="APPROVED"
@@ -554,6 +560,7 @@ run_wait() {
         STUB_MARKER_LOG="$RUN/marker-posts" \
         STUB_REQUEST_LOG="$RUN/requests" \
         STUB_COPILOT_COUNT_FILE="$RUN/copilot-polls" \
+        STUB_TIMELINE_BYTES_FILE="$RUN/timeline-bytes" \
         .agents/skills/orch/scripts/approval-wait "$@" ${base_args[@]+"${base_args[@]}"} 2>"$RUN/stderr")
   RC=$?
   set -e
@@ -606,6 +613,7 @@ observe() {
       fallback_notices) got="$got fallback_notices=$(fallback_notices)" ;;
       unsent) got="$got unsent=$(grep -c '^approval-wait: copilot-fallback-unsent ' "$RUN/stderr" || true)" ;;
       requests) got="$got requests=$(count_lines "$RUN/requests")" ;;
+      timeline_large) got="$got timeline_large=$([[ $(cat "$RUN/timeline-bytes") -gt 131072 ]] && echo true || echo false)" ;;
       request_argv) got="$got request_argv=$(tr ' ' '+' < "$RUN/requests")" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       copilot_polls) got="$got copilot_polls=$(cat "$RUN/copilot-polls" 2>/dev/null || echo 0)" ;;
@@ -789,6 +797,10 @@ table '1 1 1 --json --mode approval' \
   're-pointed Copilot approval cannot approve the pushed head||STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0' \
   're-pointed approval cannot use the silence fallback||STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout approvals=0 requests=0' \
   'a review after the force push still approves||STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:06:58Z|rc=0 status=approved approvals=1 requests=0' \
+  'a stale Copilot approval beside a human cannot prove the aggregate||STUB_APPROVAL_MODE=copilot_repointed,STUB_HUMAN_APPROVAL=true,STUB_REQUIRED_APPROVALS=2,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout review_decision=REVIEW_REQUIRED approvals=1 requests=0' \
+  'a fresh Copilot approval beside a human preserves the aggregate||STUB_APPROVAL_MODE=copilot_repointed,STUB_HUMAN_APPROVAL=true,STUB_REQUIRED_APPROVALS=2,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:06:58Z|rc=0 status=approved review_decision=APPROVED approvals=2 requests=0' \
+  'a large timeline retains a fresh approval||STUB_APPROVAL_MODE=copilot_repointed,STUB_LONG_TIMELINE=true,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:06:58Z|rc=0 status=approved approvals=1 requests=0 timeline_large=true' \
+  'a large timeline still removes a stale approval||STUB_APPROVAL_MODE=copilot_repointed,STUB_LONG_TIMELINE=true,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0 timeline_large=true' \
   'an approval without an aggregate decision must also follow arrival||STUB_APPROVAL_MODE=copilot_repointed,STUB_REVIEW_DECISION=,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0' \
   'a re-pointed request for changes holds no verdict on the pushed head||STUB_APPROVAL_MODE=copilot_repointed,STUB_REVIEW_STATE=CHANGES_REQUESTED,STUB_REVIEW_DECISION=CHANGES_REQUESTED,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout changes_requested=0 requests=0' \
   'a review before the committed event cannot approve||STUB_APPROVAL_MODE=copilot_repointed,STUB_ARRIVAL_EVENT=committed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0' \
@@ -1104,8 +1116,18 @@ control copilot-error-no-retry '  if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg
   "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error_twice' 'rc=1 status=copilot-error requests=1 approval_polls=3'
 
 # shellcheck disable=SC2016
-control copilot-head-arrival '  | map(select($arrival == "" or' \
-  '  | map(select(true or $arrival == "" or' \
+control copilot-aggregate-support '      | if $removed' \
+  '      | if false and $removed' \
+  '1 1 1 --json --mode approval' \
+  'STUB_APPROVAL_MODE=copilot_repointed,STUB_HUMAN_APPROVAL=true,STUB_REQUIRED_APPROVALS=2,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z' \
+  'rc=1 status=timeout review_decision=REVIEW_REQUIRED approvals=1 requests=0'
+control copilot-timeline-argv '  arrival=$(jq -er --arg head "$last_head_sha" "$HEAD_ARRIVAL_JQ" <<<"$timeline") || return $?' \
+  '  arrival=$(jq -er --arg head "$last_head_sha" --arg ignored "$timeline" "$HEAD_ARRIVAL_JQ" <<<"$timeline") || return $?' \
+  '1 1 1 --json --mode approval' \
+  'STUB_APPROVAL_MODE=copilot_repointed,STUB_LONG_TIMELINE=true,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:06:58Z' \
+  'rc=0 status=approved approvals=1 requests=0 timeline_large=true'
+control copilot-head-arrival '  map(select($arrival == "" or' \
+  '  map(select(true or $arrival == "" or' \
   '1 1 1 --json --mode approval' \
   'STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z' \
   'rc=1 status=timeout approvals=0 requests=0'

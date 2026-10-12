@@ -1,1 +1,1 @@
-- Copilot reviews from before a force push no longer count as reviews of the replacement head. Approval waits request a new review and hold approval until that head is reviewed.
+- Copilot reviews from before a force push no longer count as reviews of the replacement head. Approval waits request a new review, hold approval until that head is reviewed, and read long pull request timelines without an argument-size error.

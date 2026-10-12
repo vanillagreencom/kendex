@@ -269,7 +269,8 @@ stop: stdout stays empty and stderr says why.
                  an approval request on a draft prints fallback cause=draft and
                  sends no request. Drafts take no Copilot wait or fallback notice.
 
-Approval mode reads GitHub-native review state ONLY, on either signal:
+Approval mode applies the Copilot head rule below, then reads GitHub-native
+review state on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
     base's review requirement), or
   - when reviewDecision is empty/null: at least one reviewer whose LATEST
@@ -284,6 +285,16 @@ Approval mode reads GitHub-native review state ONLY, on either signal:
   refuse an open thread, as does a base rule where it requires thread
   resolution, so the caller triages it first. A CHANGES_REQUESTED without an
   approval reports "changes_requested" ahead of the thread count.
+
+Copilot head rule: when the timeline reports a matching head arrival, a review
+counts for existing-review detection, approval, changes requested, or an error
+retry only when its submitted_at follows the head's latest matching
+head_ref_force_pushed.created_at, or the matching
+committed event's committer.date when no force-push event matches. Removing
+a Copilot verdict also removes the matching aggregate verdict: the wait treats
+it as REVIEW_REQUIRED. Without a matching arrival event, the commit_id match
+remains the head check. An older review still counts as engagement and prevents
+the proceed-on-timeout silence fallback.
 
 Copilot error reviews: a COMMENTED review by copilot-pull-request-reviewer
 containing Copilot's error sentence triggers one retry at the current head.
@@ -377,7 +388,7 @@ arrives before the deadline, "block" reports "timeout" (exit 1) and the
 caller prompts or keeps waiting; "proceed" instead reports a distinct
 "proceeded" (exit 0), which the caller records as a reviewer-down
 override — CI and the comment-hygiene gate still apply, and a
-CHANGES_REQUESTED always blocks. Proceed fires ONLY on genuine reviewer
+An eligible CHANGES_REQUESTED always blocks. Proceed fires ONLY on genuine reviewer
 silence: zero unresolved threads (an open thread returns "comments"
 first), no non-author review of any state (an active COMMENTED review is
 engagement) — AND a head that did not change during this wait. A mid-wait
@@ -670,15 +681,17 @@ COPILOT_REVIEWER='copilot-pull-request-reviewer'
 COPILOT_ERROR_SENTENCE='Copilot encountered an error and was unable to review this pull request.'
 # GitHub can re-point an older review to a force-pushed commit. The timeline
 # time, rather than commit_id alone, binds that review to the delivered head.
-HEAD_REVIEW_JQ='
-  ($timeline | if type != "array" or length == 0 or any(.[]; type != "array")
+HEAD_ARRIVAL_JQ='
+  if type != "array" or length == 0 or any(.[]; type != "array")
     then error("timeline pages") else add end
     | ([.[] | select(.event == "head_ref_force_pushed" and .commit_id == $head) | .created_at]
        | if length > 0 then . else empty end) //
       [.[] | select(.event == "committed" and .sha == $head) | .committer.date]
     | map(if type == "string" then . else error("head arrival time") end)
-    | max // "") as $arrival
-  | map(select($arrival == "" or
+    | max // ""
+'
+HEAD_REVIEW_JQ='
+  map(select($arrival == "" or
       (if (.submitted_at | type) == "string" then .submitted_at > $arrival
        else error("review submission time") end)))
 '
@@ -1067,8 +1080,10 @@ run_review_action() (
       || { approval_message request-reviews-unreadable >&2; exit 2; }
     request_timeline=$(gh api "repos/$REPO/issues/$PR_NUM/timeline?per_page=100" --paginate --slurp 2>"$GH_ERR_FILE") \
       || { approval_message request-reviews-unreadable >&2; exit 2; }
+    request_arrival=$(jq -er --arg head "$request_head" "$HEAD_ARRIVAL_JQ" <<<"$request_timeline") \
+      || { approval_message request-reviews-unreadable >&2; exit 2; }
     request_review_exists=$(jq -er -s --arg head "$request_head" \
-      --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" --argjson timeline "$request_timeline" '
+      --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg arrival "$request_arrival" '
       if length == 0 or any(.[]; type != "array") then error("review pages") else add end
       | map(select(.user.login == $reviewer and .commit_id == $head
           and (.state == "APPROVED" or .state == "COMMENTED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
@@ -1356,12 +1371,13 @@ copilot_fallback_notice() {
 # latestReviews. Its last review after this head arrived supplies both the
 # formal verdict and any error retry; an older review supplies neither.
 read_copilot_error() {
-  local reviews timeline status=0
+  local reviews timeline arrival status=0
   : > "$GH_ERR_FILE"
   reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE") || status=$?
   [ "$status" -eq 0 ] || return "$status"
   timeline=$(gh api "repos/$REPO/issues/$PR_NUM/timeline?per_page=100" --paginate --slurp 2>"$GH_ERR_FILE") || return $?
-  jq -cer -s --arg head "$last_head_sha" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg reviewer "${COPILOT_REVIEWER}[bot]" --argjson timeline "$timeline" '
+  arrival=$(jq -er --arg head "$last_head_sha" "$HEAD_ARRIVAL_JQ" <<<"$timeline") || return $?
+  jq -cer -s --arg head "$last_head_sha" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg arrival "$arrival" '
     if length == 0 or any(.[]; type != "array") then error("review pages") else add end
     | [.[] | select(.user.login == $reviewer
         and .commit_id == $head and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]
@@ -1460,11 +1476,13 @@ while true; do
     # Keep stale engagement visible to the timeout rule, but remove its formal
     # verdict. GitHub's aggregate approval cannot approve through that review.
     view_json=$(jq --arg reviewer "$COPILOT_REVIEWER" --argjson current "$copilot_review" '
-      .latestReviews |= map(if .author.login == $reviewer
+      .reviewDecision as $decision
+      | (($decision == "APPROVED" or $decision == "CHANGES_REQUESTED") and
+          any(.latestReviews[]?; .author.login == $reviewer and .state == $decision
+            and .state != $current.review.state)) as $removed
+      | .latestReviews |= map(if .author.login == $reviewer
         then .state = ($current.review.state // "COMMENTED") else . end)
-      | .reviewDecision as $decision
-      | if ($decision == "APPROVED" or $decision == "CHANGES_REQUESTED") and
-          ([.latestReviews[]? | select(.state == $decision)] | length) == 0
+      | if $removed
         then .reviewDecision = "REVIEW_REQUIRED" else . end' <<<"$view_json")
     last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
   fi
