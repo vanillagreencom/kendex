@@ -2304,10 +2304,22 @@ fi
         signal_refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
         self.assertEqual((signal_refused.returncode, f"stop-signal-refused item=TEST-1 pid={lane.pid}".encode() in signal_refused.stderr),
                          (1, True), signal_refused.stderr)
-        library.write_text(library_original)
+        # The private signal stub models delayed teardown after an accepted KILL.
+        library.write_text(library_original + '\nkill() { if [[ "$1" == -KILL ]]; then return 0; fi; builtin kill "$@"; }\n')
         refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
         self.assertEqual((refused.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in refused.stderr, lane.poll()),
                          (1, True, None), refused.stderr)
+        term_only = "for signal in TERM KILL; do"
+        self.assertEqual(library_original.count(term_only), 1)
+        library.write_text(library_original.replace(term_only, "for signal in TERM; do"))
+        control = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((control.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in control.stderr, lane.poll()),
+                         (1, True, None), control.stderr)
+        library.write_text(library_original)
+        stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((stopped.returncode, stopped.stdout),
+                         (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
+        self.assertEqual(lane.wait(timeout=2), -9)
 
     def test_close_preserves_and_restores_only_traced_render_drift(self):
         self.assertEqual(self.create().returncode, 0)
