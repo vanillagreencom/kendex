@@ -59,17 +59,19 @@ Offer one of these commands, run with the repository's main checkout as the work
 
 ## Transcript fallback
 
-Until the mailbox install, answer from the agent's own session transcript.
+Until the mailbox install, answer from the agent's own session transcript under [Weekly efficiency audit: Transcript access](../workflows/efficiency-audit.md#transcript-access). Use available documented read-only readers first. Before reading internal files, record why the installed reader is unavailable or which required evidence it cannot supply.
+
+Resolve transcript roots under [Weekly efficiency audit: Inputs](../workflows/efficiency-audit.md#inputs). The user's own location takes precedence. Use the file selectors below only when original file access is required under the transcript access contract.
 
 | Harness | Session file for repository folder `[ROOT]` |
 |---|---|
 | Claude Code | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/[FOLDER]/[SESSION_ID].jsonl`. `[FOLDER]` is `[ROOT]` with each character other than an ASCII letter or digit changed to `-`. A name over 200 characters is cut at 200 and followed by `-` and a hash; match it by that prefix. |
 | Codex | `${CODEX_HOME:-~/.codex}/sessions/[YYYY]/[MM]/[DD]/rollout-*.jsonl` whose first line, a `session_meta` record, carries `payload.cwd` equal to `[ROOT]`. |
 | Copilot CLI | `${COPILOT_HOME:-~/.copilot}/session-state/[SESSION_ID]/events.jsonl` whose sibling `workspace.yaml` has the `cwd:` line `[ROOT]`. |
-| Pi | No session-file location is known for a session started outside kendex. Say that no transcript can be located, and do not guess. |
+| Pi | Discover the installed version's configured session directory under [Weekly efficiency audit: Inputs](../workflows/efficiency-audit.md#inputs). Confirm the session's recorded working directory belongs to `[ROOT]`. Report no transcript only when no matching session is available. |
 
-- Read the newest session for `[ROOT]` and name it, so the user can correct the choice.
+- Select the newest session whose recorded repository identity matches `[ROOT]` and name it, so the user can correct the choice.
 - The transcript is read only. Read it as a stream, only its last entries, and write nothing.
 - Never read a tmux pane or a screen: `capture-pane` and screen capture are not a route.
 - Quote no credential from the file; [accounts-and-secrets.md § Secret transfer](accounts-and-secrets.md#secret-transfer) applies.
-- Open the answer with "From the session transcript, not a report from the agent". Name the file and the time of its last entry, or say that no transcript was found. Then offer the mailbox install.
+- Open the answer with "From the session transcript, not a report from the agent". Name the original file and the time of its last entry when accessible. Otherwise name the reader and the unavailable evidence. Say when no transcript was found. Then offer the mailbox install.
