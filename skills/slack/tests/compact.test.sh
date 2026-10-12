@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
 # `slack compact`: lines resolved or ignored longer ago than SLACK_THREAD_DAYS,
-# an old report's upload, an old read directive's receipt marks, and every
-# history position but the last leave the journal; every open ask, every
-# young line, an old directive or ask answer still marked eyes with its
-# delivery, and an old directive Slack refused to mark with its delivery stay, the relay reads
-# the compacted file as before, marks the unmarked directive eyes and swaps
-# both marks once read, and a running relay's lock refuses the verb; an old
-# connection line leaves and a young one stays. Eight controls, one per rule:
-# a mutant that drops no old line, one that keeps every receipt mark, one
-# that keeps no unread directive, one that keeps no unread answer, one that keeps no unmarked directive, one
-# that keeps every history position, one that keeps every connection line,
-# and one that takes no lock.
+# an old report's upload and superseded deliveries leave the journal.
+# Required generation deliveries and their receipts stay for later live
+# replies. Unread deliveries also stay without generation metadata, as
+# older journals wrote them. Controls isolate that unread retention from
+# generation retention, and exercise receipts, positions, connections,
+# uncertain posts and the relay lock.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -65,7 +60,7 @@ NEXT="$(sk_inject C001 U001 'after compaction')"
 sk_poll "$ROOT"
 assert_eq "$RC=$(jq -r 'select(.t == "in") | .ts' "$JOURNAL" | tr '\n' ' ')" "0=$YOUNG $NEXT " \
   "the relay reads the compacted journal and goes on from its last position"
-# A directive read long ago leaves with its marks; one still marked eyes
+# A read root keeps its generation mark for a later live reply. One marked eyes
 # keeps its delivery and its mark whatever its age, and swaps once read; one
 # whose eyes mark Slack refused keeps its delivery, is marked on the next
 # poll, and swaps once read.
@@ -86,14 +81,31 @@ receipts() { jq -r 'select(.t == "in" or .t == "mark") | [.t, .ts, (.name // .ki
 assert_eq "$RC $(sk_reactions "$GAMMA_CH" "$READ_OLD") $(sk_reactions "$GAMMA_CH" "$UNREAD_OLD") [$(sk_reactions "$GAMMA_CH" "$UNMARKED_OLD")]" \
   "0 white_check_mark eyes []" "one old directive is read, one is not, and Slack refused the third its mark"
 sk_run -- compact --root "$GAMMA"
-assert_eq "$RC=$(receipts "$GAMMA")" "0=in:$UNREAD_OLD:directive mark:$UNREAD_OLD:eyes in:$UNMARKED_OLD:directive " \
-  "the old unread directive keeps its delivery and its eyes mark, the old unmarked one its delivery; the old read one keeps neither"
+assert_eq "$RC=$(receipts "$GAMMA")" "0=in:$READ_OLD:directive mark:$READ_OLD:eyes mark:$READ_OLD:white_check_mark in:$UNREAD_OLD:directive mark:$UNREAD_OLD:eyes in:$UNMARKED_OLD:directive " \
+  "the read root keeps its generation delivery and receipts; the unread and unmarked directives also keep their deliveries"
 sk_poll "$GAMMA"
 assert_eq "$RC $(sk_reactions "$GAMMA_CH" "$UNMARKED_OLD")" "0 eyes" "the next poll marks the kept unmarked directive"
 sk_lm "$GAMMA" inbox --item overseer >/dev/null
 sk_poll "$GAMMA"
 assert_eq "$RC $(sk_reactions "$GAMMA_CH" "$UNREAD_OLD") $(sk_reactions "$GAMMA_CH" "$UNMARKED_OLD")" "0 white_check_mark white_check_mark" \
   "both kept directives swap to a check once the overseer reads them"
+READ_REPLY="$(sk_inject "$GAMMA_CH" U001 'Old topic reply.' "$READ_OLD" "\"ts\":\"$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 180))')\"")"
+sk_event "$GAMMA" "$GAMMA_CH" "$READ_REPLY"
+assert_eq "$RC=$(jq -c --arg d "$GAMMA_CH:$READ_REPLY" 'select(.delivery_id == $d) | .parent.thread' "$(sk_box "$GAMMA")/to-lane.jsonl")" \
+  "0=$(jq -nc --arg ts "$READ_REPLY" '[{ts:$ts,author:"owner",text:"Old topic reply."}]')" \
+  "a live old-thread reply excludes the root already delivered before compaction"
+sk_lm "$GAMMA" inbox --item overseer >/dev/null || exit 1
+sk_poll "$GAMMA"
+assert_eq "$RC=$(sk_reactions "$GAMMA_CH" "$READ_REPLY")" '0=white_check_mark' "the later old reply is read before its delivery supersedes the root mark"
+# The saved scan position has expired together with the cached parent.
+printf '{"t":"thread","ts":"%s","seen":"%s"}\n' "$READ_OLD" "$READ_REPLY" >> "$(sk_journal "$GAMMA")"
+sk_run -- compact --root "$GAMMA"
+assert_eq "$RC=$(jq -sr --arg ts "$READ_OLD" '[.[] | select((.t == "in" or .t == "mark") and .ts == $ts)] | length' "$(sk_journal "$GAMMA")")" \
+  '0=0' "the later delivered reply lets compaction remove the superseded root delivery and receipts"
+assert_eq "$(jq -sr '[.[] | select(.t == "parent" or .t == "thread")] | length' "$(sk_journal "$GAMMA")")" \
+  0 "expired parent caches and saved thread scans still leave the journal"
+assert_eq "$(jq -sr --arg ts "$READ_REPLY" '[.[] | select(.t == "mark" and .ts == $ts) | .name] | index("white_check_mark") != null' "$(sk_journal "$GAMMA")")" \
+  true "the latest generation delivery keeps its read receipt after ordinary history prunes"
 sk_run SLACK_THREAD_DAYS=0 -- compact --root "$ROOT"
 assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_THREAD_DAYS=0" "a thread-days value under 1 is refused"
 sk_run -- compact --root "$SK_TMP/nowhere"
@@ -120,8 +132,8 @@ sk_run -- compact --root "$RESUMES"
 assert_eq "$RC=$(jq -cr 'select(.t == "resume") | .skipped' "$(sk_journal "$RESUMES")")" '0=["YOUNG-SKIP"]' \
   "compaction keeps skipped ids with the young resume and drops them with the aged resume"
 
-# An old answer in a closed ask's thread keeps its delivery and its eyes mark
-# until it is read, as a directive does; one read leaves with its marks.
+# An older journal's answer has no generation metadata. Its unread delivery
+# and eyes mark stay; a read answer can leave with its marks.
 ANSWER_UNREAD="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 30))')"
 ANSWER_READ="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400 + 45))')"
 ANSWERS="$(sk_new_root answers)"
@@ -139,7 +151,7 @@ EOF
 cp "$(sk_journal "$ANSWERS")" "$SK_TMP/answers.jsonl"
 sk_run -- compact --root "$ANSWERS"
 assert_eq "$RC=$(receipts "$ANSWERS")" "0=in:$ANSWER_UNREAD:answer mark:$ANSWER_UNREAD:eyes " \
-  "the old unread answer keeps its delivery and its eyes mark; the old read one keeps neither"
+  "the unread legacy answer keeps its delivery and eyes mark; the read legacy answer and receipts expire"
 
 # Replay the real journal after its completed posts age out. A lone pre-send
 # line is still uncertain; a later outcome, including retry, settles it.
@@ -213,7 +225,7 @@ assert_eq "$RC=$(jq -r 'select(.t == "seen") | .ts' "$JOURNAL" | wc -l | tr -d '
   "control: the position rule gone, every history position stays"
 sk_bin_reset
 
-sk_mutant marks store.py 'elif kind == "mark" and old:\n            drop = not pending' 'elif kind == "mark" and old:\n            drop = False'
+sk_mutant marks store.py 'elif kind == "mark" and old:\n            drop = not \(pending or retained\)' 'elif kind == "mark" and old:\n            drop = False'
 cat >> "$JOURNAL" <<EOF
 {"name": "white_check_mark", "t": "mark", "ts": "$OLD_TS"}
 EOF
@@ -229,15 +241,54 @@ sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$(jq -r 'select(.t == "reconnect") | .at' "$JOURNAL")" "0=$OLD_AT" "control: the connection rule gone, an old reconnect line stays"
 sk_bin_reset
 
-sk_mutant pending store.py 'pending = kind in \("in", "mark"\) and' 'pending = False and'
-UNREAD_LOST="$(sk_inject "$GAMMA_CH" U001 'unread and lost' '' "\"ts\": \"$OLD_SHARE\"")"
-sk_run -- listen --root "$GAMMA" --once
-sk_run -- compact --root "$GAMMA"
-sk_bin_reset
-sk_lm "$GAMMA" inbox --item overseer >/dev/null
-sk_poll "$GAMMA"
-assert_eq "$(receipts "$GAMMA" | grep -c "$UNREAD_LOST")|$(sk_reactions "$GAMMA_CH" "$UNREAD_LOST")" "0|eyes" \
-  "control: the unread rule gone, an old eyes directive loses its lines and never swaps"
+# Older journal deliveries have no generation. Removing that fixture field
+# isolates unread retention from the independent generation-retention rule.
+while read -r mark mode; do
+  LEGACY="$(sk_new_root "legacy-$mark-$mode")"
+  sk_bind "$LEGACY"
+  sk_rebind_at "$LEGACY" "$(python3 -c 'import time; print("%.6f" % (time.time() - 10 * 86400))')"
+  LEGACY_CH="$(sk_channel "$LEGACY")"
+  LEGACY_TS="$(sk_inject "$LEGACY_CH" U001 'An unread legacy directive.' '' "\"ts\":\"$OLD_UNMARKED_LOST\"")"
+  if [ "$mark" = unmarked ]; then
+    sk_ctl /_test/fault '{"method":"reactions.add","error":"missing_scope"}' >/dev/null
+  fi
+  sk_poll "$LEGACY"
+  WANT_MARK=eyes
+  [ "$mark" != unmarked ] || WANT_MARK=""
+  assert_eq "$RC=$(sk_reactions "$LEGACY_CH" "$LEGACY_TS")" "0=$WANT_MARK" "$mark/$mode: the real delivery reaches its intended receipt state"
+  jq -c --arg ts "$LEGACY_TS" 'if .t == "in" and .ts == $ts then del(.generation) else . end' "$(sk_journal "$LEGACY")" > "$SK_TMP/legacy-journal" || exit 1
+  mv -- "$SK_TMP/legacy-journal" "$(sk_journal "$LEGACY")" || exit 1
+  if [ "$mode" = control ]; then
+    case "$mark" in
+      eyes) sk_mutant pending store.py 'pending = kind in \("in", "mark"\) and' 'pending = False and' ;;
+      unmarked) sk_mutant unmarked store.py 'state\.marks\.get\(str\(line\["ts"\]\)\) != READ' 'state.marks.get(str(line["ts"]), READ) != READ' ;;
+    esac
+  fi
+  sk_run -- compact --root "$LEGACY"
+  GOT="$RC=$(receipts "$LEGACY")"
+  WANT="0=in:$LEGACY_TS:directive "
+  [ "$mark" != eyes ] || WANT="${WANT}mark:$LEGACY_TS:eyes "
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" "$WANT" "$mark: unread legacy delivery and its existing receipt survive compaction"
+  else
+    sk_assert_red "$GOT" "$WANT" "$mark: disabling only the intended unread guard fails the same retention assertion"
+  fi
+  sk_bin_reset
+  sk_poll "$LEGACY"
+  sk_lm "$LEGACY" inbox --item overseer >/dev/null || exit 1
+  sk_poll "$LEGACY"
+  GOT="$RC=$(sk_reactions "$LEGACY_CH" "$LEGACY_TS")"
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" '0=white_check_mark' "$mark: the retained legacy directive gets its read receipt after the real inbox consumes it"
+  else
+    sk_assert_red "$GOT" '0=white_check_mark' "$mark: losing the legacy delivery prevents the later read receipt"
+  fi
+done <<'ROWS'
+eyes production
+eyes control
+unmarked production
+unmarked control
+ROWS
 
 sk_mutant answers store.py 'str\(line\["ts"\]\) in state\.delivered' 'str(line["ts"]) in state.delivered and line.get("kind") != "answer"'
 cp "$SK_TMP/answers.jsonl" "$(sk_journal "$ANSWERS")"
@@ -245,15 +296,5 @@ sk_run -- compact --root "$ANSWERS"
 sk_assert_red "$RC=$(receipts "$ANSWERS")" "0=in:$ANSWER_UNREAD:answer mark:$ANSWER_UNREAD:eyes " \
   "control: the unread rule kept to directives, an old eyes answer loses its delivery"
 sk_bin_reset
-
-sk_mutant unmarked store.py 'state\.marks\.get\(str\(line\["ts"\]\)\) != READ' 'state.marks.get(str(line["ts"]), READ) != READ'
-UNMARKED_LOST="$(sk_inject "$GAMMA_CH" U001 'unmarked and lost' '' "\"ts\": \"$OLD_UNMARKED_LOST\"")"
-sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
-sk_run -- listen --root "$GAMMA" --once
-sk_run -- compact --root "$GAMMA"
-sk_bin_reset
-sk_poll "$GAMMA"
-assert_eq "$(receipts "$GAMMA" | grep -c "$UNMARKED_LOST")|$(sk_reactions "$GAMMA_CH" "$UNMARKED_LOST")" "0|" \
-  "control: the unmarked rule gone, an old directive Slack refused to mark loses its line and is never marked"
 
 sk_summary
