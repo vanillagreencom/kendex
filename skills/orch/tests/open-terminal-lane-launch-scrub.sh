@@ -144,7 +144,7 @@ if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
     local case_name="$1" script="$2" shell="$3" command="$4" held="$5" rc=0 actual=missing
     local root="$TMP_ROOT/$case_name"
     mkdir -p "$root"
-    timeout 20 "$BASH" "$TEST_DIR/lane-launch-scrub.sh" --raw-case "$root" "$script" "$shell" "$command" > "$root/log" 2>&1 || rc=$?
+    timeout 20 "$BASH" "$TEST_DIR/open-terminal-lane-launch-scrub.sh" --raw-case "$root" "$script" "$shell" "$command" > "$root/log" 2>&1 || rc=$?
     [[ ! -f "$root/result" ]] || actual="$(cat "$root/result")"
     [[ ! -f "$root/launch.log" ]] || cat "$root/launch.log" >> "$root/log"
     assert_eq "exit=$rc $actual" "exit=0 held=$held|origin=$root/worktree|function=called" \
@@ -188,7 +188,7 @@ assert changed != text
 path.write_text(changed)
 PY
   rc=0
-  env LAUNCH_LIB_UNDER_TEST="$TMP_ROOT/mutant-lib" "$BASH" "$TEST_DIR/lane-launch-scrub.sh" > "$TMP_ROOT/control.out" 2>&1 || rc=$?
+  env LAUNCH_LIB_UNDER_TEST="$TMP_ROOT/mutant-lib" "$BASH" "$TEST_DIR/open-terminal-lane-launch-scrub.sh" > "$TMP_ROOT/control.out" 2>&1 || rc=$?
   assert_eq "$rc" 1 'control: a launch line without the scrub fails the suite'
   control="$(cat "$TMP_ROOT/control.out")"
   for label in 'Claude lane under the prefix' 'custom command under launch env words'; do
