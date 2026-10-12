@@ -12,7 +12,8 @@ Each record kind has one home. Write a record to its home, never to the handoff.
 | Open exchange | Its mailbox, read live: the user channel and each agent's channel. With orch installed, `lane-mail pending`, peer asks and `lane-mail events`. |
 | Session state | The handoff. |
 
-- Create each of the session's own tasks as a tracker issue through the tracker's existing issue creation command, in the one project the user names for session tasks. No repository dispatch reads that project.
+- A continuing session requires available tracker access and one user-selected project for its own tasks. Confirm that the tracker can read the workspace queue and retain tasks and checks. If setup or project selection is missing, request it through [Connect Linear](../workflows/setup-linear.md). Keep the current handoff untouched until these prerequisites hold.
+- Create each of the session's own tasks as a tracker issue through the tracker's existing issue creation command, in that project. No repository dispatch reads that project.
 - Record a session's check on another item as a Done-when box on that item. The box names the check, its evidence source, its trigger and its deadline. It follows the tracker's Verifying lifecycle: an open box keeps the item in Verifying, and the box closes only on recorded evidence or an explicit disposition. Add no label.
 - Select the checks by the tracker's Verifying state, read across the workspace and every page. When the read fails, report the checks unavailable.
 
