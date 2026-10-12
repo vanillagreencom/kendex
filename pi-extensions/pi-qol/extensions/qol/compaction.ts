@@ -34,8 +34,11 @@ import { gatewayPrivacyBlocksNativeSummary, gatewayPrivacyOnPayload } from "./ga
 export type QolSummaryProfile = "concise" | "balanced" | "exhaustive";
 export type QolSummaryPurpose = "compaction" | "branch-summary" | "session-search";
 
-export function compactionNotify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info"): void {
-	if (ctx.hasUI && settingBoolean("compaction.notify", true, ctx.cwd)) ctx.ui.notify(message, level);
+export function compactionNotify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info", required = false): void {
+	if (ctx.hasUI && (required || settingBoolean("compaction.notify", true, ctx.cwd))) ctx.ui.notify(message, level);
+	// Print, JSON and RPC callers read stderr for diagnostics. A cancelled
+	// protected summary has no Pi error event to carry its provider failure.
+	if (!ctx.hasUI && required) console.error(JSON.stringify({ source: "pi-qol", level, message }));
 }
 
 export function compactionProfile(cwd: string): QolSummaryProfile {
@@ -263,16 +266,18 @@ export function writeBudgetHandoffArtifact(ctx: ExtensionContext, handoff: QolBu
 export async function handleQolCompaction(event: any, ctx: ExtensionContext): Promise<any> {
 	const isBudgetGuard = isBudgetGuardCompaction(event?.customInstructions);
 	const nativeBlocked = gatewayPrivacyBlocksNativeSummary(ctx);
+	const customEnabled = settingBoolean("compaction.customEnabled", false, ctx.cwd);
 	// Budget-guard-triggered and privacy-covered compactions force the QOL
 	// summarizer even when compaction.customEnabled is off. The handoff writer
 	// still honors its independent compaction.handoffArtifactEnabled toggle.
-	if (!isBudgetGuard && !nativeBlocked && !settingBoolean("compaction.customEnabled", false, ctx.cwd)) return undefined;
+	if (!isBudgetGuard && !nativeBlocked && !customEnabled) return undefined;
 	const preparation = event.preparation ?? {};
 	const messages = [...(preparation.messagesToSummarize ?? []), ...(preparation.turnPrefixMessages ?? [])];
 	if (messages.length === 0) return undefined;
 	const tokensBefore = typeof preparation.tokensBefore === "number" ? preparation.tokensBefore : 0;
-	const handoff = buildBudgetHandoff(ctx, { preparation, reason: event.customInstructions ?? "session_before_compact" });
-	const handoffResult = writeBudgetHandoffArtifact(ctx, handoff);
+	const handoffResult: HandoffWriteResult = isBudgetGuard || customEnabled
+		? writeBudgetHandoffArtifact(ctx, buildBudgetHandoff(ctx, { preparation, reason: event.customInstructions ?? "session_before_compact" }))
+		: {};
 	const sourceLabel = isBudgetGuard ? "pi-qol budget-guard" : "pi-qol";
 	compactionNotify(ctx, `QOL compaction: summarizing ${messages.length} message(s), ${tokensBefore.toLocaleString()} token(s)${isBudgetGuard ? " (budget guard)" : ""}.`, "info");
 	try {
@@ -310,7 +315,7 @@ export async function handleQolCompaction(event: any, ctx: ExtensionContext): Pr
 		};
 	} catch (error) {
 		if (event.signal?.aborted) return undefined;
-		compactionNotify(ctx, `QOL compaction failed: ${stringifyError(error)}`, "error");
+		compactionNotify(ctx, `QOL compaction failed: ${stringifyError(error)}`, "error", nativeBlocked);
 		return !nativeBlocked && settingBoolean("compaction.fallbackToDefault", true, ctx.cwd) ? undefined : { cancel: true };
 	}
 }
@@ -348,7 +353,7 @@ export async function handleQolBranchSummary(event: any, ctx: ExtensionContext):
 		};
 	} catch (error) {
 		if (event.signal?.aborted) return undefined;
-		compactionNotify(ctx, `QOL branch summary failed: ${stringifyError(error)}`, "error");
+		compactionNotify(ctx, `QOL branch summary failed: ${stringifyError(error)}`, "error", nativeBlocked);
 		return nativeBlocked ? { cancel: true } : undefined;
 	}
 }

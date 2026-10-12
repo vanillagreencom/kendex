@@ -1,11 +1,12 @@
 // Plain Bun child: the package test preload does not replace Pi's real SDKs.
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { generateQolSummary, handleQolBranchSummary, handleQolCompaction } from "../extensions/qol/compaction.ts";
 import { runHandoff } from "../extensions/qol/handoff.ts";
 import { generateAutoRenameName } from "../extensions/qol/session-rename.ts";
+import { QOL_BUDGET_GUARD_SENTINEL } from "../extensions/qol/budget-guard.ts";
 
 interface Scenario {
 	provider: string;
@@ -14,13 +15,17 @@ interface Scenario {
 	enabled: boolean;
 	refuse?: boolean;
 	qolSummaries?: boolean;
+	hasUI?: boolean;
+	notify?: boolean;
+	budgetGuard?: boolean;
+	artifactEnabled?: boolean;
 }
 
 const row: Scenario = JSON.parse(process.argv[2]);
 const root = process.env.PI_CODING_AGENT_DIR!;
 const title = "Private session summary";
 const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
-const notices: string[] = [];
+const notices: Array<{ level: string; message: string }> = [];
 // The handlers stand in for Pi's own summary, which goes to the session model.
 const sessionHandler = row.purpose === "compact-handler" || row.purpose === "tree-handler";
 
@@ -58,6 +63,8 @@ try {
 		"handoffReviewPrompt": false,
 		"compaction.customEnabled": row.qolSummaries ?? false,
 		"compaction.branchSummaryEnabled": row.qolSummaries ?? false,
+		"compaction.notify": row.notify ?? true,
+		"compaction.handoffArtifactEnabled": row.artifactEnabled ?? true,
 	} } } } }));
 	const model = {
 		type: "chat", provider: row.provider, api: row.api, id: "fixture", name: "fixture", reasoning: false,
@@ -66,7 +73,7 @@ try {
 		...(row.provider === "openrouter" ? { compat: { openRouterRouting: { order: ["fixture-provider"] } } } : {}),
 	};
 	const ctx = {
-		cwd: root, hasUI: row.purpose === "handoff" || sessionHandler, isProjectTrusted: () => false,
+		cwd: root, hasUI: row.hasUI ?? (row.purpose === "handoff" || sessionHandler), isProjectTrusted: () => false,
 		// Nested summaries can use a different provider from the main agent.
 		model: row.purpose === "handoff" || sessionHandler ? model : { provider: row.provider === "openai" ? "openrouter" : "openai", id: "main-agent" },
 		modelRegistry: {
@@ -75,10 +82,11 @@ try {
 		},
 		sessionManager: {
 			getSessionFile: () => undefined,
+			getSessionId: () => "gateway-fixture",
 			buildSessionContext: () => ({ messages: [{ role: "user", content: "private fixture conversation", timestamp: 0 }] }),
 		},
 		ui: {
-			notify: (_message: string, level: string) => notices.push(level),
+			notify: (message: string, level: string) => notices.push({ message, level }),
 			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value: unknown) => void) => { dispose(): void }) => new Promise((resolve) => {
 				const component = factory({ requestRender() {} }, { fg: (_color: string, text: string) => text }, {}, (value) => { component.dispose(); resolve(value); });
 			}),
@@ -90,14 +98,16 @@ try {
 	try {
 		if (row.purpose === "handoff") await runHandoff("continue the private task", ctx);
 		else if (row.purpose === "auto-name") result = await generateAutoRenameName("private fixture conversation", ctx);
-		else if (row.purpose === "compact-handler") result = await handleQolCompaction({ type: "session_before_compact", preparation: { messagesToSummarize: [{ role: "user", content: "private fixture conversation", timestamp: 0 }], turnPrefixMessages: [], tokensBefore: 1 } }, ctx);
+		else if (row.purpose === "compact-handler") result = await handleQolCompaction({ type: "session_before_compact", customInstructions: row.budgetGuard ? `${QOL_BUDGET_GUARD_SENTINEL} budget exceeded` : undefined, preparation: { messagesToSummarize: [{ role: "user", content: "private fixture conversation", timestamp: 0 }], turnPrefixMessages: [], tokensBefore: 1 } }, ctx);
 		else if (row.purpose === "tree-handler") result = await handleQolBranchSummary({ type: "session_before_tree", preparation: { userWantsSummary: true, entriesToSummarize: [{ type: "message", message: { role: "user", content: "private fixture conversation", timestamp: 0 } }] } }, ctx);
 		else result = await generateQolSummary(ctx, { conversationText: "private fixture conversation", purpose: row.purpose });
 	} catch (error) {
 		if (!(error instanceof Error)) throw error;
 		outcome = "error";
 	}
-	console.log(JSON.stringify({ outcome, result, requests, notices }));
+	const sessionDir = join(root, "kendex", "sessions", "gateway-fixture");
+	const artifacts = existsSync(sessionDir) ? readdirSync(sessionDir, { recursive: true }).filter((path) => String(path).endsWith(".json") && String(path).includes("handoff")) : [];
+	console.log(JSON.stringify({ outcome, result, requests, notices, artifacts }));
 } finally {
 	server.stop(true);
 }

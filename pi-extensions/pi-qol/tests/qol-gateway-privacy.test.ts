@@ -13,8 +13,16 @@ const providers = [
 	{ provider: "vercel-ai-gateway", api: "anthropic-messages" as const },
 ];
 const purposes = ["compaction", "branch-summary", "session-search", "handoff", "auto-name"] as const;
-type Scenario = typeof providers[number] & { purpose: typeof purposes[number] | "compact-handler" | "tree-handler"; enabled: boolean; refuse?: boolean; qolSummaries?: boolean };
-type ProbeResult = { outcome: string; result?: any; notices?: string[]; requests: Array<{ path: string; body: Record<string, unknown> }> };
+type Scenario = typeof providers[number] & { purpose: typeof purposes[number] | "compact-handler" | "tree-handler"; enabled: boolean; refuse?: boolean; qolSummaries?: boolean; hasUI?: boolean; notify?: boolean; budgetGuard?: boolean; artifactEnabled?: boolean };
+type Diagnostic = { source: string; level: string; message: string };
+type ProbeResult = {
+	outcome: string;
+	result?: { cancel?: boolean; compaction?: { summary: string; details: { handoffArtifact?: string; handoffArtifactLatest?: string } }; summary?: { summary: string } };
+	notices: Array<{ level: string; message: string }>;
+	diagnostics: Diagnostic[];
+	artifacts: string[];
+	requests: Array<{ path: string; body: Record<string, unknown> }>;
+};
 
 async function probe(row: Scenario): Promise<ProbeResult> {
 	mkdirSync(scratch, { recursive: true });
@@ -25,8 +33,11 @@ async function probe(row: Scenario): Promise<ProbeResult> {
 	const deadline = setTimeout(() => child.kill(), 30_000);
 	try {
 		const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-		expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
-		return JSON.parse(stdout);
+		expect(exitCode).toBe(0);
+		// Headless Pi callers consume the JSON diagnostic on stderr. Provider
+		// error codes come from the HTTP response, not QOL's human copy.
+		const diagnostics: Diagnostic[] = stderr.trim() ? stderr.trim().split("\n").map((line) => JSON.parse(line)) : [];
+		return { ...JSON.parse(stdout), diagnostics };
 	} finally {
 		clearTimeout(deadline);
 		await child.exited;
@@ -77,17 +88,36 @@ const handlerRows: Array<Scenario & { expected: "summary" | "cancel" | "fallback
 	{ ...providers[1], purpose: "tree-handler", enabled: false, refuse: true, qolSummaries: true, expected: "fallback" },
 	{ ...providers[0], purpose: "compact-handler", enabled: false, expected: "native" },
 	{ ...providers[1], purpose: "tree-handler", enabled: false, expected: "native" },
+	...providers.flatMap((provider) => (["compact-handler", "tree-handler"] as const).flatMap((purpose) => [
+		{ ...provider, purpose, enabled: true, refuse: true, hasUI: false, notify: true, expected: "cancel" as const },
+		{ ...provider, purpose, enabled: true, refuse: true, hasUI: false, notify: false, expected: "cancel" as const },
+		{ ...provider, purpose, enabled: true, refuse: true, hasUI: true, notify: false, expected: "cancel" as const },
+	])),
+	...[
+		{ qolSummaries: true },
+		{ budgetGuard: true },
+		{ qolSummaries: true, artifactEnabled: false },
+		{ budgetGuard: true, artifactEnabled: false },
+	].map((options) => ({ ...providers[0], purpose: "compact-handler" as const, enabled: true, expected: "summary" as const, ...options })),
 ];
 
 for (const row of handlerRows) {
-	test(`QOL session handler: ${row.provider} ${row.purpose} privacy=${row.enabled} refusal=${row.refuse ?? false} -> ${row.expected}`, async () => {
+	test(`QOL session handler: ${JSON.stringify(row)}`, async () => {
 		const response = await probe(row);
 		expect(response.outcome).toBe("completed");
 		if (row.expected === "native") {
 			expect({ result: response.result, requests: response.requests }).toEqual({ result: undefined, requests: [] });
 			return;
 		}
-		expect(response.notices?.includes("error")).toBe(row.expected !== "summary");
+		const errors = [...response.notices, ...response.diagnostics].filter((notice) => notice.level === "error");
+		expect(errors.length).toBe(row.expected === "summary" ? 0 : 1);
+		if (row.expected === "cancel") {
+			expect(errors[0].message).toContain("no_providers_available");
+			if (row.hasUI === false) {
+				expect(response.notices).toEqual([]);
+				expect(response.diagnostics[0]).toMatchObject({ source: "pi-qol", level: "error" });
+			} else expect(response.diagnostics).toEqual([]);
+		}
 		if (row.expected === "fallback") {
 			expect(response.result).toBeUndefined();
 			expect(() => assertPrivacy(row, response)).toThrow(AssertionError);
@@ -95,6 +125,19 @@ for (const row of handlerRows) {
 		}
 		assertPrivacy(row, response);
 		if (row.expected === "cancel") expect(response.result).toEqual({ cancel: true });
-		else expect(row.purpose === "compact-handler" ? response.result?.compaction?.summary : response.result?.summary?.summary).toBe("Private session summary");
+		else {
+			expect(row.purpose === "compact-handler" ? response.result?.compaction?.summary : response.result?.summary?.summary).toBe("Private session summary");
+			const writesArtifact = row.purpose === "compact-handler" && (row.qolSummaries || row.budgetGuard) && row.artifactEnabled !== false;
+			if (writesArtifact) {
+				expect(response.artifacts).toContain("pi-qol/handoff/latest.json");
+				expect(response.artifacts.some((path) => path !== "pi-qol/handoff/latest.json")).toBe(true);
+				expect(response.result?.compaction?.details.handoffArtifact).toBeString();
+				expect(response.result?.compaction?.details.handoffArtifactLatest).toBeString();
+			} else {
+				expect(response.artifacts).toEqual([]);
+				expect(response.result?.compaction?.details.handoffArtifact).toBeUndefined();
+				expect(response.result?.compaction?.details.handoffArtifactLatest).toBeUndefined();
+			}
+		}
 	}, 30_000);
 }
