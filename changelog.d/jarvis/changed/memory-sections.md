@@ -1,0 +1,1 @@
+- Jarvis keeps each memory note under a subject heading and reads only the needed section at the acting step.

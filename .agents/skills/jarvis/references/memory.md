@@ -9,6 +9,9 @@
 
 ## Notes
 
+- Put each note under its own `###` heading naming one subject.
+- At the step that acts on a subject, read only that heading's section, not the whole memory file.
+
 | Field | Content |
 |---|---|
 | Source | The user statement or original record that supports the note. |
