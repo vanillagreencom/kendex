@@ -213,6 +213,13 @@ environment_rows() {
 [2,"env NAME=value","env-assignment-only"]
 [2,"env -0","env-null"]
 [2,"env --","env-options-end"]
+[2,"env -- NAME=value","env-options-end-assignment"]
+[2,"env -- NAME=value printenv","env-options-end-printenv"]
+[2,"env -- NAME=value systemctl --user show-environment","env-options-end-systemctl"]
+[2,"command env -- NAME=value printenv","command-env-options-end-dump"]
+[2,"sudo env -- NAME=value printenv","sudo-env-options-end-dump"]
+[0,"env -- NAME=value git status","env-options-end-launcher"]
+[0,"env -- NAME=value printenv NAME","env-options-end-named"]
 [2,"printenv --","printenv-options-end"]
 [2,"printenv -0","printenv-null"]
 [2,"printenv $NAME","unresolved-name"]
@@ -232,11 +239,39 @@ environment_rows() {
 [0,"typeset -x | grep '^NAME='","typeset-filter"]
 [0,"systemctl show-environment | grep '^NAME='","system-filter"]
 [0,"systemctl --user show-environment | grep '^NAME='","session-filter"]
-[0,"cat /proc/self/environ | grep '^NAME='","proc-cat-filter"]
+[2,"cat /proc/self/environ | grep '^NAME='","proc-cat-filter"]
 [0,"tr '\\0' '\\n' < /proc/self/environ | grep '^NAME='","proc-tr-filter"]
 [0,"strings /proc/self/environ | grep '^NAME='","proc-strings-filter"]
-[0,"xargs -0 < /proc/self/environ | grep '^NAME='","proc-xargs-filter"]
+[2,"xargs -0 < /proc/self/environ | grep '^NAME='","proc-xargs-filter"]
 [0,"cat /proc/self/environ | tr '\\0' '\\n' | grep '^NAME='","proc-conversion-filter"]
+[0,"cat -- /proc/self/environ | tr '\\000' '\\n' | grep NAME","proc-options-end-conversion"]
+[0,"cat < /proc/self/environ | tr '\\0' '\\n' | grep NAME","proc-stdin-conversion"]
+[0,"strings < /proc/self/environ | grep NAME","strings-default-records"]
+[0,"env -0 | tr '\\0' '\\n' | grep NAME","env-nul-conversion"]
+[0,"printenv -0 | tr '\\0' '\\n' | grep NAME","printenv-nul-conversion"]
+[2,"env -0 | grep NAME","env-raw-nul"]
+[2,"printenv -0 | grep NAME","printenv-raw-nul"]
+[2,"env | grep -z NAME","env-grep-nul-mode"]
+[2,"printenv | grep -z NAME","printenv-grep-nul-mode"]
+[2,"systemctl --user show-environment | grep -z NAME","session-grep-nul-mode"]
+[2,"env | grep -a NAME","env-grep-text-mode"]
+[2,"cat /proc/self/environ | grep -a NAME","proc-grep-text-mode"]
+[2,"cat /proc/self/environ | grep -z NAME","proc-grep-nul-mode"]
+[2,"xargs -0 < /proc/self/environ | grep NAME","xargs-flattened-records"]
+[2,"xargs -0 < /proc/self/environ | tr '\\0' '\\n' | grep NAME","xargs-conversion-cannot-repair-records"]
+[2,"cat -v /proc/self/environ | tr '\\0' '\\n' | grep NAME","cat-transformed-records"]
+[2,"cat -A /proc/self/environ | tr '\\0' '\\n' | grep NAME","cat-all-transformations"]
+[2,"cat -n < /proc/self/environ | tr '\\0' '\\n' | grep NAME","cat-numbered-records"]
+[2,"cat /proc/$PID/environ | tr '\\0' '\\n' | grep NAME","proc-unresolved-path-framing"]
+[2,"tr -d '\\0' < /proc/self/environ | grep NAME","tr-deleted-records"]
+[2,"tr -d '\\0' < /proc/self/environ | tr '\\0' '\\n' | grep NAME","tr-conversion-cannot-repair-records"]
+[2,"strings -s ' ' /proc/self/environ | grep NAME","strings-changed-separator"]
+[2,"strings --output-separator=' ' /proc/self/environ | tr '\\0' '\\n' | grep NAME","strings-conversion-cannot-repair-records"]
+[2,"env --unknown | tr '\\0' '\\n' | grep NAME","env-unknown-option-framing"]
+[2,"printenv --unknown | tr '\\0' '\\n' | grep NAME","printenv-unknown-option-framing"]
+[2,"printenv \"$NAME\" | grep NAME","printenv-unresolved-option-framing"]
+[2,"declare -p --unknown | grep NAME","declare-unknown-option-framing"]
+[2,"systemctl --user --unknown show-environment | tr '\\0' '\\n' | grep NAME","systemctl-unknown-option-framing"]
 [0,"printenv NAME","named-variable"]
 [0,"printenv -- NAME","named-variable-options-end"]
 [0,"printenv A B","named-variables"]
@@ -295,6 +330,28 @@ environment_rows() {
 [2,"env | grep NAME | printenv","later-pipe-dump"]
 [0,"env | grep NAME; printenv A","filtered-list"]
 [2,"(env)","nested-dump"]
+[2,"{ env; }","brace-dump"]
+[2,"{ NAME=value env; }","brace-assignment-dump"]
+[2,"if true; then env; fi","if-body-dump"]
+[2,"if env; then :; fi","if-condition-dump"]
+[2,"if true; then NAME=value env; fi","if-body-assignment-dump"]
+[2,"if false; then :; elif printenv; then :; fi","elif-condition-dump"]
+[2,"if false; then :; else set; fi","else-body-dump"]
+[2,"for ITEM in first; do printenv; done","for-body-dump"]
+[2,"while true; do set; done","while-body-dump"]
+[2,"while env; do :; done","while-condition-dump"]
+[2,"until env; do :; done","until-condition-dump"]
+[2,"! env","negated-dump"]
+[2,"time env","timed-dump"]
+[2,"time -p env","timed-posix-dump"]
+[2,"builtin set","builtin-dump"]
+[2,"exec env","exec-dump"]
+[2,"exec -- env","exec-options-end-dump"]
+[2,"{ env | grep NAME; }","brace-conservative-filter"]
+[0,"for ITEM in env; do :; done","loop-variable-data"]
+[0,"printf '%s' '{ env; }'","quoted-brace-data"]
+[0,"printf '%s' ${NAME}","parameter-brace-data"]
+[2,"printenv ${NAME}","parameter-brace-not-a-literal-name"]
 [2,"(env | grep NAME)","nested-filter"]
 [2,"(env) | grep NAME","outer-filter"]
 [2,"printf '%s' \"$(env)\"","substitution-dump"]
@@ -335,6 +392,14 @@ environment_rows() {
 [0,["printf","%s","env"],"array-data"]
 [2,["systemctl","--user","show-environment","|","grep","NAME"],"array-pipe-is-data"]
 [2,["env","NAME=value"],"array-assignment-only"]
+[2,["env","--","NAME=value"],"array-options-end-assignment"]
+[2,["env","--","NAME=value","printenv"],"array-options-end-printenv"]
+[2,["env","--","NAME=value","systemctl","--user","show-environment"],"array-options-end-systemctl"]
+[0,["env","--","NAME=value","git","status"],"array-options-end-launcher"]
+[0,["env","--","NAME=value","printenv","NAME"],"array-options-end-named"]
+[0,["{","env"],"array-brace-is-an-executable"]
+[0,["then","env"],"array-keyword-is-an-executable"]
+[0,["NAME=value","env"],"array-assignment-is-an-executable"]
 [0,["env","NAME=value","git","status"],"array-launcher"]
 ENVIRONMENT_ROWS
   [ "$((passed + failed))" -gt "$before" ] || { echo 'FAIL environment table has no rows'; failed=$((failed + 1)); }
@@ -348,7 +413,10 @@ if [ "${1:-}" = --environment-rows ]; then
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  planted=""
   while IFS='|' read -r defect failed_row; do
+    if [ "$defect" != "$planted" ]; then
+    planted=$defect
     mutant="$scratch/environment-$defect.sh"
     awk -v defect="$defect" '
       function swap(from, to, at) {
@@ -366,6 +434,13 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "launcher-pass" && $0 == "        env)" { print; print "          program=\"\"; mode=other; break"; changed++; next }
       defect == "nested-pass" && $0 == "  n=${#tokens[@]}" { print "  [ -z \"$compound\" ] || return 1"; changed++ }
       defect == "broad-filter" { swap("[[ $pattern =~ $filter_re ]]", "[[ -n $pattern ]]") }
+      defect == "env-terminator" { swap("--) options_ended=1; pos=$((pos + 1)); continue ;;", "--) pos=$((pos + 1)); break ;;") }
+      defect == "grep-record-flags" { swap("^-[EFq]+$", "^-[EFazq]+$") }
+      defect == "nul-records" && $0 == "    case \"${decisions[$stage]}\" in" {
+        print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
+      }
+      defect == "unproved-records" { swap("unrouted | dump-unknown) return 0 ;;", "unrouted) return 0 ;; dump-unknown) continue ;;") }
+      defect == "shell-prefix" { swap("          if [ \"$1\" = shell ]; then", "          if false; then") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -373,6 +448,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     control_status=0
     env -i "HOME=$HOME" "PATH=$PATH" "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows \
       >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
+    fi
     if [ "$control_status" -eq 1 ] && grep -F -- "$failed_row" "$scratch/environment-$defect.log" >/dev/null; then
       printf 'PASS environment control %s rejects its planted rule failure\n' "$defect"; passed=$((passed + 1))
     else
@@ -385,6 +461,17 @@ unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
 launcher-pass|FAIL environment: launcher-dump: exit=0 expected=2
 nested-pass|FAIL environment: substitution-dump: exit=0 expected=2
 broad-filter|FAIL environment: wildcard-filter: exit=0 expected=2
+env-terminator|FAIL environment: env-options-end-assignment: exit=0 expected=2
+env-terminator|FAIL environment: array-options-end-printenv: exit=0 expected=2
+grep-record-flags|FAIL environment: env-grep-nul-mode: exit=0 expected=2
+nul-records|FAIL environment: proc-cat-filter: exit=0 expected=2
+unproved-records|FAIL environment: xargs-flattened-records: exit=0 expected=2
+unproved-records|FAIL environment: cat-transformed-records: exit=0 expected=2
+unproved-records|FAIL environment: tr-conversion-cannot-repair-records: exit=0 expected=2
+unproved-records|FAIL environment: strings-conversion-cannot-repair-records: exit=0 expected=2
+shell-prefix|FAIL environment: brace-dump: exit=0 expected=2
+shell-prefix|FAIL environment: if-body-dump: exit=0 expected=2
+shell-prefix|FAIL environment: timed-dump: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in

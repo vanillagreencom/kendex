@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. It preserves argument-array boundaries and executes no submitted text. Known nested dumps can refuse even with a filter; general heredocs, process substitutions, shell programs and env split strings have no interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. Shell keyword and brace prefixes cannot hide known dumps. The check preserves argument-array boundaries and executes no submitted text. Known nested dumps can refuse even with a filter; general heredocs, process substitutions, shell programs and env split strings have no interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -19,7 +19,7 @@ set -euo pipefail
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound=""
   local j start=0 end n fd target proc output input_redirect pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 opaque text
+  local mode pattern_count pattern filter_ok stage=0 opaque text options_ended null_output shell_head
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local opaque_re='(^|[^A-Za-z0-9_])(env|printenv|set|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)|/proc/[^[:space:]]*/environ'
@@ -129,14 +129,31 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
       args[${#args[@]}]=${tokens[$j]}; arg_kinds[${#arg_kinds[@]}]=${kinds[$j]}
     done
-    pos=0
-    while [ "$pos" -lt "${#args[@]}" ] && [[ ${args[$pos]} =~ $name_re ]] && [[ ${args[$pos]} == *=* ]]; do pos=$((pos + 1)); done
+    pos=0; shell_head=""
+    [ "$1" != shell ] || shell_head=1
     # Only these literal forwarding forms are part of the input contract.
     # Unsupported executable-string arguments get conservative detection.
     while [ "$pos" -lt "${#args[@]}" ]; do
+      if [ -n "$shell_head" ]; then
+        while [ "$pos" -lt "${#args[@]}" ] && [[ ${args[$pos]} =~ $name_re ]] && [[ ${args[$pos]} == *=* ]]; do pos=$((pos + 1)); done
+        shell_head=""
+        [ "$pos" -lt "${#args[@]}" ] || break
+      fi
       [ "${arg_kinds[$pos]}" = literal ] || break
       program=${args[$pos]##*/}; pos=$((pos + 1))
       case "$program" in
+        '{' | '}' | '!' | time | if | then | elif | else | do | while | until | fi | builtin | exec)
+          if [ "$1" = shell ]; then
+            compound=1; shell_head=1
+            case "$program" in
+              time) [ "${args[$pos]:-}" != -p ] || pos=$((pos + 1)) ;;
+              exec | builtin)
+                [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
+                case "${args[$pos]:-}" in -*) program=opaque; break ;; esac ;;
+            esac
+            continue
+          fi
+          break ;;
         command)
           case "${args[$pos]:-}" in -v | -V) pos=${#args[@]}; break ;; -p) pos=$((pos + 1)) ;; esac
           [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
@@ -152,37 +169,52 @@ environment_dump() { # command kind; arguments are already decoded data
           done
           continue ;;
         env)
+          options_ended=""; null_output=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
+            # -- ends options, not the following assignment operands.
+            if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then pos=$((pos + 1)); continue; fi
+            [ -z "$options_ended" ] || break
             case "$value" in
-              -i | --ignore-environment | -0 | --null) pos=$((pos + 1)) ;;
+              -i | --ignore-environment) pos=$((pos + 1)) ;;
+              -0 | --null) null_output=1; pos=$((pos + 1)) ;;
               -u | --unset | -C | --chdir) pos=$((pos + 2)) ;;
               --unset=* | --chdir=*) pos=$((pos + 1)) ;;
               --help | --version) pos=${#args[@]}; program=""; break ;;
-              --) pos=$((pos + 1)); break ;;
+              --) options_ended=1; pos=$((pos + 1)); continue ;;
               -S | --split-string | --split-string=*) program=opaque; break ;;
-              -*) mode=dump; break ;;
-              *)
-                if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then pos=$((pos + 1)); else break; fi ;;
+              -*) mode=dump-unknown; break ;;
+              *) break ;;
             esac
           done
-          if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then mode=dump; fi
-          if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then mode=dump; fi
-          [ "$program" = env ] && [ "$mode" != dump ] || break
+          if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then
+            mode=dump-lines; [ -z "$null_output" ] || mode=dump-nul
+          fi
+          if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then mode=dump-unknown; fi
+          [ "$program" = env ] && [ "$mode" = other ] || break
           continue ;;
         *) break ;;
       esac
     done
     case "${program:-}" in
       printenv)
-        named=""
+        named=""; options_ended=""; null_output=""; mode=dump-lines
         for ((j=pos; j<${#args[@]}; j++)); do
           value=${args[$j]}
-          case "$value" in --help | --version) named=1 ;; -* | '') ;;
-            *) [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1 ;;
-          esac
+          [ "${arg_kinds[$j]}" = literal ] || mode=dump-unknown
+          if [ -z "$options_ended" ]; then
+            case "$value" in
+              --help | --version) named=1; continue ;;
+              -0 | --null) null_output=1; continue ;;
+              --) options_ended=1; continue ;;
+              -*) mode=dump-unknown; continue ;;
+            esac
+          fi
+          [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1
         done
-        [ -n "$named" ] || mode=dump ;;
+        if [ "$mode" != dump-unknown ]; then
+          if [ -n "$named" ]; then mode=other; elif [ -n "$null_output" ]; then mode=dump-nul; fi
+        fi ;;
       export | declare | typeset)
         named=""; flags=""
         for ((j=pos; j<${#args[@]}; j++)); do
@@ -192,19 +224,49 @@ environment_dump() { # command kind; arguments are already decoded data
           esac
         done
         if [ -z "$named" ]; then
-          case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump ;; esac
+          case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump-lines ;; esac
+          if [ "$mode" = dump-lines ]; then
+            for ((j=pos; j<${#args[@]}; j++)); do
+              value=${args[$j]}
+              case "$value" in --) ;; -*) [[ $value =~ ^-[px]+$ ]] || mode=dump-unknown ;; *) mode=dump-unknown ;; esac
+            done
+          fi
         fi ;;
       set)
         named=""
         for ((j=pos; j<${#args[@]}; j++)); do [ "${arg_kinds[$j]}" != literal ] || named=1; done
-        [ -n "$named" ] || mode=dump ;;
+        if [ -z "$named" ]; then
+          if [ "$pos" -lt "${#args[@]}" ]; then mode=dump-unknown; else mode=dump-lines; fi
+        fi ;;
       systemctl)
-        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump; done ;;
+        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump-lines; done
+        if [ "$mode" = dump-lines ]; then
+          for ((j=pos; j<${#args[@]}; j++)); do
+            case "${args[$j]}" in --user | --system | -- | show-environment) ;; *) mode=dump-unknown ;; esac
+          done
+        fi ;;
       cat | tr | strings | xargs)
         for ((j=pos; j<${#args[@]}; j++)); do [[ ${args[$j]} != /proc/*/environ ]] || proc=1; done
-        [ -z "$proc" ] || mode=dump
-        if [ "$program" = tr ] && [ "$mode" != dump ] && [ -z "$input_redirect$output" ] && [ "$((${#args[@]} - pos))" -eq 2 ]; then
-          case "${args[$pos]}:${args[$((pos + 1))]}" in '\0:\n' | '\000:\n') mode=convert ;; esac
+        if [ -n "$proc" ]; then
+          case "$program" in
+            cat | strings)
+              mode=dump-nul; [ "$program" != strings ] || mode=dump-lines
+              for ((j=pos; j<${#args[@]}; j++)); do
+                [ "${args[$j]}" != -- ] || continue
+                [ "${arg_kinds[$j]}" = literal ] || mode=dump-unknown
+                [[ ${args[$j]} == /proc/*/environ ]] || mode=dump-unknown
+              done ;;
+            tr | xargs) mode=dump-unknown ;;
+          esac
+        fi
+        # Only this literal conversion proves separate newline records.
+        # Unknown transformations and flattened xargs output stay unknown.
+        if [ "$program" = tr ] && [ -z "$output" ] && [ "$((${#args[@]} - pos))" -eq 2 ] &&
+          [ "${arg_kinds[$pos]}:${arg_kinds[$((pos + 1))]}" = literal:literal ]; then
+          case "${args[$pos]}:${args[$((pos + 1))]}" in
+            '\0:\n' | '\000:\n')
+              if [ -n "$proc" ]; then mode=dump-lines; elif [ -z "$input_redirect" ]; then mode=convert; fi ;;
+          esac
         fi ;;
       grep)
         filter_ok=1; pattern_count=0; pattern=""
@@ -214,7 +276,7 @@ environment_dump() { # command kind; arguments are already decoded data
           case "$value" in
             --) pos=$((j + 1)); break ;;
             -e) j=$((j + 1)); value=${args[$j]:-}; [ "${arg_kinds[$j]:-}" = literal ] || filter_ok="" ;;
-            -*) [[ $value =~ ^-[EFazq]+$ ]] || filter_ok=""; continue ;;
+            -*) [[ $value =~ ^-[EFq]+$ ]] || filter_ok=""; continue ;;
           esac
           pattern_count=$((pattern_count + 1)); pattern=$value
         done
@@ -227,19 +289,22 @@ environment_dump() { # command kind; arguments are already decoded data
       opaque | bash | sh | dash | zsh | ksh | eval | source | .)
         for ((j=pos; j<${#args[@]}; j++)); do
           opaque=${args[$j]//[\'\"\\]/}
-          if [[ $opaque =~ $opaque_re ]]; then mode=dump; compound=1; fi
+          if [[ $opaque =~ $opaque_re ]]; then mode=dump-unknown; compound=1; fi
         done ;;
     esac
-    if [ "$mode" = dump ] && [ -n "$output" ]; then mode=unrouted; fi
+    case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
     case "${decisions[$stage]}" in
-      unrouted) return 0 ;;
-      dump)
+      unrouted | dump-unknown) return 0 ;;
+      dump-lines | dump-nul)
         [ -z "$compound" ] || return 0
         j=$stage
-        if [ "${separators[$j]}" = '|' ] && [ "${decisions[$((j + 1))]:-}" = convert ]; then j=$((j + 1)); fi
+        if [ "${decisions[$stage]}" = dump-nul ]; then
+          if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != convert ]; then return 0; fi
+          j=$((j + 1))
+        fi
         if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != filter ]; then return 0; fi ;;
     esac
   done
@@ -282,7 +347,7 @@ refuse() { # KEY VALUE [CAUSE]
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
         echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
-        echo "a project that wants another policy sets COMMAND_SAFETY_DENY_PATTERN in kendex.settings.toml [env] to replace the default, and the value \"^\$\" turns matching off" ;;
+        echo "a project that wants another pattern sets COMMAND_SAFETY_DENY_PATTERN in kendex.settings.toml [env] to replace the default, and the value \"^\$\" turns only project-pattern matching off; the fixed environment-dump refusal remains active" ;;
       exit=*) echo "the command safety check could not complete" ;;
     esac
     # The cause a command this hook ran wrote, captured at the site and
