@@ -9,6 +9,7 @@
 # HOOK_UNDER_TEST overrides the script the must-fail controls at the end run
 # against.
 set -euo pipefail
+case "$(uname -s)" in MINGW*|MSYS*) export MSYS=winsymlinks:nativestrict ;; esac
 
 # shellcheck source=lib/lane-mail-world.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
@@ -1139,14 +1140,14 @@ assert_eq "said=$(grep -c "^lane-mail-check: harness-unlisted=$LANE/.other/hooks
   "a launched lane's turn end on an install naming no harness reports harness-unlisted and writes no row"
 
 # --- the idle judge at a turn end -----------------------------------------
-# A launched lane lead that ends its turn with nothing sent through lane mail
+# A launched lane lead that ends its turn with no lane mail or status update
 # since its last judged turn end, no handoff recorded and no halt standing,
 # told nobody it stopped: the overseer reads the mailbox, never the pane. The
 # turn end is refused once with the continuation that reads the lane's mail,
 # and the hold recorded; ending idle again on the turn that recorded hold
 # continued is reported to the overseer as a lane notice, never refused a
-# second time. Every fact is lane mail's: the transcript rows below give the
-# judge a lane's words and it reads none of them.
+# second time. The transcript rows below give the judge a lane's words and
+# it reads none of them.
 
 # The lane's record of its sent count, and the notices its outbound file
 # holds, the first line of each, one per line.
@@ -1163,6 +1164,63 @@ read_mail() { # ITEM
   (cd "$LANE" && "$LANE_MAIL" inbox --item "$1" --root "$LANE" >/dev/null)
 }
 printf 'Which base?\n' > "$TMP_ROOT/ask.txt"
+
+# A lane writes this file at continuing waits. Fixed modification times inject
+# the update state without a sleep, including a same-text rewrite.
+new_handoff_lane idle_status KEN-101
+REPORT_ITEM=""
+STATUS_PATH="$LANE/tmp/lane-status-KEN-101.md"
+while IFS='|' read -r ACTION ACTIVE WANT_RC WANT_COUNT WANT_HOLD WANT_STATUS WANT_NOTICES; do
+  case "$ACTION" in
+    create|rewrite) printf 'Step: waiting\n' > "$STATUS_PATH"; touch -t "${STATUS_STAMP:-202401010000}" "$STATUS_PATH" ;;
+    change) printf 'Step: waiting on review\n' > "$STATUS_PATH"; touch -t 202401010002 "$STATUS_PATH" ;;
+    remove) rm -- "$STATUS_PATH" ;;
+  esac
+  STATUS_STAMP=202401010001
+  if [ "$ACTIVE" = true ]; then stop_active; else stop; fi
+  read -r STATUS_COUNT STATUS_HOLD STATUS_RECORDED < "$LANE/tmp/lane-mail/KEN-101/sent-count"
+  case "$STATUS_HOLD" in status=*) STATUS_RECORDED="$STATUS_HOLD"; STATUS_HOLD="" ;; esac
+  STATUS_NOTICES=0
+  if [ -f "$LANE/tmp/lane-mail/KEN-101/to-overseer.jsonl" ]; then
+    STATUS_NOTICES=$(jq -s 'map(select(.kind == "notice")) | length' "$LANE/tmp/lane-mail/KEN-101/to-overseer.jsonl")
+  fi
+  assert_eq "RC=$RC count=$STATUS_COUNT held=${STATUS_HOLD:-none} status=$([ -n "$STATUS_RECORDED" ] && echo present || echo absent) notices=$STATUS_NOTICES" \
+    "RC=$WANT_RC count=$WANT_COUNT held=$WANT_HOLD status=$WANT_STATUS notices=$WANT_NOTICES" \
+    "a status $ACTION with continued=$ACTIVE follows the report and hold contract"
+done <<'STATUS_TURNS'
+create|false|0|0|none|present|0
+unchanged|false|2|0|held|present|0
+unchanged|true|0|1|none|present|1
+rewrite|false|0|1|none|present|1
+change|true|0|1|none|present|1
+unchanged|true|2|1|held|present|1
+rewrite|true|0|1|none|present|1
+remove|false|2|1|held|absent|1
+STATUS_TURNS
+
+# Only this lane's regular status file can report. An unrelated file or a
+# symbolic link cannot supply the update state or redirect the baseline read.
+for STATUS_KIND in other-item symlink directory record-symlink; do
+  new_handoff_lane "idle_status_$STATUS_KIND" KEN-102
+  REPORT_ITEM=""
+  STATUS_PATH="$LANE/tmp/lane-status-KEN-102.md"
+  printf '0\n' > "$TMP_ROOT/unrelated-status"
+  case "$STATUS_KIND" in
+    other-item) cp "$TMP_ROOT/unrelated-status" "$LANE/tmp/lane-status-KEN-103.md" ;;
+    symlink) ln -s "$TMP_ROOT/unrelated-status" "$STATUS_PATH"; [ -L "$STATUS_PATH" ] ;;
+    directory) mkdir "$STATUS_PATH" ;;
+    record-symlink) ln -s "$TMP_ROOT/unrelated-status" "$LANE/tmp/lane-mail/KEN-102/sent-count"; [ -L "$LANE/tmp/lane-mail/KEN-102/sent-count" ] ;;
+  esac
+  stop
+  case "$STATUS_KIND" in
+    other-item) WANT_RC=2; WANT_KEYS='account=unlisted;idle=KEN-102' ;;
+    symlink|directory) WANT_RC=2; WANT_KEYS="account=unlisted;idle-status=$STATUS_PATH;idle=KEN-102" ;;
+    record-symlink) WANT_RC=0; WANT_KEYS="account=unlisted;idle-record=$LANE/tmp/lane-mail/KEN-102/sent-count;idle-unrecorded=$LANE/tmp/lane-mail/KEN-102/sent-count" ;;
+  esac
+  assert_eq "RC=$RC keys=$(hook_keys)" "RC=$WANT_RC keys=$WANT_KEYS" \
+    "a $STATUS_KIND supplies no lane status report"
+  assert_eq "$(cat "$TMP_ROOT/unrelated-status")" 0 "the idle judge preserves the unrelated file"
+done
 
 new_handoff_lane idle_turn KEN-65
 REPORT_ITEM=""
@@ -1324,7 +1382,7 @@ mkdir -p "$LANE/tmp/lane-mail/KEN-72/to-overseer.jsonl"
 stop
 assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted;events=2" \
   "an events listing the reader refuses is reported under its exit status and the turn ends"
-for BAD_RECORD in 'many' '0 maybe' '0 held 1'; do
+for BAD_RECORD in 'many' '0 maybe' '0 held 1' '0 status=/some/other/file.md' '0 held status=%%'; do
   new_handoff_lane idle_record_bad KEN-73
   REPORT_ITEM=""
   printf '%s\n' "$BAD_RECORD" > "$LANE/tmp/lane-mail/KEN-73/sent-count"
@@ -2891,6 +2949,43 @@ REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop
 expect 0 "$GAP" "control: without its refusal a lane that sent nothing ends its turn"
+
+# The old judge used only mail sends. Removing the status comparison restores
+# that rule and rejects the paired no-send status update.
+mutant idle-ignores-status -e 's@^  if \[ -n "\$STATUS_STATE" \] \&\& \[ "\$STATUS_STATE" != "\$RECORDED_STATUS" \]; then$@  if false; then@'
+new_handoff_lane control_idle_status KEN-104
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-104.md"
+stop
+assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-104" \
+  "control: the old mail-only judge holds a no-send turn that updated its status"
+
+# Ignoring update time restores the content-only rule. The same text can be
+# written again when the wait continues, and must still report that turn.
+mutant idle-status-ignores-time -e "s@stat -c '%d:%i:%s:%y'@stat -c '%d:%i:%s'@" \
+  -e "s@stat -f '%d:%i:%z:%.9Fm'@stat -f '%d:%i:%z'@"
+new_handoff_lane control_idle_status_time KEN-105
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-105.md"
+touch -t 202401010000 "$LANE/tmp/lane-status-KEN-105.md"
+stop
+printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-105.md"
+touch -t 202401010001 "$LANE/tmp/lane-status-KEN-105.md"
+stop
+assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-105" \
+  "control: a judge without update time holds a same-text rewrite"
+
+mutant idle-status-follows-links -e '/^  if \[ -L "\$ROOT\/tmp" \] || \[ -L "\$STATUS_FILE" \]/s@^  if .*; then$@  if false; then@'
+new_handoff_lane control_idle_status_link KEN-106
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+printf 'Step: waiting\n' > "$TMP_ROOT/control-unrelated-status"
+ln -s "$TMP_ROOT/control-unrelated-status" "$LANE/tmp/lane-status-KEN-106.md"
+[ -L "$LANE/tmp/lane-status-KEN-106.md" ]
+stop
+expect 0 "$GAP" "control: a judge without the path check counts a non-lane symbolic link as a report"
 
 # The count ignored: a lane that reported this turn is held all the same.
 mutant idle-ignores-sent -e 's@^  if \[ "\$SENT" != "\$RECORDED" \]; then$@  if false; then@'

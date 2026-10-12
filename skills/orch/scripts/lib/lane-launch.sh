@@ -660,8 +660,8 @@ launch_choice_question_off() { # HARNESS
 # discovered APPEND_SYSTEM.md only when no such value is given, and that file
 # carries the instructions its installed extensions append. The turn-end half
 # of the rule is the lane-mail-check hook's idle judge, on every harness that
-# runs it, which holds a turn ending with no lane-mail ask or notice sent since
-# the last one. The text crosses the quoting layers a codex kickoff does, so it
+# runs it, which holds a turn ending with no lane-mail ask or notice sent and
+# no lane status file update since its last judgement. The text crosses the quoting layers a codex kickoff does, so it
 # holds only letters, spaces, commas, periods and hyphens.
 LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice, or the lane status file, says where the work stands. Send a notice only when the work changed since your last notice, with a new head, PR, verdict, blocker, request or finish. A wait that continues updates the lane status file only. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
 
