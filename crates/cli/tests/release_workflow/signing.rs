@@ -4,6 +4,7 @@
 //! an update every client turns away. That is a tag-run failure otherwise,
 //! because release.yml never runs on a pull request; here the real step
 //! runs the real script against a signer this test controls.
+//! Inputs: .github/workflows/release.yml and tools/release-digests.
 
 #[cfg(unix)]
 use std::collections::BTreeMap;
@@ -31,6 +32,12 @@ struct Signed {
 }
 
 #[cfg(unix)]
+enum SigningMode<'a> {
+    Main { build: u64, commit: &'a str },
+    Release { tag: &'a str },
+}
+
+#[cfg(unix)]
 fn command_name(lane: &super::Lane) -> String {
     match lane.runner_os {
         "Windows" => format!("kendex-{}.exe", lane.target),
@@ -45,19 +52,38 @@ fn command_name(lane: &super::Lane) -> String {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn sign(lane: &super::Lane, dist: &BTreeMap<String, String>, body: &str) -> Signed {
-    sign_for_ref(lane, dist, body, "refs/tags/v5.1.0", "v5.1.0", None)
+    sign_for_mode(lane, dist, body, SigningMode::Release { tag: "v5.1.0" })
 }
 
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
-fn sign_for_ref(
+fn sign_for_mode(
     lane: &super::Lane,
     dist: &BTreeMap<String, String>,
     body: &str,
-    git_ref: &str,
-    ref_name: &str,
-    main: Option<(u64, &str)>,
+    mode: SigningMode<'_>,
 ) -> Signed {
+    let workflow = workflow();
+    let step_script = expand(
+        &run_script(&step(&workflow, "name: Sign this lane's downloads")),
+        lane,
+    );
+    sign_with_script(lane, dist, body, mode, &step_script)
+}
+
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn sign_with_script(
+    lane: &super::Lane,
+    dist: &BTreeMap<String, String>,
+    body: &str,
+    mode: SigningMode<'_>,
+    step_script: &str,
+) -> Signed {
+    let (mode, release_tag, main) = match mode {
+        SigningMode::Main { build, commit } => ("main", "", Some((build, commit))),
+        SigningMode::Release { tag } => ("release", tag, None),
+    };
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
     fs::create_dir_all(root.join("dist")).unwrap();
@@ -86,19 +112,17 @@ fn sign_for_ref(
     fs::write(&shim, format!("#!/bin/sh\n{body}\n")).unwrap();
     fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let workflow = workflow();
-    let step_script = expand(
-        &run_script(&step(&workflow, "name: Sign this lane's downloads")),
-        lane,
-    );
     let run = std::process::Command::new("bash")
         // The flags a `shell: bash` step gets on a runner.
-        .args(["-eo", "pipefail", "-c", &step_script])
+        .args(["-eo", "pipefail", "-c", step_script])
         .current_dir(&root)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("GITHUB_REF", git_ref)
-        .env("GITHUB_REF_NAME", ref_name)
+        .env("GITHUB_REF", "refs/heads/main")
+        .env("GITHUB_REF_NAME", "main")
+        .env("RELEASE_MODE", mode)
+        .env("RELEASE_TAG", release_tag)
+        .env("SOURCE_COMMIT", "0123456789abcdef0123456789abcdef01234567")
         .envs(main.into_iter().flat_map(|(build, commit)| {
             [
                 ("KENDEX_MAIN_BUILD", build.to_string()),
@@ -147,19 +171,48 @@ fn main_signing_binds_the_version_build_and_commit() {
         format!("#!/bin/sh\nprintf 'kendex %s\\n' '{version}'\n"),
     );
 
-    let signed = sign_for_ref(
+    let signed = sign_for_mode(
         lane,
         &staged,
         SIGNS,
-        "refs/heads/main",
-        "main",
-        Some((42, commit)),
+        SigningMode::Main { build: 42, commit },
     );
     assert_eq!(signed.code, 0, "{}", signed.said);
     let document: serde_json::Value = serde_json::from_str(&signed.document).unwrap();
     assert_eq!(document["version"], version);
     assert_eq!(document["main_build"].as_u64(), Some(42));
     assert_eq!(document["commit"].as_str(), Some(commit));
+}
+
+#[cfg(unix)]
+#[test]
+fn release_signing_does_not_use_rolling_identity_on_main() {
+    let lane = &LANES[0];
+    let staged = super::stage_assets(lane);
+    let script = expand(
+        &run_script(&step(&workflow(), "name: Sign this lane's downloads")),
+        lane,
+    );
+    let signed = sign_with_script(
+        lane,
+        &staged,
+        SIGNS,
+        SigningMode::Release { tag: "v5.1.0" },
+        &script,
+    );
+    assert_eq!(signed.code, 0, "{}", signed.said);
+    let guard = "if [ \"$RELEASE_MODE\" = main ]; then";
+    assert_eq!(script.matches(guard).count(), 1);
+    let changed = script.replacen(guard, "if [ \"$GITHUB_REF\" = refs/heads/main ]; then", 1);
+    let changed = format!(": <<'DISABLED_RULE'\n{guard}\nDISABLED_RULE\n{changed}");
+    let signed = sign_with_script(
+        lane,
+        &staged,
+        SIGNS,
+        SigningMode::Release { tag: "v5.1.0" },
+        &changed,
+    );
+    assert_ne!(signed.code, 0);
 }
 
 /// A signer that answers for every file it is handed.
@@ -204,6 +257,8 @@ fn each_lane_signs_the_command_and_the_document_it_published() {
             "{}",
             lane.target
         );
+        assert!(document.get("main_build").is_none(), "{}", lane.target);
+        assert!(document.get("commit").is_none(), "{}", lane.target);
         assert_eq!(
             document["target"].as_str(),
             Some(lane.target),

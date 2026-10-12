@@ -3,7 +3,8 @@
 //! of it runs on a pull request, and the parts
 //! that have to agree — the workflow's idea of what a tag is against core's,
 //! and the workflow's channel tag against the URLs core sends a candidate
-//! to — are two files that only a tag run would otherwise put together.
+//! to are two files that only a release run would otherwise put together.
+//! Inputs: .github/workflows/release.yml, crates/cli/build.rs and core update contracts.
 
 #[cfg(unix)]
 use std::fs;
@@ -38,6 +39,14 @@ pub(crate) const BUILT_CLI: &str = "kendex-x86_64-unknown-linux-gnu";
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String, String) {
+    let workflow = workflow();
+    let script = run_script(&step(&workflow, "name: Classify the tag"));
+    classify_script_with_cli(ref_name, cli, &script)
+}
+
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn classify_script_with_cli(ref_name: &str, cli: &str, script: &str) -> (i32, String, String) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
@@ -50,26 +59,31 @@ fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String, String) {
     fs::write(dist.join(BUILT_CLI), cli).unwrap();
     fs::set_permissions(dist.join(BUILT_CLI), fs::Permissions::from_mode(0o644)).unwrap();
 
-    let workflow = workflow();
-    let script = run_script(&step(&workflow, "name: Classify the tag"));
     let run = std::process::Command::new("bash")
         .arg("-e")
         .arg("-c")
-        .arg(&script)
+        .arg(script)
         .current_dir(&root)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("GITHUB_REF_NAME", ref_name)
+        .env("GITHUB_REF_NAME", "main")
+        .env("GITHUB_REF", "refs/heads/main")
         .env(
-            "GITHUB_REF",
+            "RELEASE_MODE",
             if ref_name == "main" {
-                "refs/heads/main".to_owned()
+                "main"
             } else {
-                format!("refs/tags/{ref_name}")
+                "release"
             },
         )
-        .env("GITHUB_SHA", "0123456789abcdef0123456789abcdef01234567")
+        .env(
+            "RELEASE_TAG",
+            if ref_name == "main" { "" } else { ref_name },
+        )
+        .env("SOURCE_COMMIT", "0123456789abcdef0123456789abcdef01234567")
+        .env("GITHUB_SHA", "abcdef0123456789abcdef0123456789abcdef0123")
         .env("GITHUB_RUN_NUMBER", "42")
+        .env("GITHUB_RUN_ATTEMPT", "1")
         .env("GITHUB_OUTPUT", &output)
         .output()
         .unwrap();
@@ -211,10 +225,25 @@ fn the_main_job_accepts_only_a_build_that_names_its_commit() {
 
     let workflow = workflow();
     assert!(workflow.contains("branches: [main]"));
-    assert!(
-        workflow.contains("name: ${{ github.ref == 'refs/heads/main' && 'main' || 'publish' }}")
-    );
     assert!(workflow.contains("releases/download/${{ steps.tag.outputs.release-ref }}"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_release_dispatch_uses_release_mode_on_the_main_ref() {
+    let script = run_script(&step(&workflow(), "name: Classify the tag"));
+    let cli = cli_built_as("5.1.0");
+    let (code, prerelease, channel) = classify_script_with_cli("v5.1.0", &cli, &script);
+    assert_eq!(
+        (code, prerelease.as_str(), channel.as_str()),
+        (0, "false", "")
+    );
+    let guard = "if [ \"$RELEASE_MODE\" = main ]; then";
+    assert_eq!(script.matches(guard).count(), 1);
+    let changed = script.replacen(guard, "if [ \"$GITHUB_REF\" = refs/heads/main ]; then", 1);
+    let changed = format!(": <<'DISABLED_RULE'\n{guard}\nDISABLED_RULE\n{changed}");
+    let (code, _, _) = classify_script_with_cli("v5.1.0", &cli, &changed);
+    assert_ne!(code, 0);
 }
 
 #[cfg(unix)]
@@ -564,7 +593,7 @@ fn later_pushes_never_cancel_running_builds_or_publication() {
 fn a_main_run_holds_its_pending_targets_until_publication() {
     let workflow = workflow();
     let group =
-        "release-workflow-${{ github.ref == 'refs/heads/main' && github.ref || github.run_id }}";
+        "release-workflow-${{ github.event_name == 'push' && github.ref || github.run_id }}";
     let check = |workflow: &str| {
         let lines: Vec<&str> = workflow.lines().collect();
         assert_eq!(
@@ -625,6 +654,24 @@ fn a_main_run_holds_its_pending_targets_until_publication() {
             "{rule}"
         );
     }
+}
+
+#[test]
+fn release_dispatches_keep_separate_matrix_build_groups() {
+    let workflow = workflow();
+    let expected = "release-build-${{ needs.prepare.outputs.mode == 'main' && github.ref || github.run_id }}-${{ matrix.target }}";
+    let check = |workflow: &str| {
+        assert_eq!(
+            concurrency_value(&job(workflow, "build"), "group", 4),
+            Some(expected)
+        );
+    };
+    check(&workflow);
+    let original = format!("      group: {expected}");
+    assert_eq!(workflow.matches(&original).count(), 1);
+    let changed = workflow.replacen(&original, &format!("      group: release-build-${{{{ github.ref }}}}-${{{{ matrix.target }}}}\n      # {expected}"), 1);
+    assert_ne!(changed, workflow);
+    assert!(std::panic::catch_unwind(|| check(&changed)).is_err());
 }
 
 /// The rolling release uses a tag that cannot be confused with the main

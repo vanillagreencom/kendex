@@ -1,4 +1,7 @@
-//! release.yml runs only on tags and main pushes, so its build, staging and
+//! Inputs: .github/workflows/release.yml, .github/workflows/publish-aur.yml,
+//! tools/release-digests, tools/release-channel-point, crates/cli/build.rs,
+//! crates/app/release/, and the core update contracts.
+//! release.yml runs on main pushes and main release dispatches, so its build, staging and
 //! manifest steps are never exercised by a pull request. Both build
 //! commands must emit
 //! into the per-target output dir and the staging step must read from that
@@ -19,6 +22,7 @@ use std::sync::OnceLock;
 #[cfg(unix)]
 use crate::test_util::rooted;
 
+mod admission;
 mod catalog;
 
 const TARGET_EXPR: &str = "${{ matrix.target }}";
@@ -29,6 +33,7 @@ fn workflow() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/release.yml"),
     )
     .unwrap()
+    .replace("\r\n", "\n")
 }
 
 #[cfg(unix)]
@@ -165,6 +170,13 @@ fn concurrency_value<'a>(lines: &[&'a str], key: &str, indent: usize) -> Option<
 
 /// The body of a step's `run: |` block, dedented so bash can run it.
 fn run_script(step_lines: &[&str]) -> String {
+    if let Some(inline) = step_lines
+        .iter()
+        .find_map(|line| line.trim().strip_prefix("run: "))
+        .filter(|value| *value != "|")
+    {
+        return inline.to_owned();
+    }
     let mut lines = step_lines
         .iter()
         .skip_while(|l| l.trim() != "run: |")

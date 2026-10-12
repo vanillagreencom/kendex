@@ -19,7 +19,7 @@ if ! tag=$(jq -er '
   fail stable-release unavailable
 fi
 
-# A release PR head can be outside main, so fetching main cannot retrieve it.
+# Historical release tags can point outside main, so fetch the selected tag.
 if ! git fetch origin tag "$tag" >&2; then
   fail tag-fetch "$tag"
 fi

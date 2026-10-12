@@ -4,13 +4,12 @@
 # button installs from, and the signed digests document each lane publishes
 # about what it built.
 #
-# Release tag pushes publish releases. A major tag such as v1 names the
-# release consumers' shared refresh workflow runs and starts no build. A push
-# to main publishes one immutable build, then changes the fixed channel's
-# single feed pointer.
+# A main dispatch builds a selected merged commit and creates its version
+# tag. A push to main publishes one immutable build, then changes the fixed
+# channel's single feed pointer. Tags start no build.
 # Pull requests are covered by the per-crate checks. The Intel macOS lane
 # restores a Rust dependency cache saved only by trusted main runs. Later
-# main and tag runs reuse it; tags never save. Bundles are removed before
+# main and dispatch runs reuse it; dispatches never save. Bundles are removed before
 # the post-job save, so signed and notarized installers stay out of it.
 # Every lane runs
 # on a GitHub-standard runner, which is free for a public repository.
@@ -19,29 +18,110 @@
 # universal build doubles every download for nothing. Linux arm64 is a
 # native lane too — the app's webkit2gtk dependency does not cross-compile.
 name: release
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('release {0} at {1}', inputs.tag, inputs.release_commit) || format('main build {0}', github.sha) }}
 
 on:
   push:
     branches: [main]
-    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag to create, v followed by the built version
+        type: string
+        required: true
+      release_commit:
+        description: Full merged commit ID from main
+        type: string
+        required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
 
 # Hold the whole main run through publication: a pending matrix target can
 # otherwise be replaced even when another target of that run is building.
-# Tag runs get unique workflow groups and retain their job-level groups.
+# Release dispatches get unique workflow groups and job-level groups.
 concurrency:
-  group: release-workflow-${{ github.ref == 'refs/heads/main' && github.ref || github.run_id }}
+  group: release-workflow-${{ github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: false
 
 jobs:
+  # Environment admission judges the run ref, not the checkout. A dispatch
+  # must prove its selected code belongs to this reviewed main history before
+  # any build can receive signing secrets.
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.source.outputs.mode }}
+      source-commit: ${{ steps.source.outputs.source-commit }}
+      release-tag: ${{ steps.source.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select the release source
+        id: source
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_REF: ${{ github.ref }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          REQUESTED_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          if [ "$RUN_REF" != refs/heads/main ]; then
+            echo "::error::release-source: ref=$RUN_REF"
+            echo "Release source selection requires a main workflow run."
+            exit 1
+          fi
+          mode=main
+          source_commit="$GITHUB_SHA"
+          release_tag=""
+          case "$EVENT_NAME" in
+            push) ;;
+            workflow_dispatch)
+              mode=release
+              if [[ ${#REQUESTED_COMMIT} -ne 40 || "$REQUESTED_COMMIT" == *[!0-9a-f]* ]]; then
+                echo "::error::release-source: commit=$REQUESTED_COMMIT"
+                echo "release_commit must be a full lowercase commit ID."
+                exit 1
+              fi
+              source_commit=$(git rev-parse --verify "${REQUESTED_COMMIT}^{commit}")
+              if ! git merge-base --is-ancestor "$source_commit" "$GITHUB_SHA"; then
+                echo "::error::release-source: ancestry=$source_commit"
+                echo "The release commit is outside this reviewed main history, or its ancestry could not be read."
+                exit 1
+              fi
+              case "$REQUESTED_TAG" in
+                v?*) ;;
+                *) echo "::error::release-source: tag=$REQUESTED_TAG"; echo "The requested release tag must start with v and name a version."; exit 1 ;;
+              esac
+              git check-ref-format "refs/tags/$REQUESTED_TAG"
+              fragments=$(git ls-tree -r --name-only "$source_commit" -- changelog.d)
+              if [ "$fragments" != changelog.d/README.md ]; then
+                echo "::error::release-source: fragments=$source_commit"
+                echo "The release commit must contain only changelog.d/README.md under changelog.d."
+                exit 1
+              fi
+              release_tag="$REQUESTED_TAG"
+              ;;
+            *) echo "::error::release-source: event=$EVENT_NAME"; echo "This event cannot select a release source."; exit 1 ;;
+          esac
+          {
+            echo "mode=$mode"
+            echo "source-commit=$source_commit"
+            echo "release-tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     concurrency:
-      group: release-build-${{ github.ref }}-${{ matrix.target }}
+      group: release-build-${{ needs.prepare.outputs.mode == 'main' && github.ref || github.run_id }}-${{ matrix.target }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -58,14 +138,15 @@ jobs:
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-    # The Apple and Tauri signing secrets live only in the kendex
-    # environment, which admits main and v*.*.* tags, so a pull request
-    # branch's edited workflow cannot read them.
+    # The main-only environment excludes edited branch and tag workflows.
     environment: kendex
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source-commit }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -73,14 +154,16 @@ jobs:
         if: matrix.target == 'x86_64-apple-darwin'
         with:
           key: ${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ needs.prepare.outputs.mode == 'main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Record the main build commit
-        if: github.ref == 'refs/heads/main'
+        if: needs.prepare.outputs.mode == 'main'
+        env:
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.source-commit }}
         run: |
-          echo "KENDEX_GIT_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "KENDEX_GIT_COMMIT=${SOURCE_COMMIT}" >> "$GITHUB_ENV"
           echo "KENDEX_MAIN_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
         shell: bash
       - name: Linux webview dependencies
@@ -257,9 +340,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RELEASE_MODE: ${{ needs.prepare.outputs.mode }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release-tag }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.source-commit }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          version="${RELEASE_TAG#v}"
+          if [ "$RELEASE_MODE" = main ]; then
             ext=""
             [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
             built=$("dist/kendex-${{ matrix.target }}${ext}" --version)
@@ -279,10 +365,18 @@ jobs:
         shell: bash
 
   publish:
-    needs: build
+    needs: [prepare, build]
+    environment: kendex
+    permissions:
+      contents: write
+      actions: write
+    env:
+      RELEASE_MODE: ${{ needs.prepare.outputs.mode }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release-tag }}
+      SOURCE_COMMIT: ${{ needs.prepare.outputs.source-commit }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    name: ${{ github.ref == 'refs/heads/main' && 'main' || 'publish' }}
+    name: ${{ needs.prepare.outputs.mode == 'main' && 'main' || 'publish' }}
     concurrency:
       group: release-publish-${{ github.run_id }}
       cancel-in-progress: false
@@ -293,6 +387,10 @@ jobs:
       channel: ${{ steps.tag.outputs.channel }}
       main-build: ${{ steps.tag.outputs.main-build }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -324,15 +422,15 @@ jobs:
             exit 1
           fi
           built=${built##* }
-          version="${GITHUB_REF_NAME#v}"
-          release_ref="$GITHUB_REF_NAME"
-          release_name="$GITHUB_REF_NAME"
+          version="${RELEASE_TAG#v}"
+          release_ref="$RELEASE_TAG"
+          release_name="$RELEASE_TAG"
           commit=""
           channel=""
           main_build=""
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+          if [ "$RELEASE_MODE" = main ]; then
             version="$built"
-            commit="$GITHUB_SHA"
+            commit="$SOURCE_COMMIT"
             main_build="$GITHUB_RUN_NUMBER"
             release_ref="main-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${commit}"
             release_name="main build ${GITHUB_RUN_NUMBER}"
@@ -343,7 +441,7 @@ jobs:
               *) echo "::error::The main build reports ${version}, which does not name build ${GITHUB_RUN_NUMBER} at commit ${commit}."; exit 1 ;;
             esac
           elif [ "$version" != "$built" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} names version ${version}, and this release was built as ${built}. The tag is the version without its leading v; bump the version to match, or re-tag the commit that carries it."
+            echo "::error::Tag ${RELEASE_TAG} names version ${version}, and this release was built as ${built}. Dispatch the tag and merged commit that carry the same version."
             exit 1
           fi
           # SemVer keeps build metadata after a `+` and out of the version,
@@ -369,6 +467,46 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "main-build=$main_build" >> "$GITHUB_OUTPUT"
+          echo "source-commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+      # A retry may reuse a matching tag. Creation never moves an existing
+      # tag, and readback binds the release to the code its artifacts carry.
+      - name: Create and verify the version tag
+        if: needs.prepare.outputs.mode == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          read_tag_target() {
+            local remote status=0 sha ref peeled=""
+            tag_target=""
+            remote=$(git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}") || status=$?
+            [ "$status" -eq 0 ] || return "$status"
+            while read -r sha ref; do
+              case "$ref" in
+                "refs/tags/$RELEASE_TAG") tag_target="$sha" ;;
+                "refs/tags/$RELEASE_TAG^{}") peeled="$sha" ;;
+              esac
+            done <<< "$remote"
+            tag_target="${peeled:-$tag_target}"
+            [ -n "$tag_target" ]
+          }
+          status=0
+          read_tag_target || status=$?
+          case "$status" in
+            0) ;;
+            2)
+              gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_COMMIT"
+              ;;
+            *) echo "::error::release-tag: read=$RELEASE_TAG"; echo "Could not read the requested remote tag."; exit "$status" ;;
+          esac
+          read_tag_target
+          if [ "$tag_target" != "$SOURCE_COMMIT" ]; then
+            echo "::error::release-tag: target=$tag_target"
+            echo "The release tag targets a different commit. It will not be moved."
+            exit 1
+          fi
       - name: Write the update feed
         run: |
           version="${{ steps.tag.outputs.version }}"
@@ -427,7 +565,7 @@ jobs:
           add darwin-aarch64 'kendex-aarch64-apple-darwin.app.tar.gz.sig'
           add windows-x86_64 'kendex_*_x64-setup.exe.sig'
           if [ -n "$missing" ]; then
-            echo "::error::No signed updater artifact reached dist/ for:${missing}. Every release lane signs; check that lane and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
+            echo "::error::No signed updater artifact reached dist/ for:${missing}. Every release lane signs; check that lane and TAURI_SIGNING_PRIVATE_KEY, then rerun the failed release jobs."
             exit 1
           fi
           jq -n \
@@ -468,10 +606,18 @@ jobs:
           files: dist/*
           tag_name: ${{ steps.tag.outputs.release-ref }}
           name: ${{ steps.tag.outputs.release-name }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.tag.outputs.source-commit }}
           draft: ${{ steps.tag.outputs.prerelease == 'false' }}
           prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
-          make_latest: ${{ github.ref == 'refs/heads/main' && 'false' || 'legacy' }}
+          make_latest: ${{ needs.prepare.outputs.mode == 'main' && 'false' || 'legacy' }}
+      # GITHUB_TOKEN publication does not trigger release-event workflows.
+      # A stable draft is published by the operator and uses the AUR bridge.
+      - name: Dispatch candidate AUR publication on main
+        if: needs.prepare.outputs.mode == 'release' && steps.tag.outputs.channel == 'prerelease'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish-aur.yml --repo "$GITHUB_REPOSITORY" --ref main
       # The channel job writes only feed.json onto the fixed release. The
       # Linux CLI authenticates a main pointer and orders candidate versions.
       - uses: actions/upload-artifact@v4
@@ -490,12 +636,14 @@ jobs:
   # queue — GitHub keeps one pending run per group and replaces that pending
   # run when another arrives. Inside the group, a burst keeps the first arrival
   # and the last
-  # and drops every repoint in between; outside it, every tag publishes. So a
-  # burst costs repoints and never a release, and pushing the newest tag again
-  # moves the channel to it, which is what the app-deploy skill records.
+  # and drops every repoint in between; outside it, every dispatch publishes.
+  # Rerunning the newest release's channel job moves the pointer to it.
   channel:
     needs: publish
     if: needs.publish.outputs.channel != ''
+    environment: kendex
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
@@ -503,6 +651,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: manifests

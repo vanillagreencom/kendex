@@ -54,15 +54,15 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
     ambiguous)
       printf '%s holds more than one file matching %s (%s and %s); this lane cannot say which one it published.\n' "$3" "$2" "$4" "$5" ;;
     missing)
-      printf '%s holds no file matching %s; check this lane'"'"'s staging step, then re-run the tag.\n' "$3" "$2" ;;
+      printf '%s holds no file matching %s; check this lane'"'"'s staging step, then rerun the failed release jobs.\n' "$3" "$2" ;;
     digest-unreadable)
       printf 'the SHA-256 of %s could not be taken.\n' "$2" ;;
     digest-malformed)
       printf "the digest of %s came back as '%s', which is not SHA-256.\n" "$2" "$3" ;;
     signer)
-      printf 'the signer failed on %s. kendex update refuses what it cannot verify; check TAURI_SIGNING_PRIVATE_KEY, then re-run the tag.\n' "$2" ;;
+      printf 'the signer failed on %s. kendex update refuses what it cannot verify; check TAURI_SIGNING_PRIVATE_KEY, then rerun the failed release jobs.\n' "$2" ;;
     signature)
-      printf 'no signature for %s. kendex update refuses what it cannot verify; check this lane'"'"'s signer step and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag.\n' "$2" ;;
+      printf 'no signature for %s. kendex update refuses what it cannot verify; check this lane'"'"'s signer step and TAURI_SIGNING_PRIVATE_KEY, then rerun the failed release jobs.\n' "$2" ;;
     *)
       printf 'no explanation is defined for this key: tools/release-digests is broken.\n' ;;
   esac
