@@ -217,6 +217,87 @@ unreadable-record|claude|0|record|-|-|0
 incomplete-jarvis|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
 ROWS
 
+# The checkout's overseer mailbox reaching a Jarvis session whose wake is set
+# through ORCH_WAKE_PROCESS. The hook is the one deliverer of mailbox text: a
+# Jarvis wake moves no cursor, so it is no reader, and the pointer route the
+# mailbox ships, `lane-mail watch`, run here for real, announces a count and a
+# read command and no body. One envelope past the 4000 characters a wake
+# event would cut reaches the session once, in full, from the hook's context
+# after the tool call, and the turn end hands it no second time.
+#   live       the wake runs
+#   dead       ORCH_WAKE_PROCESS is set and nothing matches it
+#   unwritten  the wake runs and the first tool call's context write fails:
+#              the cursor stays, and the next tool call hands the envelope
+# WAKE is `pointer`, the real watch, or `rows`, the control: a wake on the
+# same argv printing each unread envelope's text cut to 4000 characters.
+JARVIS_BODY="jarvis-owner-note:$(printf '0123456789%.0s' $(seq 500)):note-end"
+JARVIS_GOT=""
+NL=$'\n'
+jarvis_text() { # STDOUT-FILE — the context the run wrote there, else nothing
+  [ -s "$1" ] || return 0
+  jq -r '.hookSpecificOutput.additionalContext // ""' "$1"
+}
+jarvis_mail() { # live|dead|unwritten pointer|rows
+  local wake="$TMP_ROOT/jarvis-rows/lane-mail" out="$TMP_ROOT/jarvis-wake.out" seen=0 tries=0 text failed=- unread_after=- deliver stop
+  local tool='{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash"}'
+  stop_wake_processes
+  wake_overseer "jarvis-mail-$1-$2" claude
+  peer_send "$JARVIS_BODY"
+  CALL_ENV+=("ORCH_WAKE_PROCESS=lane-mail watch --item overseer --root $LANE" "ORCH_WAKE_START=$JARVIS_START")
+  : > "$out"
+  if [ "$1" != dead ]; then
+    if [ "$2" = rows ]; then
+      mkdir -p "${wake%/*}"
+      printf '%s\n' '#!/usr/bin/env bash' \
+        "\"$LANE_MAIL\" inbox --item overseer --root \"\$5\" --peek | tail -n +2 | jq -r '\"lane-mail: event=mail item=overseer text=\" + (.text | .[0:4000])'" \
+        'exec sleep 600' > "$wake"
+    else
+      wake=$LANE_MAIL
+    fi
+    (cd -- "$LANE" && exec bash "$wake" watch --item overseer --root "$LANE" --interval 1) > "$out" 2>&1 &
+    WAKE_PIDS+=("$!")
+    # Real time: the watch polls once a second; 100 tries bound the wait.
+    while [ "$tries" -lt 100 ]; do
+      seen=$(grep -c '^lane-mail: ' "$out" || :)
+      [ "$seen" -eq 0 ] || break
+      tries=$((tries + 1))
+      sleep 0.1
+    done
+  fi
+  ARM_ARGS=(deliver)
+  if [ "$1" = unwritten ]; then
+    printf '#!/usr/bin/env bash\nexec >&-\nexec bash %q "$@"\n' "$CASE_HOOK" > "$TMP_ROOT/jarvis-closed.sh"
+    local judge=$CASE_HOOK
+    CASE_HOOK="$TMP_ROOT/jarvis-closed.sh"
+    run_payload "$tool"
+    CASE_HOOK=$judge
+    failed=$(first_line)
+    unread_after=$(overseer_unread "$JARVIS_BODY")
+  fi
+  run_payload "$tool"
+  text=$(jarvis_text "$TMP_ROOT/stdout")
+  deliver="$RC:${text%%"$NL"*}"
+  ARM_ARGS=()
+  stop
+  stop="$RC:$(first_line)"
+  text="$text$NL$(cat -- "$ERR_FILE")$NL$(jarvis_text "$TMP_ROOT/stdout")$NL$(cat -- "$out")"
+  JARVIS_GOT="deliver=$deliver stop=$stop failed=$failed unread-after-failure=$unread_after"
+  JARVIS_GOT="$JARVIS_GOT full=$(grep -oF -- "$JARVIS_BODY" <<< "$text" | wc -l | tr -d ' ')"
+  JARVIS_GOT="$JARVIS_GOT copies=$(grep -oF -- "jarvis-owner-note:" <<< "$text" | wc -l | tr -d ' ')"
+  JARVIS_GOT="$JARVIS_GOT in-wake=$(grep -cF -- "jarvis-owner-note:" "$out" || :) unread=$(overseer_unread "$JARVIS_BODY")"
+  stop_wake_processes
+}
+JARVIS_ONCE="full=1 copies=1 in-wake=0 unread=0"
+for jarvis_case in \
+  "live|deliver=0:lane-mail-check: unread=1 stop=0:- failed=- unread-after-failure=- $JARVIS_ONCE" \
+  "dead|deliver=0:lane-mail-check: unread=1 stop=2:lane-mail-check: wake=unarmed failed=- unread-after-failure=- $JARVIS_ONCE" \
+  "unwritten|deliver=0:lane-mail-check: unread=1 stop=0:- failed=lane-mail-check: notice=unwritten unread-after-failure=1 $JARVIS_ONCE"; do
+  scenario=${jarvis_case%%|*}
+  [ -z "$SELECTED" ] || [ "jarvis-mail-$scenario:claude" = "$SELECTED" ] || continue
+  jarvis_mail "$scenario" pointer
+  assert_eq "$JARVIS_GOT" "${jarvis_case#*|}" "jarvis-mail-$scenario:claude"
+done
+
 # Copilot's custom subagent names its own session and the lead's transcript.
 # This is the measured agentStop producer, distinct from agent_id/type.
 if [ -z "$SELECTED" ]; then
@@ -249,6 +330,24 @@ if [ -z "$SELECTED" ]; then
   wake_control warning-continues continuation:claude \
     '      printf '\''%s\n'\'' "$WAKE_NOTICE" >&2' \
     '      printf '\''%s\n'\'' "$WAKE_NOTICE" >&2; CONTEXT_EVENT=Stop; hand_over "$WAKE_NOTICE"'
+  # A gate that counts the live Jarvis wake as the mailbox's reader hands the
+  # session nothing, and the wake carries no body: the envelope never arrives.
+  wake_control jarvis-wake-reads jarvis-mail-live:claude \
+    '    ! watch_live || return 0' \
+    '    ! watch_live || return 0; ! pgrep -f -- "$ORCH_WAKE_PROCESS" >/dev/null || return 0'
+  # Handed and not acknowledged, the envelope is handed again at the turn end.
+  wake_control jarvis-unacknowledged jarvis-mail-live:claude \
+    '    acknowledge' \
+    '    : acknowledge'
+  # A context write that fails and passes acknowledges what never arrived.
+  wake_control jarvis-unwritten-acks jarvis-mail-unwritten:claude \
+    '    2>"$WORK_DIR/notice.err" || refuse notice unwritten "$(cat -- "$WORK_DIR/notice.err")"' \
+    '    2>"$WORK_DIR/notice.err" || :'
+  # A wake printing the box's rows as events puts the envelope in the
+  # session twice, once cut at 4000 characters.
+  jarvis_mail live rows
+  assert_eq "${JARVIS_GOT#*unread-after-failure=- }" "full=1 copies=2 in-wake=1 unread=0" \
+    "control: a wake printing the box's rows hands the envelope twice"
   wake_control watch-unknown-skips watch-probe-error:claude \
     '        *) exit "$rc" ;;' \
     '        *) printf "single\t" ;;'
