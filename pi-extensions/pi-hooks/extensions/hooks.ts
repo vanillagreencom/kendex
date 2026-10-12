@@ -245,6 +245,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			tool_name: toolName,
 			tool_input: claudeToolInput(toolName, event.input, ctx.cwd),
 			...claudeSessionFields(ctx),
+			...piContextFields(ctx),
 		});
 		let verdict: Verdict;
 		const run = await runListener(

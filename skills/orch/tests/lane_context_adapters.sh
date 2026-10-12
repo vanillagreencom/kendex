@@ -45,7 +45,7 @@ reading() { # LIB HARNESS WINDOW
 # due LIB TOKENS WINDOW PCT — the judge's answer and exit status.
 due() { # LIB TOKENS WINDOW PCT
   local out rc=0
-  out="$(bash -c 'set -euo pipefail; source "$1"; lane_context_handoff_due "$2" "$3" "$4"' _ "$@")" || rc=$?
+  out="$(bash -c 'set -euo pipefail; source "$1"; shift; lane_context_handoff_due "$@"' _ "$@")" || rc=$?
   printf 'rc=%s%s' "$rc" "${out:+ $out}"
 }
 
@@ -437,6 +437,26 @@ opencode|$CLAUDE_OWNED|s1|$CHOME|3 harness-unlisted
 opencode|$CLAUDE_OWNED||$CHOME|3 harness-unlisted
 ROWS
 
+while IFS='|' read -r tokens window pct reserve want; do
+  assert_eq "$(due "$LIB" "$tokens" "$window" "$pct" "$reserve")" "$want" \
+    "agent reserve: $tokens of ${window:-unknown} at $pct with $reserve: $want"
+done <<'ROWS'
+249999|1000000|90|150000|rc=0 room
+250000|1000000|90|150000|rc=0 due
+250001|1000000|90|150000|rc=0 due
+49999|200000|50|50000|rc=0 room
+50000|200000|50|50000|rc=0 due
+90000|200000|90|0|rc=0 room
+180000|200000|90|0|rc=0 due
+0|200000|50|150000|rc=0 due
+1||90|150000|rc=1
+250000||90|150000|rc=0 due
+0||90|999999999999999999999|rc=0 due
+1|200000|90|-1|rc=2
+1|200000|90|015|rc=2
+1|200000|90|abc|rc=2
+ROWS
+
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   echo "=== must-fail controls ==="
   # control NAME FILE OLD NEW PATTERN — a copy of the library whose FILE has OLD
@@ -486,6 +506,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'claude configuration 0 gives point unresolved'
   control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \
     '232560 of 258400 at 90: rc=0 room'
+  control agent-reserve lane-context.sh 'if [ "$#" -ge 4 ]; then' 'if false; then' \
+    'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
   control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
     '400000 of no window at 90: rc=0 due'
   control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \

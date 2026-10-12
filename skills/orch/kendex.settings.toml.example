@@ -293,6 +293,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Earlier context handoff percentage. Shared rule and boundary behavior:
 # references/oversee-events.md, Judgement rules.
 # ORCH_HANDOFF_CONTEXT_PCT = "90"
+# Attached agent result reserve before the earlier context mark. Nonnegative
+# whole tokens; equality refuses a launch. Missing context refuses the launch.
+# ORCH_HANDOFF_AGENT_RESERVE_TOKENS = "150000"
 
 # The recording policy: the most bytes one fleet log row's text may carry,
 # the fleet log rows a successor overseer reads at takeover, the days before

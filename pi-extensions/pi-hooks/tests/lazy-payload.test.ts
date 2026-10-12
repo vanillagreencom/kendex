@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER } from "../extensions/registry.ts";
-import { initRustRepo, installCarrier, readLog, registerRendered, renderStub, toolResultEvent, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
+import { initRustRepo, installCarrier, mutatedCarrier, readLog, registerRendered, renderStub, toolResultEvent, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 
 import * as vocab from "../extensions/vocab.ts";
 
@@ -54,6 +54,36 @@ for (const row of [
 			if (row.hooks === "two") expect(payloads[1]).toBe(payloads[0]);
 		} finally {
 			keyed.mockRestore();
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+}
+
+for (const row of [
+	{ name: "model window", window: 200000, want: 200000, mutate: false },
+	{ name: "absent window", window: undefined, want: undefined, mutate: false },
+	{ name: "invalid window", window: 0, want: undefined, mutate: false },
+	{ name: "control: missing PreToolUse context producer", window: 200000, want: 200000, mutate: true },
+]) {
+	test(`PreToolUse context: ${row.name}`, async () => {
+		const project = initRustRepo("pi-hooks-pre-context-");
+		const log = join(project, "context.log");
+		try {
+			registerRendered(join(project, ".pi"), TOOL_CALL_LISTENER, "subagent", `cat > ${JSON.stringify(log)}`);
+			const carrier = row.mutate
+				? (await import(mutatedCarrier(project, "no-pre-context", "hooks.ts",
+					"const payload = () => JSON.stringify({\n\t\t\ttool_name: toolName,\n\t\t\ttool_input: claudeToolInput(toolName, event.input, ctx.cwd),\n\t\t\t...claudeSessionFields(ctx),\n\t\t\t...piContextFields(ctx),\n\t\t});",
+					"const payload = () => JSON.stringify({\n\t\t\ttool_name: toolName,\n\t\t\ttool_input: claudeToolInput(toolName, event.input, ctx.cwd),\n\t\t\t...claudeSessionFields(ctx),\n\t\t});"))).default
+				: undefined;
+			const handler = installCarrier(undefined, carrier).handler(TOOL_CALL_LISTENER);
+			await handler({ toolName: "subagent", input: { agent: "scout", task: "map" } }, trusted(project, {
+				getContextUsage: () => row.window === undefined ? undefined : { contextWindow: row.window },
+			}));
+			const payload = JSON.parse(readLog(log));
+			const assertPayload = () => expect(payload.context_window).toBe(row.want);
+			if (row.mutate) expect(assertPayload).toThrow();
+			else assertPayload();
+		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
 	});

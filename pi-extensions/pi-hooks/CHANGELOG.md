@@ -4,6 +4,8 @@
 
 ### Unreleased
 
+- PreToolUse hooks receive the session context window so they can refuse an attached agent launch before its result reserve is spent.
+
 - The lane mail wake marks mail read only once the turn's message is sent. A send that fails leaves the mail unread, and it is handed again rather than lost. Needs the kendex `lane-mail-check` hook that reads `kendex_ack`; an older hook marks the mail read itself, as before.
 - Mailbox wake tests cover delivery of overseer answers to idle Pi lanes.
 - Maintainer documentation delegates mailbox decisions to the lane-mail hook.

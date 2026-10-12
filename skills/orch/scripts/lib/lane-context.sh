@@ -350,7 +350,7 @@ lane_context_handoff_pct() { # PCT
   if [ "$1" -gt 90 ]; then printf '90\n'; else printf '%s\n' "$1"; fi
 }
 
-# lane_context_handoff_due TOKENS WINDOW PCT — the one judgement of a context
+# lane_context_handoff_due TOKENS WINDOW PCT [AGENT_RESERVE] — one context
 # reading: `due` at 400000 used tokens or strictly past PCT percent of WINDOW,
 # with PCT capped at 90. WINDOW is the effective capacity before compaction,
 # or the actual window when compaction is disabled. Exit 1 below the token cap
@@ -359,10 +359,31 @@ lane_context_handoff_pct() { # PCT
 # to 100, or a figure is not a whole number or carries a leading zero a shell
 # would read as octal. Every reader of a reading asks here, so a lane, the
 # overseer and the report cannot judge one reading two ways.
-lane_context_handoff_due() { # TOKENS WINDOW PCT
-  local pct
+lane_context_handoff_due() { # TOKENS WINDOW PCT [AGENT_RESERVE]
+  local pct reserve budget
   pct=$(lane_context_handoff_pct "${3:-}") || return 2
   case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+  # A launch must keep its reserve before either mark. Equality refuses a
+  # launch, while the existing handoff percentage remains strictly greater.
+  if [ "$#" -ge 4 ]; then
+    reserve=$4
+    case "$reserve" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+    # No arithmetic uses an unbounded setting: any reserve this large leaves
+    # no room below the absolute mark, even if the capacity is unknown.
+    if [ "${#reserve}" -gt 6 ] || [ "$reserve" -ge 400000 ]; then
+      printf 'due\n'
+      return 0
+    fi
+    budget=$((400000 - reserve))
+    if [ "$1" -ge "$budget" ]; then printf 'due\n'; return 0; fi
+    case "${2:-}" in "" | 0) return 1 ;; *[!0-9]* | 0*) return 2 ;; esac
+    if [ $((($1 + reserve) * 100)) -ge $(($2 * pct)) ]; then
+      printf 'due\n'
+    else
+      printf 'room\n'
+    fi
+    return 0
+  fi
   if [ "$1" -ge 400000 ]; then
     printf 'due\n'
     return 0
