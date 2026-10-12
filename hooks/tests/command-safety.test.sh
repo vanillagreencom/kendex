@@ -434,12 +434,6 @@ FAIL=0
 HOOK=$hook_source
 ln -s "$ROOT/skills" "$scratch/skills"
 . "$ROOT/hooks/tests/lib/assert.sh"
-run_hook() {
-  local payload
-  payload=$(jq -nc --arg cwd "$repo" --arg c "$1" '{cwd:$cwd,tool_input:{command:$c}}')
-  rc=0
-  "$BASH" "$HOOK" <<<"$payload" >/dev/null 2>"$ERR_FILE" || rc=$?
-}
 # Env::global_skills_dir and the harness adapters emit these installed roots.
 # One table covers native, shared, relocated, partial and unavailable support.
 global_reader_rows() {
