@@ -37,6 +37,32 @@ for (const row of [
 		},
 		expected: [false, true],
 	},
+	// The extension manager saves each schema.key as a flat property.
+	...[
+		{ key: "video.enabled", value: false, read: (s: ReturnType<typeof loadSettings>) => s.video.enabled },
+		{ key: "githubClone.enabled", value: false, read: (s: ReturnType<typeof loadSettings>) => s.githubClone.enabled },
+		{ key: "githubClone.maxRepoSizeMB", value: 40, read: (s: ReturnType<typeof loadSettings>) => s.githubClone.maxRepoSizeMB },
+		{ key: "htmlExtraction.jinaFallback", value: false, read: (s: ReturnType<typeof loadSettings>) => s.htmlExtraction.jinaFallback },
+		{ key: "video.geminiModel", value: "saved-model", read: (s: ReturnType<typeof loadSettings>) => s.video.geminiModel },
+	].map(({ key, value, read }) => ({
+		name: `flat ${key} saved from the settings screen`,
+		run(_root: string, user: string, project: string) {
+			const unset = read(loadSettings(project));
+			config(join(user, "settings.json"), { [key]: value });
+			clearPackageConfigCache();
+			return [unset === value, read(loadSettings(project))];
+		},
+		expected: [false, value],
+	})),
+	{
+		name: "flat key merges into the same file's nested object",
+		run(_root: string, user: string, project: string) {
+			config(join(user, "settings.json"), { githubClone: { enabled: true, maxRepoSizeMB: 40 }, "githubClone.enabled": false });
+			const { githubClone } = loadSettings(project);
+			return [githubClone.enabled, githubClone.maxRepoSizeMB];
+		},
+		expected: [false, 40],
+	},
 	{
 		name: "malformed JSON diagnostic",
 		run(_root: string, user: string, project: string) {

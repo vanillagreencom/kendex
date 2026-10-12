@@ -71,6 +71,23 @@ function mergeDeep(target: SettingsRecord, source: SettingsRecord): SettingsReco
 	return target;
 }
 
+/** One file's config with each flat dotted key, as the settings screen saves
+ * `"githubClone.enabled"`, moved to its nested property over the same file's
+ * nested value. A blank string, or a value of another type than the nested one
+ * it would replace, keeps the nested value, since the reader would reject it. */
+function nestFlatKeys(config: SettingsRecord): SettingsRecord {
+	const normalized = Object.fromEntries(Object.entries(config).filter(([key]) => !key.includes(".")));
+	for (const [key, value] of Object.entries(config)) {
+		if (!key.includes(".") || (typeof value === "string" && !value.trim())) continue;
+		const path = key.split(".");
+		const leaf = path.pop()!;
+		let parent: SettingsRecord = normalized;
+		for (const part of path) parent = parent[part] = { ...asRecord(parent[part]) };
+		if (parent[leaf] === undefined || typeof parent[leaf] === typeof value) parent[leaf] = value;
+	}
+	return normalized;
+}
+
 /** This package's config, merged deeply: a nested object in a later file
  * overrides the earlier file's key by key, not whole. */
 export function readRawkendexConfig(cwd?: string): SettingsRecord {
@@ -78,15 +95,7 @@ export function readRawkendexConfig(cwd?: string): SettingsRecord {
 	for (const file of readSettingsFiles(piSettingsPaths(cwd))) {
 		if (file.kind !== "parsed") continue;
 		const config = packageConfigIn(file.settings, PACKAGE_ID);
-		if (!config) continue;
-		// The settings screen writes a flat key; normalize it before file precedence applies.
-		const normalized = { ...config };
-		const flatModel = config["video.geminiModel"];
-		if (typeof flatModel === "string" && flatModel.trim()) {
-			normalized.video = { ...asRecord(config.video), geminiModel: flatModel };
-		}
-		delete normalized["video.geminiModel"];
-		mergeDeep(merged, normalized);
+		if (config) mergeDeep(merged, nestFlatKeys(config));
 	}
 	return merged;
 }

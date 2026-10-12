@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Every nested setting saved from `/extensions:settings` now reaches the tool: `video.enabled`, `githubClone.enabled`, `githubClone.maxRepoSizeMB` and `htmlExtraction.jinaFallback`, not only `video.geminiModel`. The settings screen saves them as flat dotted keys, such as `"githubClone.enabled": false`, and the tool read only the nested form, so it kept the default while the screen showed the saved value.
+
 ### 4.2.0
 
 - The Gemini API requests default to `gemini-3.5-flash-lite` for the `gemini` `web_search` provider and `gemini-3.8-flash` for YouTube and local video understanding. Google refuses `gemini-2.5-flash`, the old default, to API keys created after it limited the 2.5 models, so every request from a new key failed with `404 NOT_FOUND`.
