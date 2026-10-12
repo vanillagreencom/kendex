@@ -1,0 +1,1 @@
+- A session the Jarvis runtime launched records its harness's own session id and session file in the runtime record's pending row at its start, on Claude Code, Codex, Copilot CLI and Pi, with no orch fleet or overseer mailbox. Other sessions in the same home write nothing there.

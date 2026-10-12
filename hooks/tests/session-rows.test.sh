@@ -433,5 +433,91 @@ run session-start-row "$COP_START" "${COP_ENV[@]}"
 assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=lane-mail-check: rows-unwritten=$CHECKOUT rows=0" \
   "control: without the wrapper's event a Copilot start writes no row"
 
+# A Jarvis launch: the runtime record's pending row names generation 3 on
+# server 7000, pane %9, with the id the launch preassigned where the harness
+# takes one, and the harness carries JARVIS_RECORD and JARVIS_GENERATION. The
+# checkout has no overseer mailbox, so the record is the only place a start
+# lands. Payloads are each harness's SessionStart: Codex 0.160.0's, Copilot
+# CLI 1.0.91's camelCase, and the pi-hooks carrier's.
+CODEX_START='{"session_id":"019a","transcript_path":"/r/rollout-019a.jsonl","cwd":"/work","hook_event_name":"SessionStart","source":"startup","model":"gpt-5"}'
+PI_START='{"hook_event_name":"SessionStart","source":"startup","session_id":"p1","transcript_path":"/p/p1.jsonl"}'
+jarvis_checkout() { # LABEL HOOK_HOME [PREASSIGNED]
+  new_checkout "$1" "$2"
+  rm -rf -- "${CHECKOUT:?}/tmp"
+  RECORD="$TMP_ROOT/$1-record.json"
+  jq -nc --arg id "${3:-}" '{generation: 3, pending: ({generation: 3, server: 7000, pane: "%9"}
+    + (if $id == "" then {} else {native_session_id: $id} end))}' >"$RECORD"
+}
+pending() { jq -r '[.pending.native_session_id, .pending.session_file, (.pending.started_at | type)] | map(. // "-") | join(",")' "$RECORD"; }
+JARVIS_ENV=(JARVIS_GENERATION=3)
+while IFS='|' read -r label home preassigned payload want; do
+  jarvis_checkout "jarvis_$label" "$home" "$preassigned"
+  run session-start-row "$payload" "${COP_ENV[@]}" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+  assert_eq "RC=$RC first=$(first_line) pending=$(pending) mailbox=$([ -e "$CHECKOUT/tmp" ] && echo made || echo none)" \
+    "RC=0 first=- pending=$want mailbox=none" "a managed $label start records its native identity with no mailbox"
+done <<JARVISTABLE
+claude|.claude/hooks|5f0c|$START|5f0c,/t/5f0c.jsonl,number
+codex|.codex/hooks||$CODEX_START|019a,/r/rollout-019a.jsonl,number
+copilot|.github/hooks|l1|$COP_START|l1,-,number
+pi|.pi/kendex/hooks|p1|$PI_START|p1,/p/p1.jsonl,number
+JARVISTABLE
+
+# What leaves the record as it stands: a session in the same home with no
+# Jarvis environment, one in another pane, one of another generation, a
+# harness nested in the managed one, a second start of a launch already
+# recorded, and a start the harness names by another id than the preassigned
+# one, which alone is reported.
+jarvis_untouched() { # LABEL PAYLOAD WANT_FIRST [ENV=VAL...]
+  local label="$1" payload="$2" want="$3" before
+  shift 3
+  before="$(cat "$RECORD")"
+  run session-start-row "$payload" "$@"
+  assert_eq "RC=$RC first=$(first_line) same=$([ "$(cat "$RECORD")" = "$before" ] && echo yes || echo no)" \
+    "RC=0 first=$want same=yes" "$label"
+}
+jarvis_checkout jarvis_unmanaged .claude/hooks
+jarvis_untouched "a non-managed session in the same home writes nothing to the record" "$START" -
+jarvis_checkout jarvis_pane .claude/hooks
+jarvis_untouched "a managed environment in another pane writes nothing" "$START" - \
+  TMUX_PANE=%8 "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+jarvis_checkout jarvis_generation .claude/hooks
+jarvis_untouched "a managed environment of another generation writes nothing" "$START" - \
+  "JARVIS_RECORD=$RECORD" JARVIS_GENERATION=2
+jarvis_checkout jarvis_nested .claude/hooks
+NESTED=1 jarvis_untouched "a harness nested in the managed one writes nothing" "$START" - \
+  "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+jarvis_checkout jarvis_again .claude/hooks
+run session-start-row "$START" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+jarvis_untouched "a second start of a recorded launch leaves the first identity" \
+  "${START/5f0c/6a1d}" - "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+jarvis_checkout jarvis_mismatch .claude/hooks 6a1d
+jarvis_untouched "a start named by another id than the preassigned one is reported, not recorded" "$START" \
+  "lane-mail-check: rows-unwritten=$CHECKOUT" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+assert_eq "$(grep -c '^jarvis-identity=mismatch record=' "$ERR_FILE" || true)" "1" \
+  "the refused start's cause names the mismatch"
+
+# --- control ------------------------------------------------------------------
+# Each rule removed from a copy of the orch scripts reddens its row: the call,
+# and the pane, generation and preassigned-id bindings.
+n=0
+while IFS='@' read -r old new label preassigned env; do
+  n=$((n + 1))
+  jarvis_checkout "jarvis_control_$n" .claude/hooks "$preassigned"
+  rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
+  cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+  LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
+  mutate_lib "$old" "$new"
+  before="$(cat "$RECORD")"
+  # shellcheck disable=SC2086  # env is a list of assignments.
+  run session-start-row "$START" "JARVIS_RECORD=$RECORD" $env
+  assert_eq "changed=$([ "$(cat "$RECORD")" = "$before" ] && echo no || echo yes)" \
+    "changed=$([ "$label" = call ] && echo no || echo yes)" "control: $label"
+done <<'JARVISCONTROL'
+session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" <<<"$payload"@:@call@@JARVIS_GENERATION=3
+ or $p.pane != $pane@@pane@@TMUX_PANE=%8 JARVIS_GENERATION=3
+($p.generation | tostring) != $generation@false@generation@@JARVIS_GENERATION=2
+"mismatch"@"own"@preassigned@6a1d@JARVIS_GENERATION=3
+JARVISCONTROL
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

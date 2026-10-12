@@ -44,6 +44,10 @@
 # (session_rows_lane_write, session_rows_lane_verdict). Claude Code and Codex
 # lanes write none: their pane is still what lib/lane-state.sh reads.
 #
+# A session the Jarvis runtime launched writes no file here of its own: its
+# SessionStart fills the launch's pending row in the runtime record its
+# environment names, with no fleet and no mailbox (session_rows_jarvis_write).
+#
 # The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
 # lib/lane-context.sh and lib/lane-state.sh sourced by its caller, and the lane
 # writer the first two; the overseer readers need jq and tail alone, and the
@@ -258,6 +262,11 @@ session_rows_top_level() { # PANE_PID
 # hook names its own event for Copilot's camelCase payloads, which spell none
 # and name the session `sessionId` and the transcript `transcriptPath`.
 #
+# A SessionStart of a session the Jarvis runtime launched, which carries
+# JARVIS_RECORD in its environment, also writes its native identity to that
+# record (session_rows_jarvis_write), whether or not the overseer mailbox
+# directory stands; its exit is the call's where the row's own is 0.
+#
 # Nothing is written, with exit 0, where that directory is not there, since no
 # fleet made it and no reader will look, for a session that is not its pane's
 # top-level harness (session_rows_top_level), and for a subagent's payload. A
@@ -268,10 +277,10 @@ session_rows_top_level() { # PANE_PID
 # build the row, and mailbox_append_locked's own 2 and 3 for the write and the
 # lock. The cause is on stderr.
 session_rows_write() { # DIR HARNESS [EVENT]
-  local key file payload event account row pane_pid
+  local key file payload event account row pane_pid jarvis_rc=0
   key="$(lane_context_caller_key)" || return 3
   file="$(session_rows_overseer_file "$1" "${key%% *}" "${key#* }")"
-  [ -d "${file%/*}" ] || return 0
+  [ -d "${file%/*}" ] || [ -n "${JARVIS_RECORD:-}" ] || return 0
   pane_pid="$(tmux display-message -p -t "${key#* }" '#{pane_pid}' 2>/dev/null)" || return 3
   session_rows_top_level "$pane_pid" || return 0
   payload="$(cat)" || return 1
@@ -282,6 +291,10 @@ session_rows_write() { # DIR HARNESS [EVENT]
     <<<"$payload")" || return 1
   [ "$event" != subagent ] || return 0
   [ -n "$event" ] || { printf 'the payload names no hook_event_name\n' >&2; return 1; }
+  if [ "$event" = SessionStart ] && [ -n "${JARVIS_RECORD:-}" ]; then
+    session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" <<<"$payload" || jarvis_rc=$?
+  fi
+  [ -d "${file%/*}" ] || return "$jarvis_rc"
   if [ "$event" = Stop ]; then
     session_rows_last "$file" || return 2
     if [ "$(jq -r '.event // ""' <<<"${SESSION_ROW:-null}")" != StopFailure ]; then
@@ -300,7 +313,56 @@ session_rows_write() { # DIR HARNESS [EVENT]
        | with_entries(select(.value | type == "string" and . != "")))
     + (if (.last_assistant_message | type) == "string" then {message: .last_assistant_message} else {} end)
     + (if $account == "" then {} else {account: $account} end)' <<<"$payload")" || return 1
-  printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
+  printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT" || return
+  return "$jarvis_rc"
+}
+
+# session_rows_jarvis_write RECORD GENERATION KEY — the SessionStart payload on
+# stdin written as its session's native identity into the `pending` row of the
+# Jarvis runtime record RECORD: the harness's own session id as
+# `native_session_id`, its session file as `session_file` where it names one,
+# and `started_at`. The launcher writes that row, with its launch `generation`,
+# tmux `server` pid and lead `pane` id, before the harness starts, and hands the
+# harness RECORD and GENERATION as JARVIS_RECORD and JARVIS_GENERATION; KEY is
+# this session's `<server pid> <pane id>`. A row naming another generation,
+# server or pane, or one already started, is another session's and is left as
+# it stands, with exit 0. A launch that preassigned the id writes it in the row
+# as `native_session_id`, and a start the harness names by any other id, or by
+# none, is refused, exit 4: the identity is the harness's own word, never a
+# transcript picked by its modification time. The write renames a new file
+# over RECORD under the lock on `RECORD.lock`, which every writer of the record
+# takes, as workflow-state's writers take theirs. Exit 1 where the payload names
+# neither or RECORD could not be read, 2 where it could not be written, 3 where
+# its lock was not taken. The cause is on stderr.
+session_rows_jarvis_write() { # RECORD GENERATION KEY
+  local identity
+  identity="$(jq -c '{native_session_id: (.session_id // .sessionId),
+      session_file: (.transcript_path // .transcriptPath)}
+    | with_entries(select(.value | type == "string" and . != ""))')" || return 1
+  (
+    exec 200>>"$1.lock" || exit 2
+    orch_take_lock 200 "$1.lock" "$SESSION_ROWS_WAIT" || exit 3
+    verdict="$(jq -r --arg generation "$2" --arg server "${3%% *}" --arg pane "${3#* }" \
+      --argjson identity "$identity" '
+      .pending as $p
+      | if ($p | type) != "object" or $generation == "" or ($p.generation | tostring) != $generation
+          or ($p.server | tostring) != $server or $p.pane != $pane or $p.started_at != null then "other"
+        elif ($p.native_session_id // $identity.native_session_id) != $identity.native_session_id then "mismatch"
+        elif ($identity | length) == 0 then "unnamed"
+        else "own" end' -- "$1")" || exit 1
+    case "$verdict" in
+      other) exit 0 ;;
+      own) ;;
+      *)
+        printf 'jarvis-identity=%s record=%s\nthe start is not recorded as the launch the record awaits\n' \
+          "$verdict" "$1" >&2
+        [ "$verdict" = mismatch ] && exit 4
+        exit 1 ;;
+    esac
+    jq -c --argjson identity "$identity" --argjson at "$(date +%s)" \
+      '.pending += $identity + {started_at: $at}' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
+    mv -f -- "$1.$$" "$1" || { rm -f -- "$1.$$"; exit 2; }
+  )
 }
 
 # ---------------------------------------------------------------------------
