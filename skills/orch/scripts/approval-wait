@@ -315,7 +315,10 @@ Missing context, a missing trusted reader, unreadable settings or invalid policy
 Native resolution: under enforce, read the PR's base branch through REST
 (repos/<repo>/pulls/<n> .base.ref), then every ruleset rule GitHub applies to
 that branch, organization rulesets included (rules/branches/<base>, every
-page). At least one required approval prints "approval". Otherwise read
+page). A positive general or team approval count, code-owner review, or
+last-push approval prints "approval". Conditional file requirements keep
+the approval gate because the branch rules do not prove they are inapplicable.
+Otherwise read
 branches/<base> .protection.enabled. A false value proves no classic
 protection. A true value requires branches/<base>/protection:
 required_pull_request_reviews present as an object prints "approval", even
@@ -867,9 +870,10 @@ REPO_NAME="${REPO#*/}"
 # missing requirement through REST. Each read is checked: a failed or
 # unparseable answer is no mode, never "off", since off skips the wait.
 
-# Print the largest required_approving_review_count among BRANCH's
-# pull_request rules, or 1 for a classic review requirement when rulesets
-# require none. Classic review protection can require code-owner review even
+# Print a positive count for any approval requirement in BRANCH's pull_request
+# rules, or 1 for a classic review requirement when rulesets require none.
+# Branch rules cannot prove a PR's files exclude conditional code-owner or
+# team requirements, so those requirements retain the gate. Classic review protection can require code-owner review even
 # with a zero count. Returns 1 on a failed read, a
 # zero-byte answer, a page that is not a list, or a count that is not a whole
 # number, since the -ge test below reads anything else as neither mode.
@@ -879,9 +883,18 @@ read_required_approvals() { # BRANCH
   raw=$(gh api "repos/$REPO/rules/branches/$uri" --paginate 2>"$GH_ERR_FILE") || return 1
   [ -n "$raw" ] || return 1
   required=$(jq -s -r 'if length > 0 and all(.[]; type == "array")
-    then add | [.[] | select(.type == "pull_request") | .parameters.required_approving_review_count]
-      | if all(.[]; type == "number" and . >= 0 and . == floor) then (max // 0)
-        else error("a required approval count is not a whole number") end
+    then add | [.[] | select(.type == "pull_request") | .parameters
+      | .required_approving_review_count as $general
+      | (.require_code_owner_review // false) as $code_owner
+      | (.require_last_push_approval // false) as $last_push
+      | (.required_reviewers // []) as $teams
+      | if ($general | type == "number" and . >= 0 and . == floor)
+          and ($code_owner | type == "boolean") and ($last_push | type == "boolean")
+          and ($teams | type == "array")
+          and all($teams[]; .minimum_approvals | type == "number" and . >= 0 and . == floor)
+        then [$general, (if $code_owner then 1 else 0 end),
+          (if $last_push then 1 else 0 end), $teams[].minimum_approvals] | max
+        else error("invalid approval requirement") end] | (max // 0)
     else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null) || return 1
   if [ "$required" -ge 1 ]; then printf '%s\n' "$required"; return 0; fi
   raw=$(gh api "repos/$REPO/branches/$uri" 2>"$GH_ERR_FILE") || return 1

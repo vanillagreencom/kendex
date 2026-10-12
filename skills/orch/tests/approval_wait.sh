@@ -264,7 +264,10 @@ case "${1:-}" in
     if [[ "${2:-}" == repos/*/rules/branches/* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       [[ -n "${STUB_RULES_LOG:-}" ]] && printf '%s\n' "$2" >> "$STUB_RULES_LOG"
-      pr_rule='{"type":"pull_request","parameters":{"required_approving_review_count":%s,"required_review_thread_resolution":true}}'
+      pr_rule='{"type":"pull_request","parameters":{"required_approving_review_count":%s,"require_code_owner_review":%s,"require_last_push_approval":%s,"required_reviewers":%s,"required_review_thread_resolution":true}}'
+      # Keep the general count as printf's placeholder for malformed-count
+      # and pagination rows. Each independent requirement is private to a row.
+      pr_rule=$(printf "$pr_rule" '%s' "${STUB_CODE_OWNER:-false}" "${STUB_LAST_PUSH:-false}" "${STUB_REQUIRED_REVIEWERS:-[]}")
       case "${STUB_RULES_MODE:-ok}" in
         fail) echo "HTTP 500: Internal Server Error" >&2; exit 1 ;;
         zero_byte) ;;
@@ -651,6 +654,12 @@ table "$RESOLVE" \
   'rules requiring 1 approval resolve approval||STUB_REQUIRED_APPROVALS=1|rc=0 mode=approval rules_reads=1' \
   'rules requiring 2 approvals resolve approval||STUB_REQUIRED_APPROVALS=2|rc=0 mode=approval' \
   'rules requiring 0 approvals resolve off||STUB_REQUIRED_APPROVALS=0|rc=0 mode=off' \
+  'zero general count with code-owner review resolves approval||STUB_REQUIRED_APPROVALS=0,STUB_CODE_OWNER=true|rc=0 mode=approval' \
+  'zero general count with last-push approval resolves approval||STUB_REQUIRED_APPROVALS=0,STUB_LAST_PUSH=true|rc=0 mode=approval' \
+  'zero general count with required team approval resolves approval||STUB_REQUIRED_APPROVALS=0,STUB_REQUIRED_REVIEWERS=[{"minimum_approvals":1}]|rc=0 mode=approval' \
+  'optional team review with zero general count resolves off||STUB_REQUIRED_APPROVALS=0,STUB_REQUIRED_REVIEWERS=[{"minimum_approvals":0}]|rc=0 mode=off' \
+  'invalid code-owner flag refuses mode||STUB_REQUIRED_APPROVALS=0,STUB_CODE_OWNER=1|rc=2 stdout=empty' \
+  'invalid team approval count refuses mode||STUB_REQUIRED_APPROVALS=0,STUB_REQUIRED_REVIEWERS=[{"minimum_approvals":"1"}]|rc=2 stdout=empty' \
   'a base with no pull_request rule resolves off||STUB_RULES_MODE=none|rc=0 mode=off' \
   'classic review requirement resolves approval||STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=review|rc=0 mode=approval' \
   'classic review requirement with zero count resolves approval||STUB_RULES_MODE=none,STUB_CLASSIC_MODE=review,STUB_CLASSIC_COUNT=0|rc=0 mode=approval' \
@@ -997,6 +1006,15 @@ control threshold-down '  if [ "$required" -ge 1 ]; then' \
 control classic-ignored '  if [ "$enabled" = false ]; then printf '\''0\n'\''; return 0; fi' \
   '  if true; then printf '\''0\n'\''; return 0; fi # [ "$enabled" = false ]' \
   "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=review' 'rc=0 mode=approval'
+control code-owner-ignored '      | (.require_code_owner_review // false) as $code_owner' \
+  '      | (.require_code_owner_review // false) as $ignored | false as $code_owner' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_CODE_OWNER=true' 'rc=0 mode=approval'
+control last-push-ignored '      | (.require_last_push_approval // false) as $last_push' \
+  '      | (.require_last_push_approval // false) as $ignored | false as $last_push' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_LAST_PUSH=true' 'rc=0 mode=approval'
+control team-approval-ignored '      | (.required_reviewers // []) as $teams' \
+  '      | (.required_reviewers // []) as $ignored | [] as $teams' \
+  "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_REQUIRED_REVIEWERS=[{"minimum_approvals":1}]' 'rc=0 mode=approval'
 control classic-fail-open '  raw=$(gh api "repos/$REPO/branches/$uri/protection" 2>"$GH_ERR_FILE") || return 1' \
   '  raw=$(gh api "repos/$REPO/branches/$uri/protection" 2>"$GH_ERR_FILE") || raw="{}"' \
   "$RESOLVE" 'STUB_REQUIRED_APPROVALS=0,STUB_CLASSIC_MODE=fail' 'rc=2 stdout=empty'

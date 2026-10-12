@@ -63,15 +63,20 @@ case "$1 $2" in
     ;;
   'api repos/consumer/repo/rules/branches/feature%2Fbase')
     printf '%s\n' "$PWD|$*" >> "$QUERY_LOG"
-    printf '[{"type":"pull_request","parameters":{"required_approving_review_count":%s}}]\n' "${REQUIRED_APPROVALS:-1}"
+    printf '[{"type":"pull_request","parameters":{"required_approving_review_count":%s,"require_code_owner_review":%s,"require_last_push_approval":%s,"required_reviewers":%s}}]\n' \
+      "${REQUIRED_APPROVALS:-1}" "${CODE_OWNER:-false}" "${LAST_PUSH:-false}" "${REQUIRED_REVIEWERS:-[]}"
     ;;
   'api repos/consumer/repo/branches/feature%2Fbase')
     echo '{"protection":{"enabled":false}}'
     ;;
   'api repos/consumer/repo/pulls/42')
+    count=0
+    [[ ! -f "$PULL_READ_COUNT" ]] || count="$(cat "$PULL_READ_COUNT")"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$PULL_READ_COUNT"
     [[ "$PULL_JSON" != fail ]] || exit 1
     [[ "${BASE_READ_FAIL:-false}" != true ]] || { echo 'HTTP 403: Forbidden' >&2; exit 1; }
-    [[ "${HEAD_READ_FAIL:-false}" != true ]] || exit 1
+    [[ "${HEAD_READ_FAIL:-false}" != true || "$count" -ne 2 ]] || exit 1
     [[ "${HEAD_READ_FAIL_AFTER_READY:-false}" != true || ! -s "$TRANSITION_LOG" ]] || exit 1
     draft=false
     [[ ! -f "$DRAFT_FILE" ]] || draft="$(cat "$DRAFT_FILE")"
@@ -114,6 +119,7 @@ EXECUTION_LOG="$TMP_ROOT/executions"
 DRAFT_FILE="$TMP_ROOT/draft"
 HEAD_FILE="$TMP_ROOT/head"
 TRANSITION_LOG="$TMP_ROOT/transitions"
+PULL_READ_COUNT="$TMP_ROOT/pull-reads"
 
 # write_settings FILE GATE COPILOT [REFRESH]: COPILOT empty leaves
 # PR_COPILOT_REQUESTS unset; REFRESH is extra [env] lines, ';'-separated.
@@ -133,12 +139,13 @@ run_action() { # SCRIPT REQUEST_EXIT ARGS...
   : > "$QUERY_LOG"
   : > "$EXECUTION_LOG"
   : > "$TRANSITION_LOG"
+  printf '0\n' > "$PULL_READ_COUNT"
   RC=0
   (cd -- "${ACTION_CWD:-$TMP_ROOT/catalog}" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     GH_TOKEN=github_pat_fixture GH_REPO=catalog/repo GITHUB_REPOSITORY=catalog/repo \
     REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review REVIEW_GATE_SETTINGS_FILE=/dev/null \
     QUERY_LOG="$QUERY_LOG" EXECUTION_LOG="$EXECUTION_LOG" REQUEST_LOG="$REQUEST_LOG" \
-    DRAFT_FILE="$DRAFT_FILE" HEAD_FILE="$HEAD_FILE" TRANSITION_LOG="$TRANSITION_LOG" \
+    DRAFT_FILE="$DRAFT_FILE" HEAD_FILE="$HEAD_FILE" TRANSITION_LOG="$TRANSITION_LOG" PULL_READ_COUNT="$PULL_READ_COUNT" \
     ORCH_STATE_DIR="$TMP_ROOT/state" REVIEW_BASE_FIXTURE="$BASE" \
     CHECKS_JSON='[{"check_runs":[]}]' TIMELINE_JSON='[[]]' REVIEWS_JSON='[]' \
     REQUEST_EXIT="$request_exit" PULL_JSON="$PULL_JSON" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
@@ -213,6 +220,31 @@ done
 scripts="$(mutant_scripts rest-base-control approval-wait)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
+# GitHub's rules endpoint emits each independent approval requirement. The
+# branch fixture has no classic protection, so no other rule can hide one.
+for row in \
+  'code-owner|true|false|[]|approval|1' \
+  'last-push|false|true|[]|approval|1' \
+  'team-approval|false|false|[{"minimum_approvals":1}]|approval|1' \
+  'optional-team|false|false|[{"minimum_approvals":0}]|off|0'; do
+  IFS='|' read -r rule code_owner last_push teams want_mode want_requests <<<"$row"
+  RUN_ENV=(DENY_GRAPHQL=true REQUIRED_APPROVALS=0 "CODE_OWNER=$code_owner" "LAST_PUSH=$last_push" "REQUIRED_REVIEWERS=$teams")
+  printf 'true\n' > "$DRAFT_FILE"
+  run_action "$RUN" 0 --request-review --mark-ready --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$DRAFT_FILE")" "0|$want_mode|$want_requests|false" "$rule routes its ready request" "$ERR"
+  [[ "$rule" != optional-team ]] || continue
+  scripts="$(mutant_scripts "$rule-action-control" approval-wait)" || exit 1
+  case "$rule" in
+    code-owner) mutate_file "$scripts/approval-wait" '(.require_code_owner_review // false) as $code_owner' '(.require_code_owner_review // false) as $ignored | false as $code_owner' ;;
+    last-push) mutate_file "$scripts/approval-wait" '(.require_last_push_approval // false) as $last_push' '(.require_last_push_approval // false) as $ignored | false as $last_push' ;;
+    team-approval) mutate_file "$scripts/approval-wait" '(.required_reviewers // []) as $teams' '(.required_reviewers // []) as $ignored | [] as $teams' ;;
+  esac
+  printf 'true\n' > "$DRAFT_FILE"
+  run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$DRAFT_FILE")" '0|off|0|false' "$rule control loses the required request" "$ERR"
+done
+RUN_ENV=()
+scripts="$(mutant_scripts rest-base-control approval-wait)" || exit 1
 mutate_file "$scripts/approval-wait" 'base_json=$(gh api "repos/$REPO/pulls/$PR_NUM"' \
   'base_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName,reviewDecision'
 printf 'true\n' > "$DRAFT_FILE"
@@ -268,7 +300,17 @@ for row in \
   run_action "$RUN" 0 "${args[@]}"
   actual="$(paste -sd, "$TRANSITION_LOG")"
   assert_eq "$RC|$(cat "$OUT")|$REQUESTS|${actual:-none}" "$want_rc|$want_out|$requests|$transitions" "$label" "$ERR"
+  [[ "$unread" != true ]] || assert_contains "$(cat "$ERR")" 'approval-wait: request-head-unreadable pr=42 repo=consumer/repo' "$label head guard" "$ERR"
 done
+RUN_ENV=()
+scripts="$(mutant_scripts pre-ready-head-control approval-wait)" || exit 1
+mutate_file "$scripts/approval-wait" $'  if $MARK_READY; then\n    read_request_head || exit 2' \
+  $'  if $MARK_READY; then\n    read_request_head || { request_draft=false; request_head=current-head; } # exit 2'
+printf 'true\n' > "$DRAFT_FILE"
+RUN_ENV=(HEAD_READ_FAIL=true)
+run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
+assert_eq "$RC|$REQUESTS|$(paste -sd, "$TRANSITION_LOG")" '0|1|request head=current-head draft=true' \
+  'control: ignoring the pre-ready head refusal requests an unreadable draft' "$ERR"
 RUN_ENV=()
 # Removing the producer's ready flag makes the same publication command fail
 # to produce the ready request. This control exercises the script, not prose.
