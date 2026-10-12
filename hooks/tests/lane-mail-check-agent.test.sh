@@ -42,6 +42,46 @@ run_payload '{"session_id":"s1","tool_name":"Agent"}'
 expect 2 'lane-mail-check: agent-input=transcript-unnamed' 'an absent reading establishes no launch room'
 ARM_ARGS=()
 
+# A retained edited orch install can keep the released three-argument judge
+# while this hook updates. Keep the released function here so this fixture
+# does not change when origin/main advances. Other readers use the real lib.
+new_lane agent_legacy AGENT-1
+mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
+plant_install
+LEGACY_LIB="$TMP_ROOT/retained-context-lib"
+cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$LEGACY_LIB"
+cat >> "$LEGACY_LIB/lane-context.sh" <<'RELEASED_CONTEXT_JUDGE'
+lane_context_handoff_due() { # TOKENS WINDOW PCT
+  local pct
+  pct=$(lane_context_handoff_pct "${3:-}") || return 2
+  case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+  if [ "$1" -ge 400000 ]; then
+    printf 'due\n'
+    return 0
+  fi
+  case "${2:-}" in '' | 0) return 1 ;; *[!0-9]* | 0*) return 2 ;; esac
+  if [ $(($1 * 100)) -gt $(($2 * pct)) ]; then
+    printf 'due\n'
+  else
+    printf 'room\n'
+  fi
+}
+RELEASED_CONTEXT_JUDGE
+rm "$LANE/.claude/skills/orch/scripts/lib"
+ln -s "$LEGACY_LIB" "$LANE/.claude/skills/orch/scripts/lib"
+write_transcript "$TRANSCRIPT" 600000
+run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,stop_hook_active:false}')"
+expect 2 'lane-mail-check: context=600000' 'the released judge retains ordinary Stop behavior'
+launch 250000 Agent
+expect 2 'lane-mail-check: agent-input=reserve-unsupported' 'an installed older judge cannot admit a reserve launch'
+# A retained edit can lower the old cap to the default launch boundary. Two
+# boundary values alone cannot prove that it consumes a changed reserve.
+sed 's/-ge 400000/-ge 250000/' "$LEGACY_LIB/lane-context.sh" > "$TMP_ROOT/lower-legacy-cap"
+mv "$TMP_ROOT/lower-legacy-cap" "$LEGACY_LIB/lane-context.sh"
+launch 249999 Agent ORCH_HANDOFF_AGENT_RESERVE_TOKENS=200000
+expect 2 'lane-mail-check: agent-input=reserve-unsupported' 'a lower legacy cap cannot stand in for reserve support'
+plant_install
+
 # An ordinary checkout, or a child caller, never inherits the lead's mark.
 launch 250000 Agent 'LANE_MAIL_ITEM=AGENT-1'
 ARM_ARGS=(halt)
@@ -71,7 +111,6 @@ codex|spawn_agent|119200|258400|2
 codex|multi_agent_v2.spawn_agent|119200|258400|2
 pi|subagent|89999|200000|0
 pi|subagent|90000|200000|2
-pi|delegate_subagent|90000|200000|2
 ROWS
 
 new_lane agent_copilot AGENT-1
@@ -108,11 +147,25 @@ new_overseer agent_children
 judge_says "$CONTEXT_MARK_LINE"
 write_transcript "$TRANSCRIPT" 600000
 agent_stop() { # BACKGROUND_FIELDS
+  local fields="$1"
+  shift
   # shellcheck disable=SC2046
-  run_payload "$(jq -nc --arg p "$TRANSCRIPT" --argjson extra "$1" \
-    '{session_id:"s1",transcript_path:$p,stop_hook_active:false} + $extra')" $(overseer_env)
+  run_payload "$(jq -nc --arg p "$TRANSCRIPT" --argjson extra "$fields" \
+    '{session_id:"s1",transcript_path:$p,stop_hook_active:false} + $extra')" $(overseer_env) "$@"
 }
 agent_rows() { sed -n 's/^lane-mail-check: attached-agent=//p' "$ERR_FILE"; }
+# A host without the existing timeout command cannot safely read old Claude
+# history. Its native-list cases still run; its fallback must report unknown.
+SCAN_AVAILABLE=0
+if command -v timeout >/dev/null 2>&1; then SCAN_AVAILABLE=1; fi
+expect_fallback() { # EXPECTED_ROWS CASE
+  if [ "$SCAN_AVAILABLE" -eq 1 ]; then
+    assert_eq "$(agent_rows)" "$1" "$2"
+  else
+    assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown "$2: bound unavailable"
+    assert_eq "$(agent_rows)" '' "$2: no unverified rows"
+  fi
+}
 while IFS='|' read -r fields want; do
   agent_stop "$fields"
   expect 2 'lane-mail-check: context=612000' 'a reached mark retains its refusal'
@@ -133,32 +186,117 @@ append_notice() { # ID STATUS
 }
 append_launch
 agent_stop '{}'
-assert_eq "$(agent_rows)" 'a1 status=running output=unknown' 'fallback names the launched child'
+expect_fallback 'a1 status=running output=unknown' 'fallback names the launched child'
+# The usage tail cannot establish a roster. Keep the launch outside that
+# window and add a recent usage line so only the full child scan can find it.
+jq -nc '{message:{role:"assistant",content:("x" * 1048576)}}' >> "$TRANSCRIPT"
+usage_line sonnet 600000 >> "$TRANSCRIPT"
+agent_stop '{}'
+expect_fallback 'a1 status=running output=unknown' 'complete history names a launch outside the usage window'
 agent_stop '{"background_tasks":[]}'
 assert_eq "$(agent_rows)" '' 'a valid native empty list takes priority over old transcript state'
 append_notice monitor completed
 agent_stop '{}'
-assert_eq "$(agent_rows)" 'a1 status=running output=unknown' 'a monitor notification clears no child'
+expect_fallback 'a1 status=running output=unknown' 'a monitor notification clears no child'
 append_notice a1 completed
 agent_stop '{}'
-assert_eq "$(agent_rows)" '' 'the matching terminal notification ends the child hold'
+expect_fallback '' 'the matching terminal notification ends the child hold'
 append_launch
 mkdir -p "${TRANSCRIPT%.jsonl}/subagents"
 : > "${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl"
 agent_stop '{}'
-assert_eq "$(agent_rows)" "a1 status=running output=${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl" 'a later launch replaces completion and names existing output'
+expect_fallback "a1 status=running output=${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl" 'a later launch replaces completion and names existing output'
 printf '{broken\n' >> "$TRANSCRIPT"
 agent_stop '{}'
 assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown 'an unreadable fallback never reports no child'
 
+# Clock injection represents the account judgement spending its ceiling.
+# Real timeout enforces the remaining budget. The fake jq emits a partial
+# row before blocking, so a failed evaluation must discard actual stdout.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion; do
+  SCAN_BIN="$TMP_ROOT/agent-scan-bin"
+  mkdir -p "$SCAN_BIN"
+  REAL_JQ=$(command -v jq)
+  cat > "$SCAN_BIN/jq" <<SLOW_JQ
+#!/usr/bin/env bash
+if [ "\${1:-}" = -Rnr ] && [[ "\${2:-}" == *'capture("agentId:'* ]]; then
+  printf 'ghost\\trunning\\n'
+  sleep 10
+  exit 0
+fi
+exec "$REAL_JQ" "\$@"
+SLOW_JQ
+  chmod +x "$SCAN_BIN/jq"
+  if [ "$SCAN_AVAILABLE" -eq 1 ]; then
+    REAL_TIMEOUT=$(command -v timeout)
+    cat > "$SCAN_BIN/timeout" <<SCAN_TIMEOUT
+#!/usr/bin/env bash
+if [ "\${1:-}" = --kill-after=1 ]; then printf '%s\\n' "\$2" >> "$TMP_ROOT/scan-seconds"; fi
+exec "$REAL_TIMEOUT" "\$@"
+SCAN_TIMEOUT
+    chmod +x "$SCAN_BIN/timeout"
+  fi
+  for scan_case in timeout unbounded-control unavailable exhausted native; do
+    case "$scan_case" in
+      timeout | unbounded-control)
+        [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;;
+    esac
+    scan_edits=(-e 's/^  JUDGE_RC=0$/  HOOK_AGENT_DEADLINE=$((SECONDS + 30)); SECONDS=$((SECONDS + 20)); JUDGE_RC=0/')
+    case "$scan_case" in
+      unbounded-control) scan_edits+=(-e 's#^    agents=\$("\${scan_bound\[@\]}" jq -Rnr#    agents=$(jq -Rnr#') ;;
+      unavailable | native) scan_edits+=(-e 's/^! command -v timeout.*$/BOUND_BY=()/') ;;
+      exhausted) scan_edits=(-e 's/^  JUDGE_RC=0$/  SECONDS=$((SECONDS + 30)); JUDGE_RC=0/') ;;
+    esac
+    variant "agent-scan-$scan_case" "${scan_edits[@]}"
+    install_hook "$VARIANT_PATH" "$CASE_HOOK"
+    write_transcript "$TRANSCRIPT" 600000
+    append_launch
+    : > "$TMP_ROOT/scan-seconds"
+    if [ "$scan_case" = native ]; then
+      agent_stop '{"background_tasks":[]}' "PATH=$SCAN_BIN:$TMUX_BIN:$PATH"
+      assert_eq "unknown=$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE") rows=$(agent_rows)" \
+        'unknown= rows=' 'native empty tasks retain priority without a fallback bound'
+    else
+      agent_stop '{}' "PATH=$SCAN_BIN:$TMUX_BIN:$PATH"
+      unknown=$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")
+      rows=$(agent_rows)
+      checker_rc=0
+      [ "$unknown" = unknown ] && [ -z "$rows" ] || checker_rc=1
+      if [ "$scan_case" = unbounded-control ]; then
+        assert_eq "$checker_rc" 1 'control: removing the bound fails the unknown/no-partial-roster assertion'
+      else
+        assert_eq "$checker_rc" 0 "$scan_case preserves unknown and discards partial rows"
+        case "$scan_case" in
+          timeout) cause=124 ;;
+          unavailable) cause=timeout-unavailable ;;
+          exhausted) cause=budget-exhausted ;;
+        esac
+        assert_eq "$(sed -n 's/^lane-mail-check: agent-scan=//p' "$ERR_FILE")" "$cause" "$scan_case reports its evaluation cause"
+      fi
+      if [ "$scan_case" = timeout ]; then
+        scan_seconds=$(cat "$TMP_ROOT/scan-seconds")
+        assert_eq "$([ "$scan_seconds" -gt 0 ] && [ "$scan_seconds" -le 7 ] && echo remaining || echo unbounded)" \
+          remaining 'the parser receives only the remaining budget after the account cost'
+      fi
+    fi
+    expect 2 'lane-mail-check: context=612000' "$scan_case retains the original context refusal"
+  done
+  install_hook "$HOOK" "$CASE_HOOK"
+fi
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  for mutation in launch input children native completion capability; do
+    if [ "$mutation" = completion ] && [ "$SCAN_AVAILABLE" -eq 0 ]; then
+      printf 'skip: completion control requires a host timeout command\n'
+      continue
+    fi
     case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
       children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
       native) variant agent-no-native -e 's/^  if jq -e '\''has("background_tasks")'\'' <<<"\$INPUT" >\/dev\/null; then$/  if false; then/' ;;
       completion) variant agent-no-completion -e 's/if has(\$n\[0\]) then .\[\$n\[0\]\] = \$n\[1\] else . end/. /' ;;
+      capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \

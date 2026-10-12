@@ -1482,7 +1482,7 @@ assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the rea
 # second executable parser. Normalize CRLF before comparing source lines.
 PERMITTED_AGENT_READ="$TMP_ROOT/permitted-agent-id-status-read"
 cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
-    agents=$(jq -Rnr '
+    agents=$("${scan_bound[@]}" jq -Rnr '
       def text: if type == "string" then . elif type == "array" then
         [.[] | select(.type == "text") | .text] | join("\n") else "" end;
       reduce (inputs | fromjson | .message? | objects) as $m ({};
@@ -1497,7 +1497,7 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
             (. ; if has($n[0]) then .[$n[0]] = $n[1] else . end)
         else . end)
       | to_entries[] | [.key, .value] | @tsv
-    ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || {
+    ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || scan_rc=$?
 AGENT_ID_STATUS_READ
 text_reads() { # FILE...
   awk '
@@ -1509,10 +1509,10 @@ text_reads() { # FILE...
       hit = ($0 ~ /asks_the_person|transcript_turn_start|transcript_final_line|select\(\.type == "text"\)|\.message\.content.*\.text/)
       forbidden += hit
       quote = sprintf("%c", 39)
-      if (in_agent && $0 == "    agents=$(jq -Rnr " quote) reading = 1
+      if (in_agent && $0 == "    agents=$(\"${scan_bound[@]}\" jq -Rnr " quote) reading = 1
       if (reading) {
         block = block $0 "\n"; block_hits += hit
-        if ($0 == "    " quote " <\"$TRANSCRIPT\" 2>\"$WORK_DIR/agents.err\") || {") {
+        if ($0 == "    " quote " <\"$TRANSCRIPT\" 2>\"$WORK_DIR/agents.err\") || scan_rc=$?") {
           if (FILENAME ~ /\/lane-mail-check\.sh$/ && !admitted && block == permitted) {
             forbidden -= block_hits; admitted = 1
           }
@@ -2777,8 +2777,16 @@ assert_eq "$(grep -c "$CONTROL_STATE" "$ERR_FILE")" "0" \
 # the account mark unjudged and not one line on stderr, which is the one answer
 # the marks forbid. What the masking costs depends on the interpreter the
 # shebang picks, so the control runs only under the one that dies.
-mutant in-process-probe \
-  -e 's@^  if ! "\$BASH" -euo pipefail -c .* 2>"\$WORK_DIR/lib.err"; then$@  if ! { . "$SCRIPTS/lib/lane-context.sh" \&\& declare -F lane_context_caller_cfg >/dev/null; } 2>"$WORK_DIR/lib.err"; then@'
+cat > "$TMP_ROOT/in-process-probe.sed" <<'IN_PROCESS_PROBE'
+/^load_context_lib()/,/^}/ {
+  /^  if ! "\$BASH" -euo pipefail -c '/,/^    ' _ .* 2>"\$WORK_DIR\/lib.err"; then$/c\
+  if ! { . "$SCRIPTS/lib/lane-context.sh" && declare -F lane_context_caller_cfg >/dev/null; } 2>"$WORK_DIR/lib.err"; then
+}
+IN_PROCESS_PROBE
+mutant in-process-probe -f "$TMP_ROOT/in-process-probe.sed"
+probe_syntax_rc=0
+"$BASH" -n "$MUTANT_PATH" 2>"$TMP_ROOT/probe-syntax.err" || probe_syntax_rc=$?
+assert_eq "$probe_syntax_rc" 0 'the in-process source control remains a valid hook'
 new_handoff_lane control_probe KEN-93
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 plant_install lib
@@ -3142,7 +3150,7 @@ for read_case in outside-function outside-site changed-fields other-hook; do
     outside-function)
       mutant "text-$read_case" -e "s@^idle_check() {\$@idle_check() { $PLANTED_TEXT_READ@" ;;
     outside-site)
-      mutant "text-$read_case" -e "s@^  local agents row id status output\$@&; $PLANTED_TEXT_READ@" ;;
+      mutant "text-$read_case" -e "s@^  local agents row id status output.*\$@&; $PLANTED_TEXT_READ@" ;;
     changed-fields)
       mutant "text-$read_case" -e 's@agentId: (?<id>@agentId: (?<words>@' ;;
     other-hook)
