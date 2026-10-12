@@ -268,7 +268,7 @@ WORKTREE_SYMLINKS = "config/local.txt"
 WORKTREE_COPIES = "copied.txt"
 WORKTREE_MKDIRS = "tmp"
 WORKTREE_RELATIVE_SYMLINKS = "relative.link=base.txt"
-WORKTREE_SETUP_CMD = 'test -f config/local.txt && test -f copied.txt && test -d tmp && test -L relative.link || exit 9; echo "$PWD" >> setup-marker; echo consumer-output; exit "${SETUP_TEST_EXIT:-0}"'
+WORKTREE_SETUP_CMD = 'test -f config/local.txt && test -f copied.txt && test -d tmp && test -L relative.link || exit 9; echo "$PWD" >> setup-marker; echo a7f4c9; echo b1d8e2 >&2; exit "${SETUP_TEST_EXIT:-0}"'
 SETTINGS
   git -C "$MAIN" add kendex.settings.toml
   git -C "$MAIN" commit -q -m settings
@@ -322,7 +322,7 @@ SETTINGS
 }
 
 setup_result() {
-  local mode="$1" command="$2" rc=0 calls=0 marker=ok registered=no stash=no preserved=yes line listing err_records
+  local mode="$1" command="$2" rc=0 calls=0 marker=ok registered=no stash=no preserved=yes line listing err_records consumer_output
   local -a argv
   read -r -a argv <<<"${command//<wt>/$WT}"
   (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
@@ -342,13 +342,15 @@ setup_result() {
   fi
   # Consumer output is arbitrary stderr, not a worktree protocol record.
   err_records="$(awk '/^worktree-[a-z-]+:/ { print }' "$ROOT/err")"
-  printf 'rc=%s out=%s err=%s calls=%s marker=%s registered=%s stash=%s preserved=%s' \
-    "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <<<"$err_records")" "$calls" "$marker" "$registered" "$stash" "$preserved"
+  consumer_output="$(awk '/^a7f4c9$|^b1d8e2$/ { print }' "$ROOT/err" | paste -s -d ';' -)"
+  printf 'rc=%s out=%s err=%s calls=%s marker=%s registered=%s stash=%s preserved=%s consumer=%s' \
+    "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <<<"$err_records")" "$calls" "$marker" "$registered" "$stash" "$preserved" "$consumer_output"
 }
 
 SETUP_CASE_SERIAL=0
 setup_row() {
-  local mode="$1" command="$2" rc="$3" calls="$4" out="$5" err="$6" stash="$7"
+  local mode="$1" command="$2" rc="$3" calls="$4" out="$5" err="$6" stash="$7" consumer="${8:-a7f4c9;b1d8e2}"
+  [[ "$consumer" != - ]] || consumer=""
   SETUP_CASE_SERIAL=$((SETUP_CASE_SERIAL + 1))
   build "setup-$mode-$SETUP_CASE_SERIAL" repo
   setup_fixture "$mode"
@@ -364,30 +366,30 @@ setup_row() {
   want_out="$(alias_text <<<"$want_out")"
   want_err="$(alias_text <<<"$want_err")"
   assert_eq "$(setup_result "$mode" "$command")" \
-    "rc=$rc out=$want_out err=$want_err calls=$calls marker=ok registered=yes stash=$stash preserved=yes" "$mode: $command"
+    "rc=$rc out=$want_out err=$want_err calls=$calls marker=ok registered=yes stash=$stash preserved=yes consumer=$consumer" "$mode: $command"
 }
 
 echo "=== configured setup commands ==="
-# mode|command|status|marker-lines|stdout|stderr|stash
-SETUP_ROWS='success|create issue-setup|0|1|path|-|no
-unset|create issue-setup|0|0|path|-|no
-fail|create issue-setup|1|1|-|fail|no
-retry-fail|create issue-setup --reuse|1|2|-|dirty-fail|no
-retry-ok|create issue-setup --reuse|0|2|path|dirty|no
-transfer|create issue-setup --transfer issue-setup|1|1|-|fail|yes
-transfer-retry|create issue-setup --reuse|0|2|path|dirty|yes
-codex|codex-setup <wt>|0|1|codex|-|no
-claude|claude-setup <wt>|0|1|claude|-|no
-branch|codex-branch issue-setup <wt>|0|1|branch|-|no
-hosted|create issue-setup --hosted|0|1|path|-|no
-no-checkout|create issue-setup --no-checkout|0|0|path|-|no
-claim|create issue-setup --reuse|0|1|path|-|no
-repair|fix-links <wt>|0|1|links|-|no
-keep|create issue-setup --reuse --keep-on-conflict|76|1|path|keep|no
-keep-fail|create issue-setup --reuse --keep-on-conflict|1|1|-|fail|no
-unavailable|create issue-setup|1|0|-|unavailable|no'
-while IFS='|' read -r mode command rc calls out err stash; do
-  setup_row "$mode" "$command" "$rc" "$calls" "$out" "$err" "$stash"
+# mode|command|status|marker-lines|stdout|stderr|stash|consumer-bytes-on-stderr
+SETUP_ROWS='success|create issue-setup|0|1|path|-|no|a7f4c9;b1d8e2
+unset|create issue-setup|0|0|path|-|no|-
+fail|create issue-setup|1|1|-|fail|no|a7f4c9;b1d8e2
+retry-fail|create issue-setup --reuse|1|2|-|dirty-fail|no|a7f4c9;b1d8e2
+retry-ok|create issue-setup --reuse|0|2|path|dirty|no|a7f4c9;b1d8e2
+transfer|create issue-setup --transfer issue-setup|1|1|-|fail|yes|a7f4c9;b1d8e2
+transfer-retry|create issue-setup --reuse|0|2|path|dirty|yes|a7f4c9;b1d8e2
+codex|codex-setup <wt>|0|1|codex|-|no|a7f4c9;b1d8e2
+claude|claude-setup <wt>|0|1|claude|-|no|a7f4c9;b1d8e2
+branch|codex-branch issue-setup <wt>|0|1|branch|-|no|-
+hosted|create issue-setup --hosted|0|1|path|-|no|a7f4c9;b1d8e2
+no-checkout|create issue-setup --no-checkout|0|0|path|-|no|-
+claim|create issue-setup --reuse|0|1|path|-|no|a7f4c9;b1d8e2
+repair|fix-links <wt>|0|1|links|-|no|-
+keep|create issue-setup --reuse --keep-on-conflict|76|1|path|keep|no|a7f4c9;b1d8e2
+keep-fail|create issue-setup --reuse --keep-on-conflict|1|1|-|fail|no|a7f4c9;b1d8e2
+unavailable|create issue-setup|1|0|-|unavailable|no|-'
+while IFS='|' read -r mode command rc calls out err stash consumer; do
+  setup_row "$mode" "$command" "$rc" "$calls" "$out" "$err" "$stash" "$consumer"
 done <<<"$SETUP_ROWS"
 
 # Mutants stay outside the worktree and install the bounded-runner dependency
@@ -395,7 +397,7 @@ done <<<"$SETUP_ROWS"
 setup_control() {
   local name="$1" needle="$2" replacement="$3" mode="$4" rc="$5" calls="$6" out="$7" err="$8"
   local copy="$TMP_ROOT/control-$name" mutant
-  mkdir -p "$copy/github/scripts"
+  mkdir -p "$copy/github/scripts" "$copy/rows"
   cp -R "${ORIGINAL_WORKTREE_SCRIPT%/scripts/worktree}" "$copy/worktree"
   cp -R "${ORIGINAL_WORKTREE_SCRIPT%/worktree/scripts/worktree}/github/scripts/lib" "$copy/github/scripts/lib"
   mutant="$copy/worktree/scripts/worktree"
@@ -403,7 +405,7 @@ setup_control() {
   awk -v needle="$needle" -v replacement="$replacement" '{ if (index($0, needle)) print replacement; else print }' "$mutant" >"$copy/changed"
   cmp -s "$mutant" "$copy/changed" && { echo 'FIXTURE: setup mutation changed nothing' >&2; exit 2; }
   cat "$copy/changed" >"$mutant"
-  if (ORIGINAL_WORKTREE_SCRIPT="$mutant"; PASS=0; FAIL=0; setup_row "$mode" 'create issue-setup' "$rc" "$calls" "$out" "$err" no; [[ "$FAIL" -gt 0 ]]); then
+  if (TMP_ROOT="$copy/rows"; ORIGINAL_WORKTREE_SCRIPT="$mutant"; PASS=0; FAIL=0; setup_row "$mode" 'create issue-setup' "$rc" "$calls" "$out" "$err" no; [[ "$FAIL" -gt 0 ]]); then
     PASS=$((PASS + 1)); printf '  ok    must-fail: %s\n' "$name"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  must-fail: %s\n' "$name"
@@ -411,6 +413,10 @@ setup_control() {
 }
 setup_control missing-call 'run_worktree_setup_command "$wt" || return 1' '    :' success 0 1 path -
 setup_control ignored-status 'if [[ "$status" -ne 0 ]]; then' '  if false && [[ "$status" -ne 0 ]]; then' fail 1 1 - fail
+setup_control discarded-output \
+  '  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >&2 || status=$?' \
+  '  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >/dev/null 2>&1 || status=$?' \
+  success 0 1 path -
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
