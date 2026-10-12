@@ -182,14 +182,50 @@ table \
   "pi's level on the model value names the effort, so the launch is not asked for it again|cmd=true --model pi-claude/sonnet:high|--harness pi --lane $H/.claude KEN-95|rc=0 launched=1 modelmissing=none effortmissing=none" \
   "a separator with no level after it names no effort, so that launch is still refused|cmd=true --model sonnet:|--harness pi --lane $H/.claude KEN-97|rc=1 launched=nolog modelmissing=none effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
   "a claude launch whose model value carries a colon is still asked for its effort, its row naming no separator|cmd=true --model opus:1m|--harness claude --lane $H/.claude KEN-98|rc=1 launched=nolog modelmissing=none effortmissing=harness=claude,lane=$H/.claude,spellings=--effort"
-# The same value inside a --cmd template, which a word-split args field cannot
-# spell.
-run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:high $QUESTION_OFF_ALL" KEN-96
+# A setup command before Pi requires the selected account to cover the whole
+# template. Replay the real line recorded by the shared tmux fixture.
+PI_TEMPLATE="true && pi --model pi-claude/sonnet:high $QUESTION_OFF_ALL"
+PI_TEMPLATE_BIN="$TMP_ROOT/pi-template-bin"
+mkdir -p "$PI_TEMPLATE_BIN"
+printf '#!%s\nprintf "%%s" "${CLAUDE_CONFIG_DIR-}" > "$PI_ACCOUNT_LOG"\n' "$BASH" > "$PI_TEMPLATE_BIN/pi"
+chmod +x "$PI_TEMPLATE_BIN/pi"
+pi_template_account() {
+  local line
+  line="$(sed -n 's/^clear; //p' "$RUN/tmux.log")" || return 1
+  [[ -n "$line" ]] || return 1
+  env -i PATH="$PI_TEMPLATE_BIN:$PATH" HOME="$H" CLAUDE_CONFIG_DIR=/parent \
+    PI_ACCOUNT_LOG="$RUN/pi-account" "$BASH" -c "$line" || return 1
+  cat "$RUN/pi-account"
+}
+run_ot "" --harness pi --lane "$H/.claude" --cmd "$PI_TEMPLATE" KEN-96
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "pi's level named on the model value inside the --cmd template names the effort too"
 assert_eq "$(counted '^capture-pane ' "$RUN/tmux.log")" 0 \
   'a custom Pi lane starts without waiting for an account readiness screen'
+PI_TEMPLATE_ACCOUNT="$(pi_template_account)" || exit 1
+assert_eq "$PI_TEMPLATE_ACCOUNT" "$H/.claude" \
+  'Pi after a setup command receives the selected account for the whole template'
+
+PI_TEMPLATE_CONTROL="$(mutant_scripts pi-template-control open-terminal)" || exit 1
+orch_fixture_shared_libs "${PI_TEMPLATE_CONTROL%/scripts}"
+mutate_file "$PI_TEMPLATE_CONTROL/open-terminal" \
+  '"$launch_var" "$launch_home" "$launch_form" "$CMD_TEMPLATE")' \
+  '"$launch_var" "$launch_home" "$launch_form")'
+PI_TEMPLATE_LIVE_OT="$OPEN_TERMINAL"
+OPEN_TERMINAL="$PI_TEMPLATE_CONTROL/open-terminal"
+run_ot "" --harness pi --lane "$H/.claude" --cmd "$PI_TEMPLATE" KEN-96
+assert_eq "$RC" 0 'control: the template omission still launches the Pi lane'
+PI_TEMPLATE_ACCOUNT="$(pi_template_account)" || exit 1
+PI_TEMPLATE_SAVED_FAIL="$FAIL"
+FAIL=0
+assert_eq "$PI_TEMPLATE_ACCOUNT" "$H/.claude" \
+  'control: the same whole-template account assertion detects missing template forwarding' > "$TMP_ROOT/pi-template-control.out"
+PI_TEMPLATE_CONTROL_FAIL="$FAIL"
+FAIL="$PI_TEMPLATE_SAVED_FAIL"
+assert_eq "$PI_TEMPLATE_CONTROL_FAIL" 1 'control: omitted template forwarding fails the selected account assertion'
+assert_eq "$PI_TEMPLATE_ACCOUNT" /parent 'control: Pi receives the parent account when only the setup command gets the selection'
+OPEN_TERMINAL="$PI_TEMPLATE_LIVE_OT"
 
 # Rendering caller shell text must not enable account observation on Pi.
 PI_ACCOUNT_CONTROL="$(mutant_scripts pi-account-control lib/lane-launch.sh)" || exit 1
@@ -199,7 +235,7 @@ mutate_file "$PI_ACCOUNT_CONTROL/lib/lane-launch.sh" \
   'if [[ -z "$template" && ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then'
 PI_ACCOUNT_LIVE_OT="$OPEN_TERMINAL"
 OPEN_TERMINAL="$PI_ACCOUNT_CONTROL/open-terminal"
-run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:high $QUESTION_OFF_ALL" KEN-96
+run_ot "" --harness pi --lane "$H/.claude" --cmd "$PI_TEMPLATE" KEN-96
 PI_ACCOUNT_SAVED_FAIL="$FAIL"
 FAIL=0
 assert_eq "$(counted '^capture-pane ' "$RUN/tmux.log")" 0 \
