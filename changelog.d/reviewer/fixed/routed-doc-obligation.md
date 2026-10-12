@@ -1,0 +1,1 @@
+- A review reads each doc an `AGENTS.md` Read-when line routes for the subject the changed code implements. It reports a routed rule that requires a change to a file the diff leaves untouched, such as a format version or a tracked render.

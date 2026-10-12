@@ -1,0 +1,30 @@
+{
+  "replay": {
+    "repository": "vanillagreencom/kendex",
+    "pull_request": 4671,
+    "base": "aad7f26ec07cc614d0d6eaca08d6140a8c4d0e18",
+    "head": "4203ca17e3ae0012a023ede2b43f7768ef0e1616",
+    "delegation": "Worktree: a detached checkout of head. Diff-range: base..head. Issue: bind agent model classes to native models on Codex and Copilot with a new [model-bindings.<harness>] table in kendex.toml.",
+    "reviewers": ["reviewer-correctness", "reviewer-arch"]
+  },
+  "diff_excerpt": "diff --git a/crates/core/src/manifest/mod.rs b/crates/core/src/manifest/mod.rs\n@@ -308,6 +308,9 @@ pub struct Manifest {\n     pub model_classes: BTreeMap<String, String>,\n+    /// Consumer native class selectors, per harness. Catalog values are not policy.\n+    #[serde(default, skip_serializing_if = \"BTreeMap::is_empty\")]\n+    pub model_bindings: BTreeMap<String, BTreeMap<String, String>>,\n     #[serde(default, skip_serializing_if = \"BTreeMap::is_empty\")]\n     pub sources: BTreeMap<String, SourceDecl>,\n",
+  "routes": {
+    "AGENTS.md": "Before changing planning, apply, the manifest, the lock, ownership, take-over, forks, the generated-file inventory, verification, workflow adoption, tracked outputs, or the commit, push or pull-request offer: `docs/architecture/engine.md`.",
+    "crates/core/AGENTS.md": "The rules of the model and their enforcers are `docs/architecture/engine.md` § Rules; the root `AGENTS.md` § Read when lists the other principle docs."
+  },
+  "routed_rule": {
+    "doc": "docs/architecture/engine.md",
+    "section": "Rules, rule 15",
+    "text": "Manifest and lock reads convert no format version: this build reads exactly the version it writes and refuses any other, leaving the file byte for byte. A format change is a new version this build reads and the old one refuses; never add a migration."
+  },
+  "untouched_at_head": {
+    "crates/core/src/manifest/mod.rs:29": "pub const MANIFEST_SCHEMA: u32 = 6;"
+  },
+  "expected_finding": {
+    "class": "blockers",
+    "location": "crates/core/src/manifest/mod.rs",
+    "names": ["docs/architecture/engine.md § Rules rule 15", "MANIFEST_SCHEMA"],
+    "defect": "The diff adds a manifest table while MANIFEST_SCHEMA stays 6, so a schema-6 build that predates the table reads a file it cannot represent instead of refusing it."
+  },
+  "control": "The reviewer text before this fixture's change reports no finding naming rule 15 or MANIFEST_SCHEMA on this replay: it either never opens engine.md or applies its rules to changed lines only."
+}
