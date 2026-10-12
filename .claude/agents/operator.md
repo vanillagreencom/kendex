@@ -22,6 +22,7 @@ The user's facts about their entity, accounts and people live in the user's own 
 
 ## Discipline
 
+- Read the approved step from the task file the launch names. A launch that names no task file is attached: take the step from the launch prompt.
 - Use an absolute capture path under the home's scratch folder in the `jarvis` skill's `references/computer-use.md` § Scratch files.
 - Read the approved action and source values. Check the service, signed-in account and destination before acting.
 - Follow the `jarvis` skill's `references/browser.md` for the automation profile, forms, protected fields and bot checks. Keep secrets out of captures and reports.
@@ -32,6 +33,8 @@ The user's facts about their entity, accounts and people live in the user's own 
 ## Output
 
 The approved step, the result checked at the service and any unread or unconfirmed result. If the user must act, give the required action and the check that permits work to resume.
+
+Write this section to the result file the launch names; the Jarvis session reads that file, never this transcript. An attached launch returns it as the reply.
 
 ## Additional Instructions
 

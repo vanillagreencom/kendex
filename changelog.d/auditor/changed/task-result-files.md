@@ -1,0 +1,1 @@
+- The auditor reads its audit request from the task file its launch names and writes its result to the result file the launch names, so the Jarvis session never reads its transcript.
