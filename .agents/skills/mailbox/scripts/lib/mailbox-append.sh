@@ -190,12 +190,12 @@ owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY [ASK TO CLOSE]
     OWNER_TRACKER_LABEL="${ORCH_OWNER_ASK_LABEL:-}"
     [[ -z "$OWNER_TRACKER_LABEL" || -z "$OWNER_TRACKER_EMAIL" ]] || configured=1
   fi
-  # Posting evidence keeps the label that this ask applied. A close needs
-  # that label even after settings disappear or name a different label.
+  [[ "$configured" -eq 1 ]] || OWNER_TRACKER_LABEL=""
+  # Saved evidence enables close without settings. Keep the configured
+  # label unchanged: it is the fallback for other, older asks only.
   if [[ -n "${2:-}" ]]; then
     recorded_label="$(jq -r 'select(.tracker_posted == true) | .tracker_label // empty' <<<"$2")" || return 1
     if [[ -n "$recorded_label" ]]; then
-      OWNER_TRACKER_LABEL="$recorded_label"
       return 0
     fi
   fi
@@ -213,8 +213,10 @@ OWNER_TRACKER_JQ='def owner_tracker_record($posted):
     | .tracker_posted = ($record != null)
     | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
   else . end;
-def owner_tracker_open_labels($label):
-  map(select(.tracker_posted == true) | .tracker_label // $label) | unique;'
+def owner_tracker_label($configured):
+  .tracker_label // (if $configured != "" then $configured else error("owner-tracker-label-unavailable") end);
+def owner_tracker_open_labels($configured):
+  map(select(.tracker_posted == true) | owner_tracker_label($configured)) | unique;'
 
 # One description format serves the ask, its close and the watch's existing read.
 # The Linear file reader trims trailing newlines. Use --description and keep
@@ -225,10 +227,11 @@ def owner_action_line($name; $action):
   "**" + ($name | [splits("\\s+") | select(length > 0)] | first)
   + ", what you do:** " + $action + "\n\n" + owner_action_body;'
 
-owner_tracker_labels() { # ITEM JSON ADD|REMOVE [REMAINING POSTED ASKS]
-  jq -r --arg label "$OWNER_TRACKER_LABEL" --arg action "$2" --argjson remaining "${3:-[]}" "$OWNER_TRACKER_JQ"'
+owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTED ASKS]
+  jq -r --arg label "${3:-$OWNER_TRACKER_LABEL}" --arg configured "$OWNER_TRACKER_LABEL" \
+    --arg action "$2" --argjson remaining "${4:-[]}" "$OWNER_TRACKER_JQ"'
     .labels | if $action == "ADD" then . + [$label] | unique
-      else ($remaining | owner_tracker_open_labels($label)) as $kept
+      else ($remaining | owner_tracker_open_labels($configured)) as $kept
         | map(select(. != $label)) + $kept | unique end | join(",")' <<<"$1"
 }
 
@@ -268,9 +271,13 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
 }
 
 owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
-  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description remaining
+  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description remaining closing_label
   issue="$(jq -r '.issue // empty' <<<"$ask")" || return 1
   [[ -n "$issue" ]] || return 0
+  closing_label="$(jq -r --arg configured "$OWNER_TRACKER_LABEL" "$OWNER_TRACKER_JQ"'
+    owner_tracker_label($configured)' <<<"$ask" 2>"$work/tracker.err")" || {
+    owner_tracker_unwritten "$issue" "$OWNER_TRACKER_SETTINGS_CAUSE"; return 0;
+  }
   # The close guard supplies the ruling from the owner's last answer or the
   # default. Read that record, rather than computing another ruling here.
   ask_id="$(jq -r '.id' <<<"$ask")" || return 1
@@ -292,9 +299,11 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
   }
   remaining="$(jq -cs --arg issue "$issue" '[.[] | select(.tracker_posted == true and .issue == $issue)]' \
     "$work/tracker-remaining")" || return 1
-  # Each confirmed ask owns its recorded label. Older records share the
-  # resolved label because they contain no per-ask label evidence.
-  labels="$(owner_tracker_labels "$current" REMOVE "$remaining")" || return 1
+  # A remaining legacy ask needs configured evidence. Another ask's saved
+  # label cannot identify it, even when that other ask is closing.
+  labels="$(owner_tracker_labels "$current" REMOVE "$closing_label" "$remaining" 2>"$work/tracker.err")" || {
+    owner_tracker_unwritten "$issue" "$OWNER_TRACKER_SETTINGS_CAUSE"; return 0;
+  }
   local owner_args=(--clear-assignee)
   if [[ "$remaining" != '[]' ]]; then
     owner_args=()
