@@ -183,18 +183,22 @@ assert_eq "$(state_json "$work")" "$typo_before" "a push that printed no map rew
 echo
 echo "=== a rebase map is recorded and recorded fix SHAs rewritten ==="
 
-work="$TMP_ROOT/work-map"
-reset_state "$work"
-map_out="rebase-map: $OLD_A $NEW_A
+mapped_push_case() {
+  work="$TMP_ROOT/work-map"
+  reset_state "$work"
+  map_out="rebase-map: $OLD_A $NEW_A
 rebase-map: $OLD_B dropped"
-STUB_PUSH_STDOUT="$map_out" run_push "$work" --worktree "$wt" --issue KEN-1
-assert_eq "$RUN_RC" "0" "mapped push exits 0"
-assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "old→new mapping recorded"
-assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_B\"]")" "dropped" "dropped mapping recorded literally"
-assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "fixed_items short SHA rewritten, truncated to recorded length"
-assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "dropped:${OLD_B:0:8}" "dropped mapping marks the recorded commit unpublishable"
-assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[1].commit')" "${NEW_A:0:10}" "pr_comment_review.fixes SHA rewritten, truncated to recorded length"
-assert_eq "$(grep '^sha-reconcile:' "$run_out")" "sha-reconcile: map_entries=2 fixed_items=1 pr_fixes=2" "reconcile summary reports what changed"
+  STUB_PUSH_STDOUT="$map_out" run_push "$work" --worktree "$wt" --issue KEN-1
+  assert_eq "$RUN_RC" "0" "mapped push exits 0"
+  assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "old→new mapping recorded"
+  assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_B\"]")" "dropped" "dropped mapping recorded literally"
+  assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "fixed_items short SHA rewritten, truncated to recorded length"
+  assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "dropped:${OLD_B:0:8}" "dropped mapping marks the recorded commit unpublishable"
+  assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[1].commit')" "${NEW_A:0:10}" "pr_comment_review.fixes SHA rewritten, truncated to recorded length"
+  assert_eq "$(grep '^sha-reconcile:' "$run_out")" "sha-reconcile: map_entries=2 fixed_items=1 pr_fixes=2" "reconcile summary reports what changed"
+  assert_eq "$(state_json "$work" | jq -r '.restacks // 0')" "0" "a native push rebase adds no restack"
+}
+mapped_push_case
 
 echo
 echo "=== a second push chains through the already-rewritten SHA ==="
@@ -227,18 +231,39 @@ assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "abse
 # Both hops in one call. Each reconciliation compares a record against its
 # original value, so only applying the restack hop first carries the record
 # from OLD_A through NEW_A to NEW_A2; one merged map would leave it at NEW_A.
-work="$TMP_ROOT/work-restack-chain"
-reset_state "$work"
-printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
-STUB_PUSH_STDOUT="rebase-map: $NEW_A $NEW_A2" run_push "$work" --worktree "$wt" --issue KEN-1
-assert_eq "$RUN_RC" "0" "both hops in one call exit 0"
-assert_eq "$(grep '^restack-reconcile:' "$run_out")" "restack-reconcile: map_entries=1 fixed_items=1 pr_fixes=1" \
-  "the restack hop reports first"
-assert_eq "$(grep '^sha-reconcile:' "$run_out")" "sha-reconcile: map_entries=1 fixed_items=1 pr_fixes=1" \
-  "the push hop reports second"
-assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7}" \
-  "the record follows both hops to the final SHA"
-assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "absent" "the chained call deletes the file too"
+restack_chain_case() {
+  work="$TMP_ROOT/work-restack-chain"
+  reset_state "$work"
+  printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
+  STUB_PUSH_STDOUT="rebase-map: $NEW_A $NEW_A2" run_push "$work" --worktree "$wt" --issue KEN-1
+  assert_eq "$RUN_RC" "0" "both hops in one call exit 0"
+  assert_eq "$(grep '^restack-reconcile:' "$run_out")" "restack-reconcile: map_entries=1 fixed_items=1 pr_fixes=1" \
+    "the restack hop reports first"
+  assert_eq "$(grep '^sha-reconcile:' "$run_out")" "sha-reconcile: map_entries=1 fixed_items=1 pr_fixes=1" \
+    "the push hop reports second"
+  assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7}" \
+    "the record follows both hops to the final SHA"
+  assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "absent" "the chained call deletes the file too"
+  assert_eq "$(state_json "$work" | jq -r '.restacks // 0')" "1" "a restack followed by a native push rebase counts only the restack"
+}
+restack_chain_case
+
+# Reuse both cases so the selector control fails their count assertions.
+PUSH_SAVED="$PUSH"
+PUSH="$(mutant_scripts push-counted-as-restack worktree-push)/worktree-push" || exit 1
+mutate_file "$PUSH" '$ENV.WTP_KEY == "restack-reconcile"' \
+  '($ENV.WTP_KEY == "restack-reconcile" or $ENV.WTP_KEY == "sha-reconcile")'
+for row in 'mapped_push_case|1' 'restack_chain_case|2'; do
+  IFS='|' read -r scenario wrong_count <<<"$row"
+  control_result="$(
+    FAIL=0
+    "$scenario" > "$TMP_ROOT/push-count-control.out"
+    printf '%s|%s\n' "$FAIL" "$(state_json "$work" | jq -r '.restacks // 0')"
+  )" || exit 1
+  assert_eq "$control_result" "1|$wrong_count" \
+    "control: $scenario rejects counting the native push rebase" "$TMP_ROOT/push-count-control.out"
+done
+PUSH="$PUSH_SAVED"
 
 # Two restacks before one push: one file, two hops. Read as one map, both would
 # be compared against the record's pre-hop SHA and it would stop at NEW_A, a
