@@ -2,6 +2,13 @@
 
 Follow this workflow when starting a continuing session, reconciling open work or transferring control.
 
+## Session command
+
+- Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`. Use the Jarvis package installed in HOME. Supply the account directory for the selected app. Both modes follow [Start](#start).
+- A consumer can append `--brief-file PATH` with its private instructions on one printable line. The session command delivers those instructions with Start after the harness confirms its native identity. This route starts no repository overseer workflow.
+- Read `.agents/skills/jarvis/scripts/jarvis-session status --home HOME` for the recorded session. A `starting` answer means the native identity or its first working turn is still unconfirmed. Status starts and stops nothing.
+- Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`. An app that turns Jarvis off uses `--origin app-off`. Only `start --origin app-on` clears that Off. A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
+
 ## Start
 
 - Keep one assistant in control at a time.

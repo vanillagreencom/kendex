@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Surface: jarvis-session start/status/stop, native identity and exact resume.
+# Inputs: skills/jarvis/scripts/, skills/orch/scripts/, skills/mailbox/scripts/.
+set -euo pipefail
+ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
+export JARVIS_TEST_BASH="$BASH"
+exec python3 "$ROOT/skills/jarvis/tests/session_test.py" "$@"

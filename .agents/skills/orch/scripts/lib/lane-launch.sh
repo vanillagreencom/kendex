@@ -66,6 +66,36 @@ lane_env_prefix() { # HARNESS DIR [MODEL]
   printf '%s=%s\n' "$var" "$2"
 }
 
+# Jarvis starts without a prompt so SessionStart can confirm the native id
+# before the Start procedure reaches the model. The explicit Pi account is
+# its agent directory, rather than a Claude seat selected for pi-claude.
+lane_session_command() { # HARNESS NATIVE_ID RESUME_FILE
+  local harness="$1" id="$2" file="$3"
+  LANE_SESSION_ACCOUNT_VAR="$(lane_env_prefix "$harness" -)"
+  LANE_SESSION_ACCOUNT_VAR="${LANE_SESSION_ACCOUNT_VAR%%=*}"
+  [[ "$harness" != pi ]] || LANE_SESSION_ACCOUNT_VAR=PI_CODING_AGENT_DIR
+  LANE_SESSION_CMD="$(
+  case "$harness" in
+    claude)
+      if [[ -n "$file" ]]; then printf 'claude -n jarvis --resume %q' "$id"
+      else printf 'claude -n jarvis --session-id %q' "$id"; fi ;;
+    codex)
+      launch_choice_lead_settings codex || return 1
+      printf 'codex'
+      printf ' %q' "${LAUNCH_CHOICE_KEPT[@]}"
+      [[ -z "$file" ]] || printf ' resume %q' "$id" ;;
+    copilot)
+      if [[ -n "$file" ]]; then printf 'copilot --resume=%q' "$id"
+      else printf 'copilot --session-id=%q' "$id"; fi ;;
+    pi)
+      if [[ -n "$file" ]]; then printf 'pi --session %q' "$file"
+      else printf 'pi --session-id %q' "$id"; fi ;;
+    *) return 2 ;;
+  esac
+  printf '\n'
+  )" || return 1
+}
+
 # The harness whose accounts `lanes pick` judges a launch of HARNESS on MODEL
 # under, which is the account that launch spends. Claude, codex and copilot
 # spend their own accounts' windows, whatever the model: a Copilot account's

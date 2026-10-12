@@ -51,18 +51,32 @@ Follow [Memory](references/memory.md) for personal facts and preferences. Put re
 
 Use a private Git repository for your assistant home. Committed files travel with its commits. Local files stay on one machine.
 
+Install the `jarvis` bundle in this home with `kendex add --bundle jarvis --harness claude,codex,copilot,pi --yes`. The bundle installs Jarvis and the hooks that confirm the native session identity.
+
 | Path | Git status | Reason |
 |---|---|---|
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |
 | `skills/own/` | Committed | You are the source; `kendex add ./skills/own/my-task --skill my-task --harness codex --yes` makes your skill available to the harness. |
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](references/memory.md). |
-| `state/`, with `state/handoff.md` and `state/archive/` | Committed | Current and archived handoffs travel with you without secrets under [Handoff](references/long-session.md#handoff); an app-managed home permits model file and shell writes only here. |
+| `state/handoff.md` | Committed | The session model writes the current handoff under [Handoff](references/long-session.md#handoff). |
+| `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](references/long-session.md#handoff). |
+| Other files under `state/` | Committed | A consumer's file and shell tools write its work here. An app-managed home limits model file and shell writes to this folder. |
+| `${XDG_STATE_HOME:-$HOME/.local/state}/kendex/jarvis/<canonical-home-key>/jarvis-session.json` | Outside the home | The session runtime and the native SessionStart hook write the local controller record. The runtime writes no start-critical record under `state/`. |
 | `.agents/skills/` and each harness's skill directory, such as `.claude/skills/` | Committed | kendex renders or links installed skills here so a clone has them; VGS reads the Jarvis render when present. |
 | `skills/base/` | Local | VGS supplies this package copy when `.agents/skills/jarvis/` is absent; it removes the copy when that render is present. |
 | `tmp/` | Local | Scratch files stay on this machine under [Scratch files](references/computer-use.md#scratch-files). |
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
 
 `kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. These lines keep scratch and secrets out of Git. You do not need to add them yourself.
+
+The [session command](workflows/session.md#session-command) keeps one tmux controller per canonical home. Its record stays across logins and restarts. Each home uses a separate tmux socket. Status names that socket and the owned session, window and pane.
+
+The contract rows use real tmux, the shipped SessionStart carrier and native CLI fixtures. They prove the package boundary. A release follow-up checks the real apps in the owner's home.
+
+- Claude Code: `start`, `status` and `stop` meet the contract in `test_claude_contract`.
+- Codex: `start`, `status` and `stop` meet the contract in `test_codex_contract`.
+- Copilot CLI: `start`, `status` and `stop` meet the contract in `test_copilot_contract`.
+- Pi: `start`, `status` and `stop` meet the contract in `test_pi_contract`.
 
 ## Update
 

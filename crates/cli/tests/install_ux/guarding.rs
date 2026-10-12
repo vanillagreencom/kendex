@@ -27,7 +27,7 @@ pub fn offer(world: &World, skill: &str) {
 }
 
 #[allow(clippy::unwrap_used)]
-fn copy_tree(from: &Path, to: &Path) {
+pub(crate) fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap().flatten() {
         let target = to.join(entry.file_name());

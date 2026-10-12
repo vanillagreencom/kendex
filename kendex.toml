@@ -210,3 +210,7 @@ analyst = ["linear", "github"]
 engineer = ["dev", "github", "decider", "linear", "preflight", "code-quality"]
 manager = ["dev", "github", "project-management", "linear", "decider"]
 reviewer = ["reviewer"]
+
+[bundles.jarvis]
+skills = ["jarvis"]
+hooks = ["session-start-row", "lane-mail-check"]

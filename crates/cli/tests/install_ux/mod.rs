@@ -18,7 +18,7 @@ mod cloning;
 mod coexistence;
 mod disclosing;
 mod dropping;
-mod guarding;
+pub(crate) mod guarding;
 mod installing;
 
 use std::fs;

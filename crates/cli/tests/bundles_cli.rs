@@ -152,6 +152,124 @@ fn a_bundle_the_catalog_lacks_is_refused() {
     assert!(!project.join("kendex.toml").exists());
 }
 
+/// Jarvis's native identity carrier calls the judge beside it. The shipped
+/// bundle must install both, as well as the runtime and its required skills.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_jarvis_bundle_installs_the_carrier_beside_its_judge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/jarvis");
+    fs::create_dir_all(&project).unwrap();
+    // The override belongs to the test boundary: the must-fail control
+    // removes the hook group from a disposable copy of this real catalog.
+    let catalog = std::env::var_os("JARVIS_TEST_CATALOG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .canonicalize()
+        .unwrap();
+    let output = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            catalog.to_str().unwrap(),
+            "--bundle",
+            "jarvis",
+            "--harness",
+            "claude,codex,copilot,pi",
+            "--yes",
+            "--throwaway",
+        ],
+    );
+    assert!(output.status.success(), "{}", printed(&output));
+    if let Some(ready) = std::env::var_os("JARVIS_TEST_INSTALL_READY") {
+        fs::write(ready, "installed\n").unwrap();
+    }
+    assert!(
+        project
+            .join(".agents/skills/jarvis/scripts/jarvis-session")
+            .is_file()
+    );
+    assert!(
+        project
+            .join(".agents/skills/orch/scripts/lib/session-rows.sh")
+            .is_file()
+    );
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    let carriers: Vec<_> = lock
+        .entries
+        .values()
+        .filter(|entry| {
+            entry.kind == kendex_core::model::ItemKind::Hook && entry.name == "session-start-row"
+        })
+        .collect();
+    assert!(!carriers.is_empty(), "Jarvis carrier is absent");
+    for carrier in carriers {
+        let paths = &carrier.emitted.as_ref().unwrap().paths;
+        assert!(!paths.is_empty());
+        for path in paths {
+            let path = project.join(path);
+            assert!(path.is_file(), "carrier is not installed");
+            assert!(path.parent().unwrap().join("lane-mail-check.sh").is_file());
+        }
+    }
+    if std::env::var_os("JARVIS_TEST_CATALOG").is_none() {
+        assert_jarvis_hook_group_control(&catalog, &home);
+    }
+}
+
+/// The control removes the bundle hooks and reruns the actual install row.
+#[allow(clippy::unwrap_used)]
+fn assert_jarvis_hook_group_control(catalog: &Path, home: &Path) {
+    let mutant = home.join("mutant-catalog");
+    for directory in ["skills", "agents", "hooks"] {
+        crate::install_ux::guarding::copy_tree(&catalog.join(directory), &mutant.join(directory));
+    }
+    let mut document: toml::Table = fs::read_to_string(catalog.join("kendex.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let hooks = document["bundles"]["jarvis"]["hooks"]
+        .as_array_mut()
+        .unwrap();
+    assert!(
+        hooks
+            .iter()
+            .any(|hook| hook.as_str() == Some("session-start-row"))
+    );
+    // Each hook requires the other, so either member installs the pair.
+    // Remove the bundle's hook group to reach an absent carrier.
+    hooks.clear();
+    fs::write(
+        mutant.join("kendex.toml"),
+        toml::to_string(&document).unwrap(),
+    )
+    .unwrap();
+    let ready = home.join("control-install-ready");
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "bundles_cli::the_jarvis_bundle_installs_the_carrier_beside_its_judge",
+            "--nocapture",
+        ])
+        .env_clear()
+        .envs(test_util::fixture_env(home))
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("JARVIS_TEST_CATALOG", &mutant)
+        .env("JARVIS_TEST_INSTALL_READY", &ready)
+        .output()
+        .unwrap();
+    assert!(
+        ready.is_file(),
+        "control install did not reach the bundle check"
+    );
+    assert!(
+        !child.status.success(),
+        "the missing carrier control passed"
+    );
+}
+
 /// The catalog renames the set a consumer declared: refresh fails, its
 /// members stay installed, and verify fails the set. Retiring it instead
 /// lets a plain refresh and verify pass with one notice keyed by the set

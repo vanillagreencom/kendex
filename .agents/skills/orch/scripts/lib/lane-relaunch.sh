@@ -172,6 +172,32 @@ session_id_of() { # HARNESS SESSION_FILE
   printf '%s\n' "$id"
 }
 
+# A recorded target is exact. Jarvis uses this instead of the newest-session
+# search above. A missing target is 1; unreadable or changed identity is 2.
+recorded_session_file() { # HARNESS ACCOUNT NATIVE_ID SESSION_FILE
+  local harness="$1" account="$2" id="$3" file="$4" actual
+  if [[ "$harness" == copilot && -z "$file" ]]; then
+    case "$id" in ''|.|..|*[!A-Za-z0-9._-]*) return 2 ;; esac
+    file="$account/session-state/$id/workspace.yaml"
+  fi
+  [[ -n "$file" ]] || return 1
+  [[ -e "$file" ]] || { [[ ! -L "$file" ]] || return 2; return 1; }
+  [[ -f "$file" && -r "$file" ]] || return 2
+  if [[ "$harness" == copilot ]]; then
+    [[ -e "${file%/*}/events.jsonl" ]] || return 1
+    [[ -f "${file%/*}/events.jsonl" && -r "${file%/*}/events.jsonl" ]] || return 2
+    [[ -s "${file%/*}/events.jsonl" ]] || return 1
+  else
+    jq -Rne '[inputs | fromjson] | length > 0' -- "$file" >/dev/null || return 2
+  fi
+  actual="$(session_id_of "$harness" "$file")" || return 2
+  if [[ "$harness" == pi ]]; then
+    actual="$(jq -Rrn 'first(inputs|fromjson|select(.type=="session")|.id)//empty' -- "$file")" || return 2
+  fi
+  [[ "$actual" == "$id" ]] || return 2
+  printf '%s\n' "$file"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
   LAUNCH_FLAGS="$3" LANE_ENV=""

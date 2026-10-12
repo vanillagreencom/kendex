@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# The public session boundary; the Python owner keeps lifecycle state.
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+export JARVIS_BASH="$BASH"
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'jarvis-session: dependency=python3\n' >&2
+  exit 2
+fi
+exec python3 "$SCRIPT_DIR/lib/session.py" "$@"
