@@ -231,12 +231,12 @@ for control in overdue empty stale fields branch; do
       mutant_lib="${MUTANT_RW%/*}/lib/verifying.sh"
       rm -- "${mutant_lib:?}"
       cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
-      mutate_file "$mutant_lib" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'all(.boxes[]; .checked or .post_merge)'"; expected='verifying-invalid issue=T-7' ;;
+      mutate_file "$mutant_lib" "if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)" "if all(.boxes[]; .checked or .post_merge)"; expected='verifying-invalid issue=T-7' ;;
     branch)
       mutant_lib="${MUTANT_RW%/*}/lib/verifying.sh"
       rm -- "${mutant_lib:?}"
       cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
-      mutate_file "$mutant_lib" "'(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)'" "'(.errors | length) == 0'"; expected='verifying-invalid issue=T-8' ;;
+      mutate_file "$mutant_lib" "if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)" "if (.errors | length) == 0"; expected='verifying-invalid issue=T-8' ;;
   esac
   CONTROL_RC=0
   CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \

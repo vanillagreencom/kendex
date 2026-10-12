@@ -10,57 +10,62 @@ verifying_error() { # KEY [FIELDS...]
 }
 
 verifying_parse() { # SAFE_ROW
-  local row="$1" id desc parsed
-  id="$(jq -r '.id' <<<"$row")" || return 1
-  desc="$(jq -r '(.description // "") + "."' <<<"$row")" || return 1
+  local record id desc parsed boxes
+  # One read for both fields: an issue ID holds no unit separator, and the
+  # final dot keeps the description's trailing newlines through substitution.
+  record="$(jq -r '"\(.id)\u001f\(.description // "")."' <<<"$1")" || return 1
+  id="${record%%$'\037'*}"
+  desc="${record#*$'\037'}"
   parsed="$(done_when_parse "${desc%.}" '[]')" || return 1
-  if ! jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<"$parsed" >/dev/null; then
+  boxes="$(jq -c 'if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)
+    then [.boxes[] | select(.post_merge and (.checked | not))] else empty end' <<<"$parsed")" || boxes=""
+  if [[ -z "$boxes" ]]; then
     verifying_error verifying-invalid "issue=$id"
     printf '%s\n' "$parsed" >&2
     return 1
   fi
-  jq -c '[.boxes[] | select(.post_merge and (.checked | not))]' <<<"$parsed"
+  printf '%s\n' "$boxes"
 }
 
 verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT GH_CLI
   # GH_CLI follows reconciliation's existing command-word contract.
   local row="$1" merged="$2" merged_repos="$3" now="$4" boxes="$5" errf="$6" release_limit="$7" gh_cli="$8"
-  local id blocked release_rows repo glob merge_row oid releases resolved release tag compare_tag comparison box
-  id="$(jq -r '.id' <<<"$row")" || return 1
-  blocked="$(jq -c '(.blocked_by_open // [] | length) > 0' <<<"$row")" || return 1
-  if jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
+  local records id number repo oid glob releases resolved at compare_tag tag comparison fired_at=""
+  # The issue ID, then one record per release box. The glob comes last, so
+  # read keeps any separator it holds; an oid of `invalid` is a merge row
+  # whose commit is not a full hexadecimal object name.
+  records="$(jq -r --argjson row "$row" --argjson repos "$merged_repos" '
+    $row.id, (.[] | select(.trigger_kind == "release")
+      | ($repos[.release_repo | ascii_downcase]
+          | if . == null then "" else (try (.mergeCommit.oid | select(type == "string") | select(test("^[0-9a-fA-F]{40}$"))) catch null) // "invalid" end) as $oid
+      | "\(.number)\u001f\(.release_repo)\u001f\($oid)\u001f\(.release_glob)")' <<<"$boxes")" || return 1
+  id="${records%%$'\n'*}"
+  if [[ "$records" == *$'\n'* ]]; then
     [[ "$merged" != null ]] || { verifying_error verifying-merge-unread "issue=$id"; return 2; }
-    release_rows="$(jq -c '.[] | select(.trigger_kind == "release")' <<<"$boxes")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
-    while IFS= read -r box; do
-      repo="$(jq -r .release_repo <<<"$box")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
-      glob="$(jq -r .release_glob <<<"$box")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
-      merge_row="$(jq -c --arg repo "$repo" '.[$repo | ascii_downcase]' <<<"$merged_repos")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
-      oid=""
-      if [[ "$merge_row" != null ]]; then
-        oid="$(jq -er '.mergeCommit.oid | select(type == "string") | select(test("^[0-9a-fA-F]{40}$"))' <<<"$merge_row" 2>"$errf")" \
-          || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
-      fi
+    while IFS=$'\037' read -r number repo oid glob; do
+      [[ "$oid" != invalid ]] || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
       releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
         || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
-      releases="$(jq -c --argjson merged "$merged" --argjson limit "$release_limit" '
+      # One record per candidate after the merge: its epoch, the tag as a
+      # URL path segment, then the tag itself.
+      releases="$(jq -r --argjson merged "$merged" --argjson limit "$release_limit" '
         if type != "array" or length >= $limit then error("release-list-incomplete") else . end
         | map(if (.isDraft | type) != "boolean" then error("release-fields") else . end
             | select(.isDraft == false) | .publishedAt as $stamp
             | if (.tagName | type) != "string" or (try ($stamp | fromdateiso8601 | todateiso8601 == $stamp) catch false) != true
               then error("release-fields") else . end)
-        | map(. + {at: (.publishedAt | fromdateiso8601)} | select(.at > $merged)) | sort_by(.at)[]' <<<"$releases" 2>"$errf")" \
+        | map(. + {at: (.publishedAt | fromdateiso8601)} | select(.at > $merged)) | sort_by(.at)[]
+        | "\(.at)\u001f\(.tagName | @uri)\u001f\(.tagName)"' <<<"$releases" 2>"$errf")" \
         || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
       resolved=null
-      while IFS= read -r release; do
-        [[ -n "$release" ]] || continue
-        tag="$(jq -r .tagName <<<"$release")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
+      while IFS=$'\037' read -r at compare_tag tag; do
+        [[ -n "$at" ]] || continue
         # The tracker supplies a tag glob, not a literal tag.
         # shellcheck disable=SC2053
         [[ "$tag" == $glob ]] || continue
         # GitHub can publish a tag built before the item's merge. Compare only
         # within that merge's repository; another repository has no such commit.
         if [[ -n "$oid" ]]; then
-          compare_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')" || { verifying_error verifying-invalid "issue=$id"; return 1; }
           comparison="$($gh_cli api "repos/$repo/compare/$oid...$compare_tag" --jq .status 2>"$errf")" \
             || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo" "tag=$tag"; return 2; }
           case "$comparison" in
@@ -69,18 +74,23 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
             *) verifying_error verifying-release-unread "issue=$id" "repo=$repo" "tag=$tag" "status=$comparison"; return 2 ;;
           esac
         fi
-        resolved="$(jq -c '.publishedAt | fromdateiso8601' <<<"$release")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
+        resolved="$at"
         break
       done <<<"$releases"
-      boxes="$(jq -c --argjson box "$box" --argjson fired "$resolved" --argjson merged "$merged" '
-        map(if .number == $box.number then .trigger_epoch = $fired | .merged = ($merged | todateiso8601)
-            | .deadline_epoch = (if $fired == null then null else $fired + (.deadline_hours * 3600) end)
-            | .deadline = (if .deadline_epoch == null then null else .deadline_epoch | todateiso8601 end)
-            else . end)' <<<"$boxes")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
-    done <<<"$release_rows"
+      fired_at+="${fired_at:+,}\"$number\":$resolved"
+    done <<<"${records#*$'\n'}"
   fi
-  boxes="$(jq -c --argjson now "$now" --argjson blocked "$blocked" '
-    map(.status = (if .deadline_epoch != null and .deadline_epoch <= $now then "overdue"
+  # Every box result in one pass: release boxes take their resolved
+  # publication, then each box takes its status on this pass's clock.
+  boxes="$(jq -c --argjson row "$row" --argjson now "$now" --argjson merged "$merged" --argjson fired_at "{$fired_at}" '
+    (($row.blocked_by_open // []) | length > 0) as $blocked
+    | map((.number | tostring) as $number
+      | if $fired_at | has($number) then $fired_at[$number] as $fired
+          | .trigger_epoch = $fired | .merged = ($merged | todateiso8601)
+          | .deadline_epoch = (if $fired == null then null else $fired + (.deadline_hours * 3600) end)
+          | .deadline = (if .deadline_epoch == null then null else .deadline_epoch | todateiso8601 end)
+        else . end
+      | .status = (if .deadline_epoch != null and .deadline_epoch <= $now then "overdue"
         elif $blocked then "blocked"
         elif .trigger_kind != "merge" and (.trigger_epoch == null or .trigger_epoch > $now) then "waiting"
         else "due" end))' <<<"$boxes")" || { verifying_error verifying-invalid "issue=$id"; return 1; }
@@ -88,8 +98,9 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
 }
 
 # Both operational readers consume this machine-read line.
+VERIFYING_LINE_JQ='def verifying_line($id; $row):
+  ($row.blocked_by_open // [] | if length == 0 then "-" else join(",") end) as $blocked
+  | "verifying \($id) box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline // "-")\(if .merged then " merged=\(.merged)" else "" end) blocked_by=\($blocked) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)";'
 verifying_lines() { # ITEM BOXES SAFE_ROW
-  jq -r --arg id "$1" --argjson row "$3" '
-    ($row.blocked_by_open // [] | if length == 0 then "-" else join(",") end) as $blocked
-    | .[] | "verifying \($id) box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline // "-")\(if .merged then " merged=\(.merged)" else "" end) blocked_by=\($blocked) reading=\(.reading | tojson) where=\(.where | tojson) why=\(.why | tojson)"' <<<"$2"
+  jq -r --arg id "$1" --argjson row "$3" "$VERIFYING_LINE_JQ"' .[] | verifying_line($id; $row)' <<<"$2"
 }

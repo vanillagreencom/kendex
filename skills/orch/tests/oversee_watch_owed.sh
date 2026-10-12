@@ -400,13 +400,13 @@ for validation in fields branch; do
   MUTANT_WATCH="$(mutant_scripts "verifying-validation-$validation/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-  old="jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<\"\$parsed\" >/dev/null"
+  old="if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)"
   if [[ "$validation" == fields ]]; then
-    new="jq -e 'all(.boxes[]; .checked or .post_merge)' <<<\"\$parsed\" >/dev/null"
+    new="if all(.boxes[]; .checked or .post_merge)"
     description='## Done when
 - [ ] Post-merge: Read health'
   else
-    new="jq -e '(.errors | length) == 0' <<<\"\$parsed\" >/dev/null"
+    new="if (.errors | length) == 0"
     description='## Done when
 - [ ] branch proof
 - [ ] Post-merge: Read health; Where: service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z'
@@ -678,7 +678,7 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
     null) mutate_verifying "$MUTANT_WATCH" '.deadline_epoch != null and ' '' ;;
     fired) mutate_verifying "$MUTANT_WATCH" '$fired + (.deadline_hours * 3600)' '$merged + 259200' ;;
     merge-clock) mutate_verifying "$MUTANT_WATCH" '.deadline_epoch <= $now' 'false' ;;
-    release) mutate_verifying "$MUTANT_WATCH" 'if jq -e '\''any(.[]; .trigger_kind == "release")'\'' <<<"$boxes" >/dev/null; then' 'if [[ "$blocked" == false ]] && jq -e '\''any(.[]; .trigger_kind == "release")'\'' <<<"$boxes" >/dev/null; then' ;;
+    release) mutate_verifying "$MUTANT_WATCH" 'select(.trigger_kind == "release")' 'select(.trigger_kind == "release" and ($row.blocked_by_open // [] | length) == 0)' ;;
     invalid) mutate_verifying "$MUTANT_WATCH" 'if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then' 'if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then die verifying-invalid "" "issue=$id"' ;;
   esac
   # A fresh event store is necessary to observe the invalid row's commit.
@@ -910,6 +910,161 @@ WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_contains "$OUT" 'EVENT heartbeat' 'control: failed release read exposes its fabricated full row at heartbeat' "$ERR"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=waiting' "control: ignoring the release read failure fabricates waiting" "$ERR"
+
+# Two release boxes on one issue keep their own globs: each takes the first
+# publication its own glob matches after the merge.
+release_world release_globs
+jq 'map(if .id == "KEN-1" then .description += "\n- [ ] Post-merge: Read other; Where: feed; Why after merge: other release; Trigger: release owner/releases other*; Deadline: +48h" else . end)' \
+  "$STUB_DIR/tracker.out" >"$STUB_DIR/globs.json"
+mv -- "$STUB_DIR/globs.json" "$STUB_DIR/tracker.out"
+want_globs='verifying KEN-1 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-02T12:00:00Z merged=2026-10-01T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"
+verifying KEN-1 box=2 trigger="release owner/releases other*" status=due deadline=2026-10-03T00:00:01Z merged=2026-10-01T00:00:00Z blocked_by=- reading="Read other" where="feed" why="other release"'
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(verification_lines)" "rc=0 $want_globs" "each release box resolves its own glob" "$ERR"
+MUTANT_DIR="$TMP_ROOT/release-globs-mutant"
+MUTANT_WATCH="$(mutant_scripts release-globs-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_verifying "$MUTANT_WATCH" 'fired_at+="${fired_at:+,}' 'fired_at="'
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+if [[ "rc=$RC $(verification_lines)" != "rc=0 $want_globs" ]]; then pass "control: keeping one box's release violates the per-box result"; else fail "control: keeping one box's release violates the per-box result" "$OUT"; fi
+
+# The floor is the latest merge across watched repositories; containment uses
+# the merge commit read from the release's own repository.
+two_repo_world() {
+  release_world "$1" 'release owner/other v*'
+  printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-01T00:00:00Z","mergeCommit":{"oid":"1111111111111111111111111111111111111111"}}]' >"$STUB_DIR/merged.owner_repo.json"
+  printf '%s\n' '[{"number":2,"headRefName":"ken-1","mergedAt":"2026-09-30T00:00:00Z","mergeCommit":{"oid":"2222222222222222222222222222222222222222"}}]' >"$STUB_DIR/merged.owner_other.json"
+  printf '%s\n' '[{"tagName":"v2","publishedAt":"2026-10-01T12:00:00Z","isDraft":false},{"tagName":"v1","publishedAt":"2026-09-30T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_other.json"
+  printf '%s\n' '{"status":"ahead"}' >"$STUB_DIR/compare.owner_other_compare_2222222222222222222222222222222222222222...v2.json"
+}
+want_two='verifying KEN-1 box=1 trigger="release owner/other v*" status=due deadline=2026-10-02T12:00:00Z merged=2026-10-01T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'
+two_repo_world release_two_repos
+watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
+assert_eq "rc=$RC $(verification_lines)" "rc=0 $want_two" "two repositories give one floor and each its own merge commit" "$ERR"
+while IFS='@' read -r name old new; do
+  two_repo_world "release_two_repos_$name"
+  MUTANT_DIR="$TMP_ROOT/two-repos-$name"
+  MUTANT_WATCH="$(mutant_scripts "two-repos-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_verifying "$MUTANT_WATCH" "$old" "$new"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
+  if [[ "rc=$RC $(verification_lines)" != "rc=0 $want_two" ]]; then pass "control: $name violates the two-repository release"; else fail "control: $name violates the two-repository release" "$OUT"; fi
+done <<'ROWS'
+earliest_floor@([.[][1][].at] | max)@([.[][1][].at] | min)
+shared_commit@($read | max_by(.at) // null)@($rows[0] | max_by(.at) // null)
+ROWS
+
+# A failed or incomplete merged inventory stops the pass with its own key.
+while IFS='|' read -r name setup want; do
+  release_world "release_merged_$name"
+  case "$setup" in
+    fail) touch "$STUB_DIR/list-fail" ;;
+    page) jq -n '[range(1000) | {number: (. + 10), headRefName: "other", title: "KEN-1 mention", mergedAt: "2026-10-01T00:00:00Z"}]' >"$STUB_DIR/merged.json" ;;
+  esac
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC lines=$(verification_lines) key=$(grep -cxF "oversee-watch: $want" "$ERR" || true)" 'rc=2 lines= key=1' "merged $name refuses the release judgement" "$ERR"
+done <<'ROWS'
+read|fail|pr-list-failed repo=owner/repo state=merged branch=ken-1
+page|page|merged-search-truncated repo=owner/repo item=KEN-1 limit=1000
+ROWS
+
+# The stage reads each issue and builds its box results in bulk records. Per
+# issue: its inventory record, the parser's description read, done_when_parse,
+# box selection, the judge's box records, its results and the printed lines,
+# less the inventory read every pass makes: six jq. A release issue adds its
+# two merged reads per repository and one merge record; a release box adds the
+# record pass over its own release list. No box field, release candidate or
+# box update starts a process. Only jq the watch starts is counted: the gh
+# stub's own jq is not the stage's work.
+REAL_JQ="$(command -v jq)"
+mkdir -p "$TMP_ROOT/work-bin"
+cat >"$TMP_ROOT/work-bin/jq" <<SH
+#!/usr/bin/env bash
+case "\$(ps -o args= -p "\$PPID")" in
+  *oversee-watch*) printf 'jq\n' >>"\$STUB_DIR/jq.calls" ;;
+esac
+exec "$REAL_JQ" "\$@"
+SH
+chmod +x "$TMP_ROOT/work-bin/jq"
+# work_world NAME CANDIDATES [ID=BOXES...] — the shared world plus Verifying
+# issues no other stage reads. BOXES is a comma list of `t`, a time trigger
+# still waiting, and `r`, a release box in the watched repository whose
+# CANDIDATES publications after the merge are all behind it, so no box raises
+# an event.
+work_world() {
+  world "$1"
+  local candidates="$2" spec id boxes box description items='[]' n
+  shift 2
+  for spec in "$@"; do
+    id="${spec%%=*}"
+    description='## Done when'
+    boxes="${spec#*=}"
+    # shellcheck disable=SC2086 # BOXES holds only the letters t and r.
+    for box in ${boxes//,/ }; do
+      case "$box" in
+        t) description+=$'\n- [ ] Post-merge: Read health; Where: service; Why after merge: later; Trigger: 2026-10-05T00:00:00Z; Deadline: 2026-10-06T00:00:00Z' ;;
+        r) description+=$'\n- [ ] Post-merge: Read release; Where: feed; Why after merge: publish; Trigger: release owner/repo v*; Deadline: +24h' ;;
+      esac
+    done
+    items="$(jq -c --arg id "$id" --arg d "$description" '. + [{id: $id, state: "Verifying", priority: 2, description: $d}]' <<<"$items")"
+  done
+  jq --argjson items "$items" '. + $items' "$STUB_DIR/tracker.out" >"$STUB_DIR/work.json"
+  mv -- "$STUB_DIR/work.json" "$STUB_DIR/tracker.out"
+  jq -n --argjson items "$items" '[$items | to_entries[] | {number: (.key + 1), headRefName: (.value.id | ascii_downcase), title: .value.id,
+    mergedAt: "2026-10-01T00:00:00Z", mergeCommit: {oid: "1111111111111111111111111111111111111111"}}]' >"$STUB_DIR/merged.json"
+  jq -n --argjson n "$candidates" '[range($n; 0; -1) | {tagName: "v\(.)", publishedAt: "2026-10-01T0\(.):00:00Z", isDraft: false}]' \
+    >"$STUB_DIR/releases.owner_repo.json"
+  for ((n = 1; n <= candidates; n++)); do
+    printf '%s\n' '{"status":"behind"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v$n.json"
+  done
+  jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+}
+# work_pass — one pass under the counting jq; WORK is the stage's count above
+# the same world with no Verifying issue.
+work_pass() {
+  : >"$STUB_DIR/jq.calls"
+  watch_pass PATH="$TMP_ROOT/work-bin:$TMP_ROOT/bin:$PATH" -- --state "$STUB_DIR/state.json"
+  WORK=$(($(wc -l <"$STUB_DIR/jq.calls") - WORK_BASE))
+}
+WORK_BASE=0
+work_world work_base 1
+work_pass
+assert_eq "$RC" 0 "the empty stage completes its pass" "$ERR"
+WORK_BASE="$WORK"
+WORK_ROWS='merge_one|1|KEN-30=t|6
+merge_boxes|1|KEN-30=t,t,t,t|6
+merge_issues|1|KEN-30=t KEN-31=t KEN-32=t|18
+release_one|1|KEN-30=r|10
+release_boxes|1|KEN-30=r,r,r|12
+release_candidates|5|KEN-30=r|10
+mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|27'
+while IFS='|' read -r name candidates issues want; do
+  # shellcheck disable=SC2086 # ISSUES is a word list of ID=BOXES specs.
+  work_world "work_$name" "$candidates" $issues
+  work_pass
+  assert_eq "rc=$RC events=$(verification_events) work=$WORK" "rc=0 events= work=$want" "$name reads in bulk records" "$ERR"
+done <<<"$WORK_ROWS"
+# Each control restores one per-field command substitution in a disposable copy.
+while IFS='@' read -r name row old new; do
+  MUTANT_DIR="$TMP_ROOT/work-$name"
+  MUTANT_WATCH="$(mutant_scripts "work-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_verifying "$MUTANT_WATCH" "$old" "$new"
+  IFS='|' read -r _ candidates issues want <<<"$(grep "^$row|" <<<"$WORK_ROWS")"
+  # shellcheck disable=SC2086 # ISSUES is a word list of ID=BOXES specs.
+  work_world "work_control_$name" "$candidates" $issues
+  WATCH_BIN="$MUTANT_WATCH" work_pass
+  assert_eq "$RC" 0 "control: $name reaches the stage result" "$ERR"
+  if [[ "$WORK" -gt "$want" ]]; then pass "control: $name exceeds the bulk-record work"; else fail "control: $name exceeds the bulk-record work" "work=$WORK want=$want"; fi
+done <<'ROWS'
+issue_id@merge_issues@  while IFS=$'\037' read -r id row; do@  while IFS=$'\037' read -r id row; do id="$(jq -r .id <<<"$row")"
+box_field@release_boxes@      [[ "$oid" != invalid ]]@      glob="$(jq -rn --arg glob "$glob" '$glob')"; [[ "$oid" != invalid ]]
+release_tag@release_candidates@        [[ -n "$at" ]] || continue@        [[ -n "$at" ]] || continue; tag="$(jq -rn --arg tag "$tag" '$tag')"
+box_update@release_boxes@      fired_at+=@      boxes="$(jq -c . <<<"$boxes")"; fired_at+=
+ROWS
 
 # A due set's status change must raise attention even when its membership
 # stays the same. Standing due lines still print without a second event.

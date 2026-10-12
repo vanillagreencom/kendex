@@ -4521,9 +4521,11 @@ owed_accounts() { # HOST
 # lane filtering. Deadlines remain per box in the issue description.
 verifying_read() { # SAFE_ITEMS
   local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
-  local rows row id boxes merged merged_repos repo lines due prior key selected rc
+  local rows row id boxes merged merged_repos merged_rows repo out lines due line prior key rc
   local state="${PW_SEEN[0]}" errf="$WORK_DIR/verifying.err"
-  rows="$(jq -c '.[] | select(.state == "verifying")' <<<"$1")" \
+  # One record per issue, its ID then the row: owed_read admits no unit
+  # separator in an ID, and tojson keeps the row on one line.
+  rows="$(jq -r '.[] | select(.state == "verifying") | "\(.id)\u001f\(tojson)"' <<<"$1")" \
     || die tracker-list-invalid "" "team=$LINEAR_TEAM"
   # Rebuild the due set after the complete inventory, including valid items
   # after a checklist that Linear accepted but the box parser cannot read.
@@ -4535,9 +4537,8 @@ verifying_read() { # SAFE_ITEMS
   [[ -r "$lib" ]] || die missing-linear "" "path=$lib"
   # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
   source "$lib"
-  while IFS= read -r row; do
-    [[ -n "$row" ]] || continue
-    id="$(jq -r '.id' <<<"$row")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+  while IFS=$'\037' read -r id row; do
+    [[ -n "$id" ]] || continue
     if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then
       ow_message verifying-invalid "issue=$id" >&2
       cat -- "$errf" >&2
@@ -4545,13 +4546,21 @@ verifying_read() { # SAFE_ITEMS
     fi
     merged=null
     merged_repos='{}'
-    if jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
+    # verifying_parse prints compact JSON, where this text can only be a
+    # box's own trigger field: a quote inside a value is escaped.
+    if [[ "$boxes" == *'"trigger_kind":"release"'* ]]; then
+      merged_rows=""
       for repo in "${REPOS[@]}"; do
         merged_item_read "$id" "$repo" null
-        merged="$(jq -c --argjson previous "$merged" '([$previous] + map(.at)) | max' <<<"$MERGED_ITEM_ROWS")" || die verifying-invalid "" "issue=$id"
-        merged_repos="$(jq -c --arg repo "$repo" --argjson previous "$merged_repos" '
-          $previous + {($repo | ascii_downcase): (max_by(.at) // null)}' <<<"$MERGED_ITEM_ROWS")" || die verifying-invalid "" "issue=$id"
+        merged_rows+="${merged_rows:+,}$MERGED_ITEM_ROWS"
       done
+      # The latest merge across repositories, then each repository's own.
+      out="$(jq -nc --argjson rows "[$merged_rows]" '[$ARGS.positional, $rows] | transpose
+        | ([.[][1][].at] | max),
+          reduce .[] as [$repo, $read] ({}; . + {($repo | ascii_downcase): ($read | max_by(.at) // null)})' \
+        --args "${REPOS[@]}")" || die verifying-invalid "" "issue=$id"
+      merged="${out%%$'\n'*}"
+      merged_repos="${out#*$'\n'}"
     fi
     rc=0
     boxes="$(verifying_judge "$row" "$merged" "$merged_repos" "$PASS_NOW" "$boxes" "$WORK_DIR/verifying-release.err" "$MERGED_SEARCH_PAGE" gh 2>"$errf")" || rc=$?
@@ -4562,19 +4571,29 @@ verifying_read() { # SAFE_ITEMS
       cat -- "$errf" >&2
       continue
     fi
-    lines="$(verifying_lines "$id" "$boxes" "$row")" || die verifying-invalid "" "issue=$id"
+    # The box lines, a record separator, then the due keys. tojson escapes
+    # every control character a field holds, so the separator is unique.
+    out="$(jq -r --arg id "$id" --argjson row "$row" "$VERIFYING_LINE_JQ"'
+      ([.[] | verifying_line($id; $row)] | join("\n")) + "\u001e"
+      + ([.[] | select(.status == "due" or .status == "overdue")
+          | "box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline)"] | join("\n"))' <<<"$boxes")" \
+      || die verifying-invalid "" "issue=$id"
+    lines="${out%%$'\036'*}"
+    due="${out#*$'\036'}"
     [[ -n "$lines" ]] || lines="verifying $id boxes=0"
     VERIFYING_LINES+="$lines"$'\n'
-    due="$(jq -r '.[] | select(.status == "due" or .status == "overdue")
-      | "box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline)"' <<<"$boxes")" || die verifying-invalid "" "issue=$id"
     # The existing row also records a valid read with no due boxes. This
     # distinguishes first-read completion from an unchanged empty due set.
     key="${due//$'\n'/|}"
     [[ -n "$key" ]] || key=-
     [[ "$lines" != "verifying $id boxes=0" ]] || key=boxes=0
-    prior="$(lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id")" \
+    # Both helpers leave their answer in LANE_ROW; read here, they fork
+    # nothing per issue.
+    lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id" >/dev/null \
       || die state-read-failed "" "row=verifying-deadline" "issue=$id"
-    state="$(lane_row_set verifying-deadline "$state" "$id" "$key")"
+    prior="$LANE_ROW"
+    lane_row_set verifying-deadline "$state" "$id" "$key" >/dev/null
+    state="$LANE_ROW"
     [[ "$prior" != "$key" ]] || continue
     if [[ "$key" == boxes=0 ]]; then
       VERIFYING_EVENT_LINES+="$lines"$'\n'
@@ -4586,9 +4605,9 @@ verifying_read() { # SAFE_ITEMS
       # The saved row already holds each due box key. A changed sibling must
       # not repeat this box's instructions before the full heartbeat.
       [[ "|$prior|" != *"|$row|"* ]] || continue
-      selected="$(awk -v box="${row%% *}" '$3 == box' <<<"$lines")" \
-        || die verifying-invalid "" "issue=$id"
-      VERIFYING_EVENT_LINES+="$selected"$'\n'
+      while IFS= read -r line; do
+        [[ "$line" != "verifying $id ${row%% *} "* ]] || VERIFYING_EVENT_LINES+="$line"$'\n'
+      done <<<"$lines"
       echo "EVENT verifying-deadline $id $row"
       PASS_EVENT=1
     done <<<"$due"
