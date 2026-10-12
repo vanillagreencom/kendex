@@ -80,8 +80,9 @@ Attention kinds:
                      current-head CI aggregate completed successfully.
                      Reported immediately, without a quiet period or lane.
                      The overseer still proves the render before approval
-  head-moved         the head commit read beside the PR is not the PR's
-                     head: a push landed during the read, so the findings
+  head-moved         the head changed between shared reads, or the head
+                     commit read beside the PR is not its head. A push
+                     landed during the read, so the findings
                      (or the silence) describe the OLD head; re-run.
                      Attention, not an error: the race is ordinary, the
                      response is one more poll
@@ -201,14 +202,14 @@ fi
 # that lands during the request shows as a head commit that is not the PR's
 # head, which reads as head-moved. The reduction is one jq program; nothing
 # here starts a process per pull request or per output line.
-PR_FIELDS='number state isDraft headRefOid headRefName createdAt author{login __typename}
+PR_STATE_FIELDS='number state isDraft headRefOid headRefName createdAt author{login __typename}
   autoMergeRequest{mergeMethod} isInMergeQueue mergeQueueEntry{position} reviewDecision
-  reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}
   commits(last:1){totalCount nodes{commit{oid committedDate
     checkSuites(first:10,filterBy:{checkName:"CI"}){pageInfo{hasNextPage}
       nodes{checkRuns(first:20,filterBy:{checkName:"CI",checkType:LATEST}){pageInfo{hasNextPage} nodes{name status conclusion}}}}}}}
   timelineItems(last:10,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT,REVIEW_REQUESTED_EVENT]){nodes{
     ... on ReadyForReviewEvent{createdAt} ... on ReopenedEvent{createdAt} ... on ReviewRequestedEvent{createdAt}}}'
+PR_FIELDS="$PR_STATE_FIELDS reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}"
 owner="${GH_REPO%%/*}"
 name="${GH_REPO#*/}"
 now="$(date +%s)" || {
@@ -246,8 +247,8 @@ else
 fi
 
 # The reduction. Input: the main read's pages on stdin; $read, the named
-# read's status; $ARGS.positional, one (status, request, answer) triple per
-# thread-page round. Output: a control line, then the attention protocol.
+# read's status; a marker and response per thread-page round on stdin after
+# the main pages. Output: a control line, then the attention protocol.
 # The control line is `exit<TAB>code`, `global<TAB>key` for a listing that
 # cannot be trusted, or `walk<TAB>request`, the GraphQL request body for the
 # next thread page of every PR whose count needs one. A malformed answer is that
@@ -347,15 +348,21 @@ def stale($p; $commit; $n; $head; $queued):
       end
     end;
 
-def reduce_pr($n; $p; $later):
-  if ($p | type) != "object" or $p.number != $n or ($p.headRefOid | sha | not)
+def reduce_pr($n; $initial; $later):
+  # Thread histories can span concurrent pushes, arms and review updates.
+  # Keep the first head for binding, but judge the latest state read beside
+  # the last thread page before returning silence or a head-sensitive line.
+  ($later | last) as $last
+  | (if $last == null or $last.status != "ok" then $initial
+     else $last.p + {reviewThreads: $initial.reviewThreads} end) as $p
+  | if ($p | type) != "object" or $p.number != $n or ($p.headRefOid | sha | not)
      or ($p.state | type) != "string" or ($p | has("isDraft") | not) or ($p.isDraft | type) != "boolean"
      or ($p | has("autoMergeRequest") | not)
      or (($p.autoMergeRequest | type) != "null"
          and (($p.autoMergeRequest | type) != "object" or ($p.autoMergeRequest.mergeMethod | type) != "string"))
      or ($p.createdAt | type) != "string"
   then [finding($n; "--------"; "error"; "PR #\($n) response is not a well-formed PR object (broken read)")]
-  else $p.headRefOid as $head
+  else $initial.headRefOid as $head
   # Closed and merged PRs need nothing (reachable through named PRs); a
   # state outside the enum must never read as closed.
   | if $p.state == "CLOSED" or $p.state == "MERGED" then []
@@ -384,6 +391,8 @@ def reduce_pr($n; $p; $later):
         elif ($threads | length) > 0 then []
         elif ($decision | IN("APPROVED", "CHANGES_REQUESTED", "NONE", "REVIEW_REQUIRED") | not)
         then [finding($n; $head; "error"; "reviewDecision '\''\($decision)'\'' reached the reduction unhandled — the review-state read admits only APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED and NONE")]
+        elif $p.headRefOid != $head
+        then [finding($n; $head; "head-moved"; "the head changed during this reduction (now \($p.headRefOid[0:8])) — findings describe the old head; re-run")]
         else (try $p.commits.nodes[0].commit catch null) as $commit
         | if ($commit | type) != "object" or ($commit.oid | sha | not)
           then [finding($n; $head; "error"; "head commit read returned no usable sha (broken read)")]
@@ -416,11 +425,13 @@ def reduce_pr($n; $p; $later):
 
 def page_of($n): try .data.repository["p\($n)"] catch null;
 
-[try inputs catch null] as $pages
-| [range(0; $ARGS.positional | length; 3) as $i
-   | {status: $ARGS.positional[$i],
-      numbers: ($ARGS.positional[$i + 1] | fromjson | .variables | keys_unsorted | map(select(startswith("c")) | ltrimstr("c"))),
-      answer: (try ($ARGS.positional[$i + 2] | fromjson) catch null)}] as $rounds
+[try inputs catch null] as $documents
+| [$documents | to_entries[] | select(.value | type == "object" and has("_watch_round")) | .key] as $starts
+| [$starts[] as $i | $documents[$i]._watch_round as $r
+   | {status: $r.status,
+      numbers: ($r.request.variables | keys_unsorted | map(select(startswith("c")) | ltrimstr("c"))),
+      answer: $documents[$i + 1]}] as $rounds
+| $documents[:($starts[0] // ($documents | length))] as $pages
 | (if $mode == "list" then
      if ($pages | length) == 0
         or any($pages[]; type != "object" or (try (.data.repository.pullRequests.nodes | type) catch null) != "array")
@@ -436,12 +447,12 @@ def page_of($n): try .data.repository["p\($n)"] catch null;
     | if $e.unread then [finding($e.n; "--------"; "error"; "could not read PR #\($e.n)")]
       else reduce_pr($e.n; $e.p;
         [$rounds[] | select(any(.numbers[]; . == ($e.n | tostring)))
-         | {status, page: (.answer | page_of($e.n) | try .reviewThreads catch null)}])
+         | (.answer | page_of($e.n)) as $p | {status, p: $p, page: (try $p.reviewThreads catch null)}])
       end | .[]] as $all
   | [$all[] | select(.walk)] as $walks
   | if ($walks | length) > 0 then $walks | unique_by(.n)
     # The cursor rides a GraphQL variable, never the query text.
-    | "walk\t" + ({query: "query($owner:String!,$name:String!\([.[] | ",$c\(.n):String!"] | join(""))){repository(owner:$owner,name:$name){\([.[] | "p\(.n):pullRequest(number:\(.n)){reviewThreads(first:100,after:$c\(.n)){pageInfo{hasNextPage endCursor} nodes{isResolved}}}"] | join(" "))}}",
+    | "walk\t" + ({query: "query($owner:String!,$name:String!\([.[] | ",$c\(.n):String!"] | join(""))){repository(owner:$owner,name:$name){\([.[] | "p\(.n):pullRequest(number:\(.n)){...PRState reviewThreads(first:100,after:$c\(.n)){pageInfo{hasNextPage endCursor} nodes{isResolved}}}"] | join(" "))}} fragment PRState on PullRequest{\($state_fields)}",
         variables: ({owner: $owner, name: $name} + ([.[] | {key: "c\(.n)", value: .walk}] | from_entries))} | tojson)
     else "exit\t\(if any($all[]; .kind == "error") then 2 elif ($all | length) > 0 then 1 else 0 end)",
       ($all[] | "\(.n)\t\(.head)\t\(.kind)\t\(.detail)")
@@ -452,11 +463,22 @@ def page_of($n): try .data.repository["p\($n)"] catch null;
 # by every such PR, so a pass grows with the deepest thread history, not with
 # the PR count.
 rounds=()
+reduction_input() {
+  # gh can return full shared pages larger than the OS argument limit.
+  # Native GraphQL documents have no _watch_round field; the marker binds
+  # each response to its request without putting response bytes in argv.
+  printf '%s\n' "$main"
+  local i
+  for ((i=0; i < ${#rounds[@]}; i+=3)); do
+    printf '{"_watch_round":{"status":"%s","request":%s}}\n' "${rounds[$i]}" "${rounds[$((i + 1))]}"
+    printf '%s\n' "${rounds[$((i + 2))]:-null}"
+  done
+}
 while :; do
-  reduced="$(jq -nr --arg mode "$mode" --arg numbers "$PR_ARGS" --arg read "$main_read" \
+  reduced="$(reduction_input | jq -nr --arg mode "$mode" --arg numbers "$PR_ARGS" --arg read "$main_read" \
+      --arg state_fields "$PR_STATE_FIELDS" \
       --arg owner "$owner" --arg name "$name" --argjson now "$now" --argjson wait "$AWAITING_AFTER" \
-      "def refresh_identity: $REFRESH_IDENTITY_JQ; $REDUCE_JQ" \
-      --args ${rounds[@]+"${rounds[@]}"} <<<"$main")" || {
+      "def refresh_identity: $REFRESH_IDENTITY_JQ; $REDUCE_JQ")" || {
     rg_message error watch-reduce-failed "$GH_REPO" "::error::pr-watch: the reduction failed" >&2
     exit 2
   }

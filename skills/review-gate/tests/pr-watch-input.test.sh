@@ -82,7 +82,7 @@ echo '=== every open-PR listing page reaches the reduction ==='
 P7P9="$(jq -cn --argjson row "$(pr_row 7)" '[$row, ($row | .number = 9)]')"
 PAGED_LIST="STUB_OPEN_PRS=$P7P9;STUB_LIST_PAGE_SIZE=1;STUB_UNRESOLVED=1"
 table "a finding on each listing page reports both PRs||$PAGED_LIST|rc=1 kinds=threads-open,threads-open protocol=7~aaaaaaaa~threads-open~1+unresolved+review+thread(s);9~aaaaaaaa~threads-open~1+unresolved+review+thread(s)"
-mutant_watch list-first-page 's#\[try inputs catch null\] as $pages#([try inputs catch null] | .[0:1]) as $pages#' '[try inputs catch null] as $pages'
+mutant_watch list-first-page 's#\[try inputs catch null\] as $documents#([try inputs catch null] | .[0:1]) as $documents#' '[try inputs catch null] as $documents'
 table "must-fail: dropping later listing pages loses the second PR||$PAGED_LIST|rc=1 kinds=threads-open protocol=7~aaaaaaaa~threads-open~1+unresolved+review+thread(s)"
 WATCH_BIN="$LIVE_WATCH"
 
@@ -103,6 +103,22 @@ table "must-fail: without the commit cap a long PR reads as a push forever||STUB
 mutant_watch offset-sign 's#if $c.s == "-" then -1 else 1 end#if $c.s == "-" then 1 else -1 end#' 'if $c.s == "-" then -1 else 1 end'
 table "must-fail: with the offset applied the wrong way the commit reads four hours ahead|--awaiting-after 3600|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OFFSET_NOW|rc=2 kinds=error"
 WATCH_BIN="$LIVE_WATCH"
+
+echo '=== full shared thread pages are streamed, without an argv size bound ==='
+LARGE_PRS="$(jq -cn --argjson row "$(pr_row 1)" '[range(1;81) as $n | $row | .number = $n]')"
+LARGE_ENV="STUB_OPEN_PRS=$LARGE_PRS;STUB_LIST_PAGE_SIZE=50;STUB_THREADS_PAGES=2;STUB_THREADS_PAGE_NODES=100;STUB_ROUND_BYTES_FILE=$TMP_ROOT/shared-page-bytes"
+table "80 PRs with 200 resolved threads each remain healthy||$LARGE_ENV|rc=0 kinds=none"
+read -r SHARED_PAGE_BYTES <"$TMP_ROOT/shared-page-bytes"
+large=0
+[[ "$SHARED_PAGE_BYTES" -le 131072 ]] || large=1
+assert_eq "$large" 1 'the actual shared response exceeds the Linux single-argument limit'
+printf 'shared page evidence: prs=80 threads-per-pr=200 response-bytes=%s\n' "$SHARED_PAGE_BYTES"
+case "$OSTYPE" in
+  linux*)
+    mutant_watch thread-response-argv 's#--arg state_fields "$PR_STATE_FIELDS"#--arg bulk "${rounds[2]:-}" --arg state_fields "${PR_STATE_FIELDS}"#' '--arg state_fields "$PR_STATE_FIELDS"'
+    table "must-fail: putting the shared response in argv loses every PR result||$LARGE_ENV|rc=2 kinds=none diagnostic=review-gate-error=watch-reduce-failed+value=acme/widgets"
+    WATCH_BIN="$LIVE_WATCH" ;;
+esac
 
 echo "=== configuration errors refuse to reduce ==="
 table \

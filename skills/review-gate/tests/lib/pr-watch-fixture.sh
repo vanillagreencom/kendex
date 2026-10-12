@@ -50,7 +50,12 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 #   STUB_THREADS_RAW    a single-PR thread answer, served for every page
 #   STUB_THREADS_PAGE2  the page a cursor gets, before STUB_THREADS_RAW
 #   STUB_THREADS_PAGES  N distinct advancing resolved pages, CURk asking k+1
+#   STUB_THREADS_PAGE_NODES resolved nodes per advancing page (default 1)
 #   STUB_ROUND          "fail" or "emptybytes" for a thread-page round
+#   STUB_ROUND_HEAD, STUB_ROUND_STATE, STUB_ROUND_DRAFT, STUB_ROUND_ARMED,
+#   STUB_ROUND_DECISION, STUB_ROUND_QUEUED latest state in the shared round
+#   STUB_ROUND_DROP     remove this field from the latest PR object
+#   STUB_ROUND_BYTES_FILE record the shared response byte count
 #   STUB_HEAD_DATE      the head commit's committedDate ("null" = null)
 #   STUB_HEAD_AFTER     the head commit's oid when it is not the PR's head
 #   STUB_COMMITS        the PR's listed commit count (default 1)
@@ -124,9 +129,8 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
   def rows: ($ENV.STUB_OPEN_PRS // "[]") | try fromjson catch [];
   def generated: {pageInfo: {hasNextPage: (($ENV.STUB_THREADS_NEXTPAGE // "false") == "true")},
     nodes: [range(($ENV.STUB_UNRESOLVED // "0") | tonumber) | {isResolved: false}]};
-  def deep($k): if $k < ($ENV.STUB_THREADS_PAGES | tonumber)
-    then {pageInfo: {hasNextPage: true, endCursor: "CUR\($k)"}, nodes: [{isResolved: true}]}
-    else {pageInfo: {hasNextPage: false}, nodes: [{isResolved: true}]} end;
+  def deep($k): {pageInfo: {hasNextPage: ($k < ($ENV.STUB_THREADS_PAGES | tonumber)), endCursor: "CUR\($k)"},
+    nodes: [range(($ENV.STUB_THREADS_PAGE_NODES // "1") | tonumber) | {isResolved: true}]};
   def raw_threads($v): $v | fromjson | .data.repository.pullRequest.reviewThreads;
   def first_threads:
     if $ENV.STUB_THREADS_PAGES then deep(1)
@@ -194,11 +198,23 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
        then {errors: [{message: "Could not resolve to a PullRequest"}], data: {repository: ($found | from_entries)}}
        else {data: {repository: ($found | map(.value |= node) | from_entries)}} end
    else ($request | fromjson | .variables | to_entries | map(select(.key | test("^c[0-9]+$")))) as $cursors
-     | {data: {repository: ($cursors | map({key: "p\(.key | ltrimstr("c"))", value: {reviewThreads: later_threads(.value)}}) | from_entries)}}
+     | {data: {repository: ($cursors | map(. as $cursor | (.key | ltrimstr("c") | tonumber) as $n
+         | {key: "p\($n)", value: (rows[] | select(.number == $n) | node
+           | .reviewThreads = later_threads($cursor.value)
+           | if $ENV.STUB_ROUND_HEAD then .headRefOid = opt($ENV.STUB_ROUND_HEAD) | .commits.nodes[0].commit.oid = .headRefOid else . end
+           | if $ENV.STUB_ROUND_STATE then .state = $ENV.STUB_ROUND_STATE else . end
+           | if $ENV.STUB_ROUND_DRAFT then .isDraft = ($ENV.STUB_ROUND_DRAFT == "true") else . end
+           | if $ENV.STUB_ROUND_ARMED then .autoMergeRequest = (if $ENV.STUB_ROUND_ARMED == "true" then {mergeMethod: "MERGE"} else null end) else . end
+           | if $ENV.STUB_ROUND_DECISION then .reviewDecision = opt($ENV.STUB_ROUND_DECISION) else . end
+           | if $ENV.STUB_ROUND_QUEUED then .isInMergeQueue = ($ENV.STUB_ROUND_QUEUED == "true") else . end
+           | if $ENV.STUB_ROUND_DROP then del(.[$ENV.STUB_ROUND_DROP]) else . end)} ) | from_entries)}}
    end) as $answer
   | if $kind != "round" and $ENV.STUB_REVIEW_RAW and (review_raw | has("errors"))
     then {errors: review_raw.errors} + $answer else $answer end')" || exit 1
 printf '%s\n' "$answer"
+if [[ "$kind" == round && -n "${STUB_ROUND_BYTES_FILE:-}" ]]; then
+  printf '%s\n' "${#answer}" >"$STUB_ROUND_BYTES_FILE"
+fi
 [[ "$answer" != '{"errors"'* ]] || exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"

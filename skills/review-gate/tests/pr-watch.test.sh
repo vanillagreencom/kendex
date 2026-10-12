@@ -48,6 +48,10 @@ table \
   "25 advancing resolved pages breach the budget: overflow||STUB_OPEN_PRS=$P7;STUB_THREADS_PAGES=25|rc=1 kinds=threads-open threads=overflow" \
   "exactly 20 advancing resolved pages are healthy||STUB_OPEN_PRS=$P7;STUB_THREADS_PAGES=20|rc=0 kinds=none"
 
+mutant_watch thread-page-bound 's#\$pages >= 20#false#' '$pages >= 20'
+table "must-fail: without the page budget 25 resolved pages lose overflow attention||STUB_OPEN_PRS=$P7;STUB_THREADS_PAGES=25|rc=0 kinds=none"
+WATCH_BIN="$LIVE_WATCH"
+
 echo "=== the reviewer-silence clock ==="
 # Awaiting is stale only past the quiet period, measured from the newest of
 # the head commit, the PR's creation, and a readiness, reopen or re-review
@@ -76,6 +80,24 @@ table \
   "a moved head is no stale-review nudge|--awaiting-after 60|$HEAD_AFTER;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=1 kinds=head-moved" \
   "an open thread on a moved head still reports the thread||$HEAD_AFTER;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1|rc=1 kinds=threads-open"
 
+echo '=== shared thread pages use the latest head and reviewability state ==='
+PAGED="STUB_THREADS_PAGES=2"
+table \
+  "a push during pagination cannot return silence||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_HEAD=$HEAD_B|rc=1 kinds=head-moved" \
+  "a push during pagination cannot re-arm the old head||$PAGED;STUB_OPEN_PRS=$P7U;STUB_ROUND_HEAD=$HEAD_B|rc=1 kinds=head-moved" \
+  "a push during pagination cannot report the old head stale|--awaiting-after 60|$PAGED;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD;STUB_ROUND_HEAD=$HEAD_B|rc=1 kinds=head-moved" \
+  "a current arm suppresses the earlier disarmed state||$PAGED;STUB_OPEN_PRS=$P7U;STUB_ROUND_ARMED=true|rc=0 kinds=none" \
+  "a current disarm reports the latest merge ownership||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_ARMED=false|rc=1 kinds=disarmed" \
+  "a PR closed during pagination needs no attention||$PAGED;STUB_OPEN_PRS=$P7U;STUB_ROUND_STATE=CLOSED|rc=0 kinds=none" \
+  "a PR made draft during pagination gets no re-arm nudge||$PAGED;STUB_OPEN_PRS=$P7U;STUB_ROUND_DRAFT=true|rc=0 kinds=none" \
+  "a PR made draft during pagination gets no stale nudge|--awaiting-after 60|$PAGED;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_ROUND_DRAFT=true|rc=0 kinds=none" \
+  "a current queue entry suppresses the earlier disarmed state||$PAGED;STUB_OPEN_PRS=$P7U;STUB_ROUND_QUEUED=true|rc=0 kinds=none" \
+  "the latest review decision reports a standing objection||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_DECISION=CHANGES_REQUESTED|rc=1 kinds=changes-requested" \
+  "the latest queue state annotates the standing objection||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_DECISION=CHANGES_REQUESTED;STUB_ROUND_QUEUED=true|rc=1 kinds=changes-requested queued_notes=1" \
+  "a missing current draft state fails loudly||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_DROP=isDraft|rc=2 kinds=error" \
+  "a missing current review decision fails loudly||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_DROP=reviewDecision|rc=2 kinds=error" \
+  "a malformed current head fails loudly||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_HEAD=not-a-sha|rc=2 kinds=error"
+
 echo "=== lanes-app refresh approval attention ==="
 # The watcher wakes the existing overseer approval route; it never approves.
 # Actual REST identity and commit-bound check runs drive the real reducer.
@@ -83,6 +105,7 @@ REFRESH_ROW="$(pr_row 7 open armed false "$NOW" | jq -c '.head.ref="kendex/refre
 REFRESH_PRS="[$REFRESH_ROW]"
 CI_GREEN="$(jq -cn --arg head "$HEAD_A" '{check_runs:[{name:"CI",head_sha:$head,status:"completed",conclusion:"success"}]}')"
 REFRESH_ENV="STUB_OPEN_PRS=$REFRESH_PRS;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$NOW;STUB_CI_RAW=$CI_GREEN"
+table "a push during pagination cannot approve the old refresh head||$REFRESH_ENV;$PAGED;STUB_ROUND_HEAD=$HEAD_B|rc=1 kinds=head-moved"
 table \
   "a fresh green refresh reports immediately|--awaiting-after 3600|$REFRESH_ENV|rc=1 kinds=refresh-ready" \
   "a pending refresh aggregate is silent|--awaiting-after 60|$REFRESH_ENV;STUB_HEAD_DATE=$OLD;STUB_CI_RAW=$(jq -c '.check_runs[0].status="in_progress" | .check_runs[0].conclusion=null' <<<"$CI_GREEN")|rc=0 kinds=none" \
@@ -120,6 +143,10 @@ echo "=== must-fail controls for each kept kind ==="
 # changes-requested, disarmed and awaiting-stale each read reviewDecision,
 # disarmed never on a null decision, and awaiting-stale in both directions;
 # head-moved compares the head commit with the PR's head.
+mutant_watch round-retained-head 's#else $initial.headRefOid as $head#else $p.headRefOid as $head#' 'else $initial.headRefOid as $head'
+table "must-fail: forgetting the initial head hides a paginated push||$PAGED;STUB_OPEN_PRS=$P7;STUB_ROUND_HEAD=$HEAD_B|rc=0 kinds=none"
+mutant_watch round-retained-state 's#else $last.p + {reviewThreads: $initial.reviewThreads} end)#else $initial end)#' 'else $last.p + {reviewThreads: $initial.reviewThreads} end)'
+table "must-fail: retaining the initial reviewability state re-arms an already armed PR||$PAGED;STUB_OPEN_PRS=$P7U;STUB_ROUND_ARMED=true|rc=1 kinds=disarmed"
 mutant_watch threads-count 's#select(.isResolved == false)#select(.isResolved == null)#' 'select(.isResolved == false)'
 table "must-fail: with unresolved nodes uncounted two open threads read as silence||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2|rc=0 kinds=none"
 

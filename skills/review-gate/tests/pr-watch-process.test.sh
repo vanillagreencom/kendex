@@ -11,10 +11,10 @@ if [[ -z "${BASHPID:-}" ]] || ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 401)
   exit 0
 fi
 . "$TEST_DIR/lib/pr-watch-fixture.sh"
-. "$TEST_DIR/lib/process-count.sh"
+. "$SKILL_ROOT/../orch/tests/lib/process-count.sh"
 
 COUNT_DIR="$TMP_ROOT/count"
-pc_install "$COUNT_DIR" "$TMP_ROOT/bin:$PATH"
+PATH="$TMP_ROOT/bin:$PATH" process_count_install "$COUNT_DIR" pr-watch.sh
 mkdir -p "$TMP_ROOT/before/lib"
 cp "$TEST_DIR/fixtures/pr-watch-before.txt" "$TMP_ROOT/before/pr-watch.sh"
 cp "$TMP_ROOT/scripts/lib/"* "$TMP_ROOT/before/lib/"
@@ -26,13 +26,13 @@ pass_cost() { # PRS [PAGES] [NAMED] sets COST, GH_CALLS, JQ_CALLS, OUT
   if [[ "${3:-}" == named ]]; then
     for ((n=1; n <= $1; n++)); do flags+=("$n"); done
   fi
-  pc_reset "$COUNT_DIR"
+  process_count_reset "$COUNT_DIR"
   run_watch "PATH=$COUNT_DIR/bin:$TMP_ROOT/bin:$PATH;BASH_ENV=$COUNT_DIR/bash-env;STUB_OPEN_PRS=$rows;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD;STUB_THREADS_PAGES=${2:-1}" "${flags[@]}"
   assert_eq "$RC $(grep -c "$(printf '\tawaiting-stale\t')" <<<"$OUT" || true)" "1 $1" "$1 stale PRs print $1 lines"
-  [[ -s "$COUNT_DIR/main" && -s "$COUNT_DIR/trace" ]] || { printf 'process-count: missing-watcher-trace\n' >&2; exit 1; }
-  COST="$(pc_births "$COUNT_DIR")"
-  GH_CALLS="$(pc_births "$COUNT_DIR" gh)"
-  JQ_CALLS="$(pc_births "$COUNT_DIR" jq)"
+  [[ -s "$COUNT_DIR/existing" && -s "$COUNT_DIR/trace" ]] || { printf 'process-count: missing-watcher-trace\n' >&2; exit 1; }
+  COST="$(process_count_total "$COUNT_DIR")"
+  GH_CALLS="$(process_count_total "$COUNT_DIR" gh)"
+  JQ_CALLS="$(process_count_total "$COUNT_DIR" jq)"
   printf 'pass evidence: watch=%s prs=%s pages=%s mode=%s births=%s gh=%s jq=%s\n' "${WATCH_BIN#"$TMP_ROOT"/}" "$1" "${2:-1}" "${3:-list}" "$COST" "$GH_CALLS" "$JQ_CALLS"
 }
 
