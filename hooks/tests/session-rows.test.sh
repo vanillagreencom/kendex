@@ -441,9 +441,9 @@ assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=lane-mail-c
 # CLI 1.0.91's camelCase, and the pi-hooks carrier's.
 CODEX_START='{"session_id":"019a","transcript_path":"/r/rollout-019a.jsonl","cwd":"/work","hook_event_name":"SessionStart","source":"startup","model":"gpt-5"}'
 PI_START='{"hook_event_name":"SessionStart","source":"startup","session_id":"p1","transcript_path":"/p/p1.jsonl"}'
-jarvis_checkout() { # LABEL HOOK_HOME [PREASSIGNED]
+jarvis_checkout() { # LABEL HOOK_HOME [PREASSIGNED] [MAILBOX=absent]
   new_checkout "$1" "$2"
-  rm -rf -- "${CHECKOUT:?}/tmp"
+  [ "${4:-absent}" = present ] || rm -rf -- "${CHECKOUT:?}/tmp"
   RECORD="$TMP_ROOT/$1-record.json"
   jq -nc --arg id "${3:-}" '{generation: 3, pending: ({generation: 3, server: 7000, pane: "%9"}
     + (if $id == "" then {} else {native_session_id: $id} end))}' >"$RECORD"
@@ -463,7 +463,7 @@ pi|.pi/kendex/hooks|p1|$PI_START|p1,/p/p1.jsonl,number
 JARVISTABLE
 
 # What leaves the record as it stands: a session in the same home with no
-# Jarvis environment, one in another pane, one of another generation, a
+# Jarvis environment, one on another server or pane, one of another generation, a
 # harness nested in the managed one, a second start of a launch already
 # recorded, and a start the harness names by another id than the preassigned
 # one, which alone is reported.
@@ -477,28 +477,37 @@ jarvis_untouched() { # LABEL PAYLOAD WANT_FIRST [ENV=VAL...]
 }
 jarvis_checkout jarvis_unmanaged .claude/hooks
 jarvis_untouched "a non-managed session in the same home writes nothing to the record" "$START" -
-jarvis_checkout jarvis_pane .claude/hooks
-jarvis_untouched "a managed environment in another pane writes nothing" "$START" - \
-  TMUX_PANE=%8 "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
-jarvis_checkout jarvis_generation .claude/hooks
-jarvis_untouched "a managed environment of another generation writes nothing" "$START" - \
-  "JARVIS_RECORD=$RECORD" JARVIS_GENERATION=2
-jarvis_checkout jarvis_nested .claude/hooks
-NESTED=1 jarvis_untouched "a harness nested in the managed one writes nothing" "$START" - \
-  "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+while IFS='|' read -r label nested env; do
+  jarvis_checkout "jarvis_$label" .claude/hooks
+  # shellcheck disable=SC2086  # env is a list of assignments.
+  NESTED="$nested" jarvis_untouched "a $label session leaves the managed record unchanged" "$START" - \
+    "JARVIS_RECORD=$RECORD" $env
+done <<'JARVISUNTOUCHED'
+server|0|TMUX_SERVER_ID=8000 JARVIS_GENERATION=3
+pane|0|TMUX_PANE=%8 JARVIS_GENERATION=3
+generation|0|JARVIS_GENERATION=2
+nested|1|JARVIS_GENERATION=3
+JARVISUNTOUCHED
 jarvis_checkout jarvis_again .claude/hooks
 run session-start-row "$START" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
 jarvis_untouched "a second start of a recorded launch leaves the first identity" \
   "${START/5f0c/6a1d}" - "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
-jarvis_checkout jarvis_mismatch .claude/hooks 6a1d
-jarvis_untouched "a start named by another id than the preassigned one is reported, not recorded" "$START" \
-  "lane-mail-check: rows-unwritten=$CHECKOUT" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
-assert_eq "$(grep -c '^jarvis-identity=mismatch record=' "$ERR_FILE" || true)" "1" \
-  "the refused start's cause names the mismatch"
+while IFS='|' read -r mailbox count want_row; do
+  jarvis_checkout "jarvis_mismatch_$mailbox" .claude/hooks 6a1d "$mailbox"
+  jarvis_untouched "a mismatched start with mailbox $mailbox reports the refusal and preserves the record" "$START" \
+    "lane-mail-check: rows-unwritten=$CHECKOUT" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+  assert_eq "rows=$(row_count) row=$(last_row '[.event, .harness, .session_id, .transcript_path] | join(",")')" \
+    "rows=$count row=$want_row" "a mismatched start with mailbox $mailbox keeps the ordinary row outcome"
+  assert_eq "$(sed -n '2,$p' "$ERR_FILE" | grep -c -x -F "jarvis-identity=mismatch record=$RECORD" || true)" "1" \
+    "the refused start with mailbox $mailbox reports its mismatch below the keyed notice"
+done <<'JARVISMISMATCH'
+absent|0|absent
+present|1|SessionStart,claude,5f0c,/t/5f0c.jsonl
+JARVISMISMATCH
 
 # --- control ------------------------------------------------------------------
 # Each rule removed from a copy of the orch scripts reddens its row: the call,
-# and the pane, generation and preassigned-id bindings.
+# and the server, pane, generation and preassigned-id bindings.
 n=0
 while IFS='@' read -r old new label preassigned env; do
   n=$((n + 1))
@@ -514,10 +523,24 @@ while IFS='@' read -r old new label preassigned env; do
     "changed=$([ "$label" = call ] && echo no || echo yes)" "control: $label"
 done <<'JARVISCONTROL'
 session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" <<<"$payload"@:@call@@JARVIS_GENERATION=3
+($p.server | tostring) != $server@false@server@@TMUX_SERVER_ID=8000 JARVIS_GENERATION=3
  or $p.pane != $pane@@pane@@TMUX_PANE=%8 JARVIS_GENERATION=3
 ($p.generation | tostring) != $generation@false@generation@@JARVIS_GENERATION=2
 "mismatch"@"own"@preassigned@6a1d@JARVIS_GENERATION=3
 JARVISCONTROL
 
+# With a mailbox, losing the Jarvis error after the ordinary append hides the
+# rows-unwritten notice. The record and ordinary row still have their results.
+jarvis_checkout jarvis_return_control .claude/hooks 6a1d present
+rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
+mutate_lib '  return "$jarvis_rc"' '  return 0'
+CONTROL_OUT="$(jarvis_untouched "mailbox mismatch reports the refusal" "$START" \
+  "lane-mail-check: rows-unwritten=$CHECKOUT" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}")"
+assert_eq "$(grep -c '^  FAIL  mailbox mismatch reports the refusal$' <<<"$CONTROL_OUT")" "1" \
+  "control: dropping the final Jarvis error fails the mailbox mismatch assertion"
+assert_eq "rows=$(row_count) row=$(last_row '[.event, .harness, .session_id, .transcript_path] | join(",")')" \
+  "rows=1 row=SessionStart,claude,5f0c,/t/5f0c.jsonl" "control: the ordinary row was appended before the error was lost"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
