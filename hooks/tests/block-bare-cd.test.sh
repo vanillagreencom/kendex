@@ -144,6 +144,8 @@ lifted substitution receiver body|command|2|block-bare-cd: refused=bare-cd|cat <
 lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "cd /tmp"\nEOF
 process substitution receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF > >(bash)\ncd /tmp\nEOF
 process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "cd /tmp"\nEOF
+pending shell receiver|command|2|block-bare-cd: refused=bare-cd|cat <<'\''EOF'\'' |\ncd /tmp\nEOF\nbash
+pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
 '
 }
 command_position_rows

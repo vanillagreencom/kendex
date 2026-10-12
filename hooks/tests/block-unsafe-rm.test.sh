@@ -307,6 +307,8 @@ process substitution receiver body|command|2|block-unsafe-rm: refused=shared-roo
 process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "rm -rf $HOME"\nEOF
 quoted find terminators|command|2|block-unsafe-rm: refused=shared-root|find . -exec echo {} ";" -exec rm -rf $HOME {} ";"
 quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "rm -rf $HOME" {} ";"
+pending shell receiver|command|2|block-unsafe-rm: refused=shared-root|cat <<'\''EOF'\'' |\nrm -rf "$HOME"\nEOF\nbash
+pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
 '
 }
 command_position_rows

@@ -162,6 +162,8 @@ process substitution receiver body|command|2|block-argv-kill: refused=pkill|cat 
 process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "pkill -f x"\nEOF
 quoted find terminators|command|2|block-argv-kill: refused=pkill|find . -exec echo {} ";" -exec pkill -f x {} ";"
 quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "pkill -f x" {} ";"
+pending shell receiver|command|2|block-argv-kill: refused=pkill|cat <<'\''EOF'\'' |\npkill -f x\nEOF\nbash
+pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
 '
 }
 command_position_rows

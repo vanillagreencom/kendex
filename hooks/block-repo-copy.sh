@@ -4,8 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a copy (cp, rsync, tar, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
-# summary: Stops executable copies of .git or target into temporary folders. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators or substitutions can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators or substitutions can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-repo-copy: <key>=<value>.
+# summary: Stops executable copies of .git or target into temporary folders. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse on guarded text.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators, redirection ampersands, substitutions or pending pipe receivers can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-repo-copy: <key>=<value>.
 # requires-skills: [commit-guards]
 # ---
 

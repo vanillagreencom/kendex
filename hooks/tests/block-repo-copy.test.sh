@@ -303,6 +303,8 @@ process substitution receiver body|command|2|block-repo-copy: refused=cp|cat <<E
 process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "cp -r /repo/.git /tmp/copy"\nEOF
 quoted find terminators|command|2|block-repo-copy: refused=cp|find . -exec echo {} ";" -exec cp -r /repo/.git /tmp/copy {} ";"
 quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "cp -r /repo/.git /tmp/copy" {} ";"
+pending shell receiver|command|2|block-repo-copy: refused=cp|cat <<'\''EOF'\'' |\ncp -a .git /tmp/probe\nEOF\nbash
+pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
 '
 }
 command_position_rows

@@ -13,7 +13,8 @@
 # become control bytes, so no word inside a span reaches a caller's
 # pattern and no character inside one starts or ends a segment, and a heredoc
 # body that a proven simple data reader consumes is dropped. Groups, control
-# operators and substitutions keep input unproven and can warn or refuse on
+# operators, redirection ampersands, substitutions and pending receivers keep
+# input unproven and can warn or refuse on
 # guarded text. Other bodies remain
 # command text. A quoted program that a shell, `eval`, `source` or `.` word
 # runs is appended as an independent command position,
@@ -238,8 +239,9 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
   done
 }
 # The heredoc bodies. Drop a body only when the owning command and the whole
-# remaining command prove simple data consumption. Groups, control operators
-# and substitutions keep input unproven and can warn or refuse on guarded text.
+# remaining command prove simple data consumption. Groups, control operators,
+# redirection ampersands, substitutions and pending receivers keep input
+# unproven and can warn or refuse on guarded text.
 # Retain unproven executable input
 # instead of enumerating the commands that might run it. The `<<` is read off the line with its
 # comment dropped and its quoted spans masked, so a `<<` only written down does
@@ -293,6 +295,8 @@ EOF
       while [[ $pipeline == *"|"* ]]; do
         receiver=${pipeline#*|}
         receiver=${receiver#"${receiver%%[![:space:]]*}"}
+        # A receiver on a later line has not proved data consumption.
+        [ -n "$receiver" ] || executable_body=1
         # A grouped receiver's prefix cannot prove its whole input is data.
         # Retain that input without interpreting the group's commands.
         case "$receiver" in

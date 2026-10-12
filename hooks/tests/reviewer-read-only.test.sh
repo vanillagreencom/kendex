@@ -290,6 +290,8 @@ process substitution receiver body|command|2|reviewer-read-only: refused=git-dis
 process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "git reset --hard"\nEOF
 quoted find terminators|command|2|reviewer-read-only: refused=git-discard|find . -exec echo {} ";" -exec git reset --hard {} ";"
 quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "git reset --hard" {} ";"
+pending shell receiver|command|2|reviewer-read-only: refused=git-discard|cat <<'\''EOF'\'' |\ngit reset --hard\nEOF\nbash
+pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
 '
 }
 command_position_rows

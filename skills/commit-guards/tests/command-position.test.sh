@@ -107,6 +107,8 @@ process substitution receiver quoted data|cat,bash,echo||cat <<EOF > >(bash)\nec
 quoted find semicolon actions|echo,pkill||find . -exec echo {} ';' -exec pkill x {} ';'
 quoted find plus actions|echo,pkill||find . -exec echo {} "+" -exec pkill x {} "+"
 quoted find action data|echo,echo||find . -exec echo {} ';' -exec echo "pkill x" {} ';'
+pending shell receiver|cat,pkill,bash||cat <<'EOF' |\npkill -f x\nEOF\nbash
+pending harmless receiver|cat,printf,bash||cat <<'EOF' |\nprintf harmless-body\nEOF\nbash
 ROWS
 if [ -z "${READER_UNDER_TEST:-}" ]; then
   while IFS='|' read -r defect row; do
@@ -126,6 +128,9 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
       }
       index($0, "*\"$NL\"*) executable_body=1 ;;") && defect == "heredoc-rest" {
         sub(/executable_body=1 ;;/, "executable_body=1; executable_body=\"\" ;;"); changed++
+      }
+      index($0, "[ -n \"$receiver\" ] || executable_body=1") && defect == "heredoc-pending" {
+        print; print "        [ -n \"$receiver\" ] || executable_body=\"\""; changed++; next
       }
       /^    executable=\$word/ && defect == "control-words" {
         print; print "    case $word in else | \\{) COMMAND_TEXTS=$rest$NL; return 0 ;; esac"; changed++; next
@@ -169,6 +174,7 @@ heredoc-owner|last shell heredoc
 heredoc-pipe|grouped shell heredoc
 heredoc-simple-pipe|pipeline shell heredoc
 heredoc-rest|process substitution receiver body
+heredoc-pending|pending shell receiver
 control-words|else arm
 launchers|timeout duration
 option-value|nice option value

@@ -506,6 +506,8 @@ process substitution receiver body|command|2|command-safety: refused=policy|cat 
 process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "qs -c vshell"\nEOF
 quoted find terminators|command|2|command-safety: refused=policy|find . -exec echo {} ";" -exec qs -c vshell {} ";"
 quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "qs -c vshell" {} ";"
+pending shell receiver|command|2|command-safety: refused=policy|cat <<'\''EOF'\'' |\nqs -c vshell\nEOF\nbash
+pending harmless receiver|command|0|-|cat <<'\''EOF'\'' |\nprintf harmless-body\nEOF\nbash
 '
 }
 command_position_rows
