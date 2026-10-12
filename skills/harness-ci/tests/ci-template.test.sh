@@ -504,7 +504,7 @@ check_action_pins() { # TEMPLATE
   refs="$(awk '
     /^[[:space:]-]*uses: / {
       sub(/^[[:space:]-]*uses: /, "")
-      if ($0 ~ /^[^ /]+\/[^ ]+@/ && $0 !~ /^vanillagreencom\//) print
+      if ($0 ~ /^[^ \/]+\/[^ ]+@/ && $0 !~ /^vanillagreencom\//) print
     }
   ' "$1")" || return 1
   [ -n "$refs" ] || return 0
