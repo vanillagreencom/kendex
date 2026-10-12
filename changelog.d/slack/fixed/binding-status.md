@@ -1,0 +1,1 @@
+- `slack listen --status` reports a root's missing or unreadable binding as `state=failing` with `cause=binding-missing` or `cause=binding-unreadable` and the `slack setup --take CHANNEL --root DIR` fix, whatever the recorded connection.

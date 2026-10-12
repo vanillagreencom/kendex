@@ -337,6 +337,14 @@ def install(roots: List[Path], print_only: bool) -> int:
 def status(roots: List[Path], now: float) -> int:
     for root in roots:
         record = read_status(root)
+        try:
+            (root / "tmp/slack/binding.json").read_bytes()
+        except OSError as err:
+            cause = "binding-missing" if isinstance(err, FileNotFoundError) else "binding-unreadable"
+            channel = record["channel"] if record else "CHANNEL"
+            print(keyed("slack-relay", f"{root} state=failing cause={cause}"
+                        f" fix=slack setup --take {channel} --root {root}"))
+            continue
         if record is None:
             print(keyed("slack-relay", f"{root} state=never fix=start the relay with `slack listen --root {root}`"))
             continue

@@ -66,7 +66,9 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           root from the relay's status record, with the connection state
           and the fingerprint of the running code as code=;
           failing too while the relay has been reconnecting past twice its
-          longest wait
+          longest wait; a missing or unreadable tmp/slack/binding.json
+          reports state=failing cause=binding-missing|binding-unreadable,
+          whatever the connection, with fix=slack setup --take CHANNEL --root DIR
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
           link expansion past that cap selects Slack's mrkdwn instead;
