@@ -483,7 +483,7 @@ class RootRelay:
             author = author_of(message, self.binding.owner_ids.values(), bot_user)
             if author is not None and float(mark or 0) < float(message["ts"]) <= float(ts) and str(message["ts"]) not in answers:
                 unseen.append({"ts": str(message["ts"]), "author": author,
-                               "text": plain(str(message.get("text") or "").strip(), self.user_name)})
+                               "text": plain(str(message.get("text") or ""), self.user_name)})
         return dict(self.parent_context(thread_ts, root, retries), thread=unseen)
 
     def catch_up(self, bot_user: str, due: Set[str]) -> None:

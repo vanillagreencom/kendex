@@ -229,4 +229,42 @@ answer-watermark-control
 answer-pruning-control
 ROWS
 
+# Both live events and catch-up pages pass complete text to plain().
+# The shipped post command preserves indentation and the final newline.
+while read -r path mode; do
+  ROOT="$(sk_new_root "whitespace-$path-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  APP_BOUNDARY=$'    if ready:\n        proceed()\n'
+  OWNER_BOUNDARY=$'\n\tKeep the indentation.  \n'
+  sk_run -- post --root "$ROOT" --text "$APP_BOUNDARY"
+  ROOT_TS="$(sk_state ".messages.${CH}[-1].ts")"
+  assert_eq "$RC=$(sk_state ".messages.${CH}[-1] | .text | @json")" "0=$(jq -nc --arg text "$APP_BOUNDARY" '$text')" \
+    "$path/$mode: the shipped post preserves the app text's boundary whitespace"
+  if [ "$mode" = trim-control ]; then
+    sk_mutant trim-context relay.py 'plain\(str\(message.get\("text"\) or ""\), self.user_name\)' 'plain(str(message.get("text") or "").strip(), self.user_name)'
+  fi
+  REPLY="$(sk_inject "$CH" U001 "$OWNER_BOUNDARY" "$ROOT_TS")"
+  case "$path" in
+    live) sk_event "$ROOT" "$CH" "$REPLY" ;;
+    catch-up) sk_poll "$ROOT" ;;
+  esac
+  assert_eq "$RC" 0 "$path/$mode: the whitespace reply reaches the real mailbox"
+  GOT="$(jq -c --arg d "$CH:$REPLY" 'select(.delivery_id == $d) | .parent.thread' "$(sk_box "$ROOT")/to-lane.jsonl")"
+  WANT="$(jq -nc --arg root "$ROOT_TS" --arg app "$APP_BOUNDARY" --arg reply "$REPLY" --arg owner "$OWNER_BOUNDARY" \
+    '[{ts:$root,author:"app",text:$app},{ts:$reply,author:"owner",text:$owner}]')"
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" "$WANT" "$path: complete app and owner text retains indentation, tabs, boundary spaces and final newlines with author and timestamp"
+  else
+    sk_assert_red "$GOT" "$WANT" "$path: trimming before plain fails the same complete message assertion"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+live production
+live trim-control
+catch-up production
+catch-up trim-control
+ROWS
+
 sk_summary
