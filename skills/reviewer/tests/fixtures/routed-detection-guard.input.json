@@ -1,0 +1,14 @@
+{
+  "prompt": "Act as the supplied reviewer-quality agent for this kendex sample. Read agents/reviewer-quality.md and .agents/skills/reviewer/SKILL.md, then review the complete change in review.diff and the affected code at the head. Apply the sample's applicable AGENTS.md instructions. The supplied directory is the full evidence boundary for this review. Do not read parent directories, other runs or external repositories. Do not change files or invoke another agent. If a referenced companion skill or execution tool is absent, record that limit; do not treat its absence as a sample code defect. This is a code review, not a screenshot QA trigger.\n\nReturn only one JSON object with agent, verdict, summary, blockers, suggestions, questions, files_read, rules_applied and unavailable_evidence. blockers and suggestions are arrays of findings with location, description, recommendation, priority and rule. questions is empty. List the files you actually read and the rules you applied, with their source, section, affected code and passing or breached evidence. Report verified findings for the complete supplied change.\n",
+  "files": {
+    "AGENTS.md": "# Kendex package-key sample\n\nPackage keys use lowercase letters, digits and hyphens. The sample checker accepts alpha-kit and rejects Alpha.\n\n## Read when\n\n- For a package-key check or a change to its suite, read docs/architecture/suite-evidence.md.\n",
+    "docs/architecture/suite-evidence.md": "# Suite evidence\n\n## Invalid-check trials\n\nAn edited suite must demonstrate that its assertions reject a substituted checker that accepts every key and one that refuses every key. Keep these trials in the suite even when its ordinary cases pass. A successful run of ordinary cases establishes the checker result, but does not establish that the suite detects either broken checker.\n",
+    "scripts/package-key-check": "#!/bin/sh\nset -eu\nLC_ALL=C\nexport LC_ALL\ncase \"${1-}\" in\n  ''|*[!a-z0-9-]*) exit 1 ;;\n  *) exit 0 ;;\nesac\n",
+    "tests/package-key-check.sh": "#!/bin/sh\nset -eu\nsample_root=$(CDPATH= cd \"$(dirname \"$0\")/..\" && pwd)\nexercise() {\n  \"$1\" alpha-kit && ! \"$1\" Alpha\n}\nexercise \"$sample_root/scripts/package-key-check\"\nprintf '%s\\n' 'package key checks passed'\n",
+    "review.diff": "diff --git a/tests/package-key-check.sh b/tests/package-key-check.sh\n--- a/tests/package-key-check.sh\n+++ b/tests/package-key-check.sh\n@@ -4,9 +4,5 @@\n exercise() {\n   \"$1\" alpha-kit && ! \"$1\" Alpha\n }\n-always_accept() { return 0; }\n-always_refuse() { return 1; }\n exercise \"$sample_root/scripts/package-key-check\"\n-if exercise always_accept; then exit 1; fi\n-if exercise always_refuse; then exit 1; fi\n printf '%s\\n' 'package key checks passed'\n"
+  },
+  "public_context": {
+    "agents/reviewer-quality.md": "agents/reviewer-quality.md",
+    ".agents/skills/reviewer/SKILL.md": "skills/reviewer/SKILL.md"
+  }
+}

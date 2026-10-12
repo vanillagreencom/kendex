@@ -1,1 +1,1 @@
-- A review reports a routed doc's rule that requires a change to a file the diff leaves untouched, such as a tracked render, and checks a rule over a set against the inventory that lists the set. It reads each doc an `AGENTS.md` Read-when line routes for the subject the changed code implements, and its summary names the rules it checked.
+- Reviews apply routed document rules to the behavior a change alters and report missing required work, including controls that prove a test can reject a defect.
