@@ -245,7 +245,7 @@ lane_state_rounds() { # STATE_JSON [ERRF]
     ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0) + (.pr_comment_review.iterations // 0)) as $rounds
     | (if .stages == null then "unread" else [.stages[] | select(.kind == "fix")] | length end) as $fixes
     | ([ (.validate_rounds // [])[] | select(.kind == "implement" or .kind == "fix")] | length) as $validations
-    | (([ (.validate_rounds // [])[] | select(.kind == "restack")] | length) + (.restack_skips // [] | length)) as $restacks
+    | (.restacks // 0) as $restacks
     | (.pr_comment_review.patched_causes // []) as $patches
     | (reduce $patches[] as $patch ({seen: [], repeated: []};
         if any(.seen[]; .commit != $patch.commit and

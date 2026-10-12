@@ -39,7 +39,7 @@ seed_fleet() {
       {"round_id": "r2", "kind": "fix", "mode": "range", "seconds": 290, "lanes": "lint", "selection": "subset"},
       {"round_id": "r3", "kind": "restack", "mode": "range", "seconds": 60},
       {"round_id": "r4", "kind": "restack", "mode": "range", "seconds": 60}],
-    "restack_skips": [{}, {}]}'
+    "restack_skips": [{}, {}], "restacks": 4}'
   item_state KEN-2 '{"post_pr_stop": null}'
   printf '%s\n' "$(merged_pr 11 ken-1 -60 abcdef1234)" "$(merged_pr 13 ken-3 -7200 1234567abc)" \
     "$(merged_pr 19 ken-9 -60 9999999aaa)" "$(merged_pr 21 ken-1 -30 2121212aaa someone-else)" \
@@ -156,12 +156,12 @@ assert_eq "$RC|$OUT" "0|$WANT" \
   "Landed holds only the fleet item merged since the last report, Running each live, preparing or parked lane with its PR, the parked one's from its record, Validation each running lane's minutes in total and per run, Next the queue, Waiting on you the open owner ask with its recommendation and deadline then each running lane's blockers"
 
 echo "=== render: round counts use the shared reader ==="
-for name in fixes skips; do
+for name in fixes restacks; do
   ROUND_REPORT="$(mutant_scripts "report-round-$name/orch" lib/lane-gitfile.sh)/oversee-report" || exit 1
   ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/report-round-$name/github"
   case "$name" in
     fixes) old='[.stages[] | select(.kind == "fix")] | length' new='.cycles' ;;
-    skips) old='(.restack_skips // [] | length)' new='0' ;;
+    restacks) old='(.restacks // 0)' new='0' ;;
   esac
   mutate_file "${ROUND_REPORT%/*}/lib/lane-gitfile.sh" "$old" "$new"
   seed_fleet "round_${name}_mutant"
@@ -180,6 +180,23 @@ issue KEN-3 "Title 3" "Outcome 3"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_contains "$OUT" 'Rounds:
 - KEN-3: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread' "a running lane with no state has unread round counts"
+
+echo "=== render: one completed restack reads 1 whatever its validation route ==="
+# KEN-2 restacked with no run or skip recorded, KEN-3 with a range run, KEN-4
+# with a skipped re-test: each counts its restack once.
+new_case rounds_restack_routes
+report -60
+fleet '' "$(lane KEN-2 running)" "$(lane KEN-3 running)" "$(lane KEN-4 running)"
+item_state KEN-2 '{"stages": [], "restacks": 1}'
+item_state KEN-3 '{"stages": [], "restacks": 1, "validate_rounds": [{"round_id": "restack-1", "kind": "restack", "mode": "range", "seconds": 60}]}'
+item_state KEN-4 '{"stages": [], "restacks": 1, "restack_skips": [{}]}'
+for n in 2 3 4; do issue "KEN-$n" "Title $n" "Outcome $n"; done
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_contains "$OUT" 'Rounds:
+- KEN-2: review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread
+- KEN-3: review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread
+- KEN-4: review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread' \
+  "one restack reads restacks=1 with no record, a range run or a skip beside it"
 
 echo "=== render: Waiting on you reads the overseer mailbox and nothing else ==="
 seed_fleet owner_asks_mail

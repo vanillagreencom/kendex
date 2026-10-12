@@ -37,6 +37,8 @@
 # the same grammar and the same reconciliation, printing one
 # `restack-reconcile: map_entries=N fixed_items=N pr_fixes=N` line per hop
 # standing before the push and a `sha-reconcile:` line for the push's own.
+# Each hop standing before the push adds one to `restacks`, the lane's restack
+# count, whether or not a validation run or skip followed that restack.
 # Every hop is a separate
 # reconciliation because each one compares a record against the value it held
 # when that reconciliation began: a record the first hop moved from X to Y is
@@ -302,18 +304,23 @@ state_flags=()
 # print the caller's summary line under its own key. The map travels by
 # environment variable so the jq program stays a plain single-quoted literal. A
 # recorded short SHA follows the shared owner's non-chaining remap rule.
+# A hop rebase_map already holds whole is a kept file's re-run, so it counts
+# no second restack.
 reconcile_map() {
 	local key="$1" map_json="$2" report
-	report="$(WTP_MAP="$map_json" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" "$REBASE_MAP_REMAP_JQ"'
+	report="$(WTP_MAP="$map_json" WTP_KEY="$key" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" "$REBASE_MAP_REMAP_JQ"'
 		($ENV.WTP_MAP | fromjson) as $map
 		| . as $s
+		| ($s.rebase_map // {}) as $seen
 		| ($s.fixed_items // []) as $fi
 		| ($s.pr_comment_review.fixes // []) as $pf
 		| ($fi | map(if (.commit? // "") != "" then .commit |= rebase_map_remap($map) else . end)) as $fi2
 		| ($pf | map(if (.commit? // "") != "" then .commit |= rebase_map_remap($map) else . end)) as $pf2
 		| {
 		    state: ($s
-		      | .rebase_map = ((.rebase_map // {}) + $map)
+		      | if $ENV.WTP_KEY == "restack-reconcile" and ($map | to_entries | any($seen[.key] != .value))
+		        then .restacks = ((.restacks // 0) + 1) else . end
+		      | .rebase_map = ($seen + $map)
 		      | .fixed_items = $fi2
 		      | .pr_comment_review = ((.pr_comment_review // {}) | .fixes = $pf2)),
 		    report: {

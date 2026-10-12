@@ -244,7 +244,7 @@ rounds_case() { # NAME STATE [WATCH_BIN] [MODE]
 REPEATED_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111"},{"cause":"unchecked read","commit":"bbb222"}]}}'
 LOCATION_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"unchecked read","commit":"aaa111","location":" src/x.rs (`f`) "},{"cause":"stale count","commit":"bbb222","location":"src/x.rs (`f`)"}]}}'
 OWNER_STATE='{"pr_comment_review":{"iterations":2,"patched_causes":[{"cause":"cancel leaves intent","commit":"aaa111","location":"src/dialog.rs (`close_retry`)","owner":"src/alert.rs (`AlertRow`)"},{"cause":"send leaves intent","commit":"bbb222","location":"src/send.rs (`on_failed_send`)","owner":"src/alert.rs (`AlertRow`)"}]}}'
-COUNTS_STATE='{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}]}'
+COUNTS_STATE='{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}],"restacks":4}'
 NO_STAGES_STATE="$(jq -c 'del(.stages)' <<<"$COUNTS_STATE")"
 # NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED
 for row in \
@@ -253,6 +253,9 @@ for row in \
   "fileless|$COUNTS_STATE|unread|unread|unread|unread|unread" \
   "parked|$COUNTS_STATE|unread|unread|unread|unread|unread" \
   'no_validation_lists|{"stages":[]}|0|0|0|0|unread' \
+  'one_restack_no_record|{"stages":[],"restacks":1}|0|0|0|1|unread' \
+  'one_restack_range_run|{"stages":[],"restacks":1,"validate_rounds":[{"kind":"restack"}]}|0|0|0|1|unread' \
+  'one_restack_skipped|{"stages":[],"restacks":1,"restack_skips":[{}]}|0|0|0|1|unread' \
   'absent_state||unread|unread|unread|unread|unread' \
   "two_bot_rounds|$REPEATED_STATE|2|unread|0|0|1" \
   "different_causes_one_location|$LOCATION_STATE|2|unread|0|0|1" \
@@ -430,11 +433,12 @@ for control in baseline owner; do
     assert_file_contains "$STUB_DIR/control.out" 'repeated_class_rounds=0' "$control: the planted defect omits the owner round"
   fi
 done
-# Each mutation changes the shared reader the event consumes.
-for name in fixes skips unread; do
+# Each mutation changes the shared reader the event consumes. The restacks
+# mutant counts validation records alone, which miss a restack with neither.
+for name in fixes restacks unread; do
   case "$name" in
     fixes) old='[.stages[] | select(.kind == "fix")] | length' new='.cycles' ;;
-    skips) old='(.restack_skips // [] | length)' new='0' ;;
+    restacks) old='(.restacks // 0)' new='(([ (.validate_rounds // [])[] | select(.kind == "restack")] | length) + (.restack_skips // [] | length))' ;;
     unread) old='LANE_REVIEW_ROUNDS=unread' new='LANE_REVIEW_ROUNDS=0' ;;
   esac
   ROUND_WATCH="$(mutant_scripts "lane-round-$name/orch" lib/lane-gitfile.sh)/oversee-watch" || exit 1
@@ -442,10 +446,14 @@ for name in fixes skips unread; do
   mutate_file "${ROUND_WATCH%/*}/lib/lane-gitfile.sh" "$old" "$new"
   state="$COUNTS_STATE"
   expected='review_rounds=5 fix_receipts=3 validation_runs=2 restacks=4 repeated_class_rounds=1'
-  if [[ "$name" == unread ]]; then
-    state=''
-    expected='review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread'
-  fi
+  case "$name" in
+    restacks)
+      state='{"stages":[],"restacks":1}'
+      expected='review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread' ;;
+    unread)
+      state=''
+      expected='review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread' ;;
+  esac
   rounds_case "lane_round_${name}_mutant" "$state" "$ROUND_WATCH"
   if (FAIL=0; assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 $expected stage=dev round 1" round-control "$STUB_DIR/err"; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
     fail "control: $name did not redden the event count row"
