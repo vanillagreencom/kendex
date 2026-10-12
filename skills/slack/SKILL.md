@@ -40,7 +40,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
 - A package update reaches a running relay by itself: each poll fingerprints its code, and a change that holds for two polls re-executes the relay in the same process, which reads its settings again. The reload waits while the relay reconnects or holds a refused live delivery. `listen --status` shows the running code as `code=`.
 - A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing either token, restart the relay.
-- A threaded directive carries a small parent pointer, cached in the journal: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers). Read the full thread only when needed with `slack thread TS [--limit N]`.
+- A threaded directive's parent carries every thread message its reader generation has not received: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers). Read the full thread only when needed with `slack thread TS [--limit N]`.
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.
 - Settings live in the project's `kendex.settings.toml` and the two tokens, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
 
