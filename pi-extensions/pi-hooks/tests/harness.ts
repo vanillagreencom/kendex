@@ -134,16 +134,25 @@ export type SentCall = { message: SentMessage; options: Record<string, unknown> 
  * handler returns. */
 export interface Carrier {
 	sent: SentCall[];
+	/** The text of every `pi.sendUserMessage` call that returned. */
+	prompted: string[];
 	handler(event: string): ListenerHandler;
 }
 
 /** `onSend` runs after the call is recorded, for a case whose subject is a
  * channel that fails: Pi's session-bound `pi` throws once the session it was
  * captured from has been replaced. `extension` is the carrier's entry, a
- * `mutatedCarrier` copy's for a must-fail control. */
-export function installCarrier(onSend?: (message: SentMessage) => void, extension: (pi: never) => void = piHooks): Carrier {
+ * `mutatedCarrier` copy's for a must-fail control, or another entry of this
+ * package. `onPrompt` runs before a `sendUserMessage` call is recorded, so one
+ * that throws records nothing, as Pi's does. */
+export function installCarrier(
+	onSend?: (message: SentMessage) => void,
+	extension: (pi: never) => void = piHooks,
+	onPrompt?: (text: string) => void,
+): Carrier {
 	const handlers = new Map<string, ListenerHandler>();
 	const sent: SentCall[] = [];
+	const prompted: string[] = [];
 	const pi = {
 		on(event: string, cb: ListenerHandler) {
 			handlers.set(event, cb);
@@ -152,10 +161,15 @@ export function installCarrier(onSend?: (message: SentMessage) => void, extensio
 			sent.push({ message, options });
 			onSend?.(message);
 		},
+		sendUserMessage(text: string) {
+			onPrompt?.(text);
+			prompted.push(text);
+		},
 	};
 	extension(pi as never);
 	return {
 		sent,
+		prompted,
 		handler(event: string): ListenerHandler {
 			const handler = handlers.get(event);
 			if (handler === undefined) throw new Error(`the carrier registered no ${event} handler`);

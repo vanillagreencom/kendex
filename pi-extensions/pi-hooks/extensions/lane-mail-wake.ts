@@ -23,6 +23,34 @@ function watchFailed(dir: string, cause: unknown): string {
 	return `lane-mail-wake: watch-failed=${dir}\nMail that lands while this session is idle starts no turn until the session next settles.\n${String(cause)}`;
 }
 
+/** The bound on the reader's `--ack`, a cursor write under the mailbox lock. */
+const ACK_BUDGET_MS = 10_000;
+
+/**
+ * The reader's `--ack` command the judge hands back as `kendex_ack` beside the
+ * context, for a wake run, whose payload asks it to leave the acknowledgement
+ * to the caller. Anything else carries none, and its mail stays unread.
+ */
+function acknowledgement(stdout: string): string[] | undefined {
+	let output: unknown;
+	try {
+		output = JSON.parse(stdout);
+	} catch {
+		return undefined;
+	}
+	if (typeof output !== "object" || output === null || !("kendex_ack" in output)) return undefined;
+	const argv = output.kendex_ack;
+	return Array.isArray(argv) && argv.length > 0 && argv.every((word) => typeof word === "string") ? argv : undefined;
+}
+
+/**
+ * The line this module writes when the acknowledgement of mail it sent fails.
+ * The mail stays unread, so the lane-mail hooks hand it again.
+ */
+function ackFailed(cause: string, stderr: string): string {
+	return `lane-mail-wake: ack-failed=${cause}\nThe mail this wake sent stays unread, so the lane-mail hooks hand it again at the next tool call.${stderr === "" ? "" : `\n${stderr}`}`;
+}
+
 /**
  * Whether a directory stands at `dir`. Nothing there, or a file where a
  * directory above it belongs, is a directory not made yet; any other failure
@@ -50,8 +78,10 @@ function standing(dir: string): boolean {
  * hands a working lane its mail after each tool call. The wake runs that same
  * judge while the session is idle, with the lead's session fields, and starts
  * one turn through `pi.sendUserMessage`
- * with what the judge hands over; the judge marks the mail read once it has
- * written it, as after a tool call. Anything else the judge says, a refusal or
+ * with what the judge hands over. Its payload's `kendex_ack: "caller"` asks the
+ * judge to leave the mail unread and hand back the reader's `--ack` command,
+ * which the wake runs once the send returns, so a send that throws loses no
+ * mail. Anything else the judge says, a refusal or
  * a judge that did not run, starts the same turn, and a wake whose text equals
  * the last one's is not sent again, so a mailbox the judge keeps refusing, or
  * a halt the lane has not yet read, starts one turn and not one per settle.
@@ -101,25 +131,33 @@ export default function laneMailWake(pi: ExtensionAPI): void {
 		if (!getBool(readConfig(ctx.cwd, project), "enabled")) return;
 		const registry = registeredHooks(TOOL_RESULT_LISTENER, undefined, project, projectTrusted(ctx));
 		let text: string | undefined;
+		let ack: string[] | undefined;
 		if (registry.unreadable !== undefined) {
 			text = unreadableLine(TOOL_RESULT_LISTENER, registry.unreadable);
 		} else {
 			const hook = registry.hooks.find((candidate) => candidate.name === DELIVER_HOOK);
 			// No registration is kendex having installed no lane mail delivery here.
 			if (hook === undefined) return;
-			const outcome = await runHook(hook, JSON.stringify({ hook_event_name: "PostToolUse", ...claudeSessionFields(ctx) }), ctx);
+			const payload = { hook_event_name: "PostToolUse", ...claudeSessionFields(ctx), kendex_ack: "caller" };
+			const outcome = await runHook(hook, JSON.stringify(payload), ctx);
 			const result = { hook, outcome };
 			const forPerson = personLine(result);
 			if (forPerson !== undefined && ctx.hasUI) ctx.ui.notify(forPerson, "info");
 			text = agentLine(result, ctx);
+			if (outcome.ran && outcome.exitCode === 0) ack = acknowledgement(outcome.stdout);
 		}
 		if (text === undefined || text === "") {
 			lastWake = undefined;
 			return;
 		}
 		if (text === lastWake) return;
-		lastWake = text;
+		// A send that throws leaves the mail unread and this text unsent, so the next judgement hands it again.
 		pi.sendUserMessage(text, { deliverAs: "followUp" });
+		lastWake = text;
+		if (ack === undefined) return;
+		const [command, ...args] = ack;
+		const acked = await runCommandAsync(command!, args, ctx.cwd, ACK_BUDGET_MS);
+		if (acked.exitCode !== 0 || acked.stoppedBy !== null) record(ackFailed(acked.stoppedBy ?? `exit ${acked.exitCode}`, acked.stderr));
 	};
 
 	/**

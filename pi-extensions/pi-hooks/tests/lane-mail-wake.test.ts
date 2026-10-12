@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { clearPackageConfigCache } from "../extensions/package-config.ts";
-import { CONFIG_ID, projectCommand, registerRendered, runGit, useIsolatedGitEnv } from "./harness.ts";
+import { CONFIG_ID, installCarrier, projectCommand, registerRendered, runGit, trusted, useIsolatedGitEnv } from "./harness.ts";
 import { startSession } from "./pi-session.ts";
 
 /**
@@ -213,9 +213,10 @@ for (const row of rows) {
 			});
 			// Real time: the wake is a filesystem event and a spawned judge,
 			// and the bound is the interval a live monitor answers within.
-			// The judge marks the mail read before the wake's turn starts, so
-			// the read alone ends nothing: the wait holds until the turn the
-			// row expects has reached the model, or the interval is out. The
+			// The wake marks the mail read once its send returns, before the
+			// turn reaches the model, so the read alone ends nothing: the wait
+			// holds until the turn the row expects has reached the model, or
+			// the interval is out. The
 			// turn is running once the model saw it, so waitForIdle then
 			// waits for it. Only a row that expects a wake to read its mail
 			// ends early; any other waits the interval out, since only then is
@@ -290,3 +291,66 @@ test("the wake hands its judge no tool and no context window", async () => {
 		else process.env.PI_CODING_AGENT_DIR = saved;
 	}
 }, MAIL_INTERVAL_MS * 4);
+
+/**
+ * A copy of the extensions whose wake leaves the acknowledgement to its judge,
+ * the order before the wake acknowledged once its send returned: the control
+ * for a send that throws.
+ */
+function judgeAcknowledges(name: string): string {
+	const copy = join(world, `${name}-extensions`);
+	cpSync(join(PACKAGE, "extensions"), copy, { recursive: true });
+	const wake = join(copy, "lane-mail-wake.ts");
+	const source = readFileSync(wake, "utf8");
+	const ask = ', kendex_ack: "caller" };';
+	if (source.split(ask).length !== 2) throw new Error(`lane-mail-wake.ts asks for the acknowledgement ${source.split(ask).length - 1} times, not once`);
+	const mutant = source.replace(ask, " };");
+	if (mutant === source) throw new Error("the acknowledgement edit changed nothing");
+	writeFileSync(wake, mutant);
+	return wake;
+}
+
+/**
+ * A send Pi throws from, as it does for a session replaced under the
+ * extension, loses no mail. The wake runs on the stub Pi whose
+ * `sendUserMessage` throws on its first call, over the lane-mail hooks kendex
+ * renders for Pi: the directive stays unread through the throw, and the next
+ * settle hands it once and marks it read. The control's wake lets its judge
+ * mark the mail read before the send, and the throw loses it.
+ */
+for (const variant of ["wake", "judge-acknowledges"] as const) {
+	test(`a send that throws: ${variant}`, async () => {
+		const name = `send-throws-${variant}`;
+		const { lane, agentDir } = laneWorld(name, "mailbox", true);
+		const id = send(lane, "directive");
+		const entry = variant === "wake" ? join(PACKAGE, "extensions", "lane-mail-wake.ts") : judgeAcknowledges(name);
+		const { default: laneMailWake } = (await import(entry)) as { default: (pi: never) => void };
+		let throws = true;
+		const carrier = installCarrier(undefined, laneMailWake, () => {
+			if (!throws) return;
+			throws = false;
+			throw new Error("This extension ctx is stale after session replacement or reload.");
+		});
+		const ctx = trusted(lane, { hasUI: false, isIdle: () => true });
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		clearPackageConfigCache();
+		try {
+			await carrier.handler("session_start")({}, ctx);
+			await carrier.handler("agent_settled")({}, ctx);
+			const afterThrow = directiveState(lane, id);
+			await carrier.handler("agent_settled")({}, ctx);
+			const handed = carrier.prompted.filter((text) => text.includes(id)).length;
+			expect({ afterThrow, handed, state: directiveState(lane, id) }).toEqual(
+				variant === "wake"
+					? { afterThrow: "directive-unread", handed: 1, state: "directive-read" }
+					: { afterThrow: "directive-read", handed: 0, state: "directive-read" },
+			);
+		} finally {
+			await carrier.handler("session_shutdown")({}, ctx);
+			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = saved;
+			clearPackageConfigCache();
+		}
+	}, MAIL_INTERVAL_MS * 4);
+}
