@@ -2,7 +2,10 @@ import { requireApiKey } from "../utils/auth.js";
 import { requestWithin } from "../utils/deadline.js";
 import type { NormalizedExaResponse, NormalizedExaResult } from "./exa.js";
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+// Google refuses the 2.5 models to API keys created after it limited them; current models per
+// https://ai.google.dev/gemini-api/docs/deprecations.
+export const DEFAULT_GEMINI_SEARCH_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_GEMINI_VIDEO_MODEL = "gemini-3.8-flash";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export interface GeminiApiSearchParams {
@@ -79,7 +82,7 @@ export class GeminiApiClient {
 	}
 
 	async search(params: GeminiApiSearchParams, signal?: AbortSignal): Promise<NormalizedExaResponse> {
-		const model = params.model ?? DEFAULT_MODEL;
+		const model = params.model ?? DEFAULT_GEMINI_SEARCH_MODEL;
 		const body = this.buildSearchBody(params);
 		const url = `${this.baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 		const raw = await requestWithin<GenerateContentResponse>(`Gemini API ${model}:generateContent`, url, {

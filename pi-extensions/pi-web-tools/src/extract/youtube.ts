@@ -1,3 +1,4 @@
+import { DEFAULT_GEMINI_VIDEO_MODEL } from "../providers/gemini-api.js";
 import { GeminiWebClient } from "../providers/gemini-web.js";
 import { readBrowserCookies, type ReadCookiesOptions } from "../utils/browser-cookies.js";
 import { DEFAULT_DEADLINE_MS, requestWithin, withDeadline } from "../utils/deadline.js";
@@ -197,7 +198,7 @@ async function tryGeminiWeb(parsed: ParsedYouTubeUrl, options: YouTubeExtractOpt
 
 async function tryGeminiApi(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult | undefined> {
 	if (!options.geminiApiKey) return undefined;
-	const model = options.geminiModel ?? "gemini-2.5-flash";
+	const model = options.geminiModel ?? DEFAULT_GEMINI_VIDEO_MODEL;
 	const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(options.geminiApiKey)}`;
 	const body = {
 		contents: [{ role: "user", parts: [{ fileData: { fileUri: parsed.canonicalUrl, mimeType: "video/mp4" } }, { text: enhancePrompt(options.prompt, options.mode) }] }],

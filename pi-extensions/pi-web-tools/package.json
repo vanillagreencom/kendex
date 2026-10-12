@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-web-tools",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "First-party Pi web tools: provider-toggled web search, Exa deep research, content retrieval, and OpenAI native web_search integration.",
   "type": "module",
   "keywords": [
@@ -81,6 +81,15 @@
           "description": "Comma-separated provider allow-list: exa,perplexity,gemini,exa-mcp,duckduckgo,openai-native.",
           "type": "string",
           "default": "exa,perplexity,gemini,exa-mcp,duckduckgo,openai-native",
+          "category": "Providers",
+          "apply": "live"
+        },
+        {
+          "key": "geminiSearchModel",
+          "label": "Gemini search model",
+          "description": "Gemini API model the gemini web_search provider asks. It must support Grounding with Google Search.",
+          "type": "string",
+          "default": "gemini-3.5-flash-lite",
           "category": "Providers",
           "apply": "live"
         },
@@ -187,6 +196,15 @@
           "category": "Content",
           "apply": "reload",
           "requiresReload": true
+        },
+        {
+          "key": "video.geminiModel",
+          "label": "Gemini video model",
+          "description": "Gemini API model for YouTube and local video understanding.",
+          "type": "string",
+          "default": "gemini-3.8-flash",
+          "category": "Content",
+          "apply": "live"
         }
       ]
     }

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import { DEFAULT_GEMINI_SEARCH_MODEL, DEFAULT_GEMINI_VIDEO_MODEL } from "./providers/gemini-api.js";
 import { expandHome, packageConfigIn, piSettingsPaths, projectSettingsTrustedForCwd, readSettingsFiles, settingsMemo, type SettingsRecord } from "./package-config.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
@@ -17,6 +18,7 @@ export interface WebToolsSettings {
 	autoEnable: boolean;
 	defaultProvider: WebProvider;
 	enabledProviders: ResolvedWebProvider[];
+	geminiSearchModel: string;
 	nativeOpenAiWebSearch: boolean;
 	openAiExternalWebAccess: boolean;
 	exaDeepResearchEnabled: boolean;
@@ -28,7 +30,7 @@ export interface WebToolsSettings {
 	htmlExtraction: { jinaFallback: boolean };
 	pdfOcr: { enabled: boolean; maxPages: number; dpi: number };
 	browserCookies: { preferredBrowser: "auto" | "firefox" | "zen" | "chrome" | "chromium"; profile?: string };
-	video: { enabled: boolean };
+	video: { enabled: boolean; geminiModel: string };
 	apiKeys: Partial<Record<Exclude<ResolvedWebProvider, "exa-mcp" | "duckduckgo"> | "openai" | "jina", string>>;
 	privateConfigFile?: string;
 	warnings: string[];
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: Omit<WebToolsSettings, "apiKeys" | "warnings" | "
 	autoEnable: true,
 	defaultProvider: "auto",
 	enabledProviders: ["exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"],
+	geminiSearchModel: DEFAULT_GEMINI_SEARCH_MODEL,
 	nativeOpenAiWebSearch: true,
 	openAiExternalWebAccess: true,
 	exaDeepResearchEnabled: true,
@@ -51,7 +54,7 @@ export const DEFAULT_SETTINGS: Omit<WebToolsSettings, "apiKeys" | "warnings" | "
 	htmlExtraction: { jinaFallback: true },
 	pdfOcr: { enabled: true, maxPages: 5, dpi: 150 },
 	browserCookies: { preferredBrowser: "auto" },
-	video: { enabled: true },
+	video: { enabled: true, geminiModel: DEFAULT_GEMINI_VIDEO_MODEL },
 };
 
 function asRecord(value: unknown): SettingsRecord | undefined {
@@ -335,6 +338,7 @@ function resolveSettings(inputs: SettingsInputs, resolution: Resolution): WebToo
 		autoEnable: boolSetting(raw, "autoEnable"),
 		defaultProvider: providerSetting(raw),
 		enabledProviders: enabledProvidersSetting(raw),
+		geminiSearchModel: stringSetting(raw, "geminiSearchModel", DEFAULT_SETTINGS.geminiSearchModel),
 		nativeOpenAiWebSearch: boolSetting(raw, "nativeOpenAiWebSearch"),
 		openAiExternalWebAccess: boolSetting(raw, "openAiExternalWebAccess"),
 		exaDeepResearchEnabled: boolSetting(raw, "exaDeepResearchEnabled"),
@@ -360,7 +364,10 @@ function resolveSettings(inputs: SettingsInputs, resolution: Resolution): WebToo
 			preferredBrowser: (["auto", "firefox", "zen", "chrome", "chromium"] as const).includes((browserCookies.preferredBrowser as any)) ? (browserCookies.preferredBrowser as any) : DEFAULT_SETTINGS.browserCookies.preferredBrowser,
 			profile: typeof browserCookies.profile === "string" && browserCookies.profile.trim() ? browserCookies.profile.trim() : undefined,
 		},
-		video: { enabled: typeof video.enabled === "boolean" ? video.enabled : DEFAULT_SETTINGS.video.enabled },
+		video: {
+			enabled: typeof video.enabled === "boolean" ? video.enabled : DEFAULT_SETTINGS.video.enabled,
+			geminiModel: stringSetting(video, "geminiModel", DEFAULT_SETTINGS.video.geminiModel),
+		},
 		apiKeys: {
 			exa: resolveSecretRef(exaKey, "EXA_API_KEY", resolution),
 			perplexity: resolveSecretRef(perplexityKey, "PERPLEXITY_API_KEY", resolution),

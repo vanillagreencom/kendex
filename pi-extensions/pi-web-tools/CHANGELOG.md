@@ -2,8 +2,10 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 4.2.0
 
+- The Gemini API requests default to `gemini-3.5-flash-lite` for the `gemini` `web_search` provider and `gemini-3.8-flash` for YouTube and local video understanding. Google refuses `gemini-2.5-flash`, the old default, to API keys created after it limited the 2.5 models, so every request from a new key failed with `404 NOT_FOUND`.
+- New settings `geminiSearchModel` and `video.geminiModel` choose those two models.
 - The `web_research` `contextGlob` description names `tmp/plans/research/ISSUE/context-*.md` as its example, the directory the project-management research workflows write context files to, instead of `docs/research/ISSUE/context-*.md`.
 
 ### 4.1.0

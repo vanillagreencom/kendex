@@ -12,6 +12,8 @@ for (const { key, expected } of [
 	{ key: "enabledProviders", expected: DEFAULT_SETTINGS.enabledProviders.join(",") },
 	{ key: "nativeOpenAiWebSearch", expected: DEFAULT_SETTINGS.nativeOpenAiWebSearch },
 	{ key: "githubClone.enabled", expected: DEFAULT_SETTINGS.githubClone.enabled },
+	{ key: "geminiSearchModel", expected: DEFAULT_SETTINGS.geminiSearchModel },
+	{ key: "video.geminiModel", expected: DEFAULT_SETTINGS.video.geminiModel },
 ]) {
 	test(`manifest default: ${key}`, () => assert.equal(defaults[key], expected));
 }

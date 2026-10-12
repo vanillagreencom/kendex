@@ -561,7 +561,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 						if (isLocalFileInput(url)) {
 							const localPath = resolveLocalFilePath(ctx.cwd, url);
 							if (settings.video.enabled && isLocalVideoPath(localPath)) {
-								const video = await extractLocalVideo(localPath, { prompt: params.prompt, geminiApiKey: settings.apiKeys.gemini, signal });
+								const video = await extractLocalVideo(localPath, { prompt: params.prompt, geminiApiKey: settings.apiKeys.gemini, geminiModel: settings.video.geminiModel, signal });
 								stored.push(storeWebContent(pi, { title: video.title, url: pathToFileURL(localPath).href, content: video.content, metadata: { tool: name, localPath, ...video.metadata } }));
 								continue;
 							}
@@ -582,7 +582,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 						const youtube = settings.video.enabled ? parseYouTubeUrl(url) : undefined;
 						if (youtube) {
 							youtubeExtractionAttempted = true;
-							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, browserCookies: settings.browserCookieAccess ? { pi, preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile } : undefined, signal });
+							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, geminiModel: settings.video.geminiModel, browserCookies: settings.browserCookieAccess ? { pi, preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile } : undefined, signal });
 							if (yt) {
 								stored.push(storeWebContent(pi, { title: yt.title, url: yt.url, content: yt.content, metadata: { tool: name, ...yt.metadata } }));
 								continue;

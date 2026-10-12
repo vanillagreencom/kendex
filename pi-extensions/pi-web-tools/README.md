@@ -66,6 +66,7 @@ Open `/extensions:settings`; settings appear under the **Web Tools** tab. Projec
 
 - `enabled`, `autoEnable`: the package and whether its tools join the active set on their own.
 - `defaultProvider`, `enabledProviders`: which provider answers `web_search` and which are allowed at all.
+- `geminiSearchModel`, `video.geminiModel`: the Gemini API models for the `gemini` provider of `web_search` (default `gemini-3.5-flash-lite`) and for YouTube and local video understanding in `web_fetch` (default `gemini-3.8-flash`).
 - `nativeOpenAiWebSearch`, `openAiExternalWebAccess`: the native OpenAI rewrite.
 - `exaDeepResearchEnabled`, `exaResearchModes`, `exaAdvancedEnabled`: `web_research`, its per-mode overrides, and the advanced Exa tools. `exaAdvancedEnabled` stays off because it adds three tools to every session's tool list, and each call is billed to the user's Exa key.
 - `htmlExtraction.jinaFallback`, `githubClone.enabled`, `githubClone.maxRepoSizeMB`, `video.enabled`, `browserCookieAccess`: the fetch paths. Browser cookies are read only with `browserCookieAccess` on, for the Gemini Web provider of `web_search` and for YouTube understanding in `web_fetch`; with it off, YouTube understanding uses `GEMINI_API_KEY`. It stays off because it reads the user's browser sign-in cookies, which only the user can allow.

@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { DEFAULT_GEMINI_VIDEO_MODEL } from "../providers/gemini-api.js";
 import { requestWithin } from "../utils/deadline.js";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".mpg", ".mpeg", ".wmv", ".flv"]);
@@ -95,7 +96,7 @@ export async function extractLocalVideo(filePath: string, options: LocalVideoExt
 	const limit = (options.maxSizeMB ?? 50) * 1024 * 1024;
 	if (info.size > limit) throw new Error(`Video too large (${Math.round(info.size / (1024 * 1024))}MB > ${options.maxSizeMB ?? 50}MB).`);
 	const { uri, mimeType } = await uploadVideoToGemini(filePath, options.geminiApiKey, options);
-	const model = options.geminiModel ?? "gemini-2.5-flash";
+	const model = options.geminiModel ?? DEFAULT_GEMINI_VIDEO_MODEL;
 	const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(options.geminiApiKey)}`;
 	const body = { contents: [{ role: "user", parts: [{ fileData: { fileUri: uri, mimeType } }, { text: enhancePrompt(options.prompt) }] }] };
 	const raw = await requestWithin<any>(`Gemini API ${model} local video analysis`, url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, options);
