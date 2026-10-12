@@ -380,7 +380,7 @@ ASK_TO_OWNER="$ASK"
 lm resolve --item overseer --id "$ASK_TO_OWNER" --text "$(text a 'a')"
 RESOLUTION="$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | .id')"
 # A peer ask leaves the asker's own record in this mailbox with `to: peer`,
-# which resolve closes no more than it closes this overseer's own notice; the
+# which resolve can close explicitly; the
 # peer's ask the other way lands in to-lane.jsonl beside the owner's notes.
 REFUSALS="$LANE"
 new_repo peer
@@ -443,7 +443,7 @@ resolve --item overseer --default|2=lane-mail: option-required=--id
 resolve --item overseer --id x|2=lane-mail: ask-unknown=x
 resolve --item overseer --id x --default --text $F|2=lane-mail: option-conflict=--text,--default
 resolve --item overseer --id 1790000000-1-1 --default|2=lane-mail: ask-unknown=1790000000-1-1
-resolve --item overseer --id $PEER_ASK --text $F|2=lane-mail: ask-unknown=$PEER_ASK
+resolve --item overseer --id $PEER_ASK --text $F|2=lane-mail: option-conflict=$PEER_ASK
 resolve --item overseer --id $NOTE_TO_OWNER --text $F|2=lane-mail: ask-unknown=$NOTE_TO_OWNER
 drain --item overseer --after 0 --to owner|2=lane-mail: option-unknown=--to
 inbox --item overseer --due|2=lane-mail: option-unknown=--due
@@ -675,6 +675,30 @@ lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "the answered reserved ask is no longer pending"
 
 # --- resolve, exactly once ----------------------------------------------------
+new_repo resolve_nonowner
+owner_ask 'Still open?' yes,no yes
+OPEN_OWNER="$ASK"
+for audience in peer legacy; do
+  jq -cn --arg id "$audience" --arg to "$audience" '{id:$id,kind:"ask",at:"2000-01-01T00:00:00Z"}
+    + (if $to == "peer" then {to:$to} else {} end)' >> "$BOX/to-overseer.jsonl"
+  for option in text default; do
+    args=(--default)
+    [ "$option" != text ] || args=(--text "$(text a 'closed')")
+    lm resolve --item overseer --id "$audience" "${args[@]}"
+    assert_eq "$RC=$ERR" "2=lane-mail: option-conflict=$audience" "$audience: owner answer options refuse"
+  done
+  lm send --item overseer --re "$audience" --file "$(text a 'answer')"
+  assert_eq "$RC=$ERR" "2=lane-mail: ask-unknown=$audience" "$audience: owner send still refuses"
+  lm resolve --item overseer --id "$audience"
+  assert_eq "$RC" 0 "$audience: explicit resolve succeeds"
+  assert_eq "$(field "$BOX/to-lane.jsonl" 'select(.re == "'"$audience"'") | [.kind,.by] | join(" ")')" \
+    'resolution explicit' "$audience: one explicit close and no owner answer"
+  lm resolve --item overseer --id "$audience"
+  assert_eq "$RC=${ERR%% id=*}" "2=lane-mail: resolved-already=$audience" "$audience: second close refuses"
+done
+lm pending --item overseer
+assert_eq "$RC=$(jq -r .id <<<"$OUT")" "0=$OPEN_OWNER" 'pending omits both explicit closes and keeps the owner ask'
+
 new_repo resolve
 owner_ask 'Cut the scanner?' cut,keep cut 0
 lm resolve --item overseer --id "$ASK" --default
@@ -865,6 +889,28 @@ mutant_reader() {
 }
 
 new_repo control_progress_ref
+for audience in peer legacy; do
+  new_repo "control_resolve_$audience"
+  mkdir -p "$BOX"
+  jq -cn --arg to "$audience" '{id:"nonowner",kind:"ask",at:"2000-01-01T00:00:00Z"}
+    + (if $to == "peer" then {to:$to} else {} end)' > "$BOX/to-overseer.jsonl"
+  mutant "resolve-owner-only-$audience" '$verb == "resolve" or (.to // "") == $to' '(.to // "") == $to'
+  lm resolve --item overseer --id nonowner
+  assert_eq "$RC=$ERR" '2=lane-mail: ask-unknown=nonowner' "$audience control: old lookup refuses explicit close"
+  LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id nonowner
+  mutant_reader "pending-answer-only-$audience" '$closed + $answered' '$answered'
+  lm pending --item overseer
+  assert_eq "$RC=$(jq -r .id <<<"$OUT")" '0=nonowner' "$audience control: old pending filter keeps closed ask"
+  jq -cn --arg to "$audience" '{id:"unguarded",kind:"ask",at:"2000-01-01T00:00:00Z"}
+    + (if $to == "peer" then {to:$to} else {} end)' >> "$BOX/to-overseer.jsonl"
+  mutant "owner-options-$audience" '[ "$ASK_TO" = owner ] || refuse option-conflict "$MSGID"' ':'
+  lm resolve --item overseer --id unguarded --default
+  assert_eq "$RC=$ERR" '2=lane-mail: recommend-missing=unguarded' "$audience control: default bypasses owner restriction"
+  lm resolve --item overseer --id unguarded --text "$(text a 'owner')"
+  assert_eq "$RC" 0 "$audience control: text bypasses owner restriction"
+done
+LANE_MAIL_BIN="$LANE_MAIL"
+new_repo control_progress_ref
 mutant progress-ref-optional '[ -n "$REF" ] || refuse progress-needs-ref --progress' ': '\''[ -n "$REF" ] || refuse progress-needs-ref --progress'\'''
 lm notice --item overseer --to owner --progress --file "$(text n 'Step..')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.progress')" "0=true" \
@@ -968,7 +1014,7 @@ assert_eq "$RC" "0" "control: bypassing the answer close guard admits a reply af
 new_repo control_answer_pending
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --re "$ASK" --delivery-id first:reply --file "$(text a 'b')"
-mutant_reader answer-closes-pending 'if .to == "owner" then $closed else $answered end' 'if .to == "owner" then $answered else $answered end'
+mutant_reader answer-closes-pending 'if .to == "owner" then $closed else $closed + $answered end' 'if .to == "owner" then $answered else $answered end'
 lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "control: pending drops an answered ask when it judges answers as closes"
 

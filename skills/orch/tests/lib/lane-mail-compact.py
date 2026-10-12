@@ -269,6 +269,28 @@ class Compaction(unittest.TestCase):
                         with self.assertRaises(AssertionError):
                             self.assertEqual(retained, expected)
 
+    def nonowner_closed(self, scripts):
+        for audience in ({"to": "peer"}, {}):
+            repo, box = self.world()
+            self.rows(box, "to-overseer", [
+                {"id": name, "kind": "ask", "at": OLD, **audience}
+                for name in ("closed", "open")])
+            self.rows(box, "to-lane", [
+                {"id": "close", "kind": "resolution", "by": "explicit", "re": "closed", "at": OLD}])
+            self.run_cli(repo, "inbox", scripts=scripts)
+            self.run_cli(repo, "compact", scripts=scripts)
+            retained = [json.loads(row)["id"] for row in
+                        (box / "to-overseer.jsonl").read_text().splitlines()]
+            self.assertEqual(retained, ["open"])
+            self.assertEqual((box / "to-lane.jsonl").read_text(), "")
+
+    def test_nonowner_closed(self):
+        self.nonowner_closed(SCRIPTS)
+        mutant = self.mutant("nonowner-answer-only", "lib/lane-mail-store.py",
+                             'else owner_closed | answers', 'else answers')
+        with self.assertRaises(AssertionError):
+            self.nonowner_closed(mutant)
+
     def peer_exchange(self, scripts):
         requester, requester_box = self.world()
         receiver, receiver_box = self.world()

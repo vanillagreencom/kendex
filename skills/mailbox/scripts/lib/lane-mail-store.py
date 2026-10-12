@@ -47,7 +47,7 @@ def objects($box):
       + [$over[] | select($in.after == "" or .line > $after) | .envelope | . as $envelope
         | select($in.verb == "drain" or .kind == "ask")
         | select(.kind != "ask" or
-          ((if .to == "owner" then $closed else $answered end) | index($envelope.id) | not))
+          ((if .to == "owner" then $closed else $closed + $answered end) | index($envelope.id) | not))
         | select($in.to == "" or .to == $in.to)
         | select($in.due == false or (.reserved != true and
           ((.deadline // "" | at_epoch) as $d | $d != null and $d <= now))) | tojson]
@@ -246,7 +246,7 @@ def plan(box, dest, cutoff, seen, jq_defs):
             unread = b == 1 and boxes[b][1][i] > seen
             open_ask = obj and obj.get("kind") == "ask" and (
                 not isinstance(obj.get("id"), str) or obj["id"] not in (
-                    owner_closed if obj.get("to") == "owner" else answers))
+                    owner_closed if obj.get("to") == "owner" else owner_closed | answers))
             retain = at is None or at >= cutoff or unread or open_ask
             selected.append(retain)
             if obj:
