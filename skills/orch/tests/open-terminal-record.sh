@@ -1071,8 +1071,8 @@ assert_eq "handed=$(grep -c '^open-terminal: lane-preparing item=CC-88 ' <<<"$OU
 # home of the suite's own, and
 # the provider below plants that slot as create runs, so create is admitted
 # and the launch's next host call is the one refused; under BUSY_PLANT_ON it
-# plants it as that verb runs instead, the capabilities read every launch makes
-# first, so create is the call refused.
+# plants it as that verb runs instead. An uncached capabilities read runs
+# before create, so create is the call refused.
 BUSY_HOME="$TMP_ROOT/busy-home"
 BUSY_SLOTS="$BUSY_HOME/.cache/orch/lane-host-slots"
 mkdir -p "$BUSY_SLOTS/short"
@@ -1089,6 +1089,9 @@ chmod +x "$BUSY_HOST"
 busy_hand_off() {
   local item="$1"
   shift
+  # Each row needs the provider's slot plant, including on capabilities.
+  # A size change makes the row independent of an earlier stored reply.
+  printf '# busy fixture row\n' >> "$BUSY_HOST"
   HOME="$BUSY_HOME" HOST_STUB="$BUSY_HOST" hand_off "$item" ORCH_LANE_HOST_MAX_CALLS=1 ORCH_LANE_HOST_BUSY_WAIT_SECS=0 ORCH_LANE_HOST_SHORT_MAX_CALLS=1 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0 "$@"
 }
 # A background job exists to wait for its host: a wait refused at the cap is

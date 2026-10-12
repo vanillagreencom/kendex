@@ -234,8 +234,8 @@ CAPABILITY_CONTROL_ROOT="$(cd -- "$CAPABILITY_CONTROL_ROOT" && pwd -P)" || { ech
 trap 'rm -rf -- "${TMP_ROOT:?}" "${CAPABILITY_CONTROL_ROOT:?}"' EXIT
 CONTROL="$(TMP_ROOT="$CAPABILITY_CONTROL_ROOT" mutant_scripts capability-cost lib/lane-capabilities.sh)"
 mutate_file "$CONTROL/lib/lane-capabilities.sh" \
-  'LANE_CAPABILITIES="$(lane_capabilities_answer "$@")"' \
-  'LANE_CAPABILITIES="$(cd -- "${3:-.}" && ORCH_LANE_HOST="$2" "$1" capabilities)" # LANE_CAPABILITIES="$(lane_capabilities_answer "$@")"'
+  'LANE_CAPABILITIES="$(lane_capabilities_answer "$1" "$2" "${3:-.}")"' \
+  'LANE_CAPABILITIES="$(cd -- "${3:-.}" && ORCH_LANE_HOST="$2" "$1" capabilities)" # LANE_CAPABILITIES="$(lane_capabilities_answer "$1" "$2" "${3:-.}")"'
 capability_pick "$CONTROL/lanes"
 assert_eq "$RC" 0 'base-reader control reaches the chooser' "$TMP_ROOT/capability.err"
 assert_eq "$CAPABILITY_STARTS" 1 'base-reader control starts the capability provider once'

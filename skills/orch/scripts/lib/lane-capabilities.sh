@@ -13,7 +13,7 @@
 # lane-host's status, its words already on stderr.
 LANE_CAPABILITIES=""
 lane_capabilities_read() { # LANE_HOST_CLI HOST [DIR]
-  LANE_CAPABILITIES="$(lane_capabilities_answer "$@")"
+  LANE_CAPABILITIES="$(lane_capabilities_answer "$1" "$2" "${3:-.}")"
 }
 
 # The provider interpreter is unnecessary while its file stays unchanged.
