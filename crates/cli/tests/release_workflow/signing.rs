@@ -365,7 +365,7 @@ fn the_step_signs_under_the_release_key() {
     assert!(lines.contains("tools/release-digests"), "{lines}");
 }
 
-fn signing_env_uses_repository_secrets(workflow: &str) -> bool {
+fn signing_env_uses_workflow_secrets(workflow: &str) -> bool {
     let mut key = false;
     let mut password = false;
     for line in workflow.lines() {
@@ -385,11 +385,11 @@ fn signing_env_uses_repository_secrets(workflow: &str) -> bool {
 }
 
 #[test]
-fn every_tauri_signing_env_value_comes_from_its_repository_secret() {
+fn every_tauri_signing_env_value_comes_from_its_workflow_secret() {
     let workflow = workflow();
-    assert!(signing_env_uses_repository_secrets(&workflow));
+    assert!(signing_env_uses_workflow_secrets(&workflow));
     let wrong_source = format!("{workflow}\nTAURI_SIGNING_PRIVATE_KEY: ${{{{ env.KEY }}}}\n");
-    assert!(!signing_env_uses_repository_secrets(&wrong_source));
+    assert!(!signing_env_uses_workflow_secrets(&wrong_source));
 }
 
 #[test]

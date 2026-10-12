@@ -66,7 +66,7 @@ Each completed `main` build publishes all assets under an immutable `main-build-
 
 The release build, publish and channel jobs use the `kendex` environment. It admits only `main`. Store release signing secrets there. A release dispatch runs the reviewed main workflow even when it builds an earlier merged commit. Confirm the job token can create the requested version tag before release use. If GitHub refuses creation, stop and report that permission failure to the owner. Keep the environment main-only.
 
-The `TAURI_SIGNING_*` pair and the `APPLE_*` secrets are repository secrets that only `release.yml` reads. No release step reads them on a machine. No machine needs to hold them for a release.
+The `TAURI_SIGNING_*` pair and the `APPLE_*` secrets are held in this repository's main-only `kendex` environment. Only `release.yml` reads them. No release step reads them on a machine. No machine needs to hold them for a release.
 
 For a signed local bundle, follow [DEVELOPMENT.md § Packaging](../../../DEVELOPMENT.md#packaging): the project's private env file holds `op://` references, and `op run` resolves them for that command only. The login environment (`~/.config/environment.d`, a shell profile, or `systemctl --user set-environment`) is not a supported source for a signing secret: any process that prints its environment prints the secret. A literal signing key in the private env file is not supported: every skill script loads that file.
 
