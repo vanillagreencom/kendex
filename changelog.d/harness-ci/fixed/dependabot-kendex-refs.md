@@ -1,0 +1,1 @@
+- The Dependabot wiring guide ignores kendex workflow and action refs so the kendex refresh route owns their updates.

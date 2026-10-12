@@ -23,7 +23,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "vanillagreencom/kendex*"
 ```
+
+The kendex refresh route owns kendex's workflow and action refs.
 
 [GitHub's Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference) define the configuration.
 
