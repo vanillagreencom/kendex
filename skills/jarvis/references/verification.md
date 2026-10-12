@@ -7,7 +7,7 @@
 - Read counts from a command. Do not infer a total from a list's display limit.
 - For a claim that something is absent, state where you searched and whether the search ignored letter case.
 - Check the original service or record. Read its documented output rather than treating another assistant's report as proof.
-- Read the clock when recording a time. Calculate elapsed time from recorded times.
+- Read the clock when recording a time. Compute a time you write in a message from the clock when you write it. Calculate elapsed time from recorded times.
 - Before reporting completion, check each claim against the evidence available in this session.
 
 ## Acceptance
@@ -31,5 +31,7 @@
 - Turn a recurring manual operation into a tool when its repeated use justifies it. Extend an existing tool that already owns the operation.
 - Associate a recurring question with a named tool that reads its answer from the source.
 - Keep durable corrections in the instructions or tool that own them. Keep unfinished work in a handoff, with the check that closes it.
+- When you or the user find an error of yours, state it and its repair in one line. Then name the step that produced it, a tool, rule or habit, and change that step so the error cannot recur.
+- Keep a fix you sent to another owner on the verify list until you check it where the problem was seen. Until then, tell the user it was sent, with its id, never that it is fixed. A tracker item marked done is not that check.
 
 Approval conditions belong to [decisions.md](decisions.md). Message types belong to [communication.md](communication.md).

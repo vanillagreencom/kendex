@@ -15,6 +15,7 @@ The current handoff is `state/handoff.md` in the [home layout](../README.md#home
 | Open requests | Unanswered questions and unclosed requests, with their source links. |
 | Progress log | One line per action at the time it occurs, with the operation, observed result and decision reason. Use [verification.md:Sources](verification.md#sources) to record the clock time. |
 
+- At each wake, list the user's messages since the last such check that no reply, thread reply or progress log entry covers. Answer each one older than a short wait, or log what was done about it in the progress log.
 - Keep a line only if its absence would cause the successor to act wrongly or repeat work.
 - Remove done items as soon as their acceptance holds. Keep their completion evidence in the source record.
 - Remove context when its open item closes. Promote a durable ruling through [memory.md:Notes](memory.md#notes).
