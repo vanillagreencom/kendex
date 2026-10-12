@@ -84,20 +84,34 @@ copilot_account 1copilot "$(pool 1000000 900000 '{"credits_used":318085}')"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
 # Equal resets keep the chooser row focused on unlimited room, not its bonus.
-copilot_account 4copilot '{"quota_reset_date_utc":"2099-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
-copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100}}}'
+copilot_account 4copilot '{"quota_reset_date_utc":"2099-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true,"credits_used":42}}}'
+copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100,"credits_used":7}}}'
 copilot_account 6copilot "$(pool 0 0)"
 copilot_account 7copilot '{"quota_snapshots":{"premium_interactions":{"entitlement":"1000000","remaining":900000}}}'
 copilot_account 8copilot '{"quota_snapshots":{}}'
 copilot_account 9copilot "$(pool 1000 -500)"
 copilot_account 10copilot "$(pool 1000 1200)"
+copilot_account 11copilot "$(pool 1000000 900000 '{"credits_used":318085.5}')"
+copilot_account 12copilot "$(pool 1000000 900000 '{"credits_used":0}')"
+copilot_account 13copilot "$(pool 1000000 900000 '{"credits_used":"318085"}')"
+copilot_account 14copilot "$(pool 1000000 900000)"
+printf '403\n' > "$FIXTURE_DIR/.14copilot.status"
 mkdir -p "$H/.0copilot/session-state"
-run_lanes list --harness copilot --local --json
+run_lanes list --harness all --local --json
 while IFS='|' read -r label alias field want; do
   assert_eq "$(record "$alias" "$field")" "$want" "$label"
 done <<'ROWS'
 a pool with room binds the monthly bucket, used share from remaining over entitlement|1copilot|[.status, .monthly_pct, .headroom_pct, .binding_bucket, .binding_resets_at]|["ok",10,90,"monthly","2099-10-01T00:00:00Z"]
 the plan is the endpoint's own|1copilot|.plan|"business"
+raw month consumption differs from the pool used to judge room|1copilot|[.credits_used, .credits.used, .monthly_pct]|[318085,100000,10]
+raw month consumption keeps fractional credits|11copilot|[.credits_used, .credits.used, .monthly_pct]|[318085.5,100000,10]
+an explicit raw zero stays zero|12copilot|[.credits_used, .credits.used, .monthly_pct]|[0,100000,10]
+a mistyped raw number stays unavailable|13copilot|[has("credits_used"), .credits_used]|[true,null]
+an absent raw number stays unavailable|8copilot|[has("credits_used"), .credits_used]|[true,null]
+an unavailable usage read has no raw number|14copilot|[.status, has("credits_used"), .credits_used]|["refused",true,null]
+an account with no login has no raw number|0copilot|[.status, has("credits_used"), .credits_used]|["no_credentials",true,null]
+an unlimited seat keeps its raw month consumption|4copilot|[.credits_used, .monthly_pct]|[42,0]
+raw month consumption needs no measured pool|5copilot|[.credits_used, .status, .monthly_pct]|[7,"no_usage_data",null]
 a pool at zero is spent whatever overage it permits|2copilot|[.monthly_pct, .headroom_pct, .credits.overage_permitted]|[100,0,true]
 one credit left rounds up to a spent share|3copilot|.monthly_pct|100
 an explicit unlimited seat is a monthly pool at 0 percent used|4copilot|[.status, .unlimited, .monthly_pct, .headroom_pct, .binding_bucket, .credits.unit, .credits.unlimited]|["ok",true,0,100,"monthly","AIC",true]
@@ -216,8 +230,8 @@ rm -f -- "${H:?}/.1copilot/config.json"
 ROW_ENV=(ORCH_LANE_COPILOT_POOL="$H/.1copilot=250/1000")
 run_lanes pick --lane "$H/.1copilot" --harness copilot --json
 ROW_ENV=()
-assert_eq "$(jq -c '[.status, .measured_through, .monthly_pct, (.credits | del(.measured_at))]' <<<"$OUT" 2>/dev/null || echo unparseable)" \
-  '["ok","stated",25,{"unit":"AIC","unlimited":false,"used":250,"granted":1000,"remaining":750}]' \
+assert_eq "$(jq -c '[.status, .measured_through, .monthly_pct, .credits_used, (.credits | del(.measured_at))]' <<<"$OUT" 2>/dev/null || echo unparseable)" \
+  '["ok","stated",25,null,{"unit":"AIC","unlimited":false,"used":250,"granted":1000,"remaining":750}]' \
   "an account whose login does not read takes its stated reading as the fallback"
 # measure_copilot_pool refuses an override entry nothing can read, the named
 # Copilot form's one guard for it; its control reads the entry as no reading.
@@ -448,6 +462,15 @@ lanes_control ctl-limit lib/copilot-credits.sh '($remaining != null and $granted
 control_row 6copilot '[.status, .monthly_pct]' '["ok",100]' "control: without the entitlement bound a zero grant reads as a measured pool"
 lanes_control ctl-used lib/copilot-credits.sh 'used: ($granted - $remaining),' 'used: (($q.credits_used | numbers) // null),'
 control_row 1copilot .credits.used 318085 "control: used read from the endpoint's credits_used is not the pool the share is judged from"
+lanes_control ctl-raw-month lib/copilot-credits.sh 'credits_used: (($q.credits_used | numbers) // null),' 'credits_used: ($granted - $remaining),'
+run_lanes list --harness all --local --json
+raw_control_rc=0
+(
+  FAIL=0
+  assert_eq "$(record 1copilot '[.credits_used, .credits.used, .monthly_pct]')" '[318085,100000,10]' "raw month consumption differs from the pool used to judge room"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/raw-month-control.log" 2>&1 || raw_control_rc=$?
+assert_eq "$raw_control_rc" 1 "control: the raw month consumption test rejects a derived figure"
 lanes_control ctl-bind lanes '[{k: "monthly", p: $b.monthly_pct}, ' '['
 control_row 2copilot .binding_bucket null "control: without the monthly bucket in the binding a Copilot pool binds nothing"
 lanes_control ctl-walled-harness lanes 'if .harness == "codex" and .credits != null then' 'if .credits != null then'

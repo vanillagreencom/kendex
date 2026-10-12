@@ -2480,6 +2480,7 @@ emit_lane() {
 		             then "authenticated, but the usage response carried no session/weekly/monthly window"
 		             elif $detail == "" then null else $detail end)
 		  }
+		| . + (if $harness == "copilot" then {credits_used: ($b.credits_used // null)} else {} end)
 		| with_lane_binding(""; false)'
 }
 

@@ -203,7 +203,7 @@ CURLCFG
 }
 
 # copilot_credits_parse < BODY — the pool one endpoint body answers, as the
-# buckets `lanes` records: `monthly_pct`, `unlimited`, `credits` (the counts,
+# buckets `lanes` records: `monthly_pct`, `credits_used`, `unlimited`, `credits` (the counts,
 # ../../schemas/copilot-credits.md), `plan` and `resets.monthly`, null where
 # the body measured nothing.
 copilot_credits_parse() {
@@ -223,6 +223,7 @@ copilot_credits_parse() {
           elif test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") then . else null end) // null) as $reset
     | {
         monthly_pct: $pct,
+        credits_used: (($q.credits_used | numbers) // null),
         unlimited: $unlimited,
         credits: (if $unlimited then {unit: "AIC", unlimited: true}
                   elif $counted then {unit: "AIC", unlimited: false,
