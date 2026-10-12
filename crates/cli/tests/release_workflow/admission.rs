@@ -800,10 +800,17 @@ fn check_admission_declarations(release: &str, aur: &str) {
         declaration(&job(release, "publish"), "needs").as_deref(),
         Some("[prepare, build]")
     );
-    let build = job(release, "build").join("\n");
-    assert!(build.contains("ref: ${{ needs.prepare.outputs.source-commit }}"));
-    let channel = job(release, "channel").join("\n");
-    assert!(channel.contains("ref: ${{ github.sha }}"));
+    for (name, expected) in [
+        ("build", "${{ needs.prepare.outputs.source-commit }}"),
+        ("channel", "${{ github.sha }}"),
+    ] {
+        let owner = job(release, name).join("\n");
+        let checkout = step(&owner, "uses: actions/checkout@v4");
+        let active_ref = checkout
+            .iter()
+            .find_map(|line| line.strip_prefix("          ref: "));
+        assert_eq!(active_ref, Some(expected), "{name}");
+    }
     let publish = step(release, "uses: softprops/action-gh-release@v2");
     assert!(
         publish
@@ -842,6 +849,36 @@ fn workflow_declarations_bind_signing_and_publication_to_prepared_main_runs() {
         assert!(
             std::panic::catch_unwind(|| check_admission_declarations(&mutant, &aur)).is_err(),
             "{name}"
+        );
+    }
+    for (name, expected, wrong) in [
+        (
+            "build",
+            "${{ needs.prepare.outputs.source-commit }}",
+            "${{ github.sha }}",
+        ),
+        (
+            "channel",
+            "${{ github.sha }}",
+            "${{ needs.prepare.outputs.source-commit }}",
+        ),
+    ] {
+        let original = job(&release, name).join("\n");
+        let original_ref = format!("          ref: {expected}");
+        assert_eq!(original.matches(&original_ref).count(), 1);
+        let changed = original.replacen(
+            &original_ref,
+            &format!("          ref: {wrong}\n          # ref: {expected}"),
+            1,
+        );
+        assert_ne!(original, changed);
+        assert_eq!(release.matches(&original).count(), 1);
+        let mutant = release.replacen(&original, &changed, 1);
+        assert_ne!(mutant, release);
+        assert!(mutant.contains(&format!("# ref: {expected}")));
+        assert!(
+            std::panic::catch_unwind(|| check_admission_declarations(&mutant, &aur)).is_err(),
+            "{name} accepted a wrong checkout ref"
         );
     }
 }
