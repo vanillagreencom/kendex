@@ -66,6 +66,7 @@ message() { # KEY VALUE [CAUSE]
           bare-id) echo "Link each KEN item or PR number in Slack mrkdwn; do not leave a bare identifier." ;;
           github-link) echo "Link the Linear item, not a GitHub pull request or commit. The item holds that detail." ;;
           waiting-on-you) echo "Include the Waiting on you label, even when its answer is Nothing." ;;
+          layout) echo "Rewrite the summary to the shape the line below names: item lines of at most 20 words, each figure on its own line, no more item lines than ORCH_REPORT_SUMMARY_LINES. Nothing was written or sent; run write again." ;;
         esac ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
@@ -141,13 +142,13 @@ write    prints the rows and writes the same bytes to the path
          refusal whose lines name lane-mail's `owner-notice-repeated`
          leaves the report file standing and the owner already holding the
          same text, under the notice id that line names.
-         Before rendering or writing, write checks the summary in its posted
-         mrkdwn form. It refuses as summary-shape with the first failing
-         rule: bare-id, github-link, waiting-on-you.
-         After sending, it prints at most one summary-shape-notice: line=N
-         words=W for the first item over 20 words, else item-lines=N cap=CAP
-         when the item count exceeds ORCH_REPORT_SUMMARY_LINES. Layout
-         never blocks a report or asks for a resend.
+         Before rendering, writing or sending, write checks the summary in
+         its posted mrkdwn form. It refuses as summary-shape with the first
+         failing rule: bare-id, github-link, waiting-on-you, layout.
+         A layout refusal's third line is summary-shape-notice: line=N
+         words=W for the first item over 20 words, else item-lines=N
+         cap=CAP when the item count exceeds ORCH_REPORT_SUMMARY_LINES.
+         Nothing is written or sent: rewrite the summary and write again.
          Owner wording and the template live in
          references/communication-modes.md § Owner messages.
 
@@ -468,9 +469,8 @@ if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
   }' <<<"$SUMMARY_TEXT")"; then
   refuse summary "$SUMMARY"
 fi
-SUMMARY_NOTICE=""
 case "$SHAPE_FAILURE" in
-  summary-shape-notice:*) SUMMARY_NOTICE="$SHAPE_FAILURE" ;;
+  summary-shape-notice:*) refuse summary-shape layout "$SHAPE_FAILURE" ;;
   '') ;;
   *) refuse summary-shape "$SHAPE_FAILURE" ;;
 esac
@@ -1035,4 +1035,3 @@ NOTICE_RECEIPT="$("$LANE_MAIL" notice --item overseer --to owner --attach "$TARG
   2>"$WORK_DIR/notice.err")" || refuse notice "$TARGET" "$(cat "$WORK_DIR/notice.err")"
 NOTICE_ID="${NOTICE_RECEIPT#* id=}"
 message report-written "$TARGET notice-id=${NOTICE_ID%% *}"
-[[ -z "$SUMMARY_NOTICE" ]] || printf '%s\n' "$SUMMARY_NOTICE" >&3

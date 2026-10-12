@@ -1041,10 +1041,24 @@ commit-link~See https://github.com/owner/repo/commit/abcdef.~normal~~github-link
 waiting-on-you~Work continues.~missing~~waiting-on-you
 first-failure~KEN-42: https://github.com/owner/repo/pull/42~missing~~bare-id
 ROWS
-echo "=== write: layout is advisory after sending ==="
-# The overseer reads the machine notice. Each row proves the report exists
-# and one notice was sent. Controls restore the old refusals or remove the
-# advisory decision, reddening the same row's contract.
+echo "=== write: layout refuses before any report or notice ==="
+# The overseer rewrites a refused summary from its notice line and writes
+# again. A breach row proves nothing was written or sent; a conforming row
+# proves one send. Controls restore send-then-notice or move a detector,
+# reddening the same row's contract.
+layout_result() { # WANT
+  local file="$CASE/progress-reports/${NAME%-succession.md}.md"
+  if [[ -n "$1" ]]; then
+    printf '%s|%s|%s|%s|%s' "$RC" "$(first_err)" "$(sed -n 3p "$CASE/err")" "$OUT" \
+      "$(find "$CASE" -name '*.md' -o -name 'progress-reports' -o -name 'mail.calls' -o -name 'gh.calls')"
+  else
+    printf '%s|%s|%s|%s' "$RC" "$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")" \
+      "$(wc -l < "$CASE/mail.calls" | tr -d ' ')" "$([[ -f "$file" && "$OUT" == "$(cat "$file")" ]] && echo written)"
+  fi
+}
+layout_want() { # WANT
+  if [[ -n "$1" ]]; then printf '2|oversee-report: summary-shape=layout|%s||' "$1"; else printf '0||1|written'; fi
+}
 while IFS='~' read -r name mode setting want; do
   rows="$OWNER_ROWS"
   case "$mode" in
@@ -1072,14 +1086,17 @@ while IFS='~' read -r name mode setting want; do
   envs=()
   [[ -z "$setting" ]] || envs+=("$setting")
   run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-  notices="$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")"
-  file="$CASE/progress-reports/${NAME%-succession.md}.md"
-  assert_eq "$RC|$notices|$(wc -l < "$CASE/mail.calls" | tr -d ' ')|$([[ -f "$file" && "$OUT" == "$(cat "$file")" ]] && echo written)" \
-    "0|$want|1|written" "summary $name writes and sends once with its sole advisory notice"
+  if [[ -n "$want" ]]; then
+    assert_eq "$(layout_result "$want")" "$(layout_want "$want")" \
+      "summary $name refuses as layout with its notice, writing no report and sending no notice" "$CASE/err"
+  else
+    assert_eq "$(layout_result "$want")" "$(layout_want "$want")" \
+      "summary $name writes and sends once with no layout notice" "$CASE/err"
+  fi
   case "$name" in
-    label-spacing|line-cap|words|at-cap)
-      mutant="$(mutant_scripts "advisory-$name/orch" oversee-report)/oversee-report" || exit 1
-      ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/advisory-$name/github"
+    label-spacing|words|line-cap|word-limit|at-cap)
+      mutant="$(mutant_scripts "layout-$name/orch" oversee-report)/oversee-report" || exit 1
+      ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/layout-$name/github"
       case "$name" in
         label-spacing)
           old='if (label ~ /^Waiting on you(:|[[:space:]]*$)/) waiting = 1'
@@ -1087,10 +1104,15 @@ while IFS='~' read -r name mode setting want; do
           mutate_file "$mutant" "$old" "$new"
           old='else if (!waiting) print "waiting-on-you"'
           new=$'else if (!waiting) print "waiting-on-you"\n    else if (spacing) print "label-spacing"' ;;
-        line-cap)
-          old='else if (!waiting) print "waiting-on-you"'
-          new=$'else if (!waiting) print "waiting-on-you"\n    else if (NR > cap) print "line-cap"' ;;
-        words) old='count > 20'; new='count > 21' ;;
+        # The send-then-notice path the refusal replaced: hold the notice,
+        # send, then print it.
+        words|line-cap)
+          old='summary-shape-notice:*) refuse summary-shape layout "$SHAPE_FAILURE" ;;'
+          new='summary-shape-notice:*) SUMMARY_NOTICE="$SHAPE_FAILURE" ;;'
+          mutate_file "$mutant" "$old" "$new"
+          old='message report-written "$TARGET notice-id=${NOTICE_ID%% *}"'
+          new=$'message report-written "$TARGET notice-id=${NOTICE_ID%% *}"\nprintf \'%s\\n\' "$SUMMARY_NOTICE" >&3' ;;
+        word-limit) old='count > 20'; new='count > 21' ;;
         at-cap) old='items++'; new='items = NR' ;;
       esac
       mutate_file "$mutant" "$old" "$new"
@@ -1100,23 +1122,25 @@ while IFS='~' read -r name mode setting want; do
       printf 'Work continues.\n%s\n\n\n' "$rows" > "$CASE/summary.txt"
       REPORT_UNDER_TEST="$mutant" run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
       case "$name" in
-        label-spacing|line-cap)
+        label-spacing)
           assert_eq "$RC|$(first_err)" "2|oversee-report: summary-shape=$name" \
             "control: restoring $name reddens the write-and-send row" ;;
-        words)
-          notices="$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")"
-          assert_eq "$RC|$notices" "0|" \
-            "control: changing $name reddens the advisory row" ;;
+        words|line-cap)
+          assert_eq "$RC|$(wc -l < "$CASE/mail.calls" | tr -d ' ')|$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")" "0|1|$want" \
+            "control: send-then-notice writes the envelope for the $name breach, reddening its refusal row" ;;
+        word-limit)
+          assert_eq "$RC|$(wc -l < "$CASE/mail.calls" | tr -d ' ')" "0|1" \
+            "control: raising the word limit sends the 21-word line, reddening its refusal row" ;;
         at-cap)
-          assert_eq "$RC" "0" "control: counting physical lines still sends"
-          assert_file_contains "$CASE/err" 'summary-shape-notice: item-lines=' \
-            "control: counting physical lines reddens the conforming row" ;;
+          assert_eq "$RC|$(first_err)|$(sed -n '3s/item-lines=[0-9]*/item-lines=N/p' "$CASE/err")" "2|oversee-report: summary-shape=layout|summary-shape-notice: item-lines=N cap=20" \
+            "control: counting physical lines refuses the conforming row" ;;
       esac ;;
   esac
 done <<'ROWS'
 conforming~normal~~
 label-spacing~spacing~~
 words~words21~~summary-shape-notice: line=4 words=21
+word-limit~words21~~summary-shape-notice: line=4 words=21
 word-boundary~words20~~
 two-links~links20~~
 line-cap~cap21~~summary-shape-notice: item-lines=21 cap=20
