@@ -52,13 +52,17 @@ cat >/dev/null
 printf 'answer from codex\n'
 SH
 chmod +x "$TMP_ROOT/bin/codex"
-# Blocks long enough that the run is still going when the test kills it, and
-# short enough that a host without setsid (where only the wrapper takes the
-# signal) is not left with a stray process for long.
+# Blocks long enough that the run is still going when the test kills it. Its
+# child ignores TERM until the test releases it, so group-run, stopping the CLI's
+# group, keeps a member of the worker's group alive after the leader dies: the
+# shape a loaded runner gives any teardown. group-run's KILL bounds an
+# unreleased child.
 cat > "$TMP_ROOT/bin/slow-codex" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
-printf 'started\n' > "$SLOW_CLI_READY_FILE"
+( trap '' TERM
+  printf 'started\n' > "$SLOW_CLI_READY_FILE"
+  while [[ ! -e "$SLOW_CLI_RELEASE_FILE" ]]; do sleep 0.05; done ) &
 sleep 10
 printf 'late answer\n'
 SH
@@ -96,6 +100,7 @@ direct_launch() {
   mkdir "$TMP_ROOT/$label-runtime"
   SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD="$cli" \
     SLOW_CLI_READY_FILE="$TMP_ROOT/$label.ready" \
+    SLOW_CLI_RELEASE_FILE="$TMP_ROOT/$label.release" \
     HOSTILE_READY_FILE="$TMP_ROOT/$label.ready" \
     HOSTILE_RELEASE_FILE="$TMP_ROOT/$label.release" \
     HOSTILE_FORGED_FILE="$TMP_ROOT/$label.forged" \
@@ -105,6 +110,18 @@ direct_launch() {
     quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 30 \
     > "$TMP_ROOT/$label-launch.stdout" 2> "$TMP_ROOT/$label-launch.stderr"
   sed -n 's/^wait: //p' "$TMP_ROOT/$label-launch.stdout"
+}
+# await_group_exit <label>: wait until no member of the worker's process group
+# is left, the condition the wait judges a run by. A leader can exit while
+# members run on, so a 2-second wait slice cannot outlast a loaded runner.
+await_group_exit() {
+  local pid
+  pid="$(cat < "$TMP_ROOT/$1-runtime/pid")" || fail "$1: cannot read the worker pid"
+  for _ in $(seq 1 200); do
+    kill -0 -- "-$pid" 2>/dev/null || return 0
+    sleep 0.05
+  done
+  fail "$1: the worker's process group outlived its bound"
 }
 
 echo "=== the shipped entry point detaches and its wait returns the artifact ==="
@@ -143,6 +160,7 @@ chmod +x "$MUTANT"
 cmp -s "$RUNTIME" "$MUTANT" && fail "status control mutated nothing"
 ok "the status control removes the publishing line"
 mutant_wait="$(direct_launch "$MUTANT" mutant 20 2 codex)"
+await_group_exit mutant
 rc=0
 bash -c "$mutant_wait" > "$TMP_ROOT/mutant-wait.stdout" 2> "$TMP_ROOT/mutant-wait.stderr" || rc=$?
 assert_rc "$rc" 1 "a run that ended without status is terminal"
@@ -153,6 +171,7 @@ assert_contains "$TMP_ROOT/mutant-wait.stderr" "published no status" \
 
 echo "=== the same shape with the status channel intact is terminal ==="
 paired_wait="$(direct_launch "$RUNTIME" paired 20 2 codex)"
+await_group_exit paired
 rc=0
 bash -c "$paired_wait" > "$TMP_ROOT/paired-wait.stdout" 2> "$TMP_ROOT/paired-wait.stderr" || rc=$?
 assert_rc "$rc" 0 "the unmutated runtime returns 0 through the same harness"
@@ -229,6 +248,14 @@ for _ in $(seq 1 200); do
 done
 kill -0 "$killed_pid" 2>/dev/null && fail "the worker survived the kill"
 ok "the launched pid names the worker and dies when signalled"
+# Control: the leader's death is not the wait's condition. group-run still
+# holds the worker's group open, so the same wait call reports a live run.
+rc=0
+bash -c "$killed_wait" > "$TMP_ROOT/killed-live.stdout" 2> "$TMP_ROOT/killed-live.stderr" || rc=$?
+assert_rc "$rc" 75 "a group member outliving the leader keeps the run live"
+touch "$TMP_ROOT/killed.release"
+await_group_exit killed
+ok "every member of the worker's process group is gone"
 rc=0
 bash -c "$killed_wait" > "$TMP_ROOT/killed-wait.stdout" 2> "$TMP_ROOT/killed-wait.stderr" || rc=$?
 assert_rc "$rc" 1 "a killed worker without status is terminal"
