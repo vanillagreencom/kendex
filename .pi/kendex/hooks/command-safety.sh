@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. Shell keyword and brace prefixes cannot hide known dumps. The check preserves argument-array boundaries and executes no submitted text. Known nested dumps can refuse even with a filter; general heredocs, process substitutions, shell programs and env split strings have no interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. A reserved word in shell-head position ends ordinary selection. The complete unsupported suffix receives conservative known-dump detection and no filter permission. Exec and builtin use the same conservative policy. Command-like data in those contexts can refuse. Pathname basenames, ordinary arguments and argv arrays do not establish reserved-word syntax. The check executes no submitted text. General heredocs, process substitutions, shell programs and env split strings have no interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -17,17 +17,18 @@ set -euo pipefail
 # Only a proven direct pipe grants permission. Nested syntax is detection
 # evidence, never proof of routing; unseen program semantics are not judged.
 environment_dump() { # command kind; arguments are already decoded data
-  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound=""
+  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1
   local j start=0 end n fd target proc output input_redirect pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 opaque text options_ended null_output shell_head
+  local mode pattern_count pattern filter_ok stage=0 opaque text options_ended null_output syntax_head opaque_from
+  local continuation=$'\\\n'
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local opaque_re='(^|[^A-Za-z0-9_])(env|printenv|set|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)|/proc/[^[:space:]]*/environ'
-  local tokens=() kinds=() saved_quotes=() closers=() args=() arg_kinds=()
+  local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() origins=() evidence=()
   local starts=() ends=() separators=() decisions=()
   if [ "$1" = argv ]; then
     tokens=(${command_argv[@]+"${command_argv[@]}"})
-    for ((i=0; i<${#tokens[@]}; i++)); do kinds[i]=literal; done
+    for ((i=0; i<${#tokens[@]}; i++)); do kinds[i]=literal; unquoted_words[i]=""; done
   else
     text=$command_text
     while [ "$i" -lt "${#text}" ]; do
@@ -39,6 +40,7 @@ environment_dump() { # command kind; arguments are already decoded data
       if [ "$c" = '\' ]; then
         if [ "$i" -ge "${#text}" ]; then kind=unknown; break; fi
         i=$((i + 1))
+        [ "$next" = $'\n' ] || bare=""
         if [ "$quote" = '"' ]; then
           case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) word=$word$c ;; esac
         fi
@@ -48,8 +50,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
       if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
-        if [ -n "$active" ]; then tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; compound=1
+        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        word=""; active=""; kind=literal; bare=1; compound=1
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -57,6 +59,8 @@ environment_dump() { # command kind; arguments are already decoded data
           saved_quotes[n]=$quote; quote=""
           if [ "$c" = '$' ]; then closers[n]=')'; i=$((i + 1)); else closers[n]='`'; fi
         fi
+        [ -z "$quote" ] || bare=""
+        unquoted_words[${#tokens[@]}]=""
         tokens[${#tokens[@]}]=';'; kinds[${#kinds[@]}]=operator
         continue
       fi
@@ -65,8 +69,8 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       case "$c" in
-        "'" | '"') quote=$c; active=1; continue ;;
-        '$') kind=unknown; word=$word$c; active=1; continue ;;
+        "'" | '"') quote=$c; active=1; bare=""; continue ;;
+        '$') kind=unknown; word=$word$c; active=1; bare=""; continue ;;
         '#')
           if [ -z "$active" ]; then
             while [ "$i" -lt "${#text}" ] && [ "${text:$i:1}" != $'\n' ]; do i=$((i + 1)); done
@@ -75,14 +79,15 @@ environment_dump() { # command kind; arguments are already decoded data
       esac
       case "$c" in
         ' ' | $'\t' | $'\r' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>')
-          if [ -n "$active" ]; then tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-          word=""; active=""; kind=literal
+          if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+          word=""; active=""; kind=literal; bare=1
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
             ')')
               compound=1; n=${#closers[@]}
               if [ "$n" -gt 0 ]; then quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'; fi
+              [ -z "$quote" ] || bare=""
               c=';' ;;
             $'\n') c=';' ;;
             *)
@@ -91,12 +96,12 @@ environment_dump() { # command kind; arguments are already decoded data
               esac
               [ "$c" != '<<' ] || compound=1 ;;
           esac
-          tokens[${#tokens[@]}]=$c; kinds[${#kinds[@]}]=operator ;;
+          unquoted_words[${#tokens[@]}]=""; tokens[${#tokens[@]}]=$c; kinds[${#kinds[@]}]=operator ;;
         *) word=$word$c; active=1 ;;
       esac
     done
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   n=${#tokens[@]}
   for ((i=0; i<=n; i++)); do
@@ -108,13 +113,13 @@ environment_dump() { # command kind; arguments are already decoded data
     separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
   done
   for ((stage=0; stage<${#starts[@]}; stage++)); do
-    start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=()
-    proc=""; output=""; input_redirect=""; mode=other; program=""
+    start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); origins=()
+    proc=""; output=""; input_redirect=""; mode=other; program=""; opaque_from=""
     for ((j=start; j<end; j++)); do
       if [ "${kinds[$j]}" = operator ]; then
         fd=""; n=${#args[@]}
         if [ "$n" -gt 0 ] && [[ ${args[$((n - 1))]} =~ ^[0-9]+$ ]]; then
-          fd=${args[$((n - 1))]}; unset 'args[n-1]' 'arg_kinds[n-1]'
+          fd=${args[$((n - 1))]}; unset 'args[n-1]' 'arg_kinds[n-1]' 'arg_unquoted[n-1]' 'origins[n-1]'
         fi
         j=$((j + 1)); target=${tokens[$j]:-}
         case "${tokens[$((j - 1))]}" in
@@ -127,31 +132,36 @@ environment_dump() { # command kind; arguments are already decoded data
         esac
         continue
       fi
-      args[${#args[@]}]=${tokens[$j]}; arg_kinds[${#arg_kinds[@]}]=${kinds[$j]}
+      n=${#args[@]}
+      args[n]=${tokens[$j]}; arg_kinds[n]=${kinds[$j]}; arg_unquoted[n]=${unquoted_words[$j]}; origins[n]=$j
     done
-    pos=0; shell_head=""
-    [ "$1" != shell ] || shell_head=1
+    pos=0
+    if [ "$1" = shell ]; then
+      while [ "$pos" -lt "${#args[@]}" ] && [[ ${args[$pos]} =~ $name_re ]] && [[ ${args[$pos]} == *=* ]]; do pos=$((pos + 1)); done
+    fi
+    syntax_head=""
+    if [ "$1" = shell ] && [ "$pos" -lt "${#args[@]}" ] && [ "${arg_kinds[$pos]}" = literal ]; then
+      # Reserved-word spelling ends selection, not merely one forwarding
+      # step. No function name, case pattern or option can restart it.
+      case "${args[$pos]}" in
+        if | then | elif | else | fi | time | for | in | until | while | do | done | case | esac | 'coproc' | select | function | '{' | '}' | '[[' | ']]' | '!')
+          syntax_head=${arg_unquoted[$pos]} ;;
+        exec | builtin) syntax_head=1 ;;
+      esac
+    fi
+    if [ -n "$syntax_head" ]; then
+      program=opaque
+      opaque_from=$((origins[$pos] + 1))
+    fi
     # Only these literal forwarding forms are part of the input contract.
     # Unsupported executable-string arguments get conservative detection.
-    while [ "$pos" -lt "${#args[@]}" ]; do
-      if [ -n "$shell_head" ]; then
-        while [ "$pos" -lt "${#args[@]}" ] && [[ ${args[$pos]} =~ $name_re ]] && [[ ${args[$pos]} == *=* ]]; do pos=$((pos + 1)); done
-        shell_head=""
-        [ "$pos" -lt "${#args[@]}" ] || break
-      fi
+    while [ "$program" != opaque ] && [ "$pos" -lt "${#args[@]}" ]; do
       [ "${arg_kinds[$pos]}" = literal ] || break
       program=${args[$pos]##*/}; pos=$((pos + 1))
       case "$program" in
-        '{' | '}' | '!' | time | if | then | elif | else | do | while | until | fi | builtin | exec)
-          if [ "$1" = shell ]; then
-            compound=1; shell_head=1
-            case "$program" in
-              time) [ "${args[$pos]:-}" != -p ] || pos=$((pos + 1)) ;;
-              exec | builtin)
-                [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
-                case "${args[$pos]:-}" in -*) program=opaque; break ;; esac ;;
-            esac
-            continue
+        exec | builtin)
+          if [ "$1" = shell ] && [ "${args[$((pos - 1))]}" = "$program" ]; then
+            opaque_from=$((origins[$((pos - 1))] + 1)); program=opaque
           fi
           break ;;
         command)
@@ -287,8 +297,18 @@ environment_dump() { # command kind; arguments are already decoded data
         fi
         if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
       opaque | bash | sh | dash | zsh | ksh | eval | source | .)
-        for ((j=pos; j<${#args[@]}; j++)); do
-          opaque=${args[$j]//[\'\"\\]/}
+        evidence=()
+        if [ -n "$opaque_from" ]; then
+          mode=opaque-clean; compound=1
+          # Keep the suffix across list, pipe and brace boundaries. The
+          # selector cannot prove where an unsupported construct ends.
+          for ((j=opaque_from; j<${#tokens[@]}; j++)); do evidence[${#evidence[@]}]=${tokens[$j]}; done
+        else
+          for ((j=pos; j<${#args[@]}; j++)); do evidence[${#evidence[@]}]=${args[$j]}; done
+        fi
+        for value in ${evidence[@]+"${evidence[@]}"}; do
+          opaque=${value//"$continuation"/}
+          opaque=${opaque//[\'\"\\]/}
           if [[ $opaque =~ $opaque_re ]]; then mode=dump-unknown; compound=1; fi
         done ;;
     esac

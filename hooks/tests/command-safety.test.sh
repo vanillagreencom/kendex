@@ -141,6 +141,7 @@ assert_first() { # WANT LABEL
 # KEN-3813 expressly requires this remedy example as well as the keyed
 # verdict. The remaining English is not pinned. Every command below stays
 # fixture data submitted only to the hook, including all planted controls.
+# A JSON escape keeps the coprocess data word out of the Bash syntax lint.
 environment_rows() {
   local row fields expected command_json label world payload payload_cwd status output payload_hook
   local want first_key invalid shape_kind before=$((passed + failed))
@@ -347,8 +348,44 @@ environment_rows() {
 [2,"builtin set","builtin-dump"]
 [2,"exec env","exec-dump"]
 [2,"exec -- env","exec-options-end-dump"]
+[2,"function f { env; }; f","function-syntax-dump"]
+[2,"function f { e'n'v; }; f","function-split-dump"]
+[2,"function f { en\\\nv; }; f","function-continued-dump"]
+[2,"function f { env | grep NAME; }; f","function-conservative-filter"]
+[2,"coproc { env; }","coprocess-syntax-dump"]
+[2,"coproc WORKER { printenv; }","named-coprocess-dump"]
+[2,"coproc WORKER { env | grep NAME; }","coprocess-conservative-filter"]
+[2,"time -p -- env","time-option-suffix-dump"]
+[2,"time --unknown NAME env | grep NAME","time-unknown-suffix-dump"]
+[2,"function f { :; printf '%s' env; }; f","unsupported-list-evidence"]
+[2,"function f { : | printf '%s' env; }; f","unsupported-pipe-evidence"]
+[2,"case WORD in NAME) env;; esac","case-syntax-dump"]
+[2,"select ITEM in first; do env; done","select-syntax-dump"]
+[2,"[[ env ]]","conditional-data-conservative"]
+[2,"exec -a NAME env","exec-name-option-dump"]
+[2,"exec -c printenv","exec-cleared-option-dump"]
+[2,"exec -a NAME env | grep NAME","exec-option-conservative-filter"]
+[2,"builtin -- set","builtin-option-dump"]
+[2,"command exec -a NAME env","forwarded-exec-option-dump"]
+[2,"command builtin -- set","forwarded-builtin-option-dump"]
+[0,"exec git status","exec-ordinary-target"]
+[0,"exec -a NAME git status","exec-option-ordinary-target"]
+[0,"builtin echo ready","builtin-ordinary-target"]
+[0,"function f { git status; }; f","function-without-known-dump"]
+[0,"coproc WORKER { git status; }","coprocess-without-known-dump"]
+[0,"time -p -- git status","time-without-known-dump"]
+[0,"for ITEM in first; do git status; done","loop-without-known-dump"]
+[0,"case WORD in NAME) git status;; esac","case-without-known-dump"]
+[0,"printf '%s' 'function f { env; }'","quoted-function-data"]
+[0,"printf '%s' \u0063oproc env","syntax-arguments-are-data"]
+[0,"\"function\" env","quoted-head-is-an-executable"]
+[0,"fun\\ction env","escaped-head-is-an-executable"]
+[0,"/usr/bin/time env","pathname-basename-is-not-syntax"]
+[0,"command function f env","launcher-target-is-not-syntax"]
+[0,"env NAME=value function f env","env-target-is-not-syntax"]
+[0,"# function f { env; }\ngit status","syntax-comment-data"]
 [2,"{ env | grep NAME; }","brace-conservative-filter"]
-[0,"for ITEM in env; do :; done","loop-variable-data"]
+[2,"for ITEM in env; do :; done","loop-data-conservative"]
 [0,"printf '%s' '{ env; }'","quoted-brace-data"]
 [0,"printf '%s' ${NAME}","parameter-brace-data"]
 [2,"printenv ${NAME}","parameter-brace-not-a-literal-name"]
@@ -400,6 +437,10 @@ environment_rows() {
 [0,["{","env"],"array-brace-is-an-executable"]
 [0,["then","env"],"array-keyword-is-an-executable"]
 [0,["NAME=value","env"],"array-assignment-is-an-executable"]
+[0,["function","f","{","env"],"array-function-is-an-executable"]
+[0,["coproc","{","env"],"array-coprocess-is-an-executable"]
+[0,["time","-p","--","env"],"array-time-is-an-executable"]
+[0,["exec","-a","NAME","env"],"array-exec-is-an-executable"]
 [0,["env","NAME=value","git","status"],"array-launcher"]
 ENVIRONMENT_ROWS
   [ "$((passed + failed))" -gt "$before" ] || { echo 'FAIL environment table has no rows'; failed=$((failed + 1)); }
@@ -440,7 +481,16 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
       }
       defect == "unproved-records" { swap("unrouted | dump-unknown) return 0 ;;", "unrouted) return 0 ;; dump-unknown) continue ;;") }
-      defect == "shell-prefix" { swap("          if [ \"$1\" = shell ]; then", "          if false; then") }
+      defect == "shell-prefix" { swap("if [[ $opaque =~ $opaque_re ]]; then", "if [ -z \"$opaque_from\" ] && [[ $opaque =~ $opaque_re ]]; then") }
+      defect == "suffix-first-word" && /for \(\(j=opaque_from;/ {
+        swap("j<${#tokens[@]}", "j<opaque_from+1 && j<${#tokens[@]}")
+      }
+      defect == "suffix-stage-only" && /for \(\(j=opaque_from;/ { swap("j<${#tokens[@]}", "j<end") }
+      defect == "head-basename" && $0 == "      case \"${args[$pos]}\" in" {
+        $0 = "      case \"${args[$pos]##*/}\" in"; changed++
+      }
+      defect == "quoted-head" { swap("syntax_head=${arg_unquoted[$pos]}", "syntax_head=1") }
+      defect == "array-head" { swap("if [ -n \"$syntax_head\" ]; then", "if [ -n \"$syntax_head\" ] || [ \"$1\" = argv ]; then") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -472,6 +522,21 @@ unproved-records|FAIL environment: strings-conversion-cannot-repair-records: exi
 shell-prefix|FAIL environment: brace-dump: exit=0 expected=2
 shell-prefix|FAIL environment: if-body-dump: exit=0 expected=2
 shell-prefix|FAIL environment: timed-dump: exit=0 expected=2
+shell-prefix|FAIL environment: function-syntax-dump: exit=0 expected=2
+shell-prefix|FAIL environment: coprocess-syntax-dump: exit=0 expected=2
+shell-prefix|FAIL environment: time-option-suffix-dump: exit=0 expected=2
+shell-prefix|FAIL environment: exec-name-option-dump: exit=0 expected=2
+shell-prefix|FAIL environment: exec-cleared-option-dump: exit=0 expected=2
+shell-prefix|FAIL environment: forwarded-exec-option-dump: exit=0 expected=2
+shell-prefix|FAIL environment: forwarded-builtin-option-dump: exit=0 expected=2
+suffix-first-word|FAIL environment: function-syntax-dump: exit=0 expected=2
+suffix-first-word|FAIL environment: time-option-suffix-dump: exit=0 expected=2
+suffix-first-word|FAIL environment: exec-name-option-dump: exit=0 expected=2
+suffix-stage-only|FAIL environment: unsupported-list-evidence: exit=0 expected=2
+suffix-stage-only|FAIL environment: unsupported-pipe-evidence: exit=0 expected=2
+head-basename|FAIL environment: pathname-basename-is-not-syntax: exit=2 expected=0
+quoted-head|FAIL environment: quoted-head-is-an-executable: exit=2 expected=0
+array-head|FAIL environment: array-function-is-an-executable: exit=2 expected=0
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
