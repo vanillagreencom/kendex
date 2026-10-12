@@ -1167,27 +1167,36 @@ printf 'Which base?\n' > "$TMP_ROOT/ask.txt"
 
 # A lane writes this file at continuing waits. Fixed modification times inject
 # the update state without a sleep, including a same-text rewrite.
-new_handoff_lane idle_status KEN-101
-REPORT_ITEM=""
-STATUS_PATH="$LANE/tmp/lane-status-KEN-101.md"
-while IFS='|' read -r ACTION ACTIVE WANT_RC WANT_COUNT WANT_HOLD WANT_STATUS WANT_NOTICES; do
-  case "$ACTION" in
-    create|rewrite) printf 'Step: waiting\n' > "$STATUS_PATH"; touch -t "${STATUS_STAMP:-202401010000}" "$STATUS_PATH" ;;
-    change) printf 'Step: waiting on review\n' > "$STATUS_PATH"; touch -t 202401010002 "$STATUS_PATH" ;;
-    remove) rm -- "$STATUS_PATH" ;;
-  esac
-  STATUS_STAMP=202401010001
-  if [ "$ACTIVE" = true ]; then stop_active; else stop; fi
-  read -r STATUS_COUNT STATUS_HOLD STATUS_RECORDED < "$LANE/tmp/lane-mail/KEN-101/sent-count"
-  case "$STATUS_HOLD" in status=*) STATUS_RECORDED="$STATUS_HOLD"; STATUS_HOLD="" ;; esac
-  STATUS_NOTICES=0
-  if [ -f "$LANE/tmp/lane-mail/KEN-101/to-overseer.jsonl" ]; then
-    STATUS_NOTICES=$(jq -s 'map(select(.kind == "notice")) | length' "$LANE/tmp/lane-mail/KEN-101/to-overseer.jsonl")
+for STATUS_LAYOUT in plain linked; do
+  new_handoff_lane "idle_status_$STATUS_LAYOUT" KEN-101
+  REPORT_ITEM=""
+  # WORKTREE_SYMLINKS can put tmp outside the lane checkout. The mailbox and
+  # status file share that directory, as the lane-marker and lane-mail owners
+  # permit; the status file itself stays regular.
+  if [ "$STATUS_LAYOUT" = linked ]; then
+    mv "$LANE/tmp" "$TMP_ROOT/status-linked-tmp"
+    ln -s "$TMP_ROOT/status-linked-tmp" "$LANE/tmp"
+    [ -L "$LANE/tmp" ]
   fi
-  assert_eq "RC=$RC count=$STATUS_COUNT held=${STATUS_HOLD:-none} status=$([ -n "$STATUS_RECORDED" ] && echo present || echo absent) notices=$STATUS_NOTICES" \
-    "RC=$WANT_RC count=$WANT_COUNT held=$WANT_HOLD status=$WANT_STATUS notices=$WANT_NOTICES" \
-    "a status $ACTION with continued=$ACTIVE follows the report and hold contract"
-done <<'STATUS_TURNS'
+  STATUS_PATH="$LANE/tmp/lane-status-KEN-101.md"
+  while IFS='|' read -r ACTION ACTIVE WANT_RC WANT_COUNT WANT_HOLD WANT_STATUS WANT_NOTICES; do
+    case "$ACTION" in
+      create) printf 'Step: waiting\n' > "$STATUS_PATH"; touch -t 202401010000 "$STATUS_PATH" ;;
+      rewrite) printf 'Step: waiting\n' > "$STATUS_PATH"; touch -t 202401010001 "$STATUS_PATH" ;;
+      change) printf 'Step: waiting on review\n' > "$STATUS_PATH"; touch -t 202401010002 "$STATUS_PATH" ;;
+      remove) rm -- "$STATUS_PATH" ;;
+    esac
+    if [ "$ACTIVE" = true ]; then stop_active; else stop; fi
+    read -r STATUS_COUNT STATUS_HOLD STATUS_RECORDED < "$LANE/tmp/lane-mail/KEN-101/sent-count"
+    case "$STATUS_HOLD" in status=*) STATUS_RECORDED="$STATUS_HOLD"; STATUS_HOLD="" ;; esac
+    STATUS_NOTICES=0
+    if [ -f "$LANE/tmp/lane-mail/KEN-101/to-overseer.jsonl" ]; then
+      STATUS_NOTICES=$(jq -s 'map(select(.kind == "notice")) | length' "$LANE/tmp/lane-mail/KEN-101/to-overseer.jsonl")
+    fi
+    assert_eq "RC=$RC count=$STATUS_COUNT held=${STATUS_HOLD:-none} status=$([ -n "$STATUS_RECORDED" ] && echo present || echo absent) notices=$STATUS_NOTICES" \
+      "RC=$WANT_RC count=$WANT_COUNT held=$WANT_HOLD status=$WANT_STATUS notices=$WANT_NOTICES" \
+      "a status $ACTION in $STATUS_LAYOUT tmp with continued=$ACTIVE follows the report and hold contract"
+  done <<'STATUS_TURNS'
 create|false|0|0|none|present|0
 unchanged|false|2|0|held|present|0
 unchanged|true|0|1|none|present|1
@@ -1197,9 +1206,10 @@ unchanged|true|2|1|held|present|1
 rewrite|true|0|1|none|present|1
 remove|false|2|1|held|absent|1
 STATUS_TURNS
+done
 
 # Only this lane's regular status file can report. An unrelated file or a
-# symbolic link cannot supply the update state or redirect the baseline read.
+# link at the status file cannot supply the update state or redirect the read.
 for STATUS_KIND in other-item symlink directory record-symlink; do
   new_handoff_lane "idle_status_$STATUS_KIND" KEN-102
   REPORT_ITEM=""
@@ -2977,7 +2987,7 @@ stop
 assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-105" \
   "control: a judge without update time holds a same-text rewrite"
 
-mutant idle-status-follows-links -e '/^  if \[ -L "\$ROOT\/tmp" \] || \[ -L "\$STATUS_FILE" \]/s@^  if .*; then$@  if false; then@'
+mutant idle-status-follows-links -e '/^  if \[ -L "\$STATUS_FILE" \]/s@^  if .*; then$@  if false; then@'
 new_handoff_lane control_idle_status_link KEN-106
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -2986,6 +2996,21 @@ ln -s "$TMP_ROOT/control-unrelated-status" "$LANE/tmp/lane-status-KEN-106.md"
 [ -L "$LANE/tmp/lane-status-KEN-106.md" ]
 stop
 expect 0 "$GAP" "control: a judge without the path check counts a non-lane symbolic link as a report"
+
+# Restore the rejected parent-directory rule. A regular status file in the
+# supported linked tmp layout must report just as one in a plain tmp does.
+mutant idle-status-rejects-linked-tmp -e 's@^  if \[ -L "\$STATUS_FILE" \] ||@  if [ -L "$ROOT/tmp" ] || [ -L "$STATUS_FILE" ] ||@'
+new_handoff_lane control_idle_status_tmp KEN-107
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+mv "$LANE/tmp" "$TMP_ROOT/control-status-linked-tmp"
+ln -s "$TMP_ROOT/control-status-linked-tmp" "$LANE/tmp"
+[ -L "$LANE/tmp" ]
+printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-107.md"
+stop
+assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-107)" \
+  "RC=2 keys=account=unlisted;idle-status=$LANE/tmp/lane-status-KEN-107.md;idle=KEN-107 record=0 held" \
+  "control: rejecting linked tmp holds a turn that updated its regular status file"
 
 # The count ignored: a lane that reported this turn is held all the same.
 mutant idle-ignores-sent -e 's@^  if \[ "\$SENT" != "\$RECORDED" \]; then$@  if false; then@'
