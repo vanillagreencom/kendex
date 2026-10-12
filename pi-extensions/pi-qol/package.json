@@ -36,7 +36,7 @@
         {
           "key": "gatewayPrivacy.enabled",
           "label": "Require gateway privacy controls",
-          "description": "Require zero data retention and no prompt training for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. Overrides weaker privacy values and keeps other routing options. Pi's built-in compaction and branch summaries, including fallback after a refused QOL request, bypass this control. Use gateway account policies for those paths.",
+          "description": "Require zero data retention and no prompt training for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. Overrides weaker privacy values and keeps other routing options. On a gateway session model, QOL writes compaction and branch summaries in place of Pi's built-in ones, which cannot carry these controls, and a failed summary cancels instead of falling back to Pi's.",
           "type": "boolean",
           "default": false,
           "category": "Privacy",
@@ -812,7 +812,7 @@
         {
           "key": "compaction.fallbackToDefault",
           "label": "Fallback to Pi default compaction",
-          "description": "If custom compaction fails, let Pi run its default compaction instead of cancelling the compaction.",
+          "description": "If custom compaction fails, let Pi run its default compaction instead of cancelling the compaction. Ignored while gatewayPrivacy.enabled covers the session model, since Pi's compaction would send the transcript without the privacy controls.",
           "type": "boolean",
           "default": true,
           "category": "Compaction",

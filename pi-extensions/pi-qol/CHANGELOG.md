@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- Add an optional gateway privacy setting for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. It requires zero data retention and no prompt training while keeping other routing options. Native Pi compaction and branch summaries still require gateway account privacy policies.
+- Add an optional gateway privacy setting for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. It requires zero data retention and no prompt training while keeping other routing options. On a gateway session model, QOL writes compaction and branch summaries in place of Pi's built-in ones, which cannot carry these fields, and a failed summary cancels instead of falling back to Pi's.
 
 ### 2.4.0
 

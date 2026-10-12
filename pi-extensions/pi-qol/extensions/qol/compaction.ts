@@ -29,7 +29,7 @@ import {
 } from "./compaction-handoff.js";
 import { piCompactionEnabled, settingBoolean, settingNumber, settingString } from "./settings.js";
 import { stringifyError } from "./util.js";
-import { gatewayPrivacyOnPayload } from "./gateway-privacy.js";
+import { gatewayPrivacyBlocksNativeSummary, gatewayPrivacyOnPayload } from "./gateway-privacy.js";
 
 export type QolSummaryProfile = "concise" | "balanced" | "exhaustive";
 export type QolSummaryPurpose = "compaction" | "branch-summary" | "session-search";
@@ -262,10 +262,11 @@ export function writeBudgetHandoffArtifact(ctx: ExtensionContext, handoff: QolBu
 
 export async function handleQolCompaction(event: any, ctx: ExtensionContext): Promise<any> {
 	const isBudgetGuard = isBudgetGuardCompaction(event?.customInstructions);
-	// Budget-guard-triggered compactions force the QOL bounded summarizer even
-	// when compaction.customEnabled is off. The handoff writer still honors its
-	// independent compaction.handoffArtifactEnabled toggle.
-	if (!isBudgetGuard && !settingBoolean("compaction.customEnabled", false, ctx.cwd)) return undefined;
+	const nativeBlocked = gatewayPrivacyBlocksNativeSummary(ctx);
+	// Budget-guard-triggered and privacy-covered compactions force the QOL
+	// summarizer even when compaction.customEnabled is off. The handoff writer
+	// still honors its independent compaction.handoffArtifactEnabled toggle.
+	if (!isBudgetGuard && !nativeBlocked && !settingBoolean("compaction.customEnabled", false, ctx.cwd)) return undefined;
 	const preparation = event.preparation ?? {};
 	const messages = [...(preparation.messagesToSummarize ?? []), ...(preparation.turnPrefixMessages ?? [])];
 	if (messages.length === 0) return undefined;
@@ -310,7 +311,7 @@ export async function handleQolCompaction(event: any, ctx: ExtensionContext): Pr
 	} catch (error) {
 		if (event.signal?.aborted) return undefined;
 		compactionNotify(ctx, `QOL compaction failed: ${stringifyError(error)}`, "error");
-		return settingBoolean("compaction.fallbackToDefault", true, ctx.cwd) ? undefined : { cancel: true };
+		return !nativeBlocked && settingBoolean("compaction.fallbackToDefault", true, ctx.cwd) ? undefined : { cancel: true };
 	}
 }
 
@@ -323,7 +324,8 @@ function summarizeEntryForBranch(entry: any): string[] {
 }
 
 export async function handleQolBranchSummary(event: any, ctx: ExtensionContext): Promise<any> {
-	if (!settingBoolean("compaction.branchSummaryEnabled", false, ctx.cwd)) return undefined;
+	const nativeBlocked = gatewayPrivacyBlocksNativeSummary(ctx);
+	if (!nativeBlocked && !settingBoolean("compaction.branchSummaryEnabled", false, ctx.cwd)) return undefined;
 	const preparation = event.preparation ?? {};
 	if (preparation.userWantsSummary !== true) return undefined;
 	const entries = Array.isArray(preparation.entriesToSummarize) ? preparation.entriesToSummarize : [];
@@ -347,7 +349,7 @@ export async function handleQolBranchSummary(event: any, ctx: ExtensionContext):
 	} catch (error) {
 		if (event.signal?.aborted) return undefined;
 		compactionNotify(ctx, `QOL branch summary failed: ${stringifyError(error)}`, "error");
-		return undefined;
+		return nativeBlocked ? { cancel: true } : undefined;
 	}
 }
 

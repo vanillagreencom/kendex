@@ -13,8 +13,8 @@ const providers = [
 	{ provider: "vercel-ai-gateway", api: "anthropic-messages" as const },
 ];
 const purposes = ["compaction", "branch-summary", "session-search", "handoff", "auto-name"] as const;
-type Scenario = typeof providers[number] & { purpose: typeof purposes[number]; enabled: boolean; refuse?: boolean };
-type ProbeResult = { outcome: string; requests: Array<{ path: string; body: Record<string, unknown> }> };
+type Scenario = typeof providers[number] & { purpose: typeof purposes[number] | "compact-handler" | "tree-handler"; enabled: boolean; refuse?: boolean; qolSummaries?: boolean };
+type ProbeResult = { outcome: string; result?: any; notices?: string[]; requests: Array<{ path: string; body: Record<string, unknown> }> };
 
 async function probe(row: Scenario): Promise<ProbeResult> {
 	mkdirSync(scratch, { recursive: true });
@@ -66,3 +66,35 @@ test("a QOL direct-provider summary ignores the main agent's gateway", async () 
 	expect(result.requests.length).toBeGreaterThan(0);
 	for (const request of result.requests) expect({ provider: request.body.provider, providerOptions: request.body.providerOptions }).toEqual({ provider: undefined, providerOptions: undefined });
 }, 30_000);
+
+// The session handlers run where Pi would otherwise send its own summary to the
+// session model with no payload callback (the probe's context model).
+const handlerRows: Array<Scenario & { expected: "summary" | "cancel" | "fallback" | "native" }> = [
+	...providers.flatMap((provider) => (["compact-handler", "tree-handler"] as const).map((purpose) => ({ ...provider, purpose, enabled: true, expected: "summary" as const }))),
+	{ ...providers[0], purpose: "compact-handler", enabled: true, refuse: true, expected: "cancel" },
+	{ ...providers[1], purpose: "tree-handler", enabled: true, refuse: true, expected: "cancel" },
+	{ ...providers[0], purpose: "compact-handler", enabled: false, refuse: true, qolSummaries: true, expected: "fallback" },
+	{ ...providers[1], purpose: "tree-handler", enabled: false, refuse: true, qolSummaries: true, expected: "fallback" },
+	{ ...providers[0], purpose: "compact-handler", enabled: false, expected: "native" },
+	{ ...providers[1], purpose: "tree-handler", enabled: false, expected: "native" },
+];
+
+for (const row of handlerRows) {
+	test(`QOL session handler: ${row.provider} ${row.purpose} privacy=${row.enabled} refusal=${row.refuse ?? false} -> ${row.expected}`, async () => {
+		const response = await probe(row);
+		expect(response.outcome).toBe("completed");
+		if (row.expected === "native") {
+			expect({ result: response.result, requests: response.requests }).toEqual({ result: undefined, requests: [] });
+			return;
+		}
+		expect(response.notices?.includes("error")).toBe(row.expected !== "summary");
+		if (row.expected === "fallback") {
+			expect(response.result).toBeUndefined();
+			expect(() => assertPrivacy(row, response)).toThrow(AssertionError);
+			return;
+		}
+		assertPrivacy(row, response);
+		if (row.expected === "cancel") expect(response.result).toEqual({ cancel: true });
+		else expect(row.purpose === "compact-handler" ? response.result?.compaction?.summary : response.result?.summary?.summary).toBe("Private session summary");
+	}, 30_000);
+}

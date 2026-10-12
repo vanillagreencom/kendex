@@ -3,22 +3,26 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { generateQolSummary } from "../extensions/qol/compaction.ts";
+import { generateQolSummary, handleQolBranchSummary, handleQolCompaction } from "../extensions/qol/compaction.ts";
 import { runHandoff } from "../extensions/qol/handoff.ts";
 import { generateAutoRenameName } from "../extensions/qol/session-rename.ts";
 
 interface Scenario {
 	provider: string;
 	api: "openai-completions" | "anthropic-messages";
-	purpose: "compaction" | "branch-summary" | "session-search" | "handoff" | "auto-name";
+	purpose: "compaction" | "branch-summary" | "session-search" | "handoff" | "auto-name" | "compact-handler" | "tree-handler";
 	enabled: boolean;
 	refuse?: boolean;
+	qolSummaries?: boolean;
 }
 
 const row: Scenario = JSON.parse(process.argv[2]);
 const root = process.env.PI_CODING_AGENT_DIR!;
 const title = "Private session summary";
 const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+const notices: string[] = [];
+// The handlers stand in for Pi's own summary, which goes to the session model.
+const sessionHandler = row.purpose === "compact-handler" || row.purpose === "tree-handler";
 
 function sse(type: string, data: unknown): string {
 	return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -52,6 +56,8 @@ try {
 		"sessionAutoRename.model": `${row.provider}/fixture`,
 		"sessionAutoRename.fallbackModel": "",
 		"handoffReviewPrompt": false,
+		"compaction.customEnabled": row.qolSummaries ?? false,
+		"compaction.branchSummaryEnabled": row.qolSummaries ?? false,
 	} } } } }));
 	const model = {
 		type: "chat", provider: row.provider, api: row.api, id: "fixture", name: "fixture", reasoning: false,
@@ -60,9 +66,9 @@ try {
 		...(row.provider === "openrouter" ? { compat: { openRouterRouting: { order: ["fixture-provider"] } } } : {}),
 	};
 	const ctx = {
-		cwd: root, hasUI: row.purpose === "handoff", isProjectTrusted: () => false,
+		cwd: root, hasUI: row.purpose === "handoff" || sessionHandler, isProjectTrusted: () => false,
 		// Nested summaries can use a different provider from the main agent.
-		model: row.purpose === "handoff" ? model : { provider: row.provider === "openai" ? "openrouter" : "openai", id: "main-agent" },
+		model: row.purpose === "handoff" || sessionHandler ? model : { provider: row.provider === "openai" ? "openrouter" : "openai", id: "main-agent" },
 		modelRegistry: {
 			find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
 			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fixture-key" }),
@@ -72,7 +78,7 @@ try {
 			buildSessionContext: () => ({ messages: [{ role: "user", content: "private fixture conversation", timestamp: 0 }] }),
 		},
 		ui: {
-			notify() {},
+			notify: (_message: string, level: string) => notices.push(level),
 			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value: unknown) => void) => { dispose(): void }) => new Promise((resolve) => {
 				const component = factory({ requestRender() {} }, { fg: (_color: string, text: string) => text }, {}, (value) => { component.dispose(); resolve(value); });
 			}),
@@ -84,12 +90,14 @@ try {
 	try {
 		if (row.purpose === "handoff") await runHandoff("continue the private task", ctx);
 		else if (row.purpose === "auto-name") result = await generateAutoRenameName("private fixture conversation", ctx);
+		else if (row.purpose === "compact-handler") result = await handleQolCompaction({ type: "session_before_compact", preparation: { messagesToSummarize: [{ role: "user", content: "private fixture conversation", timestamp: 0 }], turnPrefixMessages: [], tokensBefore: 1 } }, ctx);
+		else if (row.purpose === "tree-handler") result = await handleQolBranchSummary({ type: "session_before_tree", preparation: { userWantsSummary: true, entriesToSummarize: [{ type: "message", message: { role: "user", content: "private fixture conversation", timestamp: 0 } }] } }, ctx);
 		else result = await generateQolSummary(ctx, { conversationText: "private fixture conversation", purpose: row.purpose });
 	} catch (error) {
 		if (!(error instanceof Error)) throw error;
 		outcome = "error";
 	}
-	console.log(JSON.stringify({ outcome, result, requests }));
+	console.log(JSON.stringify({ outcome, result, requests, notices }));
 } finally {
 	server.stop(true);
 }
