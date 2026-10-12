@@ -6,8 +6,7 @@
 #
 # A main dispatch builds a selected merged commit and creates its version
 # tag. A push to main publishes one immutable build, then changes the fixed
-# channel's single feed pointer. Tags start no build. Publishing a stable
-# release moves its major tag, the ref consumers' shared refresh calls.
+# channel's single feed pointer. Tags start no build.
 # Pull requests are covered by the per-crate checks. The Intel macOS lane
 # restores a Rust dependency cache saved only by trusted main runs. Later
 # main and dispatch runs reuse it; dispatches never save. Bundles are removed before
@@ -19,7 +18,7 @@
 # universal build doubles every download for nothing. Linux arm64 is a
 # native lane too — the app's webkit2gtk dependency does not cross-compile.
 name: release
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('release {0} at {1}', inputs.tag, inputs.release_commit) || github.event_name == 'release' && format('major tag for {0}', github.event.release.tag_name) || format('main build {0}', github.sha) }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('release {0} at {1}', inputs.tag, inputs.release_commit) || format('main build {0}', github.sha) }}
 
 on:
   push:
@@ -34,8 +33,6 @@ on:
         description: Full merged commit ID from main
         type: string
         required: true
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -55,7 +52,6 @@ jobs:
   # must prove its selected code belongs to this reviewed main history before
   # any build can receive signing secrets.
   prepare:
-    if: github.event_name != 'release'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -670,67 +666,3 @@ jobs:
           NEW_VERSION: ${{ needs.publish.outputs.version }}
           NEW_BUILD: ${{ needs.publish.outputs.main-build }}
         run: tools/release-channel-point
-
-  # A stable release lands as a draft that the operator publishes, and that
-  # publication is the release event this job answers. Its tag ref cannot
-  # enter the main-only environment, and the move needs no secret from it.
-  major-tag:
-    if: github.event_name == 'release'
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    concurrency:
-      group: release-major-tag
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Move the major tag to this release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          PRERELEASE: ${{ github.event.release.prerelease }}
-        run: |
-          set -euo pipefail
-          if [ "$PRERELEASE" != false ]; then
-            echo "major-tag: skip=prerelease tag=$RELEASE_TAG"
-            exit 0
-          fi
-          if ! [[ $RELEASE_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "::error::major-tag: tag=$RELEASE_TAG"
-            echo "A stable release tag names a plain vX.Y.Z version, the only form the shared refresh workflow reads."
-            exit 1
-          fi
-          major="v${BASH_REMATCH[1]}" minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
-          commit=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
-          if ! git merge-base --is-ancestor "$commit" origin/main; then
-            echo "::error::major-tag: ancestry=$commit"
-            echo "The release commit is outside main history, or its ancestry could not be read."
-            exit 1
-          fi
-          current=$(git rev-parse --verify --quiet "refs/tags/$major^{commit}") || current=""
-          if [ -n "$current" ]; then
-            [ "$current" != "$commit" ] || { echo "major-tag: unchanged=$major cause=current commit=$commit"; exit 0; }
-            held=$(git tag --points-at "$current")
-            while read -r name; do
-              [[ $name =~ ^$major\.([0-9]+)\.([0-9]+)$ ]] || continue
-              if (( 10#${BASH_REMATCH[1]} > minor || (10#${BASH_REMATCH[1]} == minor && 10#${BASH_REMATCH[2]} > patch) )); then
-                echo "major-tag: unchanged=$major cause=newer held=$name"
-                exit 0
-              fi
-            done <<< "$held"
-            moved=(--method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" -f "sha=$commit" -F force=true)
-          else
-            moved=(--method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$major" -f "sha=$commit")
-          fi
-          if ! gh api "${moved[@]}" > /dev/null; then
-            echo "::error::major-tag: update=$major"
-            echo "Could not point $major at $commit. The major-tag ruleset must admit this workflow's token; until it does, the operator moves the tag."
-            exit 1
-          fi
-          echo "major-tag: moved=$major tag=$RELEASE_TAG commit=$commit"

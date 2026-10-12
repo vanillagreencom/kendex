@@ -1,1 +1,1 @@
-- Publishing a stable kendex release moves its major tag, such as `v1`, to the release commit, so a consumer calling the shared refresh workflow at that tag runs the new release.
+- The stable release procedure requires the Jarvis session or owner to move the release's major tag and verify its target after publication, so consumer refresh uses that release. A tag that already names a newer release stays there.
