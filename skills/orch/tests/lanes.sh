@@ -595,6 +595,34 @@ api_rows 150 "$API_EXPIRES_SOON"
 api_case 'a credit-only provider row keeps its own balance and spent figure' "$API_ENV" "$API_PICK" \
   '[.config_dir, .status, .credits.unit, .credits.remaining_dollars, .credits.used_dollars]' \
   "0:[\"$H/.eclaude\",\"ok\",\"usd\",150,37.52]"
+# Account policy can remove the provider's last readable grant. Its discovery
+# must survive the cache even when a later accounts command would be busy.
+api_exclusion_case() { # NAME
+  local state="$TMP_ROOT/api-exclusion-$1" env_list cold warm repair calls
+  mkdir -p "$state"
+  env_list="$API_ENV;ORCH_LANE_EXCLUDE=eclaude;OVERSEE_WATCH_STATE_DIR=$state;ORCH_LANES_USAGE_TTL=300;LANE_HOST_STUB_LOG=$state/provider.log"
+  # shellcheck disable=SC2086
+  run_lanes "$env_list" $API_PICK --no-cache
+  cold="$RC:$(jq -c '[.qualifying_count, .walled, .unmeasured, .refusals]' <<<"$OUT" 2>/dev/null || printf unreadable)"
+  repair="$(grep -c '^lanes: pick-provider-unmeasured ' "$ERR" || true)"
+  # shellcheck disable=SC2086
+  run_lanes "$env_list;LANE_HOST_STUB_ACCOUNTS_STATUS=69" $API_PICK
+  warm="$RC:$(jq -c '[.qualifying_count, .walled, .unmeasured, .refusals]' <<<"$OUT" 2>/dev/null || printf unreadable)"
+  repair="$repair:$(grep -c '^lanes: pick-provider-unmeasured ' "$ERR" || true)"
+  calls="$(grep -c '^accounts ' "$state/provider.log" || true)"
+  assert_eq "cold=$cold warm=$warm repair=$repair calls=$calls" \
+    'cold=3:[0,0,0,[]] warm=3:[0,0,0,[]] repair=0:0 calls=1' \
+    'an excluded provider grant is no candidate on cold and cached reads'
+}
+api_exclusion_case after
+API_EXCLUSION_SHIPPED="$LANES"
+API_EXCLUSION_MUTANT="$(mutant_scripts api-exclusion-before lanes)" || exit 1
+mutate_file "$API_EXCLUSION_MUTANT/lanes" \
+  '"$hosted" == "[]" && "$HOSTED_API_DISCOVERED" != true' '"$hosted" == "[]"'
+LANES="$API_EXCLUSION_MUTANT/lanes"; API_EXCLUSION_SAVED="$FAIL"; FAIL=0
+api_exclusion_case before > "$TMP_ROOT/api-exclusion-before.out"
+API_EXCLUSION_RED="$FAIL"; FAIL="$API_EXCLUSION_SAVED"; LANES="$API_EXCLUSION_SHIPPED"
+assert_eq "$API_EXCLUSION_RED" 1 'control: the prior empty-row check fails the unchanged exclusion row'
 api_rows 10 "$API_EXPIRES_SOON"
 api_case 'the default shared floor refuses an API grant at ten dollars' "${API_ENV%;ORCH_LANE_CLOUD_CREDIT_FLOOR=5}" "$API_PICK" \
   '[.walled, .refusals[0].refusal.cause]' '3:[1,"api-credit"]'

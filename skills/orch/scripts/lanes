@@ -2630,22 +2630,28 @@ collect_lanes() {
 # through the usage cache under ORCH_LANES_USAGE_TTL, like every usage figure
 # here: they are windows, and whether the host holds an account for a launch
 # gate is `host-accounts --no-cache`'s answer, never this one.
-HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS=""
-host_lane_rows() { # HARNESS [READINGS]
-	local rows hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0
-	HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS=""
+HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS="" HOSTED_API_DISCOVERED=false
+host_lane_rows() { # HARNESS [READINGS [MODEL]]
+	local rows answer format="" hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0
+	HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS="" HOSTED_API_DISCOVERED=false
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || return 0
-	rows="$(host_accounts_answer "$ORCH_LANE_HOST")" || accounts_rc=$?
+	[[ "$(lane_pick_pool "$1" "${3:-}")" != api-credit ]] || format=record
+	answer="$(host_accounts_answer "$ORCH_LANE_HOST" "$format")" || accounts_rc=$?
 	case "$accounts_rc" in
 		0) HOSTED_READ=answered ;;
 		2) HOSTED_READ=absent; return 0 ;;
 		*) HOSTED_READ=failed; return 0 ;;
 	esac
+	rows="$answer"
+	if [[ "$format" == record ]]; then
+		HOSTED_API_DISCOVERED="$(jq -r '.api_discovered' <<<"$answer")" || hosted_rc=$?
+		rows="$(jq -r '.rows' <<<"$answer")" || hosted_rc=$?
+	fi
 	# Keep this command's answer for seats too, even with no cache or a zero TTL.
 	HOST_ACCOUNTS_ROWS="$rows"
 	# Seed host-only paths through the protocol's parser before child shells
 	# emit their readings. The emitting pass reports any invalid cached row.
-	host_account_rows "$rows" "$1" canon 2>/dev/null || hosted_rc=$?
+	[[ "$hosted_rc" -ne 0 ]] || host_account_rows "$rows" "$1" canon 2>/dev/null || hosted_rc=$?
 	[[ "$hosted_rc" -ne 0 ]] || rows="$(host_account_rows "$rows" "$1" "${2:-}")" || hosted_rc=$?
 	dirs="$(jq -sr '.[].config_dir' <<<"$rows")" || hosted_rc=$?
 	while IFS= read -r d; do
@@ -2732,7 +2738,7 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # policy that does not retire the account, since the record it sits in is
 # stamped with every setting the retirement was matched through, the alias
 # map included, and the day, and is a miss under any other.
-host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
+host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVERY]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said rest alias
 	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field
@@ -2809,6 +2815,12 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 		# a later read asks for.
 		[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue
 		[[ "$mode" != readings || -n "$said" ]] || continue
+		# Discovery survives policy filtering without retaining the excluded
+		# account or its usage in the cache's candidate rows.
+		if [[ "$mode" == discovery ]]; then
+			[[ -z "$credit_fields" && "$detail" != api-credit-* ]] || printf '%s\n' true
+			continue
+		fi
 		# The same two settings that remove a local lane remove a hosted row, and
 		# for the same reason: they are the operator saying the account is not
 		# available to this fleet, which a copy of it on another machine does not
@@ -2873,8 +2885,8 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS]
 # host-account-invalid notice on the cold read and none on a cached one. Its
 # status is the one host_account_records passes on: 0 answered, 2 verb absent,
 # 1 failed.
-host_accounts_answer() { # HOST — the provider's rows on stdout, its status back
-	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait
+host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status back
+	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait discovered
 	local -a bound=()
 	# Read through the same cache every usage figure in this script uses, keyed on
 	# the PROVIDER rather than on a harness and a config dir, since one answer
@@ -2896,10 +2908,14 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 		# hand the parser the string `null` to read as a provider row. A record
 		# that fails that test emits nothing, `read` fails, and the miss falls
 		# through to the provider rather than reporting a status nobody parsed.
+		# Record callers also need discovery: filtered rows in an older cache
+		# cannot say whether account policy removed a provider API grant.
 		rc=""
-		{ IFS= read -r rc || rc=""; rows="$(cat)"; } < <(jq -r '
+		{ IFS= read -r rc || rc=""; rows="$(cat)"; } < <(jq -r --arg mode "${2:-}" '
 			if (.usage.status | type) == "number" and (.usage.rows | type) == "string"
-			then "\(.usage.status)\n\(.usage.rows)" else empty end' <<<"$cached")
+			   and ($mode != "record" or .usage.status == 2 or (.usage.api_discovered | type) == "boolean")
+			then "\(.usage.status)\n" + (if $mode == "record" then (.usage | tojson) else .usage.rows end)
+			else empty end' <<<"$cached")
 		case "$rc" in
 			0) printf '%s\n' "$rows"; return 0 ;;
 			2) return 2 ;;
@@ -2969,13 +2985,19 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	fi
 	rm -f -- "$err"
 	trap - INT TERM
+	# The same parser names valid API rows before policy removes candidates.
+	# Its emitting cache pass below owns malformed-row notices.
+	discovered="$(host_account_rows "$rows" pi discovery 2>/dev/null)" || return 1
 	rows="$(host_account_rows "$rows" all cache)" || return 1
-	record="$(jq -nc --arg r "$rows" '{status: 0, rows: $r}')" || record_rc=$?
-	# A record this script could not build is not cached at all: the answer it
-	# would have held is already on stdout, and the next listing asks the provider
-	# again. A cache that cannot be WRITTEN takes the same policy measure_lane
-	# takes for a usage body — it costs the next run a call, never a wrong answer.
+	record="$(jq -nc --arg r "$rows" --arg api "$discovered" '{status: 0, rows: $r, api_discovered: ($api != "")}')" || record_rc=$?
+	# Row callers can still use an answer the cache record could not carry.
+	# Record callers need discovery too and refuse that failure below. A failed
+	# cache write costs the next run a call, never a wrong answer.
 	[[ "$record_rc" -ne 0 ]] || write_usage_cache host-accounts "$host" "$now_s" "$record" || true
+	if [[ "${2:-}" == record ]]; then
+		[[ "$record_rc" -eq 0 ]] || return 1
+		rows="$record"
+	fi
 	printf '%s\n' "$rows"
 }
 
@@ -3180,7 +3202,7 @@ render_table() {
 # harness=pi rows for the selected model's pool. Copilot rows can use the
 # stated override; API grants use only the provider's reading.
 pick_host_rows() { # HARNESS [MODEL]
-	host_lane_rows "$1" readings
+	host_lane_rows "$1" readings "${2:-}"
 	if [[ "$1" == pi ]]; then
 		local pool
 		pool="$(lane_pick_pool "$1" "${2:-}")" || return 1
@@ -3455,7 +3477,7 @@ cmd_pick() {
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	hosted="$HOSTED_ROWS"
-	if [[ "$pick_pool" == api-credit && "$hosted" == "[]" ]]; then
+	if [[ "$pick_pool" == api-credit && "$hosted" == "[]" && "$HOSTED_API_DISCOVERED" != true ]]; then
 		message pick-provider-unmeasured "$harness" "${model:-none}" >&2
 		return 5
 	fi

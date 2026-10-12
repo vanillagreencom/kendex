@@ -520,9 +520,10 @@ assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep 
 # The provider can hold a Copilot login while its usage query returns 403.
 # The admitted relaunch must still charge the monthly pool once readings return.
 COPILOT_CLAIM_ROWS="$TMP_ROOT/copilot-claim-rows.tsv"
-copilot_claim_case() { # READING ROUTE
-  local reading="$1" route="$2" account="$H/.1copilot" pick_rc=0 picked launch_rc pool
+copilot_claim_case() { # READING ROUTE [HOST_POOL]
+  local reading="$1" route="$2" account="$H/.1copilot" pick_rc=0 picked launch_rc pool capabilities
   local route_args=()
+  capabilities="$(printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=%s\tland=lane' "${3:-plan}")"
   [[ "$route" != relaunch ]] || route_args=(--relaunch)
   case "$reading" in
     room) printf 'account=%s\tharness=copilot\tmonthly-pct=40\n' "$account" > "$COPILOT_CLAIM_ROWS" ;;
@@ -534,13 +535,14 @@ copilot_claim_case() { # READING ROUTE
       : > "$COPILOT_CLAIM_ROWS"
       ;;
   esac
-  run_ot "cwd=$NOSETTINGS;LANE_HOST_STUB_ACCOUNTS=$COPILOT_CLAIM_ROWS;$COPILOT_HOSTED" \
+  run_ot "cwd=$NOSETTINGS;LANE_HOST_STUB_CAPABILITIES=$capabilities;LANE_HOST_STUB_ACCOUNTS=$COPILOT_CLAIM_ROWS;$COPILOT_HOSTED" \
     --host "$HOST_STUB" --harness copilot --lane "$account" --repo o/r ${route_args[@]+"${route_args[@]}"} KEN-3747
   launch_rc="$RC"
   pool="$(awk -F'\t' '{print $9}' "$RUN"/state/claims/*.claim 2>/dev/null)"
   printf 'account=%s\tharness=copilot\tmonthly-pct=94\n' "$account" > "$COPILOT_CLAIM_ROWS"
   picked="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
     ORCH_LANE_HOST="$HOST_STUB" LANE_HOST_STUB_ACCOUNTS="$COPILOT_CLAIM_ROWS" \
+    LANE_HOST_STUB_CAPABILITIES="$capabilities" \
     LANE_HOST_STUB_LOG="$RUN/host.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" \
     OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" OT_TMUX_LOG="$RUN/tmux.log" \
     PATH="$OT_STUB_BIN:$PATH" "$SCRIPTS_DIR/lanes" pick --lane "$account" --harness copilot --model claude-opus-5 --projected --json --no-cache)" || pick_rc=$?
@@ -548,14 +550,33 @@ copilot_claim_case() { # READING ROUTE
     'launch=0 pool=copilot pick=0 charged=[1,"copilot",true]' \
     "a $route Copilot launch with $reading usage charges its live pane when readings return"
 }
-while IFS='|' read -r reading route; do
-  copilot_claim_case "$reading" "$route"
+while IFS='|' read -r reading route host_pool; do
+  copilot_claim_case "$reading" "$route" "$host_pool"
 done <<'ROWS'
 room|fresh
 room|relaunch
 refused|relaunch
 absent|fresh
+absent|fresh|cloud-credit
 ROWS
+COPILOT_POOL_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host-pool/orch lib/lane-launch.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host-pool/orch"
+COPILOT_POOL_AFTER="$(cat <<'ORDER'
+    copilot:* | pi:github-copilot/*:*) printf '%s\n' copilot ;;
+    *:cloud-credit) printf '%s\n' cloud-credit ;;
+ORDER
+)"
+COPILOT_POOL_BEFORE="$(cat <<'ORDER'
+    *:cloud-credit) printf '%s\n' cloud-credit ;;
+    copilot:* | pi:github-copilot/*:*) printf '%s\n' copilot ;;
+ORDER
+)"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" "$COPILOT_POOL_AFTER" "$COPILOT_POOL_BEFORE"
+COPILOT_POOL_SAVED="$FAIL"; FAIL=0
+copilot_claim_case absent fresh cloud-credit > "$TMP_ROOT/copilot-host-pool-control.out"
+COPILOT_POOL_RED="$FAIL"; FAIL="$COPILOT_POOL_SAVED"; OPEN_TERMINAL="$COPILOT_POOL_SHIPPED"
+assert_eq "$COPILOT_POOL_RED" 1 'control: host credit ahead of Copilot fails the unchanged monthly claim row'
 COPILOT_CLAIM_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-claim-pool/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-claim-pool/orch"

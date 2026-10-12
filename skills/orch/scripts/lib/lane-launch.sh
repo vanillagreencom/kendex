@@ -101,8 +101,8 @@ lane_pick_harness() { # HARNESS MODEL
 lane_pick_pool() { # HARNESS MODEL [HOST_POOL]
   case "$1:$2:${3:-plan}" in
     pi:anthropic/*:*) printf '%s\n' api-credit ;;
-    *:cloud-credit) printf '%s\n' cloud-credit ;;
     copilot:* | pi:github-copilot/*:*) printf '%s\n' copilot ;;
+    *:cloud-credit) printf '%s\n' cloud-credit ;;
     *) printf '%s\n' "${3:-plan}" ;;
   esac
 }
