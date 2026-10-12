@@ -24,6 +24,13 @@ events() {
   printf '%s' "${got:-none}"
 }
 
+# The watch log's keyed admission record; human-readable prose is not parsed.
+permission_notes() {
+  local got
+  got="$(grep '^oversee-watch: outside-fleet-by-permission ' "$ERR" || true)"
+  printf '%s' "${got:-none}"
+}
+
 # item NUMBER LOGIN TYPE ASSOCIATION [pr] — one issues-endpoint row; `pr` marks
 # the pull request the issues endpoint lists beside the issues.
 item() {
@@ -38,17 +45,17 @@ pull() {
 
 HEAD_A="$(printf 'a%.0s' {1..40})"
 HEAD_B="$(printf 'b%.0s' {1..40})"
-OUTSIDE_PR="$(pull 3100 giladbarnea User CONTRIBUTOR "$HEAD_A")"
-OUTSIDE_PR_PUSHED="$(pull 3100 giladbarnea User CONTRIBUTOR "$HEAD_B")"
-OUTSIDE_PR_LISTED="$(item 3100 giladbarnea User CONTRIBUTOR pr)"
-OUTSIDE_ISSUE="$(item 3101 giladbarnea User NONE)"
-LANES_PR="$(pull 3134 vanillagreen-fleet-lanes[bot] Bot CONTRIBUTOR "$HEAD_A")"
-OWNER_PR="$(pull 3130 bmethod User COLLABORATOR "$HEAD_A")"
+OUTSIDE_PR="$(pull 3100 fixture-visitor User CONTRIBUTOR "$HEAD_A")"
+OUTSIDE_PR_PUSHED="$(pull 3100 fixture-visitor User CONTRIBUTOR "$HEAD_B")"
+OUTSIDE_PR_LISTED="$(item 3100 fixture-visitor User CONTRIBUTOR pr)"
+OUTSIDE_ISSUE="$(item 3101 fixture-visitor User NONE)"
+LANES_PR="$(pull 3134 fixture-lanes[bot] Bot CONTRIBUTOR "$HEAD_A")"
+OWNER_PR="$(pull 3130 fixture-admin User COLLABORATOR "$HEAD_A")"
 MEMBER_ISSUE="$(item 3129 teammate User MEMBER)"
 OWNER_ISSUE="$(item 3128 founder User OWNER)"
-PR_EVENT="EVENT outside-contribution owner/repo#3100 kind=pr author=giladbarnea"
-PRIVATE_MEMBER_ISSUE="$(item 3127 bmethod User CONTRIBUTOR)"
-PRIVATE_MEMBER_PR="$(pull 3126 bmethod User CONTRIBUTOR "$HEAD_A")"
+PR_EVENT="EVENT outside-contribution owner/repo#3100 kind=pr author=fixture-visitor"
+PRIVATE_MEMBER_ISSUE="$(item 3127 fixture-admin User CONTRIBUTOR)"
+PRIVATE_MEMBER_PR="$(pull 3126 fixture-admin User CONTRIBUTOR "$HEAD_A")"
 READER_ISSUE="$(item 3125 reader User CONTRIBUTOR)"
 NEWCOMER_ISSUE="$(item 3124 newcomer User NONE)"
 READER_EVENTS="EVENT outside-contribution owner/repo#3125 kind=issue author=reader
@@ -71,7 +78,7 @@ case_private_member() { # WATCH
   new_case outside_private_member
   printf '[%s]\n' "$PRIVATE_MEMBER_PR" > "$STUB_DIR/pulls.json"
   printf '[%s]\n' "$PRIVATE_MEMBER_ISSUE" > "$STUB_DIR/issues.json"
-  printf 'admin\n' > "$STUB_DIR/permission.bmethod.txt"
+  printf 'admin\n' > "$STUB_DIR/permission.fixture-admin.txt"
   WATCH_BIN="$1" run --
 }
 case_readers() { # WATCH
@@ -101,7 +108,7 @@ printf '[%s,%s]\n' "$OUTSIDE_PR_LISTED" "$OUTSIDE_ISSUE" > "$STUB_DIR/issues.jso
 run --
 assert_eq "$RC|$(events)|$(grep -c '^EVENT heartbeat' <<<"$OUT" || true)" \
   "0|$PR_EVENT head=$HEAD_A
-EVENT outside-contribution owner/repo#3101 kind=issue author=giladbarnea|0" \
+EVENT outside-contribution owner/repo#3101 kind=issue author=fixture-visitor|0" \
   "an outside pull request and an outside issue are one event each, and the run ends on them" "$ERR"
 run --
 assert_eq "$RC|$(events)|$(head -n 1 <<<"$OUT")" "0|none|$HEARTBEAT" \
@@ -136,13 +143,22 @@ done
 # organization member as the app's token reads one, is fleet: neither the pull
 # request nor the issue prints, and the login is read once in the pass.
 case_private_member ""
-assert_eq "$RC|$(events)|$(head -n 1 <<<"$OUT")|$(grep -c '^api repos/owner/repo/collaborators/bmethod/permission ' "$STUB_DIR/gh.calls" || true)" \
-  "0|none|$HEARTBEAT|1" "a CONTRIBUTOR author with admin permission is fleet, read once per pass" "$ERR"
+PRIVATE_MEMBER_NOTE='oversee-watch: outside-fleet-by-permission repo=owner/repo author=fixture-admin permission=admin'
+assert_eq "$RC|$(events)|$(permission_notes)|$(head -n 1 <<<"$OUT")|$(grep -c '^api repos/owner/repo/collaborators/fixture-admin/permission ' "$STUB_DIR/gh.calls" || true)" \
+  "0|none|$PRIVATE_MEMBER_NOTE|$HEARTBEAT|1" "an admin CONTRIBUTOR prints one note and no event for its pull request and issue" "$ERR"
+run --
+assert_eq "$RC|$(events)|$(permission_notes)" "0|none|$PRIVATE_MEMBER_NOTE" \
+  "the next pass prints the admission note again" "$ERR"
+printf '[%s]\n' "$PRIVATE_MEMBER_PR" > "$STUB_DIR/pulls.owner_other.json"
+run -- --repo owner/repo --repo owner/other
+assert_eq "$RC|$(events)|$(permission_notes)" "0|none|$PRIVATE_MEMBER_NOTE
+oversee-watch: outside-fleet-by-permission repo=owner/other author=fixture-admin permission=admin" \
+  "the same admitted login prints one note for each repository" "$ERR"
 
 # CONTRIBUTOR and NONE authors whose permission is read are still outside.
 case_readers ""
-assert_eq "$RC|$(events)" "0|$READER_EVENTS" \
-  "CONTRIBUTOR and NONE authors with read permission are reported" "$ERR"
+assert_eq "$RC|$(events)|$(permission_notes)" "0|$READER_EVENTS|none" \
+  "CONTRIBUTOR and NONE authors with read permission print events without admission notes" "$ERR"
 
 # A permission read that fails is not a verdict: the pass exits as a failed
 # list does, naming the login and GitHub's words.
@@ -218,15 +234,25 @@ assert_eq "$(events)" "$PR_EVENT head=$HEAD_A" \
   "control: without the baseline read the second pass reports the same pull request again" "$ERR"
 
 # Must-fail controls for the permission read, one per rule.
+outside_mutant outside-mutant-no-note 'if [[ "$verdict" == fleet ]]; then' 'if false && [[ "$verdict" == fleet ]]; then'
+case_private_member "$MUTANT_BIN"
+assert_eq "$RC|$(events)|$(permission_notes)" "0|none|none" \
+  "control: a disabled admission note fails the admin note assertion without changing admission" "$ERR"
+outside_mutant outside-mutant-no-cache '[[ "$line" != "$1 $2" ]] || { [[ "$verdict" == fleet ]]; return; }' ': # [[ "$line" != "$1 $2" ]] || { [[ "$verdict" == fleet ]]; return; }'
+case_private_member "$MUTANT_BIN"
+assert_eq "$RC|$(events)|$(permission_notes)" "0|none|$PRIVATE_MEMBER_NOTE
+$PRIVATE_MEMBER_NOTE" \
+  "control: a disabled permission cache repeats the note for the same repository and login" "$ERR"
 outside_mutant outside-mutant-no-permission '! outside_author_is_fleet "$repo" "$login" || continue' ':'
 case_private_member "$MUTANT_BIN"
-assert_eq "$RC|$(events)" "0|EVENT outside-contribution owner/repo#3126 kind=pr author=bmethod head=$HEAD_A
-EVENT outside-contribution owner/repo#3127 kind=issue author=bmethod" \
+assert_eq "$RC|$(events)" "0|EVENT outside-contribution owner/repo#3126 kind=pr author=fixture-admin head=$HEAD_A
+EVENT outside-contribution owner/repo#3127 kind=issue author=fixture-admin" \
   "control: without the permission read the admin CONTRIBUTOR is reported" "$ERR"
 outside_mutant outside-mutant-read-fleet 'admin | maintain | write)' 'admin | maintain | write | read)'
 case_readers "$MUTANT_BIN"
-assert_eq "$RC|$(events)" "0|none" \
-  "control: with read counted as fleet the read-permission authors are not reported" "$ERR"
+assert_eq "$RC|$(events)|$(permission_notes)" "0|none|oversee-watch: outside-fleet-by-permission repo=owner/repo author=reader permission=read
+oversee-watch: outside-fleet-by-permission repo=owner/repo author=newcomer permission=read" \
+  "control: read counted as fleet replaces outside events with admission notes" "$ERR"
 outside_mutant outside-mutant-failure-404 "grep -q '(HTTP 404)' \"\$errf\"" 'true'
 case_permission_failed "$MUTANT_BIN"
 assert_eq "$RC|$(events)" "0|EVENT outside-contribution owner/repo#3125 kind=issue author=reader" \

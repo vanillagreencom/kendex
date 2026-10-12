@@ -247,7 +247,11 @@ The long pass's events, checked and reported in this order:
                              GitHub's collaborator permission read, made once
                              per pass per repository and login, answers
                              admin, maintain or write; a 404 is outside and
-                             any other failed read exits. A pull request
+                             any other failed read exits. An admitted login
+                             prints outside-fleet-by-permission on stderr
+                             with repo=, author= and permission= once per pass
+                             per repository and login, without an event.
+                             A pull request
                              carries head=, its head commit on the list.
                              Reported once while it stays open, and a pull
                              request again once per new head; a
@@ -1224,6 +1228,7 @@ ow_message() { # REASON FIELD=VALUE...
     pr-list-failed) text='The GitHub PR list command failed.' ;;
     pr-list-invalid) text='The GitHub PR list output could not be parsed.' ;;
     outside-list-failed) text='The GitHub list of open issues and pull requests the outside-contribution check reads failed.' ;;
+    outside-fleet-by-permission) text='The collaborator permission read admits this author as fleet. No outside-contribution event is reported for this author.' ;;
     outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
     external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
     security-alerts-invalid) text='ORCH_SECURITY_ALERTS takes on or off.' ;;

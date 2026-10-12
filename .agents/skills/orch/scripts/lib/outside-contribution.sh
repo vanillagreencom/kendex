@@ -15,7 +15,9 @@
 # and an organization member whose membership is private reads as CONTRIBUTOR
 # to the app's installation token, so the pass asks GitHub's collaborator
 # permission read, once per pass per repository and login, before it calls
-# such an author outside. Every other author is outside, a login the read
+# such an author outside. An admitted login prints outside-fleet-by-permission
+# on stderr once per pass per repository and login, without an event.
+# Every other author is outside, a login the read
 # answers 404 among them. GitHub answers both on its own, so no setting lists
 # the fleet's logins.
 
@@ -66,6 +68,9 @@ outside_author_is_fleet() {
   verdict=outside
   case "$permission" in admin | maintain | write) verdict=fleet ;; esac
   OUTSIDE_PERMISSIONS+="$1 $2"$'\t'"$verdict"$'\n'
+  if [[ "$verdict" == fleet ]]; then
+    ow_message outside-fleet-by-permission "repo=$1" "author=$2" "permission=$permission" >&2
+  fi
   [[ "$verdict" == fleet ]]
 }
 
