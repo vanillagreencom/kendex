@@ -95,6 +95,8 @@ personal overrides):
   WORKTREE_MKDIRS             Space-separated directories created inside each
                               worktree with mkdir -p (gitignored scratch dirs
                               such as tmp).
+  WORKTREE_SETUP_CMD          Optional Bash command run after file and Git setup
+                              in create and app setup hooks (Dependencies below).
   BOT_NAME / BOT_EMAIL        git identity for worktree commits
   BOT_SIGNING_KEY             SSH signing key path
   BOT_REMOTE_NAME             Remote name for push (default: origin)
@@ -117,9 +119,24 @@ Setup-path hardening:
   directory leaf.
 
 Dependencies:
-  No worktree command runs a package-manager install: installs run in the
-  main checkout, and only when the lockfile changed. Link it into each
-  worktree with a WORKTREE_SYMLINKS entry for the node_modules path. On a
+  WORKTREE_SETUP_CMD is an optional Bash command string, run once per create
+  or app setup attempt in the physical worktree root after links, copies,
+  directories and Git configuration. Empty or unset runs nothing. It uses
+  the github skill's bounded runner and requires Perl. Its bound is 3600
+  seconds; stdin is closed, and its output goes to stderr. The command must
+  finish its work before it exits and must not start detached services.
+  A nonzero status refuses setup with worktree-setup-command-failed naming
+  the path and status; create exits 1 without printing a path. Missing runner
+  support refuses with worktree-setup-command-unavailable. The worktree,
+  branch and partial output stay for repair and retry through create --reuse
+  or the app setup hook. Dirty reuse also retries it without rebasing.
+  --no-checkout, fix-links, repair-links, codex-branch and standalone restack
+  recovery run no setup command. A reuse that materializes a claim runs it.
+  For pnpm and Next.js, remove node_modules from WORKTREE_SYMLINKS and set
+  WORKTREE_SETUP_CMD, for example to pnpm install --frozen-lockfile. pnpm
+  hard-links packages from its store into each private worktree install.
+  Without this setting no worktree command runs a package-manager install.
+  An npm project can install in main and link its node_modules. On a
   hosted lane the host provider's create owns that install in its clone:
   orch's lane-host-ssh runs it for a static SSH host, and any other host
   provider owes the same step, per orch schemas/lane-host.md. pnpm
@@ -137,7 +154,7 @@ Dependencies:
   their dependencies. npm install there removes the link and installs locally,
   leaving main intact. To keep a private install, remove its node_modules path
   from WORKTREE_SYMLINKS. Otherwise setup restores the link and removes the
-  private install. Prefer installing in main and keeping the link.
+  private install. Keep the link only for projects that accept it.
   Limitation: linked node_modules
   resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
   a worktree's checks see main's copy of sibling packages.
@@ -279,7 +296,9 @@ Options:
                   A clean tree at its remote branch's head stays there,
                   unrebased, until the next push rebases it; --restack and
                   --replay rebase it. Any other clean tree rebases onto
-                  origin/<default>. A clean tree also refreshes setup. The
+                  origin/<default>. A clean tree also refreshes setup. With
+                  WORKTREE_SETUP_CMD set, a dirty tree refreshes setup and
+                  runs that command before returning, without rebasing. The
                   target must be registered to this repository; incomplete
                   directories are preserved (exit 75).
   --restack       When reusing, stop in the conflict state for resolution
@@ -876,7 +895,8 @@ Usage: worktree codex-setup    [PATH]
 App-created worktree hooks. The app (Codex Desktop, Claude Code) owns
 worktree and branch creation and deletion; the setup hooks apply the same
 project-local setup that create applies — env/config symlinks, configured
-copies and dirs, optional bot git config and remote — inside a worktree git
+copies and dirs, optional bot git config and remote, and WORKTREE_SETUP_CMD
+when set, inside a worktree git
 has already created (default: the current directory). codex-branch
 normalizes an app-managed branch name to the issue branch orch expects
 before 'orch start'. The cleanup hooks are non-destructive and never remove

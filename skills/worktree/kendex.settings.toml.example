@@ -48,6 +48,15 @@ WORKTREE_COPIES = ""
 # shows as untracked and needs no .gitignore entry.
 WORKTREE_MKDIRS = ""
 
+# Optional command interpreted by Bash in the worktree after links, copies,
+# directories and Git configuration. For pnpm or Next.js, omit node_modules
+# from WORKTREE_SYMLINKS and use "pnpm install --frozen-lockfile" here.
+# Requires the github skill and Perl. It has a 3600-second bound, no stdin,
+# and sends output to stderr. Failure keeps the worktree for --reuse or an
+# app setup-hook retry. Repair commands and --no-checkout do not run it.
+# The command must finish its work before exiting; do not detach services.
+WORKTREE_SETUP_CMD = ""
+
 # The name on commits made in a worktree. Empty uses the signed-in user, and
 # the email below is then ignored. A name here is written on every commit
 # exactly as typed.

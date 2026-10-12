@@ -35,6 +35,7 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |
 | `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout |
 | `WORKTREE_MKDIRS` | Space-separated gitignored scratch directories created in each worktree |
+| `WORKTREE_SETUP_CMD` | Optional Bash command string run in each worktree after links, copies, directories and Git configuration. Create and app setup hooks refuse a nonzero status and keep the worktree for retry. Requires the github skill and Perl; bound: 3600 seconds |
 | `BOT_NAME` / `BOT_EMAIL` | Git identity for worktree commits |
 | `BOT_SIGNING_KEY` | SSH signing key for those commits |
 | `BOT_REMOTE_NAME` / `BOT_REMOTE_URL` | Remote for bot pushes |
@@ -49,6 +50,12 @@ WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 WORKTREE_RELATIVE_SYMLINKS = "ui/.env=../.env.worktree"
 WORKTREE_MKDIRS = "tmp"
 ```
+
+For pnpm or Next.js, leave `node_modules` out of `WORKTREE_SYMLINKS` and set `WORKTREE_SETUP_CMD = "pnpm install --frozen-lockfile"`. Each worktree then receives its own dependencies. pnpm hard-links packages from its store.
+
+An empty or unset command runs nothing. The command receives the existing environment and no stdin. Its output goes to stderr. It must finish before it exits and must not start detached services. A failed command keeps its partial files and refuses create without a successful path. Repair links from main if required, then retry with `create <ID> --reuse` or the app setup hook. A dirty reuse retries the command without rebasing. Link repair, branch normalization, standalone restack recovery and `--no-checkout` do not run it.
+
+Hosted creates run this command on the lane host. The provider must deliver private files before that create. The static SSH provider's existing-clone route needs the correction tracked by KEN-3905; it currently calls create before private-file delivery and again afterward.
 
 Worktree setup does nothing when the checkout is both the source and the destination, as in a standalone clone or the main checkout: every configured entry would act on its own source.
 

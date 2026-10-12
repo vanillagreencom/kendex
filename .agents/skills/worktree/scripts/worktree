@@ -1267,7 +1267,7 @@ keep_unrebased_worktree() { # rebase|replay CONFLICT_FILES
     *) worktree_message keep-operation-unknown "$1" >&2; exit 1 ;;
   esac
   release_issue_claim_lock
-  setup_app_worktree "$WT_PATH" || exit 1
+  setup_app_worktree "$WT_PATH" true true || exit 1
   worktree_message reuse-unrebased "$WT_PATH" "$operation onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-$1 head." >&2
   if [[ -n "$2" ]]; then
     echo "Conflicting files:" >&2
@@ -1490,7 +1490,7 @@ materialize_worktree_claim() {
 # app-specific; it is the same setup `create` applies once git has made the
 # worktree, which is why both entry points share it.
 setup_app_worktree() {
-  local wt="$1" checkout="${2:-true}"
+  local wt="$1" checkout="${2:-true}" command_requested="${3:-false}"
 
   # Push guards read the index; --no-checkout leaves it empty. Initialize
   # that metadata without writing the source files a cloud claim never uses.
@@ -1506,6 +1506,30 @@ setup_app_worktree() {
   # Best-effort by contract: a repo where the hooks cannot be written
   # still gets a fully provisioned worktree.
   if [[ "$checkout" == true ]]; then install_worktree_autorepair_hooks; fi
+  if [[ "$checkout" == true && "$command_requested" == true ]]; then
+    run_worktree_setup_command "$wt" || return 1
+  fi
+  return 0
+}
+
+run_worktree_setup_command() {
+  local wt="$1" bounded="$SCRIPT_DIR/../../github/scripts/lib/bounded.sh" status=0
+  [[ -n "${WORKTREE_SETUP_CMD:-}" ]] || return 0
+  same_canonical_dir "$PROJECT_ROOT" "$wt" && return 0
+  # shellcheck source=../../github/scripts/lib/bounded.sh
+  if [[ ! -f "$bounded" || ! -f "${bounded%/*}/group-leader.sh" ]] ||
+     ! command -v perl >/dev/null 2>&1 || ! source "$bounded" ||
+     ! declare -F kendex_github_run_bounded >/dev/null; then
+    worktree_message setup-command-unavailable "path=$wt" "Configured setup requires the github skill's bounded runner and Perl; the worktree is kept for retry." >&2
+    return 1
+  fi
+  # The command inherits this environment and must finish its own work.
+  # Redirect its output so create's stdout remains one worktree path.
+  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >&2 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    worktree_message setup-command-failed "path=$wt status=$status" "The setup command failed; the worktree and partial output are kept. Repair links if needed, then retry create with --reuse or rerun the app setup hook." >&2
+    return 1
+  fi
   return 0
 }
 
@@ -2768,7 +2792,9 @@ case "${1:-}" in
       REUSE_STATUS=""
       REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
-        if [[ "$REUSE_CHECKOUT_MODE" == claim ]]; then setup_app_worktree "$WT_PATH" || exit 1; fi
+        if [[ "$REUSE_CHECKOUT_MODE" == claim || -n "${WORKTREE_SETUP_CMD:-}" ]]; then
+          setup_app_worktree "$WT_PATH" true true || exit 1
+        fi
         worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
         report_created_worktree; exit 0
       fi
@@ -3035,7 +3061,7 @@ case "${1:-}" in
       fi
       # Refresh setup (rebase may have replaced symlinks with tracked content)
       release_issue_claim_lock
-      setup_app_worktree "$WT_PATH"
+      setup_app_worktree "$WT_PATH" true true
       report_created_worktree
       exit 0
     fi
@@ -3137,7 +3163,7 @@ case "${1:-}" in
         fi
       fi
       release_issue_claim_lock
-      setup_app_worktree "$WT_PATH"
+      setup_app_worktree "$WT_PATH" true true
       if [[ -n "$TRANSFER_STASH" && "$(git -C "$WT_PATH" rev-parse --verify refs/stash 2>/dev/null || true)" == "$TRANSFER_STASH" ]]; then
         git -C "$WT_PATH" stash drop 'stash@{0}' >/dev/null 2>&1 || \
           worktree_message transfer-stash-kept "$TRANSFER_STASH" "Warning: transfer succeeded, but its recovery stash could not be removed." >&2
@@ -3172,7 +3198,7 @@ case "${1:-}" in
       mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
       release_issue_claim_lock
-      setup_app_worktree "$WT_PATH" "$CHECKOUT"
+      setup_app_worktree "$WT_PATH" "$CHECKOUT" true
       report_created_worktree
       exit 0
     fi
@@ -3267,7 +3293,7 @@ case "${1:-}" in
       fi
     fi
 
-    setup_app_worktree "$WT_PATH" "$CHECKOUT"
+    setup_app_worktree "$WT_PATH" "$CHECKOUT" true
     report_created_worktree
     ;;
 
@@ -4006,7 +4032,7 @@ case "${1:-}" in
     if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
       exit 1
     fi
-    setup_app_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH" true true
     worktree_message codex-configured "$WT_PATH" "Configured Codex worktree: $WT_PATH"
     ;;
 
@@ -4097,7 +4123,7 @@ case "${1:-}" in
     if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
       exit 1
     fi
-    setup_app_worktree "$WT_PATH"
+    setup_app_worktree "$WT_PATH" true true
     worktree_message claude-configured "$WT_PATH" "Configured Claude worktree: $WT_PATH"
     ;;
 
