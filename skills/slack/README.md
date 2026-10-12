@@ -6,7 +6,7 @@ A relay between an overseer's mailbox and one private Slack channel. Session own
 
 - Create or adopt one private channel per checkout and invite its owners by email.
 - Post an overseer's question to the channel and record every reply in its open thread as an answer. After confirmed tracker posting, an ask shows its first line and item link. Other asks include the complete question and an @mention.
-- Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age, with small parent context.
+- Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age. Its parent carries every owner and app thread message this reader generation has not received: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers).
 - Read a requested thread as plain text with `slack thread`, without loading channel history.
 - Send a text reply only to its thread with `slack post --thread TS`.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
@@ -78,7 +78,7 @@ The Jarvis session's watch writes a bare read line count to `<root>/tmp/lane-mai
 |-----------------|--------------|
 | Top-level | The overseer receives it as a directive; :eyes: marks it delivered, :white_check_mark: read |
 | In an open question's thread, any reply | The overseer receives your words as an answer to that question; :eyes: marks it delivered, :white_check_mark: read. The question stays open until the overseer closes it, or until its deadline passes where it names an option that stands |
-| In any thread, at any age, including "Also send to channel" | The overseer receives it as a directive with small parent context, unless it answers an open question |
+| In any thread, at any age, including "Also send to channel" | The overseer receives it as a directive, unless it answers an open question. Its parent carries every owner and app thread message this reader generation has not received: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers) |
 | A file, with or without text | The overseer receives the text, then the saved path of each file |
 | A message with no text and no file | Not routed; the relay replies once, and once more after its journal is moved aside |
 | From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message until its journal is moved aside, which answers it once more |
