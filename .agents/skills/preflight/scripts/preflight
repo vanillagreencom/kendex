@@ -1389,6 +1389,31 @@ suite_is_wired() { # SUITE-PATH
   return 1
 }
 
+# --- shellcheck, one pass over every changed shell file ----------------------
+# ShellCheck's analysis is the largest cost on a wide diff, and no file's
+# depends on another's: side by side on the online cores, the pass lasts
+# about as long as its largest file rather than the sum. The worker count
+# moves only how long the pass takes, never what it reports, so an unreadable
+# count runs one worker. Each file's output lands in its own record, which
+# the shell lanes below read in diff order.
+if [ "$HAVE_SHELLCHECK" = 1 ]; then
+  : >"$TMP/shellcheck.jobs"
+  IDX=0
+  while IFS= read -r f; do
+    IDX=$((IDX + 1))
+    content_of "$IDX" "$f" || continue
+    is_shell_path "$f" "$CONTENT" || continue
+    printf '%s\0%s\0' "$CONTENT" "$TMP/shellcheck.$IDX" >>"$TMP/shellcheck.jobs"
+  done <"$TMP/files.list"
+  SC_WORKERS="$(getconf _NPROCESSORS_ONLN 2>/dev/null)" || SC_WORKERS=1
+  case "$SC_WORKERS" in "" | 0 | *[!0-9]*) SC_WORKERS=1 ;; esac
+  SC_JOB="$(declare -f has_shebang run_shellcheck)"$'\n''run_shellcheck "$1" >"$2"'
+  if [ -s "$TMP/shellcheck.jobs" ]; then
+    pf_dep xargs -0 -n 2 -P "$SC_WORKERS" "$BASH" -c "$SC_JOB" preflight-shellcheck <"$TMP/shellcheck.jobs" \
+      || env_error shellcheck-pass "$REPO_ROOT" "the shellcheck results of the changed shell files could not be written"
+  fi
+fi
+
 # --- lanes, one changed file at a time ---------------------------------------
 FILE_COUNT=0
 IDX=0
@@ -1515,6 +1540,8 @@ while IFS= read -r f; do
     elif [ "$HAVE_SHELLCHECK" = 1 ]; then
       # Only reached for a file bash can parse — a syntax error has already
       # spoken for the file, and shellcheck would only restate it.
+      [ -f "$TMP/shellcheck.$IDX" ] \
+        || env_error shellcheck-pass "$f" "the shellcheck pass left no result for this shell file"
       while IFS= read -r raw; do
         [ -n "$raw" ] || continue
         parse_gcc "$raw" "$cpath"
@@ -1526,7 +1553,7 @@ while IFS= read -r f; do
             emit "$f" "$GCC_LINE" masked-returns "$GCC_MSG"
           fi
         fi
-      done <<<"$(run_shellcheck "$cpath")"
+      done <"$TMP/shellcheck.$IDX"
     else
       record_skip shellcheck-errors "shellcheck is unavailable"
       if [ "$vendored_mirror" = 0 ]; then
