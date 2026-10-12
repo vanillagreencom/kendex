@@ -212,7 +212,9 @@ OWNER_TRACKER_JQ='def owner_tracker_record($posted):
     . as $ask | ([$posted[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
     | .tracker_posted = ($record != null)
     | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
-  else . end;'
+  else . end;
+def owner_tracker_open_labels($label):
+  map(select(.tracker_posted == true) | .tracker_label // $label) | unique;'
 
 # One description format serves the ask, its close and the watch's existing read.
 # The Linear file reader trims trailing newlines. Use --description and keep
@@ -223,10 +225,11 @@ def owner_action_line($name; $action):
   "**" + ($name | [splits("\\s+") | select(length > 0)] | first)
   + ", what you do:** " + $action + "\n\n" + owner_action_body;'
 
-owner_tracker_labels() { # ITEM JSON ADD|REMOVE
-  jq -r --arg label "$OWNER_TRACKER_LABEL" --arg action "$2" '
+owner_tracker_labels() { # ITEM JSON ADD|REMOVE [REMAINING POSTED ASKS]
+  jq -r --arg label "$OWNER_TRACKER_LABEL" --arg action "$2" --argjson remaining "${3:-[]}" "$OWNER_TRACKER_JQ"'
     .labels | if $action == "ADD" then . + [$label] | unique
-      else map(select(. != $label)) end | join(",")' <<<"$1"
+      else ($remaining | owner_tracker_open_labels($label)) as $kept
+        | map(select(. != $label)) + $kept | unique end | join(",")' <<<"$1"
 }
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
@@ -287,17 +290,19 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
     >"$work/tracker-remaining" 2>"$work/tracker.err" || {
     owner_tracker_unwritten "$issue" asks-read; return 0;
   }
-  remaining="$(jq -cs --arg issue "$issue" '[.[] | select(.tracker_posted == true and .issue == $issue)] | last' \
+  remaining="$(jq -cs --arg issue "$issue" '[.[] | select(.tracker_posted == true and .issue == $issue)]' \
     "$work/tracker-remaining")" || return 1
+  # Each confirmed ask owns its recorded label. Older records share the
+  # resolved label because they contain no per-ask label evidence.
+  labels="$(owner_tracker_labels "$current" REMOVE "$remaining")" || return 1
   local owner_args=(--clear-assignee)
-  if [[ "$remaining" != null ]]; then
+  if [[ "$remaining" != '[]' ]]; then
     owner_args=()
-    labels="$(owner_tracker_labels "$current" ADD)" || return 1
-    description="$(jq -r --argjson ask "$remaining" "$OWNER_ACTION_JQ"'
+    description="$(jq -r --argjson asks "$remaining" "$OWNER_ACTION_JQ"'
+      ($asks | last) as $ask |
       .assignee as $name | (.description // "")
       | (if ($ask.do // "") != "" then owner_action_line($name; $ask.do) else owner_action_body end) + "."' <<<"$current")" || return 1
   else
-    labels="$(owner_tracker_labels "$current" REMOVE)" || return 1
     description="$(jq -r "$OWNER_ACTION_JQ"' (.description // "") | owner_action_body + "."' <<<"$current")" || return 1
   fi
   description="${description%.}"
