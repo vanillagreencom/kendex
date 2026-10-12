@@ -170,7 +170,7 @@ exec "$REAL_TMUX" "\$@"
 STUB
 cat > "$PROBE_BIN/ps" <<STUB
 #!/bin/sh
-if [ "\$*" = '-o comm= -p $SERVER_PID' ]; then
+if [ "\$*" = '-A -o pid= -o comm=' ]; then
   echo process-read=failed >&2
   exit 2
 fi

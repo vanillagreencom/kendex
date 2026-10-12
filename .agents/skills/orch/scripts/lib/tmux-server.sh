@@ -89,17 +89,37 @@ tmux_server_start() { # PANE SERVER
 # absence cannot judge that server. TMUX_PANE_DETAIL holds a failed read's cause.
 TMUX_PANE_DETAIL=""
 tmux_pane_live() { # SERVER START PANE [SOCKET]
-  local comm panes rc=0 nl='
+  local comm panes table pid name err detail cleanup rc=0 read_rc=0 cleanup_rc=0 nl='
 '
   TMUX_PANE_DETAIL=""
-  comm="$(ps -o comm= -p "$1" 2>&1)" || rc=$?
+  err="$(mktemp 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    # ps reports an absent pid with status 1 and no output. Errors, including
-    # a missing executable, cannot grant takeover of a fleet record.
-    [ "$rc" -ne 1 ] || [ -n "$comm" ] || return 1
-    TMUX_PANE_DETAIL="process-read server=$1 status=$rc${comm:+$'\n'$comm}"
+    TMUX_PANE_DETAIL="process-read server=$1 operation=scratch status=$rc${err:+$'\n'$err}"
     return 2
   fi
+  # A selected-pid ps read can fail for absence or for a dependency error.
+  # Only a successful all-process table proves absence. Diagnostic output
+  # never forms part of its identity, even when ps succeeds with a warning.
+  table="$(LC_ALL=C ps -A -o pid= -o comm= 2>"$err")" || rc=$?
+  detail="$(cat -- "$err" 2>&1)" || read_rc=$?
+  cleanup="$(rm -- "${err:?}" 2>&1)" || cleanup_rc=$?
+  if [ "$read_rc" -ne 0 ]; then
+    TMUX_PANE_DETAIL="process-read server=$1 operation=diagnostics status=$read_rc${detail:+$'\n'$detail}"
+    return 2
+  fi
+  if [ "$cleanup_rc" -ne 0 ]; then
+    TMUX_PANE_DETAIL="process-read server=$1 operation=cleanup status=$cleanup_rc${cleanup:+$'\n'$cleanup}"
+    return 2
+  fi
+  if [ "$rc" -ne 0 ]; then
+    TMUX_PANE_DETAIL="process-read server=$1 status=$rc${detail:+$'\n'$detail}"
+    return 2
+  fi
+  comm=""
+  while read -r pid name; do
+    if [ "$pid" = "$1" ]; then comm="$name"; break; fi
+  done <<<"$table"
+  [ -n "$comm" ] || return 1
   case "${comm##*/}" in
     tmux*) ;;
     *) return 1 ;;

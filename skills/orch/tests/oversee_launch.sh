@@ -1479,17 +1479,13 @@ test_recorded_server() {
   real_ps="$(command -v ps)"
   cat > "$fail_bin/ps" <<STUB
 #!/bin/sh
-case "\$*" in '-o comm= -p '*) echo process-read=failed >&2; exit 2 ;; esac
+case "\$*" in '-A -o pid= -o comm=') echo process-read=failed >&2; exit 2 ;; esac
 exec "$real_ps" "\$@"
 STUB
   chmod +x "$fail_bin/ps"
   process_control="$(mutant_scripts process-fail-control-$mode lib/tmux-server.sh)" || exit 1
-  mutate_file "$process_control/lib/tmux-server.sh" '    return 2
-  fi
-  case "${comm##*/}"' '    return 1
-    return 2
-  fi
-  case "${comm##*/}"'
+  mutate_file "$process_control/lib/tmux-server.sh" '    TMUX_PANE_DETAIL="process-read server=$1 status=$rc' '    return 1
+    TMUX_PANE_DETAIL="process-read server=$1 status=$rc'
   legacy_control="$(mutant_scripts legacy-control-$mode lib/overseer-launch.sh)" || exit 1
   mutate_file "$legacy_control/lib/overseer-launch.sh" \
     'args=(--server "$server" --server-start "$start")' \

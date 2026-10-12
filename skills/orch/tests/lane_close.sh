@@ -1906,7 +1906,7 @@ mkdir -p "$SERVER_PS_BIN"
 REAL_PS="$(command -v ps)" || { printf 'lane-close-test: no-ps\n' >&2; exit 1; }
 cat >"$SERVER_PS_BIN/ps" <<EOF
 #!/usr/bin/env bash
-[[ "\$*" != '-o comm= -p 999' ]] || { printf 'tmux\\n'; exit 0; }
+[[ "\$*" != '-A -o pid= -o comm=' ]] || { printf '999 tmux\\n'; exit 0; }
 exec "$REAL_PS" "\$@"
 EOF
 chmod +x "$SERVER_PS_BIN/ps"
