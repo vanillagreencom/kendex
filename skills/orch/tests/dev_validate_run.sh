@@ -2701,7 +2701,7 @@ pass_start() { # SCRIPT WORKTREE PATHS ARG...
 #   timeout  a qualifying older timeout coexists with the pass
 # The count of projects made lives in a file: pass_rows runs in a subshell.
 pass_row() {
-  local script="$1" step="$2" paths="$3" request="$4" proj n first dir failed old last=""
+  local script="$1" step="$2" paths="$3" request="$4" proj n first dir failed old pass_run seconds="" last=""
   n=$(( $(cat "$TMP_ROOT/pass-n" 2>/dev/null || echo 0) + 1 ))
   printf '%s\n' "$n" > "$TMP_ROOT/pass-n"
   proj="$(pass_proj "proj-pass-$n")"
@@ -2758,29 +2758,32 @@ pass_row() {
   esac
   pass_start "$script" "$proj" "$paths" --validate-mode "$request" --base HEAD
   dir="$(run_dir_of "$OUT")"
+  pass_run="$(start_line "$dir" pass-run 2>/dev/null)" || pass_run=""
   printf '%s|%s|%s|' "$(cat "$proj/tmp/ran")" "$(verdict_of "$OUT")" \
-    "$([[ "$(start_line "$dir" pass-run 2>/dev/null)" == "$first" ]] && echo first || echo none)"
+    "$([[ "$pass_run" == "$first" ]] && echo first || echo none)"
   run_script "$script" --record --run-dir "$dir"
-  printf '%s %s %s %s%s\n' "$(record_field validate-mode "$OUT")" "$(record_field lanes "$OUT")" \
-    "$(record_field verdict "$OUT")" "$(record_field seconds "$OUT")" "$last"
+  # Reuse records zero work. An executed command can cross a clock second.
+  [[ -z "$pass_run" ]] || seconds=" $(record_field seconds "$OUT")"
+  printf '%s %s %s%s%s\n' "$(record_field validate-mode "$OUT")" "$(record_field lanes "$OUT")" \
+    "$(record_field verdict "$OUT")" "$seconds" "$last"
 }
 # label|step|paths the second start reads|its mode|want
 PASS_ROWS=(
   "a fix round whose lanes passed on a tree asks for a range receipt on it and starts no second command|none|docs/a.md|range|x|$OK|first|range a,b pass 0"
   "a ci request that falls back to range after the round's pass on the tree starts no second command|none|docs/a.md|ci|x|$OK|first|range a,b pass 0"
-  "a changed tree after the pass still runs the range command|edit|docs/a.md|range|xx|$OK|none|range a,b pass 0"
-  "a later failed run over the tree voids the pass and the range command runs|failed|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
-  "a failure from another base voids the pass|failed-base|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
-  "a failure handed another class voids the pass|failed-class|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
-  "a failure handed another docs verdict voids the pass|failed-docs|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
-  "a failure with another finding prefix voids the pass|failed-prefix|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
-  "a later unfinished run voids the pass|unfinished|docs/a.md|range|xxx|$OK|none|range a,b pass 0"
-  "a same-second failure across PID widths cannot reuse a pass|failed-tied|docs/a.md|range|xxx|$OK|none|range a,b pass 0 last=red"
-  "a same-second failure after PID reuse cannot reuse a pass|failed-reused-pid|docs/a.md|range|xxx|$OK|none|range a,b pass 0 last=red"
+  "a changed tree after the pass still runs the range command|edit|docs/a.md|range|xx|$OK|none|range a,b pass"
+  "a later failed run over the tree voids the pass and the range command runs|failed|docs/a.md|range|xxx|$OK|none|range a,b pass"
+  "a failure from another base voids the pass|failed-base|docs/a.md|range|xxx|$OK|none|range a,b pass"
+  "a failure handed another class voids the pass|failed-class|docs/a.md|range|xxx|$OK|none|range a,b pass"
+  "a failure handed another docs verdict voids the pass|failed-docs|docs/a.md|range|xxx|$OK|none|range a,b pass"
+  "a failure with another finding prefix voids the pass|failed-prefix|docs/a.md|range|xxx|$OK|none|range a,b pass"
+  "a later unfinished run voids the pass|unfinished|docs/a.md|range|xxx|$OK|none|range a,b pass"
+  "a same-second failure across PID widths cannot reuse a pass|failed-tied|docs/a.md|range|xxx|$OK|none|range a,b pass last=red"
+  "a same-second failure after PID reuse cannot reuse a pass|failed-reused-pid|docs/a.md|range|xxx|$OK|none|range a,b pass last=red"
   "a known older failure does not void the newer pass|failed-older|docs/a.md|range|xx|$OK|first|range a,b pass 0 last=first"
-  "a failure without a start second cannot reuse a pass|failed-unknown|docs/a.md|range|xxx|$OK|none|range a,b pass 0 last=red"
+  "a failure without a start second cannot reuse a pass|failed-unknown|docs/a.md|range|xxx|$OK|none|range a,b pass last=red"
   "a later pass wins over qualifying timeout evidence and keeps its lanes|timeout|docs/a.md|range|x|$OK|first|range a,b pass 0"
-  "a pass that read fewer paths than this run reads still runs the range command|none|docs/a.md,docs/b.md|range|xx|$OK|none|range a,b pass 0"
+  "a pass that read fewer paths than this run reads still runs the range command|none|docs/a.md,docs/b.md|range|xx|$OK|none|range a,b pass"
 )
 pass_rows() { # SCRIPT [LABEL]
   local row label step paths request

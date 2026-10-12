@@ -226,9 +226,7 @@ assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/lost-tree")" "restack=re
 # A range run on the restacked head that fails, then the skip check asked
 # again, as a re-entry of the restack cycle after a red verdict would.
 cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/newer-red"
-# Run directories are named for the second they start: the red run must sort
-# after the seed's pass.
-sleep 1
+# The failed range run makes --last-pass reject the seed's pass.
 sed -i.bak 's/^DEV_VALIDATE_CMD = .*/DEV_VALIDATE_CMD = "false"/' "$TMP_ROOT/newer-red/kendex.settings.toml"
 printf 'DEV_VALIDATE_RANGE_CMD = "false"\n' >> "$TMP_ROOT/newer-red/kendex.settings.toml"
 clean_env "$SCRIPTS_DIR/dev-validate-run" --worktree "$TMP_ROOT/newer-red" --poll 1 --validate-mode range --base origin/main \
@@ -236,10 +234,9 @@ clean_env "$SCRIPTS_DIR/dev-validate-run" --worktree "$TMP_ROOT/newer-red" --pol
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/newer-red")" "restack=retest cause=newer-red rc=1" \
   "a range run that failed on the restacked head re-tests when asked again"
 
-# A range run on the restacked head that the bound ended, planted the way the
-# runner leaves one under a name that sorts after the seed's pass: with no
-# finding line of its command it refuted nothing, and the version-only restack
-# still skips; with one it re-tests.
+# A bound-ended range record without a start time: with no finding line it
+# refuted nothing, and the version-only restack still skips. With a finding
+# the records cannot establish order, so the restack re-tests.
 cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/no-verdict"
 nv_dir="$TMP_ROOT/no-verdict/tmp/dev-validate-29990101T000000Z-1"
 mkdir -p "$nv_dir"
@@ -249,7 +246,7 @@ printf 'runner=setsid\nguard-note: suites=all\n' > "$nv_dir/log"
 printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$nv_dir/exit"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" \
   "$(skip_line "$TMP_ROOT/no-verdict" version-only pkg/CHANGELOG.md,pkg/package.json)" \
-  "a version-only restack after a range run the bound ended with no finding still skips"
+  "a version-only restack with a finding-free bound-ended range run still skips"
 nv_control_dir="$(mutant_scripts no-verdict-red dev-validate-run)" || exit 1
 mutate_file "$nv_control_dir/dev-validate-run" \
   $'    if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then\n      continue\n    fi\n' ''
@@ -319,7 +316,7 @@ assert_eq "$(control no-conflict-kind restack-skip 'CONFLICT*) retest conflict-k
 assert_eq "$(control no-mode restack-skip '          *) retest conflict-kind "path=$path" "run-dir=$run_dir" ;;' '          *) ;;' symlink)" \
   "$(version_only symlink changelog.d/fixed/link.md)" \
   "control: with no regular-file mode rule a symlink conflict skips"
-assert_eq "$(control no-newer-red dev-validate-run $'      red="$run_dir"\n      continue' '      continue' newer-red)" \
+assert_eq "$(control no-newer-red dev-validate-run '    if [[ "$verdict" != pass ]]; then' $'    if [[ "$verdict" != pass ]]; then\n      continue' newer-red)" \
   "$(version_only newer-red pkg/CHANGELOG.md,pkg/package.json)" \
   "control: with no newer-red rule in dev-validate-run a failed head skips"
 
