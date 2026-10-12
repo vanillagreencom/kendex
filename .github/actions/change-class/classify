@@ -129,7 +129,12 @@
 # declaration's grammar and reader are the classifier's lib/ci-lanes.sh.
 # The declaration is read from LANES_FROM, the default branch's copy, because
 # the author of the diff under judgement could edit the tree's own copy to
-# stand a lane down. An absent or malformed declaration is not a refusal:
+# stand a lane down. For .github/ci-lanes.conf alone, compare that declaration
+# with HEAD using ci_lanes_read. Select the union's lanes whose names, claim
+# sets or queue marks changed. A declaration hit never defers a queue lane.
+# Other paths use the default branch's claims only. A missing, unreadable or
+# malformed copy keeps the all-lanes fallback.
+# An absent or malformed default-branch declaration is not a refusal:
 # the default branch holds it, so failing the step would redden every pull
 # request, the one that repairs it included.
 #
@@ -371,6 +376,42 @@ case "$lane_state" in
       "$lane_state" "$declaration" "${declaration_note:-}" ;;
 esac
 
+# This local comparison needs no decision record: branch claims cannot
+# stand down checks for other paths, since the author controls those claims.
+declaration_delta() {
+  local names=("${lane_names[@]}") queues=("${lane_queue[@]}") claims=()
+  local count="$lane_count" index other claim found
+  index=0
+  while [ "$index" -lt "$count" ]; do
+    claims[$index]="$(printf '%s' "${lane_globs[$index]}" | LC_ALL=C sort -u)" || return 1
+    index=$((index + 1))
+  done
+  git -C "$REPO" cat-file blob "$HEAD:.github/ci-lanes.conf" >"${work:?}/head-ci-lanes.conf" 2>/dev/null || return 1
+  ci_lanes_read "${work:?}/head-ci-lanes.conf" || return 1
+  index=0
+  while [ "$index" -lt "$lane_count" ]; do
+    other=0
+    while [ "$other" -lt "$count" ] && [ "${names[$other]}" != "${lane_names[$index]}" ]; do
+      other=$((other + 1))
+    done
+    claim="$(printf '%s' "${lane_globs[$index]}" | LC_ALL=C sort -u)" || return 1
+    if [ "$other" -eq "$count" ] || [ "${claims[$other]}" != "$claim" ] || [ "${queues[$other]}" != "${lane_queue[$index]}" ]; then
+      printf '%s\n' "${lane_names[$index]}"
+    fi
+    index=$((index + 1))
+  done
+  other=0
+  while [ "$other" -lt "$count" ]; do
+    found=false index=0
+    while [ "$index" -lt "$lane_count" ]; do
+      [ "${names[$other]}" != "${lane_names[$index]}" ] || found=true
+      index=$((index + 1))
+    done
+    [ "$found" = true ] || printf '%s\n' "${names[$other]}"
+    other=$((other + 1))
+  done
+}
+
 # A lane's cause, empty for a lane no changed path reached. `every` names
 # what turns every lane on at once.
 lane_hits=()
@@ -386,6 +427,26 @@ if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
   fi
   while IFS= read -r path; do
     [ -n "$path" ] || continue
+    if [ "$path" = .github/ci-lanes.conf ]; then
+      if delta="$(declaration_delta)"; then
+        while IFS= read -r name; do
+          [ -n "$name" ] || continue
+          index=0
+          while [ "$index" -lt "$lane_count" ] && [ "${lane_names[$index]}" != "$name" ]; do
+            index=$((index + 1))
+          done
+          if [ "$index" -eq "$lane_count" ]; then
+            lane_names[$index]="$name" lane_globs[$index]=""
+            lane_queue[$index]=false lane_uniform[$index]=false
+            lane_count=$((lane_count + 1))
+          fi
+          lane_hits[$index]="cause=declaration-changed path=$path"
+        done <<<"$delta"
+      else
+        every="cause=lane-declaration-unreadable path=$path"
+      fi
+      continue
+    fi
     claimed=false
     index=0
     while [ "$index" -lt "$lane_count" ]; do
@@ -432,7 +493,7 @@ index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$lanes" = false ]; then
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [[ ${lane_hits[$index]} == cause=claimed\ * ]]; then
     hit="${lane_hits[$index]#cause=claimed }"
     [ "$reader_missing" != unread ] || reader_missing="$(queue_reader_missing)"
     if [ -n "$reader_missing" ]; then

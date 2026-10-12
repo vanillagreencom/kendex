@@ -78,7 +78,10 @@ mkdir -p "$ROOT/tmp"
 TMP="$(mktemp -d "$ROOT/tmp/action-suite.XXXXXX")" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
-trap 'chmod -R u+rwX "${TMP:?}" 2>/dev/null; rm -rf -- "${TMP:?}"' EXIT
+CONTROL_ROOT="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $CONTROL_ROOT && ! -L $CONTROL_ROOT ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
+CONTROL_ROOT="$(cd -- "$CONTROL_ROOT" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
+trap 'chmod -R u+rwX "${TMP:?}" 2>/dev/null; rm -rf -- "${TMP:?}" "${CONTROL_ROOT:?}"' EXIT
 
 PASS=0
 FAIL=0
@@ -384,8 +387,7 @@ check "an empty base is not passed as a flag" \
 # The copy keeps every line but the one that reads the wrapped script, and
 # prints `standard` there instead. The render row, whose stub says render,
 # must see the difference.
-mutant="$TMP/mutant/classify"
-mkdir -p "$TMP/mutant"
+mutant="$CONTROL_ROOT/classify"
 needle='"$("$SCRIPTS/change-class" "${args[@]}")"'
 [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
   { echo "the change-class call is no longer one line in $CLASSIFY" >&2; exit 1; }
@@ -823,7 +825,141 @@ status="$(run "$mutant" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OU
 check "must-fail: a classify reading lanes from the judged tree is not refused" \
   "0 lane_verdicts=lane_evil=true" "$status $(outputs | tr ' ' '\n' | grep '^lane_verdicts=')"
 
-# --- 5b. The queue mark ------------------------------------------------------
+# --- 5b. Declaration changes ------------------------------------------------
+
+declare_lanes added-glob 'check:event-uniform src/* Cargo.toml tests/*
+tmux:event-uniform tmux/* fixtures/*
+docs-build docs/*
+'
+declare_lanes reordered 'docs-build docs/*
+tmux:event-uniform tmux/* tmux/*
+check tests/* Cargo.toml src/*
+check:event-uniform src/*
+'
+declare_lanes removed-glob 'check:event-uniform src/* Cargo.toml tests/*
+tmux:event-uniform fixtures/*
+docs-build docs/*
+'
+declare_lanes added-lane 'check:event-uniform src/* Cargo.toml tests/*
+tmux:event-uniform tmux/*
+docs-build docs/*
+extra src/*
+'
+declare_lanes removed-lane 'check:event-uniform src/* Cargo.toml tests/*
+docs-build docs/*
+'
+declare_lanes renamed-lane 'check:event-uniform src/* Cargo.toml tests/*
+terminal:event-uniform tmux/*
+docs-build docs/*
+'
+declare_lanes queue-added 'check:event-uniform src/* Cargo.toml tests/*
+tmux:event-uniform:queue tmux/*
+docs-build docs/*
+'
+declare_lanes uniform-only 'check src/* Cargo.toml tests/*
+tmux tmux/*
+docs-build docs/*
+'
+
+# GitHub supplies HEAD as a commit. Its declaration must be read there,
+# even where the checkout holds another declaration or a merge tree.
+DELTA_REPO="$TMP/delta-repo"
+mkdir -p "$DELTA_REPO/.github"
+mkdir -p "$DELTA_REPO/.agents/skills/harness-ci/scripts/lib" "$TMP/decl/queue-added/.agents/skills/harness-ci/scripts/lib"
+cp "$LANES_LIB" "$DELTA_REPO/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+cp "$LANES_LIB" "$TMP/decl/queue-added/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+delta_git() { git -C "$DELTA_REPO" -c user.name=suite -c user.email=suite@example.invalid "$@"; }
+delta_git init -q
+delta_git config gc.auto 0
+delta_git config maintenance.auto false
+for decl in good added-glob reordered removed-glob added-lane removed-lane renamed-lane queue-added uniform-only bad-name unreadable absent; do
+  [ ! -e "$DELTA_REPO/.github/ci-lanes.conf" ] || rm -r -- "$DELTA_REPO/.github/ci-lanes.conf"
+  case "$decl" in
+    absent) ;;
+    unreadable)
+      mkdir "$DELTA_REPO/.github/ci-lanes.conf"
+      : >"$DELTA_REPO/.github/ci-lanes.conf/member" ;;
+    *) cp "$TMP/decl/$decl/.github/ci-lanes.conf" "$DELTA_REPO/.github/ci-lanes.conf" ;;
+  esac
+  delta_git add -A
+  delta_git commit --allow-empty -qm "$decl"
+  delta_git rev-parse HEAD >"$TMP/decl/$decl/head"
+done
+
+# NAME|BASE DECLARATION|HEAD DECLARATION|CHANGED PATHS|EXPECTED VERDICTS
+# All these paths are outside the docs set. The action's workflow and
+# aggregate consume lane_verdicts; expected values are independent of globs.
+delta_rows() {
+  cat <<'ROWS'
+added-glob|good|added-glob|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+removed-glob|added-glob|good|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+reordered-claims|good|reordered|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
+uniform-only|good|uniform-only|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
+added-lane|good|added-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false,lane_extra=true
+removed-lane|good|removed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+renamed-lane|good|renamed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false,lane_terminal=true
+queue-added|good|queue-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+queue-removed|queue-added|good|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+malformed-head|good|bad-name|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+missing-head|good|absent|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+unreadable-head|good|unreadable|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+unreadable-revision|good|invalid|.github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+malformed-base|bad-name|good|.github/ci-lanes.conf|lane_verdicts=
+missing-base|absent|good|.github/ci-lanes.conf|lane_verdicts=
+unreadable-base|unreadable|good|.github/ci-lanes.conf|lane_verdicts=
+branch-only-claim|good|added-glob|.github/ci-lanes.conf fixtures/new.rs|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+retained-base-claim|good|removed-glob|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+existing-base-claim|good|added-glob|.github/ci-lanes.conf src/new.rs|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false
+path-before-declaration|good|added-glob|src/new.rs .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false
+ROWS
+}
+delta_answer() { # SCRIPT ROW
+  local line name decl head_decl paths expected head
+  line="$(delta_rows | grep "^$2|")" || { echo "no declaration row named $2" >&2; exit 1; }
+  IFS='|' read -r name decl head_decl paths expected <<<"$line"
+  head=invalid
+  [ "$head_decl" = invalid ] || head="$(cat "$TMP/decl/$head_decl/head")"
+  if [ "$(run "$1" REPO="$DELTA_REPO" HEAD="$head" LANES_FROM="$TMP/decl/$decl" \
+    STUB_QUEUE=true STUB_PATHS="$paths" STUB_OUTSIDE="$paths")" != 0 ]; then
+    echo crashed
+    return 0
+  fi
+  outputs | tr ' ' '\n' | grep '^lane_verdicts='
+}
+rows=0
+while IFS='|' read -r name decl head_decl paths expected; do
+  rows=$((rows + 1))
+  check "declaration row $name" "$expected" "$(delta_answer "$CLASSIFY" "$name")"
+done < <(delta_rows)
+require_rows declaration "$rows"
+
+# Bypassing this one path's comparison restores the previous selector.
+# The regression then observes all lanes instead of the changed lane alone.
+plant classify '    if [ "$path" = .github/ci-lanes.conf ]; then' '    if false; then'
+check "must-fail: the previous selector runs every lane for one added glob" \
+  'lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true' "$(delta_answer "$PLANTED" added-glob)"
+mutants=0
+while IFS='@' read -r needle replacement row; do
+  mutants=$((mutants + 1))
+  plant classify "$needle" "$replacement"
+  expected="$(delta_rows | grep "^$row|" | cut -d'|' -f5)"
+  answer="$(delta_answer "$PLANTED" "$row")"
+  if [ "$answer" != crashed ] && [ "$answer" != "$expected" ]; then
+    ok "must-fail: declaration rule rejects $row"
+  else
+    bad "must-fail: declaration rule survived or crashed for $row"
+  fi
+done <<'ROWS'
+[ "${claims[$other]}" != "$claim" ]@[ "${claims[$other]}" = "$claim" ]@added-glob
+[ "${queues[$other]}" != "${lane_queue[$index]}" ]@false@queue-added
+[ "$found" = true ] || printf@[ "$found" = false ] || printf@removed-lane
+        every="cause=lane-declaration-unreadable path=$path"@        every=""@malformed-head
+            lane_count=$((lane_count + 1))@            :@added-lane
+[[ ${lane_hits[$index]} == cause=claimed\ * ]]@[ -n "${lane_hits[$index]}" ]@queue-removed
+ROWS
+require_rows "declaration mutant" "$mutants"
+
+# --- 5c. The queue mark ------------------------------------------------------
 
 # A lane marked `:queue` that one of its own globs reaches stands down on a
 # pull request alone, and there only where the classifier answered
@@ -951,9 +1087,9 @@ while IFS='@' read -r needle replacement row target; do
     *) bad "must-fail: '$needle' planted as '$replacement' gave no verdict on the $row row" ;;
   esac
 done <<'ROWS'
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then@  elif false; then@pr-deferred@classify
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [[ ${lane_hits[$index]} == cause=claimed\ * ]]; then@  elif false; then@pr-deferred@classify
 [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
- && [ -n "${lane_hits[$index]}" ]; then@; then@pr-unclaimed@classify
+ && [[ ${lane_hits[$index]} == cause=claimed\ * ]]; then@; then@pr-unclaimed@classify
   [ -f "$lanes_root/$queue_reader" ] || missing="lanes-from"@  true || missing="lanes-from"@pr-reader-absent@classify
   [ "$(git -C "$REPO" cat-file -t "$HEAD:$queue_reader" 2>/dev/null)" = blob ] ||@  true ||@pr-judged-reader-absent@classify
     elif [ "$queue_only" != true ]; then@    elif false; then@pr-unconfirmed@classify
