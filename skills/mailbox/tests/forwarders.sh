@@ -47,7 +47,7 @@ for script in "$OLD" "$NEW"; do
 done
 mkdir -p "$PROJECT/tmp"
 printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$PROJECT/tmp/workflow-state-oversee.json"
-for messages in 50 250; do
+for messages in 50 400; do
 jq -cn --argjson messages "$messages" '{ts:"1.1",author:"bot",excerpt:"Progress.",thread:
   [range($messages) | {ts:(tostring),author:"bot",text:([range(4000) | "x"] | join(""))}]}' > "$TMP_ROOT/parent.json"
 for script in "$OLD" "$NEW"; do
