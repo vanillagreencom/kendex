@@ -68,4 +68,42 @@ reply 'Everyone counts.' "$ROOT_TS"
 assert_has "$(carried "$REPLY")" "$ASIDE" "control: carrying a non-owner's message breaks the owner-only assertion"
 sk_bin_reset
 
+# Catch-up must include app messages it already scanned but did not deliver.
+# Slack's replies page is reused while handling each offline owner reply.
+while read -r mode; do
+  ROOT="$(sk_new_root "catch-up-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  ROOT_TS="$(post 'Offline topic.')"
+  reply 'Read this first.' "$ROOT_TS"
+  sk_poll "$ROOT"
+  BETWEEN="$(post 'Progress before the offline reply.' "$ROOT_TS")"
+  sk_poll "$ROOT"
+  assert_eq "$RC=$(jq -r 'select(.t == "thread") | .seen' "$(sk_journal "$ROOT")" | tail -n 1)" \
+    "0=$BETWEEN" "$mode: catch-up scans an app message after the reader delivery mark"
+  AFTER="$(post 'More progress.' "$ROOT_TS")"
+  OFFLINE="$(sk_inject "$CH" U001 'First offline reply.' "$ROOT_TS")"
+  LATER="$(sk_inject "$CH" U001 'Second offline reply.' "$ROOT_TS")"
+  if [ "$mode" = truncated-page-control ]; then
+    sk_mutant truncated-page relay.py 'messages = page\[1\]' 'messages = page[1][:1]'
+  fi
+  sk_poll "$ROOT"
+  assert_eq "$RC" 0 "$mode: offline replies reach the mailbox through catch-up"
+  GOT="$(jq -sc --arg first "$CH:$OFFLINE" --arg later "$CH:$LATER" \
+    '{first: [.[] | select(.delivery_id == $first) | .parent.thread[]], later: [.[] | select(.delivery_id == $later) | .parent.thread[]]}' \
+    "$(sk_box "$ROOT")/to-lane.jsonl")"
+  WANT="$(jq -nc --arg between "$BETWEEN" --arg after "$AFTER" --arg first "$OFFLINE" --arg later "$LATER" \
+    '{first: [{ts:$between, author:"app", text:"Progress before the offline reply."}, {ts:$after, author:"app", text:"More progress."}, {ts:$first, author:"owner", text:"First offline reply."}], later: [{ts:$later, author:"owner", text:"Second offline reply."}]}')"
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" "$WANT" "catch-up carries complete unseen author, timestamp and text entries in order without repeats"
+  else
+    sk_assert_red "$GOT" "$WANT" "control: truncating the reused page fails the complete catch-up context assertion"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+production
+truncated-page-control
+ROWS
+
 sk_summary
