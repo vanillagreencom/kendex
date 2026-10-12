@@ -178,7 +178,11 @@ case "${1:-}" in
       exit 0
     fi
     if [[ "${2:-}" == repos/*/issues/*/timeline\?* ]]; then
-      if [[ "${STUB_COPILOT_FLIGHT:-completed}" == cycle-* ]]; then
+      if [[ -n "${STUB_HEAD_ARRIVAL:-}" ]]; then
+        jq -nc --arg at "$STUB_HEAD_ARRIVAL" --arg event "${STUB_ARRIVAL_EVENT:-head_ref_force_pushed}" '
+          [[{event:"committed",sha:"headsha1",committer:{date:"2026-10-11T22:05:55Z"}}],
+           [{event:$event,commit_id:"headsha1",sha:"headsha1",created_at:$at,committer:{date:$at}}]]'
+      elif [[ "${STUB_COPILOT_FLIGHT:-completed}" == cycle-* ]]; then
         jq -nc --arg head "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" --arg current "${STUB_CONFIRM_HEAD:-headsha1}" --arg old "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" --arg mode "$STUB_COPILOT_FLIGHT" --argjson count "$(cat "$STUB_COPILOT_COUNT_FILE")" '
         def req($id;$at): {event:"review_requested",id:$id,commit_id:null,created_at:$at,requested_reviewer:{login:"Copilot",type:"Bot"}};
         def work($id;$at): {event:"copilot_work_started",id:$id,commit_id:null,commit_url:null,created_at:$at,actor:{login:"bmethod",type:"User"},performed_via_github_app:{slug:"copilot-pull-request-reviewer"}};
@@ -208,7 +212,8 @@ case "${1:-}" in
         invalid) echo '{}'; exit 0 ;;
       esac
       id="${STUB_ERROR_ID:-1}"
-      poll="$(cat "$STUB_APPROVAL_COUNT_FILE")"
+      poll=0
+      [[ ! -f "$STUB_APPROVAL_COUNT_FILE" ]] || poll="$(cat "$STUB_APPROVAL_COUNT_FILE")"
       if [[ "${STUB_DUPLICATE_ERRORS:-0}" == 1 ]]; then id=2; fi
       if [[ "${STUB_APPROVAL_MODE:-}" == copilot_error_twice && "$poll" -ge 3 ]]; then id=$((id + 1)); fi
       head="${STUB_ERROR_HEAD:-headsha1}"
@@ -219,6 +224,10 @@ case "${1:-}" in
       [[ "${STUB_REST_REVIEWER:-}" != human ]] || login=colleague
       rows="$(jq -nc --arg head "$head" --arg body "$body" --argjson id "$id" --arg login "$login" \
         '[{id:$id,user:{login:$login},commit_id:$head,state:"COMMENTED",body:$body}]')"
+      if [[ -n "${STUB_REVIEW_SUBMITTED:-}" ]]; then
+        rows="$(jq -c --arg at "$STUB_REVIEW_SUBMITTED" --arg state "${STUB_REVIEW_STATE:-APPROVED}" \
+          'map(.submitted_at=$at | .state=$state)' <<<"$rows")"
+      fi
       if [[ "${STUB_DUPLICATE_ERRORS:-0}" == 1 ]]; then
         rows="$(jq -c '[.[0] + {id:1}] + .' <<<"$rows")"
       fi
@@ -437,6 +446,11 @@ case "${1:-}" in
         fi
         decision=""
         case "$mode" in
+          copilot_repointed)
+            decision="${STUB_REVIEW_DECISION-APPROVED}"
+            reviews="$(jq -nc --arg state "${STUB_REVIEW_STATE:-APPROVED}" \
+              '[{author:{login:"copilot-pull-request-reviewer"},state:$state}]')"
+            ;;
           approved_decision)
             decision="APPROVED"
             reviews='[{"author":{"login":"reviewer1"},"state":"APPROVED"}]'
@@ -771,6 +785,15 @@ table "$APPROVAL" \
   'a denied listing with no readable default branch is unresolved||STUB_RULESETS_MODE=denied,STUB_DEFAULT_BRANCH_MODE=fail,STUB_BASE_REF=main,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout auto_review_target_source=unresolved target_patterns=' \
   'a ruleset naming ~DEFAULT_BRANCH with no readable default branch is unresolved||STUB_DEFAULT_BRANCH_MODE=fail,STUB_BASE_REF=stack-base,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout auto_review_target_source=unresolved'
 
+table '1 1 1 --json --mode approval' \
+  're-pointed Copilot approval cannot approve the pushed head||STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0' \
+  're-pointed approval cannot use the silence fallback||STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout approvals=0 requests=0' \
+  'a review after the force push still approves||STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:06:58Z|rc=0 status=approved approvals=1 requests=0' \
+  'an approval without an aggregate decision must also follow arrival||STUB_APPROVAL_MODE=copilot_repointed,STUB_REVIEW_DECISION=,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0' \
+  'a re-pointed request for changes holds no verdict on the pushed head||STUB_APPROVAL_MODE=copilot_repointed,STUB_REVIEW_STATE=CHANGES_REQUESTED,STUB_REVIEW_DECISION=CHANGES_REQUESTED,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout changes_requested=0 requests=0' \
+  'a review before the committed event cannot approve||STUB_APPROVAL_MODE=copilot_repointed,STUB_ARRIVAL_EVENT=committed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout approvals=0 requests=0' \
+  're-pointed error review cannot spend a retry||STUB_APPROVAL_MODE=copilot_repointed,STUB_REVIEW_STATE=COMMENTED,STUB_REVIEW_DECISION=REVIEW_REQUIRED,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z|rc=1 status=timeout requests=0'
+
 echo "=== Copilot error answers retry once through the request owner ==="
 # KEN-3421 produced duplicate error reviews for one request. The first snapshot
 # consumes one retry; unchanged IDs are not new answers. A later ID is terminal.
@@ -1081,6 +1104,11 @@ control copilot-error-no-retry '  if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg
   "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error_twice' 'rc=1 status=copilot-error requests=1 approval_polls=3'
 
 # shellcheck disable=SC2016
+control copilot-head-arrival '  | map(select($arrival == "" or' \
+  '  | map(select(true or $arrival == "" or' \
+  '1 1 1 --json --mode approval' \
+  'STUB_APPROVAL_MODE=copilot_repointed,STUB_HEAD_ARRIVAL=2026-10-11T22:06:43Z,STUB_REVIEW_SUBMITTED=2026-10-11T22:03:51Z' \
+  'rc=1 status=timeout approvals=0 requests=0'
 control copilot-current-head '        and .commit_id == $head and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]' \
   '        and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]' \
   "$APPROVAL" 'STUB_APPROVAL_MODE=copilot_error,STUB_ERROR_HEAD=oldsha' 'rc=1 status=timeout requests=0'

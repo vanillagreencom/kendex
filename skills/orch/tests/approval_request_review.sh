@@ -582,6 +582,33 @@ for row in \
     assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|approval|1' "$label control reaches the duplicate request" "$ERR"
   fi
 done
+# GitHub can move a submitted review's commit_id to a later force-pushed head.
+# Pages include an older push and an unrelated push after the current head.
+ARRIVAL_TIMELINE='[[{"event":"committed","sha":"current-head","committer":{"date":"2026-10-11T22:09:00Z"}},{"event":"head_ref_force_pushed","commit_id":"current-head","created_at":"2026-10-11T22:02:00Z"}],[{"event":"head_ref_force_pushed","commit_id":"current-head","created_at":"2026-10-11T22:06:43Z"},{"event":"head_ref_force_pushed","commit_id":"another-head","created_at":"2026-10-11T22:10:00Z"}]]'
+for row in \
+  're-pointed approval|2026-10-11T22:03:51Z|1' \
+  'review at push time|2026-10-11T22:06:43Z|1' \
+  'review after push|2026-10-11T22:06:58Z|0'; do
+  IFS='|' read -r label submitted requests <<<"$row"
+  timed_review=$(jq -c --arg at "$submitted" 'map(.submitted_at=$at)' <<<"$HEAD_REVIEW")
+  RUN_ENV=("TIMELINE_JSON=$ARRIVAL_TIMELINE" "REVIEWS_JSON=$timed_review")
+  run_action "$RUN" 0 --request-review --base-checkout "$BASE"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "0|approval|$requests" "$label requests only unreviewed delivered heads" "$ERR"
+  if [[ "$requests" == 0 ]]; then
+    assert_contains "$(cat "$ERR")" 'approval-wait: existing-review head=current-head' "$label retains completed work" "$ERR"
+  else
+    scripts="$(mutant_scripts head-arrival-control approval-wait)" || exit 1
+    mutate_file "$scripts/approval-wait" 'map(select($arrival == "" or' 'map(select(true or $arrival == "" or'
+    run_action "$scripts/approval-wait" 0 --request-review --base-checkout "$BASE"
+    assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|approval|0' "$label control counts the replaced head review" "$ERR"
+    assert_contains "$(cat "$ERR")" 'approval-wait: existing-review head=current-head' "$label control reaches existing-review" "$ERR"
+    if [[ "$RC|$(cat "$OUT")|$REQUESTS" == "0|approval|$requests" ]]; then
+      fail "$label control did not turn its request assertion red"
+    else
+      pass "$label control turns its request assertion red"
+    fi
+  fi
+done
 # Each exception and failed source keeps its own control. All use the real
 # request owner with private defects; the stub supplies only GitHub evidence.
 for row in \

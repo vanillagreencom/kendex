@@ -668,6 +668,20 @@ last_reviews_present=0
 # Copilot's own error sentence is the upstream producer (KEN-3455).
 COPILOT_REVIEWER='copilot-pull-request-reviewer'
 COPILOT_ERROR_SENTENCE='Copilot encountered an error and was unable to review this pull request.'
+# GitHub can re-point an older review to a force-pushed commit. The timeline
+# time, rather than commit_id alone, binds that review to the delivered head.
+HEAD_REVIEW_JQ='
+  ($timeline | if type != "array" or length == 0 or any(.[]; type != "array")
+    then error("timeline pages") else add end
+    | ([.[] | select(.event == "head_ref_force_pushed" and .commit_id == $head) | .created_at]
+       | if length > 0 then . else empty end) //
+      [.[] | select(.event == "committed" and .sha == $head) | .committer.date]
+    | map(if type == "string" then . else error("head arrival time") end)
+    | max // "") as $arrival
+  | map(select($arrival == "" or
+      (if (.submitted_at | type) == "string" then .submitted_at > $arrival
+       else error("review submission time") end)))
+'
 copilot_error_retries='{}'
 copilot_fallback_cause=""
 
@@ -1051,11 +1065,14 @@ run_review_action() (
       || { approval_message request-checks-unreadable >&2; exit 2; }
     request_reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE") \
       || { approval_message request-reviews-unreadable >&2; exit 2; }
+    request_timeline=$(gh api "repos/$REPO/issues/$PR_NUM/timeline?per_page=100" --paginate --slurp 2>"$GH_ERR_FILE") \
+      || { approval_message request-reviews-unreadable >&2; exit 2; }
     request_review_exists=$(jq -er -s --arg head "$request_head" \
-      --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" '
+      --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" --argjson timeline "$request_timeline" '
       if length == 0 or any(.[]; type != "array") then error("review pages") else add end
       | map(select(.user.login == $reviewer and .commit_id == $head
           and (.state == "APPROVED" or .state == "COMMENTED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
+      | '"$HEAD_REVIEW_JQ"'
       | (map(select(.state != "DISMISSED")) | last) as $latest
       | if $latest.state == "COMMENTED" and (($latest.body // "") | contains($sentence))
         then false else any(.[]; (.body // "") | contains($sentence) | not) end
@@ -1336,21 +1353,23 @@ copilot_fallback_notice() {
 }
 
 # REST's paginated review list supplies the identity and commit absent from
-# latestReviews. Only Copilot's last submitted review at this head can retry;
-# an earlier error must not override a completed review.
+# latestReviews. Its last review after this head arrived supplies both the
+# formal verdict and any error retry; an older review supplies neither.
 read_copilot_error() {
-  local reviews status=0
+  local reviews timeline status=0
   : > "$GH_ERR_FILE"
   reviews=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE") || status=$?
   [ "$status" -eq 0 ] || return "$status"
-  jq -er -s --arg head "$last_head_sha" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg reviewer "${COPILOT_REVIEWER}[bot]" '
+  timeline=$(gh api "repos/$REPO/issues/$PR_NUM/timeline?per_page=100" --paginate --slurp 2>"$GH_ERR_FILE") || return $?
+  jq -cer -s --arg head "$last_head_sha" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg reviewer "${COPILOT_REVIEWER}[bot]" --argjson timeline "$timeline" '
     if length == 0 or any(.[]; type != "array") then error("review pages") else add end
     | [.[] | select(.user.login == $reviewer
         and .commit_id == $head and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED"))]
-    | last
+    | '"$HEAD_REVIEW_JQ"'
+    | last as $latest | {review: $latest, error_id: ($latest
     | if .state == "COMMENTED" and ((.body // "") | contains($sentence))
       then if (.id | type) == "number" then .id | tostring else error("review identity") end
-      else "" end' <<<"$reviews"
+      else "" end)}' <<<"$reviews"
 }
 
 # The existing atomic workflow-state owner holds error-answer state, not a
@@ -1424,6 +1443,31 @@ while true; do
   last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
   last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
   read_base_ref
+  copilot_error_id=""
+  if jq -e --arg reviewer "$COPILOT_REVIEWER" 'any(.latestReviews[]?; .author.login == $reviewer and
+      (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED"))' >/dev/null <<<"$view_json"; then
+    error_status=0
+    copilot_review=$(read_copilot_error) || error_status=$?
+    if [ "$error_status" -ne 0 ]; then
+      if gh_failure_is_transient "$error_status"; then
+        transient_retry copilot-reviews-failed
+        continue
+      fi
+      emit_error copilot-reviews-failed
+      exit 1
+    fi
+    copilot_error_id=$(jq -r '.error_id' <<<"$copilot_review")
+    # Keep stale engagement visible to the timeout rule, but remove its formal
+    # verdict. GitHub's aggregate approval cannot approve through that review.
+    view_json=$(jq --arg reviewer "$COPILOT_REVIEWER" --argjson current "$copilot_review" '
+      .latestReviews |= map(if .author.login == $reviewer
+        then .state = ($current.review.state // "COMMENTED") else . end)
+      | .reviewDecision as $decision
+      | if ($decision == "APPROVED" or $decision == "CHANGES_REQUESTED") and
+          ([.latestReviews[]? | select(.state == $decision)] | length) == 0
+        then .reviewDecision = "REVIEW_REQUIRED" else . end' <<<"$view_json")
+    last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
+  fi
   # latestReviews already holds the latest review per reviewer; count formal
   # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
   last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
@@ -1482,16 +1526,6 @@ while true; do
   fi
   if [ "$COPILOT_REQUESTS" = on ] && jq -e --arg reviewer "$COPILOT_REVIEWER" '
     any(.latestReviews[]?; .author.login == $reviewer and .state == "COMMENTED")' >/dev/null <<<"$view_json"; then
-    error_status=0
-    copilot_error_id=$(read_copilot_error) || error_status=$?
-    if [ "$error_status" -ne 0 ]; then
-      if gh_failure_is_transient "$error_status"; then
-        transient_retry copilot-reviews-failed
-        continue
-      fi
-      emit_error copilot-reviews-failed
-      exit 1
-    fi
     if [ -n "$copilot_error_id" ]; then
       if ! claim_copilot_error_retry "$copilot_error_id"; then
         emit_error copilot-retry-state-failed
