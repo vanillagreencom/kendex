@@ -787,7 +787,8 @@ trap_signals() { # FILE LINE -> the operands after the action
     if [ "$closed" = 0 ]; then
       prior="$source"
       source="$source$line"$'\n'
-      syntax="$(substitution_parse_result "$source")" || return 1
+      substitution_parse_result "$source" || return 1
+      syntax="$SUBSTITUTION_PARSE_RESULT"
       case "$syntax" in
         open:*) continue ;;
       esac
@@ -816,7 +817,8 @@ after_action() { # SOURCE LINE
       \" | \') ;;
       *) continue ;;
     esac
-    syntax="$(substitution_parse_result "$1${2:0:i}")" || return 1
+    substitution_parse_result "$1${2:0:i}" || return 1
+    syntax="$SUBSTITUTION_PARSE_RESULT"
     case "$syntax" in
       open:*) ;;
       *)
@@ -854,37 +856,64 @@ substitution_status_checked() { # STATEMENT
 }
 # Bash has no command-span API. Read only its first diagnostic record as the
 # fallback delimiter result: later records echo source, not parser state.
-substitution_parse_result() { # SOURCE -> boundary | open:DELIMITER
+SUBSTITUTION_PARSE_RESULT=''
+substitution_parse_result() { # SOURCE -> SUBSTITUTION_PARSE_RESULT
   local diagnostic='' rc=0
   diagnostic="$(LC_ALL=C bash -n <<<"$1" 2>&1)" || rc=$?
   diagnostic="${diagnostic%%$'\n'*}"
   case "$rc:$diagnostic" in
     [12]:*'unexpected EOF while looking for matching '*)
-      printf 'open:%s\n' "${diagnostic#*unexpected EOF while looking for matching }" ;;
-    0:*|2:*) printf 'boundary\n' ;;
+      SUBSTITUTION_PARSE_RESULT="open:${diagnostic#*unexpected EOF while looking for matching }" ;;
+    0:*|2:*) SUBSTITUTION_PARSE_RESULT=boundary ;;
     *) return 1 ;;
   esac
 }
 # Keep the original prefix for Bash's compound-command context. A closing fi,
 # done, esac or brace must not stop parsing before the delimiter being probed.
-substitution_statements() { # FILE -> START TAB END TAB STATEMENT
+substitution_statements() { # FILE LAST-ADDED-LINE UNCHECKED-MKTEMP UNREACHABLE-GUARD -> START TAB END TAB STATEMENT
   local line='' statement='' source='' first=1 last=0 tail='' syntax='boundary'
-  local quoted_syntax=''
+  local quoted_syntax='' pending='' candidate=0
   while IFS= read -r line || [ -n "$line" ]; do
     last=$((last + 1))
-    statement="$statement$line"
     source="$source$line"$'\n'
     tail="$line"
     while [ "${tail%\\}" != "$tail" ]; do tail="${tail%\\}"; done
+    if [ -z "$statement" ] && [ "$line" = "$tail" ]; then
+      # The first line cannot reach the strict-file rule without its existing
+      # assignment shape. The mktemp rule can match inside a substitution,
+      # so its carrier keeps the full logical statement.
+      candidate=0
+      if [ "$4" = 1 ] && [[ "$line " =~ $SUBST_ASSIGN_RE ]]; then candidate=1; fi
+      if [ "$3" = 1 ]; then
+        case "$line" in *'$('* ) candidate=1 ;; esac
+      fi
+      if [ "$candidate" = 0 ] || { [ "$3" = 0 ] && ! line_is_code "$1" "$last"; }; then
+        first=$((last + 1))
+        if [ "$last" -ge "$2" ]; then return 0; fi
+        continue
+      fi
+    fi
+    statement="$statement$line"
+    # Bash has named the open delimiter. Without it or a trailing escape,
+    # this line cannot close the statement; retain context without a probe.
+    if [ -n "$pending" ] && [ "$line" = "$tail" ]; then
+      case "$line" in
+        *"$pending"*) ;;
+        *) statement="$statement"$'\n'; continue ;;
+      esac
+    fi
+    pending=''
     syntax='boundary'
     case "$statement" in
       *'$('* | *\\)
-        syntax="$(substitution_parse_result "$source")" || return 1 ;;
+        substitution_parse_result "$source" || return 1
+        syntax="$SUBSTITUTION_PARSE_RESULT" ;;
     esac
     if [ "$(( (${#line} - ${#tail}) % 2 ))" = 1 ]; then
       # Comments and single quotes ignore the replacement double quote.
       # Active backslashes change the delimiter result and remove the newline.
-      quoted_syntax="$(substitution_parse_result "${source%\\$'\n'}\"")" || return 1
+      substitution_parse_result "${source%\\$'\n'}\"" || return 1
+      quoted_syntax="$SUBSTITUTION_PARSE_RESULT"
       if [ "$syntax" != "$quoted_syntax" ]; then
         statement="${statement%\\}"
         continue
@@ -892,11 +921,16 @@ substitution_statements() { # FILE -> START TAB END TAB STATEMENT
     fi
     case "$syntax" in
       open:*)
+        pending="${syntax#open:}"
+        if [ "${#pending}" = 3 ]; then pending="${pending:1:1}"; else pending=''; fi
         statement="$statement"$'\n'
         continue ;;
     esac
     printf '%s\t%s\t%s\n' "$first" "$last" "${statement//$'\n'/ }" || return 1
     statement=''
+    # The consumer reads only statements that intersect added lines. Finish
+    # a pending statement, then leave the unchanged tail unparsed.
+    if [ "$last" -ge "$2" ]; then return 0; fi
     first=$((last + 1))
   done <"$1"
   # A syntax-invalid file still belongs to shell-syntax, never a clean scan.
@@ -1517,22 +1551,37 @@ while IFS= read -r f; do
 
   # Substitution status belongs to the logical statement, not its opening
   # physical line. Keep its end for the guard's existing look-ahead window.
-  if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ]; then
-    substitution_statements "$cpath" >"$TMP/statements.$IDX" \
-      || env_error fail-open "$f" "shell statements could not be read"
+  unchecked_mktemp=0
+  unreachable_guard=0
+  [ "$has_ee" = 0 ] && unchecked_mktemp=1
+  if [ "$own_rules" = 0 ] && [ "$has_ee" = 1 ] && [ "$has_noee" = 0 ]; then
+    unreachable_guard=1
+  fi
+  # Strict test files cannot produce either substitution finding. Building
+  # their full statements would repeatedly parse shell fixture text for no
+  # rule that can consume it.
+  if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] \
+    && { [ "$unchecked_mktemp" = 1 ] || [ "$unreachable_guard" = 1 ]; }; then
     added_lines_of "$IDX" "$f"
+    last_added="$(awk '$1 > last { last=$1 } END { print last+0 }' "$ADDED_LINES")" \
+      || env_error fail-open "$f" "changed shell line numbers could not be read"
+    : >"$TMP/statements.$IDX"
+    if [ "$last_added" -gt 0 ]; then
+      substitution_statements "$cpath" "$last_added" "$unchecked_mktemp" "$unreachable_guard" >"$TMP/statements.$IDX" \
+        || env_error fail-open "$f" "shell statements could not be read"
+    fi
     awk -F '\t' 'FILENAME == ARGV[1] { added[$1] = 1; next }
       { for (n = $1; n <= $2; n++) if (added[n]) { print; break } }' \
       "$ADDED_LINES" "$TMP/statements.$IDX" >"$TMP/substitutions.$IDX" \
       || env_error fail-open "$f" "changed shell statements could not be selected"
     while IFS="$TAB" read -r n statement_end content; do
-      if [ "$has_ee" = 0 ] \
+      if [ "$unchecked_mktemp" = 1 ] \
         && grep -Eq -- "$MKTEMP_ASSIGN" <<<"$content" \
         && ! substitution_status_checked "$content"; then
         emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
       fi
 
-      if [ "$own_rules" = 0 ] && [ "$has_ee" = 1 ] && [ "$has_noee" = 0 ]; then
+      if [ "$unreachable_guard" = 1 ]; then
         case "$content" in
           *'$('*)
             if ! substitution_status_checked "$content" && grep -Eq -- "$SUBST_ASSIGN_RE" <<<"$content"; then
