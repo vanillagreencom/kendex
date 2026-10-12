@@ -262,7 +262,7 @@ EOF
     if mask_spans "$BARE" context; then
       BARE=$MASKED
     fi
-    local openings=$BARE prior="" prefix strip_tabs match before owner receiver pipeline executable_body context
+    local openings=$BARE prior="" prefix strip_tabs match before owner receiver pipeline executable_body context segment receiver_segments
     local heredoc_open='(^|[^<])<<(-?)[[:blank:]]*([^[:space:]<][^[:space:]]*)'
     while [[ $openings =~ $heredoc_open ]]; do
       match=${BASH_REMATCH[0]}
@@ -296,8 +296,13 @@ EOF
         case "$receiver" in
           \(* | \{*) executable_body=1 ;;
           *)
-            command_text "${receiver%%|*}"
-            case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) ;; *) executable_body=1 ;; esac
+            command_segments "${receiver%%|*}"
+            receiver_segments=$SEGMENTS
+            while IFS= read -r segment; do
+              command_text "$segment"
+              [ -n "$COMMAND_TEXTS" ] || continue
+              case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) ;; *) executable_body=1 ;; esac
+            done <<<"$receiver_segments"
             ;;
         esac
         pipeline=$receiver
