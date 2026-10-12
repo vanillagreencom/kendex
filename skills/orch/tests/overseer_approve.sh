@@ -11,7 +11,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)" || { echo 'overseer_approve: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "overseer_approve: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'overseer_approve: scratch=resolve-failed' >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap '[[ -z ${FOREIGN_PARENT_TOKEN:-} ]] || rm -f -- "$FOREIGN_PARENT_TOKEN"; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 TOKEN=ghs_fixtureOverseerReviewToken
 GIVEN=0123456789abcdef0123456789abcdef01234567
@@ -46,6 +46,24 @@ if [[ -O "$FOREIGN_FILE" ]]; then
   chown 1 "$FOREIGN_FILE"
 fi
 [[ ! -O "$FOREIGN_FILE" ]] || exit 1
+# A private file in another account's directory must name that parent. The
+# sticky temp root permits this hostile layout without changing its owner.
+FOREIGN_PARENT="$(cd -- /tmp && pwd -P)" || exit 1
+if [[ "$EUID" -eq 0 ]]; then
+  FOREIGN_PARENT="$TMP_ROOT/foreign-parent"
+  mkdir "$FOREIGN_PARENT"
+  chmod 700 "$FOREIGN_PARENT"
+  chown 1 "$FOREIGN_PARENT"
+else
+  [[ ! -O "$FOREIGN_PARENT" && -k "$FOREIGN_PARENT" && -w "$FOREIGN_PARENT" ]] || {
+    printf 'overseer_approve: foreign-parent=unavailable path=%s\n' "$FOREIGN_PARENT" >&2
+    exit 1
+  }
+fi
+FOREIGN_PARENT_TOKEN="$(mktemp "$FOREIGN_PARENT/orch-parent-owner.XXXXXX")" || exit 1
+cp -p "$TMP_ROOT/token" "$FOREIGN_PARENT_TOKEN"
+chmod 600 "$FOREIGN_PARENT_TOKEN"
+[[ -f "$FOREIGN_PARENT_TOKEN" && -O "$FOREIGN_PARENT_TOKEN" && ! -O "$FOREIGN_PARENT" ]] || exit 1
 printf 'Each decline holds.\n"Quoted" line\n' > "$TMP_ROOT/body"
 CALLS="$TMP_ROOT/calls"
 INPUT="$TMP_ROOT/input"
@@ -352,11 +370,30 @@ token file group executable|@token-610|mode-610|
 token file other executable|@token-601|mode-601|
 token file mode 000|@token-000|$UNREADABLE_CAUSE|
 token parent group writable|@shared-parent/token|mode-770|@shared-parent
+token parent foreign owner|$FOREIGN_PARENT_TOKEN|not-owned|$FOREIGN_PARENT
 token file final newline|@token|accepted|
 token file no final newline|@token-no-newline|accepted|
 token file repeated final newlines|@token-final-newlines|accepted|
 token file symlink|@token-link|accepted|
 EOF
+
+# Skipping only the parent's ownership check invalidates the row above. A
+# sticky temp root then reaches the write-mode refusal; a private parent reads.
+scripts="$(mutant_scripts token-parent-owner/orch lib/gh-auth.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/token-parent-owner/github"
+mutate_file "$scripts/lib/gh-auth.sh" '[[ ! -O "$path" ]]' \
+  '[[ "$path" == "$file" && ! -O "$path" ]]'
+run_approve "$scripts/overseer-approve" "$FOREIGN_PARENT_TOKEN" "$GIVEN" ok "${APPROVE[@]}"
+if [[ "$EUID" -eq 0 ]]; then
+  assert_eq "$RC|$NCALLS" '0|2' 'control: foreign parent ownership refusal disappears' "$ERR"
+else
+  assert_eq "$RC|$NCALLS|$(cat "$OUT")" '3|0|' 'control: foreign parent reaches its mode refusal' "$ERR"
+  assert_contains "$(cat "$ERR")" "orch_token_file_read: refused file=$FOREIGN_PARENT cause=mode-" \
+    'control: skipping parent ownership reaches the next parent check' "$ERR"
+fi
+assert_not_contains "$(cat "$ERR")" "orch_token_file_read: refused file=$FOREIGN_PARENT cause=not-owned" \
+  'control: the foreign-parent not-owned row fails' "$ERR"
+assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" 'parent-owner control prints no token'
 
 # The caller skips an unset setting. Exercise the reader's own unset contract.
 source "$REPO_ROOT/skills/orch/scripts/lib/gh-auth.sh"

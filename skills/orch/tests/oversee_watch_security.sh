@@ -11,6 +11,25 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 
 HEARTBEAT="EVENT heartbeat loops=1 interval=0s since=none"
 
+# The sticky temp root permits a caller-owned private file in another
+# account's directory. Root uses a private directory with a foreign owner.
+FOREIGN_PARENT="$(cd -- /tmp && pwd -P)" || exit 1
+if [[ "$EUID" -eq 0 ]]; then
+  FOREIGN_PARENT="$TMP_ROOT/foreign-parent"
+  mkdir "$FOREIGN_PARENT"
+  chmod 700 "$FOREIGN_PARENT"
+  chown 1 "$FOREIGN_PARENT"
+else
+  [[ ! -O "$FOREIGN_PARENT" && -k "$FOREIGN_PARENT" && -w "$FOREIGN_PARENT" ]] || {
+    printf 'oversee_watch_security: foreign-parent=unavailable path=%s\n' "$FOREIGN_PARENT" >&2
+    exit 1
+  }
+fi
+FOREIGN_PARENT_TOKEN="$(mktemp "$FOREIGN_PARENT/orch-parent-owner.XXXXXX")" || exit 1
+trap 'rm -f -- "$FOREIGN_PARENT_TOKEN"; rm -rf -- "${TMP_ROOT:?}"' EXIT
+chmod 600 "$FOREIGN_PARENT_TOKEN"
+[[ -f "$FOREIGN_PARENT_TOKEN" && -O "$FOREIGN_PARENT_TOKEN" && ! -O "$FOREIGN_PARENT" ]] || exit 1
+
 # run [ENV=VAL ...] -- ARGS...: one watch run; OUT, RC and ERR (a file)
 # are what the checks read. RUN_LOOPS overrides the single-loop default.
 RUN_SEQ=0
@@ -152,12 +171,16 @@ while IFS='|' read -r shape cause; do
       cp -p "$supplied" "$STUB_DIR/shared-parent/token"
       supplied="$STUB_DIR/shared-parent/token"
       chmod 770 "$STUB_DIR/shared-parent" ;;
+    parent-owner)
+      cp -p "$supplied" "$FOREIGN_PARENT_TOKEN"
+      supplied="$FOREIGN_PARENT_TOKEN" ;;
   esac
   : > "$STUB_DIR/gh.auth"
   run GH_TOKEN=ghs_fixture_lane "ORCH_SECURITY_ALERT_TOKEN_FILE=$supplied" --
   refused="$RC|$(unread)|$(events)"
   refused_file="$supplied"
   [[ "$shape" != parent ]] || refused_file="$STUB_DIR/shared-parent"
+  [[ "$shape" != parent-owner ]] || refused_file="$FOREIGN_PARENT"
   assert_eq "$(grep '^orch_token_file_read: refused ' "$ERR")" \
     "orch_token_file_read: refused file=$refused_file cause=$cause" "credential cause: $shape" "$ERR"
   assert_not_contains "$(cat "$ERR")" ghs_fixture_overseer "credential refusal prints no token: $shape"
@@ -180,11 +203,12 @@ directory|not-regular
 mode-640|mode-640
 mode-604|mode-604
 parent|mode-770
+parent-owner|not-owned
 EOF
 
 # Each mutation removes one reader rule. Type uses a directory, so the control
 # cannot block opening a FIFO. The unchanged cause assertion would turn red.
-for rule in type owner mode parent length malformed; do
+for rule in type owner mode parent parent-owner length malformed; do
   scripts="$(mutant_scripts "security-token-$rule/orch" lib/gh-auth.sh)" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-token-$rule/github"
   new_case "security_token_control_$rule"
@@ -211,6 +235,11 @@ for rule in type owner mode parent length malformed; do
       cp -p "$supplied" "$STUB_DIR/shared-parent/token"
       supplied="$STUB_DIR/shared-parent/token"
       chmod 770 "$STUB_DIR/shared-parent" ;;
+    parent-owner)
+      mutate_file "$scripts/lib/gh-auth.sh" '[[ ! -O "$path" ]]' \
+        '[[ "$path" == "$file" && ! -O "$path" ]]'
+      cp -p "$supplied" "$FOREIGN_PARENT_TOKEN"
+      supplied="$FOREIGN_PARENT_TOKEN" ;;
     length)
       mutate_file "$scripts/lib/gh-auth.sh" 'read -r -n 4096 -d' 'read -r -n 8192 -d'
       printf '%5000s' '' | tr ' ' x > "$supplied" ;;
@@ -222,6 +251,17 @@ for rule in type owner mode parent length malformed; do
   esac
   WATCH_BIN="$scripts/oversee-watch" run GH_TOKEN=ghs_fixture_lane "ORCH_SECURITY_ALERT_TOKEN_FILE=$supplied" --
   case "$rule" in
+    parent-owner)
+      if [[ "$EUID" -eq 0 ]]; then
+        assert_eq "$RC|$(unread)" '0|none' 'control: foreign parent ownership refusal disappears' "$ERR"
+      else
+        assert_eq "$RC|$(unread)" '0|EVENT security-alerts-unread reads=installation-token:credential' \
+          'control: foreign parent reaches its mode refusal' "$ERR"
+        assert_contains "$(cat "$ERR")" "orch_token_file_read: refused file=$FOREIGN_PARENT cause=mode-" \
+          'control: skipping parent ownership reaches the next parent check' "$ERR"
+      fi
+      assert_not_contains "$(cat "$ERR")" "orch_token_file_read: refused file=$FOREIGN_PARENT cause=not-owned" \
+        'control: the foreign-parent not-owned row fails' "$ERR" ;;
     type|owner)
       forbidden=not-regular
       [[ "$rule" != owner ]] || forbidden=not-owned
