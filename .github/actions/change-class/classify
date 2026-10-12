@@ -417,23 +417,29 @@ declaration_delta() {
   done
 }
 
-# A lane's cause, empty for a lane no changed path reached. `every` names
-# what turns every lane on at once.
+# Each path records its own evidence. The verdict pass alone gives a failed
+# comparison precedence over queue deferral, and an ordinary claim precedence
+# over a valid declaration delta, without one path discarding another's fact.
+base_lane_count="$lane_count"
 lane_hits=()
-every=""
+lane_changed=()
+declaration_comparison=not-needed
+no_changed_paths=false
+unclaimed_path=""
 if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
   index=0
   while [ "$index" -lt "$lane_count" ]; do
-    lane_hits[$index]=""
+    lane_hits[$index]="" lane_changed[$index]=false
     index=$((index + 1))
   done
   if [ ! -s "${work:?}/paths" ]; then
-    every="cause=no-changed-paths"
+    no_changed_paths=true
   fi
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     if [ "$path" = .github/ci-lanes.conf ]; then
       if delta="$(declaration_delta)"; then
+        declaration_comparison=valid
         while IFS= read -r name; do
           [ -n "$name" ] || continue
           index=0
@@ -443,27 +449,28 @@ if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
           if [ "$index" -eq "$lane_count" ]; then
             lane_names[$index]="$name" lane_globs[$index]=""
             lane_queue[$index]=false lane_uniform[$index]=false
+            lane_hits[$index]="" lane_changed[$index]=false
             lane_count=$((lane_count + 1))
           fi
-          lane_hits[$index]="cause=declaration-changed path=$path"
+          lane_changed[$index]=true
         done <<<"$delta"
       else
-        every="cause=lane-declaration-unreadable path=$path"
+        declaration_comparison=unreadable
       fi
       continue
     fi
     claimed=false
     index=0
-    while [ "$index" -lt "$lane_count" ]; do
+    while [ "$index" -lt "$base_lane_count" ]; do
       if ci_lanes_claims "$index" "$path"; then
         claimed=true
         [ -n "${lane_hits[$index]}" ] ||
-          lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"
+          lane_hits[$index]="path=$path glob=$LANE_GLOB_HIT"
       fi
       index=$((index + 1))
     done
-    if [ "$claimed" = false ] && [ -z "$every" ] && outside_docs "$path"; then
-      every="cause=unclaimed-path path=$path"
+    if [ "$claimed" = false ] && [ -z "$unclaimed_path" ] && outside_docs "$path"; then
+      unclaimed_path="$path"
     fi
   done <"${work:?}/paths"
 fi
@@ -489,7 +496,7 @@ queue_reader_missing() {
 # where this run's change-class answered queue_only=true and both renders
 # read the mark, so pr-merge, asking the same question from either, keeps
 # the pull request off the admin merge. Otherwise it runs, its cause naming
-# what was missing. A queue lane only `every` reached runs here, since no
+# what was missing. A queue lane only a fallback reached runs here, since no
 # glob of its own put the diff in the queue.
 # A failed declaration comparison permits no queue deferral.
 lane_values=()
@@ -499,10 +506,10 @@ index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$lanes" = false ]; then
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
-  elif [[ $every == cause=lane-declaration-unreadable\ * ]]; then
-    lane_values[$index]=true lane_causes[$index]="$every"
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [[ ${lane_hits[$index]} == cause=claimed\ * ]]; then
-    hit="${lane_hits[$index]#cause=claimed }"
+  elif [ "$declaration_comparison" = unreadable ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then
+    hit="${lane_hits[$index]}"
     [ "$reader_missing" != unread ] || reader_missing="$(queue_reader_missing)"
     if [ -n "$reader_missing" ]; then
       lane_values[$index]=true lane_causes[$index]="cause=queue-reader-absent tree=$reader_missing $hit"
@@ -511,10 +518,14 @@ while [ "$index" -lt "$lane_count" ]; do
     else
       lane_values[$index]=false lane_causes[$index]="cause=queue-deferred $hit"
     fi
-  elif [ -n "$every" ]; then
-    lane_values[$index]=true lane_causes[$index]="$every"
+  elif [ "$no_changed_paths" = true ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=no-changed-paths"
+  elif [ -n "$unclaimed_path" ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=unclaimed-path path=$unclaimed_path"
   elif [ -n "${lane_hits[$index]}" ]; then
-    lane_values[$index]=true lane_causes[$index]="${lane_hits[$index]}"
+    lane_values[$index]=true lane_causes[$index]="cause=claimed ${lane_hits[$index]}"
+  elif [ "${lane_changed[$index]}" = true ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
   else
     lane_values[$index]=false lane_causes[$index]="cause=unreached"
   fi

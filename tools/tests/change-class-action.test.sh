@@ -795,10 +795,10 @@ declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.githu
 [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@never-a-lane-name)@bad-name@lib
 { declaration_note="cause=no-globs line=$number lane=$name"; return 1; }@:@no-globs@lib
 [ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }@:@no-lanes@lib
-          lane_hits[$index]="cause=claimed path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes@classify
-    if [ "$claimed" = false ] && [ -z "$every" ] && outside_docs "$path"; then@    if false; then@unclaimed@classify
+          lane_hits[$index]="path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes@classify
+    if [ "$claimed" = false ] && [ -z "$unclaimed_path" ] && outside_docs "$path"; then@    if false; then@unclaimed@classify
  && outside_docs "$path"; then@ && true; then@unclaimed-docs@classify
-    every="cause=no-changed-paths"@    every=""@no-paths@classify
+    no_changed_paths=true@    no_changed_paths=false@no-paths@classify
     lane_state="malformed" lane_count=0@    lane_state="malformed"@bad-after-good@classify
 [!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@*[!@bad-leading@lib
       '' | [!@      [!@bad-mark-only@lib
@@ -856,6 +856,10 @@ declare_lanes queue-added 'check:event-uniform src/* Cargo.toml tests/*
 tmux:event-uniform:queue tmux/*
 docs-build docs/*
 '
+declare_lanes queue-glob-added 'check:event-uniform src/* Cargo.toml tests/*
+tmux:event-uniform:queue tmux/* fixtures/*
+docs-build docs/*
+'
 declare_lanes uniform-only 'check src/* Cargo.toml tests/*
 tmux tmux/*
 docs-build docs/*
@@ -872,7 +876,7 @@ delta_git() { git -C "$DELTA_REPO" -c user.name=suite -c user.email=suite@exampl
 delta_git init -q
 delta_git config gc.auto 0
 delta_git config maintenance.auto false
-for decl in good added-glob reordered removed-glob added-lane removed-lane renamed-lane queue-added uniform-only bad-name unreadable absent; do
+for decl in good added-glob reordered removed-glob added-lane removed-lane renamed-lane queue-added queue-glob-added uniform-only bad-name unreadable absent; do
   [ ! -e "$DELTA_REPO/.github/ci-lanes.conf" ] || rm -r -- "$DELTA_REPO/.github/ci-lanes.conf"
   case "$decl" in
     absent) ;;
@@ -900,6 +904,13 @@ removed-lane|good|removed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=fa
 renamed-lane|good|renamed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false,lane_terminal=true
 queue-added|good|queue-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 queue-removed|queue-added|good|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+queue-glob-only|queue-added|queue-glob-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+queue-claim-after-declaration|queue-added|queue-glob-added|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
+queue-claim-before-declaration|queue-added|queue-glob-added|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=false,lane_docs-build=false
+mixed-delete-declaration-first|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+mixed-delete-claim-first|queue-added|absent|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+mixed-ordinary-declaration-first|good|added-glob|.github/ci-lanes.conf src/new.rs|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false
+mixed-ordinary-claim-first|good|added-glob|src/new.rs .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=false
 malformed-head|queue-added|bad-name|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 missing-head|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 unreadable-head|queue-added|unreadable|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
@@ -953,10 +964,14 @@ done <<'ROWS'
 [ "${claims[$other]}" != "$claim" ]@[ "${claims[$other]}" = "$claim" ]@added-glob
 [ "${queues[$other]}" != "${lane_queue[$index]}" ]@false@queue-added
 [ "$found" = true ] || printf@[ "$found" = false ] || printf@removed-lane
-        every="cause=lane-declaration-unreadable path=$path"@        every=""@malformed-head
-  elif [[ $every == cause=lane-declaration-unreadable\ * ]]; then@  elif false; then@missing-head
+        declaration_comparison=unreadable@        declaration_comparison=not-needed@malformed-head
+  elif [ "$declaration_comparison" = unreadable ]; then@  elif false; then@missing-head
             lane_count=$((lane_count + 1))@            :@added-lane
-[[ ${lane_hits[$index]} == cause=claimed\ * ]]@[ -n "${lane_hits[$index]}" ]@queue-removed
+ && [ -n "${lane_hits[$index]}" ]; then@; then@queue-removed
+          lane_changed[$index]=true@          lane_hits[$index]="" lane_changed[$index]=true@queue-claim-before-declaration
+        [ -n "${lane_hits[$index]}" ] ||@        [ "${lane_changed[$index]}" = true ] ||@queue-claim-after-declaration
+          lane_changed[$index]=true@          lane_changed[$index]=false@added-glob
+      if ci_lanes_claims "$index" "$path"; then@      if ci_lanes_claims "$index" "$path" || { [ "$path" = fixtures/new.rs ] && [ "$index" -eq 1 ]; }; then@branch-only-claim
 ROWS
 require_rows "declaration mutant" "$mutants"
 
@@ -1088,9 +1103,9 @@ while IFS='@' read -r needle replacement row target; do
     *) bad "must-fail: '$needle' planted as '$replacement' gave no verdict on the $row row" ;;
   esac
 done <<'ROWS'
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [[ ${lane_hits[$index]} == cause=claimed\ * ]]; then@  elif false; then@pr-deferred@classify
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then@  elif false; then@pr-deferred@classify
 [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
- && [[ ${lane_hits[$index]} == cause=claimed\ * ]]; then@; then@pr-unclaimed@classify
+ && [ -n "${lane_hits[$index]}" ]; then@; then@pr-unclaimed@classify
   [ -f "$lanes_root/$queue_reader" ] || missing="lanes-from"@  true || missing="lanes-from"@pr-reader-absent@classify
   [ "$(git -C "$REPO" cat-file -t "$HEAD:$queue_reader" 2>/dev/null)" = blob ] ||@  true ||@pr-judged-reader-absent@classify
     elif [ "$queue_only" != true ]; then@    elif false; then@pr-unconfirmed@classify
