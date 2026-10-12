@@ -26,16 +26,49 @@ fi
 source "$_ORCH_SHARED_GH_AUTH"
 unset _ORCH_GH_AUTH_DIR _ORCH_SHARED_GH_AUTH
 
-# The overseer app's installation token from FILE, the one reader of the
-# fleet-supplied token files ORCH_SECURITY_ALERT_TOKEN_FILE and
-# ORCH_OVERSEER_REVIEW_TOKEN_FILE name: one non-empty line with no white
-# space. Prints nothing and fails when FILE is unset, missing, unreadable or
-# empty, or the value holds white space; cat's own words go to stderr. Never
-# falls back to a lane token or the keyring.
+# Fleet supplies both overseer token files. Check their current target before
+# opening it: a FIFO would block the watch or approval. Bound the whole read,
+# including trailing newlines, so an interrupted fleet write cannot fill memory.
 orch_token_file_read() { # FILE
-  local token
-  token="$(cat -- "$1")" || return 1
-  [[ -n "$token" && "$token" != *[[:space:]]* ]] || return 1
+  local file="${1:-}" token="" mode="" cause="" status=0 LC_ALL=C
+  local parent path permissions=077 refused_file="$file"
+  parent="${file%/*}"
+  [[ "$parent" != "$file" ]] || parent=.
+  [[ -n "$parent" ]] || parent=/
+  if [[ -z "$file" ]]; then cause=unset
+  elif [[ ! -f "$file" ]]; then cause=not-regular
+  else
+    # Fleet writes in member homes. A writable parent permits replacement even
+    # when the token file itself is private; directory read and search are safe.
+    for path in "$file" "$parent"; do
+      refused_file="$path"
+      if [[ ! -O "$path" ]]; then cause=not-owned; break; fi
+      mode="$(stat -L -c '%a' -- "$path" 2>/dev/null || stat -L -f '%Lp' -- "$path" 2>/dev/null)" || cause=malformed
+      case "$mode" in
+        ""|*[!0-7]*) cause=malformed ;;
+        *) (( (8#$mode & permissions) == 0 )) || cause="mode-$mode" ;;
+      esac
+      [[ -z "$cause" ]] || break
+      permissions=022
+    done
+  fi
+  if [[ -z "$cause" ]]; then
+    refused_file="$file"
+    # An empty delimiter reads through LF and stops at NUL, EOF or the cap.
+    # Only EOF is accepted. Strip all final LF bytes as command substitution did.
+    { IFS= read -r -n 4096 -d '' token || status=$?; } 2>/dev/null < "$file" || cause=malformed
+    if [[ "${#token}" -eq 4096 ]]; then cause=too-long
+    elif [[ "$status" -ne 1 ]]; then cause=malformed
+    fi
+    if [[ -z "$cause" ]]; then
+      while [[ "$token" == *$'\n' ]]; do token="${token%$'\n'}"; done
+      [[ -n "$token" && "$token" != *[[:space:]]* ]] || cause=malformed
+    fi
+  fi
+  if [[ -n "$cause" ]]; then
+    printf 'orch_token_file_read: refused file=%s cause=%s\n' "$refused_file" "$cause" >&2
+    return 1
+  fi
   printf '%s' "$token"
 }
 

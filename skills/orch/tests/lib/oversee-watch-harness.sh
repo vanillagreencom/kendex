@@ -805,6 +805,7 @@ new_case() {
   STUB_DIR="$TMP_ROOT/cases/$1"
   rm -rf "$STUB_DIR"
   mkdir -p "$STUB_DIR"
+  chmod 700 "$STUB_DIR"
   # Fresh pr-watch baseline per case: cases stay independent and nothing is
   # written under the real repo.
   STATE_DIR="$STUB_DIR/state"
@@ -821,6 +822,7 @@ new_case() {
   printf '9002\n' > "$STUB_DIR/panepid-gh-2.txt"
   printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
   printf 'ghs_fixture_overseer\n' > "$STUB_DIR/alert-token"
+  chmod 600 "$STUB_DIR/alert-token"
 }
 
 # shortened_ceiling_watch — the scripts, as mutant_scripts links them, whose

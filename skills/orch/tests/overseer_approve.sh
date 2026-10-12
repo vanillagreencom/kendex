@@ -2,6 +2,7 @@
 # overseer-approve against a fake GitHub API: the approval call's shape, the
 # head-prefix refusal, the credential refusal, and that the token never shows.
 set -euo pipefail
+export MSYS=winsymlinks:nativestrict
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "$TEST_DIR/../../.." && pwd -P)"
@@ -20,6 +21,31 @@ mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home" "$TMP_ROOT/cwd"
 printf '%s\n' "$TOKEN" > "$TMP_ROOT/token"
 : > "$TMP_ROOT/token-empty"
 printf '%s\nsecond\n' "$TOKEN" > "$TMP_ROOT/token-two-lines"
+printf '%s' "$TOKEN" > "$TMP_ROOT/token-no-newline"
+printf '%s\n\n' "$TOKEN" > "$TMP_ROOT/token-final-newlines"
+printf '%s\r\n' "$TOKEN" > "$TMP_ROOT/token-crlf"
+printf '%5000s' '' | tr ' ' x > "$TMP_ROOT/token-long"
+printf '%s\0' "$TOKEN" > "$TMP_ROOT/token-nul"
+chmod 600 "$TMP_ROOT"/token*
+for mode in 640 604 620 602 610 601 000; do
+  cp "$TMP_ROOT/token" "$TMP_ROOT/token-$mode"
+  chmod "$mode" "$TMP_ROOT/token-$mode"
+done
+UNREADABLE_CAUSE=malformed
+[[ ! -r "$TMP_ROOT/token-000" ]] || UNREADABLE_CAUSE=accepted
+mkfifo "$TMP_ROOT/token-fifo"
+mkdir "$TMP_ROOT/shared-parent"
+cp -p "$TMP_ROOT/token" "$TMP_ROOT/shared-parent/token"
+chmod 770 "$TMP_ROOT/shared-parent"
+ln -s "$TMP_ROOT/token" "$TMP_ROOT/token-link"
+[[ -L "$TMP_ROOT/token-link" ]] || exit 1
+FOREIGN_FILE=/etc/passwd
+if [[ -O "$FOREIGN_FILE" ]]; then
+  FOREIGN_FILE="$TMP_ROOT/token-foreign"
+  cp -p "$TMP_ROOT/token" "$FOREIGN_FILE"
+  chown 1 "$FOREIGN_FILE"
+fi
+[[ ! -O "$FOREIGN_FILE" ]] || exit 1
 printf 'Each decline holds.\n"Quoted" line\n' > "$TMP_ROOT/body"
 CALLS="$TMP_ROOT/calls"
 INPUT="$TMP_ROOT/input"
@@ -160,7 +186,6 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
 }
 
 RUN="$REPO_ROOT/skills/orch/scripts/overseer-approve"
-SUPPLIER="the control VM for a hosted overseer, the fleet worker on the owner's machine for a local one"
 APPROVE=(42 "$GIVEN" --body-file "$TMP_ROOT/body" --repo o/r)
 
 run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}"
@@ -283,21 +308,105 @@ while IFS='|' read -r label token_file live post head want_rc want_key want_call
   run_approve "$RUN" "$token_file" "$live" "$post" 42 "$head" --body-file "$TMP_ROOT/body" --repo o/r
   assert_eq "$RC|$STDERR_KEY|$NCALLS|$(cat "$OUT")" "$want_rc|$want_key|$want_calls|" "$label" "$ERR"
   assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" "$label prints no token"
-  [[ "$want_rc" != 3 ]] || assert_eq "$(sed -n 2p "$ERR")" \
-    "The fleet supplies this token file: $SUPPLIER. It must hold one non-empty line, the overseer app's installation token. Nothing was posted." \
-    "$label names the supplier" "$ERR"
 done <<EOF
 head moved|@token|$MOVED|ok|$GIVEN|4|overseer-approve: head-moved pr=42 given=$GIVEN live=$MOVED|1
 prefix head moved|@token|$MOVED|ok|${GIVEN:0:8}|4|overseer-approve: head-moved pr=42 given=${GIVEN:0:8} live=$MOVED|1
 head read failed|@token|fail|ok|$GIVEN|1|overseer-approve: head-read-failed pr=42 repo=o/r|1
 live head not a sha|@token|${GIVEN}0|ok|$GIVEN|1|overseer-approve: head-read-failed pr=42 repo=o/r|1
-token file unset||$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=|0
-token file missing|@missing|$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$TMP_ROOT/missing|0
-token file empty|@token-empty|$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$TMP_ROOT/token-empty|0
-token file two lines|@token-two-lines|$GIVEN|ok|$GIVEN|3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$TMP_ROOT/token-two-lines|0
 post refused|@token|$GIVEN|refused|$GIVEN|1|overseer-approve: post-failed pr=42 repo=o/r commit=$GIVEN|3
 answer unreadable|@token|$GIVEN|unreadable|$GIVEN|1|overseer-approve: response-unread pr=42 repo=o/r commit=$GIVEN|2
 EOF
+
+# Fleet writes private regular files and may omit or repeat the final LF.
+# The overseer consumes the credential key; the cause names the failed input.
+while IFS='|' read -r label file cause refused_file; do
+  file="${file//@/$TMP_ROOT/}"
+  refused_file="${refused_file//@/$TMP_ROOT/}"
+  run_approve "$RUN" "$file" "$GIVEN" ok "${APPROVE[@]}"
+  if [[ "$cause" == accepted ]]; then
+    assert_eq "$RC|$NCALLS|$(jq -r .commit_id "$INPUT")" "0|2|$GIVEN" "$label" "$ERR"
+  else
+    assert_eq "$RC|$STDERR_KEY|$NCALLS|$(cat "$OUT")" \
+      "3|overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=$file|0|" "$label" "$ERR"
+    if [[ "$cause" != unset ]]; then
+      assert_eq "$(grep '^orch_token_file_read: refused ' "$ERR")" \
+        "orch_token_file_read: refused file=${refused_file:-$file} cause=$cause" "$label names its cause" "$ERR"
+    fi
+  fi
+  assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" "$label prints no token"
+done <<EOF
+token file unset||unset|
+token file missing|@missing|not-regular|
+token file empty|@token-empty|malformed|
+token file two lines|@token-two-lines|malformed|
+token file CRLF|@token-crlf|malformed|
+token file NUL|@token-nul|malformed|
+token file over cap|@token-long|too-long|
+token file FIFO|@token-fifo|not-regular|
+token file foreign owner|$FOREIGN_FILE|not-owned|
+token file group readable|@token-640|mode-640|
+token file other readable|@token-604|mode-604|
+token file group writable|@token-620|mode-620|
+token file other writable|@token-602|mode-602|
+token file group executable|@token-610|mode-610|
+token file other executable|@token-601|mode-601|
+token file mode 000|@token-000|$UNREADABLE_CAUSE|
+token parent group writable|@shared-parent/token|mode-770|@shared-parent
+token file final newline|@token|accepted|
+token file no final newline|@token-no-newline|accepted|
+token file repeated final newlines|@token-final-newlines|accepted|
+token file symlink|@token-link|accepted|
+EOF
+
+# The caller skips an unset setting. Exercise the reader's own unset contract.
+source "$REPO_ROOT/skills/orch/scripts/lib/gh-auth.sh"
+RC=0
+orch_token_file_read > "$OUT" 2> "$ERR" || RC=$?
+assert_eq "$RC|$(cat "$OUT")|$(cat "$ERR")" \
+  '1||orch_token_file_read: refused file= cause=unset' 'reader unset argument names its cause' "$ERR"
+
+# A token supplier can remove its file between the metadata probe and open.
+# Remove it after the parent's real stat, so this open-error control also works
+# when the test user can read mode-000 files.
+STAT_BIN="$(type -P stat)" || exit 1
+mkdir "$TMP_ROOT/stat-bin"
+cat > "$TMP_ROOT/stat-bin/stat" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+"$REAL_STAT" "$@"
+last=""
+for last in "$@"; do :; done
+[[ "$last" != "$TOKEN_PARENT" ]] || rm -- "$TOKEN_PATH"
+EOF
+chmod +x "$TMP_ROOT/stat-bin/stat"
+RACE_FILE="$TMP_ROOT/token-read-race"
+for variant in reader open-error-control; do
+  reader="$REPO_ROOT/skills/orch/scripts/lib/gh-auth.sh"
+  if [[ "$variant" == open-error-control ]]; then
+    scripts="$(mutant_scripts token-open-error/orch lib/gh-auth.sh)" || exit 1
+    ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/token-open-error/github"
+    reader="$scripts/lib/gh-auth.sh"
+    mutate_file "$reader" '} 2>/dev/null < "$file" || cause=malformed' \
+      '} < "$file" 2>/dev/null || cause=malformed'
+  fi
+  printf '%s\n' "$TOKEN" > "$RACE_FILE"
+  chmod 600 "$RACE_FILE"
+  RC=0
+  env -i PATH="$TMP_ROOT/stat-bin:$PATH" HOME="$TMP_ROOT/home" \
+    REAL_STAT="$STAT_BIN" TOKEN_PARENT="$TMP_ROOT" TOKEN_PATH="$RACE_FILE" \
+    "$BASH" -c 'set -euo pipefail; source "$1"; orch_token_file_read "$2"' \
+    -- "$reader" "$RACE_FILE" > "$OUT" 2> "$ERR" || RC=$?
+  key="orch_token_file_read: refused file=$RACE_FILE cause=malformed"
+  assert_eq "$RC|$(cat "$OUT")|$(grep '^orch_token_file_read: refused ' "$ERR")" \
+    "1||$key" "$variant: an open failure returns only a refusal" "$ERR"
+  if [[ "$variant" == reader ]]; then
+    assert_eq "$(cat "$ERR")" "$key" 'open failure emits one keyed line' "$ERR"
+  else
+    assert_not_contains "$(sed -n 1p "$ERR")" 'orch_token_file_read: refused ' \
+      'control: redirecting input first puts an unkeyed error before the refusal' "$ERR"
+  fi
+  assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" "$variant: open failure prints no token"
+done
 run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" refused "${APPROVE[@]}"
 assert_contains "$(cat "$ERR")" 'gh: Unprocessable Entity (HTTP 422)' 'a refused post prints GitHub'"'"'s message' "$ERR"
 
