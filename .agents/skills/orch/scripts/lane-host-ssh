@@ -395,17 +395,20 @@ def claude_state(current, snapshot):
     return {**current, **snapshot, "projects": projects}
 
 
-def worktree(row, *args):
+def worktree(row, *args, preliminary=False):
     """Keep path resolution and ownership in the installed worktree command."""
-    return remote(row, 'cd -- "$1"; shift; exec .agents/skills/worktree/scripts/worktree "$@"',
+    command = 'cd -- "$1"; shift; exec .agents/skills/worktree/scripts/worktree "$@"'
+    if preliminary:
+        command = 'export WORKTREE_SETUP_CMD=\n' + command
+    return remote(row, command,
                   row["clone"], *args, accept=(75,) if args[0] == "create" else ())
 
 
-def create_worktree(row, item, flags):
+def create_worktree(row, item, flags, preliminary=False):
     """Create the item's tree at the hosted lane path, identical in every lane
     of the repository, so a build there hits compile-cache entries another
     lane or the warm snapshot keyed by the same source path."""
-    made = worktree(row, "create", item, "--hosted", *flags)
+    made = worktree(row, "create", item, "--hosted", *flags, preliminary=preliminary)
     if made.returncode:
         raise SystemExit(made.returncode)
 
@@ -718,7 +721,8 @@ fi''', row["clone"], args.repo, args.item)
     if result.stdout == b"existing":
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
-        create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse))
+        # Claim ownership first; the consumer setup command needs private-file delivery.
+        create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse), preliminary=True)
     # Every prefix below sources the clone's library and records the launch
     # identity through it before the harness starts. A clone whose library
     # predates the recorder would end that prefix at bash's 127 with only

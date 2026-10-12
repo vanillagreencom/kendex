@@ -2635,6 +2635,49 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         self.assertNotEqual(launch(result.stdout).returncode, 0)
         self.assertFalse(Path(self.env["LAUNCH_RESULT"]).exists())
 
+    def test_existing_clone_runs_setup_once_after_private_file_delivery(self):
+        """The SSH provider's preliminary claim must not run consumer setup."""
+        self.copy_tree(PACKAGE.parent / "worktree/scripts",
+                       self.source / ".agents/skills/worktree/scripts", dirs_exist_ok=True)
+        self.copy_tree(PACKAGE.parent / "github/scripts/lib",
+                       self.source / ".agents/skills/github/scripts/lib")
+        (self.source / "kendex.settings.toml").write_text('''[env]
+WORKTREE_DEFAULT_BRANCH = "main"
+WORKTREE_SYMLINKS = ".env.local .agents"
+WORKTREE_SETUP_CMD = 'mkdir -p tmp; SECRET=; if test -f .env.local; then . ./.env.local; fi; printf "%s\\n" "$SECRET" >> tmp/setup-marker'
+''')
+        for args in (("branch", "-M", "main"), ("add", "."),
+                     ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "setup dependencies")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        original = self.script.read_text()
+        rule = 'create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse), preliminary=True)'
+        self.assertEqual(original.count(rule), 1)
+        for control in (False, True):
+            with self.subTest(control=control), tempfile.TemporaryDirectory() as scratch:
+                provider = original.replace(rule, rule.replace(", preliminary=True", "")) if control else original
+                self.script = Path(scratch) / "orch/scripts/lane-host-ssh"
+                self.executable(self.script, provider)
+                if control:
+                    self.assertNotEqual(self.script.read_text(), original)
+                self.row["clone"] = str(self.root / ("control-clone" if control else "setup-clone"))
+                self.inventory.write_text(json.dumps([self.row]))
+                subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]],
+                               check=True, capture_output=True)
+                for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
+                    subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "config", key, value],
+                                   check=True, capture_output=True)
+                self.assertFalse(Path(self.row["clone"], ".env.local").exists())
+                result = self.create()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                path = Path(dict(field.split("=", 1) for field in result.stdout.decode().strip().split("\t"))["path"])
+                writes = (path / "tmp/setup-marker").read_text().splitlines()
+                if control:
+                    self.assertEqual(writes, ["", "private-fixture"])
+                    with self.assertRaises(AssertionError):
+                        self.assertEqual(writes, ["private-fixture"])
+                else:
+                    self.assertEqual(writes, ["private-fixture"])
+
     def test_existing_clone_finishes_real_worktree_setup(self):
         scripts = self.source / ".agents/skills/worktree/scripts"
         self.copy_tree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
