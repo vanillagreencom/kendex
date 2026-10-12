@@ -62,6 +62,8 @@ test("settings metadata keeps bgTaskTimeoutMs visible with a finite fallback", a
 		await timeoutFallback(bgTaskTimeoutMs);
 		const mutant = await importRuntimeCopy("settings.ts", "return configured > 0 ? configured : DEFAULT_BG_TASK_TIMEOUT_MS;", "return configured;") as typeof import("../extensions/subagent/settings.js");
 		await assert.rejects(timeoutFallback(mutant.bgTaskTimeoutMs), /nonpositive timeout must use/);
+		const capped = await importRuntimeCopy("settings.ts", "return configured > 0 ? configured : DEFAULT_BG_TASK_TIMEOUT_MS;", "return configured > 0 ? Math.min(configured, DEFAULT_BG_TASK_TIMEOUT_MS) : DEFAULT_BG_TASK_TIMEOUT_MS;") as typeof import("../extensions/subagent/settings.js");
+		await assert.rejects(timeoutFallback(capped.bgTaskTimeoutMs), /configured timeout must remain above/);
 	} finally { cleanupTempRuntimes(); clearPackageConfigCache(); }
 
 });
@@ -114,14 +116,14 @@ test("legacy maxParallelTasks setting does not affect maxConcurrency", () => {
 });
 
 async function timeoutFallback(read: typeof bgTaskTimeoutMs): Promise<void> {
-	for (const value of [0, -1]) {
+	for (const [value, expected] of [[0, DEFAULT_BG_TASK_TIMEOUT_MS], [-1, DEFAULT_BG_TASK_TIMEOUT_MS], [16_200_000, 16_200_000]]) {
 		const cwd = mkdtempSync(join(tmpdir(), "pi-agents-bg-timeout-"));
 		tempDirs.push(cwd);
 		writeProjectSettings(cwd, { bgTaskTimeoutMs: value });
 		const previous = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
 		clearPackageConfigCache();
-		try { assert.equal(read(cwd), DEFAULT_BG_TASK_TIMEOUT_MS, "nonpositive timeout must use the finite default"); }
+		try { assert.equal(read(cwd), expected, value > 0 ? "configured timeout must remain above the default" : "nonpositive timeout must use the finite default"); }
 		finally {
 			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previous;

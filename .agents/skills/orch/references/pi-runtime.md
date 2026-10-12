@@ -10,7 +10,11 @@ Where no tmux server is reachable, as in a hosted lane's sandbox, the extension 
 
 ## Bg agents (Pi)
 
-Bg agents (no `pane: true`) are background one-shot processes. A run without `sessionKey` starts a fresh session file that later calls do not resume; [agent-transcripts.md](agent-transcripts.md) says where round recovery finds it. When the same `reviewer-*` (or other bg agent) must retain conversation context across delegations, pass `sessionKey: "<workflow-scoped-stable-id>"` (e.g. `review-issue-PROJ-123`); the same `agent + sessionKey` resumes the prior pi session, and omitting it keeps the call stateless. Bg agents complete by the final assistant message captured by `subagent`; do not instruct them to call `complete_subagent`. A bg agent that starts a full `dev-validate-run` needs a `bgTaskTimeoutMs` deadline that covers its work before the run plus `DEV_VALIDATE_TIMEOUT_SECS`, because the deadline counts from the agent's launch; otherwise the deadline kills it before its return.
+Bg agents (no `pane: true`) are background one-shot processes. A run without `sessionKey` starts a fresh session file that later calls do not resume; [agent-transcripts.md](agent-transcripts.md) says where round recovery finds it. When the same `reviewer-*` (or other bg agent) must retain conversation context across delegations, pass `sessionKey: "<workflow-scoped-stable-id>"` (e.g. `review-issue-PROJ-123`); the same `agent + sessionKey` resumes the prior pi session, and omitting it keeps the call stateless. Bg agents complete by the final assistant message captured by `subagent`; do not instruct them to call `complete_subagent`.
+
+Before delegating dev or fix rounds, a Pi lane sets the existing `bgTaskTimeoutMs` to at least `(DEV_VALIDATE_TIMEOUT_SECS + 7200) * 1000`. The 7200-second margin covers work before validation and completion after it. Increase the margin when that work needs more time. The background deadline counts from child launch and also applies to headless pane agents.
+
+On a hosted lane, carry this value in the host-side `$PI_CODING_AGENT_DIR/settings.json`, under `kendex.extensionManager.config["@vanillagreen/pi-agents-tmux"].bgTaskTimeoutMs`. With no `PI_CODING_AGENT_DIR`, use that host user's `~/.pi/agent/settings.json`. A control VM's settings do not set the hosted value. Trusted project settings in `.pi/settings.json` override the user value, so keep any project override above the same bound.
 
 ## Context before reuse
 
