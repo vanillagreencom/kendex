@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- Add an optional gateway privacy setting that requires zero data retention and no prompt training for OpenRouter and Vercel AI Gateway requests while keeping other routing options.
+- Add an optional gateway privacy setting for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. It requires zero data retention and no prompt training while keeping other routing options. Native Pi compaction and branch summaries still require gateway account privacy policies.
 
 ### 2.4.0
 

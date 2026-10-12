@@ -36,7 +36,7 @@
         {
           "key": "gatewayPrivacy.enabled",
           "label": "Require gateway privacy controls",
-          "description": "Require zero data retention and no prompt training for OpenRouter and Vercel AI Gateway requests. Overrides weaker request privacy values and keeps other routing options. Requests fail when the gateway has no compliant provider.",
+          "description": "Require zero data retention and no prompt training for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. Overrides weaker privacy values and keeps other routing options. Native Pi compaction and branch summaries do not apply this control; use gateway account policies for those paths.",
           "type": "boolean",
           "default": false,
           "category": "Privacy",

@@ -29,6 +29,7 @@ import {
 } from "./compaction-handoff.js";
 import { piCompactionEnabled, settingBoolean, settingNumber, settingString } from "./settings.js";
 import { stringifyError } from "./util.js";
+import { gatewayPrivacyOnPayload } from "./gateway-privacy.js";
 
 export type QolSummaryProfile = "concise" | "balanced" | "exhaustive";
 export type QolSummaryPurpose = "compaction" | "branch-summary" | "session-search";
@@ -174,7 +175,7 @@ async function singleShotSummary(ctx: ExtensionContext, request: SummarizeReques
 		() => complete(
 			model,
 			{ messages: [message], systemPrompt: QOL_COMPACTION_SYSTEM_PROMPT },
-			{ apiKey: auth.apiKey, env: auth.env, headers: auth.headers, maxTokens: options.maxTokens, signal: options.signal },
+			{ apiKey: auth.apiKey, env: auth.env, headers: auth.headers, maxTokens: options.maxTokens, signal: options.signal, onPayload: gatewayPrivacyOnPayload(ctx) },
 		),
 		options.signal,
 		{

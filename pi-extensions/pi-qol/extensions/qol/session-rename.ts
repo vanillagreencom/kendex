@@ -1,5 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 import { complete } from "./pi-ai-compat.js";
+import { gatewayPrivacyOnPayload } from "./gateway-privacy.js";
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { textFromContent } from "./agent-end.js";
 import { oneLine } from "./ansi.js";
@@ -331,7 +332,7 @@ export async function generateAutoRenameName(query: string, ctx: ExtensionContex
 				const response = await complete(
 					resolved.model,
 					{ messages: [message], systemPrompt: AUTO_RENAME_SYSTEM_PROMPT },
-					{ apiKey: resolved.apiKey, env: resolved.env, headers: resolved.headers, maxTokens, signal: controller.signal },
+					{ apiKey: resolved.apiKey, env: resolved.env, headers: resolved.headers, maxTokens, signal: controller.signal, onPayload: gatewayPrivacyOnPayload(ctx) },
 				);
 				if (response.stopReason === "error") {
 					autoRenameDebug(ctx, `${resolved.label} failed: ${response.errorMessage ?? "unknown error"}`, "warning");

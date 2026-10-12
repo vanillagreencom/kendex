@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { recordProjectTrust } from "./package-config.js";
 import { settingBoolean } from "./settings.js";
 
@@ -6,13 +6,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function registerGatewayPrivacy(pi: ExtensionAPI): void {
-	pi.on("before_provider_request", (event, ctx) => {
-		const provider = ctx.model?.provider;
+export function gatewayPrivacyOnPayload(ctx: ExtensionContext): (payload: unknown, model: { provider: string } | undefined) => unknown {
+	const cwd = ctx.cwd;
+	recordProjectTrust(ctx);
+	return (payload, model) => {
+		const provider = model?.provider;
 		if (provider !== "openrouter" && provider !== "vercel-ai-gateway") return undefined;
-		recordProjectTrust(ctx);
-		if (!settingBoolean("gatewayPrivacy.enabled", false, ctx.cwd)) return undefined;
-		const body = event.payload;
+		if (!settingBoolean("gatewayPrivacy.enabled", false, cwd)) return undefined;
+		const body = payload;
 		if (!isRecord(body)) return undefined;
 
 		// These request filters are opt-in package policy. Caller routing keys
@@ -39,5 +40,9 @@ export function registerGatewayPrivacy(pi: ExtensionAPI): void {
 				},
 			},
 		};
-	});
+	};
+}
+
+export function registerGatewayPrivacy(pi: ExtensionAPI): void {
+	pi.on("before_provider_request", (event, ctx) => gatewayPrivacyOnPayload(ctx)(event.payload, ctx.model));
 }

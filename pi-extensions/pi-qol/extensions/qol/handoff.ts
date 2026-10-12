@@ -6,6 +6,7 @@ import { acquirekendexModalLock } from "./bridges.js";
 import { serializeMessagesForSummary } from "./compaction.js";
 import { HANDOFF_SYSTEM_PROMPT } from "./constants.js";
 import { settingBoolean } from "./settings.js";
+import { gatewayPrivacyOnPayload } from "./gateway-privacy.js";
 
 function errorMessage(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
@@ -66,7 +67,7 @@ export async function runHandoff(args: string, ctx: ExtensionCommandContext): Pr
 				const response = await complete(
 					ctx.model!,
 					{ systemPrompt: HANDOFF_SYSTEM_PROMPT, messages: [userMessage] },
-					{ apiKey: auth.apiKey, env: auth.env, headers: auth.headers, signal: loader.signal },
+					{ apiKey: auth.apiKey, env: auth.env, headers: auth.headers, signal: loader.signal, onPayload: gatewayPrivacyOnPayload(ctx) },
 				);
 
 				if (response.stopReason === "aborted") return null;
