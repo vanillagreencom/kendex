@@ -68,8 +68,8 @@ prefixed shell heredoc|true,bash,pkill||true; bash <<EOF\npkill x\nEOF
 prefixed data heredoc|true,cat||true; cat <<EOF\npkill x\nEOF
 pipeline shell heredoc|cat,bash,pkill||cat <<EOF | bash\npkill x\nEOF
 pipeline data heredoc|cat,cat||cat <<EOF | cat\npkill x\nEOF
-independent shell after data|cat,bash,true||cat <<EOF && bash -c true\npkill x\nEOF
-independent or shell after data|cat,bash,true||cat <<EOF || bash -c true\npkill x\nEOF
+independent shell unproven input|cat,bash,true,pkill||cat <<EOF && bash -c true\npkill x\nEOF
+independent or shell unproven input|cat,bash,true,pkill||cat <<EOF || bash -c true\npkill x\nEOF
 pipeline receiver group|tar|pipes|tar -cf - repo/.git | (cd /tmp/x && tar -xf -)
 pipeline brace receiver|tar|pipes|tar -cf - repo/.git | { cd /tmp/x; tar -xf -; }
 last shell heredoc|bash,true,pkill||bash <<'FIRST' <<'SECOND'\ntrue\nFIRST\npkill x\nSECOND
@@ -94,6 +94,19 @@ literal shell program data|sh,true||sh -c true "pkill x"
 shell script positional data|bash||bash script -c pkill
 or receiver group|true,cd,cp|pipes|true || (cd /srv; cp -r .git /tmp/x)
 or brace group|true,echo,cp|pipes|true || { echo x; cp -r .git /tmp/x; }
+pipe-and body|cat,bash,pkill||cat <<EOF |\0046 bash\npkill x\nEOF
+pipe-and quoted data|cat,bash,echo||cat <<EOF |\0046 bash\necho "pkill x"\nEOF
+redirection ampersand body|cat,bash,pkill||cat <<EOF 2>&1 | bash\npkill x\nEOF
+redirection ampersand quoted data|cat,bash,echo||cat <<EOF 2>&1 | bash\necho "pkill x"\nEOF
+backtick receiver body|cat,sed,x,bash,pkill||cat <<EOF | sed `x` | bash\npkill x\nEOF
+backtick receiver quoted data|cat,sed,x,bash,echo||cat <<EOF | sed `x` | bash\necho "pkill x"\nEOF
+lifted substitution receiver body|cat,cat,x,bash,pkill||cat <<EOF | cat "$(x)" | bash\npkill x\nEOF
+lifted substitution receiver quoted data|cat,cat,x,bash,echo||cat <<EOF | cat "$(x)" | bash\necho "pkill x"\nEOF
+process substitution receiver body|cat,bash,pkill||cat <<EOF > >(bash)\npkill x\nEOF
+process substitution receiver quoted data|cat,bash,echo||cat <<EOF > >(bash)\necho "pkill x"\nEOF
+quoted find semicolon actions|echo,pkill||find . -exec echo {} ';' -exec pkill x {} ';'
+quoted find plus actions|echo,pkill||find . -exec echo {} "+" -exec pkill x {} "+"
+quoted find action data|echo,echo||find . -exec echo {} ';' -exec echo "pkill x" {} ';'
 ROWS
 if [ -z "${READER_UNDER_TEST:-}" ]; then
   while IFS='|' read -r defect row; do
@@ -111,6 +124,9 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
       index($0, "\\(* | \\{*) executable_body=1 ;;") && defect == "heredoc-pipe" {
         sub(/executable_body=1 ;;/, "executable_body=1; executable_body=\"\" ;;"); changed++
       }
+      index($0, "*\"$NL\"*) executable_body=1 ;;") && defect == "heredoc-rest" {
+        sub(/executable_body=1 ;;/, "executable_body=1; executable_body=\"\" ;;"); changed++
+      }
       /^    executable=\$word/ && defect == "control-words" {
         print; print "    case $word in else | \\{) COMMAND_TEXTS=$rest$NL; return 0 ;; esac"; changed++; next
       }
@@ -122,6 +138,9 @@ if [ -z "${READER_UNDER_TEST:-}" ]; then
       }
       /\[ "\$launcher" != timeout \]/ && defect == "duration" {
         print; print "        duration=\"\""; changed++; next
+      }
+      index($0, "terminator=${terminator:1:${#terminator} - 2}") && defect == "find-terminator" {
+        sub(/ - 2} ;;/, " - 2}; terminator=$name ;;"); changed++
       }
       /if \[ -n "\$actions" \]/ && defect == "find-exec" {
         print "        actions=\"\""; changed++
@@ -149,11 +168,13 @@ arguments|ordinary argument
 heredoc-owner|last shell heredoc
 heredoc-pipe|grouped later shell receiver
 heredoc-simple-pipe|pipeline shell heredoc
+heredoc-rest|process substitution receiver body
 control-words|else arm
 launchers|timeout duration
 option-value|nice option value
 duration|timeout duration
 find-exec|multiple find actions
+find-terminator|quoted find semicolon actions
 pipe-group|pipeline receiver group
 or-group|or receiver group
 shell-program|literal shell program

@@ -12,8 +12,9 @@
 # masked out before the cut: whitespace and separators inside a quoted span
 # become control bytes, so no word inside a span reaches a caller's
 # pattern and no character inside one starts or ends a segment, and a heredoc
-# body that a proven simple data reader consumes is dropped. Grouped receiver
-# input remains unproven and can warn or refuse on guarded text. Other bodies remain
+# body that a proven simple data reader consumes is dropped. Groups, control
+# operators and substitutions keep input unproven and can warn or refuse on
+# guarded text. Other bodies remain
 # command text. A quoted program that a shell, `eval`, `source` or `.` word
 # runs is appended as an independent command position,
 # and a command substitution is kept wherever it stands. A quote or a
@@ -21,7 +22,8 @@
 # so a command the reader could not take apart is read with its full reach.
 #
 # `command_text SEGMENT` leaves COMMAND_TEXTS holding, one per line, that
-# segment from each selected executable word, including every find action
+# segment from each selected executable word, including find actions with
+# plain or whole-quoted terminators
 # and a known literal shell -c program. Later positional arguments stay data.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
@@ -235,9 +237,10 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     fi
   done
 }
-# The heredoc bodies. Drop a body only when the owning command and all
-# pipeline receivers are proven simple data readers. Grouped data can warn or
-# refuse when its body holds guarded text. Retain unproven executable input
+# The heredoc bodies. Drop a body only when the owning command and the whole
+# remaining command prove simple data consumption. Groups, control operators
+# and substitutions keep input unproven and can warn or refuse on guarded text.
+# Retain unproven executable input
 # instead of enumerating the commands that might run it. The `<<` is read off the line with its
 # comment dropped and its quoted spans masked, so a `<<` only written down does
 # not arm one. A body is dropped only once its terminator line is found: an
@@ -286,8 +289,7 @@ EOF
       # retain their input, rather than using an incomplete shell-name list.
       executable_body=1
       case "$COMMAND_TEXTS" in cat[[:space:]]* | cat | echo[[:space:]]* | echo | printf[[:space:]]* | printf | tee[[:space:]]* | tee) executable_body="" ;; esac
-      pipeline=${openings%%[&;\`$NL]*}
-      pipeline=${pipeline%%'||'*}
+      pipeline=$openings
       while [[ $pipeline == *"|"* ]]; do
         receiver=${pipeline#*|}
         receiver=${receiver#"${receiver%%[![:space:]]*}"}
@@ -307,6 +309,12 @@ EOF
         esac
         pipeline=$receiver
       done
+      # Only the whole remaining command can prove data consumption. Masked
+      # quoted data has no operators; lifted substitutions have line breaks.
+      # Any remaining control or substitution keeps the body unproven.
+      case "$owner$openings" in
+        *'&'* | *';'* | *'`'* | *'$('* | *'<('* | *'>('* | *"$NL"*) executable_body=1 ;;
+      esac
       # Quoted delimiters stop expansion, but a shell still executes the body
       # it reads as its own input. Each delimiter consumes its body in order.
       expands=1
@@ -409,7 +417,8 @@ EOF
 }
 # Select the executable word after control words, assignments and launchers.
 # Known launcher options consume their own values; timeout consumes its duration.
-# find's -exec and -execdir operands are actual command positions. Other find
+# find's -exec and -execdir operands are actual command positions. Whole-quoted
+# terminators close the same action boundaries as plain ones. Other find
 # arguments remain data. Assembled names and unknown option arities remain
 # outside this lexical reader's contract.
 command_text() { # SEGMENT -> COMMAND_TEXTS
@@ -468,15 +477,19 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
         continue ;;
       find)
         find_rest=${rest#"$word"}
-        local actions="" action="" active=""
+        local actions="" action="" active="" terminator
         while [ -n "$find_rest" ]; do
           find_rest=${find_rest#"${find_rest%%[![:space:]]*}"}
           [ -n "$find_rest" ] || break
           name=${find_rest%%[[:space:]]*}
           find_rest=${find_rest#"$name"}
+          terminator=$name
+          case "$terminator" in
+            \'*\' | \"*\") terminator=${terminator:1:${#terminator} - 2} ;;
+          esac
           if [ -z "$active" ]; then
             case "$name" in -exec | -execdir) active=1 ;; esac
-          elif [ "$name" = + ] || [ "$name" = '\;' ] || [ "$name" = ";" ] || [ "$name" = "$MASK_SEMI" ]; then
+          elif [ "$terminator" = + ] || [ "$terminator" = '\;' ] || [ "$terminator" = ";" ] || [ "$terminator" = "$MASK_SEMI" ]; then
             command_text "$action"
             actions=$actions$COMMAND_TEXTS
             active=""; action=""

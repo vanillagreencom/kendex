@@ -291,6 +291,18 @@ tar receiver option|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git 
 tar receiver option after cd|command|2|block-repo-copy: refused=tar|tar -cf - /repo/.git | (cd /srv && tar -xf - -C /tmp/x)
 tar receiver ordinary option|command|0|-|tar -cf - /repo/.git | (tar -xf - -C /srv/x)
 tar receiver option data|command|0|-|tar -cf - /repo/.git | (echo "tar -xf - -C /tmp/x")
+pipe-and body|command|2|block-repo-copy: refused=cp|cat <<EOF |\0046 bash\ncp -r /repo/.git /tmp/copy\nEOF
+pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
+redirection ampersand body|command|2|block-repo-copy: refused=cp|cat <<EOF 2>&1 | bash\ncp -r /repo/.git /tmp/copy\nEOF
+redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
+backtick receiver body|command|2|block-repo-copy: refused=cp|cat <<EOF | sed `x` | bash\ncp -r /repo/.git /tmp/copy\nEOF
+backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
+lifted substitution receiver body|command|2|block-repo-copy: refused=cp|cat <<EOF | cat "$(x)" | bash\ncp -r /repo/.git /tmp/copy\nEOF
+lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "cp -r /repo/.git /tmp/copy"\nEOF
+process substitution receiver body|command|2|block-repo-copy: refused=cp|cat <<EOF > >(bash)\ncp -r /repo/.git /tmp/copy\nEOF
+process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "cp -r /repo/.git /tmp/copy"\nEOF
+quoted find terminators|command|2|block-repo-copy: refused=cp|find . -exec echo {} ";" -exec cp -r /repo/.git /tmp/copy {} ";"
+quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "cp -r /repo/.git /tmp/copy" {} ";"
 '
 }
 command_position_rows

@@ -494,6 +494,18 @@ multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nqs -c vshell\nFIRST\nqs -
 grouped later shell body|command|2|command-safety: refused=policy|cat <<EOF | (echo x; bash)\nqs -c vshell\nEOF
 grouped later brace body|command|2|command-safety: refused=policy|cat <<EOF | { echo x; bash; }\nqs -c vshell\nEOF
 grouped data guarded text|command|2|command-safety: refused=policy|cat <<EOF | (cat)\nqs -c vshell\nEOF
+pipe-and body|command|2|command-safety: refused=policy|cat <<EOF |\0046 bash\nqs -c vshell\nEOF
+pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "qs -c vshell"\nEOF
+redirection ampersand body|command|2|command-safety: refused=policy|cat <<EOF 2>&1 | bash\nqs -c vshell\nEOF
+redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "qs -c vshell"\nEOF
+backtick receiver body|command|2|command-safety: refused=policy|cat <<EOF | sed `x` | bash\nqs -c vshell\nEOF
+backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "qs -c vshell"\nEOF
+lifted substitution receiver body|command|2|command-safety: refused=policy|cat <<EOF | cat "$(x)" | bash\nqs -c vshell\nEOF
+lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "qs -c vshell"\nEOF
+process substitution receiver body|command|2|command-safety: refused=policy|cat <<EOF > >(bash)\nqs -c vshell\nEOF
+process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "qs -c vshell"\nEOF
+quoted find terminators|command|2|command-safety: refused=policy|find . -exec echo {} ";" -exec qs -c vshell {} ";"
+quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "qs -c vshell" {} ";"
 '
 }
 command_position_rows

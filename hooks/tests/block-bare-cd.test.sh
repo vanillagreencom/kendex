@@ -134,6 +134,16 @@ command_position_rows() {
 quoted cd text|command|0|-|echo '\''cd /tmp'\''
 grouped data guarded text|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | (cat)\ncd /tmp\nEOF
 cd heredoc data|command|0|-|cat <<'\''EOF'\''\ncd /tmp\nEOF
+pipe-and body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF |\0046 bash\ncd /tmp\nEOF
+pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "cd /tmp"\nEOF
+redirection ampersand body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF 2>&1 | bash\ncd /tmp\nEOF
+redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "cd /tmp"\nEOF
+backtick receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | sed `x` | bash\ncd /tmp\nEOF
+backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "cd /tmp"\nEOF
+lifted substitution receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF | cat "$(x)" | bash\ncd /tmp\nEOF
+lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "cd /tmp"\nEOF
+process substitution receiver body|command|2|block-bare-cd: refused=bare-cd|cat <<EOF > >(bash)\ncd /tmp\nEOF
+process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "cd /tmp"\nEOF
 '
 }
 command_position_rows

@@ -4,8 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent setting applies the shipped host-safety pattern, which refuses a systemd-run memory cap measured in kilobytes or megabytes; an explicit `^$` turns matching off, while unreadable input or settings warn and allow the call. Matching starts at executable command positions, and does not inspect the desktop or running processes.
-# summary: Applies the project deny pattern at executable command positions. Ordinary quoted arguments and proven simple data-reader here-documents pass; grouped data readers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. A grouped data reader can warn or refuse when its body holds guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with command-safety: <key>=<value>.
+# summary: Applies the project deny pattern at executable command positions. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators or substitutions can warn or refuse on guarded text.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators or substitutions can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---

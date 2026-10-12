@@ -278,6 +278,18 @@ multiple data bodies|command|0|-|cat <<FIRST <<SECOND\ngit reset --hard\nFIRST\n
 grouped later shell body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (echo x; bash)\ngit reset --hard\nEOF
 grouped later brace body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | { echo x; bash; }\ngit reset --hard\nEOF
 grouped data guarded text|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | (cat)\ngit reset --hard\nEOF
+pipe-and body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF |\0046 bash\ngit reset --hard\nEOF
+pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "git reset --hard"\nEOF
+redirection ampersand body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF 2>&1 | bash\ngit reset --hard\nEOF
+redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "git reset --hard"\nEOF
+backtick receiver body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | sed `x` | bash\ngit reset --hard\nEOF
+backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "git reset --hard"\nEOF
+lifted substitution receiver body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF | cat "$(x)" | bash\ngit reset --hard\nEOF
+lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "git reset --hard"\nEOF
+process substitution receiver body|command|2|reviewer-read-only: refused=git-discard|cat <<EOF > >(bash)\ngit reset --hard\nEOF
+process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "git reset --hard"\nEOF
+quoted find terminators|command|2|reviewer-read-only: refused=git-discard|find . -exec echo {} ";" -exec git reset --hard {} ";"
+quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "git reset --hard" {} ";"
 '
 }
 command_position_rows

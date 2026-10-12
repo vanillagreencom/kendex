@@ -150,6 +150,18 @@ grouped later brace body|command|2|block-argv-kill: refused=pkill|cat <<EOF | { 
 grouped data guarded text|command|2|block-argv-kill: refused=pkill|cat <<EOF | (cat)\npkill -f x\nEOF
 literal shell program|command|2|block-argv-kill: refused=pkill|find . -exec echo {} + -exec sh -c pkill {} +
 literal shell data|command|0|-|find . -exec sh -c true "pkill x" {} +
+pipe-and body|command|2|block-argv-kill: refused=pkill|cat <<EOF |\0046 bash\npkill -f x\nEOF
+pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "pkill -f x"\nEOF
+redirection ampersand body|command|2|block-argv-kill: refused=pkill|cat <<EOF 2>&1 | bash\npkill -f x\nEOF
+redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "pkill -f x"\nEOF
+backtick receiver body|command|2|block-argv-kill: refused=pkill|cat <<EOF | sed `x` | bash\npkill -f x\nEOF
+backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "pkill -f x"\nEOF
+lifted substitution receiver body|command|2|block-argv-kill: refused=pkill|cat <<EOF | cat "$(x)" | bash\npkill -f x\nEOF
+lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "pkill -f x"\nEOF
+process substitution receiver body|command|2|block-argv-kill: refused=pkill|cat <<EOF > >(bash)\npkill -f x\nEOF
+process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "pkill -f x"\nEOF
+quoted find terminators|command|2|block-argv-kill: refused=pkill|find . -exec echo {} ";" -exec pkill -f x {} ";"
+quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "pkill -f x" {} ";"
 '
 }
 command_position_rows

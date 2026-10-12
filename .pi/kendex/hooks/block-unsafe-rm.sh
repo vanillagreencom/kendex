@@ -5,8 +5,8 @@
 # matcher: Bash
 # requires: [command-safety]
 # description: Block rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
-# summary: Stops executable rm commands on shared roots or paths rooted at a possibly empty variable. Ordinary quoted arguments and proven simple data-reader here-documents pass; grouped data readers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. A grouped data reader can warn or refuse when its body holds guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-unsafe-rm: <key>=<value>.
+# summary: Stops executable rm commands on shared roots or paths rooted at a possibly empty variable. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators or substitutions can warn or refuse on guarded text.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators or substitutions can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-unsafe-rm: <key>=<value>.
 # requires-skills: [commit-guards]
 # ---
 

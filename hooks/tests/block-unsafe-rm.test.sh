@@ -295,6 +295,18 @@ multiple data bodies|command|0|-|cat <<FIRST <<SECOND\nrm -rf $HOME\nFIRST\nrm -
 grouped later shell body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (echo x; bash)\nrm -rf $HOME\nEOF
 grouped later brace body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | { echo x; bash; }\nrm -rf $HOME\nEOF
 grouped data guarded text|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | (cat)\nrm -rf $HOME\nEOF
+pipe-and body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF |\0046 bash\nrm -rf $HOME\nEOF
+pipe-and quoted data|command|0|-|cat <<EOF |\0046 bash\necho "rm -rf $HOME"\nEOF
+redirection ampersand body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF 2>&1 | bash\nrm -rf $HOME\nEOF
+redirection ampersand quoted data|command|0|-|cat <<EOF 2>&1 | bash\necho "rm -rf $HOME"\nEOF
+backtick receiver body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | sed `x` | bash\nrm -rf $HOME\nEOF
+backtick receiver quoted data|command|0|-|cat <<EOF | sed `x` | bash\necho "rm -rf $HOME"\nEOF
+lifted substitution receiver body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF | cat "$(x)" | bash\nrm -rf $HOME\nEOF
+lifted substitution receiver quoted data|command|0|-|cat <<EOF | cat "$(x)" | bash\necho "rm -rf $HOME"\nEOF
+process substitution receiver body|command|2|block-unsafe-rm: refused=shared-root|cat <<EOF > >(bash)\nrm -rf $HOME\nEOF
+process substitution receiver quoted data|command|0|-|cat <<EOF > >(bash)\necho "rm -rf $HOME"\nEOF
+quoted find terminators|command|2|block-unsafe-rm: refused=shared-root|find . -exec echo {} ";" -exec rm -rf $HOME {} ";"
+quoted find data|command|0|-|find . -exec echo {} ";" -exec echo "rm -rf $HOME" {} ";"
 '
 }
 command_position_rows

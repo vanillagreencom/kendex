@@ -4,8 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree.
-# summary: Stops executable pkill and killall commands. Ordinary quoted arguments and proven simple data-reader here-documents pass; grouped data readers can warn or refuse on guarded text.
-# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. A grouped data reader can warn or refuse when its body holds guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-argv-kill: <key>=<value>.
+# summary: Stops executable pkill and killall commands. Ordinary quoted arguments and proven simple data-reader here-documents pass; here-documents with groups, control operators or substitutions can warn or refuse on guarded text.
+# safety: Advisory reader: dependency or payload failures warn once and allow the call. Executable command matches retain exit 2. The commit-guards command-position reader selects command words and masks quoted data and proven simple data-reader here-document bodies. Here-documents with groups, control operators or substitutions can warn or refuse when their bodies hold guarded text. This is a lexical check; assembled command names and unknown launcher option forms are outside its contract. Every diagnostic starts with block-argv-kill: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
