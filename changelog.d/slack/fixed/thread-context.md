@@ -1,0 +1,1 @@
+- A Slack thread reply now reaches the session with every earlier message in that thread the session has not yet received, both sides, each with its author and time, in place of a 300-character excerpt of the thread's first message; a successor session receives the whole thread with its first reply in it, and `slack thread` heads each message with its author and UTC time.

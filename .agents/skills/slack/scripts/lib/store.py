@@ -144,6 +144,8 @@ class Thread:
     parent: Optional[Dict] = None
     active: float = 0.0
     missing: bool = False
+    # Per reader generation, the newest message of this thread it was delivered.
+    reads: Dict[int, str] = field(default_factory=dict)
 
 
 
@@ -205,6 +207,10 @@ class State:
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=str(line["id"]), kind=line["kind"])
             self.threads[thread_ts].active = max(self.threads[thread_ts].active, float(ts))
+            if "generation" in line:
+                reads = self.threads[thread_ts].reads
+                generation = int(line["generation"])
+                reads[generation] = max(reads.get(generation, ts), ts, key=float)
             self.by_envelope[str(line["id"])] = thread_ts
         elif kind == "out":
             env_id = str(line["id"])

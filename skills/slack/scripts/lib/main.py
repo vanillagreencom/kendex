@@ -80,7 +80,8 @@ post      one message to the bound channel, or --channel for another, its
           --thread replies only in a thread; --update edits the message at that
           ts. Text and file bytes are refused when they match the
           secret-value pattern
-thread    print the requested thread as plain text, oldest first; TS names
+thread    print the requested thread as plain text, oldest first, each
+          message headed by its author (owner or app) and UTC time; TS names
           its root or a reply; --limit caps the messages printed, otherwise
           all cursor pages are read. No thread is read by default
 compact   drop journal lines resolved or ignored longer ago than

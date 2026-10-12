@@ -15,7 +15,7 @@ from typing import List, Optional
 from api import Slack, markdown_checked
 from markup import outbound, plain
 from refusals import Refusal, keyed, notice
-from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, jarvis_session_held, mention, resolve_owner_ids
+from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, author_of, jarvis_session_held, mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
 from settings import CALLER_ENV, Settings, load, load_presence, user_handle
@@ -264,13 +264,17 @@ def post(
 
 
 def thread(root: Path, ts: str, limit: Optional[int]) -> int:
-    """Print an explicitly requested thread, oldest first, as plain text."""
+    """Print an explicitly requested thread, oldest first, as plain text,
+    each message headed by its author and UTC time. Another person's message
+    is headed by their Slack user id."""
     settings = load(need_owners=False)
     api = api_for(settings)
-    messages = api.paged("conversations.replies", "messages", channel=read_binding(root).channel, ts=ts)
+    binding = read_binding(root)
+    messages = api.paged("conversations.replies", "messages", channel=binding.channel, ts=ts)
     selected = itertools.islice(messages, limit) if limit is not None else messages
     for message in sorted(selected, key=lambda m: float(m["ts"])):
-        print(plain(str(message.get("text") or ""), lambda user: user))
+        author = author_of(message, binding.owner_ids.values()) or str(message.get("user", ""))
+        print(f"[{author} {format_at(float(message['ts']))}] {plain(str(message.get('text') or ''), lambda user: user)}")
     return 0
 
 

@@ -92,6 +92,7 @@ import json
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -99,7 +100,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
 from api import RETRIES, Slack
-from mailbox import LaneMail
+from mailbox import LANE_MAIL_TIMEOUT_SECONDS, LaneMail
 from markup import Verbatim, outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
@@ -131,6 +132,7 @@ ROUTED_SUBTYPES = {None, "file_share", "thread_broadcast"}
 # The package's code: the launcher and the modules it loads.
 SCRIPTS = Path(__file__).resolve().parents[1]
 LAUNCHER = SCRIPTS / "slack"
+WORKFLOW_STATE = Path(".agents/skills/orch/scripts/workflow-state")
 # Seconds the relay waits for Slack's `hello` on a new connection.
 HELLO_SECONDS = 10
 # Seconds of silence on the connection before it pings, and as many again
@@ -149,6 +151,10 @@ NO_TEXT = "Only text and files are routed; this message has neither."
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
 MARK_SETTLED = {"already_reacted", "no_reaction", "message_not_found"}
+
+# A thread read: the `oldest` it was read from, None for the whole thread,
+# and the messages it returned.
+Page = Tuple[Optional[str], List[Dict]]
 
 
 def at_epoch(at: str) -> float:
@@ -248,6 +254,32 @@ def jarvis_session_held(root: Path, presence: Presence, now: float) -> bool:
 
 def mention(binding: Binding) -> str:
     return " ".join(f"<@{binding.owner_ids[o]}>" for o in binding.owners if o in binding.owner_ids)
+
+
+def author_of(message: Dict, owner_ids: Iterable[str], bot_user: str = "") -> Optional[str]:
+    """`app` for a bot's message, `owner` for an owner's, None for anyone
+    else: the relay routes no other person's words."""
+    if message.get("bot_id") or bot_user and message.get("user") == bot_user:
+        return "app"
+    return "owner" if message.get("user") in owner_ids else None
+
+
+def reader_generation(root: Path) -> int:
+    """The generation the root's registered overseer record names, read as
+    lane-mail's own overseer check reads that record: from the root, in the
+    relay's environment. A record from before generations reads as 0. A
+    failed read refuses as a refused lane-mail write does, so the message is
+    read again on the next poll."""
+    command = "workflow-state get oversee .overseer.generation"
+    try:
+        proc = subprocess.run([str(root / WORKFLOW_STATE), "get", "oversee", ".overseer.generation // 0"], cwd=str(root),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=LANE_MAIL_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise Refusal("lane-mail-failed", f"{command} ({err})") from err
+    generation = proc.stdout.strip()
+    if proc.returncode != 0 or not generation.isdigit():
+        raise Refusal("lane-mail-failed", f"{command} {(proc.stderr.strip().splitlines() or [generation])[0]}")
+    return int(generation)
 
 
 class RootRelay:
@@ -427,6 +459,32 @@ class RootRelay:
             parent["envelope"] = envelope
         return parent
 
+    def thread_context(self, thread_ts: str, ts: str, generation: int, bot_user: str, retries: int,
+                       page: Optional[Page] = None) -> Dict:
+        """The parent pointer of the reply at `ts`, its `thread` every message
+        up to that reply, both sides, which `generation` has not been
+        delivered, oldest first: the whole thread for a generation with no
+        mark in it. One read supplies both, a catch-up's own `page` where it
+        reaches back to the mark; the text is never journaled."""
+        thread = self.state.threads.get(thread_ts)
+        mark = thread.reads.get(generation) if thread is not None else None
+        if page is not None and (page[0] is None or mark is not None and float(mark) >= float(page[0])):
+            messages = page[1]
+        else:
+            # With no parent recorded, the whole thread supplies it in the same read.
+            since = mark if thread is not None and thread.parent is not None else None
+            messages = list(self.api.paged("conversations.replies", "messages", retries=retries, channel=self.channel,
+                                           ts=thread_ts, oldest=since))
+        messages = sorted(messages, key=lambda m: float(m["ts"]))
+        root = next((m for m in messages if str(m["ts"]) == thread_ts), None)
+        unseen = []
+        for message in messages:
+            author = author_of(message, self.binding.owner_ids.values(), bot_user)
+            if author is not None and float(mark or 0) < float(message["ts"]) <= float(ts):
+                unseen.append({"ts": str(message["ts"]), "author": author,
+                               "text": plain(str(message.get("text") or "").strip(), self.user_name)})
+        return dict(self.parent_context(thread_ts, root, retries), thread=unseen)
+
     def catch_up(self, bot_user: str, due: Set[str]) -> None:
         """Discover parents once; retained eligible parents supply old-thread
         discovery on reconnect without repeating the channel lookback."""
@@ -502,24 +560,29 @@ class RootRelay:
         """Read one thread; return whether catch-up can finish without retry."""
         # Binding owns the lower boundary; thread.seen owns delivery progress.
         oldest = max(thread.seen, self.binding.bound_at, key=float)
-        since = oldest if thread.parent else None  # with no parent recorded, its page records it
+        # With no parent recorded, the whole page records it. Otherwise the
+        # page reaches back to the reader generation's mark, so each reply it
+        # delivers carries its thread context with no second read.
+        mark = thread.reads.get(reader_generation(self.path))
+        since = min(oldest, mark, key=float) if thread.parent and mark is not None else None
         try:
             replies = list(
                 self.api.paged("conversations.replies", "messages", retries=0, channel=self.channel, ts=thread.ts, oldest=since)
             )
         except Refusal as err:
             return self.thread_refused(err, thread.ts)
+        page = (since, list(replies))
         for parent in [r for r in replies if r["ts"] == thread.ts and thread.parent is None]:
             self.parent_context(thread.ts, parent)
         replies = [r for r in replies if r["ts"] != thread.ts and float(r["ts"]) > float(oldest)]
         replies.sort(key=lambda m: float(m["ts"]))
         for reply in replies:
-            self.handle(reply, bot_user)
+            self.handle(reply, bot_user, page=page)
         if replies:
             self.journal.append(t="thread", ts=thread.ts, seen=replies[-1]["ts"])
         return True
 
-    def handle(self, message: Dict, bot_user: str, path: str = "catch-up") -> None:
+    def handle(self, message: Dict, bot_user: str, path: str = "catch-up", page: Optional[Page] = None) -> None:
         ts = str(message["ts"])
         # The journal skips a stamp it already carried; lane-mail's locked
         # check judges any stamp the journal lost, the crash between the
@@ -554,9 +617,17 @@ class RootRelay:
                 notice("delivered", f"ts={ts} id={answer_id} path={path}")
                 self.mark_seen([ts])
                 return
-        parent = self.parent_context(thread_ts, retries=0 if path == "catch-up" else RETRIES) if thread_ts != ts else None
+        # A directive's `in` line marks the thread up to it as delivered to
+        # this reader generation. An answer carries no thread, so it marks
+        # nothing and the ask thread before it still reaches a later reply.
+        generation = reader_generation(self.path)
+        parent = None
+        if thread_ts != ts:
+            parent = self.thread_context(thread_ts, ts, generation, bot_user,
+                                         retries=0 if path == "catch-up" else RETRIES, page=page)
         envelope = self.mail.send_directive(text, delivery, parent)
-        self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
+        self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts,
+                            generation=generation)
         notice("delivered", f"ts={ts} id={envelope} path={path}")
         self.mark_seen([ts])
 

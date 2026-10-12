@@ -11,8 +11,9 @@ sk_bind "$ROOT"
 CH="$(sk_channel "$ROOT")"
 sk_poll "$ROOT"
 
-# A post outside the relay has no envelope. Its parent is fetched once even
-# when the relay restarts between replies, and its excerpt stays bounded.
+# A post outside the relay has no envelope. Its parent is journaled once even
+# when the relay restarts between replies, and its excerpt stays bounded; each
+# reply reads its thread once for the messages its reader has not seen.
 LONG="$(python3 -c 'print("First line\n" + "x" * 310)')"
 sk_run -- post --root "$ROOT" --text "$LONG"
 PARENT="$(sk_state ".messages.${CH}[-1].ts")"
@@ -23,9 +24,11 @@ for text in first second; do
   assert_eq "$RC" "0" "the $text reply under an unbound parent lands"
 done
 sk_lm "$ROOT" inbox --item overseer >"$SK_TMP/inbox"
-assert_eq "$(jq -s --arg ts "$PARENT" '[.[] | {thread_ts, parent}] | unique | . == [{thread_ts:$ts, parent:{ts:$ts,author:"bot",excerpt:("First line " + ("x" * 289))}}]' "$SK_TMP/inbox")" \
+assert_eq "$(jq -s --arg ts "$PARENT" '[.[] | {thread_ts, parent: (.parent | del(.thread))}] | unique | . == [{thread_ts:$ts, parent:{ts:$ts,author:"bot",excerpt:("First line " + ("x" * 289))}}]' "$SK_TMP/inbox")" \
   "true" "inbox prints the same bounded parent pointer on both replies without an envelope"
-assert_eq "$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "1" "the unbound parent is read from Slack once across two starts"
+parents() { jq -s --arg ts "$1" '[.[] | select(.t == "parent" and .ts == $ts)] | length' "$(sk_journal "$ROOT")"; } # TS
+assert_eq "$(parents "$PARENT")=$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "1=2" \
+  "the unbound parent is journaled once across two starts, and each reply reads its thread once"
 
 # Relay posts carry their own envelope in the journal and need no API read.
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text notice 'The release shipped.')" >/dev/null
@@ -35,9 +38,10 @@ POST="$(sk_state ".messages.${CH}[] | select(.text == \"The release shipped.\") 
 sk_ctl /_test/calls-reset >/dev/null
 REPLY="$(sk_inject "$CH" U002 'Thanks.' "$POST")"
 sk_event "$ROOT" "$CH" "$REPLY"
-assert_eq "$(jq --arg d "$CH:$REPLY" --arg ts "$POST" --arg envelope "$NOTICE" 'select(.delivery_id == $d) | {thread_ts,parent} == {thread_ts:$ts,parent:{ts:$ts,author:"bot",excerpt:"The release shipped.",envelope:$envelope}}' "$(sk_box "$ROOT")/to-lane.jsonl")" \
+assert_eq "$(jq --arg d "$CH:$REPLY" --arg ts "$POST" --arg envelope "$NOTICE" 'select(.delivery_id == $d) | {thread_ts,parent:(.parent | del(.thread))} == {thread_ts:$ts,parent:{ts:$ts,author:"bot",excerpt:"The release shipped.",envelope:$envelope}}' "$(sk_box "$ROOT")/to-lane.jsonl")" \
   "true" "a reply under a relay notice carries its envelope"
-assert_eq "$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "0" "the relay notice parent comes from the journal without a Slack read"
+assert_eq "$(parents "$POST")=$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "0=1" \
+  "the relay notice parent comes from its out line, with one thread read"
 
 TOP="$(sk_inject "$CH" U001 'A new topic.')"
 sk_event "$ROOT" "$CH" "$TOP"
@@ -108,7 +112,7 @@ sk_lm "$ROOT" notice --item overseer --to owner --ref "$OLD_ID" --file "$(sk_tex
 sk_poll "$ROOT"
 assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Thread only.\") | .reply_broadcast")" "true" "control: broadcasting a ref notice breaks the thread-only assertion"
 sk_bin_reset
-sk_mutant pointer relay.py 'parent = self\.parent_context\(thread_ts, retries=0 if path == "catch-up" else RETRIES\) if thread_ts != ts else None' 'parent = None'
+sk_mutant pointer relay.py 'parent = self\.thread_context\(thread_ts, ts, generation, bot_user,\n *retries=0 if path == "catch-up" else RETRIES, page=page\)' 'parent = None'
 DROP="$(sk_inject "$CH" U001 'Lost context.' "$PARENT")"
 sk_event "$ROOT" "$CH" "$DROP"
 assert_eq "$(jq -r --arg d "$CH:$DROP" 'select(.delivery_id == $d) | has("parent")' "$(sk_box "$ROOT")/to-lane.jsonl")" "false" "control: dropping the pointer breaks the envelope assertion"
@@ -126,7 +130,8 @@ for text in uncached-one uncached-two; do
   REPLY="$(sk_inject "$CH" U001 "$text" "$PARENT")"
   sk_event "$ROOT" "$CH" "$REPLY"
 done
-assert_eq "$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "2" "control: bypassing the journal cache breaks the single-read assertion"
+# Both replies follow marked replies, so their reads skip the root.
+assert_eq "$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "4" "control: bypassing the journal cache breaks the one-read-per-reply assertion"
 sk_bin_reset
 
 sk_mutant retain store.py 'str\(line.get\("thread", ""\)\) in live' 'False'

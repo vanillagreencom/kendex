@@ -235,7 +235,7 @@ while read -r allow control; do
     hold) sk_mutant hold relay.py 'self\.clock\(\) >= self\.catch_up_at' 'True' ;;
     short-hold) sk_mutant short-hold relay.py 'self\.clock\(\) \+ err\.retry_after' 'self.clock() + 1' ;;
     rate-ends) sk_mutant rate-ends relay.py 'if err\.key in \("slack-auth-failed", "slack-rate-limited"\):' 'if err.key == "slack-auth-failed":' ;;
-    page-parent) sk_mutant page-parent relay.py 'thread\.ts and thread\.parent is None\]' 'thread.ts and False]' ;;
+    page-context) sk_mutant page-context relay.py 'self\.handle\(reply, bot_user, page=page\)' 'self.handle(reply, bot_user)' ;;
   esac
   sk_recovery "$ROOT" allowance "$allow"
   GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr --arg new "${REPLIES[4]}" --arg old "${REPLIES[0]}" '[
@@ -261,7 +261,7 @@ done <<'ROWS'
 2 hold
 2 short-hold
 2 rate-ends
-1 page-parent
+1 page-context
 ROWS
 
 # A reply also sent to the channel reaches the catch-up through history, where

@@ -11,19 +11,24 @@ CH="$(sk_channel "$ROOT")"
 TOP="$(sk_inject "$CH" U001 'First &amp; foremost.')"
 SECOND="$(sk_inject "$CH" U001 'Second <https://example.test|link>.' "$TOP")"
 sk_inject "$CH" U002 'Third.' "$TOP" >/dev/null
+sk_inject "$CH" U999 'Not an owner.' "$TOP" >/dev/null
+sk_run -- post --root "$ROOT" --thread "$TOP" --text 'The app answers.'
 sk_inject "$CH" U002 'Other topic.' >/dev/null
 sk_ctl /_test/calls-reset >/dev/null
-EXPECTED='First & foremost.
-Second link (https://example.test).
-Third.'
+# The header's author and UTC second, derived from the fake's own stamps.
+header() { sk_state ".messages.${CH}[] | select(.text == \"$1\") | \"[$2 \" + (.ts | tonumber | floor | todate) + \"] \""; }
+EXPECTED="$(header 'First &amp; foremost.' owner)First & foremost.
+$(header 'Second <https://example.test|link>.' owner)Second link (https://example.test).
+$(header 'Third.' owner)Third.
+$(header 'Not an owner.' U999)Not an owner.
+$(header 'The app answers.' app)The app answers."
 for ts in "$TOP" "$SECOND"; do
   sk_run -- thread "$ts" --root "$ROOT"
-  assert_eq "$RC=$OUT" "0=$EXPECTED" "thread $ts prints every page oldest first as plain text"
+  assert_eq "$RC=$OUT" "0=$EXPECTED" "thread $ts prints every page oldest first, each message headed by author and time"
 done
 assert_eq "$(sk_state '[.calls[] | select(. == "conversations.history")] | length')" "0" "explicit thread reads use no channel history"
 sk_run -- thread "$TOP" --root "$ROOT" --limit 2
-assert_eq "$RC=$OUT" '0=First & foremost.
-Second link (https://example.test).' "--limit caps printed messages"
+assert_eq "$RC=$OUT" "0=$(printf '%s\n' "$EXPECTED" | sed -n 1,2p)" "--limit caps printed messages"
 for limit in 0 -1 wrong; do
   sk_run -- thread "$TOP" --root "$ROOT" --limit "$limit"
   assert_eq "$RC=${ERR1%%=*}" '2=slack: usage' "--limit $limit is refused"
@@ -35,6 +40,10 @@ assert_eq "$RC=$ERR1" '2=slack: slack-api-failed=conversations.replies error=cha
 sk_mutant order verbs.py 'sorted\(selected, key=lambda m: float\(m\["ts"\]\)\)' 'sorted(selected, key=lambda m: float(m["ts"]), reverse=True)'
 sk_run -- thread "$TOP" --root "$ROOT"
 assert_lacks "$OUT" "$EXPECTED" "control: reversing message order breaks the thread output assertion"
+sk_bin_reset
+sk_mutant author verbs.py 'author_of\(message, binding.owner_ids.values\(\)\) or ' ''
+sk_run -- thread "$TOP" --root "$ROOT"
+assert_lacks "$OUT" "$EXPECTED" "control: heading every message by its user id breaks the author assertion"
 sk_bin_reset
 sk_mutant limit verbs.py 'selected = itertools.islice\(messages, limit\) if limit is not None else messages' 'selected = messages'
 sk_run -- thread "$TOP" --root "$ROOT" --limit 2
