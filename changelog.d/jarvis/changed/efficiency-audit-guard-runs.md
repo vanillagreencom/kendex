@@ -1,0 +1,1 @@
+- The Jarvis efficiency audit reads the commit-guards run log and reports each guard's median seconds and blocks, listing a guard that blocked twice in the audit week with no defect for redesign or removal.
