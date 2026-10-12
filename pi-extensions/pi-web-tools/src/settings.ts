@@ -366,7 +366,7 @@ function resolveSettings(inputs: SettingsInputs, resolution: Resolution): WebToo
 		},
 		video: {
 			enabled: typeof video.enabled === "boolean" ? video.enabled : DEFAULT_SETTINGS.video.enabled,
-			geminiModel: stringSetting(video, "geminiModel", DEFAULT_SETTINGS.video.geminiModel),
+			geminiModel: stringSetting(raw, "video.geminiModel", stringSetting(video, "geminiModel", DEFAULT_SETTINGS.video.geminiModel)),
 		},
 		apiKeys: {
 			exa: resolveSecretRef(exaKey, "EXA_API_KEY", resolution),

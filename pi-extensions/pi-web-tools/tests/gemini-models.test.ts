@@ -29,7 +29,9 @@ const routes = {
 	},
 };
 
-const configured = { geminiSearchModel: "set-search-model", video: { geminiModel: "set-video-model" } };
+// The extension manager saves each schema.key as a flat property.
+const configured = { geminiSearchModel: "set-search-model", "video.geminiModel": "set-video-model" };
+const nested = { video: { geminiModel: "nested-video-model" } };
 
 for (const row of [
 	{ route: "search", config: {}, expected: "gemini-3.5-flash-lite" },
@@ -38,8 +40,10 @@ for (const row of [
 	{ route: "search", config: configured, expected: "set-search-model" },
 	{ route: "youtube", config: configured, expected: "set-video-model" },
 	{ route: "local video", config: configured, expected: "set-video-model" },
+	{ route: "youtube", config: nested, expected: "nested-video-model" },
+	{ route: "local video", config: nested, expected: "nested-video-model" },
 ] as const) {
-	test(`Gemini model: ${row.route}, ${Object.keys(row.config).length ? "set" : "no setting"}`, async (t) => {
+	test(`Gemini model: ${row.route}, ${row.config === nested ? "nested setting" : Object.keys(row.config).length ? "flat setting" : "no setting"}`, async (t) => {
 		isolateEnvironment(t, settingsEnvironment);
 		const root = tempDir(t);
 		const user = join(root, "agent");
