@@ -18,5 +18,10 @@
 
 ## Scratch files
 
-- Keep scratch work under `tmp/` in the [home layout](../README.md#home-layout), separate from user drafts and official records.
-- Remove scratch files when their work ends. Keep artifacts needed for an audit or open obligation under `tmp/retained/`. Apply [accounts-and-secrets.md:Retention](accounts-and-secrets.md#retention) to those artifacts.
+- Keep the session's scratch work under its own folder, `tmp/scratch/` in the [home layout](../README.md#home-layout), separate from user drafts and official records. Other files under `tmp/` are state of the packages that wrote them; leave them to their writers.
+- Remove scratch files when their work ends. Keep artifacts needed for an audit or open obligation under `tmp/scratch/retained/`. Apply [accounts-and-secrets.md:Retention](accounts-and-secrets.md#retention) to those artifacts.
+- A scheduled scratch sweep runs this command from the home root and nothing wider. It deletes scratch untouched for three days outside `tmp/scratch/retained/`, and a missing `tmp/scratch/` is an empty sweep:
+
+  ```sh
+  [ ! -d tmp/scratch ] || find tmp/scratch -type f ! -path 'tmp/scratch/retained/*' -mtime +2 -delete
+  ```
