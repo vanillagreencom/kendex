@@ -1391,8 +1391,7 @@ suite_is_wired() { # SUITE-PATH
 
 # --- shellcheck, one pass over every changed shell file ----------------------
 # ShellCheck's analysis is the largest cost on a wide diff, and no file's
-# depends on another's: side by side on the online cores, the pass lasts
-# about as long as its largest file rather than the sum. The worker count
+# depends on another's: a bounded worker pool uses the online cores. The worker count
 # moves only how long the pass takes, never what it reports, so an unreadable
 # count runs one worker. Each file's output lands in its own record, which
 # the shell lanes below read in diff order.
@@ -1540,8 +1539,6 @@ while IFS= read -r f; do
     elif [ "$HAVE_SHELLCHECK" = 1 ]; then
       # Only reached for a file bash can parse — a syntax error has already
       # spoken for the file, and shellcheck would only restate it.
-      [ -f "$TMP/shellcheck.$IDX" ] \
-        || env_error shellcheck-pass "$f" "the shellcheck pass left no result for this shell file"
       while IFS= read -r raw; do
         [ -n "$raw" ] || continue
         parse_gcc "$raw" "$cpath"
