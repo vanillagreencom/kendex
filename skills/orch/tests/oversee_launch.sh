@@ -794,7 +794,7 @@ assert_eq "$RC|$(identity)|$(grep -c '^oversee: context-reader=next-start ' <<<"
   "register takes a Copilot overseer's account from its SessionStart row and installs the context reader there"
 cp -- "$TMP_ROOT/state.before-copilot-row" "$FLEET_STATE"
 rm -rf -- "${H:?}/.1copilot/extensions"
-OVERSEE_BIN="$ROWCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.claude" -- register
+register_on "$HAND" "$ROWCTL/oversee"
 assert_eq "$RC|$(recorded harness)|$(grep -c '^oversee: context-reader=' <<<"$OUT" || true)" "0|none|0" \
   "control: a register that reads no row takes no harness from the pane and installs no Copilot reader"
 mv -- "$TMP_ROOT/state.before-copilot-row" "$FLEET_STATE"
