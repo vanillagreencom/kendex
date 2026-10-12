@@ -3299,7 +3299,7 @@ cmd_pick_lane() {
 	# lane's own claim is among the ones charged, so a projection would send
 	# every lane on a busy account to hand off with room left. --projected is
 	# the launch question, the chooser's own wall.
-	lane_tier_inputs "[$record]" "$pick_pool" || return 1
+	lane_tier_inputs "[$record]" "$harness" "$model" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
 	record="$(jq -c "$LANE_MODEL_JQ"' if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public' <<<"$record")" || return 1
@@ -3472,7 +3472,7 @@ cmd_pick() {
 		return 5
 	fi
 	lanes="$(collect_lanes "$harness" "$exclude" "$hosted" "$model")"
-	lane_tier_inputs "$lanes" "$pick_pool" || return 1
+	lane_tier_inputs "$lanes" "$harness" "$model" || return 1
 	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" "$TIER_POOL" "$CLOUD_CREDIT_FLOOR" "$TIER_RETIRE" "$TIER_CLOUD_REPO" "$SEATS" "$SEAT_RESERVE" <<<"$lanes")" || return 1
 	while read -r dir; do message cloud-credit-unread "$dir" >&2; done < <(jq -r '.cloud_credit_unread[]' <<<"$judged")
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"

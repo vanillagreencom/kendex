@@ -517,6 +517,55 @@ COPILOT_REMOTE="exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=${Q}/sr
 assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep -c '^create,--item,KEN-1935,--repo,o/r,--harness,copilot,--account,1copilot$') remote=$(typed "$COPILOT_REMOTE") local=$(typed COPILOT_HOME=)" \
   "rc=0 launched=1 create=1 remote=1 local=0" \
   "a hosted copilot launch creates with --harness copilot and runs copilot under the launch policy, the provider setting COPILOT_HOME"
+# The provider can hold a Copilot login while its usage query returns 403.
+# The admitted relaunch must still charge the monthly pool once readings return.
+COPILOT_CLAIM_ROWS="$TMP_ROOT/copilot-claim-rows.tsv"
+copilot_claim_case() { # READING ROUTE
+  local reading="$1" route="$2" account="$H/.1copilot" pick_rc=0 picked launch_rc pool
+  local route_args=()
+  [[ "$route" != relaunch ]] || route_args=(--relaunch)
+  case "$reading" in
+    room) printf 'account=%s\tharness=copilot\tmonthly-pct=40\n' "$account" > "$COPILOT_CLAIM_ROWS" ;;
+    refused) printf 'account=%s\tharness=copilot\tstatus=refused\tdetail=http-403-permission_error\n' "$account" > "$COPILOT_CLAIM_ROWS" ;;
+    absent)
+      account="$TMP_ROOT/named-copilot"
+      mkdir -p "$account"
+      printf '{"copilot_tokens":"fixture-token"}\n' > "$account/config.json"
+      : > "$COPILOT_CLAIM_ROWS"
+      ;;
+  esac
+  run_ot "cwd=$NOSETTINGS;LANE_HOST_STUB_ACCOUNTS=$COPILOT_CLAIM_ROWS;$COPILOT_HOSTED" \
+    --host "$HOST_STUB" --harness copilot --lane "$account" --repo o/r ${route_args[@]+"${route_args[@]}"} KEN-3747
+  launch_rc="$RC"
+  pool="$(awk -F'\t' '{print $9}' "$RUN"/state/claims/*.claim 2>/dev/null)"
+  printf 'account=%s\tharness=copilot\tmonthly-pct=94\n' "$account" > "$COPILOT_CLAIM_ROWS"
+  picked="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
+    ORCH_LANE_HOST="$HOST_STUB" LANE_HOST_STUB_ACCOUNTS="$COPILOT_CLAIM_ROWS" \
+    LANE_HOST_STUB_LOG="$RUN/host.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" \
+    OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" OT_TMUX_LOG="$RUN/tmux.log" \
+    PATH="$OT_STUB_BIN:$PATH" "$SCRIPTS_DIR/lanes" pick --lane "$account" --harness copilot --model claude-opus-5 --projected --json --no-cache)" || pick_rc=$?
+  assert_eq "launch=$launch_rc pool=$pool pick=$pick_rc charged=$(jq -c '[.claims, .pool, (.projected_headroom_pct < 6)]' <<<"$picked")" \
+    'launch=0 pool=copilot pick=0 charged=[1,"copilot",true]' \
+    "a $route Copilot launch with $reading usage charges its live pane when readings return"
+}
+while IFS='|' read -r reading route; do
+  copilot_claim_case "$reading" "$route"
+done <<'ROWS'
+room|fresh
+room|relaunch
+refused|relaunch
+absent|fresh
+ROWS
+COPILOT_CLAIM_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-copilot-claim-pool/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-claim-pool/orch"
+mutate_file "$OPEN_TERMINAL" \
+  'claim_pool="$(lane_pick_pool "$LAUNCH_HARNESS" "$LAUNCH_MODEL" "$claim_pool")"' \
+  'claim_pool="$(jq -r '\''.pool // "plan"'\'' <<<"${LANE_PICK_RECORD:-null}")"'
+COPILOT_SAVED_FAIL="$FAIL"; FAIL=0
+copilot_claim_case refused relaunch > "$TMP_ROOT/copilot-claim-pool-control.out"
+COPILOT_CLAIM_CONTROL="$FAIL"; FAIL="$COPILOT_SAVED_FAIL"; OPEN_TERMINAL="$COPILOT_CLAIM_SHIPPED"
+assert_eq "$COPILOT_CLAIM_CONTROL" 1 'control: the usage-dependent fallback loses the live Copilot relaunch claim'
 COPILOT_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host/orch"

@@ -96,11 +96,14 @@ lane_pick_harness() { # HARNESS MODEL
   esac
 }
 
-# The launch model owns its pool even where a host also carries plan accounts.
-lane_pick_pool() { # HARNESS MODEL
-  case "$1:$2" in
-    pi:anthropic/*) printf '%s\n' api-credit ;;
-    *) printf '%s\n' plan ;;
+# Usage can be unread on an admitted relaunch. The launch and host still name
+# the spending pool, so claims never infer it from a measured bucket.
+lane_pick_pool() { # HARNESS MODEL [HOST_POOL]
+  case "$1:$2:${3:-plan}" in
+    pi:anthropic/*:*) printf '%s\n' api-credit ;;
+    *:cloud-credit) printf '%s\n' cloud-credit ;;
+    copilot:* | pi:github-copilot/*:*) printf '%s\n' copilot ;;
+    *) printf '%s\n' "${3:-plan}" ;;
   esac
 }
 

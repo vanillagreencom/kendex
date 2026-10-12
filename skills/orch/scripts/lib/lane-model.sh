@@ -392,7 +392,7 @@ def with_lane_tier($pool; $cloud_floor; $retire; $now):
   | ($c.unit == "usd" and ($c.remaining_dollars | type) == "number" and ($c.limit_dollars | type) == "number"
      and $e != null) as $read
   | ($pool == "cloud-credit" or $pool == "api-credit") as $credit_pool
-  | . + {pool: (if $credit_pool then $pool elif .binding_bucket == "monthly" then "copilot" else "plan" end),
+  | . + {pool: $pool,
        _credit_unread: (($read | not) and
        (($pool == "cloud-credit" and .harness == "claude" and lane_measured and .headroom_pct != null)
         or ($pool == "api-credit" and .harness == "pi")))}
