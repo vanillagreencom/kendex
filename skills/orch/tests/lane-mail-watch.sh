@@ -164,8 +164,20 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
         record = "record-kept" if marker.exists() else "record-withdrawn"
         print(state + ":" + record)
     finally:
-        os.killpg(child.pid, signal.SIGKILL)
-        child.wait(timeout=5)
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except PermissionError:
+            # macOS refuses group signals when only zombies remain. Keep the
+            # child unreaped and prove no live descendant needs the signal.
+            probe = subprocess.run([ps, "-ax", "-o", "pgid=,stat="], env=env,
+                                   capture_output=True, check=True, timeout=5)
+            group_states = [status for pgid, status in
+                            (row.split() for row in probe.stdout.splitlines())
+                            if pgid == str(child.pid).encode()]
+            if not group_states or any(not status.startswith(b"Z") for status in group_states):
+                raise
+        finally:
+            child.wait(timeout=5)
 PY_TERM
 )"
 }
