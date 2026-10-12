@@ -78,10 +78,12 @@ env ORCH_STATE_DIR="$FW/tmp" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 -
   --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "review decision" "tools/guard on a staged render" >/dev/null
 # Further fix rounds on the same worktree, one per fix row below, each bound
 # to its own record. Every record's base is FIX_HEAD, where the runs start.
-for rid in 9-9 14-15 17-17 41-41 43-43; do
+for rid in 9-9 14-15 17-17 43-43; do
   growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 --round-id "$rid" \
     --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 done
+growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 --round-id 41-41 --pr-open true \
+  --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 VRUN_FIX="$(round_run_dir "$TMP_ROOT/validate-run-fix" "$FW" issue-776 7-7)"
 VRUN_FIX_9="$(round_run_dir "$TMP_ROOT/validate-run-fix-9" "$FW" issue-776 9-9)"
 VRUN_FIX_14="$(round_run_dir "$TMP_ROOT/validate-run-fix-14" "$FW" issue-776 14-15)"
@@ -205,10 +207,14 @@ table \
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
 
+assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round | jq -r '.reason')" "valid" "the full-ID CI receipt passes round acceptance"
 WRITE_LIVE="$WRITE"
 WRITE="$(mutant_scripts short-commit-mutant dev-return-write)/dev-return-write" || exit 1
 mutate_file "$WRITE" 'rev-parse --verify "$commit^{commit}"' 'rev-parse --verify --short=7 "$commit^{commit}"'
-table "control: storing the short commit refuses the CI receipt|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit ${FIX_HEAD:0:7} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .commit=${FIX_HEAD:0:7} roundtrip=ci_head_mismatch"
+table "control: storing the short commit refuses the CI receipt|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit ${FIX_HEAD:0:7} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .commit=${FIX_HEAD:0:7}"
+CHECK_RC=0
+CHECK_OUT="$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round 2>/dev/null)" || CHECK_RC=$?
+assert_eq "$CHECK_RC $(jq -r '.reason' <<<"$CHECK_OUT")" "1 ci_head_mismatch" "the reader rejects the short-ID round"
 WRITE="$WRITE_LIVE"
 table "CI refuses a tree as a commit|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit $FIX_HEAD^{tree} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=2 written=no stderr~dev-return-write:+ci-contents-mismatch=true"
 
