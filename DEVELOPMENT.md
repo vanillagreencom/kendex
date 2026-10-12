@@ -81,7 +81,7 @@ For a signed local bundle, store `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_
 op run --env-file "<private env file>" -- ../../ui/node_modules/.bin/tauri build
 ```
 
-1Password's CLI resolves the references for that process only. The login environment (`~/.config/environment.d`, a shell profile, or `systemctl --user set-environment`) is not a supported source for a signing secret: any process that prints its environment prints the secret. A literal signing key in the private env file is not supported: every skill script loads that file.
+1Password's CLI resolves the references for that process only. The login environment (`~/.config/environment.d`, a shell profile, or `systemctl --user set-environment`) is not a supported source for a signing secret: any process that prints its environment prints the secret. A literal signing key in the private env file is not supported: skill scripts that load that file also receive the key.
 
 The command inside each installer comes from an overlay under `crates/app/release/`, one per platform, passed as `--config release/<platform>.json`; each reads the command staged under `target/bundle-cli/`. To bundle with the command locally: `cargo build --release -p kendex-cli`, copy `target/release/kendex` to `target/bundle-cli/kendex`, then `../../ui/node_modules/.bin/tauri build --bundles deb,rpm --no-sign --config release/linux.json` from `crates/app`.
 
