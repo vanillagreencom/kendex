@@ -1159,5 +1159,61 @@ hs_mutant="$(handoff_answer "$HANDOFF_MUTANT")"
 assert_eq "${hs_mutant%%|*}" "stands" \
   "control: without the record requirement a bare stands reads as a record that stands"
 
+# A ready file proves that the harness installed its TERM ignore before stop.
+STOP_TERM_MUTANT="$TMP_ROOT/stop-term-only.sh"
+STOP_IDENTITY_MUTANT="$TMP_ROOT/stop-unchecked-identity.sh"
+cp "$SCRIPTS_DIR/lib/lane-state.sh" "$STOP_TERM_MUTANT"
+cp "$SCRIPTS_DIR/lib/lane-state.sh" "$STOP_IDENTITY_MUTANT"
+mutate_file "$STOP_TERM_MUTANT" 'for signal in TERM KILL; do' 'for signal in TERM; do'
+mutate_file "$STOP_IDENTITY_MUTANT" 'elif [[ "$current" != "${starts[$pid]}" ]]; then continue; fi' 'elif false; then continue; fi'
+stop_term_row() (
+  local library="$1" rule="$2" fixture_pid ready="$TMP_ROOT/stop-ready" rc=0
+  source "$library"
+  rm -f "$ready"
+  python3 - "$ready" <<'PY' &
+import signal
+import sys
+import time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(sys.argv[1], "w", encoding="utf-8"):
+    pass
+time.sleep(30)
+PY
+  fixture_pid=$!
+  trap 'kill -KILL "$fixture_pid" 2>/dev/null || :; wait "$fixture_pid" 2>/dev/null || :' EXIT
+  for _ in {1..100}; do [[ ! -e "$ready" ]] || break; sleep 0.02; done
+  [[ -e "$ready" ]] || exit 1
+  LANE_STOP_WAIT_PASSES=1
+  lane_stop_reset
+  if [[ "$rule" == identity ]]; then lane_stop_signal "$fixture_pid" || rc=$?
+  else lane_stop_signal "$fixture_pid" "$PWD" || rc=$?; fi
+  printf '%s|%s|%s|%s\n' "$rc" "$LANE_STOP_CAUSE" "$LANE_STOP_COUNT" "$(proc_state_after "$fixture_pid")"
+)
+for stop_rule in identity worktree; do
+  assert_eq "$(stop_term_row "$SCRIPTS_DIR/lib/lane-state.sh" "$stop_rule")" '0||1|gone' \
+    "TERM-resistant harness ends through the $stop_rule rule"
+  assert_eq "$(stop_term_row "$STOP_TERM_MUTANT" "$stop_rule")" '1|timeout|0|alive' \
+    "control: TERM-only stop times out through the $stop_rule rule"
+done
+
+# Synthetic identity changes never signal a real process. The TERM wait
+# changes the start time before the KILL phase reads it again.
+stop_identity_row() (
+  source "$1"
+  local start=original signals="" rc=0 stopped=no
+  lane_process_start() { printf '%s\n' "$start"; }
+  lane_process_state() { [[ "$stopped" == yes ]] || printf 'S\n'; }
+  sleep() { start=reused; }
+  kill() { signals+="${signals:+ }$1"; [[ "$1" != -KILL ]] || stopped=yes; }
+  LANE_STOP_WAIT_PASSES=1
+  lane_stop_reset
+  lane_stop_signal 4242 || rc=$?
+  printf '%s|%s|%s|%s\n' "$rc" "$LANE_STOP_CAUSE" "$LANE_STOP_COUNT" "$signals"
+)
+assert_eq "$(stop_identity_row "$SCRIPTS_DIR/lib/lane-state.sh")" '0||1|-TERM' \
+  "a reused pid receives no KILL after the TERM wait"
+assert_eq "$(stop_identity_row "$STOP_IDENTITY_MUTANT")" '0||1|-TERM -KILL' \
+  "control: removing the identity recheck sends KILL to the reused pid"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

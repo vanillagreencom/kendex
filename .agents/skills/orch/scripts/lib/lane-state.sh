@@ -569,8 +569,8 @@ lane_identity_read() { # FILE
 }
 
 # The two stops below end a lane's harness by signal, so nothing ever types
-# into a lane to end it: SIGTERM to each process they name, then a bounded
-# wait for every signalled process to exit. A process that exits or becomes a
+# into a lane to end it: SIGTERM, then SIGKILL after the bounded grace wait.
+# Each signal rechecks ownership. A process that exits or becomes a
 # zombie before its signal or during the wait counts as stopped. On status 0
 # LANE_STOP_COUNT is how many were signalled. On status 1 LANE_STOP_CAUSE names
 # the step that failed and LANE_STOP_PID the process it failed on, empty where
@@ -580,7 +580,7 @@ lane_identity_read() { # FILE
 #   cwd-read-failed       a live process whose directory cannot be read
 #   owner-changed         a process left the worktree before its signal
 #   signal-refused        the signal failed on a process still live
-#   timeout               a signalled process outlived LANE_STOP_WAIT_PASSES
+#   timeout               a signalled process outlived SIGKILL's bounded wait
 LANE_STOP_COUNT=0
 LANE_STOP_CAUSE=""
 LANE_STOP_PID=""
@@ -590,43 +590,64 @@ lane_stop_reset() {
   LANE_STOP_CAUSE=""
   LANE_STOP_PID=""
 }
-# SIGTERM to each of PIDS and the wait. ROOT, where given, is the directory
-# each process must still hold just before its signal.
+# ROOT, where given, is the directory each process must still hold before
+# each signal. Without ROOT, saved start times protect against reused pids.
 lane_stop_signal() { # PIDS [ROOT]
-  local pid current state signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
-  for pid in $1; do
-    LANE_STOP_PID="$pid"
-    if [[ -n "${2:-}" ]]; then
-      if ! current="$(lane_process_cwd "$pid")"; then
+  local pid current state signal pids="$1" count=0 signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
+  local starts=()
+  for signal in TERM KILL; do
+    signaled=""
+    for pid in $pids; do
+      LANE_STOP_PID="$pid"
+      if [[ "$signal" == KILL ]]; then
+        state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+        [[ -n "$state" && "$state" != Z ]] || continue
+      fi
+      if [[ -z "${2:-}" ]]; then
+        current="$(lane_process_start "$pid")" || { LANE_STOP_CAUSE=start-read-failed; return 1; }
+        if [[ -z "$current" ]]; then
+          state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+          [[ -z "$state" || "$state" == Z ]] && continue
+          LANE_STOP_CAUSE=start-read-failed; return 1
+        fi
+        if [[ "$signal" == TERM ]]; then starts[$pid]="$current"
+        elif [[ "$current" != "${starts[$pid]}" ]]; then continue; fi
+      fi
+      if [[ -n "${2:-}" ]]; then
+        if ! current="$(lane_process_cwd "$pid")"; then
+          state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+          if [[ -z "$state" || "$state" == Z ]]; then continue; fi
+          LANE_STOP_CAUSE=cwd-read-failed
+          return 1
+        fi
+        [[ "$current" == "$2" ]] || { LANE_STOP_CAUSE=owner-changed; return 1; }
+      fi
+      if ! kill -"$signal" "$pid" 2>/dev/null; then
         state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
         if [[ -z "$state" || "$state" == Z ]]; then continue; fi
-        LANE_STOP_CAUSE=cwd-read-failed
+        LANE_STOP_CAUSE=signal-refused
         return 1
       fi
-      [[ "$current" == "$2" ]] || { LANE_STOP_CAUSE=owner-changed; return 1; }
-    fi
-    if ! kill -TERM "$pid" 2>/dev/null; then
-      state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
-      if [[ -z "$state" || "$state" == Z ]]; then continue; fi
-      LANE_STOP_CAUSE=signal-refused
-      return 1
-    fi
-    signaled+="${signaled:+ }$pid"
-  done
-  LANE_STOP_PID=""
-  while [[ "$passes" -gt 0 ]]; do
-    live=""
-    for pid in $signaled; do
-      state="$(lane_process_state "$pid")" \
-        || { LANE_STOP_CAUSE=state-read-failed; LANE_STOP_PID="$pid"; return 1; }
-      [[ -z "$state" || "$state" == Z ]] || live+="${live:+ }$pid"
+      signaled+="${signaled:+ }$pid"
+      [[ "$signal" != TERM ]] || count=$((count + 1))
+    done
+    LANE_STOP_PID=""
+    while [[ "$passes" -gt 0 ]]; do
+      sleep 0.1
+      live=""
+      for pid in $signaled; do
+        state="$(lane_process_state "$pid")" \
+          || { LANE_STOP_CAUSE=state-read-failed; LANE_STOP_PID="$pid"; return 1; }
+        [[ -z "$state" || "$state" == Z ]] || live+="${live:+ }$pid"
+      done
+      [[ -n "$live" ]] || break
+      passes=$((passes - 1))
     done
     [[ -n "$live" ]] || break
-    sleep 0.1
-    passes=$((passes - 1))
+    pids="$live" passes=1
   done
   [[ -z "$live" ]] || { LANE_STOP_CAUSE=timeout; LANE_STOP_PID="${live%% *}"; return 1; }
-  for pid in $signaled; do LANE_STOP_COUNT=$((LANE_STOP_COUNT + 1)); done
+  LANE_STOP_COUNT="$count"
 }
 
 # End a lane's harness by its launch identity: every process named for HARNESS
