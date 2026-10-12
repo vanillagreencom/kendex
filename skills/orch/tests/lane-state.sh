@@ -1162,10 +1162,13 @@ assert_eq "${hs_mutant%%|*}" "stands" \
 # A ready file proves that the harness installed its TERM ignore before stop.
 STOP_TERM_MUTANT="$TMP_ROOT/stop-term-only.sh"
 STOP_IDENTITY_MUTANT="$TMP_ROOT/stop-unchecked-identity.sh"
+STOP_CWD_MUTANT="$TMP_ROOT/stop-unchecked-kill-cwd.sh"
 cp "$SCRIPTS_DIR/lib/lane-state.sh" "$STOP_TERM_MUTANT"
 cp "$SCRIPTS_DIR/lib/lane-state.sh" "$STOP_IDENTITY_MUTANT"
+cp "$SCRIPTS_DIR/lib/lane-state.sh" "$STOP_CWD_MUTANT"
 mutate_file "$STOP_TERM_MUTANT" 'for signal in TERM KILL; do' 'for signal in TERM; do'
 mutate_file "$STOP_IDENTITY_MUTANT" 'elif [[ "$current" != "${starts[$pid]}" ]]; then continue; fi' 'elif false; then continue; fi'
+mutate_file "$STOP_CWD_MUTANT" 'if [[ -n "${2:-}" ]]; then' 'if [[ -n "${2:-}" && "$signal" == TERM ]]; then'
 stop_term_row() (
   local library="$1" rule="$2" fixture_pid ready="$TMP_ROOT/stop-ready" rc=0
   source "$library"
@@ -1200,11 +1203,11 @@ done
 # changes the start time before the KILL phase reads it again.
 stop_identity_row() (
   source "$1"
-  local start=original signals="" rc=0 stopped=no root="${2:-}"
+  local start=original signals="" rc=0 stopped=no root="${2:-}" change="${3:-start}" cwd="${2:-}"
   lane_process_start() { printf '%s\n' "$start"; }
-  lane_process_cwd() { printf '%s\n' "$root"; }
+  lane_process_cwd() { printf '%s\n' "$cwd"; }
   lane_process_state() { [[ "$stopped" == yes ]] || printf 'S\n'; }
-  sleep() { start=reused; }
+  sleep() { if [[ "$change" == cwd ]]; then cwd=/elsewhere; else start=reused; fi; }
   kill() { signals+="${signals:+ }$1"; [[ "$1" != -KILL ]] || stopped=yes; }
   LANE_STOP_WAIT_PASSES=1
   lane_stop_reset
@@ -1217,6 +1220,10 @@ for stop_root in '' /same-worktree; do
   assert_eq "$(stop_identity_row "$STOP_IDENTITY_MUTANT" "$stop_root")" '0||1|-TERM -KILL' \
     "control: removing the identity recheck kills the reused pid: root=[$stop_root]"
 done
+assert_eq "$(stop_identity_row "$SCRIPTS_DIR/lib/lane-state.sh" /same-worktree cwd)" '1|owner-changed|0|-TERM' \
+  "a same-start process that leaves the worktree receives no KILL"
+assert_eq "$(stop_identity_row "$STOP_CWD_MUTANT" /same-worktree cwd)" '0||1|-TERM -KILL' \
+  "control: skipping only KILL's cwd check kills the process outside the worktree"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
