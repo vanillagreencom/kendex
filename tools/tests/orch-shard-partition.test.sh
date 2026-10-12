@@ -111,7 +111,7 @@ check() { # check <desc> <expected> <actual>
   if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
 }
 
-# One record per step carrying a `run: |` block: the step's `if:` text on the
+# One record per step carrying a `run: |` block or a one-line battery call: the step's `if:` text on the
 # `@@` line, its dedented body on the `>` lines. Every body line is prefixed,
 # so a body opening with `@` or `>` is not read as a boundary. Indent work is
 # substr and not a regex interval — the macOS leg's awk is not GNU's.
@@ -120,6 +120,12 @@ cat > "$BLOCK_AWK" <<'AWK'
 substr($0, 1, 8)  == "      - "       { inrun = 0; cond = "" }
 substr($0, 1, 12) == "        if: "   { cond = substr($0, 13); next }
 substr($0, 1, 14) == "        run: |" { inrun = 1; printf "@@%s\n", cond; next }
+substr($0, 1, 13) == "        run: " {
+  run = substr($0, 14)
+  if (index(run, "bash skills/orch/tests/run-all.sh --battery ") == 1 || index(run, "bash tools/tests/run-all.sh") == 1)
+    printf "@@%s\n>%s\n", cond, run
+  next
+}
 inrun == 1 {
   if (substr($0, 1, 10) == "          ") { printf ">%s\n", substr($0, 11); next }
   if ($0 ~ /^[ 	]*$/) { print ">"; next }
@@ -249,6 +255,7 @@ shard_filters() { # WORKFLOW ; `|<argument string>` per shard on this platform
   excluded="$(excluded_shards "$wf" "$os")"
   one_line_steps "$wf" | while IFS=$'\037' read -r job cond wd run; do
     [[ "$run" == 'bash skills/orch/tests/run-all.sh'* ]] || continue
+    [[ "$run" != 'bash skills/orch/tests/run-all.sh --battery '* ]] || continue
     shard="$(one_shard "$cond")"
     grep -qxF "$shard" <<< "$excluded" && continue
     printf '|%s\n' "${run#bash skills/orch/tests/run-all.sh}"
@@ -1218,6 +1225,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       shard="$(one_shard "$cond")"
       [[ -n "$shard" ]] || continue
       grep -qxF "$shard" <<< "$excluded" && continue
+      [[ "$run" != "bash $runner --battery "* ]] || continue
       if [[ "$mode" == files && "$run" == "bash $runner"* ]]; then
         union_of "${run#"bash $runner"}" | sed "s%^%$shard	$ORCH_TESTS_DIR/%; s%\$%.sh%"
         continue
@@ -1247,9 +1255,12 @@ while IFS='|' read -r shard step battery stem; do
     awk -v step="$step" -v battery="$battery" -v stem="$stem" -v fault="$fault" '
       index($0, "- name: " step) { active = 1 }
       active && substr($0, 1, 8) == "      - " && !index($0, "- name: " step) { active = 0 }
-      active && index($0, "bash skills/orch/tests/run-all.sh --battery " battery " ") {
+      active && index($0, "bash skills/orch/tests/run-all.sh --battery " battery) {
         if (fault == "omitted") sub("--battery " battery, "--battery " battery " !=" stem)
-        else print "          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
+        else if ($0 ~ /^ *run: /) {
+          sub(/run: /, "run: |\n          ")
+          $0 = $0 "\n          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
+        } else print "          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
         hits++
       }
       { print }
@@ -1285,7 +1296,7 @@ while IFS='|' read -r shard step battery stem; do
   result=not-run
   for block in "$TMP/assertion-blocks"/*.sh; do
     [[ "$(one_shard "$(cat "${block%.sh}.cond")")" == "$shard" ]] || continue
-    grep -qF -- "--battery $battery " "$block" || continue
+    grep -qE -- "--battery $battery( |$)" "$block" || continue
     rc=0
     (cd "$PART" && PARTITION_POOL="$bad_pool" PARTITION_POOL_CLAIMS="$bad_cache" \
       PATH="$SHIM:$PATH" "$BASH" "$block") > "$TMP/assertion-step.log" 2>&1 || rc=$?
@@ -1296,6 +1307,7 @@ while IFS='|' read -r shard step battery stem; do
   done
   check "must-fail: a pooled assertion fails its owning step: $step $battery" failed "$result"
 done <<'POOLED'
+mailbox|Mailbox suites|skills/mailbox/tests|alone
 review-gate|review-gate suites|skills/review-gate/tests|validate-standard.test
 review-gate|review-gate suites|refresh/tests|refresh-report.test
 guards-commit|commit-guards suites|skills/commit-guards/tests|atomic-install.test

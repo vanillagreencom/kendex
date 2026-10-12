@@ -20,7 +20,7 @@
 # An owner ask in the overseer mailbox is closed by `resolve` alone, exactly
 # once, under the same lock the append takes, and a send carrying a delivery
 # id lands once under that lock too; usage() § Owner channel owns both rules.
-# Text crosses a file, never argv (orch ../SKILL.md § Harness-Safe Shell).
+# Text crosses a file, never argv.
 # Bash 3.2-safe: tools/bash32-lint scans this directory.
 
 set -euo pipefail
@@ -958,9 +958,9 @@ lm_send_record() { # RESULT CAUSE
     { lm_message send-unrecorded "$ITEM" >&2; cat -- "$WORK_DIR/state.err" >&2; }
 }
 
-# A send to a lane is matched on the channel its record's host kind declares
-# (../schemas/lane-host.md § Host kinds). A mailbox channel goes on to the
-# mailbox below, and so does a lane with no record when the send names no
+# A send to a lane is matched on the channel its record's host kind declares.
+# A mailbox channel goes on to the mailbox below, and so does a lane with no
+# record when the send names no
 # fleet state; a send that names one refuses an unreadable state or one with
 # no record for the lane, since either would land a cloud lane's directive in
 # a mailbox nobody reads. A session channel is a Claude cloud session of this
