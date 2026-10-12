@@ -1389,9 +1389,9 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 # home variables are not listed: a launch sets the child's own after this scrub,
 # and KENDEX_LANE_ORIGIN, exported ahead of the command, stays.
 #   Claude Code  CLAUDECODE, the nested-session marker; CLAUDE_CODE_SESSION_ID,
-#                the session id it exports to its tools (2.1.x), and
-#                CLAUDE_SESSION_ID, the spelling a SessionStart hook can export
-#                through CLAUDE_ENV_FILE; CLAUDE_PROJECT_DIR, the root the
+#                the session id it exports to its tools (2.1.42), and
+#                CLAUDE_SESSION_ID, the name a session environment can carry
+#                it under beside that one; CLAUDE_PROJECT_DIR, the root the
 #                lane-mail-check hook resolves a lane from.
 #   Codex        CODEX_THREAD_ID, the session it exports to its tools;
 #                CODEX_SANDBOX and CODEX_SANDBOX_NETWORK_DISABLED, which

@@ -1343,8 +1343,8 @@ resolve_repo() {
 # on it. The test names the LAUNCHER and not the terminal mode: a --wake reaches
 # open_wake in tmux mode too, since the gate above exempts a wake from the
 # tmux-only settings and not from the mode, and run_detached scrubs the
-# session identity, TMUX and TMUX_PANE while keeping CODEX_HOME. That child is the one launch here
-# that really does inherit this process's environment.
+# session identity, TMUX and TMUX_PANE while keeping CODEX_HOME. That child is
+# the one launch here that really does inherit this process's environment.
 #
 # WHICH tmux scope, and in what order. tmux keeps a session environment beside a
 # global one, and a pane takes the session's entry wherever it has one. The
