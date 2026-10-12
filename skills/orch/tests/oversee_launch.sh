@@ -25,6 +25,10 @@ OVERSEE="$SRC_DIR/oversee"
 # harness without this file spelling it.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
+# The env words a rendered line opens with, clearing the launching session's
+# identity (LANE_LAUNCH_SCRUB).
+printf -v SCRUB_ENV -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
+SCRUB_ENV="env$SCRUB_ENV"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
 # The word that takes claude's question tool away, from the same table: an
 # unset ORCH_QUESTION_TOOL is off, so a first launch carries it.
@@ -184,7 +188,7 @@ assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=
   "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
   "a first launch from outside tmux opens the overseer at the base index and records it"
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded server_start)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
+  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server and its start, pane, window, account, line and generation"
 WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
