@@ -31,7 +31,7 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 | `WORKTREE_BASE_DIR` | Parent directory for created worktrees; never inside the repository root |
 | `WORKTREE_HOSTED_NAME` | Directory name for a hosted lane's worktree (`create --hosted`), always under `<parent-of-checkout>/.worktrees/<checkout-name>`; default `lane` |
 | `WORKTREE_DEFAULT_BRANCH` | Names the default branch; unset, the repository's default branch on GitHub is read. git's record of origin's HEAD answers instead with no GitHub repository, with no github skill installed, or after a failed GitHub read, which warns; with no record either, a command that reads the branch refuses |
-| `WORKTREE_SYMLINKS` | Space-separated paths symlinked from the main checkout into each worktree |
+| `WORKTREE_SYMLINKS` | Space-separated paths symlinked from the main checkout into each worktree. A pnpm or Next.js project leaves `node_modules` out and installs in each worktree, where pnpm hard-links from its store: a `node_modules` resolving outside the project root is refused, by pnpm with `ERR_PNPM_UNSAFE_MODULES_DIR`, Turbopack with `Symlink node_modules is invalid, it points out of the filesystem root` |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |
 | `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout |
 | `WORKTREE_MKDIRS` | Space-separated gitignored scratch directories created in each worktree |
@@ -41,6 +41,10 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 
 ```toml
 [env]
+# An npm project. A pnpm or Next.js project drops node_modules and installs
+# in each worktree: pnpm refuses the link with ERR_PNPM_UNSAFE_MODULES_DIR,
+# Turbopack with "Symlink node_modules is invalid, it points out of the
+# filesystem root".
 WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 WORKTREE_RELATIVE_SYMLINKS = "ui/.env=../.env.worktree"
 WORKTREE_MKDIRS = "tmp"
