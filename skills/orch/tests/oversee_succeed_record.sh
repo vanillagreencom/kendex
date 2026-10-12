@@ -26,6 +26,10 @@ SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # reaches the line without this file spelling it.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$TEST_DIR/../scripts/lib/lane-launch.sh"
+# The env words a rendered line opens with, clearing the launching session's
+# identity (LANE_LAUNCH_SCRUB).
+printf -v SCRUB_ENV -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
+SCRUB_ENV="env$SCRUB_ENV"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
 # The words every claude successor line leads with, read from the launch table
 # the builder writes them from: its compaction setting for a model whose window
@@ -275,7 +279,7 @@ assert_eq "$RC|$(judged)|$(grep -c "^oversee-succeed: record-unread pane=$CALLER
 # alone on stdout, which is all the watch start records.
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
 assert_eq "$RC|$OUT|$(sed -n 1p <<<"$ERR")" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $LEAD $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $LEAD $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
   "--print-launch-line on an unreadable state: the notice on stderr, the line alone on stdout"
 
 # The control for the pending rule: a reader that takes the pending successor
@@ -449,7 +453,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=
 # The same pane with a record: the harness, account, model and effort are the
 # record's, the permission word the caller's own flags, and the pending
 # successor changes none of it.
-RECORD_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
+RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
 for pending in '{}' "$PENDING"; do
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$pending")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
@@ -464,7 +468,7 @@ PAIRCTL="$(mutant_scripts pairctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PAIRCTL/lib/overseer-launch.sh" '  if [[ -z "$model" && -z "$effort" ]]; then' '  if true; then'
 state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
-assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
 
 # A pi overseer's line: its model and level words, its question-tool words and
@@ -483,7 +487,7 @@ pi_print_row() { # [SUCCEED_BIN] [MODEL] [BRIEF_FILE]
     -- --model "${2:-openai/gpt-5}" --thinking high
 }
 pi_print_row
-assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high $PI_BRIEF" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV pi --exclude-tools question --model openai/gpt-5 --thinking high $PI_BRIEF" \
   "--print-launch-line --harness pi prints the pi line, bare on a provider no lane measures" "$TMP_ROOT/err"
 PI_BRIEF_FILE="$TMP_ROOT/pi-brief.md"
 PIBRIEFCTL="$(mutant_scripts pibriefctl lib/overseer-launch.sh)" || exit 1
@@ -499,7 +503,7 @@ for script in "$SUCCEED" "$PIBRIEFCTL/oversee-succeed" "$PIBRIEFARGCTL/oversee-s
   assertion_rc=0
   (
     FAIL=0
-    assert_eq "$RC|$OUT" "0|pi --exclude-tools question --model openai/gpt-5 --thinking high -- '$brief_text'" \
+    assert_eq "$RC|$OUT" "0|$SCRUB_ENV pi --exclude-tools question --model openai/gpt-5 --thinking high -- '$brief_text'" \
       "pi takes the caller brief in place of its skill command" "$TMP_ROOT/err"
     [[ "$FAIL" -eq 0 ]]
   ) > "$TMP_ROOT/pi-brief-assertion.out" 2>&1 || assertion_rc=$?
@@ -517,7 +521,7 @@ BRIEFS
 # the line opens under PI_CODING_AGENT_DIR (lib/lane-launch.sh §
 # lane_env_prefix), here the home's own.
 pi_print_row "" github-copilot/gpt-5
-assert_eq "$RC|$OUT" "0|env PI_CODING_AGENT_DIR='$PI_AGENT' pi --exclude-tools question --model github-copilot/gpt-5 --thinking high $PI_BRIEF" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV PI_CODING_AGENT_DIR='$PI_AGENT' pi --exclude-tools question --model github-copilot/gpt-5 --thinking high $PI_BRIEF" \
   "--print-launch-line on a pi overseer on the Copilot pool opens on its Pi root" "$TMP_ROOT/err"
 PIHARNESSCTL="$(mutant_scripts piharnessctl oversee-succeed)" || exit 1
 mutate_file "$PIHARNESSCTL/oversee-succeed" '| copilot | pi) ;;' '| copilot) ;;'
@@ -538,7 +542,7 @@ pi_claude_row() { # MODEL [SUCCEED_BIN]
 }
 pi_claude_row pi-claude/claude-opus-5
 assert_eq "$RC|$OUT" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' pi --exclude-tools question --model pi-claude/claude-opus-5 --thinking high $PI_BRIEF" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' pi --exclude-tools question --model pi-claude/claude-opus-5 --thinking high $PI_BRIEF" \
   "--print-launch-line on a record-less pi-claude overseer opens on its claude account" "$TMP_ROOT/err"
 pi_claude_row claude-opus-5
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$OUT" "1|oversee-succeed: pi-account-unknown model=claude-opus-5|" \
@@ -661,7 +665,7 @@ for row in \
     "0|claude $row_account $row_model $row_effort none" \
     "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
   print_on_successor
-  assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $row_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
+  assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $row_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
     "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
 done
 # The control: a relaunch that records no identity leaves its session's print
@@ -715,7 +719,7 @@ reading "Fable 5.1"
   SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
   SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
 }
-SUCC_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
+SUCC_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
 pending_run "$(mutant_scripts pendingrun)"
 assert_eq "$RC|$(jq -r '.pending | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' <<<"$SNAP")" \
   "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \

@@ -159,6 +159,10 @@ SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # a second copy of its test. See § The account the pane is really on.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
+# The env words a rendered line opens with, clearing the launching session's
+# identity (LANE_LAUNCH_SCRUB).
+printf -v SCRUB_ENV -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
+SCRUB_ENV="env$SCRUB_ENV"
 # The caller's full-bypass permission word, from the launch table, for the rows
 # whose preference names a codex entry: only a transferable posture lets the
 # walk reach an entry of another harness, and this file spells no switch.
@@ -608,7 +612,7 @@ assert_eq "harness=$(orec harness) home=$(orec home) model=$(orec model) effort=
 # later dead-overseer relaunch replays. The pending line written before the
 # window opened is oversee_succeed_record.sh's row.
 assert_eq "$(recorded_line)" \
-  "env CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
+  "$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "a succession records the line it launched, for a later dead-overseer relaunch"
 # The succession's context arm, run from outside the caller's pane on the
 # reading the turn-end hook hands it: a caller past the context mark on an
@@ -1963,13 +1967,13 @@ echo "=== an overseer that DIED, which reaches none of the marks above ==="
 new_caller "$UNDER_MARK"
 run_succeed printline '' --print-launch-line -- --verbose
 assert_eq "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|yes|0|none" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|yes|0|none" \
   "--print-launch-line prints the caller's own line, judges no mark and launches nothing"
 
 new_caller "$UNDER_MARK"
 WALL_MINUTES=bad SUCCESSOR_ACCOUNTS=bad run_succeed printbadmarks '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
   "malformed trigger settings do not block a non-judging launch-line print"
 
 # The preference names where a LATER successor goes; the printed line records
@@ -1978,7 +1982,7 @@ assert_eq "$RC|$OUT|$(overseers)" \
 new_caller "$UNDER_MARK"
 run_succeed printpref 'codex:gpt-6-astra:high' --print-launch-line
 assert_eq "$RC|$OUT|$(recorded codex)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|none" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|none" \
   "--print-launch-line walks the caller entry whatever the preference names"
 
 # The account the printed line opens its successor on is the one the fleet
@@ -1997,13 +2001,13 @@ new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 run_succeed printrecord '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
   "the printed line opens on the account the fleet state records for this pane"
 new_caller "$UNDER_MARK"
 record_account '%999' "$H/.eclaude"
 run_succeed printother '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
   "a record naming another pane is another session's: the environment's account stands"
 # The control on the record fallback: a copy that never reads the recorded
 # account prints the environment's for the pane the record names.
@@ -2013,7 +2017,7 @@ new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
   "control: a print that ignores the record names the environment's account for the recorded pane"
 fleet_state
 
@@ -2022,7 +2026,7 @@ fleet_state
 # launch's environment. Its marks are judged on the account's monthly pool,
 # which lanes measures; a record naming no account refuses the line rather
 # than print one on an account nothing named.
-COPILOT_ENV="env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
+COPILOT_ENV="$SCRUB_ENV env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS='$H/.agents/skills' COPILOT_ALLOW_ALL=true"
 COPILOT_LINE="$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all -i '$BRIEF'"
 copilot_row() { # NAME [SUCCEED_BIN] ARGS... — the run on a pane whose record names $H/.1copilot
   local name="$1" bin="$2"
@@ -2270,7 +2274,7 @@ PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
   "control: a print that skips the preparation records the bare account, not the prepared home"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
@@ -2284,7 +2288,7 @@ for row in \
   IFS='|' read -r row_lane row_what <<<"$row"
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
-  assert_eq "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
+  assert_eq "$RC|$OUT|$(overseers)" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
     "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
 done
 # A codex caller launched by this script already runs with the startup update
@@ -2293,7 +2297,7 @@ done
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
   --verbose -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
   "a codex caller entry carrying the update setting keeps it exactly once"
 
 CALLER_BRIEF_FILE="$TMP_ROOT/caller-brief.md"
@@ -2329,8 +2333,8 @@ while IFS='|' read -r harness expected; do
     assert_eq "$assertion_rc" "$want_rc" "$harness prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/brief-assertion.out"
   done
 done <<ROWS
-claude|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose -- '$brief_text'
-codex|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- '$brief_text'
+claude|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose -- '$brief_text'
+codex|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- '$brief_text'
 copilot|$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all --interactive='$brief_text'
 ROWS
 done <<'BRIEFS'
@@ -2343,7 +2347,7 @@ BRIEFS
 printf 'Run the caller workflow.\n\n' > "$CALLER_BRIEF_FILE"
 new_caller "$UNDER_MARK"
 run_succeed entrybrief '' --print-launch-line --entry codex:gpt-6-astra:high --brief-file "$CALLER_BRIEF_FILE" -- --dangerously-skip-permissions --verbose
-assert_eq "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- 'Run the caller workflow.'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- 'Run the caller workflow.'" \
   "a named codex entry carries the caller brief from a claude caller"
 
 BRIEFMODECTL="$(mutant_scripts briefmodectl oversee-succeed)" || exit 1
@@ -2460,7 +2464,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
 new_caller "$UNDER_MARK"
 SUCCESSION=off run_succeed printoff '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
   "succession off still prints the line: printing launches nothing"
 
 # A successor overseer carries the words that take its harness question tool
@@ -2469,12 +2473,12 @@ assert_eq "$RC|$OUT|$(overseers)" \
 # the words is dropped under overseer and carried once under off. A value
 # that is neither refuses before a line is built.
 for row in \
-  "claude|unset||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|unset takes the claude question tool away" \
-  "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
-  "claude|overseer||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|overseer keeps the claude question tool" \
-  "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|overseer drops the caller's own question-tool words" \
-  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
-  "codex|off||0|env CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "claude|unset||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|unset takes the claude question tool away" \
+  "claude|off||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
+  "claude|overseer||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|overseer keeps the claude question tool" \
+  "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|overseer drops the caller's own question-tool words" \
+  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
+  "codex|off||0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|on||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=on|on is not a value: refused before a line is built" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=sometimes|a value that is neither off nor overseer refuses" \
   ; do
@@ -3365,7 +3369,7 @@ walled_world_reset() { claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"; 
 new_caller "$MARK"
 walled_world
 run_succeed walledpane '' --walled-pane "$CALLER_PANE"
-WALLED_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'"
+WALLED_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
   "--walled-pane opens the successor on the lane the pick named, never on the caller's own"
