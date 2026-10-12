@@ -1046,6 +1046,56 @@ while IFS='|' read -r name candidates issues want; do
   work_pass
   assert_eq "rc=$RC events=$(verification_events) work=$WORK" "rc=0 events= work=$want" "$name reads in bulk records" "$ERR"
 done <<<"$WORK_ROWS"
+# Ten Verifying items, five with release boxes, share each repository read.
+# Restoring the base callers makes this same call-count contract fail.
+shared_reads_world() {
+  work_world "$1" 1 KEN-30=r KEN-31=r KEN-32=r KEN-33=r KEN-34=r KEN-35=t KEN-36=t KEN-37=t KEN-38=t KEN-39=t
+  fleet '[]'
+  jq 'map(select(.state == "Verifying") | .created_at = (if .id == "KEN-39" then "2026-09-01T00:00:00.142Z" else "2026-09-20T00:00:00Z" end))' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/shared-reads.json"
+  mv -- "$STUB_DIR/shared-reads.json" "$STUB_DIR/tracker.out"
+}
+shared_reads_contract() {
+  local count="${1:-1}"
+  assert_eq "$RC" 0 'the shared repository reads complete verification' "$ERR"
+  assert_eq "$(grep -c '^pr list .*--state merged' "$STUB_DIR/gh.calls" || true)" "$count" 'Verifying items share one merged pull request read per repository' "$ERR"
+  assert_eq "$(grep -c '^release list ' "$STUB_DIR/gh.calls" || true)" "$count" 'release boxes share one release read per repository' "$ERR"
+  assert_eq "$(grep -c -- '--search merged:>=2026-09-01T00:00:00Z' "$STUB_DIR/gh.calls" || true)" "$count" 'each repository read includes the oldest Verifying creation floor' "$ERR"
+}
+shared_reads_world verifying_shared_reads
+watch_pass -- --state "$STUB_DIR/state.json"
+shared_reads_contract
+# A second pass must read current GitHub evidence, including a new release.
+: >"$STUB_DIR/gh.calls"
+printf '%s\n' '[{"tagName":"v2","publishedAt":"2026-10-02T00:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_repo.json"
+printf '%s\n' '{"status":"ahead"}' >"$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v2.json"
+watch_pass -- --state "$STUB_DIR/state.json"
+shared_reads_contract
+assert_eq "$(grep -c '^EVENT verifying-deadline KEN-3[0-4] box=1 ' <<<"$OUT" || true)" 5 'each release box sees the new release on the next pass' "$ERR"
+shared_reads_world verifying_shared_reads_two_repositories
+jq 'map(if .id == "KEN-31" or .id == "KEN-33" then .description |= sub("owner/repo"; "owner/other") else . end)' \
+  "$STUB_DIR/tracker.out" >"$STUB_DIR/shared-reads.json"
+mv -- "$STUB_DIR/shared-reads.json" "$STUB_DIR/tracker.out"
+cp "$STUB_DIR/releases.owner_repo.json" "$STUB_DIR/releases.owner_other.json"
+cp "$STUB_DIR/compare.owner_repo_compare_1111111111111111111111111111111111111111...v1.json" "$STUB_DIR/compare.owner_other_compare_1111111111111111111111111111111111111111...v1.json"
+watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
+shared_reads_contract 2
+for repo in owner/repo owner/other; do
+  assert_eq "$(grep -c "^pr list --repo $repo .*--state merged" "$STUB_DIR/gh.calls" || true)" 1 "$repo has one merged pull request read" "$ERR"
+  assert_eq "$(grep -c "^release list --repo $repo " "$STUB_DIR/gh.calls" || true)" 1 "$repo has one release read" "$ERR"
+done
+MUTANT_DIR="$TMP_ROOT/shared-reads-base"
+MUTANT_WATCH="$(mutant_scripts shared-reads-base/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_verifying "$MUTANT_WATCH" 'merged_item_read "$id" "$repo" null null "$floor" "$read_dir"' 'merged_item_read "$id" "$repo" null'
+mutate_verifying "$MUTANT_WATCH" '"$MERGED_SEARCH_PAGE" gh "$read_dir"' '"$MERGED_SEARCH_PAGE" gh'
+shared_reads_world verifying_shared_reads_base
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 0 'control: the base callers reach the complete verification stage' "$ERR"
+control_rc=0
+( FAIL=0; shared_reads_contract; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/shared-reads-base.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control: the base per-item and per-box reads redden the shared-read contract'
 # Each control restores one per-field command substitution in a disposable copy.
 while IFS='@' read -r name row old new; do
   MUTANT_DIR="$TMP_ROOT/work-$name"

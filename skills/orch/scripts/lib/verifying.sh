@@ -27,10 +27,10 @@ verifying_parse() { # SAFE_ROW
   printf '%s\n' "$boxes"
 }
 
-verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT GH_CLI
+verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT GH_CLI [PASS_READ_DIR]
   # GH_CLI follows reconciliation's existing command-word contract.
   local row="$1" merged="$2" merged_repos="$3" now="$4" boxes="$5" errf="$6" release_limit="$7" gh_cli="$8"
-  local records id number repo oid glob releases resolved at compare_tag tag comparison fired_at=""
+  local records id number repo oid glob releases resolved at compare_tag tag comparison read_file fired_at=""
   # The issue ID, then one record per release box. The glob comes last, so
   # read keeps any separator it holds; an oid of `invalid` is a merge row
   # whose commit is not a full hexadecimal object name.
@@ -44,8 +44,18 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
     [[ "$merged" != null ]] || { verifying_error verifying-merge-unread "issue=$id"; return 2; }
     while IFS=$'\037' read -r number repo oid glob; do
       [[ "$oid" != invalid ]] || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
+      read_file=""
+      if [[ -n "${9:-}" ]]; then
+        read_file="$9/$(printf '%s' "${repo//\//%}" | tr '[:upper:]' '[:lower:]').releases"
+      fi
+      if [[ -n "$read_file" && -f "$read_file" ]]; then
+        releases="$(cat "$read_file")" || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
+      else
       releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
         || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
+      [[ -z "$read_file" ]] || printf '%s\n' "$releases" >"$read_file" \
+        || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
+      fi
       # One record per candidate after the merge: its epoch, the tag as a
       # URL path segment, then the tag itself.
       releases="$(jq -r --argjson merged "$merged" --argjson limit "$release_limit" '
