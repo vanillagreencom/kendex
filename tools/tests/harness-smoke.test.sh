@@ -19,6 +19,7 @@
 #   rc     the exit status
 #   first  `<key>=<value>`, the value written as `SCRATCH` for the scratch
 #          directory or as itself
+# Inputs: skills/social-media-content-calendar/* .agents/skills/social-media-content-calendar/*
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -44,6 +45,52 @@ PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+
+echo "=== the content calendar uses native harness tools ==="
+# These tool names occur in the upstream calendar at
+# NousResearch/hermes-agent commit 91a545ab1e09a266aead11da62665ab7230d9840.
+# Scan every shipped Markdown file, including workflows. Top-level tests
+# and evals are source-only fixtures, as engine.md's render rule specifies.
+calendar_tools_absent() {
+  python3 - "$1" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = sorted(path for path in root.rglob("*.md")
+               if path.relative_to(root).parts[0] not in ("tests", "evals")
+               and path.relative_to(root) != pathlib.Path("DEVELOPMENT.md"))
+required = {root / "SKILL.md", root / "workflows" / "plan-campaign.md"}
+if not required.issubset(files):
+    sys.exit(2)
+tools = re.compile(r"(?<![A-Za-z0-9_])(read_file|web_extract|image_generate)(?![A-Za-z0-9_])")
+for path in files:
+    if tools.search(path.read_text(encoding="utf-8")):
+        print(f"calendar: hermes-tool path={path.relative_to(root)}")
+        sys.exit(1)
+PY
+}
+for calendar in "$REPO/skills/social-media-content-calendar" \
+  "$REPO/.agents/skills/social-media-content-calendar"; do
+  calendar_rc=0
+  calendar_out="$(calendar_tools_absent "$calendar" 2>&1)" || calendar_rc=$?
+  [ "$calendar_rc" -eq 0 ] \
+    && ok "calendar text has no upstream tool name: ${calendar#"$REPO/"}" \
+    || bad "calendar text has no upstream tool name: ${calendar#"$REPO/"}" "$calendar_out"
+done
+# A private copy makes each real upstream name reach the same scanner.
+# The exact status proves rejection rather than a missing-input error.
+for hermes_tool in read_file web_extract image_generate; do
+  control_calendar="$TMP/calendar-$hermes_tool"
+  cp -R "$REPO/skills/social-media-content-calendar" "$control_calendar"
+  printf '\nUse %s for this draft.\n' "$hermes_tool" >>"$control_calendar/workflows/plan-campaign.md"
+  calendar_rc=0
+  calendar_out="$(calendar_tools_absent "$control_calendar" 2>&1)" || calendar_rc=$?
+  [ "$calendar_rc" -eq 1 ] \
+    && ok "control: calendar rejects planted $hermes_tool" \
+    || bad "control: calendar rejects planted $hermes_tool" "rc=$calendar_rc out=$calendar_out"
+done
 
 SCRATCH="$TMP/scratch"
 mkdir -p "$SCRATCH" "$TMP/empty-bin" "$TMP/stub-bin"
