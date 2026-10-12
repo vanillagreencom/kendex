@@ -1019,8 +1019,8 @@ render_blind='.claude/agents model inherit inherit
 .claude/agents model opus opus
 .claude/agents model light sonnet
 .claude/agents model sonnet sonnet
-.claude/agents model fast sonnet
-.claude/agents model haiku sonnet
+.claude/agents model fast haiku
+.claude/agents model haiku haiku
 .codex/agents model inherit -
 .codex/agents model current -
 .codex/agents model parent -

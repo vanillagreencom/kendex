@@ -462,7 +462,8 @@ fn every_native_renderer_keeps_valid_class_representation() {
                     let expected = match class {
                         "top" => "fable",
                         "standard" => "opus",
-                        "light" | "fast" => "sonnet",
+                        "light" => "sonnet",
+                        "fast" => "haiku",
                         _ => unreachable!(),
                     };
                     assert!(
@@ -572,7 +573,7 @@ fn declared_intent_uses_source_and_overrides_not_projected_alias() {
     assert!(
         fs::read_to_string(&native)
             .unwrap()
-            .contains("model: sonnet\n")
+            .contains("model: haiku\n")
     );
     match agent_model_request(&env, &project, HarnessId::Claude, "worker").unwrap() {
         AgentModelRequest::Managed { request, .. } => assert_eq!(

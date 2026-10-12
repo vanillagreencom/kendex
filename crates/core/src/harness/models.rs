@@ -40,7 +40,6 @@ pub struct ClassRow {
     pub preferred: &'static str,
 }
 
-// REVISIT(D021): enabling Claude fast requires an owner-approved family change.
 /// The sole class policy table. Rank input indexes these rows.
 pub const TIERS: [ClassRow; 4] = [
     ClassRow {
@@ -71,7 +70,7 @@ pub const TIERS: [ClassRow; 4] = [
         class: ModelClass::Fast,
         name: "fast",
         legacy: "haiku",
-        claude: None,
+        claude: Some("haiku"),
         gpt: "terra",
         preferred: "gpt-6.1-terra",
     },

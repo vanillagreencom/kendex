@@ -168,6 +168,7 @@ fn request_kinds_and_override_rule() {
     }
     for (key, value, valid) in [
         ("fast", "provider/custom", true),
+        ("fast", "anthropic/haiku", true),
         ("light", "anthropic/sonnet", true),
         ("light", "openrouter/anthropic/claude-sonnet-4", true),
         ("top", "standard", false),
@@ -186,9 +187,10 @@ fn request_kinds_and_override_rule() {
     }
 }
 #[test]
-fn confirmed_singletons_stay_in_provider_and_fast_claude_falls_back() {
+fn confirmed_singletons_stay_in_provider_and_fast_claude_selects_new_haiku() {
     for (provider, id, effective) in [
         ("anthropic", "claude-sonnet-5", Some(ModelClass::Light)),
+        ("anthropic", "claude-haiku-5-5", Some(ModelClass::Fast)),
         ("openai", "gpt-6.1-terra", Some(ModelClass::Fast)),
         ("github-copilot", "gpt-6.1-sol", Some(ModelClass::Standard)),
         ("custom", "private-chat", None),
@@ -201,16 +203,30 @@ fn confirmed_singletons_stay_in_provider_and_fast_claude_falls_back() {
             assert_eq!(selection.effective_class, effective);
         }
     }
-    let context = context(
-        "anthropic",
-        &["claude-haiku-4-5", "claude-haiku-9", "claude-sonnet-5"],
-    );
-    let result = resolve("fast", &context);
-    assert!(result.diagnostics().iter().any(|d| d.code == "fallback"));
-    assert_eq!(
-        selected(result).concrete_id.as_deref(),
-        Some("claude-sonnet-5")
-    );
+    for (ids, expected, effective, fallback) in [
+        (
+            &["claude-haiku-4-5", "claude-haiku-5-5", "claude-sonnet-5"][..],
+            "claude-haiku-5-5",
+            ModelClass::Fast,
+            false,
+        ),
+        (
+            &["claude-haiku-4-5", "claude-sonnet-5"][..],
+            "claude-sonnet-5",
+            ModelClass::Light,
+            true,
+        ),
+    ] {
+        let context = context("anthropic", ids);
+        let result = resolve("fast", &context);
+        assert_eq!(
+            result.diagnostics().iter().any(|d| d.code == "fallback"),
+            fallback
+        );
+        let selection = selected(result);
+        assert_eq!(selection.concrete_id.as_deref(), Some(expected));
+        assert_eq!(selection.effective_class, Some(effective));
+    }
 }
 
 #[test]
@@ -567,41 +583,67 @@ fn excluded_haiku_reads_both_claude_id_orders() {
 #[test]
 fn exact_haiku_compatibility_substitution_stops_at_four_point_five() {
     // Native model lists supply the exact pins and their model-bound capacity.
-    for (id, expected, effective, causes) in [
+    for (id, newer, expected, effective, causes) in [
         (
             "claude-haiku-4",
+            None,
             "claude-sonnet-5",
             Some(ModelClass::Light),
             vec!["old-id", "excluded-haiku", "fallback"],
         ),
         (
             "claude-haiku-4-5",
+            None,
             "claude-sonnet-5",
             Some(ModelClass::Light),
             vec!["old-id", "excluded-haiku", "fallback"],
         ),
         (
             "claude-haiku-4-5-20251001",
+            None,
             "claude-sonnet-5",
             Some(ModelClass::Light),
             vec!["old-id", "excluded-haiku", "fallback"],
         ),
         (
             "claude-3-haiku-20240307",
+            None,
             "claude-sonnet-5",
             Some(ModelClass::Light),
             vec!["old-id", "excluded-haiku", "fallback"],
         ),
         (
             "claude-3-5-haiku-20241022",
+            None,
             "claude-sonnet-5",
             Some(ModelClass::Light),
             vec!["old-id", "excluded-haiku", "fallback"],
         ),
-        ("claude-haiku-4-6", "claude-haiku-4-6", None, vec!["old-id"]),
-        ("claude-haiku-5", "claude-haiku-5", None, vec!["old-id"]),
+        (
+            "claude-haiku-4-6",
+            None,
+            "claude-haiku-4-6",
+            None,
+            vec!["old-id"],
+        ),
+        (
+            "claude-haiku-5",
+            None,
+            "claude-haiku-5",
+            None,
+            vec!["old-id"],
+        ),
+        (
+            "claude-haiku-4-5",
+            Some("claude-haiku-5-5"),
+            "claude-haiku-5-5",
+            Some(ModelClass::Fast),
+            vec!["old-id", "excluded-haiku"],
+        ),
     ] {
-        let context = context("anthropic", &[id, "claude-sonnet-5"]);
+        let mut ids = vec![id, "claude-sonnet-5"];
+        ids.extend(newer);
+        let context = context("anthropic", &ids);
         let request = format!("anthropic/{id}");
         // Installed Pi frontmatter is the producer of the later dispatch request.
         let rendered = render_model(HarnessId::Pi, &request, &BTreeMap::new(), &BTreeMap::new());
@@ -833,17 +875,14 @@ fn native_alias_and_renderer_boundaries() {
             matches!(hint, ModelResolution::NativeAlias { native_selector, .. } if native_selector == pin)
         );
     }
-    assert_eq!(
-        render_model(
-            HarnessId::Claude,
-            "fast",
-            &BTreeMap::new(),
-            &BTreeMap::new()
-        )
-        .id
-        .as_deref(),
-        Some("sonnet")
+    let fast = render_model(
+        HarnessId::Claude,
+        "fast",
+        &BTreeMap::new(),
+        &BTreeMap::new(),
     );
+    assert_eq!(fast.id.as_deref(), Some("haiku"));
+    assert!(fast.warning.is_none());
     assert_eq!(
         render_model(
             HarnessId::Claude,

@@ -7,7 +7,7 @@ use crate::test_util::{agent_manifest, fixture_env, rooted};
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
+fn exact_pin_renders_haiku_and_reports_one_warning_per_process() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = home.join("consumer");
@@ -15,8 +15,8 @@ fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
     fs::create_dir_all(&project).unwrap();
     fs::create_dir_all(catalog.join("agents")).unwrap();
     for (name, model) in [
-        ("fast", "haiku"),
-        ("another-fast", "haiku"),
+        ("fast", "claude-haiku-5-5"),
+        ("another-fast", "claude-haiku-5-5"),
         ("removable", "inherit"),
     ] {
         fs::write(
@@ -75,7 +75,9 @@ fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
             .collect();
         assert_eq!(
             warnings,
-            ["model-resolution: requested=fast selected=sonnet causes=fallback source="],
+            [
+                "model-resolution: requested=claude-haiku-5-5 selected=claude-haiku-5-5 causes=old-id source="
+            ],
             "{args:?}: {stderr}"
         );
         for name in ["fast", "another-fast"] {
@@ -88,7 +90,7 @@ fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
                     .map
                     .get("model")
                     .and_then(kendex_core::frontmatter::Value::as_str),
-                Some("sonnet"),
+                Some("claude-haiku-5-5"),
                 "{args:?}/{name}"
             );
         }
