@@ -113,6 +113,9 @@ if [[ "$state" == ssh && -n "${OT_SSH_DIES_AFTER:-}" && "$reads" -gt "$OT_SSH_DI
   state=shell
 fi
 case "${1:-}" in
+  show-options)
+    [[ "${*: -1}" != default-shell ]] || printf '%s\n' "$BASH"
+    ;;
   new-window)
     n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
     echo "$OT_TMUX_SERVER_PID %$n" ;;

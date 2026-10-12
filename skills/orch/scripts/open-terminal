@@ -2292,7 +2292,7 @@ launch_session_resolve() { # TITLE
 # launch handed to a background job opens it before the hand-off, so the next
 # item's pick counts this account while the host is still preparing.
 tmux_window_open() { # DIR TITLE
-  local dir="$1" title="$2" last_idx pane spec server matches row idx id owner identity replace_idx=""
+  local dir="$1" title="$2" last_idx pane spec server matches row idx id owner identity replace_idx="" pane_shell pane_command
   local window_args=()
   tmux_server_named || { ot_message tmux-missing "item=$title" >&2; return 1; }
   launchable_dir "$dir" "$title" || return 1
@@ -2328,7 +2328,13 @@ tmux_window_open() { # DIR TITLE
   # The server pid rides along with the pane id: it is the other half of a
   # lane claim's liveness key, and taking both from the creating call means no
   # second tmux round trip and no window between them.
-  if ! spec=$(tmux new-window "${window_args[@]}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
+  if ! pane_shell=$(tmux show-options -Av -t "=$LAUNCH_SESSION:" default-shell) \
+    || ! pane_command=$(tmux show-options -Av -t "=$LAUNCH_SESSION:" default-command); then
+    ot_message tmux-failed "operation=show-options" "item=$title" >&2
+    return 1
+  fi
+  lane_launch_shell_argv "$pane_shell" "$pane_command"
+  if ! spec=$(tmux new-window "${window_args[@]}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}' "${LANE_LAUNCH_SHELL_ARGV[@]}") || [[ -z "$spec" ]]; then
     ot_message tmux-failed "operation=new-window" "item=$title" >&2
     return 1
   fi

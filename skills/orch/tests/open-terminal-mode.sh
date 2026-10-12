@@ -151,9 +151,9 @@ run() {
     *) echo "run: WHERE must be in, out or setting, got '$where'" >&2; exit 2 ;;
   esac
   [[ -z "$RUN_TERMINAL" ]] || launch_env+=("TERMINAL=$RUN_TERMINAL")
-  local name
+  local identity_name
   if [[ "$RUN_PARENT" == true ]]; then
-    for name in $SCRUB_NAMES; do launch_env+=("$name=parent-$name"); done
+    for identity_name in $SCRUB_NAMES; do launch_env+=("$identity_name=parent-$identity_name"); done
   fi
   set +e
   "${launch_env[@]}" PATH="${RUN_PATH:-$BIN:$PATH}" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" \

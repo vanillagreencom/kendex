@@ -1311,11 +1311,11 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # on another machine. It keeps its caller's form and has no local account read.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
+  if [[ -n "$template" ]]; then printf 'custom\n'; return; fi
   if [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi
-  if [[ -n "$template" ]]; then printf 'custom\n'; return; fi
   if [[ -z "$dir" ]]; then printf 'unchecked\n'; return; fi
   name="$(basename -- "$dir")" || { printf 'prefix\n'; return; }
   name="${name#.}"
@@ -1411,12 +1411,24 @@ LANE_LAUNCH_SCRUB=(
   JARVIS_RECORD JARVIS_GENERATION
 )
 
+# Start the pane's configured shell with no parent session identity. Scrubbing
+# before shell initialization preserves functions and the shell language of a
+# raw custom command. Match tmux's default-command or login-shell selection.
+lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
+  local name
+  LANE_LAUNCH_SHELL_ARGV=(env)
+  for name in "${LANE_LAUNCH_SCRUB[@]}"; do LANE_LAUNCH_SHELL_ARGV+=(-u "$name"); done
+  LANE_LAUNCH_SHELL_ARGV+=("$1")
+  if [[ -n "$2" ]]; then LANE_LAUNCH_SHELL_ARGV+=(-c "$2")
+  else LANE_LAUNCH_SHELL_ARGV+=(-l); fi
+}
+
 # The complete command under the form lane_launch_form picked for it. Empty
 # account words keep the caller's account, or the provider's on a host. Every
 # line that opens on `env` clears LANE_LAUNCH_SCRUB there. A custom command
 # that takes no env words is the caller's shell text and stays as written: it
-# runs in the pane's own shell, which may have no `unset` (fish), and a
-# function that shell defines must stay callable.
+# runs in the pane's own shell, started through lane_launch_shell_argv, so a
+# function that shell defines stays callable without the parent's identity.
 #
 # The prefix value is quoted by lane_single_quote, not wrapped in bare quotes:
 # lane dirs are paths, an unquoted space would split the env assignment inside
