@@ -14,7 +14,8 @@
 
 - A script surface is one script, function or command verb. Keep one file per surface, named for it, so input-based selection can find it.
 - Suites sharing a runner contract use that tree's assertion library. Put shared test helpers there instead of duplicating them in suites.
-- A suite makes its scratch root with these lines, replacing `NAME` with its name. Resolve the root before comparing or printing a derived path.
+- A script or test under a runner that supplies scratch uses that scratch.
+- A standalone script makes its scratch root with these lines, replacing `NAME` with its name. Resolve the root before comparing or printing a derived path.
 
 ```bash
 TMP_ROOT="$(mktemp -d)" || { echo "NAME: scratch=mktemp-failed" >&2; exit 1; }

@@ -56,7 +56,7 @@ Do not trade correctness for a smaller change. A failed check limits the evidenc
 
 - **One lifetime, one owner.** Resources with a shared lifetime have one owner whose teardown releases them. Resources with independent lifetimes have separate owners, each responsible for acquisition, recovery and release. Phases of one lifetime are private functions, not separate owners.
 - Acquire ownership before registering cleanup. A pathname alone grants no right to replace or delete a file; acquire a scratch file by exclusive creation. A saved process number grants no right to signal a later process with that number. Keep a process handle or verify identity while the ownership mechanism prevents reuse.
-- A child launch defines its environment explicitly, in production and in tests. The launch owner selects inherited values it needs instead of passing the caller's whole environment.
+- A child launch that changes identity, credentials or harness home selects the inherited values it needs, in production and in tests. A transparent launcher passes the caller's environment and states that contract.
 - Test access must not expand the shipped API or add fixture commands to a product executable. Keep fixtures in the stack's test boundary. A private readback alone is not a defect. Keep operational diagnostics with a named production consumer documented at their declaration.
 - Compatibility probing states the minimum upstream version it serves and the version that removes it. An undated shim is a workaround under § Correctness.
 - Narrow a wire-format union in one guard module. Call sites consume that result instead of repeating casts.
@@ -116,7 +116,7 @@ Load only the references for the code being changed:
 
 ## Comments and Prose
 
-A comment states why, or a constraint the code cannot show. No history, review notes, code restatements or change logs. Delete a comment that adds nothing. Keep claims within what the adjacent code establishes. The optional audit is commit-guards CHECKS.md § comments.
+A comment states why, or a constraint the code cannot show. No history, review notes, code restatements or change logs. Header help that a script prints is CLI documentation, not narration. Delete a comment that adds nothing. Keep claims within what the adjacent code establishes. The optional audit is commit-guards CHECKS.md § comments.
 
 Markdown follows [docs-writing](../docs-writing/SKILL.md). Commit bodies explain intent, not the diff.
 
