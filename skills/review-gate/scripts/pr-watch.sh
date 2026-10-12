@@ -6,9 +6,9 @@
 # sitting steadily over an open thread TRANSITIONS NOTHING, so a watcher keyed
 # on state transitions idles for hours over a thread posted minutes after its
 # last pass; this reducer reports the standing state on every call.
-# A pass is one GraphQL read per repository and one jq reduction: every
-# overseer runs it on each long pass, so its process count must not grow with
-# the pull requests it watches.
+# A pass batches the initial read into one gh process and one jq reduction.
+# Listing pages stay in that gh process. Further thread-page depths each
+# take one shared gh call and jq reduction, independent of the PR count.
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
 # Stdout is the whole-text attention protocol consumed by orch oversee-watch
@@ -98,8 +98,10 @@ A null reviewDecision, which GitHub answers on a base no approval rule
 targets (a stacked PR's base among them), is not an approval: that PR gets
 neither a disarmed nor an awaiting-stale line.
 
-One pass reads every PR in one GraphQL request per repository, plus one
-request per further page of review threads shared by every PR that has one.
+One pass reads every PR in one gh call per repository. The open-PR listing
+may send several GraphQL requests inside that call. Each further thread-page
+depth takes one extra gh call and jq reduction shared by every PR that needs
+it. No subprocess starts per PR or per attention line.
 
 Output: one tab-separated line per finding on stdout:
   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
@@ -193,7 +195,7 @@ if [ -z "$AWAITING_AFTER" ]; then
 fi
 
 # --- one read ------------------------------------------------------------
-# Every pull request comes from one GraphQL request per repository, so its
+# Every pull request comes from a batched GraphQL read per repository, so its
 # head, review state, threads, head commit, CI aggregate and timeline describe
 # one moment rather than the seconds a per-PR walk of REST reads spans. A push
 # that lands during the request shows as a head commit that is not the PR's

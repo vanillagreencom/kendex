@@ -51,3 +51,4 @@ skills/harness-ci/scripts/change-class text eol=lf
 skills/orch/tests/fixtures/mail-read-base.json text eol=lf
 skills/youtube-publish/scripts/youtube-publish.py text eol=lf
 skills/youtube-publish/tests/fixtures/api.json text eol=lf
+skills/review-gate/tests/fixtures/pr-watch-before.txt text eol=lf

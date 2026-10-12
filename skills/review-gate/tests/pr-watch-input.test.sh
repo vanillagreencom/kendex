@@ -78,6 +78,14 @@ table \
   "a head past the listed 250 commits is a broken read, never head-moved||STUB_HEAD_AFTER=$HEAD_B;STUB_COMMITS=250;STUB_OPEN_PRS=$P7|rc=2 kinds=error protocol=7~aaaaaaaa~error~head+commit+is+past+the+250+commits+GitHub+lists+for+a+PR+(broken+read)" \
   "a moved head under the listed 250 commits is head-moved||STUB_HEAD_AFTER=$HEAD_B;STUB_COMMITS=249;STUB_OPEN_PRS=$P7|rc=1 kinds=head-moved"
 
+echo '=== every open-PR listing page reaches the reduction ==='
+P7P9="$(jq -cn --argjson row "$(pr_row 7)" '[$row, ($row | .number = 9)]')"
+PAGED_LIST="STUB_OPEN_PRS=$P7P9;STUB_LIST_PAGE_SIZE=1;STUB_UNRESOLVED=1"
+table "a finding on each listing page reports both PRs||$PAGED_LIST|rc=1 kinds=threads-open,threads-open protocol=7~aaaaaaaa~threads-open~1+unresolved+review+thread(s);9~aaaaaaaa~threads-open~1+unresolved+review+thread(s)"
+mutant_watch list-first-page 's#\[try inputs catch null\] as $pages#([try inputs catch null] | .[0:1]) as $pages#' '[try inputs catch null] as $pages'
+table "must-fail: dropping later listing pages loses the second PR||$PAGED_LIST|rc=1 kinds=threads-open protocol=7~aaaaaaaa~threads-open~1+unresolved+review+thread(s)"
+WATCH_BIN="$LIVE_WATCH"
+
 echo "=== must-fail controls for the review-state read ==="
 # One control per rule the read refuses on, each against a copy of the
 # reducer with that rule planted wrong: the row it holds above must move from

@@ -173,47 +173,6 @@ mutant_watch refresh-review 's#if $refresh and (\$p.isDraft | not) and $decision
 table "must-fail: ignoring the decision reports an already approved PR||$REFRESH_ENV;STUB_DECISION=APPROVED|rc=1 kinds=refresh-ready"
 WATCH_BIN="$LIVE_WATCH"
 
-echo "=== one pass starts the same processes at any pull request count ==="
-# The births the control VM's process-event connector counts: a watcher that
-# started processes per PR or per line was the parent of hundreds of births a
-# pass. Every PR here is stale, so each reaches the deepest reduction and
-# prints a line. The count holds at 2, 8 and 16 PRs, with one gh call.
-if [[ -z "${BASHPID:-}" ]] || ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 401)); then
-  printf 'process counting needs bash 4.1 (BASHPID, BASH_XTRACEFD); the reduction rows above ran on bash %s\n' "$BASH_VERSION"
-else
-  . "$TEST_DIR/lib/process-count.sh"
-  COUNT_DIR="$TMP_ROOT/count"
-  pc_install "$COUNT_DIR" "$TMP_ROOT/bin:$PATH"
-  pass_cost() { # PRS — sets COST and GH_CALLS
-    local rows
-    rows="$(jq -cn --argjson n "$1" --argjson r "$(pr_row 1)" '[range(1; $n + 1) as $i | $r | .number = $i]')"
-    pc_reset "$COUNT_DIR"
-    run_watch "PATH=$COUNT_DIR/bin:$TMP_ROOT/bin:$PATH;BASH_ENV=$COUNT_DIR/bash-env;STUB_OPEN_PRS=$rows;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD" --awaiting-after 60
-    assert_eq "$RC $(grep -c "$(printf '\tawaiting-stale\t')" <<<"$OUT" || true)" "1 $1" "$1 stale PRs print $1 lines"
-    COST="$(pc_births "$COUNT_DIR")"
-    GH_CALLS="$(pc_births "$COUNT_DIR" gh)"
-    printf 'pass evidence: watch=%s prs=%s births=%s gh=%s\n' "${WATCH_BIN#"$TMP_ROOT"/}" "$1" "$COST" "$GH_CALLS"
-  }
-  pass_cost 2
-  BASE_COST="$COST"
-  assert_eq "$GH_CALLS" 1 "a pass over 2 PRs makes one gh call"
-  for prs in 8 16; do
-    pass_cost "$prs"
-    assert_eq "$COST" "$BASE_COST" "a pass over $prs PRs starts as many processes as one over 2"
-    assert_eq "$GH_CALLS" 1 "a pass over $prs PRs makes one gh call"
-  done
-
-  # A subshell per output line, the shape the per-PR watcher had, must move
-  # the count.
-  mutant_watch per-line-cost 's#^if \[ "$reduced" != "$control" \]; then#while IFS= read -r _; do (:); done <<<"$reduced"; if [ -n "${reduced\#"$control"}" ]; then#' 'if [ "$reduced" != "$control" ]; then'
-  pass_cost 2
-  BASE_COST="$COST"
-  pass_cost 8
-  control_rc=0
-  (FAIL=0; assert_eq "$COST" "$BASE_COST" 'the per-line subshell keeps the count flat' >/dev/null; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
-  assert_eq "$control_rc" 1 "must-fail: a subshell per line grows the count with the PRs"
-  WATCH_BIN="$LIVE_WATCH"
-fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

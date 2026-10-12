@@ -3,8 +3,10 @@
 set -euo pipefail
 
 SKILL_ROOT="$(cd "$TEST_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo 'pr-watch: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pr-watch: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'pr-watch: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 PASS=0
 FAIL=0
@@ -33,6 +35,7 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 # process count is the watcher's and not the stub's per PR:
 #   STUB_OPEN_PRS       array of pulls rows ("fail" = a failed read,
 #                       "emptybytes" = a zero-byte answer)
+#   STUB_LIST_PAGE_SIZE split the listing into pages in the same gh call
 #   STUB_PR_<N>         row for a named PR, else its STUB_OPEN_PRS row
 #   STUB_QUEUED         "yes" -> every PR answers a queue entry
 #   STUB_DECISION       reviewDecision of every PR: APPROVED (the default),
@@ -58,6 +61,30 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
+args="$*"
+# The original-watcher control consumes these same rows through its REST
+# reads and unbatched GraphQL reads. Its children are excluded from the
+# watcher's process count, like the batched stub's own jq process.
+case "$*" in
+  api\ *pulls?state=open*) printf '%s\n' "${STUB_OPEN_PRS:-[]}"; exit 0 ;;
+  api\ *issues/*/timeline?*) printf '[]\n'; exit 0 ;;
+  api\ *pulls/*)
+    number="${args##*pulls/}"; number="${number%% *}"
+    row="$(jq -ce --argjson n "$number" '.[] | select(.number == $n)' <<<"${STUB_OPEN_PRS:-[]}")" || exit 1
+    if [[ "$*" == *'--jq .head.sha'* ]]; then jq -r '.head.sha' <<<"$row"; else printf '%s\n' "$row"; fi
+    exit 0 ;;
+  api\ *commits/*) printf '%s\n' "${STUB_HEAD_DATE:-2026-01-01T00:00:00Z}"; exit 0 ;;
+  api\ graphql*reviewDecision*)
+    if [[ "$*" != *'fragment PR on PullRequest'* ]]; then
+      jq -n --arg d "${STUB_DECISION:-APPROVED}" '{data:{repository:{pullRequest:{isInMergeQueue:false,mergeQueueEntry:null,reviewDecision:$d}}}}'
+      exit 0
+    fi ;;
+  api\ graphql*reviewThreads*)
+    if [[ "$*" != *'fragment PR on PullRequest'* && "$*" != *'--input -'* ]]; then
+      jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[]}}}}}'
+      exit 0
+    fi ;;
+esac
 [[ "${1:-}" == api && "${2:-}" == graphql ]] || { echo "unexpected gh command: $*" >&2; exit 1; }
 query="" prev="" request=""
 for arg in "$@"; do
@@ -151,8 +178,13 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
          timelineItems: timeline}
     end;
   (if $kind == "list" then
-     {data: {repository: {pullRequests: {pageInfo: {hasNextPage: false, endCursor: null},
-       nodes: (rows | if type == "array" then map(node) else . end)}}}}
+     (rows | if type == "array" then map(node) else . end) as $nodes
+     | if $ENV.STUB_LIST_PAGE_SIZE and ($nodes | type) == "array" then
+       ($ENV.STUB_LIST_PAGE_SIZE | tonumber) as $size
+       | range(0; $nodes | length; $size) as $offset
+       | {data: {repository: {pullRequests: {pageInfo: {hasNextPage: ($offset + $size < ($nodes | length)), endCursor: "LIST\($offset + $size)"},
+           nodes: $nodes[$offset:$offset + $size]}}}}
+       else {data: {repository: {pullRequests: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes}}}} end
    elif $kind == "named" then
      [$query | scan("p([0-9]+):pullRequest") | .[0] | tonumber | . as $n
       | {key: "p\($n)", value: ($ENV["STUB_PR_\($n)"] as $own

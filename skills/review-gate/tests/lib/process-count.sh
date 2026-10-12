@@ -24,7 +24,7 @@ pc_install() {
   chmod +x "$dir/bin/"*
   printf '%s\n' \
     'case "$0" in' \
-    "  */pr-watch.sh) printf '%s\\n' \"\$\$\" >'$dir/main'; exec 19>>'$dir/trace'; BASH_XTRACEFD=19; PS4='+count:\${BASHPID:-\$\$}: '; set -x ;;" \
+    "  */pr-watch.sh) [ -n \"\${BASHPID:-}\" ] || { printf 'process-count: unsupported-bash=%s\\n' \"\$BASH_VERSION\" >&2; exit 2; }; printf '%s\\n' \"\$\$\" >'$dir/main'; exec 19>>'$dir/trace'; BASH_XTRACEFD=19; PS4='+count:\${BASHPID:-\$\$}: '; set -x ;;" \
     'esac' >"$dir/bash-env"
 }
 
