@@ -569,6 +569,10 @@ harnesses = ["claude", "codex", "pi", "copilot"]
 source = "."
 harnesses = ["claude", "codex", "pi", "copilot"]
 
+[skills.social-media-content-calendar]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+
 [skills.xcode-run]
 source = "."
 harnesses = [
