@@ -75,13 +75,15 @@ A linked worktree carries its own `kendex-local.toml`, so a bare `kendex apply` 
 
 `cd crates/app && ../../ui/node_modules/.bin/tauri build --no-sign` is the default local bundle command. It bundles deb and rpm anywhere; the AppImage step needs FUSE2 for linuxdeploy.
 
-For a signed local bundle, store `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as `op://` references in the project's private env file: `.env.local`, or the file `KENDEX_ENV_FILE` names. From `crates/app`, run this command with that file's absolute path:
+For a signed local bundle, use a dedicated signing env file with mode `600`. It holds only `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as `op://` references. It is neither `.env.local` nor the file `KENDEX_ENV_FILE` names. No skill script loads this dedicated file. Keep it outside the repository. If it must sit inside, it must already be git-ignored.
+
+From `crates/app`, run this command with the signing env file's absolute path:
 
 ```sh
-op run --env-file "<private env file>" -- ../../ui/node_modules/.bin/tauri build
+op run --env-file "<signing env file>" -- ../../ui/node_modules/.bin/tauri build
 ```
 
-1Password's CLI resolves the references for that process only. The login environment (`~/.config/environment.d`, a shell profile, or `systemctl --user set-environment`) is not a supported source for a signing secret: any process that prints its environment prints the secret. A literal signing key in the private env file is not supported: skill scripts that load that file also receive the key.
+1Password's CLI resolves the signing env file's references for that process only. The login environment (`~/.config/environment.d`, a shell profile, or `systemctl --user set-environment`) is not a supported source for a signing secret: any process that prints its environment prints the secret. A literal signing key in a file that skill scripts load is not supported: those scripts also receive the key.
 
 The command inside each installer comes from an overlay under `crates/app/release/`, one per platform, passed as `--config release/<platform>.json`; each reads the command staged under `target/bundle-cli/`. To bundle with the command locally: `cargo build --release -p kendex-cli`, copy `target/release/kendex` to `target/bundle-cli/kendex`, then `../../ui/node_modules/.bin/tauri build --bundles deb,rpm --no-sign --config release/linux.json` from `crates/app`.
 

@@ -393,33 +393,47 @@ fn every_tauri_signing_env_value_comes_from_its_workflow_secret() {
 }
 
 #[test]
-fn local_signing_docs_keep_secrets_in_the_private_env_file_as_references() {
+fn local_signing_docs_use_a_dedicated_signing_env_file() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for (path, heading) in [
+    let [secrets, packaging] = [
         (".agents/skills/app-deploy/SKILL.md", "## Secrets\n"),
         ("DEVELOPMENT.md", "## Packaging\n"),
-    ] {
+    ]
+    .map(|(path, heading)| {
         let document = std::fs::read_to_string(root.join(path))
             .expect("read signing instructions")
             .replace("\r\n", "\n");
-        let section = document
+        document
             .split_once(heading)
             .expect("signing section exists")
             .1
             .split("\n## ")
             .next()
-            .expect("signing section has content");
-        assert!(local_signing_route(section), "{path}");
+            .expect("signing section has content")
+            .to_owned()
+    });
+    // KEN-3823 requires this source-content contract and its rejected prior routes.
+    for (name, section, expected) in [
+        ("Secrets", secrets.as_str(), true),
+        ("Packaging", packaging.as_str(), true),
+        (
+            "prior Packaging",
+            "Bundling signs updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`.",
+            false,
+        ),
+        (
+            "shared project file",
+            r#"The project's private env file holds `op://` references. `op run --env-file "<private env file>"` resolves them for that command only. The login environment is not a supported source for a signing secret."#,
+            false,
+        ),
+    ] {
+        assert_eq!(local_signing_route(section), expected, "{name}");
     }
-    // KEN-3823 requires this documentation contract and its prior-text control.
-    assert!(!local_signing_route(
-        "Bundling signs updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`."
-    ));
 }
 
 fn local_signing_route(section: &str) -> bool {
     [
-        "private env file",
+        "dedicated signing env file",
         "op://",
         "op run",
         "login environment",

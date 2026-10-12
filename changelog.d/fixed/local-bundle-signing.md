@@ -1,1 +1,1 @@
-- Signed local bundle instructions use 1Password references in the project's private env file. Release signing stays in CI. Login environments and literal keys in the private env file are unsupported signing sources.
+- Signed local bundle instructions use a dedicated signing env file containing only the Tauri signing pair as 1Password references. Release signing stays in CI. Login environments and literal keys in files that skill scripts load are unsupported signing sources.
