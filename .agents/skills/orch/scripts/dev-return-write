@@ -582,6 +582,8 @@ fi
 # The runner owns the snapshot. A deferred run can describe a pre-commit HEAD,
 # but the receipt's commit must contain exactly those pending contents.
 if [[ "$validate_mode" == ci && "$validate" == pass ]]; then
+  commit="$(git -C "$worktree" rev-parse --verify "$commit^{commit}" 2>/dev/null)" \
+    || die ci-contents-mismatch "commit=$commit"
   commit_tree="$(git -C "$worktree" rev-parse --verify "$commit^{tree}" 2>/dev/null)" \
     || die ci-contents-mismatch "commit=$commit"
   [[ -n "$run_tree" && "$run_tree" == "$commit_tree" ]] \
