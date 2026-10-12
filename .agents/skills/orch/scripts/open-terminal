@@ -2876,6 +2876,10 @@ launch_finish() {
     # A lane has no person to assign when it activates its work item.
     run="export KENDEX_USER_EMAIL='' && $run"
     run="$(lane_launch_line "$run" "$HARNESS" "" "" custom)" || return 1
+    # The host's shell runs on whatever environment its provider hands it,
+    # which can carry the launching session's identity. This text is POSIX
+    # shell (a hosted relaunch reads `$?`), so `unset` clears the list here.
+    run="unset ${LANE_LAUNCH_SCRUB[*]} && $run"
     # Keep the marked launch root when a lane's tool shell changes directory.
     run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"

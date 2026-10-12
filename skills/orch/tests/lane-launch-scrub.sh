@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Surface: lane_launch_line's scrub of the launching session's identity,
 # LANE_LAUNCH_SCRUB in lib/lane-launch.sh. A tmux window takes the server's
-# environment and a hosted command runs in the host's login shell, so the
-# rendered line is what clears the parent's identity on those two routes; the
-# detached route is open-terminal-mode.sh's. Each row runs the line as
-# open-terminal's launch_finish wraps it, under a parent environment holding
-# every listed name, and reads the child's environment from a harness fixture.
+# environment, so the rendered line is what clears the parent's identity on
+# that route; the detached route is open-terminal-mode.sh's and the hosted one
+# open-terminal-lane-hosted.sh's. Each row runs the line as open-terminal's
+# launch_finish wraps a local launch, under a parent environment holding every
+# listed name, and reads the child's environment from a harness fixture.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -46,40 +46,36 @@ exec codex "\$@"
 STUB
 chmod +x "$TMP_ROOT/bin/1codex"
 
-# render ROUTE FORM HARNESS VAR [FLAGS] — the line launch_finish hands the
-# route: a local lane's under its picked account, a hosted lane's as the custom
-# command its provider's shell runs. A Claude bypass flag gives the hosted line
-# env words of its own, so it runs under `bash -c`; any other runs as shell text.
+# render FORM HARNESS VAR [FLAGS] — the line launch_finish types into a local
+# pane: a lane's under its picked account, or a custom command, which a Claude
+# bypass flag gives env words of its own, so it runs under `bash -c`.
 render() {
   env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" "$BASH" -c '
     source "$1/lane-launch.sh"
-    route="$2"; form="$3"; harness="$4"; var="$5"; root="$6"; flags="$7"
+    form="$2"; harness="$3"; var="$4"; root="$5"; flags="$6"
     [[ "$form" != launcher ]] || form="launcher:$root/bin/1$harness"
-    if [[ "$route" == hosted ]]; then
-      line="$(lane_launch_line "export KENDEX_USER_EMAIL='\'''\'' && exec $harness $flags" "$harness" "" "" custom)" || exit
-    else
-      dir=""
-      [[ -z "$var" ]] || dir="$root/account"
-      line="$(lane_launch_line "$harness" "$harness" "$var" "$dir" "$form")" || exit
-      line="export KENDEX_USER_EMAIL='\'''\'' && $line"
-    fi
-    printf "export KENDEX_LANE_ORIGIN=%s && %s" "$(lane_single_quote "$root/wt")" "$line"
-  ' _ "$LIB" "$1" "$2" "$3" "$4" "$TMP_ROOT" "${5:-}"
+    dir=""
+    [[ -z "$var" ]] || dir="$root/account"
+    cmd="$harness"
+    [[ "$form" != custom ]] || cmd="true && exec $harness $flags"
+    line="$(lane_launch_line "$cmd" "$harness" "$var" "$dir" "$form")" || exit
+    printf "export KENDEX_LANE_ORIGIN=%s && export KENDEX_USER_EMAIL=%s && %s" \
+      "$(lane_single_quote "$root/wt")" "$(lane_single_quote "")" "$line"
+  ' _ "$LIB" "$1" "$2" "$3" "$TMP_ROOT" "${4:-}"
 }
 
-# ROUTE|FORM|HARNESS|ACCOUNT VAR (- for none)|FLAGS|LABEL
+# FORM|HARNESS|ACCOUNT VAR (- for none)|FLAGS|LABEL
 printf '%s\n' \
-  'tmux|prefix|claude|CLAUDE_CONFIG_DIR||tmux window, Claude lane under the prefix' \
-  'tmux|launcher|codex|CODEX_HOME||tmux window, Codex lane through its launcher' \
-  'tmux|prefix|copilot|COPILOT_HOME||tmux window, Copilot lane' \
-  'tmux|unchecked|pi|-||tmux window, no lane picked' \
-  'hosted|custom|claude|-|--dangerously-skip-permissions|hosted Claude lane under env words' \
-  'hosted|custom|codex|-||hosted Codex lane as shell text' \
-  'hosted|custom|copilot|-||hosted Copilot lane as shell text' \
+  'prefix|claude|CLAUDE_CONFIG_DIR||Claude lane under the prefix' \
+  'launcher|codex|CODEX_HOME||Codex lane through its launcher' \
+  'prefix|copilot|COPILOT_HOME||Copilot lane' \
+  'unchecked|pi|-||no lane picked' \
+  'custom|claude|CLAUDE_CONFIG_DIR||custom command under an account' \
+  'custom|claude|-|--dangerously-skip-permissions|custom command under launch env words' \
   > "$TMP_ROOT/rows"
-while IFS='|' read -r route form harness var flags label; do
+while IFS='|' read -r form harness var flags label; do
   account_var="${var#-}"
-  line="$(render "$route" "$form" "$harness" "$account_var" "$flags")"
+  line="$(render "$form" "$harness" "$account_var" "$flags")"
   # The parent's own account stands in the environment too: a picked lane's
   # variable is set after the scrub and wins.
   parent=(TMUX=parent-server TMUX_PANE=%9 CLAUDE_CONFIG_DIR=/parent CODEX_HOME=/parent COPILOT_HOME=/parent)
@@ -92,7 +88,7 @@ while IFS='|' read -r route form harness var flags label; do
 done < "$TMP_ROOT/rows"
 
 # Must-fail control: a scrub list naming none of the shipped names leaves every
-# one of them in the child, under both spellings. Copy all library dependencies.
+# one of them in the child. Copy all library dependencies.
 if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
   cp -R "$LIB" "$TMP_ROOT/mutant-lib"
   python3 - "$TMP_ROOT/mutant-lib/lane-launch.sh" <<'PY'
@@ -110,7 +106,7 @@ PY
   env LAUNCH_LIB_UNDER_TEST="$TMP_ROOT/mutant-lib" "$BASH" "$TEST_DIR/lane-launch-scrub.sh" > "$TMP_ROOT/control.out" 2>&1 || rc=$?
   assert_eq "$rc" 1 'control: a launch line without the scrub fails the suite'
   control="$(cat "$TMP_ROOT/control.out")"
-  for label in 'tmux window, Claude lane under the prefix' 'hosted Claude lane under env words' 'hosted Codex lane as shell text'; do
+  for label in 'Claude lane under the prefix' 'custom command under launch env words'; do
     assert_contains "$control" "  FAIL  $label: child environment" "control: $label reds"
   done
   assert_contains "$control" "held=${NAMES// /,}|" 'control: the child holds every listed name'

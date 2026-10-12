@@ -324,6 +324,58 @@ assert_eq "$HOSTED_RM_ENV" 'resume|unset|unset;fresh|unset|unset' \
   'control: the hosted mutant reaches both Claude processes with neither switch'
 assert_eq "$RM_CONTROL" 1 'control: the hosted resume and fallback children detect the missing environment words'
 OPEN_TERMINAL="$RM_OT_SHIPPED"
+
+# The same replay under a parent environment holding every name
+# LANE_LAUNCH_SCRUB lists: each hosted child, a relaunch's fallback included,
+# holds none of them.
+SCRUB_NAMES="$(bash -c 'source "$1/lib/lane-launch.sh" && printf "%s " "${LANE_LAUNCH_SCRUB[@]}"' _ "$SCRIPTS_DIR")" || exit 1
+ID_PROBE_BIN="$TMP_ROOT/id-probe-bin"
+mkdir -p "$ID_PROBE_BIN"
+cat > "$ID_PROBE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+route=fresh held=""
+for arg in "$@"; do [[ "$arg" != --continue ]] || route=resume; done
+for name in $SCRUB_NAMES; do [[ -z "${!name+set}" ]] || held+="$name,"; done
+printf '%s|%s\n' "$route" "${held:--}" >> "$ID_PROBE_LOG"
+[[ "$route" != resume ]] || exit 1
+STUB
+chmod +x "$ID_PROBE_BIN/claude"
+ln -s "$ID_PROBE_BIN/claude" "$ID_PROBE_BIN/codex"
+hosted_identity() { # HARNESS FLAGS ROUTE; sets HOSTED_IDENTITY
+  local args=() line parent=() name
+  [[ "$3" != relaunch ]] || args+=(--relaunch)
+  run_ot "$HARNESS_UP;flags=$2" --host "$HOST_STUB" --harness "$1" \
+    --lane "$H/.eclaude" --repo o/r ${args[@]+"${args[@]}"} KEN-41
+  [[ "$RC" == 0 ]] || { HOSTED_IDENTITY=launch-failed; printf '%s\n' "$OUT" >&2; return; }
+  line="$(grep -m1 '^exec bash -lc ' "$RUN/tmux.log")" || { HOSTED_IDENTITY=unrendered; return; }
+  eval "set -- ${line#exec }" || { HOSTED_IDENTITY=undecodable; return; }
+  for name in $SCRUB_NAMES; do parent+=("$name=parent-$name"); done
+  : > "$RUN/id-env"
+  env -i PATH="$PATH" HOME="$TMP_ROOT" "${parent[@]}" SCRUB_NAMES="$SCRUB_NAMES" \
+    ID_PROBE_BIN="$ID_PROBE_BIN" ID_PROBE_LOG="$RUN/id-env" \
+    "$BASH" -lc 'PATH="$ID_PROBE_BIN:$PATH"; cd() { return 0; }; eval "$1"' \
+    id-probe "$3" > "$RUN/id-replay.out" 2> "$RUN/id-replay.err" || true
+  HOSTED_IDENTITY="$(paste -sd';' "$RUN/id-env")"
+}
+printf '%s\n' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|fresh|fresh|-' \
+  'claude|--model opus --effort high --permission-mode dontAsk|fresh|fresh|-' \
+  'claude|--model opus --effort high --permission-mode dontAsk|relaunch|resume|-;fresh|-' \
+  'codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|fresh|-' \
+  > "$TMP_ROOT/hosted-id-rows"
+while IFS='|' read -r harness flags route expected; do
+  hosted_identity "$harness" "$flags" "$route"
+  assert_eq "$HOSTED_IDENTITY" "$expected" \
+    "the hosted $harness $route child holds none of the launching session's identity: $flags" "$RUN/id-replay.err"
+done < "$TMP_ROOT/hosted-id-rows"
+ID_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts hosted-scrub-removed/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/hosted-scrub-removed/orch"
+mutate_file "$OPEN_TERMINAL" 'run="unset ${LANE_LAUNCH_SCRUB[*]} && $run"' 'run="$run"'
+hosted_identity claude '--model opus --effort high --permission-mode dontAsk' fresh
+assert_eq "$HOSTED_IDENTITY" "fresh|${SCRUB_NAMES// /,}" \
+  'control: without the hosted unset the child holds every identity name'
+OPEN_TERMINAL="$ID_OT_SHIPPED"
 # The flags a hosted claude command leads with, as the remote command quotes them.
 CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
 # hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude

@@ -1382,12 +1382,13 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 
 # The variables that name the session a launch is made from, cleared from every
 # child a launcher starts so the child never writes that session's records or
-# answers as it: lane_launch_line opens every command it renders with them, and
-# open-terminal's run_detached clears them from the detached terminal or wake.
-# A tmux window takes the server's environment rather than the launcher's, so
-# the scrub rides in the command and not in the caller's process. Account and
-# home variables are not listed: a launch sets the child's own after this scrub,
-# and KENDEX_LANE_ORIGIN, exported ahead of the command, stays.
+# answers as it: lane_launch_line opens each `env` line it renders with them,
+# open-terminal's run_detached clears them from the detached terminal or wake,
+# and its hosted command, POSIX shell text, clears them with `unset`. A tmux
+# window takes the server's environment rather than the launcher's, so the
+# scrub rides in the command and not in the caller's process. Account and home
+# variables are not listed: a launch sets the child's own after this scrub, and
+# KENDEX_LANE_ORIGIN, exported ahead of the command, stays.
 #   Claude Code  CLAUDECODE, the nested-session marker; CLAUDE_CODE_SESSION_ID,
 #                the session id it exports to its tools (2.1.42), and
 #                CLAUDE_SESSION_ID, the name a session environment can carry
@@ -1412,10 +1413,10 @@ LANE_LAUNCH_SCRUB=(
 
 # The complete command under the form lane_launch_form picked for it. Empty
 # account words keep the caller's account, or the provider's on a host. Every
-# form clears LANE_LAUNCH_SCRUB first: as `env -u` words where the line is
-# argv, and with `unset` ahead of a custom command that takes no env words,
-# which is shell text a host's login shell runs, so no local bash path reaches
-# that host.
+# line that opens on `env` clears LANE_LAUNCH_SCRUB there. A custom command
+# that takes no env words is the caller's shell text and stays as written: it
+# runs in the pane's own shell, which may have no `unset` (fish), and a
+# function that shell defines must stay callable.
 #
 # The prefix value is quoted by lane_single_quote, not wrapped in bare quotes:
 # lane dirs are paths, an unquoted space would split the env assignment inside
@@ -1438,10 +1439,9 @@ LANE_LAUNCH_SCRUB=(
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words scrub shell_scrub
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words scrub
   printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
   scrub="env$scrub"
-  shell_scrub="unset ${LANE_LAUNCH_SCRUB[*]} &&"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex && -n "$var" ]]; then
     [[ "$form" != unchecked && "$form" != custom ]] || verified=false
@@ -1457,7 +1457,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
         if [[ -n "$launch_env" ]]; then
           printf '%s %s %s -c %s\n' "$scrub" "$launch_env" "$(lane_single_quote "$BASH")" "$(lane_single_quote "$cmd")"
         else
-          printf '%s %s\n' "$shell_scrub" "$cmd"
+          printf '%s\n' "$cmd"
         fi
         ;;
       launcher:*) printf '%s%s %s %s\n' "$scrub" "${launch_env:+ $launch_env}" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
@@ -1472,8 +1472,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
     return
   fi
   if [[ -z "$var" ]]; then
-    [[ "$form" != custom ]] || scrub="$shell_scrub"
-    printf '%s %s\n' "$scrub" "$cmd"
+    if [[ "$form" == custom ]]; then printf '%s\n' "$cmd"; else printf '%s %s\n' "$scrub" "$cmd"; fi
     return
   fi
   env_words="$(lane_copilot_env "$cmd" "$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills")")"
