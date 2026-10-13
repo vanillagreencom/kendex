@@ -213,6 +213,7 @@ fn outcome(page: &Page) -> String {
     let attention = count(&[Class::Drift, Class::Unevaluated]);
     let unknown = count(&[Class::Unknown]);
     let settling = count(&[Class::Settling]);
+    let notices = count(&[Class::Notice]);
     let mut said = Vec::new();
     if attention > 0 {
         let verb = match attention {
@@ -229,6 +230,13 @@ fn outcome(page: &Page) -> String {
             "the background refresh checks {} again",
             items_word(settling)
         ));
+    }
+    if notices > 0 {
+        let verb = match notices {
+            1 => "has a command notice",
+            _ => "have command notices",
+        };
+        said.push(format!("{} {verb}", items_word(notices)));
     }
     let said = said.join("; ");
     let mut said = said.chars();

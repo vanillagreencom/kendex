@@ -9,6 +9,30 @@ use super::*;
 use crate::drift::snapshot::PackageSnapshot;
 
 #[test]
+fn a_notice_only_report_ends_with_its_outcome() {
+    for (count, outcome) in [
+        (1, "1 item has a command notice."),
+        (2, "2 items have command notices."),
+    ] {
+        let mut report = check_report();
+        for _ in 0..count {
+            fold(
+                &mut report,
+                "commands",
+                Class::Notice,
+                Text::Own("command 'gh' is missing".to_owned().into()),
+            );
+        }
+        for verbosity in [Verbosity::Default, Verbosity::Verbose] {
+            let text = render_plain(&report, verbosity);
+            assert_eq!(text.lines().last(), Some(outcome), "{text}");
+            assert!(!text.ends_with("\n\n"), "{text}");
+            assert_eq!(report.status, CheckStatus::Clean);
+        }
+    }
+}
+
+#[test]
 fn section_budget_counts_its_overflow_line_inside_itself() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());
