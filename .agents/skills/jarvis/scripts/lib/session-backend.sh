@@ -32,15 +32,13 @@ case "$verb" in
     export TMUX="$1,0,0"
     tmux_pane_live "$2" "$3" "$4" || exit "$?"
     actual="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
-    [[ "$actual" == "$5" ]] || exit 1
+    # Staging ownership precedes the native generation mark.
+    [[ "$actual" == "$5" || ( "$7" == staging && -z "$actual" ) ]] || exit 1
     session="$(tmux display-message -p -t "$4" '#{session_name}')" || exit 2
     window="$(tmux display-message -p -t "$4" '#{window_id}')" || exit 2
     [[ "$session" == jarvis && "$window" == "$6" ]] || exit 1
     jq -cn --arg socket "$1" --arg session "$session" --arg window "$window" --arg pane "$4" \
       '{server:$socket,session:$session,window:$window,pane:$pane}' ;;
-  server-start)
-    export TMUX="$1,0,0"
-    tmux_server_start "$2" "$3" ;;
   process)
     at="$(lane_process_start "$1")" || exit 1
     [[ -n "$at" ]] || exit 1
@@ -70,9 +68,10 @@ case "$verb" in
     lane_state state listed "$cmd" "$pid" "$screen" || exit 1
     if [[ "$LANE_WALL_KIND" == auth ]]; then printf 'auth\n'; exit; fi
     if [[ "$state" == working || "$6" == confirmed ]]; then
+      lane_account_equivalent "${7:-}" "$account" || { printf 'wrong-account\n'; exit; }
       lane_account_check "$pane" "$var" "$account" prefix 2 || { printf 'wrong-account\n'; exit; }
       case "$LANE_ACCOUNT_RESULT" in
-        verified|unobserved:no-process-environment) ;;
+        verified|unobserved:*) ;;
         *) printf 'unjudged\n'; exit ;;
       esac
     fi

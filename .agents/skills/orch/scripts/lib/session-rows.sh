@@ -292,7 +292,7 @@ session_rows_write() { # DIR HARNESS [EVENT]
   [ "$event" != subagent ] || return 0
   [ -n "$event" ] || { printf 'the payload names no hook_event_name\n' >&2; return 1; }
   if [ "$event" = SessionStart ] && [ -n "${JARVIS_RECORD:-}" ]; then
-    session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" <<<"$payload" || jarvis_rc=$?
+    session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" "$2" <<<"$payload" || jarvis_rc=$?
   fi
   [ -d "${file%/*}" ] || return "$jarvis_rc"
   if [ "$event" = Stop ]; then
@@ -317,11 +317,12 @@ session_rows_write() { # DIR HARNESS [EVENT]
   return "$jarvis_rc"
 }
 
-# session_rows_jarvis_write RECORD GENERATION KEY — the SessionStart payload on
+# session_rows_jarvis_write RECORD GENERATION KEY HARNESS: the SessionStart payload on
 # stdin written as its session's native identity into the `pending` row of the
 # Jarvis runtime record RECORD: the harness's own session id as
 # `native_session_id`, its session file as `session_file` where it names one,
-# and `started_at`. The launcher writes that row, with its launch `generation`,
+# `started_at`, and the effective account read from this native hook's
+# environment. The launcher writes that row, with its launch `generation`,
 # tmux `server` pid and lead `pane` id, before the harness starts, and hands the
 # harness RECORD and GENERATION as JARVIS_RECORD and JARVIS_GENERATION; KEY is
 # this session's `<server pid> <pane id>`. A row naming another generation,
@@ -334,8 +335,10 @@ session_rows_write() { # DIR HARNESS [EVENT]
 # takes, as workflow-state's writers take theirs. Exit 1 where the payload names
 # neither or RECORD could not be read, 2 where it could not be written, 3 where
 # its lock was not taken. The cause is on stderr.
-session_rows_jarvis_write() { # RECORD GENERATION KEY
-  local identity
+session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
+  local identity account
+  account="$(lane_context_caller_cfg "$4")" || return 1
+  [ -n "$account" ] || return 1
   identity="$(jq -c '{native_session_id: (.session_id // .sessionId),
       session_file: (.transcript_path // .transcriptPath)}
     | with_entries(select(.value | type == "string" and . != ""))')" || return 1
@@ -343,9 +346,9 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY
     exec 200>>"$1.lock" || exit 2
     orch_take_lock 200 "$1.lock" "$SESSION_ROWS_WAIT" || exit 3
     verdict="$(jq -r --arg generation "$2" --arg server "${3%% *}" --arg pane "${3#* }" \
-      --argjson identity "$identity" '
+      --argjson identity "$identity" --arg harness "$4" '
       .pending as $p
-      | if ($p | type) != "object" or $generation == "" or ($p.generation | tostring) != $generation
+      | if .harness != $harness or ($p | type) != "object" or $generation == "" or ($p.generation | tostring) != $generation
           or ($p.server | tostring) != $server or $p.pane != $pane or $p.started_at != null then "other"
         elif ($p.native_session_id // $identity.native_session_id) != $identity.native_session_id then "mismatch"
         elif ($identity | length) == 0 then "unnamed"
@@ -359,8 +362,8 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY
         [ "$verdict" = mismatch ] && exit 4
         exit 1 ;;
     esac
-    jq -c --argjson identity "$identity" --argjson at "$(date +%s)" \
-      '.pending += $identity + {started_at: $at}' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
+    jq -c --argjson identity "$identity" --arg account "$account" --argjson at "$(date +%s)" \
+      '.pending += $identity + {started_at: $at, observed_account: $account}' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
     mv -f -- "$1.$$" "$1" || { rm -f -- "$1.$$"; exit 2; }
   )
 }

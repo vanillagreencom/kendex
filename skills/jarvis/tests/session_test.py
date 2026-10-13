@@ -507,17 +507,158 @@ class SessionContract(unittest.TestCase):
                            + shlex.quote(str(wrong)) + "\nexec " + shlex.quote(str(native)) + ' "$@"\n')
         private = self.root / "private-brief"
         private.write_text("private-account-work")
-        count = len(self.started())
-        prompt_count = sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines())
-        self.call("start", mode="new", brief=private)
-        self.wait("blocked", "selection-conflict")
-        self.assertEqual(sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()), prompt_count)
-        self.assertEqual(json.loads(self.record.read_text())["history"]["pending"]["native_session_id"], confirmed)
-        shutil.copyfile(HARNESS, wrapper)
-        self.call("start")
-        self.wait(reason="resumed")
-        self.assertEqual(self.started()[-1]["id"], confirmed)
-        self.assertEqual(len(self.started()), count + 2)
+        wrapper_source = wrapper.read_text()
+        for observation in ("process", "native-hook-only"):
+            with self.subTest(observation=observation):
+                skills = self.root / observation
+                for package in ("jarvis", "orch", "mailbox"):
+                    shutil.copytree(SKILLS / package / "scripts", skills / package / "scripts")
+                if observation == "native-hook-only":
+                    # This host capability supplies no process environment.
+                    # Keep the reader's matched rule in the disposable copy.
+                    reader = skills / "orch/scripts/lib/lane-launch.sh"
+                    text = reader.read_text()
+                    rule = '  [[ -r "/proc/$$/environ" ]]'
+                    self.assertEqual(text.count(rule), 1)
+                    reader.write_text(text.replace(rule, '  false && ' + rule.strip()))
+                configuration = self.home / ".fixture.json"
+                fixture = json.loads(configuration.read_text())
+                fixture["skills"] = str(skills)
+                configuration.write_text(json.dumps(fixture))
+                with patch.dict(globals(), {"SKILLS": skills, "SCRIPT": skills / "jarvis/scripts/jarvis-session"}):
+                    wrapper.write_text(wrapper_source)
+                    count = len(self.started())
+                    prompt_count = sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines())
+                    self.call("start", mode="new", brief=private)
+                    self.wait("blocked", "selection-conflict")
+                    saved = json.loads(self.record.read_text())
+                    self.assertFalse(saved.get("identity_verified", False))
+                    self.assertEqual(sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()), prompt_count)
+                    self.assertEqual(saved["history"]["pending"]["native_session_id"], confirmed)
+                    shutil.copyfile(HARNESS, wrapper)
+                    self.call("start")
+                    self.wait(reason="resumed")
+                    saved = json.loads(self.record.read_text())
+                    self.assertEqual(saved["pending"]["observed_account"], str(self.account))
+                    self.assertTrue(saved["identity_verified"])
+                    self.assertEqual(self.started()[-1]["id"], confirmed)
+                    self.assertEqual(len(self.started()), count + 2)
+                    # Missing native acknowledgement is never equivalent to
+                    # the selected account, even with an unavailable reader.
+                    terminal = saved["terminal"]
+                    for acknowledgement in ("", str(wrong)):
+                        result = subprocess.run([self.env["JARVIS_TEST_BASH"], str(skills / "jarvis/scripts/lib/session-backend.sh"),
+                            "inspect", terminal["server"], terminal["pane"], "claude", "CLAUDE_CONFIG_DIR",
+                            str(self.account), "confirmed", acknowledgement], capture_output=True, text=True, env=self.env, timeout=10)
+                        self.assertEqual((result.returncode, result.stdout.strip()), (0, "wrong-account"))
+                    self.call("stop")
+                    self.wait("stopped")
+        fixture["skills"] = str(SKILLS)
+        configuration.write_text(json.dumps(fixture))
+
+    def test_start_acquisition_failure_releases_ownership(self):
+        for mode, failure in (("first", "set-option"), ("new", "set-option"), ("resume", "set-option"),
+                              ("first", "first-write"), ("new", "first-write"), ("resume", "first-write"),
+                              ("first", "first-write-retained"), ("resume", "worker-write"), ("resume", "brief-write")):
+            with self.subTest(mode=mode, failure=failure):
+                if mode == "first":
+                    self.record.unlink(missing_ok=True)
+                previous = self.started()[-1]["id"] if mode == "resume" else None
+                if failure == "set-option":
+                    real = shutil.which("tmux")
+                    wrapper = self.root / "bin/tmux"
+                    flag = self.root / "refuse-setup"
+                    flag.touch()
+                    wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+                        + 'for arg in "$@"; do if [[ $arg == set-option && -f ' + shlex.quote(str(flag))
+                        + ' ]]; then rm -- ' + shlex.quote(str(flag)) + '; exit 1; fi; done\nexec '
+                        + shlex.quote(real) + ' "$@"\n')
+                    wrapper.chmod(0o755)
+                    self.call("start", mode="new" if mode == "new" else "resume")
+                    self.wait("failed", "launch-failed")
+                    self.await_worker_result()
+                    wrapper.unlink()
+                elif failure == "worker-write":
+                    replace = os.replace
+                    injected = []
+                    def refuse_worker_ownership(source, destination):
+                        data = json.loads(Path(source).read_text())
+                        if data.get("worker") and not injected:
+                            injected.append(True)
+                            raise OSError("fixture worker write refused")
+                        return replace(source, destination)
+                    with patch.object(os, "replace", refuse_worker_ownership):
+                        answer, code = self.call("start", own_worker=True)
+                    self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 1))
+                    self.assertEqual(injected, [True])
+                    self.assertIsNotNone(self.owned_workers[-1].returncode)
+                    self.assertNotIn("worker", json.loads(self.record.read_text()))
+                else:
+                    # A refused preparation leaves the real public request
+                    # record available to the same worker acquisition owner.
+                    config = self.account / ".claude.json"
+                    config.write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
+                    self.call("start", mode="new" if mode == "new" else "resume")
+                    self.wait("failed", "launch-failed")
+                    config.unlink()
+                    request = json.loads(self.record.read_text())
+                    retained = self.refuse_teardown() if failure == "first-write-retained" else None
+                    replace = os.replace
+                    injected = []
+                    def refuse_first_ownership(source, destination):
+                        data = json.loads(Path(source).read_text())
+                        if data.get("terminal") and not injected:
+                            injected.append(True)
+                            raise OSError("fixture ownership write refused")
+                        return replace(source, destination)
+                    open_file = Path.open
+                    class RefusedBrief:
+                        def __init__(self, stream):
+                            self.stream = stream
+                        def __enter__(self):
+                            return self
+                        def __exit__(self, *arguments):
+                            self.stream.close()
+                        def write(self, content):
+                            injected.append(True)
+                            raise OSError("fixture brief write refused")
+                    def refuse_brief(path, *arguments, **options):
+                        stream = open_file(path, *arguments, **options)
+                        if path.name == "start-" + str(request["generation"]) + ".txt" and arguments == ("x",):
+                            return RefusedBrief(stream)
+                        return stream
+                    with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+                        runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+                        if failure == "brief-write":
+                            with patch.object(Path, "open", refuse_brief), self.assertRaises(OSError):
+                                runtime["Session"](self.home).worker("start", request["generation"])
+                        else:
+                            with patch.object(os, "replace", refuse_first_ownership), self.assertRaises(OSError):
+                                runtime["Session"](self.home).worker("start", request["generation"])
+                    self.assertEqual(injected, [True])
+                    self.assertEqual(list(self.record.parent.glob("start-*.txt")), [])
+                    if retained:
+                        saved = json.loads(self.record.read_text())
+                        self.assertEqual((saved["state"], saved["reason"]), ("starting", "launching"))
+                        self.assertIsNotNone(self.call("status")[0]["terminal"])
+                        self.assertEqual(saved["pending"]["generation"], request["generation"])
+                        self.assertNotIn("worker", saved)
+                        retained.unlink()
+                        (self.root / "bin/tmux").unlink()
+                        self.call("stop")
+                        self.wait("stopped")
+                saved = json.loads(self.record.read_text())
+                self.assertIsNone(saved["terminal"])
+                self.assertEqual(subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"],
+                                               capture_output=True, env=self.env).returncode, 1)
+                self.call("stop")
+                self.wait("stopped")
+                self.call("start", mode="new" if mode == "new" else "resume")
+                self.wait()
+                if previous:
+                    self.assertEqual(self.started()[-1]["id"], previous)
+                self.call("stop")
+                self.wait("stopped")
 
     def test_unrelated_session_conflicts(self):
         subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, "new-session", "-d", "-s", "jarvis",

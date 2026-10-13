@@ -444,24 +444,35 @@ assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=lane-mail-c
 CODEX_START='{"session_id":"019a","transcript_path":"/r/rollout-019a.jsonl","cwd":"/work","hook_event_name":"SessionStart","source":"startup","model":"gpt-5"}'
 PI_START='{"hook_event_name":"SessionStart","source":"startup","session_id":"p1","transcript_path":"/p/p1.jsonl"}'
 jarvis_checkout() { # LABEL HOOK_HOME [PREASSIGNED] [MAILBOX=absent]
+  local harness
+  case "$2" in
+    .claude/hooks) harness=claude ;;
+    .codex/hooks) harness=codex ;;
+    .github/hooks) harness=copilot ;;
+    .pi/kendex/hooks) harness=pi ;;
+    *) return 1 ;;
+  esac
   new_checkout "$1" "$2"
   [ "${4:-absent}" = present ] || rm -rf -- "${CHECKOUT:?}/tmp"
   RECORD="$TMP_ROOT/$1-record.json"
-  jq -nc --arg id "${3:-}" '{generation: 3, pending: ({generation: 3, server: 7000, pane: "%9"}
+  jq -nc --arg harness "$harness" --arg id "${3:-}" '{harness: $harness, generation: 3, pending: ({generation: 3, server: 7000, pane: "%9"}
     + (if $id == "" then {} else {native_session_id: $id} end))}' >"$RECORD"
 }
 pending() { jq -r '[.pending.native_session_id, .pending.session_file, (.pending.started_at | type)] | map(. // "-") | join(",")' "$RECORD"; }
 JARVIS_ENV=(JARVIS_GENERATION=3)
-while IFS='|' read -r label home preassigned payload want; do
+while IFS='|' read -r label home preassigned payload want account; do
   jarvis_checkout "jarvis_$label" "$home" "$preassigned"
-  run session-start-row "$payload" "${COP_ENV[@]}" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+  run session-start-row "$payload" "${COP_ENV[@]}" CODEX_HOME=/accounts/codex PI_CODING_AGENT_DIR=/accounts/pi \
+    "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
   assert_eq "RC=$RC first=$(first_line) pending=$(pending) mailbox=$([ -e "$CHECKOUT/tmp" ] && echo made || echo none)" \
     "RC=0 first=- pending=$want mailbox=none" "a managed $label start records its native identity with no mailbox"
+  assert_eq "$(jq -r '.pending.observed_account' "$RECORD")" "$account" \
+    "a managed $label start acknowledges its native account"
 done <<JARVISTABLE
-claude|.claude/hooks|5f0c|$START|5f0c,/t/5f0c.jsonl,number
-codex|.codex/hooks||$CODEX_START|019a,/r/rollout-019a.jsonl,number
-copilot|.github/hooks|l1|$COP_START|l1,-,number
-pi|.pi/kendex/hooks|p1|$PI_START|p1,/p/p1.jsonl,number
+claude|.claude/hooks|5f0c|$START|5f0c,/t/5f0c.jsonl,number|/accounts/one
+codex|.codex/hooks||$CODEX_START|019a,/r/rollout-019a.jsonl,number|/accounts/codex
+copilot|.github/hooks|l1|$COP_START|l1,-,number|/accounts/cop
+pi|.pi/kendex/hooks|p1|$PI_START|p1,/p/p1.jsonl,number|/accounts/pi
 JARVISTABLE
 
 # What leaves the record as it stands: a session in the same home with no
@@ -494,6 +505,11 @@ jarvis_checkout jarvis_again .claude/hooks
 run session-start-row "$START" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
 jarvis_untouched "a second start of a recorded launch leaves the first identity" \
   "${START/5f0c/6a1d}" - "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+jarvis_checkout jarvis_other_harness .claude/hooks
+jq '.harness = "codex"' "$RECORD" >"$RECORD.next"
+mv "$RECORD.next" "$RECORD"
+jarvis_untouched "another native harness leaves the managed record unchanged" "$START" - \
+  "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
 while IFS='|' read -r mailbox count want_row; do
   jarvis_checkout "jarvis_mismatch_$mailbox" .claude/hooks 6a1d "$mailbox"
   jarvis_untouched "a mismatched start with mailbox $mailbox reports the refusal and preserves the record" "$START" \
@@ -518,17 +534,22 @@ while IFS='@' read -r old new label preassigned env; do
   cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
   LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
   mutate_lib "$old" "$new"
+  if [ "$label" = harness ]; then
+    jq '.harness = "codex"' "$RECORD" >"$RECORD.next"
+    mv "$RECORD.next" "$RECORD"
+  fi
   before="$(cat "$RECORD")"
   # shellcheck disable=SC2086  # env is a list of assignments.
   run session-start-row "$START" "JARVIS_RECORD=$RECORD" $env
   assert_eq "changed=$([ "$(cat "$RECORD")" = "$before" ] && echo no || echo yes)" \
     "changed=$([ "$label" = call ] && echo no || echo yes)" "control: $label"
 done <<'JARVISCONTROL'
-session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" <<<"$payload"@:@call@@JARVIS_GENERATION=3
+session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" "$2" <<<"$payload"@:@call@@JARVIS_GENERATION=3
 ($p.server | tostring) != $server@false@server@@TMUX_SERVER_ID=8000 JARVIS_GENERATION=3
  or $p.pane != $pane@@pane@@TMUX_PANE=%8 JARVIS_GENERATION=3
 ($p.generation | tostring) != $generation@false@generation@@JARVIS_GENERATION=2
 "mismatch"@"own"@preassigned@6a1d@JARVIS_GENERATION=3
+.harness != $harness@false@harness@@JARVIS_GENERATION=3
 JARVISCONTROL
 
 # With a mailbox, losing the Jarvis error after the ordinary append hides the
@@ -544,5 +565,15 @@ assert_eq "$(grep -c '^  FAIL  mailbox mismatch reports the refusal$' <<<"$CONTR
   "control: dropping the final Jarvis error fails the mailbox mismatch assertion"
 assert_eq "rows=$(row_count) row=$(last_row '[.event, .harness, .session_id, .transcript_path] | join(",")')" \
   "rows=1 row=SessionStart,claude,5f0c,/t/5f0c.jsonl" "control: the ordinary row was appended before the error was lost"
+jarvis_checkout jarvis_account_control .claude/hooks
+rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
+mutate_lib 'observed_account: $account' 'observed_account: ""'
+run session-start-row "$START" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+CONTROL_OUT="$(assert_eq "$(jq -r '.pending.observed_account' "$RECORD")" /accounts/one \
+  'native account acknowledgement')"
+assert_eq "$(grep -c '^  FAIL  native account acknowledgement$' <<<"$CONTROL_OUT")" "1" \
+  "control: absent native acknowledgement fails the account assertion"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

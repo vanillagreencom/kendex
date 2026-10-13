@@ -95,8 +95,8 @@ def main():
     payload = {"session_id": identity}
     if harness != "copilot":
         payload["transcript_path"] = str(file)
-    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/session-rows.sh"; SESSION_ROWS_WAIT=10; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_write "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key"'
-    subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"]],
+    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; SESSION_ROWS_WAIT=10; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_write "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2"'
+    subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness],
                    input=json.dumps(payload), text=True, check=True)
     auth_mode = fixture.get("auth_mode")
     if auth_mode == "stale":

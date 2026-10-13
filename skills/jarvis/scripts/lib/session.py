@@ -147,7 +147,8 @@ class Session:
             raise Refusal("tmux-missing")
         native_generation = (record.get("pending") or {}).get("generation", record["generation"])
         live = self.backend("live", terminal["server"], record["server_pid"], record["server_started_at"],
-                            terminal["pane"], native_generation, terminal["window"], check=False)
+                            terminal["pane"], native_generation, terminal["window"],
+                            "staging" if not record.get("process") and not (record.get("pending") or {}).get("started_at") else "native", check=False)
         if live.returncode == 1:
             return None
         if live.returncode:
@@ -195,7 +196,8 @@ class Session:
             print("jarvis-session: worker=cancelled generation=" + str(generation), flush=True)
         return current
 
-    def detach(self, verb, generation):
+    def detach(self, verb, record):
+        generation = record["generation"]
         log = self.path.parent / "session.log"
         with log.open("a") as stream:
             child = subprocess.Popen([sys.executable, "-B", "-c",
@@ -203,8 +205,21 @@ class Session:
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                      env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
-        identity = json.loads(self.backend("process", child.pid).stdout)
-        return identity
+        try:
+            identity = json.loads(self.backend("process", child.pid).stdout)
+            record["worker"] = identity
+            self.write(record)
+            return identity
+        except (Refusal, OSError, ValueError, subprocess.TimeoutExpired):
+            # The lock prevents the child from acquiring a terminal until its
+            # process identity is saved. Its handle remains ours on refusal.
+            child.terminate()
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=2)
+            raise
 
     def worker_live(self, record):
         identity = record.get("worker") if record else None
@@ -337,8 +352,7 @@ class Session:
                            "launch": {"id": native_id, "file": file, "reason": reason, "brief": brief},
                            "predecessor": predecessor, "history": history_record}
             self.write(next_record)
-            next_record["worker"] = self.detach("start", generation)
-            self.write(next_record)
+            self.detach("start", next_record)
             return self.answer(next_record), 0
 
     def stop(self, origin):
@@ -360,8 +374,7 @@ class Session:
             if self.terminal(record) or self.terminal(record.get("predecessor")) or record.get("state") == "starting":
                 record.update(state="stopping", reason="stop-requested", detail="")
                 self.write(record)
-                record["worker"] = self.detach("stop", record["generation"])
-                self.write(record)
+                self.detach("stop", record)
                 answer = self.answer(record, state="stopping", reason="stop-requested")
                 # Publish while teardown still waits on this lock. Off and
                 # the Stopping answer precede the end of the owned session.
@@ -378,11 +391,16 @@ class Session:
             # tmux evaluates ownership and closes the pane's session in one
             # server command, before another client can reuse that pane id.
             native_generation = (record.get("pending") or {}).get("generation", record["generation"])
-            condition = "#{&&:#{==:#{@jarvis-generation}," + str(native_generation) + "},#{==:#{pid}," + str(record["server_pid"]) + "}}"
+            binding = "#{==:#{@jarvis-generation}," + str(native_generation) + "}"
+            if not record.get("process") and not (record.get("pending") or {}).get("started_at"):
+                binding = "#{||:" + binding + ",#{==:#{@jarvis-generation},}}"
+            condition = "#{&&:" + binding + ",#{==:#{pid}," + str(record["server_pid"]) + "}}"
             self.tmux("if-shell", "-F", "-t", pane, condition, "kill-session -t " + pane, socket=record["terminal"]["server"])
 
     def worker(self, verb, generation):
         self.deadline = time.monotonic() + CALL_SECONDS
+        acquired = None
+        transferred = False
         try:
             record = self.read()
             if not self._current_request(record, generation, verb):
@@ -411,15 +429,18 @@ class Session:
                     raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 created = self.tmux("new-session", "-d", "-s", "jarvis", "-c", self.home,
-                                    "-P", "-F", "#{socket_path}\t#{pid}\t#{window_id}\t#{pane_id}", BASH, "--noprofile", "--norc")
-                socket, server, window, pane = created.stdout.strip().split("\t")
+                                    "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", BASH, "--noprofile", "--norc")
+                socket, server, started, window, pane = created.stdout.strip().split("\t")
                 record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
-                              server_pid=int(server), effective_home=prepared["effective_home"], account_var=prepared["var"],
+                              server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
                               pending={"generation": generation, "server": int(server), "pane": pane,
                                        "native_session_id": launch["id"] if record["harness"] != "codex" or launch["file"] else None})
-                self.tmux("set-option", "-t", pane, "@jarvis-generation", generation)
-                record["server_started_at"] = int(self.backend("server-start", socket, pane, server).stdout.strip())
+                # The acquisition remains locally owned until saved, including
+                # failures of the first ownership write or later setup writes.
+                acquired = record
                 self.write(record)
+                transferred = True
+                self.tmux("set-option", "-t", pane, "@jarvis-generation", generation)
                 command = prepared["line"]
                 # The account observer reads descendants of the pane shell.
                 # A tail keeps that shell from exec-replacing itself.
@@ -441,7 +462,7 @@ class Session:
                         raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
                     identity = record.get("pending") or {}
                     observed = self.backend("inspect", socket, pane, record["harness"], prepared["var"], record["account"],
-                                            "confirmed" if identity.get("started_at") else "pending").stdout.strip()
+                                            "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", "")).stdout.strip()
                     if observed == "auth":
                         raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
                     if observed == "wrong-account":
@@ -452,9 +473,10 @@ class Session:
                         self.write(record)
                     if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in ("idle", "working"):
                         prompt = self.path.parent / ("start-" + str(generation) + ".txt")
-                        with prompt.open("x") as stream:
-                            stream.write(launch["brief"])
+                        stream = prompt.open("x")
                         try:
+                            with stream:
+                                stream.write(launch["brief"])
                             self.backend("deliver", socket, pane, record["harness"], prompt)
                         finally:
                             prompt.unlink()
@@ -474,15 +496,23 @@ class Session:
                 failure = Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
             self.deadline = time.monotonic() + CALL_SECONDS
             with self.locked():
+                if acquired and not transferred:
+                    try:
+                        self.end_owned(acquired)
+                    except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
+                        print("jarvis-session: cleanup-failed cause=" + type(teardown).__name__, file=sys.stderr)
                 record = self.read()
                 if not self._current_request(record, generation, verb):
                     raise
                 record["history"] = self.confirmed_history(record)
-                if verb == "start":
+                if verb == "start" and (not acquired or transferred):
                     try:
-                        self.end_owned(record)
+                        self.end_owned(acquired or record)
                     except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
                         print("jarvis-session: cleanup-failed cause=" + type(teardown).__name__, file=sys.stderr)
+                if acquired and self.terminal(acquired):
+                    record.update({key: acquired[key] for key in
+                                   ("terminal", "server_pid", "server_started_at", "pending", "effective_home", "account_var")})
                 predecessor = record.get("predecessor")
                 live = record if self.terminal(record) else predecessor if self.terminal(predecessor) else None
                 if live:

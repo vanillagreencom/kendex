@@ -1775,13 +1775,19 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
     waited=$((waited + settle_ms))
   done
   LANE_ACCOUNT_OBSERVED="$observed"
-  if [[ "$(lane_claims_canon "$(lane_launch_home_account "$observed")")" \
-     == "$(lane_claims_canon "$(lane_launch_home_account "$picked")")" ]]; then
+  if lane_account_equivalent "$observed" "$picked"; then
     LANE_ACCOUNT_RESULT=verified
     return 0
   fi
   LANE_ACCOUNT_RESULT=mismatch
   return 1
+}
+
+# Account equivalence is shared by process observations and native hook acknowledgements.
+lane_account_equivalent() { # OBSERVED PICKED
+  [[ -n "$1" && -n "$2" ]] || return 1
+  [[ "$(lane_claims_canon "$(lane_launch_home_account "$1")")" \
+     == "$(lane_claims_canon "$(lane_launch_home_account "$2")")" ]]
 }
 
 # lane_run_detached OUT ERR COMMAND... — COMMAND started so it outlives this
