@@ -66,6 +66,16 @@ control_replace scripts/commands/issues.sh 1 \
 	'    [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1' \
 	'    [[ "$description_set" != "true" ]] || :'
 
+control_expect 'create refuses release v* with +72h'
+control_replace scripts/lib/issue-validation.sh 1 \
+	'			| if (.trigger | test("^release(?: |$)")) and .trigger_kind != "release" then' \
+	'			| if false then'
+
+control_expect 'update refuses merge with set at merge'
+control_replace scripts/lib/issue-validation.sh 1 \
+	'			  elif .deadline_epoch == null and ((.deadline // "") | test("^\\+[0-9]+h$") | not) then' \
+	'			  elif false then'
+
 control_expect "an owner action before the outcome exits zero"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \

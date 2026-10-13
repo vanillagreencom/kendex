@@ -249,8 +249,9 @@ ISSUE_HEADER_MAX=500
 require_issue_header_shape() {
 	[[ -n ${LINEAR_REQUIRE_REACH-1} ]] || return 0
 
-	local refusal
-	refusal=$(jq -cn --arg desc "$1" --argjson max "$ISSUE_HEADER_MAX" '
+	local refusal parsed
+	parsed=$(done_when_parse "$1" '[]') || return 1
+	refusal=$(jq -cn --arg desc "$1" --argjson max "$ISSUE_HEADER_MAX" --argjson parsed "$parsed" '
 		def header: test("^(\\*\\*[^*]+(\\*\\*:|:\\*\\*)|[Rr]eached [Bb]y:)");
 		def owner_action: test("^\\*\\*[^*\\s]+, what you do:\\*\\* [^\\r\\n]*$");
 		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
@@ -258,12 +259,19 @@ require_issue_header_shape() {
 		| [$lines[] | select(.text | test("\\S"))] as $content
 		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first
 		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long
+		| ([$parsed.boxes[] | select(.post_merge)
+			| if (.trigger | test("^release(?: |$)")) and .trigger_kind != "release" then
+				{rule: "post-merge-release-repository", box: .number, fix: "Use Trigger: release OWNER/REPO TAG-GLOB."}
+			  elif .deadline_epoch == null and ((.deadline // "") | test("^\\+[0-9]+h$") | not) then
+				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh or a real UTC time in YYYY-MM-DDTHH:MM:SSZ form."}
+			  else empty end] | first) as $post
 		| if $first != null and ($first.text | header) then
 			{error: "issue-header-opening line=\($first.line) length=\($first.length)\nRefusing an issue body that opens with a header line. Open with the outcome sentence; the **Key**: and Reached by: headers follow it.",
 			 rule: "issue-header-opening", line: $first.line, length: $first.length}
 		  elif $long != null then
 			{error: "issue-header-length line=\($long.line) length=\($long.length) max=\($max)\nRefusing an issue body with a header line over \($max) characters. Keep each header to one short sentence and move the detail under a section.",
 			 rule: "issue-header-length", line: $long.line, length: $long.length}
+		  elif $post != null then $post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)}
 		  else empty end') || return 1
 	if [ -n "$refusal" ]; then
 		printf '%s\n' "$refusal" >&2
@@ -295,7 +303,7 @@ done_when_parse() {
                 | ($line | sub("^\\s*[-*] \\[[ xX]\\]\\s*"; "")) as $body
                 | ($body | startswith("Post-merge:")) as $post
                 | (if $post then
-                    (try ($body | capture("^Post-merge: (?<reading>.+); Where: (?<where>.+); Why after merge: (?<why>.+?); (?:Trigger: (?<trigger>[^;]+); )?Deadline: (?<deadline>[^; ]+)$")) catch null) // {}
+                    (try ($body | capture("^Post-merge: (?<reading>.+); Where: (?<where>.+); Why after merge: (?<why>.+?); (?:Trigger: (?<trigger>[^;]+); )?Deadline: (?<deadline>[^;]+)$")) catch null) // {}
                    else {} end) as $fields
                 | ($fields.trigger // "merge"
                     | gsub("\\\\(?<punct>[\\x21-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e])"; .punct)) as $trigger

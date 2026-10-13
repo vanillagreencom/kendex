@@ -209,6 +209,34 @@ assert "the complete writes the ticked box" \
 : >"$FILED"
 
 echo "=== the reach guard's key holds this guard too ==="
+for operation in create update bulk-update; do
+  case "$operation" in
+    create) box_args=(issues create --title "Post-merge check"); mutation=issueCreate ;;
+    update) box_args=(issues update CC-1); mutation=issueUpdate ;;
+    bulk-update) box_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
+  esac
+  while IFS='|' read -r trigger deadline rule; do
+    description="$(printf '%s\n' "$OUTCOME" "$REACH_LINE" '## Done when' \
+      "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline")"
+    run_linear "${box_args[@]}" --description "$description"
+    if [ "$rule" = valid ]; then
+      assert_written "$operation accepts $trigger with $deadline" "$mutation"
+    else
+      assert_ne "$operation refuses $trigger with $deadline" "$RC" 0
+      assert_eq "$operation refuses $trigger with $deadline before any API call" "$(api_calls)" 0
+      assert_jq "$operation names $rule and a fix" "$ERR" ".rule == \"$rule\" and .box == 1 and (.fix | length) > 0"
+    fi
+  done <<'ROWS'
+release v*|+72h|post-merge-release-repository
+merge|set at merge|post-merge-deadline
+merge|2026-09-31T12:00:00Z|post-merge-deadline
+release owner/repo v*|+72h|valid
+merge|+72h|valid
+merge|2026-10-02T00:00:00Z|valid
+2026-10-01T00:00:00Z|2026-10-02T00:00:00Z|valid
+ROWS
+done
+
 body "$SOURCE_LINE" "$REACH_LINE"
 REACH=unset
 run_linear issues create --title "Default key" --description-file "$TMP_ROOT/body.md"
