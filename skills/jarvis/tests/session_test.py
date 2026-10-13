@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
-from fixtures.harness import AUTH_MESSAGES, native_header
+from fixtures.harness import AUTH_MESSAGES, native_header, native_launcher
 import shlex
 import subprocess
 import sys
@@ -22,7 +22,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
 SCRIPT = Path(os.environ.get("JARVIS_TEST_SCRIPT", SKILLS / "jarvis/scripts/jarvis-session"))
-HARNESS = Path(__file__).with_name("fixtures") / "harness.py"
+HARNESS_SCRIPT = Path(__file__).with_name("fixtures") / "harness.py"
 # Independent VGS-1439 consumer contract. Each planted malformed answer below
 # must fail this validator, rather than depending on the producer's table.
 REASONS = {
@@ -89,6 +89,7 @@ class SessionContract(unittest.TestCase):
         self.gate = self.root / "gate"
         (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.rows), "gate": str(self.gate),
             "bash": os.environ["JARVIS_TEST_BASH"], "skills": str(SKILLS)}))
+        shutil.copyfile(HARNESS_SCRIPT, self.home / ".fixture-harness.py")
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
         for harness in ("claude", "codex", "copilot", "pi"):
@@ -160,10 +161,16 @@ class SessionContract(unittest.TestCase):
             # cleanup. Unknown ownership is a refusal until the final write.
             transient_cleanup = reason != "record-unreadable" and (answer["state"], answer["reason"]) == ("blocked", "record-unreadable")
             if answer["state"] in ("blocked", "failed") and not transient_cleanup:
-                self.fail(str(answer) + "\n" + (self.record.parent / "session.log").read_text())
+                self.fail(str(answer) + "\n" + self.session_log())
             time.sleep(0.05)
         screen = subprocess.run(["tmux", "-L", self.label, "capture-pane", "-p"], capture_output=True, text=True).stdout
-        self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n" + (self.record.parent / "session.log").read_text())
+        self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n" + self.session_log())
+
+    def session_log(self):
+        try:
+            return (self.record.parent / "session.log").read_text()
+        except FileNotFoundError:
+            return "session-log=absent"
 
     def await_launches(self, count):
         deadline = time.monotonic() + 10
@@ -359,22 +366,57 @@ class SessionContract(unittest.TestCase):
         os.mkfifo(self.gate)
         brief = self.home / "private.txt"
         brief.write_text("Continue the consumer's private work.")
-        self.call("start", "codex", brief=brief)
-        deadline = time.monotonic() + 10
-        while not self.rows.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertEqual(self.call("status")[0]["state"], "starting")
-        self.assertFalse(any("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()))
-        # A second inspection proves the first identity decision completed.
-        # The FIFO remains closed throughout that decision.
-        self.await_rows(events, 2)
-        with self.gate.open("w") as stream:
-            stream.write("1")
-        self.wait()
-        prompts = [json.loads(line)["prompt"] for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
-        self.assertEqual(len(prompts), 1)
-        self.assertIn(brief.read_text(), prompts[0])
-        self.assertNotIn("oversee", prompts[0])
+        for process in ("selected", "unrelated"):
+            with self.subTest(process=process):
+                if process == "unrelated":
+                    native = self.root / "unrelated"
+                    shutil.copyfile(HARNESS, native)
+                    native.chmod(0o755)
+                    wrapper = self.root / "bin/codex"
+                    # argv[0] still selects the Codex fixture. OS executable
+                    # identity remains unrelated and must refuse its brief.
+                    wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\nexec -a codex "
+                                       + shlex.quote(str(native)) + ' "$@"\n')
+                inspections = len(events.read_text().splitlines()) if events.exists() else 0
+                launches = len(self.started()) if self.rows.exists() else 0
+                prompt_count = sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()) if self.rows.exists() else 0
+                self.call("start", "codex", brief=brief)
+                self.await_launches(launches + 1)
+                self.assertEqual(self.call("status")[0]["state"], "starting")
+                self.assertEqual(sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()), prompt_count)
+                # A second inspection proves the first identity decision
+                # completed while the FIFO remains closed.
+                self.await_rows(events, inspections + 2)
+                with self.gate.open("w") as stream:
+                    stream.write("1")
+                if process == "unrelated":
+                    deadline = time.monotonic() + 10
+                    while not json.loads(self.record.read_text())["pending"].get("started_at") and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    record = json.loads(self.record.read_text())
+                    self.assertTrue(record["pending"].get("started_at"))
+                    self.assertEqual(record["pending"]["native_session_id"], self.started()[-1]["id"])
+                    terminal = self.call("status")[0]["terminal"]
+                    self.assertIsNotNone(terminal)
+                    # Account inspection also rejects this unrelated process.
+                    # Exercise the actual delivery owner so its refusal proves
+                    # the process gate independently of that earlier reader.
+                    env = {key: value for key, value in self.env.items()
+                           if key not in ("TMUX", "TMUX_PANE", "VGSHELL_RUNNER_PID")}
+                    delivered = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"),
+                                                "deliver", terminal["server"], terminal["pane"], "codex", str(brief)],
+                                               env=env, cwd=self.home, capture_output=True, text=True, timeout=10)
+                    self.assertEqual(delivered.returncode, 1)
+                    self.assertEqual(delivered.stderr.splitlines()[0].split()[:2], ["pane-write:", "process-mismatch"])
+                    self.assertEqual(sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()), prompt_count)
+                else:
+                    self.wait()
+                    prompts = [json.loads(line)["prompt"] for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
+                    self.assertEqual(len(prompts), prompt_count + 1)
+                    self.assertIn(brief.read_text(), prompts[-1])
+                    self.assertNotIn("oversee", prompts[-1])
+                self.call("stop")
+                self.wait("stopped")
 
     def test_idle_prompt_is_not_running(self):
         # Real time tests launch-timer wiring against a held native prompt.
@@ -600,4 +642,5 @@ class SessionContract(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    with native_launcher() as HARNESS:
+        unittest.main()

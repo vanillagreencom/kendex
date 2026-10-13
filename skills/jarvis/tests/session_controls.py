@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from session_test import BootReceiptScenario
+from fixtures.harness import native_launcher
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -14,6 +15,7 @@ CONTROLS = [
     ("app Off", "jarvis/scripts/lib/session.py", 'if record and record.get("app_off") and args.origin != "app-on":', 'if False:', "test_off_and_boot_receipt"),
     ("app On", "jarvis/scripts/lib/session.py", 'if args.origin == "app-on":', 'if False:', "test_off_and_boot_receipt"),
     ("native identity", "jarvis/scripts/lib/session.py", 'if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in ("idle", "working"):', 'if not record.get("brief_delivered"):', "test_identity_before_private_brief"),
+    ("live harness before brief", "orch/scripts/lib/pane-write.sh", 'pane_write_expect "$expect" || return', 'true || { pane_write_expect "$expect" || return; }', "test_identity_before_private_brief"),
     ("account before brief", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$state" == working || "$6" == confirmed ]]; then', 'if [[ "$state" == working ]]; then', "test_account_is_checked_before_private_brief"),
     ("working turn", "jarvis/scripts/lib/session.py", 'elif record.get("brief_delivered") and observed == "working":', 'elif record.get("brief_delivered"):', "test_idle_prompt_is_not_running"),
     ("current-turn authentication", "jarvis/scripts/lib/session-backend.sh", 'lane_state state listed "$cmd" "$pid" "$screen" || exit 1', 'if lane_auth_failure "$screen"; then printf \'auth\\n\'; exit; fi\n    lane_state state listed "$cmd" "$pid" "$screen" || exit 1', "test_sign_in_failure"),
@@ -49,7 +51,7 @@ def main():
     if not BootReceiptScenario.applicable:
         for name, *_ in BootReceiptScenario.controls:
             print("control: unavailable=" + name + " producer=boot-receipt", flush=True)
-    with tempfile.TemporaryDirectory() as allocation:
+    with native_launcher() as native, tempfile.TemporaryDirectory() as allocation:
         scratch = Path(allocation).resolve()
         skills = scratch / "skills"
         for package in ("jarvis", "orch", "mailbox"):
@@ -57,7 +59,16 @@ def main():
         # Test-owned applicability is mutated beside the existing contract case.
         shutil.copytree(ROOT / "skills/jarvis/tests", skills / "jarvis/tests",
                         ignore=shutil.ignore_patterns("__pycache__"))
+        clean = {}
         for name, relative, old, new, test in controls:
+            env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
+                                "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
+            if test not in clean:
+                baseline = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/session.test.sh"),
+                                           "SessionContract." + test], env=env, capture_output=True, text=True, timeout=90)
+                assert baseline.returncode == 0, "clean case failed: " + test + "\n" + baseline.stdout + baseline.stderr
+                clean[test] = True
+                print("control: clean=" + test, flush=True)
             path = skills / relative
             original = path.read_text()
             expected = 2 if name == "retained starting owner" else 1
@@ -66,8 +77,6 @@ def main():
             assert mutant != original
             path.write_text(mutant)
             try:
-                env = os.environ | {"JARVIS_TEST_SKILLS": str(skills),
-                                    "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
                 result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/session.test.sh"),
                                          "SessionContract." + test], env=env, capture_output=True, text=True, timeout=90)
                 assert result.returncode != 0, name + " passed its planted defect"
