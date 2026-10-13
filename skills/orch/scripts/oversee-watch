@@ -286,7 +286,6 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
 #   main-push-failing<TAB><repo><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
-#   main-push-budget<TAB><repo>@<run><TAB>reported or quiet|<attempt>|<completion update>
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
@@ -1862,21 +1861,18 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 }
 
 check_main_push() {
-  local repo latest runs greens run conclusion attempt completed identity jobs log cause failures key prior changed rc
+  local repo runs run conclusion jobs log cause failures key prior changed rc
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err"
   for repo in "${REPOS[@]}"; do
-    # Current failure judgment has its own small read. New workflow runs can
-    # move archive pages while they are read; rejecting that budget history
-    # must not suppress the independently read latest main failure.
     rc=0
-    latest="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event push \
+    runs="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event push \
       --status completed --limit 1 --json databaseId,conclusion 2>"$errf")" || rc=$?
     if (( rc == 0 )); then
-      latest="$(jq -er '
+      runs="$(jq -er '
         if type == "array" and length <= 1 and all(.[];
           (.databaseId | type) == "number" and (.conclusion | type) == "string") then
           if length == 0 then "none|" else "\(.[0].databaseId)|\(.[0].conclusion)" end
-        else error("invalid completed main-push runs") end' <<<"$latest" 2>"$errf")" || rc=$?
+        else error("invalid completed main-push runs") end' <<<"$runs" 2>"$errf")" || rc=$?
     fi
     if (( rc != 0 )); then
       if workflow_absent "$repo" skill-tests.yml "$errf"; then
@@ -1887,67 +1883,7 @@ check_main_push() {
       ow_message main-push-unread "repo=$repo" "read=runs" "exit=$rc" >&2
       continue
     fi
-    rc=0
-    # Search filters cap GitHub history at 1,000 runs. Read every page and
-    # select locally so late completions and unread older logs stay eligible.
-    runs="$(gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" \
-      --slurp 2>"$errf")" || rc=$?
-    if (( rc == 0 )); then
-      runs="$(jq -ec '
-        if type != "array" or length == 0 or any(.[]; (.workflow_runs | type) != "array") then
-          error("invalid main-push history pages")
-        else
-          . as $pages | [.[].workflow_runs[]] as $all |
-          if any($pages[]; .total_count != ($all | length)) or
-            ($all | map(.id) | unique | length) != ($all | length) then
-            error("incomplete main-push history")
-          else
-            [$all[] | select(.head_branch == "main" and .event == "push" and .status == "completed")] |
-            if all(.[]; (.id | type) == "number" and (.conclusion | type) == "string" and
-              (.run_attempt | type) == "number" and (.updated_at | type) == "string" and .updated_at != "") then .
-            else error("invalid completed main-push runs") end
-          end
-        end' <<<"$runs" 2>"$errf")" || rc=$?
-    fi
-    if (( rc != 0 )); then
-      ow_message main-push-unread "repo=$repo" "read=history" "exit=$rc" >&2
-      runs='[]'
-    fi
-    greens="$(jq -r '.[] | select(.conclusion == "success") | "\(.id)|\(.run_attempt)|\(.updated_at)"' <<<"$runs")" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-budget"
-    while IFS='|' read -r run attempt completed; do
-      [[ -n "$run" ]] || continue
-      key="$repo@$run"
-      identity="quiet|$attempt|$completed"
-      prior="$(lane_row_get main-push-budget "$rows" "$key")" \
-        || die state-read-failed "" "repo=$repo" "row=main-push-budget"
-      if [[ "$prior" != reported && "$prior" != "$identity" ]]; then
-        rc=0
-        log="$(gh run view "$run" --repo "$repo" --log 2>"$errf")" || rc=$?
-        if (( rc == 0 )); then
-          # GitHub renders workflow warnings as ##[warning] in downloaded
-          # logs. Read that annotation, never infer policy from summaries.
-          log="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
-            /^(::warning::|##\[warning\])run-all-budget / {
-              sub(/^(::warning::|##\[warning\])/, ""); print
-            }' <<<"$log")" || rc=$?
-        fi
-        if (( rc != 0 )); then
-          ow_message main-push-unread "repo=$repo" "read=annotations" "run=$run" "exit=$rc" >&2
-          continue
-        fi
-        if [[ -n "$log" ]]; then
-          log="$(jq -Rsc 'split("\n") | map(select(length > 0)) | unique' <<<"$log")" \
-            || die state-read-failed "" "repo=$repo" "row=main-push-budget"
-          printf 'EVENT main-push-budget %s workflow=skill-tests.yml run=%s evidence=%s\n' "$repo" "$run" "$log"
-          PASS_EVENT=1
-          identity=reported
-        fi
-        rows="$(lane_row_set main-push-budget "$rows" "$key" "$identity")" \
-          || die state-read-failed "" "repo=$repo" "row=main-push-budget"
-      fi
-    done <<<"$greens"
-    IFS='|' read -r run conclusion <<<"$latest"
+    IFS='|' read -r run conclusion <<<"$runs"
     if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
       rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
         || die state-read-failed "" "repo=$repo" "row=main-push-failing"
