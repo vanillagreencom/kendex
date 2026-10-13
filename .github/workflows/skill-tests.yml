@@ -86,7 +86,8 @@ name: Skill Tests
 # 37597618670. `rest`
 # is split again by test name: `verify-lock` takes verification, lock
 # recording and toggles that preserve locked records; `apply-locked` takes
-# `apply_locked::`. `rest` skips those same names. Each uses the one
+# `apply_locked::` and non-verification `refresh_` tests. `rest` skips those
+# same names. Each uses the one
 # `integration` binary. The comment above the test step cites the measured
 # runs and distinguishes the new leg's estimate from a standalone timing.
 #
@@ -747,7 +748,8 @@ jobs:
       # profiles and their complement. Dev/review names enter `orch-dev`,
       # including names that also carry lane or workflow-state. `orch-state`
       # takes the remaining lane/workflow-state names. `orch-rest` rejects
-      # both families and the terminal/oversee names. New suites therefore
+      # both families and the terminal/oversee names on Linux. The macOS
+      # profiles spread watch contracts across these same jobs. New suites
       # join one family by name. orch-shard-partition.test.sh reads the actual
       # workflow calls and proves complete, unique ownership on both OSes.
       #
@@ -810,7 +812,7 @@ jobs:
       # naming every red suite, which is this shard's FAILED SUITES report.
       - name: orch suites — the open-terminal launch path
         if: matrix.shard == 'orch-terminal'
-        run: bash skills/orch/tests/run-all.sh open-terminal
+        run: bash skills/orch/tests/run-all.sh --shard orch-terminal
 
       - name: orch suites — the oversee watch loop
         if: matrix.shard == 'orch-oversee'
@@ -826,7 +828,7 @@ jobs:
 
       - name: orch suites — the overseer succession, mailbox and report
         if: matrix.shard == 'orch-oversee-succeed'
-        run: bash skills/orch/tests/run-all.sh oversee_succeed oversee_watch_mail oversee_report
+        run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
 
       - name: 'orch suites: the dev and review round-artifact suites'
         if: matrix.shard == 'orch-dev'
@@ -1069,11 +1071,12 @@ jobs:
           done
           fail=0
           # If the tail is removed, its pending-reading timer keeps its isolation here.
-          bash skills/orch/tests/run-all.sh --battery hooks/tests \
-            --alone lane-mail-usage.test "${hooks[@]}" || fail=1
+          # Both batteries use one pool. Filters apply to both roots.
+          batteries=(--battery hooks/tests --alone lane-mail-usage.test)
           if [ "${#guards[@]}" -gt 0 ]; then
-            bash skills/orch/tests/run-all.sh --battery skills/commit-guards/tests "${guards[@]}" || fail=1
+            batteries+=(--battery skills/commit-guards/tests)
           fi
+          bash skills/orch/tests/run-all.sh "${batteries[@]}" "${hooks[@]}" ${guards[@]+"${guards[@]}"} || fail=1
           exit "$fail"
 
       - name: lane-mail and reviewer suites
@@ -1135,12 +1138,11 @@ jobs:
           done
           fail=0
           # The control-runner fixtures use a short cap and a real signal window.
-          bash skills/orch/tests/run-all.sh --battery skills/linear/tests \
-            --alone mutation-isolation.test --alone interrupt.test "${linear[@]}" || fail=1
           # These parent deadlines distinguish bounded reads and matching from hangs.
-          bash skills/orch/tests/run-all.sh --battery skills/bot-instructions/tests \
-            --alone fsutil.test --alone globs.test "${bot[@]}" || fail=1
-          bash skills/orch/tests/run-all.sh --battery skills/preflight/tests "${preflight[@]}" || fail=1
+          bash skills/orch/tests/run-all.sh \
+            --battery skills/linear/tests --alone mutation-isolation.test --alone interrupt.test \
+            --battery skills/bot-instructions/tests --alone fsutil.test --alone globs.test \
+            --battery skills/preflight/tests "${linear[@]}" "${bot[@]}" "${preflight[@]}" || fail=1
           exit "$fail"
       # ---- shards: linear-controls-a, linear-controls-b: the linear control
       # battery, which the step above skips. KEN-3762 measured 74 controls
@@ -1274,8 +1276,7 @@ jobs:
           set -u
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
-          fail=0
-          failed=""
+          batteries=()
           for dir in skills/*/tests; do
             suites=("$dir"/*.sh)
             [ -f "${suites[0]}" ] || continue
@@ -1306,15 +1307,11 @@ jobs:
                   --alone execution-fallback.test --alone process-tree.test ;;
               slack) set -- --alone mailbox.test --alone reload.test --alone socket.test ;;
             esac
-            if ! bash skills/orch/tests/run-all.sh --battery "$dir" "$@"; then
-              fail=1
-              failed="$failed $dir"
-            fi
+            batteries+=(--battery "$dir" "$@")
           done
-          if [ "$fail" != 0 ]; then
-            echo "FAILED SUITES:$failed"
-          fi
-          exit "$fail"
+          # Run 38452700793 reached the deadline before the reviewer and
+          # second-opinion packages started. One pool removes package barriers.
+          bash skills/orch/tests/run-all.sh "${batteries[@]}"
 
       # ---- shard: node — every node and bun suite here but the bridge's,
       # which the shard below runs -----------------------------------------
@@ -1879,13 +1876,13 @@ jobs:
             apply-locked)
               flags=''
               integration='--test integration'
-              filters='apply_locked::'
+              filters='apply_locked:: refresh_ --skip verify_'
               ;;
             rest)
               doc='--doc'
               flags='--lib --bins'
               integration='--test integration'
-              filters='--skip verify_ --skip lock_record:: --skip toggle_locked:: --skip apply_locked::'
+              filters='--skip verify_ --skip lock_record:: --skip toggle_locked:: --skip apply_locked:: --skip refresh_'
               flags="$flags --test cli_smoke"
               ;;
             *) echo "no target roster for leg $LEG"; exit 1 ;;
@@ -1923,8 +1920,10 @@ jobs:
       # Historical apply_locked:: work finished within 136.405s of the
       # integration harness starting, including preceding and concurrent
       # tests. This is an estimate, not a standalone leg measurement.
-      # apply-locked conservatively keeps the entire old rest maximum and
-      # its 13-minute bound until standalone hosted timings are available.
+      # Across KEN-4013's merge-group sample, apply-locked's test step had
+      # a 205s median and 356s maximum; rest's median was 764s against its
+      # 780s limit. Moving non-verification refresh tests into apply-locked
+      # uses that existing leg's room. verify_ remains with verify-lock.
       # The split removes that family from rest to meet the 600s split figure;
       # hosted PR timing must confirm both legs, independently of their bounds.
       # All filters are libtest substrings; new integration tests still land

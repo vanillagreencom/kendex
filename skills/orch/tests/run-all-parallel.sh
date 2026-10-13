@@ -427,6 +427,39 @@ run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DI
 assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=state " "control: inherited lane state fails the fixture assertion"
 
 echo "=== 8. --battery runs another directory's suites and names its tree ==="
+B="$TMP_ROOT/multi-runner/tests"
+battery "$B"
+FIRST="$TMP_ROOT/first-tree/tests"
+SECOND="$TMP_ROOT/second-tree/tests"
+mkdir -p "$FIRST" "$SECOND"
+suite "$FIRST" shared 0 'pass: 2   fail: 0'
+suite "$SECOND" shared 1 'pass: 3   fail: 1'
+multi_result() {
+  printf 'rc=%s first=%s second=%s failed=%s' "$RC" \
+    "$(line_of first-tree--shared)" "$(line_of second-tree--shared)" "$(failed_of)"
+}
+run_battery "$B" 2 -- --battery "$FIRST" --battery "$SECOND"
+MULTI_WANT='rc=1 first=suite=first-tree--shared seconds=N pass=2 fail=0 second=suite=second-tree--shared seconds=N pass=3 fail=1 failed=second-tree--shared '
+assert_eq "$(multi_result)" "$MULTI_WANT" \
+  'multiple batteries preserve each source, report and failure under a unique name'
+mutate_file "$B/run-all.sh" 'suite_args=("$suite_file")' \
+  'suite_file="${SUITE_FILES[0]}"; suite_args=("$suite_file")'
+run_battery "$B" 2 -- --battery "$FIRST" --battery "$SECOND"
+CONTROL_RC=0
+( assert_eq "$(multi_result)" "$MULTI_WANT" 'multiple battery source oracle'; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'control: replacing the second battery source turns the same assertions red'
+
+B="$TMP_ROOT/multi-meet/tests"
+meet_battery "$B" 2
+mkdir -p "$FIRST" "$SECOND"
+cp "$B/meet-1.sh" "$FIRST/meet-1.sh"
+cp "$B/meet-2.sh" "$SECOND/meet-2.sh"
+rm -- "$FIRST/shared.sh" "$SECOND/shared.sh"
+run_battery "$B" 2 MEET_DIR="$B.meet" MEET_N=2 MEET_SECS=60 \
+  -- --battery "$FIRST" --battery "$SECOND"
+assert_eq "rc=$RC failed=$(failed_of)" 'rc=0 failed=' \
+  'suites in different batteries meet in the same worker pool'
+
 B="$TMP_ROOT/runner-parent/tests"
 battery "$B"
 suite "$B" home-suite 0 'pass: 1   fail: 0'
@@ -461,9 +494,9 @@ alone_order() { # DIR [FROM TO] ; start order of a fresh runner in DIR, FROM edi
 }
 assert_eq "$(alone_order "$TMP_ROOT/alone-runner/tests")" "rc=0 started=$O zzz-pool aaa-alone mmm-alone " \
   "--alone runs each suite it names after the rest, and the runner's own ALONE name runs pooled"
-assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '  ALONE=()' '  :')" "rc=0 started=zzz-pool aaa-alone mmm-alone $O " \
+assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '  ALONE=()' '  ALONE=("$2/'"$O"'.sh")')" "rc=0 started=zzz-pool aaa-alone mmm-alone $O " \
   "control: the runner's own list kept holds back the other tree's same-named suite"
-assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$2")' ':')" "rc=0 started=aaa-alone mmm-alone $O zzz-pool " \
+assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$TEST_DIR/$2.sh")' ':')" "rc=0 started=aaa-alone mmm-alone $O zzz-pool " \
   "control: --alone left unread runs every suite pooled"
 
 echo "=== 10. a suite past its bound is stopped and reported under its own name ==="

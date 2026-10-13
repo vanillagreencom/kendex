@@ -16,6 +16,7 @@
 #   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
 #   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
+#   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #
 # `--battery DIR`, given first, runs the suites in DIR in place of this
@@ -121,19 +122,27 @@ ALONE=(
   oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
 )
 
+TEST_DIRS=("$TEST_DIR")
 if [ "${1-}" = --battery ]; then
-  TEST_DIR="$(cd "$2" && pwd)" || exit 1
-  shift 2
   # Another battery's wrapper names its own, so a suite there sharing a name
   # with one above is not held back.
   ALONE=()
-  while [ "${1-}" = --alone ]; do
-    ALONE+=("$2")
+  TEST_DIRS=()
+  while [ "${1-}" = --battery ]; do
+    TEST_DIR="$(cd "$2" && pwd)" || exit 1
+    TEST_DIRS+=("$TEST_DIR")
     shift 2
+    while [ "${1-}" = --alone ]; do
+      ALONE+=("$TEST_DIR/$2.sh")
+      shift 2
+    done
   done
+else
+  for ((i=0; i<${#ALONE[@]}; i++)); do ALONE[i]="$TEST_DIR/${ALONE[i]}.sh"; done
 fi
 # The verdict line names the tree whose tests/ the battery is.
 BATTERY="$(basename "$(dirname "$TEST_DIR")")"
+[ "${#TEST_DIRS[@]}" -eq 1 ] || BATTERY=batteries
 
 # CI supplies its review policy. Local batteries have no timing policy.
 REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
@@ -167,26 +176,18 @@ fi
 
 SELECT=()
 REJECT=()
+SHARD=""
 # Main run 37769037887 and merge-group run 37792683384 exhausted the macOS
 # and Linux deadlines. These watch suites share a separate leg on both.
 if [ "${1-}" = --shard ]; then
   shard="${2-}"
   [ "$#" -eq 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
-  WATCH=(=oversee_watch =oversee_watch_lifecycle =oversee_watch_terminal =oversee_watch_lanes =oversee_watch_overseer =oversee_watch_overseer_rows)
   case "${RUNNER_OS:-Linux}" in
     Linux|macOS) ;;
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-oversee)
-      set -- oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report'
-      for arg in "${WATCH[@]}"; do set -- "$@" "!$arg"; done ;;
-    orch-oversee-watch) set -- "${WATCH[@]}" ;;
-    # Dev/review owns mixed family names. State rejects those names, and
-    # rest rejects both families, so future suites have one owner.
-    orch-dev) set -- dev review '!open-terminal' '!oversee' ;;
-    orch-state) set -- lane workflow-state '!dev' '!review' '!open-terminal' '!oversee' ;;
-    orch-rest) set -- '!open-terminal' '!oversee' '!lane' '!workflow-state' '!dev' '!review' ;;
+    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -199,6 +200,29 @@ for arg in "$@"; do
 done
 FILTER="$*"
 
+shard_of() { # BASE
+  # Run 38452700793 exhausted watch's deadline with two overseer suites at
+  # 900s. Spread those contracts across the existing macOS worker pools.
+  if [ "${RUNNER_OS:-Linux}" = macOS ]; then
+    case "$1" in
+      oversee_watch_overseer_record*|open-terminal-lane-hosted-accounts) OWNING_SHARD=orch-dev; return ;;
+      oversee_watch_lanes|oversee_watch_owed*|oversee_watch_overseer_context|oversee_watch_overseer_gap|open-terminal-lane-hosted-ssh) OWNING_SHARD=orch-state; return ;;
+      oversee_watch_lifecycle|oversee_watch_overseer_marks|oversee_watch_overseer_mail|open-terminal-lane-hosted-cap|open-terminal-lane-hosted-pending) OWNING_SHARD=orch-rest; return ;;
+      oversee_watch_overseer_wall|open-terminal-lane-hosted-pi) OWNING_SHARD=orch-oversee-succeed; return ;;
+      open-terminal-lane-hosted-copilot|open-terminal-lane-hosted-codex) OWNING_SHARD=orch-oversee; return ;;
+    esac
+  fi
+  case "$1" in
+    *open-terminal*) OWNING_SHARD=orch-terminal ;;
+    *oversee_succeed*|*oversee_watch_mail*|*oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
+    oversee_watch|oversee_watch_lifecycle|oversee_watch_terminal|oversee_watch_lanes|oversee_watch_overseer*) OWNING_SHARD=orch-oversee-watch ;;
+    *oversee*) OWNING_SHARD=orch-oversee ;;
+    *dev*|*review*) OWNING_SHARD=orch-dev ;;
+    *lane*|*workflow-state*) OWNING_SHARD=orch-state ;;
+    *) OWNING_SHARD=orch-rest ;;
+  esac
+}
+
 matches() { # BASE FILTER
   # Exact callers select every part of the physical suite.
   if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] &&
@@ -208,6 +232,9 @@ matches() { # BASE FILTER
   if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
     case "$1:$2" in
       oversee_watch_owed_*:=oversee_watch_owed|oversee_watch_mail_*:=oversee_watch_mail) return 0 ;;
+      oversee_watch_overseer_marks:=oversee_watch_overseer|oversee_watch_overseer_record*:=oversee_watch_overseer|oversee_watch_overseer_wall:=oversee_watch_overseer|oversee_watch_overseer_mail:=oversee_watch_overseer) return 0 ;;
+      oversee_watch_overseer_context:=oversee_watch_overseer_rows|oversee_watch_overseer_gap:=oversee_watch_overseer_rows) return 0 ;;
+      open-terminal-lane-hosted-*:=open-terminal-lane-hosted) return 0 ;;
     esac
   fi
   case "$2" in
@@ -220,6 +247,11 @@ matches() { # BASE FILTER
 # expansion below sits behind its own count.
 wanted() { # BASE
   local keep=1 pat
+  if [ -n "$SHARD" ]; then
+    shard_of "$1"
+    [ "$OWNING_SHARD" = "$SHARD" ]
+    return
+  fi
   if [ "${#SELECT[@]}" -gt 0 ]; then
     keep=0
     for pat in "${SELECT[@]}"; do
@@ -244,17 +276,27 @@ alone() { # BASE
 }
 
 SUITES=()
+SUITE_FILES=()
 LATER=()
+LATER_FILES=()
+for TEST_DIR in "${TEST_DIRS[@]}"; do
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
   wanted "$base" || continue
-  if alone "$base"; then LATER+=("$base"); else SUITES+=("$base"); fi
+  suite="$base"
+  [ "${#TEST_DIRS[@]}" -eq 1 ] || suite="$(basename "$(dirname "$TEST_DIR")")--$base"
+  if alone "$test_file"; then
+    LATER+=("$suite"); LATER_FILES+=("$test_file")
+  else
+    SUITES+=("$suite"); SUITE_FILES+=("$test_file")
+  fi
+done
 done
 # Suites before POOLED share the workers; the rest run alone.
 POOLED=${#SUITES[@]}
-[ "${#LATER[@]}" -eq 0 ] || SUITES+=("${LATER[@]}")
+[ "${#LATER[@]}" -eq 0 ] || { SUITES+=("${LATER[@]}"); SUITE_FILES+=("${LATER_FILES[@]}"); }
 RUN=${#SUITES[@]}
 
 if [[ "$RUN" -eq 0 ]]; then
@@ -491,16 +533,15 @@ while [ "$finished" -lt "$RUN" ]; do
       { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; } &&
       { [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
-      suite_args=("$TEST_DIR/${SUITES[next]}.sh")
-      if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] && [ "${SUITES[next]}" = dev_validate_run ]; then
+      suite_file="${SUITE_FILES[next]}"
+      suite_args=("$suite_file")
+      if [ "$suite_file" = "$ORCH_TEST_DIR/dev_validate_run.sh" ]; then
         suite_args+=(runner)
       fi
-      if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
-        case "${SUITES[next]}" in
-          oversee_watch_owed) suite_args+=(development) ;;
-          oversee_watch_mail) suite_args+=(delivery) ;;
-        esac
-      fi
+      case "$suite_file" in
+        "$ORCH_TEST_DIR/oversee_watch_owed.sh") suite_args+=(development) ;;
+        "$ORCH_TEST_DIR/oversee_watch_mail.sh") suite_args+=(delivery) ;;
+      esac
       "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"

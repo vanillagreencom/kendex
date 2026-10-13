@@ -427,7 +427,10 @@ for profile in orch-oversee orch-oversee-watch; do
     grep -qx oversee_watch_terminal_future <<< "$kept" && ok "new oversee suite enters the $PARTITION_RUNNER_OS complement" || bad "new oversee suite lost from $PARTITION_RUNNER_OS complement"
     ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle leaves the $PARTITION_RUNNER_OS complement" || bad "lifecycle remains in $PARTITION_RUNNER_OS complement"
   else
-    grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle runs in the $PARTITION_RUNNER_OS watch leg" || bad "lifecycle lost from $PARTITION_RUNNER_OS watch leg"
+    lifecycle_owner=orch-oversee-watch
+    [[ "$PARTITION_RUNNER_OS" != macOS ]] || lifecycle_owner=orch-rest
+    lifecycle="$(selected --shard "$lifecycle_owner")"
+    grep -qx oversee_watch_lifecycle <<< "$lifecycle" && ok "lifecycle runs in the $PARTITION_RUNNER_OS $lifecycle_owner leg" || bad "lifecycle lost from $PARTITION_RUNNER_OS $lifecycle_owner leg"
     ! grep -qx oversee_watch_terminal_future <<< "$kept" && ok "$PARTITION_RUNNER_OS watch leg owns only the moved whole names" || bad "$PARTITION_RUNNER_OS watch leg claims a new name extension"
   fi
 done
@@ -436,10 +439,12 @@ rm -- "$SANDBOX/oversee_watch_terminal_future.sh"
 # The lifecycle suite must reach the moved leg. Remove its selector from a
 # disposable runner copy while retaining its suite and the rest of the rule.
 cp "$SANDBOX/run-all.sh" "$TMP/runner-original"
-sed 's/ =oversee_watch_lifecycle / /' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
+sed 's/|oversee_watch_lifecycle|/|/; s/oversee_watch_lifecycle|oversee_watch_overseer_marks/oversee_watch_overseer_marks/' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "lifecycle control changed no selector"
 for PARTITION_RUNNER_OS in Linux macOS; do
-  kept="$(selected --shard orch-oversee-watch)"
+  lifecycle_owner=orch-oversee-watch
+  [[ "$PARTITION_RUNNER_OS" != macOS ]] || lifecycle_owner=orch-rest
+  kept="$(selected --shard "$lifecycle_owner")"
   ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "must-fail: missing lifecycle selector fails its $PARTITION_RUNNER_OS moved-leg contract" || bad "$PARTITION_RUNNER_OS lifecycle omission control retained the suite"
 done
 cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
@@ -534,13 +539,33 @@ case "$1:${2-}" in
   *) battery='' ;;
 esac
 if [[ -n "$battery" ]]; then
+  batteries=()
+  prior=''
+  for word in "$@"; do
+    [[ "$prior" != --battery ]] || batteries+=("$word")
+    prior="$word"
+  done
   key="$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
   cache="$PARTITION_POOL_CLAIMS/$key"
   if [[ ! -f "$cache" ]]; then
     # No job deadline or inherited pool bound applies to empty fixture suites.
     (cd "$PARTITION_POOL" && env -u RUN_ALL_DEADLINE_EPOCH -u RUN_ALL_SUITE_SECS \
       PATH="$PARTITION_HOST_PATH" "$BASH" "$@") >"$cache.out" || exit 1
-    sed -n "s%^──── \(.*\) ────\$%suite-invoked: $battery/\1.sh%p" "$cache.out" > "$cache"
+    if [[ "${#batteries[@]}" -le 1 ]]; then
+      sed -n "s%^──── \(.*\) ────\$%suite-invoked: $battery/\1.sh%p" "$cache.out" > "$cache"
+    else
+      : > "$cache"
+      while IFS= read -r name; do
+        found=0
+        for root in "${batteries[@]}"; do
+          tree="${root%/tests}"; tree="${tree##*/}"
+          case "$name" in
+            "$tree"--*) printf 'suite-invoked: %s/%s.sh\n' "$root" "${name#"$tree"--}" >> "$cache"; found=1 ;;
+          esac
+        done
+        [[ "$found" = 1 ]] || exit 2
+      done < <(sed -n 's/^──── \(.*\) ────$/\1/p' "$cache.out")
+    fi
   fi
   cat "$cache"
   exit 0
@@ -600,8 +625,8 @@ done
 # Orch's name-filter calls remain accounted for by section 2.
 ROSTER_MARK='=== $t'
 roster_block() { # FILE ; a serial roster or a pooled battery invocation
-  grep -qF -e "$ROSTER_MARK" -e 'bash tools/tests/run-all.sh' \
-    -e 'bash skills/orch/tests/run-all.sh --battery' "$1"
+  grep -qF -e "$ROSTER_MARK" -e 'bash tools/tests/run-all.sh' "$1" ||
+    { grep -qF 'bash skills/orch/tests/run-all.sh' "$1" && grep -qF -- '--battery' "$1"; }
 }
 
 # A job outside the shell matrix may run a suite by path. Each job claims
@@ -1259,17 +1284,24 @@ while IFS='|' read -r shard step battery stem; do
     awk -v step="$step" -v battery="$battery" -v stem="$stem" -v fault="$fault" '
       index($0, "- name: " step) { active = 1 }
       active && substr($0, 1, 8) == "      - " && !index($0, "- name: " step) { active = 0 }
-      active && index($0, "bash skills/orch/tests/run-all.sh --battery " battery) {
+      active && index($0, "bash skills/orch/tests/run-all.sh") { call = 1 }
+      call && /\\$/ { print; next }
+      call {
         if (fault == "omitted") {
-          # Runner options precede filters in a one-line invocation.
-          if ($0 ~ /^ *run: /) $0 = $0 " !=" stem
-          else sub("--battery " battery, "--battery " battery " !=" stem)
+          # Every root and --alone option precedes these shared filters.
+          if ($0 ~ / \|\| /) sub(/ \|\| /, " !=" stem " || ")
+          else $0 = $0 " !=" stem
         }
         else if ($0 ~ /^ *run: /) {
           sub(/run: /, "run: |\n          ")
           $0 = $0 "\n          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
-        } else print "          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
+        } else {
+          print
+          print "          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
+          hits++; call = 0; next
+        }
         hits++
+        call = 0
       }
       { print }
       END { exit hits != 1 }
@@ -1304,11 +1336,12 @@ while IFS='|' read -r shard step battery stem; do
   result=not-run
   for block in "$TMP/assertion-blocks"/*.sh; do
     [[ "$(one_shard "$(cat "${block%.sh}.cond")")" == "$shard" ]] || continue
-    grep -qE -- "--battery $battery( |$)" "$block" || continue
+    grep -qE -- "--battery $battery([[:space:]]|\)|$)" "$block" || continue
     rc=0
     (cd "$PART" && PARTITION_POOL="$bad_pool" PARTITION_POOL_CLAIMS="$bad_cache" \
       PATH="$SHIM:$PATH" "$BASH" "$block") > "$TMP/assertion-step.log" 2>&1 || rc=$?
-    if [[ "$rc" -ne 0 ]] && grep -qxF -- "  - $stem" "$bad_cache"/*.out; then
+    tree="${battery%/tests}"; tree="${tree##*/}"
+    if [[ "$rc" -ne 0 ]] && grep -qxF -e "  - $stem" -e "  - $tree--$stem" -- "$bad_cache"/*.out; then
       result=failed
       break
     fi
@@ -1795,6 +1828,7 @@ else
 fi
 if [[ "$integration" == true ]]; then
   "$INTEGRATION_EXE" --list "$@"
+
 fi
 SH
 chmod +x "$CARGO_SHIM/cargo"
@@ -1910,6 +1944,7 @@ while IFS='|' read -r family leg; do
 done <<'FAMILIES'
 toggle_locked::|verify-lock
 apply_locked::|apply-locked
+refresh_fresh_clone::|apply-locked
 FAMILIES
 while IFS= read -r leg; do
   check "the $leg test command runs every declared target and unit selection" \
@@ -2001,7 +2036,7 @@ check "must-fail: that merge retains every target and only the integration overl
 # Omission and overlap controls remove one side of the same name seam.
 # A third control drops forwarding in the actual test command: declarations
 # alone must not claim protection for arguments the harness never receives.
-for defect in selector skip toggle-selector toggle-skip apply-leg-drop apply-skip forwarding export unit-filter; do
+for defect in selector skip toggle-selector toggle-skip apply-leg-drop apply-skip refresh-selector refresh-skip forwarding export unit-filter; do
   mutant="$TMP/wf-cargo-filter-$defect.yml"
   case "$defect" in
     selector) sed "s/filters='verify_ lock_record:: toggle_locked::'/filters='lock_record:: toggle_locked::'/" "$WORKFLOW" > "$mutant" ;;
@@ -2010,6 +2045,8 @@ for defect in selector skip toggle-selector toggle-skip apply-leg-drop apply-ski
     toggle-skip) sed 's/ --skip toggle_locked:://' "$WORKFLOW" > "$mutant" ;;
     apply-leg-drop) sed 's/, apply-locked\]/]/' "$WORKFLOW" > "$mutant" ;;
     apply-skip) sed 's/ --skip apply_locked:://' "$WORKFLOW" > "$mutant" ;;
+    refresh-selector) sed 's/apply_locked:: refresh_ --skip verify_/apply_locked:: --skip verify_/' "$WORKFLOW" > "$mutant" ;;
+    refresh-skip) sed 's/ --skip refresh_//' "$WORKFLOW" > "$mutant" ;;
     forwarding) sed 's/ -- \$CARGO_FILTERS//' "$WORKFLOW" > "$mutant" ;;
     export) sed 's/echo "CARGO_FILTERS=\$filters"/echo "CARGO_FILTERS="/' "$WORKFLOW" > "$mutant" ;;
     unit-filter) sed 's/\$CARGO_TARGETS ||/\$CARGO_TARGETS -- \$CARGO_FILTERS ||/' "$WORKFLOW" > "$mutant" ;;
@@ -2029,13 +2066,18 @@ for defect in selector skip toggle-selector toggle-skip apply-leg-drop apply-ski
     continue
   fi
   integration_claims "$mutant" | cut -d' ' -f1 | sort > "$TMP/integration-$defect"
-  if [[ "$defect" == selector || "$defect" == toggle-selector || "$defect" == apply-leg-drop ]]; then
+  if [[ "$defect" == selector || "$defect" == toggle-selector || "$defect" == apply-leg-drop || "$defect" == refresh-selector ]]; then
     lost="$(comm -23 "$INTEGRATION_TESTS" <(sort -u "$TMP/integration-$defect"))"
     if [[ "$defect" == toggle-selector || "$defect" == apply-leg-drop ]]; then
       family=toggle_locked::
       [[ "$defect" != apply-leg-drop ]] || family=apply_locked::
       check "must-fail: dropped $defect leaves every $family test unclaimed" \
-        "$(sed -n "/^$family/p" "$INTEGRATION_TESTS")" "$lost"
+        "$(sed -n "/^$family/p" "$INTEGRATION_TESTS")" "$(sed -n "/^$family/p" <<<"$lost")"
+      if [[ "$defect" == apply-leg-drop ]]; then
+        check 'must-fail: dropped apply leg also loses the non-verification refresh names' \
+          "$(grep -F refresh_ "$INTEGRATION_TESTS" | grep -vF verify_ || true)" \
+          "$(grep -F refresh_ <<<"$lost" || true)"
+      fi
     else
       [[ -n "$lost" ]] && ok "must-fail: a dropped selector names unclaimed integration tests" ||
         bad "must-fail: a dropped selector leaves no unclaimed integration test"
@@ -2045,8 +2087,13 @@ for defect in selector skip toggle-selector toggle-skip apply-leg-drop apply-ski
     if [[ "$defect" == toggle-skip || "$defect" == apply-skip ]]; then
       family=toggle_locked::
       [[ "$defect" != apply-skip ]] || family=apply_locked::
-      check "must-fail: dropped $defect repeats every $family test" \
-        "$(sed -n "/^$family/p" "$INTEGRATION_TESTS")" "$repeated"
+      expected="$(sed -n "/^$family/p" "$INTEGRATION_TESTS")"
+      if [[ "$defect" == apply-skip ]]; then
+        # Names also excluded by refresh_ cannot reach the removed skip.
+        expected="$(grep -vF refresh_ <<<"$expected" || true)"
+      fi
+      check "must-fail: dropped $defect repeats each name held only by that skip" \
+        "$expected" "$repeated"
     else
       [[ -n "$repeated" ]] && ok "must-fail: dropped $defect names repeated integration tests" ||
         bad "must-fail: dropped $defect leaves no repeated integration test"

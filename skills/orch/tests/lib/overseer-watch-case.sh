@@ -258,3 +258,16 @@ fi
 exec "$REAL_LANE_MAIL" "$@"
 EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-note-at.sh"
+
+MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80"
+marks_seen() { grep -c '^EVENT overseer-mark' <<<"$OUT" || true; }
+mark_stands() { printf '%s\n' "$MARK_LINE" > "$STUB_DIR/succeed.check"; }
+mark_lifts() { rm -f -- "${STUB_DIR:?}/succeed.check"; }
+
+check_switch_after_first() { # LINE
+  printf '%s\n' "$1" > "$STUB_DIR/succeed.check-later"
+  : > "$STUB_DIR/succeed.check-count"
+}
+# Readings taken since that counter was last cleared, which is one run's own
+# count where succeed_calls carries every run the case has made.
+checks_since_switch() { wc -c < "$STUB_DIR/succeed.check-count" | tr -d ' '; }

@@ -36,7 +36,14 @@ TMP_ROOT="$(mktemp -d)" || { echo "dev-stop-check: scratch=mktemp-failed" >&2; e
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev-stop-check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev-stop-check: scratch=resolve-failed" >&2; exit 1; }
 PLANTED=""
-trap '[ -z "$PLANTED" ] || kill -KILL "$PLANTED" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
+cleanup() {
+  if [ -n "$PLANTED" ]; then
+    kill -TERM "$PLANTED" 2>/dev/null || :
+    wait "$PLANTED" 2>/dev/null || :
+  fi
+  rm -rf -- "${TMP_ROOT:?}"
+}
+trap cleanup EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
 # shellcheck source=lib/assert.sh
@@ -56,11 +63,16 @@ plant_run() { # WORKTREE -> the run directory
 }
 WT_LIVE="$TMP_ROOT/wt.live"
 RUN_LIVE="$(plant_run "$WT_LIVE")"
-# One process carrying a run child's argv tail, which dev-validate-run checks
-# before it counts a pid as its run's.
-perl -e 'sleep 300' -- planted --child --run-dir "$RUN_LIVE" </dev/null >/dev/null 2>&1 &
+# The live child belongs to this fixture until cleanup. A fixed sleep ended
+# before late rows and controls on loaded macOS runners. The ready pipe
+# confirms that the child has acquired the argv the real reader checks.
+mkfifo "$TMP_ROOT/live-input" "$TMP_ROOT/live-ready"
+exec 8<>"$TMP_ROOT/live-input"
+perl -e '$| = 1; print "ready\n"; while (<STDIN>) {}' -- planted --child --run-dir "$RUN_LIVE" \
+  <"$TMP_ROOT/live-input" >"$TMP_ROOT/live-ready" 2>/dev/null &
 PLANTED=$!
-disown "$PLANTED"
+IFS= read -r READY <"$TMP_ROOT/live-ready"
+[ "$READY" = ready ] || { echo 'dev-stop-check: child=unready' >&2; exit 1; }
 printf '%s\n' "$PLANTED" >"$RUN_LIVE/pid"
 WT_DONE="$TMP_ROOT/wt.done"
 RUN_DONE="$(plant_run "$WT_DONE")"
@@ -254,6 +266,15 @@ stop_rows() {
   local row label world path spec rc_want first_want under got extra
   while IFS='|' read -r label world path spec rc_want first_want under; do
     [ -n "$label" ] || continue
+    if [ -n "${STOP_ROW_LABELS:-}" ]; then
+      case $'\n'"$STOP_ROW_LABELS"$'\n' in
+        *$'\n'"$label"$'\n'*) ;;
+        *) continue ;;
+      esac
+    fi
+    if [ "${COLLECT_LIVE_ROWS:-0}" = 1 ] && [ "$first_want" = "dev-stop-check: running=$RUN_LIVE" ]; then
+      LIVE_STOP_LABELS+=("$label")
+    fi
     case "$path" in
       -) run_hook "$world" "$(payload_of "$spec")" ;;
       no-jq) run_hook "$world" "$(payload_of "$spec")" "$FARM_NO_JQ" ;;
@@ -296,6 +317,14 @@ a transcript path that is not a string is refused|orch|-|raw:{"agent_transcript_
 a missing jq is reported, not held|orch|no-jq|agent:live-claude|0|dev-stop-check: missing-tools=jq|-
 every missing tool is named|orch|none|agent:live-claude|0|dev-stop-check: missing-tools=jq,git,cat,grep,awk|-
 ROWS
+}
+
+# Each hook mutation runs the rows that assert its rule. Replaying every
+# unrelated row multiplied real process-table reads on slow macOS runners.
+stop_control() {
+  STOP_ROW_LABELS="$(printf '%s\n' "${@:7}")"
+  skill_load_control "$@"
+  unset STOP_ROW_LABELS
 }
 
 # --- How a recorded command is read ------------------------------------------
@@ -409,50 +438,55 @@ LABELS
 }
 
 echo "=== dev-stop-check ==="
+LIVE_STOP_LABELS=()
+COLLECT_LIVE_ROWS=1
 stop_rows
+COLLECT_LIVE_ROWS=0
 form_rows
 
 # --- Must-fail controls, one per rule ----------------------------------------
-skill_load_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_rows \
-  'a live run named by a Claude Code call that outlasted its timeout is refused'
-skill_load_control continued-stop "$HOOK" 'ACTIVE=${REST#*"$TAB"}' 'ACTIVE=false' HOOK stop_rows \
+stop_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_rows \
+  "${LIVE_STOP_LABELS[@]}"
+stop_control continued-stop "$HOOK" 'ACTIVE=${REST#*"$TAB"}' 'ACTIVE=false' HOOK stop_rows \
   'a continued stop with no wait since the hold lets the live run go'
-skill_load_control hold-again "$HOOK" '[ "$ACTIVE" = true ] || refuse running "$RUN_DIR"' \
+stop_control hold-again "$HOOK" '[ "$ACTIVE" = true ] || refuse running "$RUN_DIR"' \
   'notice abandoned "$RUN_DIR"' HOOK stop_rows 'a continued stop after a wait since the hold is held again'
-skill_load_control never-held "$HOOK" 'notice transcript unread "$WAITED"' \
+stop_control never-held "$HOOK" 'notice transcript unread "$WAITED"' \
   '[ "$HELD" -gt 0 ] || notice abandoned "$RUN_DIR"' HOOK stop_rows \
   'a continued stop on a run this hook never held is held'
-skill_load_control wait-since-hold "$HOOK" 'notice transcript unread "$WAITED"' \
+stop_control wait-since-hold "$HOOK" 'notice transcript unread "$WAITED"' \
   'WAITED=$((HELD + 1))' HOOK stop_rows 'a wait before the last hold does not hold again'
-skill_load_control unread-continued "$HOOK" 'notice() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || refuse "$@"' \
+stop_control unread-continued "$HOOK" 'notice() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || refuse "$@"' \
   HOOK stop_rows 'a reader that cannot answer on a continued stop is reported, not held'
-skill_load_control shared-tree "$HOOK" 'for candidate in "$AT/skills/$SCRIPT" "$AT/.agents/skills/$SCRIPT"; do' \
+stop_control shared-tree "$HOOK" 'for candidate in "$AT/skills/$SCRIPT" "$AT/.agents/skills/$SCRIPT"; do' \
   '[ "$candidate" != "$AT/.agents/skills/$SCRIPT" ] || continue' HOOK stop_rows \
   'a reader in the shared tree beside the hook is found'
-skill_load_control root-stop "$HOOK" 'LEVELS=0' 'ROOT=/' HOOK stop_rows \
+stop_control root-stop "$HOOK" 'LEVELS=0' 'ROOT=/' HOOK stop_rows \
   'a reader in the repository'"'"'s shared tree is found at its root, not past it'
-skill_load_control root-fallback "$HOOK" '"$ROOT"/*) READER="$ROOT/.agents/skills/$SCRIPT"' 'READER=""' \
+stop_control root-fallback "$HOOK" '"$ROOT"/*) READER="$ROOT/.agents/skills/$SCRIPT"' 'READER=""' \
   HOOK stop_rows 'a reader in the repository'"'"'s shared tree is found at its root, not past it'
-skill_load_control home-fallback "$HOOK" 'READER="$HOME_DIR/.agents/skills/$SCRIPT"' 'READER=""' HOOK stop_rows \
+stop_control home-fallback "$HOOK" 'READER="$HOME_DIR/.agents/skills/$SCRIPT"' 'READER=""' HOOK stop_rows \
   'a reader in the home'"'"'s shared tree is found for a harness root outside the home'
-skill_load_control no-run "$HOOK" 'LIVE=$("$READER" --live --worktree "$WORKTREE" 2>&1) || rc=$?' \
+stop_control no-run "$HOOK" 'LIVE=$("$READER" --live --worktree "$WORKTREE" 2>&1) || rc=$?' \
   '[ "$rc" != 1 ] || rc=0' HOOK stop_rows 'a worktree with no run passes'
-skill_load_control removed "$HOOK" 'while IFS= read -r WORKTREE; do' \
+stop_control removed "$HOOK" 'while IFS= read -r WORKTREE; do' \
   '[ -d "$WORKTREE" ] || refuse unread "$WORKTREE"' HOOK stop_rows 'a worktree since removed passes'
-skill_load_control subagent-transcript "$HOOK" 'refuse payload invalid-json' \
+stop_control subagent-transcript "$HOOK" 'refuse payload invalid-json' \
   'FIELDS=$(printf '"'"'%s'"'"' "$INPUT" | jq -r '"'"'["transcript_path", .transcript_path, "false"] | @tsv'"'"')' \
   HOOK stop_rows 'the parent'"'"'s transcript is not the subagent'"'"'s'
-skill_load_control unread "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || exit 0' \
+stop_control unread "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || exit 0' \
   HOOK stop_rows 'a reader that cannot answer is refused with its words'
-skill_load_control payload "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != payload ] || exit 0' \
+stop_control payload "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != payload ] || exit 0' \
   HOOK stop_rows 'a payload that is not JSON is refused'
-skill_load_control reported-gaps "$HOOK" 'notice() { # KEY VALUE [DETAIL]' 'exit 0' HOOK stop_rows \
+stop_control reported-gaps "$HOOK" 'notice() { # KEY VALUE [DETAIL]' 'exit 0' HOOK stop_rows \
   'no reader beside the hook is reported, not held' 'a missing jq is reported, not held'
 
 # The reader's rules over the form table: a bare path ends at a metacharacter,
 # the flag must stand in the same command, a redirection does not end that
 # command, a quoted word is read whole, and a double quote is read at every
 # escape depth.
+form_control running-newline 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' \
+  'form == "bare" && operator == "newline" && position == "around"'
 form_control word-end 'PATH_RE="/[^[:space:]\"'"'"'\\\\&;|()<>]+"' \
   'PATH_RE="/[^[:space:]\"'"'"'\\\\]+"' 'form == "bare" && position == "around" && operator != "newline"'
 form_control one-command 'WORDS_RE="([^\"'"'"'\\\\&;|]|$REDIRECT_RE|${DQUOTE}[^\"\\\\]*$DQUOTE|${SQUOTE}[^'"'"'\\\\]*$SQUOTE)*"' \
