@@ -144,9 +144,29 @@ run() { # EDIT [ARGS...]
 }
 
 echo "=== the stamps and wall times of a merged PR ==="
-WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","merge_decision":null,"stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_head_spans":[{"start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z"},{"start":"2026-09-20T10:21:00Z","end":"2026-09-20T10:40:00Z"},{"start":"2026-09-20T10:22:00Z","end":"2026-09-20T10:45:00Z"}],"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
+WANT='{"pr":42,"repo":"owner/repo","state":"MERGED","head":"h2","merge_commit":"m1","merge_decision":null,"stamps":{"first_commit":"2026-09-20T09:00:00Z","created":"2026-09-20T09:10:00Z","last_push":"2026-09-20T10:20:00Z","first_bot_review":"2026-09-20T09:40:00Z","first_gate_met":"2026-09-20T10:05:00Z","gate_met":"2026-09-20T10:25:00Z","ci_green":"2026-09-20T10:45:00Z","armed":"2026-09-20T10:50:00Z","queued":"2026-09-20T10:55:00Z","merged":"2026-09-20T11:20:00Z"},"ci_head_secs":1500,"ci_head_clean_secs":1500,"ci_head_spans":[{"start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z"},{"start":"2026-09-20T10:21:00Z","end":"2026-09-20T10:40:00Z"},{"start":"2026-09-20T10:22:00Z","end":"2026-09-20T10:45:00Z"}],"ci_merge_group_secs":900,"open_secs":7800,"bot_reviews":2,"push_times":["2026-09-20T09:05:00Z","2026-09-20T09:50:00Z","2026-09-20T10:12:00Z","2026-09-20T10:20:00Z"],"ready_times":[],"bot_review_times":["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z"],"rounds":[{"kind":"review","head":"b1","start":"2026-09-20T09:20:00Z","end":"2026-09-20T09:30:00Z","secs":600},{"kind":"fix","head":"b1","start":"2026-09-20T09:30:00Z","end":"2026-09-20T10:20:00Z","secs":3000},{"kind":"review","head":"h2","start":"2026-09-20T10:20:00Z","end":"2026-09-20T10:30:00Z","secs":600}]}'
 assert_eq "$(run .) $(cat "$TMP_ROOT/stdout")" "rc=0 $WANT" \
   "the force-pushed-over head's gate is the first pass, the merge group's runs stay out of the head's CI, the author's own review is no bot's, and the pushes are the branch log's for this life of the name"
+
+ready_rows() {
+  local label events want rc
+  while IFS='|' read -r label events want; do
+    rc=$(run '.data.repository.pullRequest |= (.createdAt = "2026-10-13T20:26:24Z"
+      | .reviews.nodes = [.reviews.nodes[2] | .author.login = "copilot" | .submittedAt = "2026-10-13T21:22:31Z"]
+      | .timelineItems.nodes = ([{__typename: "ReviewRequestedEvent", createdAt: "2026-10-13T21:19:45Z"}] +
+        ('"$events"' | map({__typename: "ReadyForReviewEvent", createdAt: .}))))')
+    assert_eq "$rc $(jq -c .ready_times "$TMP_ROOT/stdout")" "rc=0 $want" "ready times: $label"
+  done <<'ROWS'
+fleet draft period|["2026-10-13T21:19:41Z"]|["2026-10-13T21:19:41Z"]
+never draft|[]|[]
+repeated transitions sort ascending|["2026-10-13T21:21:00Z","2026-10-13T21:19:41Z"]|["2026-10-13T21:19:41Z","2026-10-13T21:21:00Z"]
+ROWS
+}
+PR_SELECTOR='READY_FOR_REVIEW_EVENT'
+ready_rows
+PR_SELECTOR='... on ReadyForReviewEvent { createdAt }'
+ready_rows
+PR_SELECTOR='pullRequest(number'
 
 # merge-attempt writes this section after each attempt. The parsed field is
 # consumed by oversee-cycle, so unrelated route text supplies no decision.
@@ -653,6 +673,23 @@ mutate() { # ANCHOR REPLACEMENT
     "$PR_TIMELINE" > "$BIN"
   assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
 }
+
+mutate 'ready_times: ([' 'draft_exit_times: (['
+if (FAIL=0; ready_rows; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/ready-control.out"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  absent ready_times did not redden the suite\n'
+else
+  assert_eq "$(sed -n '/^  FAIL  ready times: fleet draft period$/p' "$TMP_ROOT/ready-control.out")" \
+    '  FAIL  ready times: fleet draft period' 'control: the base has no ready_times field'
+fi
+
+mutate 'REVIEW_DISMISSED_EVENT, READY_FOR_REVIEW_EVENT' 'REVIEW_DISMISSED_EVENT'
+PR_SELECTOR='READY_FOR_REVIEW_EVENT'
+assert_eq "$(run .)" 'rc=1' 'control: the query must request ready-for-review events'
+mutate '... on ReadyForReviewEvent { createdAt }' '... on ReadyForReviewEvent { id }'
+PR_SELECTOR='... on ReadyForReviewEvent { createdAt }'
+assert_eq "$(run .)" 'rc=1' 'control: the query must request the ready event time'
+PR_SELECTOR='pullRequest(number'
 
 mutate 'elif .inside then .decision =' 'elif false then .decision ='
 if (FAIL=0; merge_decision_rows; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/merge-decision-control.out"; then

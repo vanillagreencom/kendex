@@ -80,6 +80,8 @@ Output, one JSON object on stdout:
                          PR's opening, between the deletions around it. Null
                          where the PR names no head repository or branch, or
                          the log records no push in that life,
+  "ready_times":         each transition out of draft, ascending; empty when
+                         the PR has no ready-for-review event,
   "bot_review_times":    each of those Bot reviews' submission, ascending,
   "rounds": [           the review stage, ordered by start (a round with no
                          start by its end), a review before a fix at one time:
@@ -167,7 +169,7 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
       commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
       reviews(first: 100) { totalCount nodes { state body submittedAt author { __typename login } commit { oid ...pushed } comments(first: 100) { totalCount nodes { replyTo { id } } } } }
-      timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_SQUASH_ENABLED_EVENT, AUTO_REBASE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT]) {
+      timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_SQUASH_ENABLED_EVENT, AUTO_REBASE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT, READY_FOR_REVIEW_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
           __typename
@@ -177,6 +179,7 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
           ... on AutoRebaseEnabledEvent { createdAt }
           ... on AddedToMergeQueueEvent { createdAt }
           ... on ReviewDismissedEvent { previousReviewState review { submittedAt } }
+          ... on ReadyForReviewEvent { createdAt }
         }
       }
     }
@@ -348,6 +351,7 @@ def rounds($reviews; $pushed):
       open_secs: secs($stamps.created; $stamps.merged),
       bot_reviews: ($bot | length),
       push_times: null,
+      ready_times: ([$p.timelineItems.nodes[] | select(.__typename == "ReadyForReviewEvent") | .createdAt] | sort),
       bot_review_times: ($bot | map(.submittedAt) | sort),
       rounds: rounds(
         [$p.reviews.nodes[] | select(.submittedAt != null and .commit != null)
