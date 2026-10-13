@@ -212,10 +212,18 @@ pub fn load(env: &Env) -> Result<AppSettings> {
 }
 
 /// Read each file and its base together. Existing 1.x files migrate on
-/// their first read, under both locks, with no manual conversion.
+/// their first unprivileged read, under both locks, with no manual conversion.
 pub fn read_for_mutation(env: &Env) -> Result<(AppSettings, SettingsBase)> {
+    read_for_mutation_as(env, crate::privilege::acting_as_root())
+}
+
+fn read_for_mutation_as(env: &Env, root: bool) -> Result<(AppSettings, SettingsBase)> {
     let initial = read(env)?;
-    if !initial.legacy {
+    // A read-only command can reach migration with HOME or the config
+    // directory retained across sudo. Return its legacy state without
+    // creating root-owned files or locks; the next unprivileged read
+    // migrates it. crate::privilege owns this policy.
+    if !initial.legacy || root {
         return Ok((initial.settings, initial.base));
     }
     let _machine = file_lock(&machine_file(env))?;
@@ -561,6 +569,48 @@ pub(crate) mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let settings = load(&env_in(tmp.path())).unwrap();
         assert_eq!(settings, AppSettings::default());
+    }
+
+    #[test]
+    fn an_elevated_legacy_read_creates_nothing_and_the_next_unprivileged_read_migrates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let env = env_in(&home);
+        // Previous settings writers produce this combined file. A sudo
+        // command with retained HOME reads the invoking account's copy.
+        let legacy = AppSettings {
+            projects: vec![home.join("project")],
+            harness_roots: BTreeMap::from([("claude".into(), home.join("claude"))]),
+            terms: Some(crate::legal::TermsAcceptance {
+                version: 2,
+                accepted_at: "2026-10-13T00:00:00Z".into(),
+            }),
+            zoom: 150,
+            ..AppSettings::default()
+        };
+        let text = toml::to_string_pretty(&legacy).unwrap();
+        write_settings(&env, &text);
+        let entries = || {
+            std::fs::read_dir(env.settings_file().parent().unwrap())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let before = entries();
+
+        let (settings, base) = read_for_mutation_as(&env, true).unwrap();
+        assert_eq!(settings, legacy);
+        assert_eq!(base.preferences, Base::of(&text));
+        assert_eq!(base.machine, Base::absent());
+        assert_eq!(std::fs::read_to_string(env.settings_file()).unwrap(), text);
+        assert_eq!(entries(), before);
+        assert!(!machine_file(&env).exists());
+
+        let (settings, _) = read_for_mutation_as(&env, false).unwrap();
+        assert_eq!(settings, legacy);
+        assert!(machine_file(&env).exists());
+        assert!(!read(&env).unwrap().legacy);
+        assert_eq!(load(&env).unwrap(), legacy);
     }
 
     #[test]

@@ -11,7 +11,7 @@ Both files carry a `schema` field for the file format. The [settings owner](../c
 
 ## Existing installations
 
-The first read migrates machine keys from `settings.toml` to `machine.toml`. The read prints one warning that names the new file. The migration removes the old keys and keeps preference comments. No manual conversion is required. The compatibility reader remains until the next major release. An existing machine file takes precedence over old machine keys in the preference file.
+The first unprivileged read migrates machine keys from `settings.toml` to `machine.toml`. The read prints one warning that names the new file. The migration removes the old keys and keeps preference comments. No manual conversion is required. The compatibility reader remains until the next major release. An existing machine file takes precedence over old machine keys in the preference file. A run acting as root reads the existing settings without migration. The next unprivileged read performs the migration.
 
 ## Writes
 
