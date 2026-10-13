@@ -1,0 +1,1 @@
+- Keep new files in nested directories visible to Git when their names match a configured root symlink. Worktree setup and link repair migrate old exclusions to root-anchored patterns.

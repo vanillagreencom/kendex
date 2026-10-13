@@ -1,23 +1,7 @@
 #!/usr/bin/env bash
-# The shape of the info/exclude entry a configured symlink path gets. The entry
-# lands in the COMMON git dir's info/exclude, which every checkout reads,
-# including main, where the same path is a real directory: a bare entry alone
-# marked that directory ignored in main, so `git add` of a tracked file under
-# it refused with git's ignore complaint while status still listed the file
-# as modified, and the entry outlived the worktree. When the path holds
-# tracked content the bare entry is followed by `!<path>/`: a trailing-slash
-# pattern matches a real directory but not a symlink to one, so main regains
-# the directory and the worktree's link stays ignored. A runtime-only path
-# keeps the plain entry (kendex's own .agents mirror is hidden in main by that
-# entry alone). The shape is recomputed on every pass, so it follows a path
-# that gains or loses tracked content, and lines other tools wrote stay.
-# One table, a row per scenario: the fixture is a word list of steps that
-# builds a checkout with its bare origin, the configured entry's content and
-# any worktree the row needs, the command runs from the checkout, and the row
-# pins its exit status, its stdout, its stderr and what is left: the exclude
-# file's lines, git's status of main, whether main can stage every tracked
-# file under the entry (git's own refusal, first line), and every entry of
-# the worktree with git's status of it.
+# The common info/exclude hides root links without hiding nested names.
+# Each row drives create or fix-links, then checks both checkouts and the
+# common exclude file. Disposable writer mutations must make this suite fail.
 set -euo pipefail
 # The fixtures' origin is a local path that names no GitHub repository, so
 # the suite names the default branch.
@@ -71,6 +55,8 @@ make_repo() {
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   printf 'base\n' >"$MAIN/base.txt"
   git -C "$MAIN" add base.txt
   git -C "$MAIN" commit -q -m base
@@ -113,6 +99,19 @@ step() {
       printf 'WORKTREE_SYMLINKS="runtime"\n' >>"$MAIN/.env.local"
       must git -C "$MAIN" add .env.local
       commit_push runtime
+      ;;
+    # A nested directory shares the root runtime link's name.
+    nested-entry)
+      mkdir -p "$MAIN/nested/runtime"
+      printf 'tracked\n' >"$MAIN/nested/runtime/keep.md"
+      must git -C "$MAIN" add nested/runtime/keep.md
+      commit_push nested
+      ;;
+    legacy-lines)
+      printf '%s\n' "$ENTRY" "!$ENTRY/" "$ENTRY" "!$ENTRY/" >"$MAIN/.git/info/exclude"
+      ;;
+    foreign-patterns)
+      printf '%s\n' '**/.claude/*' 'nested/runtime/ignored' '/runtime/cache' '!runtime/sub/' >>"$MAIN/.git/info/exclude"
       ;;
     # A file under the entry becomes tracked, or the tracked file stops being.
     track:*)
@@ -203,6 +202,19 @@ run() {
   read -r -a argv <<<"${1//<wt>/$WT}"
   if [[ "${argv[0]}" == create ]]; then WT="$ROOT/trees/${argv[1]}"; fi
   (cd "$MAIN" && LC_ALL=C "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  if [[ -d "$MAIN/nested/runtime" ]]; then
+    local repo fresh_status staged root_ignored root_staged
+    for repo in "$MAIN" "$WT"; do
+      printf 'new\n' >"$repo/nested/runtime/new.md"
+      fresh_status="$(git -C "$repo" status --porcelain --untracked-files=all -- nested/runtime/new.md)"
+      must git -C "$repo" add -A
+      staged="$(git -C "$repo" diff --cached --name-only)"
+      root_ignored=0
+      git -C "$repo" check-ignore -q -- runtime || root_ignored=$?
+      root_staged="$(git -C "$repo" ls-files -- runtime)"
+      printf 'nested-status=%s staged=%s root-ignored=%s root-staged=%s ' "$fresh_status" "$staged" "$root_ignored" "${root_staged:--}"
+    done
+  fi
   printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
 }
 
@@ -228,14 +240,18 @@ out_text() {
 
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
-ROWS='an entry with tracked content gets the bare line and the negation after it, and main stages its tracked file|repo tracked-entry edit:harness/skills/tool.md|create tracked-check|0|wt:tracked-check|-|exclude=harness,!harness/,harness/state.json main= M harness/skills/tool.md stage=0:add '\''harness/skills/tool.md'\'' wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
-the entry'\''s lines stay after the worktree is removed|repo tracked-entry create:tracked-check|remove tracked-check|0|removed:tracked-check|deleted:tracked-check|exclude=harness,!harness/,harness/state.json main=- stage=0:- wt=gone
-a runtime-only entry keeps the plain line, and main does not see the runtime tree|repo runtime-entry|create clean-check|0|wt:clean-check|-|exclude=runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
-the negation appears once the entry gains a tracked file, the link becomes per-child links, and main stages it|repo runtime-entry create:clean-check track:runtime/sub/keep.md|fix-links <wt>|0|restored:clean-check|-|exclude=runtime,!runtime/,runtime/state.json,runtime/sub/x.json main=- stage=0:- wt=.env.local,base.txt,runtime/state.json-><main>/runtime/state.json,runtime/sub/x.json-><main>/runtime/sub/x.json wt-status=-
-a repeated pass rewrites the negation after the lines, once|repo tracked-entry create:tracked-check|fix-links <wt>|0|restored:tracked-check|-|exclude=harness,harness/state.json,!harness/ main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
-the negation stays while the worktree'\''s own index still tracks the file main dropped|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md|fix-links <wt>|0|restored:tracked-check|-|exclude=harness,harness/state.json,!harness/ main=?? harness/ stage=- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
-the negation goes once neither index tracks a file under the entry|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md sync-wt|fix-links <wt>|0|restored:tracked-check|-|exclude=harness,harness/state.json main=- stage=- wt=.env.local,.gitignore,base.txt,harness-><main>/harness wt-status=-
-a line another tool wrote into the exclude file stays, before ours|repo tracked-entry foreign-line|create tracked-check|0|wt:tracked-check|-|exclude=**/.claude/*,harness,!harness/,harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+ROWS='an entry with tracked content gets the anchored line and the negation after it, and main stages its tracked file|repo tracked-entry edit:harness/skills/tool.md|create tracked-check|0|wt:tracked-check|-|exclude=/harness,!/harness/,/harness/state.json main= M harness/skills/tool.md stage=0:add '\''harness/skills/tool.md'\'' wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the entry'\''s lines stay after the worktree is removed|repo tracked-entry create:tracked-check|remove tracked-check|0|removed:tracked-check|deleted:tracked-check|exclude=/harness,!/harness/,/harness/state.json main=- stage=0:- wt=gone
+a runtime-only entry keeps the anchored line, and main does not see the runtime tree|repo runtime-entry|create clean-check|0|wt:clean-check|-|exclude=/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
+the negation appears once the entry gains a tracked file, the link becomes per-child links, and main stages it|repo runtime-entry create:clean-check track:runtime/sub/keep.md|fix-links <wt>|0|restored:clean-check|-|exclude=/runtime,!/runtime/,/runtime/state.json,/runtime/sub/x.json main=- stage=0:- wt=.env.local,base.txt,runtime/state.json-><main>/runtime/state.json,runtime/sub/x.json-><main>/runtime/sub/x.json wt-status=-
+a repeated pass rewrites the negation after the lines, once|repo tracked-entry create:tracked-check|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,/harness/state.json,!/harness/ main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the negation stays while the worktree'\''s own index still tracks the file main dropped|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,/harness/state.json,!/harness/ main=?? harness/ stage=- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the negation goes once neither index tracks a file under the entry|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md sync-wt|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,/harness/state.json main=- stage=- wt=.env.local,.gitignore,base.txt,harness-><main>/harness wt-status=-
+a line another tool wrote into the exclude file stays, before ours|repo tracked-entry foreign-line|create tracked-check|0|wt:tracked-check|-|exclude=**/.claude/*,/harness,!/harness/,/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+a root runtime link leaves new files in a nested tracked namesake visible and stageable|repo runtime-entry nested-entry|create nested-check|0|wt:nested-check|-|exclude=/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
+fix-links removes duplicate bare lines from a legacy-only exclude file|repo runtime-entry create:legacy-check legacy-lines|fix-links <wt>|0|restored:legacy-check|-|exclude=/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
+fix-links migrates bare lines and preserves other patterns while nested files stay stageable|repo runtime-entry nested-entry create:legacy-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:legacy-check|-|exclude=**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/,/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
+fix-links migrates a tracked entry and keeps the negation last|repo tracked-entry create:legacy-check legacy-lines foreign-line|fix-links <wt>|0|restored:legacy-check|-|exclude=**/.claude/*,/harness,!/harness/ main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
 '
 
 echo "=== the exclude entry of a configured symlink path ==="
@@ -255,9 +271,51 @@ while IFS= read -r row; do
     printf '%s => %s\n' "$label" "$(run "$command")"
     continue
   fi
-  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+  prefix=""
+  if [[ -d "$MAIN/nested/runtime" ]]; then
+    prefix='nested-status=?? nested/runtime/new.md staged=nested/runtime/new.md root-ignored=0 root-staged=- '
+    prefix="$prefix$prefix"
+  fi
+  assert_eq "$(run "$command")" "${prefix}rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+# Each control edits one writer operation in a disposable script tree.
+# The child suite uses its own repositories and skips this control loop.
+if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 ]]; then
+  CONTROLS='anchor
+migration'
+  while IFS= read -r control; do
+    case "$control" in
+      anchor)
+        old='  entry="/$path"'
+        new='  entry="$path"'
+        ;;
+      migration)
+        old='      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" > "$tmp" || rc=$?'
+        new='      grep -vxF -e "$negation" -- "$info_exclude" > "$tmp" || rc=$?'
+        ;;
+    esac
+    scripts="$TMP_ROOT/control-$control"
+    cp -R -- "${WORKTREE_SCRIPT%/*}" "$scripts"
+    writer="$scripts/lib/links.sh"
+    [[ ! -L "$writer" ]] || { echo 'control writer is a symlink' >&2; exit 2; }
+    matches=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "$old" ]]; then
+        line="$new"
+        matches=$((matches + 1))
+      fi
+      printf '%s\n' "$line"
+    done <"$writer" >"$scripts/mutated"
+    [[ "$matches" -eq 1 ]] && ! cmp -s -- "$writer" "$scripts/mutated" || { echo 'control edit did not change one match' >&2; exit 2; }
+    mv -- "$scripts/mutated" "$writer"
+    control_rc=0
+    WORKTREE_EXCLUDE_CONTROL=1 WORKTREE_SCRIPT="$scripts/worktree" "$BASH" "$TEST_DIR/worktree_exclude_tracked_paths.sh" >"$scripts/result" 2>&1 || control_rc=$?
+    assert_eq "$control_rc" 1 "must-fail: $control writer mutation"
+    if [[ "$control_rc" != 1 ]]; then cat "$scripts/result"; fi
+  done <<<"$CONTROLS"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

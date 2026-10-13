@@ -40,7 +40,7 @@ split_worktree_config_words() {
   read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
 }
 
-# Idempotently append a worktree-relative path to the COMMON git-dir's
+# Idempotently append a root-anchored path to the COMMON git-dir's
 # info/exclude so git treats the symlink we lay down as ignored content.
 # Required because .gitignore patterns with a trailing slash (e.g. `.agents/`)
 # match only real directories, not symlinks pointing at directories — without
@@ -53,17 +53,18 @@ split_worktree_config_words() {
 # That shared file is the problem this function has to work around. The
 # entry is meant for a SYMLINK in a worktree, but it lands in a file every
 # checkout of the repo reads — including main, where the same path is a REAL
-# directory. A bare `harness` entry therefore marks that whole directory ignored
+# directory. A `/harness` entry therefore marks that whole directory ignored
 # in main, and `git add harness/tracked-file` starts refusing with "The
 # following paths are ignored by one of your .gitignore files" while `git
 # status` still lists the file as modified. It outlives the worktree, too.
 #
 # The fix uses the very asymmetry documented above: a TRAILING-SLASH pattern
 # matches a real directory but NOT a symlink pointing at one. So when the path
-# has tracked content, follow the bare entry with `!<path>/`, which re-includes
+# has tracked content, follow the entry with `!/<path>/`, which re-includes
 # the real directory in main while leaving the worktree's symlink ignored. Order
 # matters — gitignore takes the LAST matching pattern — so the negation is
-# always rewritten after the bare entry.
+# always rewritten after the entry. A leading slash keeps a root link's rule
+# from hiding new files under a nested directory with the same name.
 #
 # The negation is written ONLY when the path actually holds tracked files.
 # Runtime-only paths (the common case — kendex's own `.agents` mirror is hidden
@@ -77,24 +78,27 @@ split_worktree_config_words() {
 exclude_from_worktree_index() {
   local wt="$1" path="$2" has_tracked="${3:-false}"
   [[ -z "$path" ]] && return 0
-  local common_dir info_exclude negation tmp
+  local common_dir info_exclude entry negation
   common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)" || return 0
   info_exclude="$common_dir/info/exclude"
-  negation="!$path/"
+  entry="/$path"
+  negation="!/$path/"
   mkdir -p "$(dirname "$info_exclude")"
 
-  # Drop any existing negation first: when it is still wanted it gets appended
-  # below, which also guarantees it sits AFTER the bare entry.
-  if [[ -f "$info_exclude" ]] && grep -qxF "$negation" "$info_exclude" 2>/dev/null; then
-    tmp="$info_exclude.wt-tmp.$$"
-    if grep -vxF "$negation" "$info_exclude" > "$tmp" 2>/dev/null; then
-      mv "$tmp" "$info_exclude"
-    else
-      rm -f "$tmp" 2>/dev/null
-    fi
+  # Remove exact legacy lines and move the current negation after the entry.
+  # Other patterns may belong to another tool and must stay in place.
+  if [[ -f "$info_exclude" ]]; then
+    (
+      local tmp rc=0
+      tmp="$(mktemp "$info_exclude.wt-tmp.XXXXXX")" || exit 1
+      trap 'rm -f -- "$tmp"' EXIT
+      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" > "$tmp" || rc=$?
+      [[ "$rc" -le 1 ]] || exit "$rc"
+      mv -- "$tmp" "$info_exclude"
+    ) || return 1
   fi
 
-  grep -qxF "$path" "$info_exclude" 2>/dev/null || echo "$path" >> "$info_exclude"
+  grep -qxF -- "$entry" "$info_exclude" 2>/dev/null || echo "$entry" >> "$info_exclude"
   [[ "$has_tracked" == true ]] && echo "$negation" >> "$info_exclude"
   return 0
 }
