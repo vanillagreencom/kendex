@@ -4389,7 +4389,10 @@ case "$SUB" in
 		if [[ -z "$state_item" && "$state_mode" != local ]]; then
 			LANE_PANE_ID="" LANE_PANE_CMD="" LANE_PANE_PID="" LANE_PANE_SCREEN="" LANE_PANE_COUNT=0
 			state_source=unreadable
-		else lane_pane_observe "$LANE_ARG" "$state_host" "$state_item"; fi
+		else
+			lane_pane_observe "$LANE_ARG" "$state_host" "$state_item"
+			state_source="$LANE_PANE_SOURCE"
+		fi
 		# No pane on this server carries the name: nothing here sees the lane's
 		# harness, so its rows answer nothing either and the judge says unjudged.
 		[[ -n "$LANE_PANE_ID" || "$state_mode" == verb && -n "$state_item" ]] || STATE_ROWS=""

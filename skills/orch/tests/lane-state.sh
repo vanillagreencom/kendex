@@ -381,6 +381,20 @@ printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-9\t%%4\t101\tbash\n' > "$PANE
 lane_pane_observe CC-1
 assert_eq "$LANE_PANE_CMD/$LANE_PANE_PID/${LANE_PANE_SCREEN:+screen}" "claude/100/screen" \
   "the window's own pane is what the observer hands the judge"
+mv "$STUB_DIR/pane-%3.txt" "$STUB_DIR/pane-%3.saved"
+for row in '|unjudged' 'idle|idle' 'busy|working' 'unjudged|unjudged'; do
+  IFS='|' read -r session want <<< "$row"
+  lane_pane_observe CC-1
+  lane_state failed_local listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "$session" '' '' '' '' "$LANE_PANE_SOURCE"
+  assert_eq "$failed_local" "$want" "a failed local capture keeps its $session session proof"
+done
+LOCAL_FAILURE_MUTANT="$(mutant_scripts local-failure/orch lib/lane-state.sh)"
+orch_fixture_shared_libs "${LOCAL_FAILURE_MUTANT%/scripts}"
+mutate_file "$LOCAL_FAILURE_MUTANT/lib/lane-state.sh" 'LANE_PANE_SOURCE=local-unreadable' 'LANE_PANE_SOURCE=unreadable'
+CONTROL_LOCAL="$("$BASH" -c 'SCRIPT_DIR="$1"; source "$1/lib/lane-state.sh"; lane_pane_observe CC-1; lane_state result listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" busy "" "" "" "" "$LANE_PANE_SOURCE"; printf "%s" "$result"' _ "$LOCAL_FAILURE_MUTANT")"
+CONTROL_LOCAL_RED="$(FAIL=0; assert_eq "$CONTROL_LOCAL" working control >/dev/null; printf '%s' "$FAIL")"
+assert_eq "$CONTROL_LOCAL_RED" 1 'the local session assertion rejects provider failure rules applied to local reads'
+mv "$STUB_DIR/pane-%3.saved" "$STUB_DIR/pane-%3.txt"
 
 lane_pane_observe CC-404
 assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-empty}" "empty/empty/empty" \

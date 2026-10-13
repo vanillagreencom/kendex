@@ -45,7 +45,12 @@ fi
 # _CREATE_OWNED names the one item whose create exits 75, another session's.
 case "$1" in
   capture)
-    [[ "${LANE_HOST_STUB_CAPTURE_STATUS:-0}" == 0 ]] || exit "$LANE_HOST_STUB_CAPTURE_STATUS"
+    capture_status="${LANE_HOST_STUB_CAPTURE_STATUS:-0}"
+    [[ "${4:-}" == --history ]] || capture_status="${LANE_HOST_STUB_CAPTURE_VIEWPORT_STATUS:-$capture_status}"
+    if [[ "$capture_status" != 0 ]]; then
+      [[ -z "${LANE_HOST_STUB_CAPTURE_ERROR:-}" ]] || printf '%s\n' "$LANE_HOST_STUB_CAPTURE_ERROR" >&2
+      exit "$capture_status"
+    fi
     cat -- "$LANE_HOST_STUB_CAPTURE_FILE"
     exit 0 ;;
   send)
@@ -54,7 +59,7 @@ case "$1" in
       cat -- "$5" >> "$LANE_HOST_STUB_SENT_FILE"
       [[ -z "${LANE_HOST_STUB_AFTER_FILE:-}" ]] || cp -- "$LANE_HOST_STUB_AFTER_FILE" "$LANE_HOST_STUB_CAPTURE_FILE"
     elif [[ "$4" == --key ]]; then
-      printf '%s\n' "$5" >> "$LANE_HOST_STUB_SENT_FILE"
+      printf '%s\n' "$5" >> "${LANE_HOST_STUB_SENT_KEY_FILE:-$LANE_HOST_STUB_SENT_FILE}"
       [[ -z "${LANE_HOST_STUB_AFTER_KEY:-}" ]] || cp -- "$LANE_HOST_STUB_AFTER_KEY" "$LANE_HOST_STUB_CAPTURE_FILE"
     else exit 2; fi
     exit 0 ;;

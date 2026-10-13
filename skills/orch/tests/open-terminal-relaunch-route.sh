@@ -438,13 +438,13 @@ run_ot codex - claude
 assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-stuck item=KEN-1 ') missing=$(said '^open-terminal: harness-screen-missing item=KEN-1 seconds=2')" \
   "rc=1 launched=0 stuck=0 missing=1" \
   "control: gating the brief on a local relaunch loses its brief failure, but shared readiness still refuses the shell"
-control capture 'launch_capture "$pane" 2>/dev/null)" || return 2' 'launch_capture "$pane" 2>/dev/null)" || return 1'
+control capture 'case "$rc" in 0) ;; 7) return 7 ;; *) return 2 ;; esac' 'case "$rc" in 0) ;; 7) return 7 ;; *) return 1 ;; esac'
 RUN_ENV=("${CAPTURE_FAILS[@]}")
 run_ot claude "$HARNESS_SCREEN" claude
 RUN_ENV=()
 assert_eq "missing=$(said 'harness-screen-missing')" "missing=1" \
   "control: without its own status a failed read reports as a pane with no harness screen"
-control stopped 'UNTAKEN_PANE" ]] || launch_stop || true' 'UNTAKEN_PANE" ]] || true'
+control stopped '          launch_stop || true' '          if false; then launch_stop || true; fi'
 run_ot claude - claude
 assert_eq "closed=$(closed) status=$(status)" "closed=0 status=running" \
   "control: without the stop the window stays open and the record stays running behind the dead pane"
@@ -460,7 +460,7 @@ RUN_ENV=(OT_TMUX_FAIL=kill-window)
 run_ot claude - claude
 RUN_ENV=()
 assert_eq "status=$(status)" "status=stopped" "control: a stop past a failed close writes stopped over a live window"
-control untaken '|| -z "$UNTAKEN_PANE" ]]' '|| -z "${UNTAKEN_PANE:=$LAUNCH_PANE}" ]]'
+control untaken 'if [[ -n "$UNTAKEN_PANE" ]]; then' 'if [[ -n "${UNTAKEN_PANE:=$LAUNCH_PANE}" ]]; then'
 SEED_LANES='[42]'
 run_ot claude "$HARNESS_SCREEN" claude
 SEED_LANES='[]'

@@ -126,10 +126,13 @@ fi
 printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
 if [[ "$1" == capture ]]; then
   [[ "${LANE_CLOSE_CAPTURE_STATUS:-0}" == 0 ]] || exit "$LANE_CLOSE_CAPTURE_STATUS"
+  if [[ "$(cat "$LANE_CLOSE_PHASE")" == exited && "${LANE_CLOSE_CAPTURE_AFTER_EXIT:-0}" != 0 ]]; then
+    exit "$LANE_CLOSE_CAPTURE_AFTER_EXIT"
+  fi
   cat "$LANE_CLOSE_PROVIDER_SCREEN"; exit 0
 fi
 if [[ "$1" == status ]]; then
-  [[ "$(cat "$LANE_CLOSE_PHASE")" == exited ]] && echo exited || echo running
+  [[ "${LANE_CLOSE_HARNESS_STATE:-running}" == exited || "$(cat "$LANE_CLOSE_PHASE")" == exited ]] && echo exited || echo running
   exit 0
 fi
 
@@ -2451,11 +2454,26 @@ for row in 'verb|0|working|idle|1|running' 'verb|0|idle|working|0|done' 'local|0
   LANE_CLOSE_HOST_PANE="$mode" LANE_CLOSE_CAPTURE_STATUS="$capture_status" LANE_CLOSE_PROVIDER_SCREEN="$PROVIDER_SCREEN" run_close "$SCRIPT"
   assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" "rc=$want_rc status=$want_status" "close $mode capture=$capture_status remote=$remote local=$local_kind"
 done
-MUTANT="$(mutant provider-capture 'pane_screen="$(lane_pane_capture "$host_pane"' 'pane_screen="$(lane_pane_capture local')"
+MUTANT="$(lib_mutant provider-capture '_lpc_screen="$(ORCH_LANE_HOST="$3" "$SCRIPT_DIR/lane-host" capture --item "$4" ${_lpc_args[@]+"${_lpc_args[@]}"})"' '_lpc_screen="$(tmux capture-pane -pJ -t "$5")"')"
 write_state running codex /host; write_panes bash; codex_screen
 printf '› task\n  press to interrupt\n' > "$PROVIDER_SCREEN"
 LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_PROVIDER_SCREEN="$PROVIDER_SCREEN" run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' 'control: local capture closes a working provider lane'
+for row in 'initial|exited|7|0|0' 'after-stop|running|0|7|1'; do
+  IFS='|' read -r phase remote_state capture_status after_exit expected_captures <<< "$row"
+  write_state running codex /host; write_panes bash; working_screen
+  cp "$PANE_FIXTURES/codex-idle-after-turn.txt" "$PROVIDER_SCREEN"
+  LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_HARNESS_STATE="$remote_state" LANE_CLOSE_CAPTURE_STATUS="$capture_status" \
+    LANE_CLOSE_CAPTURE_AFTER_EXIT="$after_exit" LANE_CLOSE_PROVIDER_SCREEN="$PROVIDER_SCREEN" run_close "$SCRIPT"
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") captures=$(grep -c '^capture ' "$HOST_CALLS" || true)" \
+    "rc=0 status=done captures=$expected_captures" "a confirmed $phase provider exit needs no absent pane capture"
+done
+MUTANT="$(lib_mutant exit-proof 'pane_has_remote_harness "$SCRIPT_DIR/lane-host" "$_ls_item" "$_ls_harness" || _ls_rc=$?' \
+  'if false; then pane_has_remote_harness "$SCRIPT_DIR/lane-host" "$_ls_item" "$_ls_harness" || _ls_rc=$?; fi')"
+write_state running codex /host; write_panes bash; working_screen
+LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_HARNESS_STATE=exited LANE_CLOSE_CAPTURE_STATUS=7 LANE_CLOSE_PROVIDER_SCREEN="$PROVIDER_SCREEN" run_close "$MUTANT"
+CONTROL_RED="$(FAIL=0; assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' control >/dev/null; printf '%s' "$FAIL")"
+assert_eq "$CONTROL_RED" 1 'the exited close assertion rejects removal of process-status proof'
 
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"

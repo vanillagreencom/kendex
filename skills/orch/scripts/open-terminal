@@ -1812,16 +1812,27 @@ READY_RE="$CLAUDE_COMPOSER_RE"'[[:blank:]]*$'"|$CLAUDE_FOOTER_RE"
 # -J joins wrapped lines so a narrow pane cannot split the brief across a line
 # break and fake an unlaunched screen.
 launch_capture() { # PANE [history]
-  lane_pane_capture "${HOST_PANE:-local}" "$LANE_HOST" "${wt_id:-}" "$1" "${2:-}"
+  local screen rc=0
+  if [[ "${HOST_PANE:-local}" == verb ]]; then
+    lane_pane_capture screen verb "$LANE_HOST" "${wt_id:-}" "$1" "${2:-}" || rc=$?
+    if [[ "$rc" != 0 ]]; then
+      ot_message host-capture-failed operation=capture "host=$LANE_HOST" "item=${wt_id:-}" "exit=$rc" >&2
+      return 7
+    fi
+  else
+    lane_pane_capture screen local "$LANE_HOST" "${wt_id:-}" "$1" "${2:-}" 2>/dev/null || return 1
+  fi
+  printf '%s\n' "$screen"
 }
 
 tmux_lane_launched() {
-  local pane="$1" brief="$2" screen
+  local pane="$1" brief="$2" screen rc=0
   # -S -: capture from the start of history, not just the visible viewport —
   # a fast response can scroll the submitted prompt out of view before the
   # first poll, and a viewport-only capture would misread that as
   # undelivered and queue a duplicate brief into a running session.
-  screen="$(launch_capture "$pane" history 2>/dev/null)" || return 1
+  screen="$(launch_capture "$pane" history)" || rc=$?
+  case "$rc" in 0) ;; 7) return 7 ;; *) return 1 ;; esac
   lane_launched "$screen" "$brief"
 }
 
@@ -1840,11 +1851,13 @@ lane_launched() { # SCREEN BRIEF
 }
 
 tmux_wait_launched() {
-  local pane="$1" brief="$2" waited=0
+  local pane="$1" brief="$2" waited=0 rc
   while (( waited < TMUX_VERIFY_SECS )); do
     sleep 1
     waited=$((waited + 1))
-    tmux_lane_launched "$pane" "$brief" && return 0
+    rc=0
+    tmux_lane_launched "$pane" "$brief" || rc=$?
+    case "$rc" in 0) return 0 ;; 7) return 7 ;; esac
   done
   return 1
 }
@@ -1917,7 +1930,9 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT [PROMPT]
     # that footer at all, so keyed on it this wait could never return 0 and
     # the re-send below was unreachable — every consumed brief fell to the
     # failure exit.
-    screen="$(launch_capture "$pane" 2>/dev/null)" || return 4
+    rc=0
+    screen="$(launch_capture "$pane")" || rc=$?
+    case "$rc" in 0) ;; 7) return 7 ;; *) return 4 ;; esac
     if [[ -n "$brief" ]] && lane_launched "$screen" "$brief"; then return 2; fi
     grep -Eq -- "$READY_RE" <<<"$screen" && return 0
     if [[ -n "$prompt" ]]; then
@@ -1946,9 +1961,10 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT [PROMPT]
 # the instant after the keystrokes.
 #
 # Two callers read the answer differently. As the premise ahead of open_tmux's
-# account read it is BEST EFFORT, never a verdict: no harness screen inside the bound is
-# not a refusal, the read still happens, and the caller says on both lines that
-# it was taken without the premise. The resume-or-fresh relaunch in open_tmux
+# account read it is best effort when a readable screen shows no harness:
+# the account read still happens and reports that missing premise. A failed
+# provider capture refuses the launch instead of claiming a missing screen.
+# The resume-or-fresh relaunch in open_tmux
 # treats the same answer as a refusal: the lane is not launched. A pane drawing
 # a screen this predicate does not know stalls here for the whole bound, which
 # is the cost of reading only screens it knows.
@@ -1956,10 +1972,13 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT [PROMPT]
 # SECONDS is the bound, ORCH_TMUX_VERIFY_SECS where none is given. Status 0 for
 # a harness screen, 1 for none inside the bound, 2 for a pane this machine
 # could not read, which is a local tmux failure and no answer about the pane.
+# Status 7 is a provider capture failure, already reported at launch_capture.
 tmux_wait_harness() { # PANE [SECONDS]
-  local pane="$1" bound="${2:-$TMUX_VERIFY_SECS}" waited=0 screen
+  local pane="$1" bound="${2:-$TMUX_VERIFY_SECS}" waited=0 screen rc
   while :; do
-    screen="$(launch_capture "$pane" 2>/dev/null)" || return 2
+    rc=0
+    screen="$(launch_capture "$pane")" || rc=$?
+    case "$rc" in 0) ;; 7) return 7 ;; *) return 2 ;; esac
     pane_harness_up "$screen" && return 0
     (( waited < bound )) || return 1
     sleep 1
@@ -2496,13 +2515,14 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     case "$harness_rc" in
       0) ;;
       1) ot_message harness-screen-missing "item=$title" "seconds=$harness_secs" >&2; launch_rc=1 ;;
+      7) launch_rc=1 ;;
       *) ot_message tmux-failed "operation=capture-pane" "item=$title" >&2; launch_rc=1 ;;
     esac
   fi
   # The premise for the read below, and the reason it is here rather than
   # inside the check above: every launch shape passes this line, including the
-  # ones that carry no brief. It refuses nothing, so the read happens either
-  # way and this cannot turn a healthy lane away. Asked only where there is a
+  # ones that carry no brief. A missing harness on a readable screen permits
+  # the account read; a failed provider capture refuses the launch. Asked only where there is a
   # read to make a premise for, by the read's own judge and not a second copy
   # of its rule.
   #
@@ -2510,7 +2530,10 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # not asked a second time: the wait would poll the same screen for another
   # full bound to reach the answer that one has.
   if lane_account_readable "$LANE_FORM"; then
-    if [[ "$HARNESS_SCREEN_MISSED" == true ]] || ! tmux_wait_harness "$pane"; then
+    local premise_rc=0
+    [[ "$HARNESS_SCREEN_MISSED" == true ]] || tmux_wait_harness "$pane" || premise_rc=$?
+    [[ "$premise_rc" != 7 ]] || return 1
+    if [[ "$HARNESS_SCREEN_MISSED" == true || "$premise_rc" != 0 ]]; then
       premise=unmet
       # The read below still happens, so this line is the only place the launch
       # says the pane never showed a harness: without it an unpremised reading
@@ -2520,13 +2543,16 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
       premise=met
     fi
   fi
-  # On EVERY path past the keystrokes, a failed verification included: that
+  # A failed verification on a readable screen still owes this check: that
   # path leaves this pane open with its claim live, so the account it is really
   # running on still has to be the picked one. The window was announced above,
   # and one found on an account nobody picked is closed after that
   # announcement, which is what the lane-mismatch line says; closing it also
   # retires the claim written above, live only while its pane is.
-  lane_account_ok "$pane" "$title" "$premise" || { tmux_window_close "$pane" "$title" || true; return 1; }
+  lane_account_ok "$pane" "$title" "$premise" || {
+    [[ "${HOST_PANE:-local}" == verb ]] || tmux_window_close "$pane" "$title" || true
+    return 1
+  }
   [[ "$launch_rc" -ne 0 || -n "$target" ]] || launch_identity_read "$pane" "$title"
   return "$launch_rc"
 }
@@ -2565,15 +2591,16 @@ launch_identity_read() { # PANE TITLE
 # alone, so this function runs on no other, and those markers are the whole of
 # what a claude pane can draw. open_tmux sets it false ahead of each launch.
 tmux_launch_verify() { # PANE TITLE BRIEF EXPECT
-  local pane="$1" title="$2" brief="$3" expect="$4"
-  tmux_wait_launched "$pane" "$brief" && return 0
+  local pane="$1" title="$2" brief="$3" expect="$4" verify_rc=0
+  tmux_wait_launched "$pane" "$brief" || verify_rc=$?
+  case "$verify_rc" in 0) return 0 ;; 7) return 1 ;; esac
   local composer_rc=0
   tmux_wait_composer "$pane" "$title" "$brief" "$expect" || composer_rc=$?
   if (( composer_rc == 2 )); then
     ot_message launch-confirmed "item=$title"
     return 0
   fi
-  (( composer_rc != 3 )) || return 1
+  (( composer_rc != 3 && composer_rc != 7 )) || return 1
   if (( composer_rc != 0 )); then
     HARNESS_SCREEN_MISSED=true
     ot_message composer-stuck "item=$title" "brief=$brief" >&2
@@ -2583,10 +2610,13 @@ tmux_launch_verify() { # PANE TITLE BRIEF EXPECT
   # passed, short enough that no composer wraps it; the re-send carries the
   # whole prompt, the unattended words after it, as start_cmd rendered it.
   launch_write brief-send "$title" "$pane" "$expect" text "$brief $LAUNCH_UNATTENDED_TEXT" || return 1
-  if tmux_wait_launched "$pane" "$brief"; then
+  verify_rc=0
+  tmux_wait_launched "$pane" "$brief" || verify_rc=$?
+  if [[ "$verify_rc" == 0 ]]; then
     ot_message brief-redelivered "item=$title"
     return 0
   fi
+  [[ "$verify_rc" != 7 ]] || return 1
   ot_message brief-undelivered "item=$title" "brief=$brief" >&2
   return 1
 }
@@ -3429,17 +3459,19 @@ host_pane_stop() {
   HOST_PANE_LAUNCH=unstarted
 }
 
-# The background job launch_handoff starts. Its record is the outcome: running
-# once launch_finish stands, stopped with the reason when the host's wait or
-# the launch after it failed, the window closed so its claim goes with it and
-# lane-close has a stopped record to close. lane-prepare-failed is printed
-# only over a stopped record, which is what it says the record is.
+# The background job owns its preparing record until the launch takes or
+# cleanup confirms the detached harness stopped. A failed provider stop keeps
+# the window and current record so recovery can still find the live harness.
 launch_prepared() { # LOG
   local reason=wait-failed
   HOST_BUSY_RETRY=true
   if host_transport wait --item "$wt_id"; then
     reason=launch-failed
-    if LAUNCH_PREPARE="$(prepare_record "$1")"; then launch_finish && return 0; fi
+    if LAUNCH_PREPARE="$(prepare_record "$1")"; then
+      launch_finish && return 0
+      # A taken launch remains owned when only its later record write fails.
+      [[ "${HOST_PANE:-local}" != verb || "${HOST_PANE_LAUNCH:-unstarted}" != owned || -n "$UNTAKEN_PANE" ]] || return 1
+    fi
   fi
   host_pane_stop || return 1
   tmux_window_close "$LAUNCH_PANE" "$title" || true
@@ -3815,7 +3847,9 @@ for raw in "${ITEMS[@]}"; do
     # `listed`, not the window's presence: a wake resumes a session file and
     # needs no window at all. What a missing window costs is the pane half of
     # the observation, which lane_pane_observe has already left empty.
-    lane_state wake_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "$session_state" \
+    wake_item=""
+    [[ "${HOST_PANE:-local}" != verb ]] || wake_item="$wt_id"
+    ORCH_LANE_HOST="$LANE_HOST" lane_state wake_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "$session_state" "" "" "$wake_item" "$HARNESS" "$LANE_PANE_SOURCE" \
       || wake_state=unjudged
     [[ "$wake_state" == idle ]] || { ot_message wake-refused "item=$item" "reason=$wake_state" >&2; failed=$((failed + 1)); continue; }
   fi
@@ -3888,11 +3922,16 @@ for raw in "${ITEMS[@]}"; do
         preparing=$((preparing + 1))
         continue
       fi
-      # Only a relaunch whose open_tmux failed after its window opened
-      # ends through launch_stop. Any other failure keeps its record as it
-      # read: a window that never opened started nothing, and one that opened
-      # and took, record-write-failed after it, stands.
-      [[ "$RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true
+      # UNTAKEN_PANE distinguishes a failed launch from a taken launch whose
+      # later record write failed. Every owned detached failed attempt stops
+      # through its provider; closing its dormant window cannot stop it.
+      if [[ -n "$UNTAKEN_PANE" ]]; then
+        if [[ "$FLEET" == true && ( "$RELAUNCH" == true || "${HOST_PANE:-local}" == verb && "${HOST_PANE_LAUNCH:-unstarted}" == owned ) ]]; then
+          launch_stop || true
+        elif [[ "${HOST_PANE:-local}" == verb && "${HOST_PANE_LAUNCH:-unstarted}" == owned ]]; then
+          if host_pane_stop; then tmux_window_close "$UNTAKEN_PANE" "$title" || true; fi
+        fi
+      fi
       [[ "$LANE_HOST" == local ]] || host_launch_ready || { failed=$((failed + 1)); continue; }
       failed=$((failed + 1))
       continue

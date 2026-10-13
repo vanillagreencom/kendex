@@ -2875,18 +2875,18 @@ observe_lanes() {
       fi
     else pane_item=""; fi
     capture_rc=0
-    lane_pane_capture "$pane_mode" "$pane_host" "$pane_item" "$target" >"$capture.$$.tmp" 2>"$errf" || capture_rc=$?
+    lane_pane_capture pane "$pane_mode" "$pane_host" "$pane_item" "$target" 2>"$errf" || capture_rc=$?
+    LANE_PANE_SOURCES[$i]="$LANE_PANE_SOURCE"
     if [[ "$capture_rc" -ne 0 ]]; then
       rm -f "$capture.$$.tmp"
       if [[ "$pane_mode" == verb ]]; then
         cat "$errf" >&2
-        LANE_PANE_SOURCES[$i]=unreadable
         LANE_OBS+="$i"$'\t'"unreadable"$'\t\t\t\n'
         continue
       fi
       die pane-capture-failed "$(cat "$errf")" "lane=$lane"
     fi
-    [[ "$pane_mode" != verb ]] || LANE_PANE_SOURCES[$i]=provider
+    printf '%s\n' "$pane" >"$capture.$$.tmp" || die pane-capture-failed "" "lane=$lane"
     mv "$capture.$$.tmp" "$capture" || die pane-publish-failed "" "lane=$lane"
     pid="${obs%%[[:blank:]]*}"
     cmd="${obs#*[[:blank:]]}"

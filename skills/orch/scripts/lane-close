@@ -1214,10 +1214,18 @@ case "$pane_cmd" in
   claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;
 esac
 if [[ -n "$pane_id" ]]; then
-  pane_screen="$(lane_pane_capture "$host_pane" "${host:-local}" "$hosted_item" "$pane_id" 2>/dev/null)" \
-    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  pane_screen="" hosted_source=""
+  if [[ "$host_pane" == local ]]; then
+    lane_pane_capture pane_screen local "${host:-local}" "$hosted_item" "$pane_id" 2>/dev/null \
+      || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+    hosted_source="$LANE_PANE_SOURCE"
+  fi
+  # The judge owns process-status proof. A confirmed exit needs no screen
+  # from a detached session that may already have disappeared.
   ORCH_LANE_HOST="${host:-local}" lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" "" "" "$hosted_item" "$harness" "$hosted_source" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  [[ "$host_pane" != verb || "$state" != unjudged ]] || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  pane_screen="$LANE_PANE_SCREEN" hosted_source="$LANE_PANE_SOURCE"
 else
   # A window gone with its work finished, a tmux restart or a reboot among the
   # causes, closes all the same: a hosted lane through its provider, a local
@@ -1343,15 +1351,19 @@ esac
 fi
 
 pane_now_exited() {
-  local screen current_state rc=0
+  local screen="" current_state source="" rc=0
   lane_pane_by_id "$pane_id" || rc=$?
   case "$rc" in
     0) ;;
-    1) return 0 ;;
+    1) [[ "$host_pane" == verb ]] || return 0 ;;
     *) return 2 ;;
   esac
-  screen="$(lane_pane_capture "$host_pane" "${host:-local}" "$hosted_item" "$pane_id" 2>/dev/null)" || return 2
-  ORCH_LANE_HOST="${host:-local}" lane_state current_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$screen" "" "" "" "$hosted_item" "$harness" "$hosted_source" || return 2
+  if [[ "$host_pane" == local ]]; then
+    lane_pane_capture screen local "${host:-local}" "$hosted_item" "$pane_id" 2>/dev/null || return 2
+    source="$LANE_PANE_SOURCE"
+  fi
+  ORCH_LANE_HOST="${host:-local}" lane_state current_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$screen" "" "" "" "$hosted_item" "$harness" "$source" || return 2
+  [[ "$host_pane" != verb || "$current_state" != unjudged ]] || return 2
   [[ "$current_state" == exited ]]
 }
 

@@ -147,8 +147,9 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     host-exec-failed) text='The non-interactive SSH command failed to start the hosted harness.' ;;
     host-viewer-invalid) text='The provider viewer command must be one nonempty line.' ;;
     host-viewer-failed) text='The provider could not read its viewer command.' ;;
-    host-stop-failed) text='The provider could not stop the detached harness. The local window and lane record remain.' ;;
+    host-stop-failed) text='The provider could not stop the detached harness. The local window and any current running or preparing record remain.' ;;
     host-stop-state-invalid) text='The launch holds an invalid detached harness ownership state.' ;;
+    host-capture-failed) text='The provider could not read the harness screen. Repair the capture failure reported above, then relaunch.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
     host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
     parked-record-failed) text='The parked item'"'"'s sandbox is up again, but its record could not be rewritten from parked to stopped, so it still reads parked over a running sandbox and nothing was created. Fix what workflow-state names above and relaunch the item again: the start is answered again for a sandbox already up.' ;;
@@ -169,7 +170,7 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     session-resumed) text='The harness resumed the matching session.' ;;
     session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
     harness-switched) text='The lane record names another harness as the last one to run the lane, so no session this harness holds carries that work. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
-    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The selected command may have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet its window is closed and its record reads stopped, still naming the harness, model and account of the last launch that took. A launch run in the foreground writes stopped only once the close succeeds: a close that fails leaves the record as it read, tmux-failed naming the cause. A launch the background job ran writes stopped whatever the close answered. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
+    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The selected command may have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet cleanup closes its window and records stopped, still naming the harness, model and account of the last launch that took. With pane=verb, cleanup first requires a confirmed provider stop. A failed stop keeps the window and the current running or preparing record. A launch run in the foreground writes stopped only once the close succeeds: a close that fails leaves the record as it read, tmux-failed naming the cause. The background job records stopped once cleanup reaches window close, even if that close fails. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
     record-stop-failed) text='The hosted relaunch did not take and its window is closed, but its record could not be rewritten stopped, so the record keeps whatever status the launch last wrote. workflow-state names why above: fix it, then relaunch.' ;;
     handoff-unreadable) text='workflow-state handoff-standing, asked from the lane'"'"'s worktree, answered unreadable or gave no verdict, so nothing says whether the lane handed off and retired its session. Nothing was launched. Its own words are above. state is the state file the verdict names, or the item where the run gave no verdict naming one: repair it, then relaunch.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex, pi or copilot, and no --cmd, --relaunch or lane host.' ;;
@@ -424,9 +425,11 @@ Options:
                     claim open, the record reads preparing and the launch
                     moves on: a background job runs `lane-host wait`, then the
                     rest of the launch, and records the lane running, or
-                    stopped with its reason, logging to
+                    stopped after cleanup, with its reason, logging to
                     lane-prepare-ITEM.log in the state directory; the summary
-                    counts it as preparing. Without --state-dir, and for a
+                    counts it as preparing. A failed provider stop keeps
+                    the window and current running or preparing record.
+                    Without --state-dir, and for a
                     Codex --relaunch awaiting host session selection, the
                     launch runs `lane-host wait` itself.
                     lane-close closes a record still preparing. With
@@ -438,8 +441,12 @@ Options:
                     resume-lineless; paste its continuation per oversee-lanes.md
                     § Talking to a lane, Pane paste. Fresh starts need no paste.
                     These relaunches, including harness switches, count only
-                    after harness readiness. A missing screen closes the
-                    window and records stopped, retaining the last successful
+                    after harness readiness. A readable pane with no
+                    harness screen triggers cleanup. With pane=verb, cleanup
+                    requires a confirmed provider stop before window close.
+                    A failed stop keeps the window and current running or
+                    preparing record. Cleanup records stopped, retaining the
+                    last successful
                     harness, model, account and session. Foreground launches
                     record stopped only after a successful close.
                     WHICH CREDENTIAL RUNS THE LANE: the copy the provider

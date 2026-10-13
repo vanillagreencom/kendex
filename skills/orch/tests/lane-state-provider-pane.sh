@@ -25,23 +25,30 @@ printf 'stub\tgh-2\t%%2\t9002\tbash\n' > "$STUB_DIR/panes.txt"
 printf '› Type a prompt\n  ? for shortcuts\n' > "$STUB_DIR/pane-gh-2.txt"
 cp "$STUB_DIR/pane-gh-2.txt" "$STUB_DIR/pane-%2.txt"
 printf '› task\n  press to interrupt\n' > "$LANE_HOST_STUB_CAPTURE_FILE"
-for row in 'verb|0|working' 'verb|2|unjudged' 'verb|7|unjudged' 'local|0|idle' 'absent|0|idle'; do
-  IFS='|' read -r mode capture_status want <<< "$row"
+for row in 'verb|0|running|working|working' 'verb|2|running|unjudged|unjudged' 'verb|7|running|unjudged|unjudged' 'verb|7|exited|exited|unjudged' 'verb|0|exited|exited|exited' 'local|0|running|idle|idle' 'absent|0|running|idle|idle'; do
+  IFS='|' read -r mode capture_status remote_state direct_want want <<< "$row"
   ROW_CAPS="${CAPS/pane=verb/pane=$mode}"
   [[ "$mode" != absent ]] || ROW_CAPS="${CAPS/$'\tpane=verb'/}"
   export OVERSEE_WATCH_STATE_DIR="$STUB_DIR/cache-$mode-$capture_status"
   export LANE_HOST_STUB_CAPABILITIES="${ROW_CAPS}"
   export LANE_HOST_STUB_CAPTURE_STATUS="$capture_status"
+  export LANE_HOST_STUB_HARNESS_STATE="$remote_state"
   # The dormant local shell cannot establish remote exit. Its screen also
   # contradicts the provider's working turn when the legacy route reads it.
   lane_state answer listed bash 9002 "$(cat "$STUB_DIR/pane-gh-2.txt")" '' '' '' issue-2 codex
-  assert_eq "$answer" "$want" "lane_state $mode capture=$capture_status"
+  assert_eq "$answer" "$direct_want" "lane_state $mode capture=$capture_status status=$remote_state"
   "$SCRIPT_DIR/workflow-state" init oversee >/dev/null
   record="$(jq -cn --arg host "$PROVIDER" '{item:"issue-2",window:"gh-2",host:$host,harness:"codex",status:"running"}')"
   "$SCRIPT_DIR/workflow-state" set oversee lanes "[$record]" >/dev/null
+  : > "$STUB_DIR/host.log"
   state="$("$SCRIPTS_DIR/lanes" state gh-2 2>"$STUB_DIR/err")"
   assert_eq "${state%%$'\n'*}" "$want" "lanes state $mode capture=$capture_status" "$STUB_DIR/err"
+  if [[ "$mode" == verb ]]; then
+    assert_eq "$(grep -c '^capture --item issue-2 ' "$STUB_DIR/host.log" || true)" 1 'lanes state consumes one provider observation'
+    assert_eq "$(grep -c '^status --item issue-2 --harness codex ' "$STUB_DIR/host.log" || true)" 1 'lanes state retains process-status proof'
+  fi
 done
+export LANE_HOST_STUB_HARNESS_STATE=running
 
 "$SCRIPT_DIR/workflow-state" set oversee lanes '[]' >/dev/null
 for row in 'verb|unjudged' 'local|exited'; do
@@ -65,11 +72,20 @@ assert_eq "$CONTROL_RED" 1 'the lane_state provider assertion rejects the contro
 MUTANT_DIR="$(mutant_scripts caller-control/orch lanes)"
 orch_fixture_shared_libs "${MUTANT_DIR%/scripts}"
 mutate_file "$MUTANT_DIR/lanes" '"$STATE_ROWS" "$state_item" "$state_harness"' '"$STATE_ROWS" "" ""'
-CONTROL="$(OVERSEE_WATCH_STATE_DIR="$STUB_DIR/control-$MUTANT_DIR" ORCH_LANE_HOST="$PROVIDER" LANE_HOST_STUB_CAPABILITIES="$CAPS" LANE_HOST_STUB_CAPTURE_STATUS=0 \
+CONTROL="$(OVERSEE_WATCH_STATE_DIR="$STUB_DIR/control-$MUTANT_DIR" ORCH_LANE_HOST="$PROVIDER" LANE_HOST_STUB_CAPABILITIES="$CAPS" LANE_HOST_STUB_CAPTURE_STATUS=0 LANE_HOST_STUB_HARNESS_STATE=exited \
   "$MUTANT_DIR/lanes" state gh-2 2>"$STUB_DIR/control.err")"
-assert_eq "${CONTROL%%$'\n'*}" exited 'control: omitting hosted identity lets the dormant local shell establish exit'
-CONTROL_RED="$(FAIL=0; assert_eq "${CONTROL%%$'\n'*}" working control >/dev/null; printf '%s' "$FAIL")"
+assert_eq "${CONTROL%%$'\n'*}" working 'control: omitting hosted identity loses the confirmed process exit'
+CONTROL_RED="$(FAIL=0; assert_eq "${CONTROL%%$'\n'*}" exited control >/dev/null; printf '%s' "$FAIL")"
 assert_eq "$CONTROL_RED" 1 'the lanes state provider assertion rejects the control'
+MUTANT_DIR="$(mutant_scripts observation-control/orch lanes)"
+orch_fixture_shared_libs "${MUTANT_DIR%/scripts}"
+mutate_file "$MUTANT_DIR/lanes" 'state_source="$LANE_PANE_SOURCE"' 'state_source=""'
+: > "$STUB_DIR/host.log"
+OVERSEE_WATCH_STATE_DIR="$STUB_DIR/control-$MUTANT_DIR" ORCH_LANE_HOST="$PROVIDER" LANE_HOST_STUB_CAPABILITIES="$CAPS" LANE_HOST_STUB_CAPTURE_STATUS=0 \
+  "$MUTANT_DIR/lanes" state gh-2 > "$STUB_DIR/control.out" 2> "$STUB_DIR/control.err"
+CONTROL_COUNT="$(grep -c '^capture --item issue-2 ' "$STUB_DIR/host.log" || true)"
+CONTROL_RED="$(FAIL=0; assert_eq "$CONTROL_COUNT" 1 control >/dev/null; printf '%s' "$FAIL")"
+assert_eq "$CONTROL_RED" 1 'the one-capture assertion rejects a caller that drops observation metadata'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
