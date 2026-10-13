@@ -479,7 +479,7 @@ pub fn settle(
 fn resolve(
     env: &Env,
     scope: &Scope,
-    stages: Stages,
+    stages: Stages<Stage>,
     deadline: Instant,
     budget: Duration,
 ) -> Settled {
@@ -611,10 +611,10 @@ fn resolve(
 /// ends before it does — the session hook's check exits on its verdict,
 /// and the same work is the background refresh's to finish. A thread
 /// that dies without answering reads as having answered nothing.
-fn gated(
+pub(super) fn gated<T: Send + 'static>(
     deadline: Instant,
-    work: impl FnOnce(std::sync::mpsc::Sender<Stage>) + Send + 'static,
-) -> Stages {
+    work: impl FnOnce(std::sync::mpsc::Sender<T>) + Send + 'static,
+) -> Stages<T> {
     let (sender, receiver) = std::sync::mpsc::channel();
     if !deadline.saturating_duration_since(Instant::now()).is_zero() {
         std::thread::spawn(move || work(sender));
@@ -622,14 +622,14 @@ fn gated(
     Stages { receiver }
 }
 
-struct Stages {
-    receiver: std::sync::mpsc::Receiver<Stage>,
+pub(super) struct Stages<T> {
+    receiver: std::sync::mpsc::Receiver<T>,
 }
 
-impl Stages {
+impl<T> Stages<T> {
     /// The next stage, or `None` when `deadline` passes first or the
     /// thread ended without one.
-    fn next(&self, deadline: Instant) -> Option<Stage> {
+    pub(super) fn next(&self, deadline: Instant) -> Option<T> {
         self.receiver
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .ok()

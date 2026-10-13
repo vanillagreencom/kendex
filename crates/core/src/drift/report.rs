@@ -686,22 +686,24 @@ fn unknown(text: impl Into<Sentence>) -> Line {
     }
 }
 
-/// The check itself: reads every selected catalog's compatibility verdict
-/// before settlement, then reads the manifest, the lock, the drift snapshot and
+/// The check itself: reads the manifest, the lock, the drift snapshot and
 /// the fetch stamps, stats what the lock says should be on disk, and for
 /// a scope declaring Pi packages lists the `extensions/` of the two roots
 /// Pi loads together with the `package.json` of what sits there and of
 /// each managed copy under `packages/`, and nothing else — no source
-/// trees beyond their compatibility controls, no module files, no hashing, no per-package subprocesses —
+/// trees, no module files, no hashing, no per-package subprocesses —
 /// until a declaration sits on files no record accounts for, which is
 /// the one state it plans the scope to judge, inside the session hook's
-/// budget. `mode` says whether that plan may write a project's committed
+/// budget. Before the first such plan, every selected scope's catalog
+/// compatibility must answer within that same deadline. A clean check
+/// resolves no catalog. `mode` says whether that plan may write a project's committed
 /// install record.
 pub fn check(env: &Env, scopes: &[Scope], mode: crate::drift::copies::CheckMode) -> CheckReport {
     check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET, mode)
 }
 
-/// [`check`] with the original lock refusals for a caller's error channel.
+/// [`check`] with the original lock and catalog compatibility refusals
+/// for a caller's error channel.
 /// The report's bounded text cannot carry a machine-readable refusal line.
 pub fn check_with_refusals(
     env: &Env,
@@ -731,6 +733,48 @@ pub fn check_within(
     check_within_and_refusals(env, scopes, budget, mode, |_| {})
 }
 
+/// One compatibility read for the whole report, owed only where a scope
+/// has copies to settle. A missing answer at the shared deadline blocks
+/// every settlement, including the global record in report-only mode.
+struct CatalogCheck<'a> {
+    env: &'a Env,
+    scopes: &'a [Scope],
+    deadline: std::time::Instant,
+    verdict: std::cell::OnceCell<Option<Vec<(Scope, crate::error::CoreError)>>>,
+}
+
+impl CatalogCheck<'_> {
+    fn refusals(&self) -> Option<&[(Scope, crate::error::CoreError)]> {
+        self.verdict
+            .get_or_init(|| {
+                let env = self.env.clone();
+                let scopes = self.scopes.to_vec();
+                crate::drift::copies::gated(self.deadline, move |sender| {
+                    let mut refusals = Vec::new();
+                    for scope in scopes {
+                        let scope = scope.canonical();
+                        let Ok(Some(manifest)) = crate::manifest::load_current(
+                            &crate::manifest::manifest_path(&env, &scope),
+                        ) else {
+                            // The scope report owns manifest read failures.
+                            continue;
+                        };
+                        // Copy comparison uses current readings without held
+                        // pins, so the source owner needs this manifest once.
+                        if let Err(error) =
+                            crate::source::check_catalog_compatibility(&env, &scope, &manifest)
+                        {
+                            refusals.push((scope, error));
+                        }
+                    }
+                    let _ = sender.send(refusals);
+                })
+                .next(self.deadline)
+            })
+            .as_deref()
+    }
+}
+
 fn check_within_and_refusals(
     env: &Env,
     scopes: &[Scope],
@@ -741,21 +785,12 @@ fn check_within_and_refusals(
     let now = crate::clock::unix_now();
     let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
-    // Manual and session checks can settle a global record. A later
-    // scope's catalog refusal must therefore stop every settlement.
-    let mut settlement_allowed = true;
-    for scope in scopes {
-        if let Err(error) = crate::engine::check_catalog_compatibility(
-            env,
-            &scope.canonical(),
-            &crate::engine::PlanOptions::current(),
-        ) && error.is_catalog_compatibility()
-        {
-            settlement_allowed = false;
-            refusal(&error);
-            sections.unknown.push(unknown(error.to_string()));
-        }
-    }
+    let catalogs = CatalogCheck {
+        env,
+        scopes,
+        deadline,
+        verdict: std::cell::OnceCell::new(),
+    };
     // The global manifest, read once for the whole report: every project
     // scope judges its own Pi declarations against it, and a read per
     // scope would report one unreadable file once per scope and count it
@@ -805,7 +840,7 @@ fn check_within_and_refusals(
             deadline,
             budget,
             mode,
-            settlement_allowed,
+            catalogs: &catalogs,
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
             global_manifest: global_manifest.as_ref(),
@@ -821,6 +856,16 @@ fn check_within_and_refusals(
             project_scope = Some((scope.clone(), outcome.manifest));
         }
         scans.push((prefix, outcome.scan));
+    }
+    if let Some(Some(refusals)) = catalogs.verdict.get() {
+        for (scope, error) in refusals {
+            refusal(error);
+            let prefix = match many {
+                true => format!("{}: ", scope_word(scope)),
+                false => String::new(),
+            };
+            sections.unknown.push(unknown(format!("{prefix}{error}")));
+        }
     }
     crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
     for (prefix, scan) in scans {

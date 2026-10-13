@@ -234,8 +234,8 @@ pub(super) struct ScopeCheck<'a> {
     pub(super) budget: std::time::Duration,
     /// Whether the check may write a project's committed install record.
     pub(super) mode: crate::drift::copies::CheckMode,
-    /// No selected scope refused catalog compatibility.
-    pub(super) settlement_allowed: bool,
+    /// The all-scope verdict, read only before the first settlement.
+    pub(super) catalogs: &'a CatalogCheck<'a>,
     /// Where the scope's Pi packages install and the root Pi loads beside
     /// it in this session, resolved once for every Pi line; the settings
     /// read that failed when it did not resolve.
@@ -792,6 +792,36 @@ impl ScopeCheck<'_> {
         }
     }
 
+    fn settle_copies(
+        &self,
+        manifest: &crate::manifest::Manifest,
+        lock: &crate::lock::Lock,
+        occupied: &BTreeMap<String, crate::engine::Occupied>,
+        sections: &mut Sections,
+    ) -> Option<crate::drift::copies::Settled> {
+        match self.catalogs.refusals() {
+            Some([]) => Some(crate::drift::copies::settle(
+                self.env,
+                self.scope,
+                manifest,
+                lock,
+                occupied,
+                self.deadline,
+                self.budget,
+                self.mode,
+            )),
+            Some(_) => {
+                for install in occupied.values() {
+                    self.blocked_line(install, sections);
+                }
+                None
+            }
+            None => Some(crate::drift::copies::Settled::Overrun {
+                budget: self.budget,
+            }),
+        }
+    }
+
     /// Asked for, no record of installing it for this tool, and files
     /// already where that install goes. A stat finds the state; what it
     /// means needs the render, so this is the one place the check plans
@@ -835,22 +865,10 @@ impl ScopeCheck<'_> {
         if occupied.is_empty() {
             return;
         }
-        if !self.settlement_allowed {
-            for install in occupied.values() {
-                self.blocked_line(install, sections);
-            }
+        let Some(settled) = self.settle_copies(manifest, lock, occupied, sections) else {
             return;
-        }
-        let (verdicts, record_failed, unrecorded) = match crate::drift::copies::settle(
-            self.env,
-            self.scope,
-            manifest,
-            lock,
-            occupied,
-            self.deadline,
-            self.budget,
-            self.mode,
-        ) {
+        };
+        let (verdicts, record_failed, unrecorded) = match settled {
             crate::drift::copies::Settled::Judged {
                 verdicts,
                 record_failed,

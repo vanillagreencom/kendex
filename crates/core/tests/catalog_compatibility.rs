@@ -19,19 +19,22 @@ const FUTURE: &str = "999999.0.0";
 /// Manual checks and session checks share the report's settlement boundary.
 /// Session checks can still write the global record.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn check_reads_every_scope_minimum_before_settling_any_record() {
     use kendex_core::drift::copies::CheckMode;
     use kendex_core::drift::report::{CheckStatus, check_with_refusals};
 
-    for (first_global, mode, incompatible) in [
-        (true, CheckMode::Settle, true),
-        (true, CheckMode::ReportOnly, true),
-        (false, CheckMode::Settle, true),
-        (false, CheckMode::ReportOnly, true),
-        (true, CheckMode::Settle, false),
-        (true, CheckMode::ReportOnly, false),
-    ] {
+    let rows: &[(bool, CheckMode, &[usize])] = &[
+        (true, CheckMode::Settle, &[1]),
+        (true, CheckMode::ReportOnly, &[1]),
+        (false, CheckMode::Settle, &[1]),
+        (false, CheckMode::ReportOnly, &[1]),
+        (true, CheckMode::Settle, &[0, 1]),
+        (true, CheckMode::ReportOnly, &[0, 1]),
+        (true, CheckMode::Settle, &[]),
+        (true, CheckMode::ReportOnly, &[]),
+    ];
+    for &(first_global, mode, incompatible_scopes) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
@@ -67,21 +70,21 @@ fn check_reads_every_scope_minimum_before_settling_any_record() {
             records.push((record.clone(), fs::read(record).unwrap()));
             catalogs.push(catalog);
         }
-        if incompatible {
+        for &index in incompatible_scopes {
             fs::write(
-                catalogs[1].join("kendex.toml"),
+                catalogs[index].join("kendex.toml"),
                 format!("min_kendex = '{FUTURE}'\n"),
             )
             .unwrap();
         }
-        let mut needs_engine = false;
+        let mut needs_engine = 0;
         let report = check_with_refusals(&env, &scopes, mode, |error| {
-            needs_engine |= matches!(error,
+            needs_engine += usize::from(matches!(error,
                 CoreError::CatalogNeedsEngine { min, engine }
-                    if min == FUTURE && *engine == env!("CARGO_PKG_VERSION"));
+                    if min == FUTURE && *engine == env!("CARGO_PKG_VERSION")));
         });
         for (scope, (record, before)) in scopes.iter().zip(records) {
-            let withheld = incompatible
+            let withheld = !incompatible_scopes.is_empty()
                 || (mode == CheckMode::ReportOnly && matches!(scope, Scope::Project { .. }));
             assert_eq!(fs::read(&record).unwrap() == before, withheld);
             assert_eq!(
@@ -92,10 +95,116 @@ fn check_reads_every_scope_minimum_before_settling_any_record() {
                 !withheld
             );
         }
-        assert_eq!(needs_engine, incompatible);
-        if incompatible {
+        assert_eq!(needs_engine, incompatible_scopes.len());
+        if !incompatible_scopes.is_empty() {
             assert_eq!(report.status, CheckStatus::Unknown);
         }
+        // The session report consumes scope-prefixed machine refusal lines.
+        let refusals: std::collections::BTreeSet<_> = report
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .filter_map(|line| line.text.as_str().split_once(": catalog-needs-engine "))
+            .map(|(scope, _)| scope)
+            .collect();
+        let expected: std::collections::BTreeSet<_> = incompatible_scopes
+            .iter()
+            .map(|&index| match scopes[index] {
+                Scope::Global => "global",
+                Scope::Project { .. } => "consumer",
+            })
+            .collect();
+        assert_eq!(refusals, expected);
+    }
+}
+
+/// A real cached catalog proves whether the report reaches source resolution:
+/// resolving its mirror recreates the checkout and reads the future minimum.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_resolves_catalogs_only_for_settlement_with_time_remaining() {
+    use crate::test_util::git;
+    use kendex_core::drift::copies::CheckMode;
+    use kendex_core::drift::report::{CheckStatus, check_within};
+    use kendex_core::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot};
+    use std::time::Duration;
+
+    for (recorded, budget, source_read) in [
+        (true, Duration::from_secs(60), false),
+        (false, Duration::ZERO, false),
+        (false, Duration::from_secs(60), true),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let scope = Scope::Global;
+        let catalog = home.join("catalog");
+        fs::create_dir_all(catalog.join("skills/scout")).unwrap();
+        fs::write(catalog.join("kendex.toml"), "min_kendex = '0.0.0'\n").unwrap();
+        fs::write(
+            catalog.join("skills/scout/SKILL.md"),
+            "---\nname: scout\ndescription: fixture\n---\nBody.\n",
+        )
+        .unwrap();
+        git(&catalog, &["init", "-q", "-b", "main"]);
+        git(&catalog, &["add", "-A"]);
+        git(&catalog, &["commit", "-q", "-m", "compatible"]);
+        let repo = format!("file://{}", catalog.display());
+        let manifest_path = kendex_core::manifest::manifest_path(&env, &scope);
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(&manifest_path, format!(
+            "schema = 7\n[sources.cat]\nrepo = '{repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.scout]\nsource = 'cat'\n")).unwrap();
+        let manifest = kendex_core::manifest::load_current(&manifest_path)
+            .unwrap()
+            .unwrap();
+        kendex_core::remote::sync_sources(&env, &manifest).unwrap();
+        let plan = plan_apply(&env, &scope, &PlanOptions::current()).unwrap();
+        apply::execute(&env, &plan.plan).unwrap();
+        let record = kendex_core::lock::lock_path(&env, &scope);
+        if !recorded {
+            kendex_core::lock::save(&record, &kendex_core::lock::Lock::default()).unwrap();
+        }
+        let before = fs::read(&record).unwrap();
+        fs::write(
+            catalog.join("kendex.toml"),
+            format!("min_kendex = '{FUTURE}'\n"),
+        )
+        .unwrap();
+        git(&catalog, &["add", "-A"]);
+        git(&catalog, &["commit", "-q", "-m", "future minimum"]);
+        let resolved = kendex_core::remote::sync(&env, &repo, Some("main")).unwrap();
+        fs::remove_dir_all(&resolved.root).unwrap();
+        kendex_core::drift::snapshot::store(
+            &env,
+            &scope,
+            &ScopeSnapshot {
+                schema: SNAPSHOT_SCHEMA,
+                taken_at: kendex_core::clock::unix_now(),
+                scope: scope.label(),
+                packages: Vec::new(),
+                unreadable: Vec::new(),
+            },
+        )
+        .unwrap();
+        let report = check_within(&env, &[scope.clone()], budget, CheckMode::ReportOnly);
+        assert_eq!(resolved.root.exists(), source_read);
+        assert_eq!(fs::read(&record).unwrap(), before);
+        assert_eq!(report.deep_pass_owed, budget.is_zero());
+        assert_eq!(
+            report.status,
+            if recorded {
+                CheckStatus::Clean
+            } else {
+                CheckStatus::Unknown
+            }
+        );
+
+        // The source owner supplies the control without changing the report.
+        assert!(matches!(
+            kendex_core::source::check_catalog_compatibility(&env, &scope, &manifest),
+            Err(CoreError::CatalogNeedsEngine { min, .. }) if min == FUTURE
+        ));
+        assert!(resolved.root.is_dir());
     }
 }
 
