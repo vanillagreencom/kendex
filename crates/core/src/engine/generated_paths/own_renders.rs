@@ -480,8 +480,12 @@ fn changed_record_metadata_is_unsettled_without_disk_drift() {
     entry.reasons.clear();
     crate::lock::save(&lock_path(&f.env, &scope), &lock).expect("the changed record writes");
 
-    let verified = plan_apply(&f.env, &scope, &crate::attest::Reading::Current.plan_options())
-        .expect("the clean installed copies verify");
+    let verified = plan_apply(
+        &f.env,
+        &scope,
+        &crate::attest::Reading::Current.plan_options(),
+    )
+    .expect("the clean installed copies verify");
     assert_eq!(verified.declaration_status, DeclarationStatus::Complete);
     assert!(verified.drift.is_empty(), "{:?}", verified.drift);
     assert_eq!(
