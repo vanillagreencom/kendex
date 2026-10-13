@@ -21,12 +21,15 @@ scratch="$(mktemp -d "$scratch_parent/tmp/command-safety-test.XXXXXX")" || { ech
 scratch="$(cd -- "$scratch" && pwd -P)" || { echo 'command-safety-test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "$scratch"' EXIT
 repo="$scratch/project"
+prepare_project() { # the private repo and the hook source
 mkdir -p "$repo/.claude/hooks" "$repo/.agents/skills/commit-guards/scripts"
 git -C "$repo" init -q
 git -C "$repo" config gc.auto 0
 git -C "$repo" config maintenance.auto false
-cp "$hook_source" "$repo/.claude/hooks/command-safety.sh"
+cp "$1" "$repo/.claude/hooks/command-safety.sh"
 cp -R "$ROOT/skills/commit-guards/scripts/lib" "$repo/.agents/skills/commit-guards/scripts/lib"
+}
+prepare_project "$hook_source"
 hook="$repo/.claude/hooks/command-safety.sh"
 unset COMMAND_SAFETY_DENY_PATTERN COMMIT_GUARDS_SETTINGS_FILE
 
@@ -138,62 +141,98 @@ assert_first() { # WANT LABEL
   fi
 }
 
+# A requested row must execute exactly once. Missing or duplicate selection
+# cannot count as a mutant failure. Arrays are local to each row callback.
+row_selected() {
+  local i
+  [ "${#selected_rows[@]}" -ne 0 ] || return 0
+  for ((i=0; i<${#selected_rows[@]}; i++)); do
+    if [ "${selected_rows[$i]}" = "$1" ]; then
+      selected_seen[$i]=$(( ${selected_seen[$i]:-0} + 1 ))
+      return 0
+    fi
+  done
+  return 1
+}
+selection_complete() {
+  local i
+  for ((i=0; i<${#selected_rows[@]}; i++)); do
+    if [ "${selected_seen[$i]:-0}" -ne 1 ]; then
+      printf 'FAIL selection: row=%s executions=%s expected=1\n' "${selected_rows[$i]}" "${selected_seen[$i]:-0}"
+      failed=$((failed + 1))
+    fi
+  done
+}
+
+default_rows() {
+  local selected_rows=("$@") selected_seen=() unconfigured command_json label command
+  for unconfigured in empty-env no-file; do
+  case "$unconfigured" in
+    empty-env) printf '[env]\n' >"$repo/kendex.settings.toml" ;;
+    no-file) rm -f -- "$repo/kendex.settings.toml" ;;
+  esac
+  while IFS='|' read -r command_json label; do
+    row_selected "$unconfigured: $label" || continue
+    command="$(jq -nr "$command_json")" || exit 1
+    check 2 "$command" "$unconfigured: the default refuses $label"
+    assert_first 'command-safety: refused=default-policy' "$unconfigured: $label names the default policy"
+  done <<'DEFAULT_REFUSES'
+"systemd-run --user --scope -p MemoryMax=64M cargo test"|a bare MemoryMax
+"systemd-run --user --scope -p MemoryHigh=512K cargo test"|a bare MemoryHigh
+"systemd-run --user --scope -p MemoryMax=\"64M\" cargo test"|a quoted MemoryMax
+DEFAULT_REFUSES
+  if row_selected "$unconfigured: gigabyte-cap"; then
+    check 0 'systemd-run --user --scope -p MemoryMax=2G cargo test' "$unconfigured: the default passes a gigabyte cap"
+  fi
+  if row_selected "$unconfigured: unrelated-command"; then
+    check 0 'git status' "$unconfigured: the default passes an unrelated command"
+  fi
+done
+  selection_complete
+}
+
+default_consistency() {
+  local default_in_hook default_in_doc default_in_example
+default_in_hook="$(awk -v p="default_pattern='" '
+  index($0, p) == 1 { v = substr($0, length(p) + 1); sub(/.$/, "", v); print v; n++ }
+  END { exit n != 1 }' "$hook_source")" || exit 1
+default_in_doc="$(awk '
+  /^```text$/ { inside = 1; next }
+  inside && /^```$/ { inside = 0; next }
+  inside { print; n++ }
+  END { exit n != 1 }' "$ROOT/docs/authoring/command-safety.md")" || exit 1
+default_in_example="$(cd -- "$scratch" && COMMIT_GUARDS_SETTINGS_FILE="$ROOT/skills/commit-guards/kendex.settings.toml.example" \
+  GG_CHECK=command-safety bash -c '
+  source "$1/common.sh"
+  source "$1/settings.sh"
+  gg_setting COMMAND_SAFETY_DENY_PATTERN ""
+' _ "$ROOT/skills/commit-guards/scripts/lib")" || exit 1
+if [ -n "$default_in_hook" ] && [ "$default_in_example" = "$default_in_hook" ] &&
+  [ "$default_in_doc" = "$default_in_hook" ]; then
+  printf 'PASS the example and the doc carry the hook default\n'
+  passed=$((passed + 1))
+else
+  printf 'FAIL the example and the doc carry the hook default: hook [%s] example [%s] doc [%s]\n' \
+    "$default_in_hook" "$default_in_example" "$default_in_doc"
+  failed=$((failed + 1))
+fi
+}
+
 # KEN-3813 expressly requires this remedy example as well as the keyed
 # verdict. The remaining English is not pinned. Every command below stays
 # fixture data submitted only to the hook, including all planted controls.
 # A JSON escape keeps the coprocess data word out of the Bash syntax lint.
 environment_rows() {
-  local row fields expected command_json label world payload payload_cwd status output payload_hook
+  local rows expected command_json label world payload payload_cwd status output
   local want first_key invalid shape_kind before=$((passed + failed))
+  local selected_rows=("$@") selected_seen=()
   mkdir -p "$scratch/policy-tools"
   for tool in jq cat; do ln -sf "$(command -v "$tool")" "$scratch/policy-tools/$tool"; done
-  while IFS= read -r row; do
-    fields=$(jq -r '[.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv' <<<"$row") || exit 1
-    IFS=$'\t' read -r expected command_json label world <<<"$fields"
-    printf -v command_json '%b' "$command_json"
-    label="environment: $label"; payload_cwd=$repo; invalid=false; shape_kind=tool
-    printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
-    case "$world" in
-      outside) payload_cwd=/ ;;
-      gone) payload_cwd="$scratch/not-created" ;;
-      invalid-cwd) invalid=true ;;
-      bad-settings) printf '[env\n' >"$repo/kendex.settings.toml" ;;
-      empty-pattern) printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = ""\n' >"$repo/kendex.settings.toml" ;;
-      invalid-pattern) printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "["\n' >"$repo/kendex.settings.toml" ;;
-      absent-policy) rm -- "$repo/kendex.settings.toml" ;;
-      absent-loader) mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/environment-loader" ;;
-      cmd | copilot | copilot-string | top) shape_kind=$world ;;
-    esac
-    payload=$(jq -nc --argjson submitted "$command_json" --arg cwd "$payload_cwd" --argjson invalid "$invalid" --arg shape "$shape_kind" '
-      {cwd:(if $invalid then 42 else $cwd end)} +
-      (if $shape == "cmd" then {tool_input:{cmd:$submitted}}
-       elif $shape == "copilot" then {toolArgs:{command:$submitted}}
-       elif $shape == "copilot-string" then {toolArgs:({command:$submitted} | tojson)}
-       elif $shape == "top" then {command:$submitted}
-       else {tool_input:{command:$submitted}} end)') || exit 1
-    status=0
-    if [ "$world" = missing-policy-tools ]; then
-      output=$(env "PATH=$scratch/policy-tools" "$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
-    else
-      output=$("$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
-    fi
-    [ "$world" != absent-loader ] || mv "$scratch/environment-loader" "$repo/.agents/skills/commit-guards/scripts/lib"
-    first_key=$(first_line "$scratch/stderr")
-    want=-; [ "$expected" -ne 2 ] || want='command-safety: refused=environment-dump'
-    if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ -z "$output" ]; then
-      printf 'PASS %s\n' "$label"; passed=$((passed + 1))
-    else
-      printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$output"
-      failed=$((failed + 1))
-    fi
-    if [ "$expected" -eq 2 ]; then
-      if grep -F -- "systemctl --user show-environment | grep '^NAME='" "$scratch/stderr" >/dev/null; then
-        passed=$((passed + 1))
-      else
-        printf 'FAIL %s remedy: missing required filtered form\n' "$label"; failed=$((failed + 1))
-      fi
-    fi
-  done <<'ENVIRONMENT_ROWS'
+  rows=$(jq -sr --args '
+    .[] | select(($ARGS.positional | length) == 0 or
+      (.[2] as $label | $ARGS.positional | index($label))) |
+    [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
+  ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
 [2,"printenv","bare-printenv"]
 [2,"export -p","export-list"]
@@ -449,15 +488,75 @@ environment_rows() {
 [0,["exec","-a","NAME","env"],"array-exec-is-an-executable"]
 [0,["env","NAME=value","git","status"],"array-launcher"]
 ENVIRONMENT_ROWS
+  ) || exit 1
+  while IFS=$'\t' read -r expected command_json label world; do
+    [ -n "$expected" ] || continue
+    printf -v command_json '%b' "$command_json"
+    row_selected "$label" || continue
+    label="environment: $label"; payload_cwd=$repo; invalid=false; shape_kind=tool
+    printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
+    case "$world" in
+      outside) payload_cwd=/ ;;
+      gone) payload_cwd="$scratch/not-created" ;;
+      invalid-cwd) invalid=true ;;
+      bad-settings) printf '[env\n' >"$repo/kendex.settings.toml" ;;
+      empty-pattern) printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = ""\n' >"$repo/kendex.settings.toml" ;;
+      invalid-pattern) printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "["\n' >"$repo/kendex.settings.toml" ;;
+      absent-policy) rm -- "$repo/kendex.settings.toml" ;;
+      absent-loader) mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/environment-loader" ;;
+      cmd | copilot | copilot-string | top) shape_kind=$world ;;
+    esac
+    payload=$(jq -nc --argjson submitted "$command_json" --arg cwd "$payload_cwd" --argjson invalid "$invalid" --arg shape "$shape_kind" '
+      {cwd:(if $invalid then 42 else $cwd end)} +
+      (if $shape == "cmd" then {tool_input:{cmd:$submitted}}
+       elif $shape == "copilot" then {toolArgs:{command:$submitted}}
+       elif $shape == "copilot-string" then {toolArgs:({command:$submitted} | tojson)}
+       elif $shape == "top" then {command:$submitted}
+       else {tool_input:{command:$submitted}} end)') || exit 1
+    status=0
+    if [ "$world" = missing-policy-tools ]; then
+      output=$(env "PATH=$scratch/policy-tools" "$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
+    else
+      output=$("$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
+    fi
+    [ "$world" != absent-loader ] || mv "$scratch/environment-loader" "$repo/.agents/skills/commit-guards/scripts/lib"
+    first_key=$(first_line "$scratch/stderr")
+    want=-; [ "$expected" -ne 2 ] || want='command-safety: refused=environment-dump'
+    if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ -z "$output" ]; then
+      printf 'PASS %s\n' "$label"; passed=$((passed + 1))
+    else
+      printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$output"
+      failed=$((failed + 1))
+    fi
+    if [ "$expected" -eq 2 ]; then
+      if grep -F -- "systemctl --user show-environment | grep '^NAME='" "$scratch/stderr" >/dev/null; then
+        passed=$((passed + 1))
+      else
+        printf 'FAIL %s remedy: missing required filtered form\n' "$label"; failed=$((failed + 1))
+      fi
+    fi
+  done <<<"$rows"
+  selection_complete
   [ "$((passed + failed))" -gt "$before" ] || { echo 'FAIL environment table has no rows'; failed=$((failed + 1)); }
   settings
 }
-environment_rows
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  for rendered in .claude/hooks/command-safety.sh .codex/hooks/command-safety.sh .github/hooks/command-safety.sh .pi/kendex/hooks/command-safety.sh; do
+    if cmp -s -- "$hook_source" "$ROOT/$rendered"; then
+      printf 'PASS render matches source: %s\n' "$rendered"; passed=$((passed + 1))
+    else
+      printf 'FAIL render differs from source: %s\n' "$rendered"; failed=$((failed + 1))
+    fi
+  done
+fi
 if [ "${1:-}" = --environment-rows ]; then
+  shift
+  environment_rows "$@"
   printf '%s passed, %s failed\n' "$passed" "$failed"
   [ "$failed" -eq 0 ]
   exit
 fi
+environment_rows
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   planted=""
@@ -504,10 +603,16 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
     if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
-    control_status=0
-    env -i "HOME=$HOME" "PATH=$PATH" "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows \
-      >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
     fi
+    row_label=${failed_row#FAIL environment: }; row_label=${row_label%%: exit=*}
+    control_status=0
+    (
+      passed=0; failed=0
+      cp -- "$mutant" "$hook"
+      environment_rows "$row_label"
+      [ "$failed" -eq 0 ]
+    ) >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
+    cp -- "$hook_source" "$hook"
     if [ "$control_status" -eq 1 ] && grep -F -- "$failed_row" "$scratch/environment-$defect.log" >/dev/null; then
       printf 'PASS environment control %s rejects its planted rule failure\n' "$defect"; passed=$((passed + 1))
     else
@@ -589,50 +694,12 @@ settings
 
 # A fresh install has no settings line, or no settings file at all; the
 # hook's own default is then the policy.
-for unconfigured in empty-env no-file; do
-  case "$unconfigured" in
-    empty-env) printf '[env]\n' >"$repo/kendex.settings.toml" ;;
-    no-file) rm -f -- "$repo/kendex.settings.toml" ;;
-  esac
-  while IFS='|' read -r command_json label; do
-    command="$(jq -nr "$command_json")" || exit 1
-    check 2 "$command" "$unconfigured: the default refuses $label"
-    assert_first 'command-safety: refused=default-policy' "$unconfigured: $label names the default policy"
-  done <<'DEFAULT_REFUSES'
-"systemd-run --user --scope -p MemoryMax=64M cargo test"|a bare MemoryMax
-"systemd-run --user --scope -p MemoryHigh=512K cargo test"|a bare MemoryHigh
-"systemd-run --user --scope -p MemoryMax=\"64M\" cargo test"|a quoted MemoryMax
-DEFAULT_REFUSES
-  check 0 'systemd-run --user --scope -p MemoryMax=2G cargo test' "$unconfigured: the default passes a gigabyte cap"
-  check 0 'git status' "$unconfigured: the default passes an unrelated command"
-done
+default_rows
 # The default is written three times: the hook applies it, the commit-guards
 # example declares it for the app's Customize tab, and the doc prints it.
 # Each copy is read from its own file, the example through the settings
 # loader the hook uses.
-default_in_hook="$(awk -v p="default_pattern='" '
-  index($0, p) == 1 { v = substr($0, length(p) + 1); sub(/.$/, "", v); print v; n++ }
-  END { exit n != 1 }' "$hook_source")" || exit 1
-default_in_doc="$(awk '
-  /^```text$/ { inside = 1; next }
-  inside && /^```$/ { inside = 0; next }
-  inside { print; n++ }
-  END { exit n != 1 }' "$ROOT/docs/authoring/command-safety.md")" || exit 1
-default_in_example="$(cd -- "$scratch" && COMMIT_GUARDS_SETTINGS_FILE="$ROOT/skills/commit-guards/kendex.settings.toml.example" \
-  GG_CHECK=command-safety bash -c '
-  source "$1/common.sh"
-  source "$1/settings.sh"
-  gg_setting COMMAND_SAFETY_DENY_PATTERN ""
-' _ "$ROOT/skills/commit-guards/scripts/lib")" || exit 1
-if [ -n "$default_in_hook" ] && [ "$default_in_example" = "$default_in_hook" ] &&
-  [ "$default_in_doc" = "$default_in_hook" ]; then
-  printf 'PASS the example and the doc carry the hook default\n'
-  passed=$((passed + 1))
-else
-  printf 'FAIL the example and the doc carry the hook default: hook [%s] example [%s] doc [%s]\n' \
-    "$default_in_hook" "$default_in_example" "$default_in_doc"
-  failed=$((failed + 1))
-fi
+default_consistency
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
 check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'an explicit ^$ turns matching off'
 printf '[env]\n' >"$repo/kendex.settings.toml"
@@ -684,10 +751,13 @@ shape() { # EXPECTED FIRST PAYLOAD_JSON LABEL
 }
 # The table counts its own rows: an emptied row list is a refusal, never a
 # silently shorter run.
+shape_rows() {
+  local selected_rows=("$@") selected_seen=() expected want_first filter label
 before=$((passed + failed))
 while IFS='|' read -r expected want_first filter label; do
   [ -n "$expected" ] || continue
   [ "$want_first" != - ] || want_first='-'
+  row_selected "$label" || continue
   shape "$expected" "$want_first" "$(jq -nc --arg cwd "$repo" "$filter")" "$label"
 done <<'SHAPES'
 2|command-safety: refused=policy|{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}|a refused command under the cmd field
@@ -704,6 +774,9 @@ done <<'SHAPES'
 0|-|{tool_input:{command:"git status"},cwd:($cwd + "\n\n")}|working directory trailing newlines keep the previous read behavior
 0|-|{tool_input:{command:"git status\n\u0027; $(touch SHOULD_NOT_RUN); \u0027"},cwd:$cwd}|shell syntax in command text stays data
 SHAPES
+  selection_complete
+}
+shape_rows
 [ ! -e "$repo/SHOULD_NOT_RUN" ] || { printf 'FAIL payload text executed\n'; failed=$((failed + 1)); }
 quoted_cwd="$repo/quoted'"$'\t\nback\\slash'
 mkdir -p -- "$quoted_cwd"
@@ -798,6 +871,20 @@ check 0 'scripts/validate qml' 'missing settings support warns'
 # red. The default_pattern defects edit one rule of the shipped default: no
 # default at all, no quoted value, and a unit widened to gigabytes; the
 # default-key defect sends the default's refusal out under the project key.
+policy_control_rows() { # defect and its private mutated source
+  local repo="$scratch/policy-$1" hook hook_source="$2"
+  prepare_project "$2"
+  hook="$repo/.claude/hooks/command-safety.sh"
+  settings
+  case "$1" in
+    no-default | default-key) default_rows 'empty-env: a bare MemoryMax';
+      [ "$1" != no-default ] || default_rows 'no-file: a bare MemoryMax' ;;
+    no-quote) default_rows 'empty-env: a quoted MemoryMax' 'no-file: a quoted MemoryMax'; default_consistency ;;
+    unit-g) default_rows 'empty-env: gigabyte-cap' 'no-file: gigabyte-cap' ;;
+    no-cwd-fallback) shape_rows 'a denied command without cwd uses the caller policy' ;;
+    *) printf 'FAIL policy control: unknown defect=%s\n' "$1"; failed=$((failed + 1)) ;;
+  esac
+}
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   planted=
   while IFS='|' read -r defect want; do
@@ -824,8 +911,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         exit 1
       fi
       control_status=0
-      env -i HOME="$HOME" PATH="$PATH" HOOK_UNDER_TEST="$mutant" \
-        bash "${BASH_SOURCE[0]}" >"$scratch/$defect.log" 2>&1 || control_status=$?
+      (
+        passed=0; failed=0
+        policy_control_rows "$defect" "$mutant"
+        [ "$failed" -eq 0 ]
+      ) >"$scratch/$defect.log" 2>&1 || control_status=$?
     fi
     if [ "$control_status" -eq 1 ] && awk -v want="$want" '
       index($0, want) == 1 { found = 1 }
@@ -860,7 +950,9 @@ ln -s "$ROOT/skills" "$scratch/skills"
 # One table covers native, shared, relocated, partial and unavailable support.
 global_reader_rows() {
   local label hook_dir library state expected key home installed project payload status marker native
+  local selected_rows=("$@") selected_seen=() failed=0 before=$((PASS + FAIL))
   while IFS='|' read -r label hook_dir library state expected key; do
+    row_selected "$label" || continue
     home="$scratch/global-layouts/$label"
     rm -rf -- "$home"
     project="$home/project"
@@ -925,15 +1017,22 @@ settings-return|.codex/hooks|.agents/skills|return-two|0|support=unreadable
 common-exit|.codex/hooks|.agents/skills|exit-two|0|support=unreadable
 nested-absent|.codex/hooks|.agents/skills|nested-absent|0|support=unreadable
 LAYOUTS
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "  FAIL  reader table has no rows"; FAIL=$((FAIL + 1)); }
+  selection_complete
+  FAIL=$((FAIL + failed))
 }
 global_reader_rows
+reader_control_rows() { global_reader_rows "${reader_control_labels[@]}"; }
+reader_control_labels=(pi-shared codex-shared gemini-shared copilot-shared)
 skill_load_control global-reader "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
-  'lib=""' HOOK global_reader_rows 'pi-shared installed reader' 'codex-shared installed reader' 'gemini-shared installed reader' 'copilot-shared installed reader'
+  'lib=""' HOOK reader_control_rows 'pi-shared installed reader' 'codex-shared installed reader' 'gemini-shared installed reader' 'copilot-shared installed reader'
+reader_control_labels=(absent-global)
 skill_load_control loader-boundary "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
-  'lib="$root/.agents/skills/commit-guards/scripts/lib"' HOOK global_reader_rows 'absent-global project loader boundary'
-skill_load_control support-state "$HOOK" 'loading="$lib/common.sh"' 'loading=""' HOOK global_reader_rows 'common-exit installed reader' 'common-exit warns once'
+  'lib="$root/.agents/skills/commit-guards/scripts/lib"' HOOK reader_control_rows 'absent-global project loader boundary'
+reader_control_labels=(common-exit)
+skill_load_control support-state "$HOOK" 'loading="$lib/common.sh"' 'loading=""' HOOK reader_control_rows 'common-exit installed reader' 'common-exit warns once'
 skill_load_control support-cause "$HOOK" 'cause="$cause
-  $detail"' 'cause=$loading' HOOK global_reader_rows 'common-exit replays cause'
+  $detail"' 'cause=$loading' HOOK reader_control_rows 'common-exit replays cause'
 failed=$((failed + FAIL))
 passed=$((passed + PASS))
 printf '%s passed, %s failed\n' "$passed" "$failed"
