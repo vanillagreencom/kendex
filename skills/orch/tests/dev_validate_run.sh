@@ -1128,6 +1128,8 @@ ci_world() {
     stacked) STUB_RULES=Lint,CI STUB_PR_BASE=feature/parent ;;
     stacked-required) STUB_PARENT_RULES=CI STUB_PR_BASE=feature/parent ;;
     pr-no-pr) STUB_PR_EXIT=1 STUB_PR_STDERR='no pull requests found for branch' ;;
+    pr-no-pr-queue-required) STUB_PR_EXIT=1 STUB_PR_STDERR='no pull requests found for branch' STUB_RULES=Lint,CI STUB_MERGE_QUEUE=true ;;
+    pr-no-pr-queue-unrequired) STUB_PR_EXIT=1 STUB_PR_STDERR='no pull requests found for branch' STUB_MERGE_QUEUE=true ;;
     pr-closed) STUB_RULES=Lint,CI STUB_PR_STATE=CLOSED ;;
     pr-merged) STUB_RULES=Lint,CI STUB_PR_STATE=MERGED ;;
     pr-unread) STUB_RULES=Lint,CI STUB_PR_EXIT=1 STUB_PR_STDERR='gh: HTTP 401: Bad credentials' ;;
@@ -1368,15 +1370,21 @@ PUSH_ROWS=(
   'closed PR under push-first|push-first|pr-closed|standard|CI|full|none|full|pr-not-open|pass'
   'range subset before PR default|review-first|pr-no-pr|standard|CI|range|subset|range|pr-not-open|pass'
   'queue work before PR|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=true cause=queue-lane'
+  'queue fix before PR|push-first|pr-no-pr-queue-required|standard|CI|ci|none|ci||pending||ci|queue_only=true cause=queue-lane|merge_group'
+  'queue implement before PR|push-first|pr-no-pr-queue-required|standard|CI|full|none|ci||pending|||queue_only=true cause=queue-lane|merge_group'
+  'queue subset before PR|push-first|pr-no-pr-queue-required|standard|CI|range|subset|ci||pending||ci|queue_only=true cause=queue-lane|merge_group'
+  'queue unread selection before PR|push-first|pr-no-pr-queue-required|standard|CI|ci|unknown|range|selection-unread|pass|||queue_only=true cause=queue-lane'
+  'queue fix without queue before PR|push-first|pr-no-pr|standard|CI|ci|none|range|class-uncovered|pass||range|queue_only=true cause=queue-lane'
+  'queue fix unrequired context before PR|push-first|pr-no-pr-queue-unrequired|standard|CI|ci|none|range|class-uncovered|pass||range|queue_only=true cause=queue-lane'
   'absent queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||absent'
   'malformed queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=unknown'
   'queue range subset|review-first|rules|standard|CI|range|subset|range|class-uncovered|pass|||queue_only=true cause=queue-lane'
   'branch queue work before fix|push-first|pr-no-pr|standard|CI|range|subset|range|class-uncovered|pass|||branch-only'
 )
 push_rows() { # SCRIPT [LABEL]
-  local row label order world class context request selector want_mode fallback verdict local_range want_resolve queue resolved proj args dir head n=0
+  local row label order world class context request selector want_mode fallback verdict local_range want_resolve queue event resolved proj args dir head n=0
   for row in "${PUSH_ROWS[@]}"; do
-    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve queue <<<"$row"
+    IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve queue event <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "push-${label// /-}-${1##*/}-${3:-live}" "$context")"
@@ -1394,7 +1402,7 @@ push_rows() { # SCRIPT [LABEL]
     # A pre-PR branch still has required base CI under push-first.
     [[ "$order" != push-first || "$world" != pr-no-pr ]] || STUB_RULES=CI
     if [[ -n "$want_resolve" ]]; then
-      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true \
+      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE="$queue" STUB_ANSWER="change_class=$class" STUB_DOCS=false STUB_MEASURED=true \
         run_script "$1" --resolve-mode --worktree "$proj" --base HEAD
       resolved="$RC $OUT"
       if [[ "${3:-}" == resolve ]]; then
@@ -1417,6 +1425,7 @@ push_rows() { # SCRIPT [LABEL]
           "$label reads each required-context source once" "$ERR"
       fi
       if [[ "$want_mode" == ci ]]; then
+        assert_eq "$(record_field ci-event "$OUT")" "$event" "$label records the required CI event" "$ERR"
         assert_eq "$([[ -f "$dir/log" && -f "$dir/cmd" && ! -s "$dir/cmd" ]] && echo no-command || echo wrong-run)" no-command "$label starts no validation command"
         run_script "$1" --last-pass --worktree "$proj"
         assert_eq "$RC $OUT" '1 last-pass=none' "$label provides no passing validation run" "$ERR"
@@ -1433,6 +1442,14 @@ push_rows() { # SCRIPT [LABEL]
 push_rows "$CI_SCRIPT"
 # shellcheck disable=SC2016 # production guard mutations
 {
+ci_control 'the old pre-PR class check' \
+  '[[ "$pr_state" != OPEN && ( "$pr_state" != NO_PR || "$pr_order" != push-first ) ]]' \
+  '[[ "$pr_state" != OPEN ]]' \
+  'queue fix before PR' 'range|class-uncovered|pass'
+ci_control 'the pre-PR merge queue unread' \
+  '  queue="$(jq -sr '\''any(.[][]; .type == "merge_queue")'\'' <<<"$rules" 2>>"$log")" || unread=true' \
+  '  [[ "$pr_state" != OPEN ]] || queue="$(jq -sr '\''any(.[][]; .type == "merge_queue")'\'' <<<"$rules" 2>>"$log")" || unread=true' \
+  'queue fix before PR' 'range|class-uncovered|pass'
 for queue_row in 'queue work before PR' 'absent queue line' 'malformed queue line' 'queue range subset'; do
   ci_control 'the queue result unread' '[[ "$CHANGE_CLASS_QUEUE_ONLY" == false || "${1:-false}" == true ]] || return 1' ':' "$queue_row" 'ci||pending'
 done

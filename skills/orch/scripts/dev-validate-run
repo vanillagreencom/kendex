@@ -162,8 +162,9 @@
 #          pr-order permits this before publication, when no PR exists and
 #          resolve-base-branch names the base. Every order uses an open PR's
 #          own base.
-#          For a queue-only change, an open PR's base must also require the
-#          merge queue. Its required context runs on the merge group instead.
+#          For a queue-only change, that base must also require the merge
+#          queue, including push-first before a PR exists. Its required
+#          context runs on the merge group instead.
 #          --record names that run with ci-event=merge_group.
 #          Both rule reads must succeed: its rulesets and classic branch
 #          protection, as GitHub reports them for the repository gh resolves
@@ -190,8 +191,8 @@
 #            class-uncovered     a class other than micro, small or
 #                                standard, a docs-only diff, failed class
 #                                evidence, or an unmeasured narrow class,
-#                                or queue-only work without an open PR whose
-#                                base requires the merge queue and context,
+#                                or queue-only work whose base does not
+#                                require the merge queue and context,
 #                                since harness-ci may stand CI's checks down
 #                                for it
 #            selection-unread    the selector or the round evidence failed
@@ -782,7 +783,7 @@ ci_runs_validation() {
     ci_fallback=base-unresolved
     return 1
   fi
-  if [[ "$pr_state" != OPEN ]] && ! ci_class_covered; then
+  if [[ "$pr_state" != OPEN && ( "$pr_state" != NO_PR || "$pr_order" != push-first ) ]] && ! ci_class_covered; then
     ci_fallback=class-uncovered
     return 1
   fi
@@ -807,7 +808,7 @@ ci_runs_validation() {
   if ! rules="$(gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate --jq '.' 2>>"$log")"; then
     unread=true
   fi
-  [[ "$pr_state" != OPEN ]] || queue="$(jq -sr 'any(.[][]; .type == "merge_queue")' <<<"$rules" 2>>"$log")" || unread=true
+  queue="$(jq -sr 'any(.[][]; .type == "merge_queue")' <<<"$rules" 2>>"$log")" || unread=true
   rules="$(jq -r "$CI_RULES_JQ" <<<"$rules" 2>>"$log")" || unread=true
   if ! classic="$(gh api "repos/{owner}/{repo}/branches/$uri" --jq "$CI_CLASSIC_JQ" 2>>"$log")"; then
     unread=true

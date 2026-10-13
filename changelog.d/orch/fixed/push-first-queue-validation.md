@@ -1,0 +1,1 @@
+- Push-first queue-only work can record pending merge-group validation before its pull request opens when the base requires the merge queue and validation context.

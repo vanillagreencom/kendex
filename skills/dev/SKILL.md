@@ -77,6 +77,8 @@ A session keeps the rule text it loaded, and a push, `worktree create --reuse` o
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle. Once the artifact is written, start no validation, test, lint or build run in the worktree: the orchestrator validates there next.
 
+Under push-first, queue-only work can close its local round before a pull request exists when `dev-validate-run` proves that the resolved base requires the merge queue and the configured validation context. Its CI record names `ci-event=merge_group` and remains pending. The orchestrator's existing queue route proves that required run.
+
 The Codex caller follows [orch codex-runtime.md § Delegated round wait](../orch/references/codex-runtime.md#delegated-round-wait) while this agent works.
 
 - The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. Copilot CLI's channel is not yet measured, so this contract names none for it.
