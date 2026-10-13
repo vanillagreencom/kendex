@@ -3,7 +3,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest};
-use crate::model::{ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod adopt;
@@ -264,6 +264,7 @@ fn plan_scope_with_lock_base(
     )?;
     scope_writes::record_entry_selectors(&state, &mut new_lock, &item_pass, &kept);
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
+    plan_claude_project_defaults(env, scope, &new_lock, &mut config_edits);
     let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock, &said, &state.retired);
     let notices = desired::retired_notices(scope, &state, &retired);
@@ -278,8 +279,6 @@ fn plan_scope_with_lock_base(
     let wanted = wanted(&manifest, &state);
     plan_lock_write(env, scope, declared, lock_base, &new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &planned_shims, &drift, &trees, &mut ops)?;
-    let instruction_shims = planned_shims;
-
     let planned = Planned {
         drift,
         ops,
@@ -290,7 +289,7 @@ fn plan_scope_with_lock_base(
         retired,
         kept,
         safety,
-        instruction_shims,
+        instruction_shims: planned_shims,
         item_pass,
         resolved_sources,
         generated,
@@ -302,6 +301,26 @@ fn plan_scope_with_lock_base(
         held,
     };
     report(env, scope, &manifest, lock, options, state, planned)
+}
+
+fn plan_claude_project_defaults(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    config_edits: &mut config_edits::ConfigEditPlan,
+) {
+    if matches!(scope, Scope::Project { .. })
+        && lock
+            .entries
+            .values()
+            .any(|entry| entry.harness == HarnessId::Claude && entry.enabled)
+    {
+        config_edits.push(
+            targets::claude_settings(env, scope),
+            "Claude project defaults".into(),
+            crate::configedit::ConfigEdit::ClaudeProjectDefaults,
+        );
+    }
 }
 
 /// What the passes of [`plan_scope`] planned, beside the desired state,

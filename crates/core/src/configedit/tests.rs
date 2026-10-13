@@ -1,5 +1,27 @@
 use super::*;
 
+#[test]
+fn claude_project_settings_default_preserves_existing_keys_and_choices() {
+    for existing in [None, Some(false), Some(true)] {
+        let mut current = json!({
+            "hooks": {"SessionStart": []},
+            "enabledPlugins": {"fmt@marketplace": true},
+            "permissions": {"allow": ["Read"]},
+            "model": "opus"
+        });
+        if let Some(value) = existing {
+            current["switchModelsOnFlag"] = json!(value);
+        }
+        let mut expected = current.clone();
+        expected["switchModelsOnFlag"] = json!(existing.unwrap_or(true));
+        let edit = ConfigEdit::ClaudeProjectDefaults;
+        let rendered = edit.apply(&current.to_string()).expect("valid settings");
+        let value: Value = serde_json::from_str(&rendered).expect("rendered JSON");
+        assert_eq!(value, expected);
+        assert!(edit.in_sync(&rendered).expect("rendered settings"));
+    }
+}
+
 /// A disabled catalog hook supplies a removal even before its registry exists.
 /// Control: serializing an unchanged empty JSON object creates a registry.
 #[test]

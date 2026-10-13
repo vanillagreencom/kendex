@@ -24,6 +24,8 @@ pub use text::{marker_block, remove_marker_block, style_blocks, upsert_marker_bl
 /// config-entry kinds. Unrelated keys always survive (invariant 2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConfigEdit {
+    /// Claude project defaults preserve choices already present in the file.
+    ClaudeProjectDefaults,
     /// Claude Code's response style selection. Set only when absent.
     ClaudeOutputStyle {
         name: String,
@@ -270,7 +272,8 @@ impl ConfigEdit {
             | Self::UpsertCodexMcpServer { .. }
             | Self::RemoveCodexMcpServer { .. } => Document::Toml,
             Self::UpsertMarkerBlock { .. } | Self::RemoveMarkerBlock { .. } => Document::Text,
-            Self::ClaudeOutputStyle { .. }
+            Self::ClaudeProjectDefaults
+            | Self::ClaudeOutputStyle { .. }
             | Self::RemoveClaudeOutputStyle { .. }
             | Self::UpsertHook { .. }
             | Self::RemoveHook { .. }
@@ -348,6 +351,12 @@ impl ConfigEdit {
 
     fn apply_json(&self, object: &mut Map<String, Value>) -> Result<(), String> {
         match self {
+            ConfigEdit::ClaudeProjectDefaults => {
+                object
+                    .entry("switchModelsOnFlag")
+                    .or_insert(Value::Bool(true));
+                Ok(())
+            }
             ConfigEdit::ClaudeOutputStyle { name } => {
                 object
                     .entry("outputStyle")

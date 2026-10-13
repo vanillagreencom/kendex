@@ -1,0 +1,1 @@
+- Claude project settings enable automatic model switching after a safeguard flag when no existing setting overrides the default.

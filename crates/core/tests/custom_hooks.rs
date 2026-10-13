@@ -190,6 +190,71 @@ fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
+fn claude_project_settings_default_reaches_current_installations_only_in_project_scope() {
+    let hook = "[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"all\"\n";
+    let plugin = "[plugins.\"fmt@marketplace\"]\nenabled = true\nharness = \"claude\"\n";
+    for (harness, global, declaration, existing, expected) in [
+        ("claude", false, hook, None, Some(true)),
+        ("claude", false, plugin, None, Some(true)),
+        ("claude", false, hook, Some(false), Some(false)),
+        ("claude", false, plugin, Some(false), Some(false)),
+        ("claude", true, plugin, None, None),
+        ("codex", false, hook, None, None),
+    ] {
+        let w = world();
+        fs::create_dir_all(w.env.home.join(".claude")).unwrap();
+        fs::create_dir_all(w.project.join(".claude")).unwrap();
+        let scope = if global { Scope::Global } else { scope(&w) };
+        let manifest = kendex_core::manifest::manifest_path(&w.env, &scope);
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(
+            manifest,
+            format!("schema = 7\n[install]\nharnesses = [\"{harness}\"]\n{declaration}"),
+        )
+        .unwrap();
+        let first = audit(&w.env, &scope).unwrap();
+        kendex_core::apply::execute(&w.env, &first.plan).unwrap();
+        let path = match (global, harness) {
+            (true, _) => w.env.home.join(".claude/settings.json"),
+            (false, "codex") => w.project.join(".codex/hooks.json"),
+            (false, _) => w.project.join(".claude/settings.json"),
+        };
+        let mut before: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        before
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("switchModelsOnFlag");
+        before["permissions"] = serde_json::json!({"allow": ["Read"]});
+        before["model"] = serde_json::json!("opus");
+        if let Some(value) = existing {
+            before["switchModelsOnFlag"] = serde_json::json!(value);
+        }
+        fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string_pretty(&before).unwrap()),
+        )
+        .unwrap();
+        let report = audit(&w.env, &scope).unwrap();
+        assert!(report.drift.is_empty(), "{:?}", report.drift);
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
+        let rendered: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(rendered["switchModelsOnFlag"].as_bool(), expected);
+        let mut expected_keys = before;
+        if let Some(value) = expected {
+            expected_keys["switchModelsOnFlag"] = serde_json::json!(value);
+        }
+        assert_eq!(rendered, expected_keys);
+        let clean = audit(&w.env, &scope).unwrap();
+        assert!(clean.plan.ops.iter().all(|op| {
+            !matches!(&op.op, kendex_core::apply::Op::EditFile { path: edited, .. } if edited == &path)
+        }));
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
 fn a_dangerous_command_is_scored_like_a_dangerous_catalog_script() {
     let w = world();
     declare(
