@@ -532,13 +532,21 @@ ROWS
 
 R="$(sk_new_root invalid-age)"
 sk_bind "$R"
+S="$(sk_new_root startup-settings-peer)"
+sk_bind "$S"
+sk_poll "$S"
 printf '[env]\nSLACK_JARVIS_SESSION_MAX_AGE = "invalid"\n' > "$R/kendex.settings.toml"
-sk_run -- listen --once --root "$A" --root "$R"
-assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_JARVIS_SESSION_MAX_AGE=invalid root=$R" \
-  "invalid root age refuses at start and names that root even without a file"
+notice "$S" startup-invalid-age 'Healthy after invalid startup age.'
+sk_run -- listen --once --root "$S" --root "$R"
+assert_eq "$RC=$(count "$(sk_channel "$S")" 'Healthy after invalid startup age.')" "1=1" \
+  "an invalid root age skips that root while the healthy root posts"
+assert_has "$ERR1" "slack: setting-invalid=SLACK_JARVIS_SESSION_MAX_AGE=invalid root=$R" \
+  "the invalid age diagnostic names the refused root even without a file"
 printf '[env]\nSLACK_JARVIS_SESSION_FILE = []\n' > "$R/kendex.settings.toml"
-sk_run -- listen --once --root "$A" --root "$R"
-assert_eq "$RC" "2" "an unreadable root setting refuses startup instead of disabling its hold"
+notice "$S" startup-unreadable-setting 'Healthy after unreadable startup setting.'
+sk_run -- listen --once --root "$S" --root "$R"
+assert_eq "$RC=$(count "$(sk_channel "$S")" 'Healthy after unreadable startup setting.')" "1=1" \
+  "an unreadable root setting skips that root while the healthy root posts"
 assert_has "$ERR1" "slack: setting-invalid=root=$R settings-reader=" "the root settings failure names its root and reader"
 
 # --- changed files update a running relay, without restarting it -------------------
@@ -787,6 +795,7 @@ presence(old, True); setting(old)
 fixture("fault", method="auth.test", status=429, times=1, retry_after=60)
 listener = Relay([root], settings, api, clock=lambda: now)
 relay = listener.roots[0]
+startup_held = RelayLock(root, JARVIS_LOCK).held()
 # Leave a real delivered message without its courtesy mark for the next poll.
 fixture("message", channel=channel, user="U001", text="Hold retry directive.")
 fixture("fault", method="reactions.add", error="not_in_channel", times=1)
@@ -811,15 +820,15 @@ assert listener.poll_once()
 # The final hold survives until this owner exits. Age the current file so the
 # The next shell post can only regain mentions through OS release at exit.
 presence(new, False)
-print("retry-rows=" + json.dumps(rows, separators=(",", ":")))
+print("retry-rows=" + json.dumps([startup_held, rows], separators=(",", ":")))
 PY
 )"; RETRY_RC=$?
   RETRY_ROW="$(printf '%s\n' "$OUT" | sed -n 's/^retry-rows=//p')"
   if [ "$control" = real ]; then
-    assert_eq "$RETRY_RC=$RETRY_ROW" '0=[[true,true,false,1],[true,true,false,1],[true,true,false,1]]' \
-      "$name: startup, retained rename and new holds precede live retries despite stale health"
+    assert_eq "$RETRY_RC=$RETRY_ROW" '0=[true,[[false,true,false,1],[true,true,false,1],[true,true,false,1]]]' \
+      "$name: startup publishes the hold after global authentication; root retries keep it despite stale health"
   else
-    sk_assert_red "$RETRY_RC=$RETRY_ROW" '0=[[true,true,false,1],[true,true,false,1],[true,true,false,1]]' \
+    sk_assert_red "$RETRY_RC=$RETRY_ROW" '0=[true,[[false,true,false,1],[true,true,false,1],[true,true,false,1]]]' \
       "$name: the same retry state table fails without early publication or shared ownership"
   fi
   sk_run -- post --root "$R" --text "Stopped retry $name." --mention
