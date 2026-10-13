@@ -1,1 +1,0 @@
-- Require controls for each independent production check rule in one test contract, with controls ready for the check's first commit.

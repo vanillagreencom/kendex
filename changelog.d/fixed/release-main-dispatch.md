@@ -1,1 +1,0 @@
-- Version releases build a selected merged commit through the reviewed main workflow. Release signing and AUR publication use the main-only environment.

@@ -1,1 +1,0 @@
-- Owner asks can put their action line before a Linear issue's outcome sentence, so the question comment can post on the item again.

@@ -1,1 +1,0 @@
-- Apply the shared must-fail control rule when writing a check, before its first commit.

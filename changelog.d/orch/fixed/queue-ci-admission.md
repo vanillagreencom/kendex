@@ -1,1 +1,0 @@
-- Queue-only pull requests use required merge-group CI for validation when their base requires the merge queue and validation check. This avoids a duplicate local range run.

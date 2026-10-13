@@ -1,1 +1,0 @@
-- A change to `.github/ci-lanes.conf` selects only lanes whose names, claims or queue marks changed. Other paths keep default-branch claims. An unreadable declaration still runs every lane.

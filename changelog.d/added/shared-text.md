@@ -1,1 +1,0 @@
-- A manifest's `[shared-text]` table names a paragraph once, and `{{shared-text:NAME}}` places it in any skill's `[skill-instructions]` entry, so a policy that reaches some skills and not others is written once and edited in one place.

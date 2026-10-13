@@ -1,1 +1,0 @@
-- Jarvis installs its required agents with the skill. Its README lists each shipped part and uses one install command. On first load in a plain folder, Jarvis offers to add its persona to the user's instructions.

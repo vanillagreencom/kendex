@@ -1,1 +1,0 @@
-- Lane stops end harnesses that ignore SIGTERM with SIGKILL after the grace wait. The stop checks process identity again before SIGKILL.

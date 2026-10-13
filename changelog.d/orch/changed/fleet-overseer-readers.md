@@ -1,1 +1,0 @@
-- The orch state schema names the fleet overseer cost meter as a reader of the overseer session rows and of the session record's `exit`, so a change to either tells the fleet overseer first.

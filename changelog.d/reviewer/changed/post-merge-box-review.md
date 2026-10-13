@@ -1,1 +1,0 @@
-- A review raises a post-merge Done-when box that the pull request already proves or whose reason does not qualify for a post-merge check. Completion ticks require cited proof. Unproved checks need a pre-merge test or a correction to their post-merge admission under the existing Disposition rule.

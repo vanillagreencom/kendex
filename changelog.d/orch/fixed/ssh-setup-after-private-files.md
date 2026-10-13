@@ -1,1 +1,0 @@
-- Static SSH hosts run the consumer worktree setup command once after private-file delivery on an existing clone.

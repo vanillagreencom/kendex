@@ -1,1 +1,0 @@
-- A refresh never records a source commit older than the one the project's install record already names for that source. A release build refreshing a project that a main build last refreshed keeps the newer commit, so the refresh changes only renders and `verify --at-record --base` passes.

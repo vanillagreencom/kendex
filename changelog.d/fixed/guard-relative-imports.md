@@ -1,1 +1,0 @@
-- Validation reports missing relative imports as source failures, even when package dependencies are not installed.

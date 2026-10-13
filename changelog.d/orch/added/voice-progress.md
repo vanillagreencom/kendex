@@ -1,1 +1,0 @@
-- Voice requests can carry step reports for Jarvis to speak or hold while the final reply remains pending.

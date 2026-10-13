@@ -1,1 +1,0 @@
-- Reviews apply routed document rules to the behavior a change alters and report missing required work, including controls that prove a test can reject a defect.

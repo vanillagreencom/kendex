@@ -1,1 +1,0 @@
-- `pr-watch.sh` batches the initial pull request read into one GitHub CLI call per repository and one reduction. Extra review thread pages use shared calls for each page depth, so the process count stays independent of the pull request count. Shared page reads check for a changed head. The reducer streams large responses.

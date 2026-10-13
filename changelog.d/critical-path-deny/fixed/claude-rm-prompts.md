@@ -1,1 +1,0 @@
-- Remove the instruction to move a long inline removal script into a file. Claude bypass launches now disable that prompt. The hook still denies remaining critical-path removal prompts and gives their rewrites.

@@ -1,1 +1,0 @@
-- Document the Jarvis update command and its CLI test: refresh updates the rendered skill while preserving your instructions, own skills, memory and state files.

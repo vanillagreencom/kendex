@@ -1,1 +1,0 @@
-- Refuse a second overseer registration while the recorded pane still runs. Allow the recorded pane to register again and keep overseer succession available.

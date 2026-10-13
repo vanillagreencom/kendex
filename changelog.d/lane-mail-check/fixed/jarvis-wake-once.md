@@ -1,1 +1,0 @@
-- A Jarvis session with its wake armed gets each overseer-mailbox message once, in full, from the hook, and the turn end does not hand it again. On Pi, mail the idle-session wake hands over is marked read only once its message is sent, so a send that fails no longer loses it.

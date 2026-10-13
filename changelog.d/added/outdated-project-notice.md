@@ -1,1 +1,0 @@
-- kendex lists projects that have an older `kendex.toml` after a successful run in a terminal, with the command to upgrade each.

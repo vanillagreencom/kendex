@@ -1,1 +1,0 @@
-- Overseer token reads require a private regular file owned by the reader. The parent directory must belong to the reader and deny group and other write permission. Reads are bounded and refusals name the cause. Set token file permissions to `600`.

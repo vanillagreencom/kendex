@@ -1,1 +1,0 @@
-- Consumers check for kendex changes every hour instead of every 6 hours. A `kendex-refresh` dispatch still starts a run at once. Consumers take the new caller through their next refresh.

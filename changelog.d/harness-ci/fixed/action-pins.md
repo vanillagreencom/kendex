@@ -1,1 +1,0 @@
-- Consumer CI templates and wiring examples pin GitHub-owned and third-party actions to full commit SHAs with release-version comments.

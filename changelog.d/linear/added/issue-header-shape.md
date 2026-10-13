@@ -1,1 +1,0 @@
-- `issues create`, `issues update --description` or `--description-file`, and `issues bulk-update --description` refuse a body whose first non-empty line is a `**Key**:` or `Reached by:` header, or that has a header line over 500 characters, naming the line and its length; `LINEAR_REQUIRE_REACH` set empty turns it off with the reach guard.

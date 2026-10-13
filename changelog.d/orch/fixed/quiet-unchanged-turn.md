@@ -1,1 +1,0 @@
-- Unattended lanes update their status file when a wait continues and send notices only when their work changes.

@@ -1,1 +1,0 @@
-- A lane can end a continuing wait after it updates its status file, including a rewrite of the same text. The hook sends no idle notice for that update. A turn with no mail sent and no status update still meets the idle check.

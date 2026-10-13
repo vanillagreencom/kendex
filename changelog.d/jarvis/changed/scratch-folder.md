@@ -1,1 +1,0 @@
-- Jarvis keeps its scratch under `tmp/scratch/`, retained artifacts under `tmp/scratch/retained/`, and its scheduled scratch sweep deletes only there, leaving package state elsewhere under `tmp/` in place.

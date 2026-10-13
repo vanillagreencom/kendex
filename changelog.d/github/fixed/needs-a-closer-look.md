@@ -1,1 +1,0 @@
-- Count Copilot's “Needs a closer look” overview as one review finding that a head-bound Dispositions comment can answer.

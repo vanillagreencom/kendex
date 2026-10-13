@@ -6,6 +6,250 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-10-13
+
+### Added
+
+- Install and apply warn when an agent requires a skill the scope does not install. The warning names the agent and skill and explains how to install the skill or remove the assignment.
+- kendex lists projects that have an older `kendex.toml` after a successful run in a terminal, with the command to upgrade each.
+- A manifest's `[shared-text]` table names a paragraph once, and `{{shared-text:NAME}}` places it in any skill's `[skill-instructions]` entry, so a policy that reaches some skills and not others is written once and edited in one place.
+
+### Changed
+
+- The `fast` model class now renders to Claude's `haiku` alias, Haiku 5.5 on the Anthropic API. It previously rendered `sonnet` with a fallback warning. Runtime selection still excludes Haiku 4.5 and older.
+
+  You do: nothing (migrated on apply).
+
+### Fixed
+
+- Agent links and citations resolve from each harness's installed file, including agents from remote catalogs and captured local forks.
+- Validation reports missing relative imports as source failures, even when package dependencies are not installed.
+- Repository and CI checks warn about Rust formatting, Clippy warnings, and UI style while keeping compile and behavior errors blocking.
+- Signed local bundle instructions use a dedicated signing env file containing only the Tauri signing pair as 1Password references. Release signing stays in CI. Login environments and literal keys in files that skill scripts load are unsupported signing sources.
+- A refresh never records a source commit older than the one the project's install record already names for that source. A release build refreshing a project that a main build last refreshed keeps the newer commit, so the refresh changes only renders and `verify --at-record --base` passes.
+- Version releases build a selected merged commit through the reviewed main workflow. Release signing and AUR publication use the main-only environment.
+- The stable release procedure requires the Jarvis session or owner to move the release's major tag and verify its target after publication, so consumer refresh uses that release. A tag that already names a newer release stays there.
+
+### Packages
+
+#### auditor
+
+- The auditor reads its audit request from the task file its launch names and writes its result to the result file the launch names, so the Jarvis session never reads its transcript.
+
+#### block-argv-kill
+
+- Warn once and allow the shell call when required tools or payload input are unavailable. Keep the existing process-name text refusal.
+
+#### block-bare-cd
+
+- Stop installing bare-cd for Codex and Pi because each shell call starts a fresh process. Missing tools or unreadable payload warn once and allow the call. Keep the existing bare-line and here-document checks on supported harnesses.
+
+#### block-repo-copy
+
+- Warn once and allow the shell call when required tools or payload input are unavailable. Keep the existing repository-copy text refusal.
+
+#### block-unsafe-rm
+
+- Warn once and allow the shell call when required tools or payload input are unavailable. Keep the existing shared-root and empty-variable removal checks.
+
+#### bot-instructions
+
+- Installing bot-instructions into a repository with no `[bot-instructions]` table now succeeds, and verification succeeds with an empty owned-file report. Render and check write no bot files there. Adopt still refuses, and a stranded bot file still fails the orphan check.
+
+#### code-quality
+
+- Require controls for each independent production check rule in one test contract, with controls ready for the check's first commit.
+- Limit environment selection to launches that change identity, credentials or harness home. Use runner-supplied scratch and treat printed header help as CLI documentation.
+
+#### command-safety
+
+- Warn once and allow the shell call when tools, payload, installed settings support or project settings cannot be read, or the deny pattern is invalid or empty. Keep matching raw command text and joined line continuations, including quoted examples. Capture installed support diagnostics below their keyed warning.
+
+#### commit-guards
+
+- Each commit-guards batch run records one row per guard, with its outcome and how long it took, in a log under the repository's git directory.
+
+#### critical-path-deny
+
+- Remove the instruction to move a long inline removal script into a file. Claude bypass launches now disable that prompt. The hook still denies remaining critical-path removal prompts and gives their rewrites.
+
+#### dev
+
+- Apply the shared must-fail control rule when writing a check, before its first commit.
+- A dev round starts its full validation run only after every alone run of a test file it added or changed has passed, so a pending alone run holds the run as a red one does.
+
+#### docs-writing
+
+- Docs-writing adds a reader-and-job test for choosing between skill workflows and references, with a split rule for files that hold both steps and contracts.
+
+#### github
+
+- pr-timeline prints `ci_head_spans`: the start and end of each check run on the final head, including a superseded workflow run's.
+- Pull-request timelines now return the recorded merge route for merge-delay reports.
+- Count Copilot's “Needs a closer look” overview as one review finding that a head-bound Dispositions comment can answer.
+
+#### harness-ci
+
+- Consumer CI templates and wiring examples pin GitHub-owned and third-party actions to full commit SHAs with release-version comments.
+- A change to `.github/ci-lanes.conf` selects only lanes whose names, claims or queue marks changed. Other paths keep default-branch claims. An unreadable declaration still runs every lane.
+- The Dependabot wiring guide ignores kendex workflow and action refs so the kendex refresh route owns their updates.
+
+#### jarvis
+
+- Jarvis builds a report's waiting-on-you list from live sources and lists as landed only merges it read in the session. It reports a fix sent to another owner as sent until it checks the fix where the problem was seen, and repairs the step behind each of its errors. It sweeps unanswered messages at each wake.
+- Jarvis adds a weekly efficiency audit that reads the consumer's own session, overseer and lane records and writes a report with an owner summary of at most 15 lines.
+- Setup workflows guide the assistant and user through connecting Slack, Linear, GitHub and a fleet machine, with protected credentials and a checked connection result.
+- Document the Jarvis update command and its CLI test: refresh updates the rendered skill while preserving your instructions, own skills, memory and state files.
+- The Jarvis efficiency audit reads the commit-guards run log and reports each guard's median seconds, violation rows and confirmed blocks. It lists a guard for redesign or removal only when evidence confirms two blocks in the audit week that found no defect.
+- **Breaking:** Jarvis continuing sessions require tracker access and a user-selected project for session tasks. The handoff keeps only session state in State, Sub-agents, Instructions in force and Progress log. Before replacement, Jarvis confirms that each predecessor record remains in its home and archives the predecessor handoff. Tasks and checks go to the tracker, facts and rulings to memory notes, and open exchanges stay in their mailboxes. A successor reads three short sections before its first decision.
+- Jarvis defines which home files travel between machines and provides a session workflow with a current handoff and an archive.
+
+  You do: move your handoff to state/handoff.md if your home used another path, such as state/delegate/handoff.md.
+- Jarvis installs its required agents with the skill. Its README lists each shipped part and uses one install command. On first load in a plain folder, Jarvis offers to add its persona to the user's instructions.
+- Jarvis installs the mailbox skill for repository questions, notices and answers.
+- Jarvis keeps each memory note under a subject heading and reads only the needed section at the acting step.
+- Jarvis keeps its scratch under `tmp/scratch/`, retained artifacts under `tmp/scratch/retained/`, and its scheduled scratch sweep deletes only there, leaving package state elsewhere under `tmp/` in place.
+- Jarvis treats its authority rules and the pre-handoff progress report as defaults: a dated entry in the user's responsibility map that names the action and quotes the user's words replaces the default for that action.
+- A Jarvis memory note that records a completed change supersedes the prior note in the same write and keeps dated observations and original sources as history.
+- Browser captures use absolute paths under the home's scratch folder.
+
+#### lane-mail-check
+
+- Session mail checks use the mailbox skill beside orchestration.
+- A Jarvis session with its wake armed gets each overseer-mailbox message once, in full, from the hook, and the turn end does not hand it again. On Pi, mail the idle-session wake hands over is marked read only once its message is sent, so a send that fails no longer loses it.
+- A lane can end a continuing wait after it updates its status file, including a rewrite of the same text. The hook sends no idle notice for that update. A turn with no mail sent and no status update still meets the idle check.
+
+#### linear
+
+- `issues create`, `issues update --description` or `--description-file`, and `issues bulk-update --description` refuse a body whose first non-empty line is a `**Key**:` or `Reached by:` header, or that has a header line over 500 characters, naming the line and its length; `LINEAR_REQUIRE_REACH` set empty turns it off with the reach guard.
+- Owner asks can put their action line before a Linear issue's outcome sentence, so the question comment can post on the item again.
+
+#### mailbox
+
+- Use the mailbox skill for repository questions, notices and answers without installing orchestration.
+- Mailbox directives preserve long Slack threads without exceeding the process argument limit. Envelope write failures report the write error and its cause.
+- Item owner asks reach Linear without a team setting. Close retains the applied label for cleanup, and unavailable tracker settings report their cause while the chat ask remains available.
+
+#### operator
+
+- The operator reads its approved step from the task file its launch names and writes its result to the result file the launch names, so the Jarvis session never reads its transcript.
+- Operator captures use absolute paths under the home's scratch folder.
+
+#### orch
+
+- Copilot account records expose the usage response's raw month consumption as `credits_used`. An unavailable value stays null.
+- Long lanes with repeated fixes receive a design review before another patch round. The overseer also reviews a mechanism before filing its second fix in one day.
+- `review-artifact-check` accepts a `perf_qa` `metric_kind: "measure"` with a `name`, a free-text `unit`, numeric `values` and a `samples` count above zero, so byte rates and Criterion means are recorded under their true name and unit instead of outside the block or as a failed measurement.
+- Voice requests can carry step reports for Jarvis to speak or hold while the final reply remains pending.
+- The overseer watch's Verifying pass reads each issue's fields and builds its box results in bulk records, starting about half the processes per pass with the same verdicts, lines and errors.
+- Cycle targets forgive one clean final-head CI run and merge-group CI. Cycle records and progress reports show lane-controlled time beside open-to-merge time, with miss share based on lane-controlled time. Phase reports include work before a pull request opens and exclude forgiven CI. Direct pushes use measured lane time for their verdict. A cycle formatter failure stops report publication.
+- Findings on code from an earlier review fix round reach Step 1's revert rule.
+
+  You do: nothing (migrated on apply)
+- A fix round whose own change brings a new blocker gets one correction past the review cap per pull request; a second such blocker ends the fix rounds in a cut round or a design review.
+- The orch state schema names the fleet overseer cost meter as a reader of the overseer session rows and of the session record's `exit`, so a change to either tells the fleet overseer first.
+- Orch instructions and launch help name the Jarvis session and use Slack's Jarvis session hold settings.
+- Orchestration uses the mailbox skill for message delivery and keeps the former mailbox paths working during consumer migration.
+- Hosted Pi lanes on Anthropic models spend the provider account's API grant with the earliest expiry. The shared cloud and API credit floor now defaults to $10 instead of $0, so Claude cloud grants with $10 or less also refuse launch. Spent, expired and unread grants refuse launch. Excluded grants report no eligible account on fresh and cached readings. API claims leave Claude plan capacity available. Copilot claims use the monthly pool even when an SSH host declares cloud credit. Copilot relaunches count against their monthly pool when usage readings return. Provider account reads have a 30-second default limit to allow the account and API-credit listings to finish.
+- At merge, completion ticks a post-merge box the merged pull request's own tests, CI or diff prove, so the item does not wait in Verifying for it.
+- Validation rounds that reach their time limit retain the selection previewed at start when the log has no valid selection report.
+- oversee-watch prints `security-alerts-unread` only on the long pass whose set of failed reads changes, so a standing failure no longer wakes an overseer following the watch log on every pass.
+- An overseer progress report whose summary has an item line over 20 words, or more item lines than `ORCH_REPORT_SUMMARY_LINES`, is refused before anything is written or sent, so the overseer rewrites it and the owner receives only the short shape.
+- A validation start whose command already passed over the same worktree tree, from the same base and over no fewer changed paths, records that pass instead of running the same lanes again, so a fix round's receipt costs one run per tree.
+- A lane or session launched from a running session clears the parent's session identity on every route, including custom commands in tmux, so the child cannot write the parent's records or answer as the parent. Custom commands keep the pane's configured shell and functions.
+- A lane that restacks once reads `restacks=1` in the lane-long event and in `oversee-report`'s Rounds row, whatever validation route followed the restack: `worktree-push` records each completed restack it reconciles, where the count had read only restacks with a recorded range run or skip.
+- Keep account comparisons unchanged during unmeasured readings, except for expired or retired credentials. The next measured reading reports changes from the saved comparison.
+- Approval request actions read the base, all configured approval requirements and head through REST and request Copilot through REST. GitHub's draft-to-ready operation still requires GraphQL.
+- Claude bypass launches set `CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1` and `CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1` in the launch environment. Lanes, overseers and their subagents can run inline shell removals and recursive removals whose target is command substitution output without these prompts. The inline switch needs Claude Code v2.1.288 or later. Other critical-path checks remain. See [Critical paths](https://code.claude.com/docs/en/permission-modes#critical-paths) and [Environment variables](https://code.claude.com/docs/en/env-vars).
+- Cloud sessions request Copilot when they mark a pull request ready. The landing route requests ready heads whose draft opening skipped the request, without closing and reopening the pull request or repeating a finished error retry.
+- Validation reports unavailable host checks as no-verdict and preserves their cause.
+- Read the Codex launch account from the deepest Codex process. Codex helpers with another home no longer cause a lane mismatch. Codex started on another account still fails the check.
+- Merged hosted Pi lanes close automatically after two watch passes with their worktree and session rows removed.
+- `dev-validate-run --help` no longer says full subsets always keep local execution: under push-first a full request takes CI where the coverage checks pass.
+- **Breaking:** Event blocks print due or overdue verification rows only when their box keys change in the saved `verifying-deadline` row, plus new pull request attention keys. Changes outside those keys wait for the heartbeat, which keeps both full lists.
+- CI completion receipts expand short commit IDs before storage, so valid rounds pass artifact acceptance.
+- `workflow-state update` refuses a filter that yields several JSON values or none, and leaves the state file unchanged, instead of writing that output as the state.
+- Lane stops end harnesses that ignore SIGTERM with SIGKILL after the grace wait. The stop checks process identity again before SIGKILL.
+- Overseer handoffs use State, Sub-agents, Instructions in force and Progress log. Standing procedures, rulings and verification evidence stay in their existing homes.
+- oversee-cycle books a ci_green gap as `ci` only for the time a check run on the final head was in progress. Idle time between check runs records as `wait` and no longer counts toward the CI repeat-miss bar.
+- Overseer registration and launch check the recorded tmux server through its socket. A session on another server cannot replace a live overseer, even when both panes have the same number.
+- Read merged pull requests and releases once per repository in each watch verification pass.
+- Merge-delay misses now name pause holds, merge-group CI or the recorded merge route at every lane tier.
+- Park hosted lanes while they wait for another pull request to merge, and admit queue waits from the lane's checked-out second branch. Resume dependency waits through the existing fleet watch.
+- Overseer pull request attention covers the item repository and `ORCH_CONNECTED_REPOS`. Extra report repositories keep their merge and heartbeat reads.
+- Queue-only pull requests use required merge-group CI for validation when their base requires the merge queue and validation check. This avoids a duplicate local range run.
+- Unattended lanes update their status file when a wait continues and send notices only when their work changes.
+- Refuse a second overseer registration while the recorded pane still runs. Allow the recorded pane to register again and keep overseer succession available.
+- Copilot reviews from before a force push no longer count as reviews of the replacement head. Approval waits request a new review, hold approval until that head is reviewed, and read long pull request timelines without an argument-size error.
+- Static SSH hosts run the consumer worktree setup command once after private-file delivery on an existing clone.
+- Overseer token reads require a private regular file owned by the reader. The parent directory must belong to the reader and deny group and other write permission. Reads are bounded and refusals name the cause. Set token file permissions to `600`.
+
+#### preflight
+
+- Avoid repeated shell statement parsing when the existing fail-open rules cannot report a finding, so large changes with shell tests finish faster.
+- Run ShellCheck over the changed shell files across the available cores with a bounded worker pool to reduce the time for changes with many shell files.
+
+#### project-management
+
+- The issue template's Done-when guidance states when a post-merge box is admitted: a deployment or installation, live use over time, or a person's screen or hands.
+
+#### review-gate
+
+- Consumers check for kendex changes every hour instead of every 6 hours. A `kendex-refresh` dispatch still starts a run at once. Consumers take the new caller through their next refresh.
+- `pr-watch.sh` batches the initial pull request read into one GitHub CLI call per repository and one reduction. Extra review thread pages use shared calls for each page depth, so the process count stays independent of the pull request count. Shared page reads check for a changed head. The reducer streams large responses.
+
+#### reviewer-correctness
+
+- Trace mapped codes, record kinds and nullable fields to their producer lines during correctness review. Report missing mappings and mappings that change a value's meaning.
+
+#### reviewer-read-only
+
+- Warn once and allow a reviewer tool call when required tools, payload or the Git path check are unavailable. Keep the existing edit, write and raw Git-command checks, including refusal of every stash command.
+
+#### reviewer-test
+
+- Review must-fail controls against the shared test contract.
+
+#### reviewer
+
+- A review raises a post-merge Done-when box that the pull request already proves or whose reason does not qualify for a post-merge check. Completion ticks require cited proof. Unproved checks need a pre-merge test or a correction to their post-merge admission under the existing Disposition rule.
+- Reviews apply routed document rules to the behavior a change alters and report missing required work, including controls that prove a test can reject a defect.
+
+#### second-opinion
+
+- Fix false failures in the detached-run tests when worker cleanup is still active. The tests wait for all worker processes to exit before they check the final result.
+
+#### session-start-row
+
+- A session the Jarvis runtime launched records its harness's own session id and, when the harness payload supplies it, its session file in the runtime record's pending row at its start, on Claude Code, Codex, Copilot CLI and Pi, with no orch fleet or overseer mailbox. Other sessions in the same home write nothing there.
+
+#### slack
+
+- The Jarvis session hold uses `SLACK_JARVIS_SESSION_FILE` and `SLACK_JARVIS_SESSION_MAX_AGE`. Status shows `held-by=jarvis`; an unreadable hold file reports `jarvis-session-file-unreadable`. The old `SLACK_MASTER_FILE` and `SLACK_MASTER_MAX_AGE` keys still hold the relay until kendex 2.0.0, with one `setting-renamed` warning per old key and process. The new key takes precedence, including an empty value.
+
+  You do: rename the two keys in kendex.settings.toml before 2.0.0 removes the old ones
+- The Slack relay reads and writes through the mailbox skill.
+- `slack listen --status` reports a root's missing or unreadable binding as `state=failing` with `cause=binding-missing` or `cause=binding-unreadable` and the `slack setup --take CHANNEL --root DIR` fix, whatever the recorded connection.
+- The Slack relay's Jarvis session hold no longer pages the owner for work the session already handles. When `SLACK_JARVIS_SESSION_FILE` moves to a file not yet written, a running relay keeps holding on the replaced file until the new one is fresh or the replaced one stale. At the end of a hold, a seen ask, including a closed ask, at or below the session's `to-overseer.seen` count is journaled as skipped, with no post and no mention, including later overdue reminders and journal replay. Posted unread reserved asks keep their reminders. `slack post --mention` reads the relay's per-root OS hold lock and the current presence file. It posts with no mention during a live hold, including presence-file renames and Slack retries past the health record's expiry, and prints one `mention-held` line on stderr. Process exit releases the relay's hold lock.
+- A Slack thread reply now reaches the session with every owner and app thread message through that reply that the session has not yet received, each with its author and time, in place of a 300-character excerpt of the thread's first message; a successor session receives its unseen thread messages with its first directive, delivery marks survive journal compaction, accepted answers stay excluded without skipping earlier context, and `slack thread` heads each message with its author and UTC time.
+
+#### social-media-content-calendar
+
+- Plan social media campaigns as portable draft calendars with claim checks, asset briefs and recorded approval references.
+
+#### worktree
+
+- Add `WORKTREE_SETUP_CMD` to run a consumer command after a worktree receives its links, copied files, and directories. Create and Codex or Claude setup hooks refuse a failed command and keep the worktree for a retry. Hosted creates run the command on the lane host.
+- The worktree docs and `worktree --help` now say that a pnpm or Next.js project leaves `node_modules` out of `WORKTREE_SYMLINKS` and installs in each worktree, since pnpm (`ERR_PNPM_UNSAFE_MODULES_DIR`) and Turbopack refuse a linked `node_modules` that resolves outside the project root.
+
+#### xcode-run
+
+- The macOS workflow template names the exact release version of its pinned artifact-upload action.
+
+#### youtube-publish
+
+- Draft YouTube uploads, comments and replies. Send each request after the user's recorded approval, with synthetic-content disclosure on uploads.
+
 ## [1.17.0] - 2026-10-11
 
 ### Added
@@ -2776,7 +3020,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.17.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.18.0..HEAD
+[1.18.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.18.0
 [1.17.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.17.0
 [1.16.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.16.0
 [1.15.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.15.0

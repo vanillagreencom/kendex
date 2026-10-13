@@ -1,1 +1,0 @@
-- Agent links and citations resolve from each harness's installed file, including agents from remote catalogs and captured local forks.

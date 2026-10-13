@@ -1,1 +1,0 @@
-- Add `WORKTREE_SETUP_CMD` to run a consumer command after a worktree receives its links, copied files, and directories. Create and Codex or Claude setup hooks refuse a failed command and keep the worktree for a retry. Hosted creates run the command on the lane host.

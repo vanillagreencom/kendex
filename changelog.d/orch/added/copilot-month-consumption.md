@@ -1,1 +1,0 @@
-- Copilot account records expose the usage response's raw month consumption as `credits_used`. An unavailable value stays null.

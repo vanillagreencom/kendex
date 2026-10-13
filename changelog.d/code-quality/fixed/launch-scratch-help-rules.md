@@ -1,1 +1,0 @@
-- Limit environment selection to launches that change identity, credentials or harness home. Use runner-supplied scratch and treat printed header help as CLI documentation.

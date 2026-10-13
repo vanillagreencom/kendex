@@ -1,1 +1,0 @@
-- Browser captures use absolute paths under the home's scratch folder.
