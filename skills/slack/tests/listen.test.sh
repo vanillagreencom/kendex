@@ -298,7 +298,7 @@ assert_eq "$GAP_ID_JOURNAL" "$GAP_ID_BEFORE" "the replayed delivery is journaled
 # --- a second relay on the same checkout is refused ------------------------------------
 sk_relay_start "$ROOT"
 sk_poll "$ROOT"
-assert_eq "$RC=${ERR1%% pid=*}" "1=slack: relay-running=$ROOT" "a held checkout lock skips that root's poll"
+assert_eq "$RC=${ERR1%% pid=*}" "2=slack: relay-running=$ROOT" "a second relay on the checkout is refused by the lock"
 sk_relay_stop
 
 # --- reconnect catch-up does not re-read a thread past SLACK_THREAD_DAYS ---------------

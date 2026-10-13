@@ -1,1 +1,1 @@
-- A root that the Slack relay cannot start or poll skips that poll. Other roots continue. The failed root retries each later poll and recovers without a restart.
+- The Slack relay skips a root after a local start or poll refusal and retries it each later poll. Other roots continue. A held relay lock stops a duplicate relay. Owner messages received while a root is inactive wait for its recovery.

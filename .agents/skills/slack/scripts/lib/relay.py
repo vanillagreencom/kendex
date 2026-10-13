@@ -1095,6 +1095,7 @@ class Relay:
         self.by_channel: Dict[str, RootRelay] = {}
         self.root_errors: Dict[Path, str] = {}
         self.channels: Dict[Path, str] = {}
+        self.waiting_live: Dict[Path, Dict[str, Dict]] = {}
         # Two roots on one channel would each deliver every owner message
         # into their own mailbox and both post there.
         for path in roots:
@@ -1141,6 +1142,7 @@ class Relay:
             return False
         self.roots.append(root)
         self.by_channel[root.channel] = root
+        root.pending_live.update(self.waiting_live.pop(path, {}))
         return True
 
     def poll_once(self) -> bool:
@@ -1181,7 +1183,7 @@ class Relay:
     def root_failed(self, root: Union[Path, RootRelay], err: Exception) -> None:
         """Record one root's failure without letting its status write stop
         other roots. A dead token still stops the shared relay."""
-        if isinstance(err, Refusal) and err.key in ("slack-auth-failed", "root-unbound", "binding-invalid", "channel-shared"):
+        if isinstance(err, Refusal) and err.key in ("slack-auth-failed", "root-unbound", "binding-invalid", "channel-shared", "relay-running"):
             raise err
         path = root if isinstance(root, Path) else root.path
         error = f"{err.key}={err.value}" if isinstance(err, Refusal) else f"{type(err).__name__}: {err}"
@@ -1264,7 +1266,7 @@ class Relay:
         waits for a later poll. The reader stops before the queue is
         delivered, so nothing is acknowledged after; a delivery refused then
         leaves the connection closed for the loop to open again."""
-        if self.socket is None or any(root.pending_live for root in self.roots):
+        if self.socket is None or self.waiting_live or any(root.pending_live for root in self.roots):
             return False
         assert self.reader is not None, "an open connection has a reader"
         self.stop_reader.set()
@@ -1283,7 +1285,7 @@ class Relay:
         self.set_connection("reconnecting")
         for root in self.roots:
             root.journal.append(t="disconnect", at=self.since, reason="reload")
-        return not any(root.pending_live for root in self.roots)
+        return not self.waiting_live and not any(root.pending_live for root in self.roots)
 
     def set_connection(self, connection: str) -> None:
         """The connection state as the next status record shows it; `since`
@@ -1399,7 +1401,14 @@ class Relay:
             return
         event = (envelope.get("payload") or {}).get("event") or {}
         root = self.by_channel.get(str(event.get("channel", "")))
-        if event.get("type") != "message" or root is None:
+        if event.get("type") != "message":
+            return
+        if root is None:
+            path = next((path for path, channel in self.channels.items() if channel == str(event.get("channel", ""))), None)
+            if path is not None:
+                # History cannot recover replies under old parents after
+                # Socket Mode has acknowledged their live events.
+                self.waiting_live.setdefault(path, {})[str(event["ts"])] = event
             return
         try:
             root.on_message(event, self.bot_user)
