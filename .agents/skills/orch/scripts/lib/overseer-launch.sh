@@ -743,15 +743,19 @@ ol_session_start() { # SERVER SESSION
 
 # ol_identity HARNESS ACCOUNT HOME MODEL EFFORT CWD — the launch identity into
 # OL_IDENTITY as the JSON object the record carries, null for each field the
-# launch does not know. ACCOUNT is the account folder a lane pick names and
-# HOME the directory the harness variable carries: the same folder for claude,
+# launch does not know. MODEL uses the launch-choice resolver at this launch.
+# An unresolved alias records null, so a later check cannot treat it as a match.
+# ACCOUNT is the account folder a lane pick names and HOME the directory the
+# harness variable carries: the same folder for claude,
 # and for codex a private CODEX_HOME built under the account where folder
 # trust needed one (lib/lane-home.sh), so both are kept and neither is read
 # back from the other. Returns 1 with jq's words in DEP_ERR.
 OL_IDENTITY=""
 ol_identity() { # HARNESS ACCOUNT HOME MODEL EFFORT CWD
+  local model
+  model="$(launch_choice_model_id "$1" "$4" resolved)" || return 1
   OL_IDENTITY="$(jq -cn --arg harness "$1" --arg account "$2" --arg home "$3" \
-    --arg model "$4" --arg effort "$5" --arg cwd "$6" \
+    --arg model "$model" --arg effort "$5" --arg cwd "$6" \
     "$OL_JQ_DEFS"' $ARGS.named | ol_identity | map_values(if . == "" then null else . end)' 2>"$DEP_ERR")"
 }
 
@@ -977,6 +981,44 @@ ol_session_stop() { # SESSION [SUCCESSOR]
   local args=(--session "$1")
   [[ -z "${2:-}" ]] || args+=(--successor "$2")
   "$SCRIPT_DIR/overseer-host" stop "${args[@]}" >/dev/null 2>"$DEP_ERR"
+}
+
+# The model-switch hook dispatches outside the predecessor's process group.
+# Claim its recorded session before opening an empty recovery slot. Stop the
+# predecessor before any checkout sync, account read or successor preparation.
+# The slot retains the original command for the existing dead-session retry.
+OL_RECOVERY_PANE="" OL_RECOVERY_LINE=""
+ol_model_recovery_begin() { # SERVER PANE EXPECTED_SESSION
+  local start report prior cwd identity anchor window server stop_rc=0
+  OL_RECOVERY_PANE="" OL_RECOVERY_LINE=""
+  start="$(ol_session_start "$1" "$2")" || { OL_REASON=model-recovery-stale; return 2; }
+  report="$("$SCRIPT_DIR/workflow-state" update-report oversee "$OL_JQ_DEFS"'
+      if (.overseer | ol_names($server; $start; $pane))
+         and .overseer.model_check.outcome == "switched"
+         and .overseer.model_check.session_id == $session
+         and .overseer.model_check.recovery == null
+      then .overseer.model_check.recovery = "claimed" | {state: ., report: .overseer}
+      else {state: ., report: null} end' --arg server "$1" --arg start "$start" \
+    --arg pane "$2" --arg session "$3" 2>"$DEP_ERR")" \
+    || { OL_REASON=record-unwritten; return 1; }
+  [[ "$report" != null ]] || { OL_REASON=model-recovery-stale; return 2; }
+  prior="$report" OL_PRIOR="$report"
+  cwd="$(jq -r '.cwd // empty' <<<"$prior" 2>"$DEP_ERR")" || return 1
+  [[ -n "$cwd" ]] || cwd="$PWD"
+  # This command starts no harness. Its shell holds the predecessor's slot.
+  OL_OPEN_OUT="$("$SCRIPT_DIR/overseer-host" create --cwd "$cwd" --name overseer \
+    --after "$2" --line : 2>"$DEP_ERR")" || stop_rc=$?
+  ol_session_from_out
+  anchor="$OL_SESSION" window="$OL_WINDOW" server="$OL_SERVER"
+  if ! ol_session_stop "$2" "$anchor"; then OL_REASON=stop-failed; return 1; fi
+  (( stop_rc == 0 )) && [[ -n "$anchor" && -n "$window" ]] \
+    || { OL_REASON=create-failed; return 1; }
+  identity="$(jq -c "$OL_JQ_DEFS"'ol_identity' <<<"$prior" 2>"$DEP_ERR")" || return 1
+  OL_RECOVERY_LINE="$(jq -r '.launch_line // empty' <<<"$prior" 2>"$DEP_ERR")" || return 1
+  ol_record_write "$OL_RUNTIME" "$anchor" "$window" "$server" "$identity" "$OL_RECOVERY_LINE" \
+    || { OL_REASON=record-unwritten; return 1; }
+  OL_RECOVERY_PANE="$anchor"
+  OL_SESSION="" OL_WINDOW="" OL_SERVER="" OL_OPEN_OUT=""
 }
 
 # ol_session_abandon — the close-out every refusal after `create` takes,

@@ -12,6 +12,13 @@
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
 #   oversee-succeed --walled-pane PANE [--harness H] [--handoff PATH] [--wait-secs N]
 #                   [-- HARNESS_FLAGS...]
+#   oversee-succeed --model-recovery-pane PANE --expected-session SESSION [--wait-secs N]
+#                   [-- HARNESS_FLAGS...]
+#
+#   Model recovery stops the recorded switched session before preparation.
+#   It replays that session's explicit original-model launch line and keeps
+#   its account, effort and permission words. Preference and succession-off
+#   do not govern this recovery. Stale session dispatches launch nothing.
 #
 #   `oversee launch --predecessor` replaces a live overseer through the same
 #   walk, flag assembly and launch steps (lib/overseer-launch.sh), and hands
@@ -488,6 +495,9 @@ message() { # KEY FIELD=VALUE...
     handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. Rewrite it before succession; no successor was launched.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
+    invalid-model-recovery) text='Model recovery needs a tmux pane and the switched session id.' ;;
+    model-recovery-stale) text='The recorded switched session no longer owns this recovery.' ;;
+    model-recovery-failed) text='Model recovery failed. The recorded original launch command remains available for retry.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
     brief-file-unreadable) text='--brief-file must name a readable file.' ;;
     brief-file-empty) text='--brief-file must contain a task, not only whitespace.' ;;
@@ -713,6 +723,8 @@ SUCCESSOR_ACCOUNTS="${ORCH_OVERSEER_SUCCESSOR_ACCOUNTS:-1}"
 HARNESS_FLAGS=()
 DEAD_PANE=""
 WALLED_PANE=""
+MODEL_RECOVERY_PANE=""
+EXPECTED_SESSION=""
 LINE_FILE=""
 PRINT_LINE=0
 ENTRY_ARG=""
@@ -731,7 +743,7 @@ CONTEXT_GIVEN=0
 HARNESS_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry|--brief-file)
+    --handoff|--wait-secs|--dead-pane|--walled-pane|--model-recovery-pane|--expected-session|--line-file|--context|--harness|--entry|--brief-file)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --context) CONTEXT_ARG="$2"; CONTEXT_GIVEN=1 ;;
@@ -742,6 +754,8 @@ while [[ $# -gt 0 ]]; do
         --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
         --dead-pane) DEAD_PANE="$2" ;;
         --walled-pane) WALLED_PANE="$2" ;;
+        --model-recovery-pane) MODEL_RECOVERY_PANE="$2" ;;
+        --expected-session) EXPECTED_SESSION="$2" ;;
         *) LINE_FILE="$2" ;;
       esac
       shift 2
@@ -767,7 +781,13 @@ HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
 #   walled   a lane picked afresh for an overseer whose account is spent, sent
 #            into its window slot; no mark judged and no recorded line read
 MODE=succeed
-if [[ -n "$DEAD_PANE" ]]; then
+if [[ -n "$MODEL_RECOVERY_PANE" ]]; then
+  MODE=model-recovery
+  matches "$MODEL_RECOVERY_PANE" '^%[0-9]+$' && [[ -n "$EXPECTED_SESSION" ]] \
+    || die invalid-model-recovery "pane=$MODEL_RECOVERY_PANE" "session=$EXPECTED_SESSION"
+  [[ -z "$DEAD_PANE$WALLED_PANE$LINE_FILE" && "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 ]] \
+    || die mode-conflict mode=model-recovery
+elif [[ -n "$DEAD_PANE" ]]; then
   MODE=dead
   [[ "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 && -z "$WALLED_PANE" ]] \
     || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "check=$CHECK_MARKS" \
@@ -793,6 +813,7 @@ elif [[ "$PRINT_LINE" -eq 1 ]]; then
 else
   [[ -z "$LINE_FILE" ]] || die mode-conflict "line-file=$LINE_FILE" "dead-pane=none"
 fi
+[[ -z "$EXPECTED_SESSION" || "$MODE" == model-recovery ]] || die mode-conflict expected-session="$EXPECTED_SESSION"
 (( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"
 if (( BRIEF_GIVEN )); then
   [[ "$MODE" == print && "$HANDOFF_GIVEN" -eq 0 ]] \
@@ -830,7 +851,7 @@ fi
 # and a judgement suppressed for the setting is a fleet left unattended in
 # silence. So `check` reads the setting, reports it and judges anyway.
 SUCCESSION=on
-if [[ "$MODE" != print ]]; then
+if [[ "$MODE" != print && "$MODE" != model-recovery ]]; then
   case "${ORCH_OVERSEER_SUCCESSION:-on}" in
     on) ;;
     off) SUCCESSION=off ;;
@@ -871,7 +892,7 @@ fi
 [[ -n "${TMUX:-}" ]] || die tmux-missing var=TMUX
 # A pane of its own replaces the caller's, so only the modes reading the
 # caller's need $TMUX_PANE at all.
-[[ "$MODE" == dead || "$MODE" == walled || -n "${TMUX_PANE:-}" ]] \
+[[ "$MODE" == dead || "$MODE" == walled || "$MODE" == model-recovery || -n "${TMUX_PANE:-}" ]] \
   || die tmux-missing var=TMUX_PANE
 
 # Whether a successor keeps the harness question tool: ORCH_QUESTION_TOOL,
@@ -883,7 +904,7 @@ fi
 # a flag its launch refuses. Read only by the modes that build a line: `dead`
 # sends the line it was handed and `check` launches nothing.
 QUESTION_OFF=()
-if [[ "$MODE" != dead && "$MODE" != check ]]; then
+if [[ "$MODE" != dead && "$MODE" != check && "$MODE" != model-recovery ]]; then
   if ! question_policy="$(launch_overseer_question_tool)"; then
     die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
   fi
@@ -899,6 +920,35 @@ if ! ol_runtime_supported; then
   die launch-failed step=host-resolve
 fi
 
+if [[ "$MODE" == model-recovery ]]; then
+  recovery_server="$(tmux display-message -p -t "$MODEL_RECOVERY_PANE" '#{pid}' 2>"$DEP_ERR")" \
+    || { message model-recovery-stale "pane=$MODEL_RECOVERY_PANE"; exit 0; }
+  recovery_rc=0
+  ol_model_recovery_begin "$recovery_server" "$MODEL_RECOVERY_PANE" "$EXPECTED_SESSION" || recovery_rc=$?
+  case "$recovery_rc" in
+    0) ;;
+    2) message model-recovery-stale "pane=$MODEL_RECOVERY_PANE" "session=$EXPECTED_SESSION"; exit 0 ;;
+    *) die model-recovery-failed "step=$OL_REASON" ;;
+  esac
+  recovery_model="$(jq -r '.model // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+    || die model-recovery-failed step=model-read
+  recovery_harness="$(jq -r '.harness // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+    || die model-recovery-failed step=harness-read
+  line_model="$(launch_choice_launch_model claude "$OL_RECOVERY_LINE")" \
+    || die model-recovery-failed step=line-model
+  recovery_model="$(launch_choice_model_id claude "$recovery_model" resolved)" \
+    || die model-recovery-failed step=model-resolve
+  line_model="$(launch_choice_model_id claude "$line_model" resolved)" \
+    || die model-recovery-failed step=line-resolve
+  [[ "$recovery_harness" == claude && -n "$recovery_model" && -n "$line_model" && "$line_model" == "$recovery_model" ]] \
+    || die model-recovery-failed step=original-model-line
+  LINE_FILE="$(mktemp)" || die model-recovery-failed step=line-file
+  trap 'rm -f -- "$DEP_ERR" "$LINE_FILE"' EXIT
+  printf '%s\n' "$OL_RECOVERY_LINE" > "$LINE_FILE" || die model-recovery-failed step=line-write
+  # Reuse the recorded-line route after the fallback has ended. The record
+  # names the empty slot, so failed verification restores a stopped session.
+  DEAD_PANE="$OL_RECOVERY_PANE" MODE=dead HARNESS_ARG="" HARNESS_FLAGS=()
+fi
 CALLER_PANE="${DEAD_PANE:-${WALLED_PANE:-${TMUX_PANE:-}}}"
 # The caller's window and server are the runtime's `inspect` of its session
 # (lib/overseer-launch.sh § ol_session_inspect), the read the launch and the
@@ -1469,6 +1519,15 @@ if [[ "$MODE" == dead ]]; then
   LANE_FORM=unchecked
   lane_dir=""
   lane_var=CLAUDE_CONFIG_DIR
+  if [[ -n "$MODEL_RECOVERY_PANE" ]]; then
+    lane_dir="$(jq -r '.account // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+      || die model-recovery-failed step=account-read
+    recovery_home="$(jq -r '.home // .account // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+      || die model-recovery-failed step=home-read
+    [[ -n "$lane_dir" && -n "$recovery_home" ]] || die model-recovery-failed step=account-missing
+    LANE_FORM="$(lane_launch_form "$cmd" claude "$recovery_home" "")" \
+      || die model-recovery-failed step=launch-form
+  fi
 else
   # The successor's flag words as argv, from which the command is written in
   # one place below and which the fleet watch restarted from the successor

@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+# Surface: lane-mail-model-switch delivery and lane-mail-check handoff_check.
+# Inputs: hooks/lane-mail-check.sh hooks/lane-mail-model-switch.sh skills/orch/scripts/** skills/mailbox/scripts/** skills/github/scripts/lib/** hooks/tests/lib/lane-mail-world.sh hooks/tests/lib/first-line.sh
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib/lane-mail-world.sh"
+. "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh"
+COMPANION="${COMPANION_UNDER_TEST:-$REPO_ROOT/hooks/lane-mail-model-switch.sh}"
+OWNED_CHILD=""
+cleanup_model_world() {
+  if [[ -n "$OWNED_CHILD" ]]; then kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; fi
+  rm -rf -- "${TMP_ROOT:?}"
+}
+trap cleanup_model_world EXIT
+
+model_world() { # NAME LAUNCHED [broken]
+  new_lane "$1" KEN-3916
+  install_hook "$COMPANION" "${CASE_HOOK%/*}/lane-mail-model-switch.sh"
+  mkdir -p "$LANE/tmp/lane-mail/KEN-3916"
+  rm -- "$LANE/.agents/skills/orch/scripts"
+  cp -R -- "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
+  mkdir -p "$LANE/.agents/skills/github/scripts/lib"
+  cp -- "$REPO_ROOT"/skills/github/scripts/lib/*.sh "$LANE/.agents/skills/github/scripts/lib/"
+  S="$LANE/.agents/skills/orch/scripts"
+  [[ -z "${MODEL_RELAUNCH_UNDER_TEST:-}" ]] || cp -- "$MODEL_RELAUNCH_UNDER_TEST" "$S/lib/lane-relaunch.sh"
+  # Capture only the launch dependency. Recovery itself, process identity,
+  # stop and workflow writes remain production operations.
+  cat >"$S/open-terminal" <<'LAUNCH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "$MODEL_ARGV"
+printf '%s\n' done > "$MODEL_DONE"
+LAUNCH
+  chmod +x "$S/open-terminal"
+  mkdir -p "$TMP_ROOT/bin"
+  cp -- "$(command -v sleep)" "$TMP_ROOT/bin/claude"
+  "$TMP_ROOT/bin/claude" 90 &
+  OWNED_CHILD=$!
+  START=$(lane_process_start "$OWNED_CHILD")
+  "$S/workflow-state" --state-dir "$LANE/tmp" init oversee >/dev/null
+  record=$(jq -nc --arg item KEN-3916 --arg model "$2" --arg cwd "$LANE" \
+    --arg pid "$OWNED_CHILD" --arg start "$START" --arg account "$OFFLINE_HOME" \
+    --arg broken "${3:-}" '{item:$item,harness:"claude",session_id:"s1",model:$model,
+      effort:"high",account:$account,status:"running",tracker:"linear",launched_at:"launch-a",
+      launch:{pid:$pid,start:$start},recovery:(if $broken == "broken" then null else
+      {cwd:$cwd,flags:"--dangerously-skip-permissions --model claude-opus-4-8 --effort high",refresh:false,session:"model-test"} end)}')
+  "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
+  CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" ANTHROPIC_BASE_URL= \
+    ANTHROPIC_DEFAULT_FABLE_MODEL= ANTHROPIC_DEFAULT_OPUS_MODEL= ANTHROPIC_DEFAULT_SONNET_MODEL= ANTHROPIC_DEFAULT_HAIKU_MODEL= \
+    CLAUDE_CODE_USE_BEDROCK= CLAUDE_CODE_USE_VERTEX= CLAUDE_CODE_USE_FOUNDRY= CLAUDE_CODE_USE_MANTLE= \
+    CLAUDE_CODE_USE_ANTHROPIC_AWS= CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=)
+}
+event() { # MODEL [EXTRA JSON]
+  run_payload "$(jq -nc --arg m "$1" --argjson extra "${2:-null}" \
+    '{hook_event_name:"PostModelSwitch",session_id:"s1",to_model:$m} + ($extra // {})')"
+}
+switch_count() { jq '[.fleet_log[]? | select(.kind=="model-switched")] | length' "$LANE/tmp/workflow-state-oversee.json"; }
+await_recovery() {
+  local until_second=$((SECONDS + 15))
+  while [[ ! -f "$LANE/tmp/done" ]]; do
+    [[ "$SECONDS" -lt "$until_second" ]] || return 1
+    sleep 0.05
+  done
+}
+
+echo '=== model outcomes ==='
+while IFS='|' read -r name launched observed outcome cause; do
+  model_world "$name" "$launched"
+  before=$(cat "$LANE/tmp/workflow-state-oversee.json")
+  event "$observed"
+  if [[ "$outcome" == matching ]]; then
+    assert_eq "$(cat "$LANE/tmp/workflow-state-oversee.json")" "$before" "$name leaves fleet state unchanged"
+    assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$name keeps predecessor running"
+  else
+    assert_eq "$(jq -r '.lanes[0].model_check.outcome' "$LANE/tmp/workflow-state-oversee.json")" unavailable "$name records unavailable"
+    assert_eq "$(jq -r '.lanes[0].model_check.cause' "$LANE/tmp/workflow-state-oversee.json")" "$cause" "$name records its cause"
+    assert_eq "$(jq -r '.hookSpecificOutput.hookEventName' "$TMP_ROOT/stdout")" PostModelSwitch "$name reaches model context"
+    event "$observed"
+    assert_eq "$(jq '[.fleet_log[]?|select(.kind=="model-unavailable")]|length' "$LANE/tmp/workflow-state-oversee.json")" 1 "$name reports once"
+    assert_eq "$(cat "$TMP_ROOT/stdout")" '' "$name duplicate has no context notice"
+  fi
+  kill "$OWNED_CHILD" 2>/dev/null || :
+  wait "$OWNED_CHILD" 2>/dev/null || :
+  OWNED_CHILD=""
+done <<'ROWS'
+matching|claude-fable-5-1|claude-fable-5-1|matching|
+equivalent|fable-5-1|claude-fable-5-1|matching|
+family-alias|fable|claude-fable-5-1|unavailable|launch-unresolved
+launch-missing||claude-opus-4-8|unavailable|launch-missing
+launch-alias|best|claude-opus-4-8|unavailable|launch-unresolved
+observed-missing|claude-fable-5-1||unavailable|observed-unread
+ROWS
+
+echo '=== unavailable fleet launch record ==='
+model_world no-fleet-record claude-fable-5-1
+rm -- "$LANE/tmp/workflow-state-oversee.json"
+event claude-opus-4-8
+assert_eq "$(jq -r '.model_checks.s1.outcome' "$LANE/tmp/workflow-state-KEN-3916.json")" unavailable 'an absent fleet record stays unavailable'
+assert_eq "$(jq -r '.model_checks.s1.cause' "$LANE/tmp/workflow-state-KEN-3916.json")" launch-unread 'an absent fleet record names its failed read'
+assert_eq "$(jq -r '.hookSpecificOutput.hookEventName' "$TMP_ROOT/stdout")" PostModelSwitch 'missing launch evidence reaches model context'
+event claude-opus-4-8
+assert_eq "$(cat "$TMP_ROOT/stdout")" '' 'missing fleet record reports once'
+assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'unavailable launch evidence changes no process'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+
+echo '=== recovery stops before preparation ==='
+for preparation in complete broken; do
+  model_world "$preparation" claude-fable-5-1 "$preparation"
+  # Existing emergency state must survive an unpushed round.
+  "$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
+  "$S/workflow-state" --state-dir "$LANE/tmp" update KEN-3916 '.dev_round="unfinished"' >/dev/null
+  "$S/workflow-state" --state-dir "$LANE/tmp" update KEN-3916 \
+    '.child_sessions={runtime:{status:"active",agent_id:"a1"},retired:{status:"closed",agent_id:"a2"}}' >/dev/null
+  "$S/workflow-state" --state-dir "$LANE/tmp" set KEN-3916 handoff '{"remaining":["old"]}' >/dev/null
+  transcript="$LANE/tmp/parent.jsonl"
+  mkdir -p "$LANE/tmp/parent/subagents"
+  : > "$transcript"
+  : > "$LANE/tmp/parent/subagents/agent-a1.jsonl"
+  extra=$(jq -nc --arg t "$transcript" --arg p "$preparation" \
+    '{stop_hook_active:true,transcript_path:$t} + (if $p == "complete" then
+      {background_tasks:[{type:"subagent",id:"a1",status:"running"}]} else {} end)')
+  event claude-opus-4-8 "$extra"
+  assert_eq "$(switch_count)" 1 "$preparation switch is recorded"
+  if [[ "$(switch_count)" == 1 ]]; then
+    if [[ "$preparation" == complete ]]; then
+      await_recovery || FAIL=$((FAIL + 1))
+      assert_eq "$(awk '/^--launch-flags$/{getline;print}' "$LANE/tmp/argv")" \
+        '--dangerously-skip-permissions --model claude-fable-5-1 --effort high' 'replacement keeps permissions and effort'
+    else
+      deadline=$((SECONDS + 15))
+      while ! [[ -f "$LANE/tmp/model-recovery-KEN-3916.log" ]] || \
+        ! rg -q '^lane-relaunch: model-recovery=prepare-failed ' "$LANE/tmp/model-recovery-KEN-3916.log"; do
+        [[ "$SECONDS" -lt "$deadline" ]] || break
+        sleep 0.05
+      done
+    fi
+    state=$(lane_process_state "$OWNED_CHILD")
+    case "$state" in '' | Z) state=gone ;; esac
+    assert_eq "$state" gone "$preparation predecessor has stopped"
+    [[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
+    wait "$OWNED_CHILD" 2>/dev/null || :
+    OWNED_CHILD=""
+    event claude-opus-4-8
+    assert_eq "$(switch_count)" 1 "$preparation repeated delivery writes no second record"
+    assert_eq "$(jq -c '.fleet_log[]|select(.kind=="model-switched")|[.session_id,.launched,.observed,(.at|type)]' "$LANE/tmp/workflow-state-oversee.json")" \
+      '["s1","claude-fable-5-1","claude-opus-4-8","string"]' "$preparation switch has launch, observation and writer time"
+    assert_eq "$(jq -r '.dev_round' "$LANE/tmp/workflow-state-KEN-3916.json")" unfinished "$preparation keeps unfinished round"
+    assert_eq "$(jq -r '.handoff.traps[0]|contains("attached-agent=a1")' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation records unfinished agent"
+    assert_eq "$(jq -r --arg p "$LANE/tmp/parent/subagents/agent-a1.jsonl" '.handoff.traps[0]|contains("output="+$p)' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation keeps known agent output"
+    assert_eq "$(jq -r '.handoff.traps[0]|contains("attached-agent=a2")' "$LANE/tmp/workflow-state-KEN-3916.json")" false "$preparation omits retired agent"
+    assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped "$preparation remains recoverable"
+    if [[ "$preparation" == complete ]]; then
+      # Native resume can retain s1. A later process must get its own action
+      # and evidence, while a duplicate of launch-a remains suppressed.
+      "$TMP_ROOT/bin/claude" 90 &
+      OWNED_CHILD=$!
+      START=$(lane_process_start "$OWNED_CHILD")
+      "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
+        .lanes[0].launch={pid:$pid,start:$start}
+        | .lanes[0].launched_at="launch-b" | .lanes[0].status="running"' \
+        --arg pid "$OWNED_CHILD" --arg start "$START" >/dev/null
+      rm -- "$LANE/tmp/done"
+      event claude-opus-4-8
+      await_recovery || FAIL=$((FAIL + 1))
+      assert_eq "$(switch_count)" 2 'a later launch of the same native session records its switch'
+      assert_eq "$(jq -c '[.fleet_log[]|select(.kind=="model-switched")|.launch_identity.launched_at]' "$LANE/tmp/workflow-state-oversee.json")" \
+        '["launch-a","launch-b"]' 'each affected launch retains its own evidence'
+      state=$(lane_process_state "$OWNED_CHILD")
+      case "$state" in '' | Z) state=gone ;; esac
+      assert_eq "$state" gone 'a later mismatch stops the resumed predecessor'
+      [[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
+      wait "$OWNED_CHILD" 2>/dev/null || :
+      OWNED_CHILD=""
+      event claude-opus-4-8
+      assert_eq "$(switch_count)" 2 'repeated delivery for the resumed launch acts once'
+      # Prune archives old fleet log rows while retaining this lane record.
+      "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.fleet_log=[]' >/dev/null
+      before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+      event claude-opus-4-8
+      assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" 'archived switch history cannot re-arm the current launch'
+    fi
+  fi
+  if [[ -n "$OWNED_CHILD" ]]; then kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""; fi
+done
+
+echo '=== delayed recovery keeps replacements ==='
+model_world retired-callback claude-fable-5-1
+CALL_ENV+=("PATH=$TMUX_BIN:$PATH" TMUX=fake "TMUX_PANE=%old" "TMUX_SERVER_ID=$OVERSEER_SERVER")
+"$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
+  '.lanes[0].launch.pane="%replacement" | .lanes[0].launch.server=$server' --arg server "$OVERSEER_SERVER" >/dev/null
+before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+event claude-opus-4-8
+assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" 'a retired callback cannot borrow a resumed session ID'
+assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'a retired callback leaves the replacement running'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+
+model_world replaced-before-write claude-fable-5-1
+mv -- "$S/workflow-state" "$S/workflow-state.real"
+cat > "$S/workflow-state" <<'STATE'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == --state-dir && "$3" == update-report ]]; then
+  "$0.real" --state-dir "$2" update oversee '.lanes[0].launched_at="launch-b"' >/dev/null
+fi
+exec "$0.real" "$@"
+STATE
+chmod +x "$S/workflow-state"
+event claude-opus-4-8
+assert_eq "$(switch_count)" 0 'a launch replacement before the locked write records no stale switch'
+assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'a stale write cannot dispatch recovery'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+
+for changed in launch session claimed; do
+  model_world "stale-$changed" claude-fable-5-1
+  "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
+    .lanes[0].model_check={session_id:"s1",outcome:"switched"}
+    | if $changed=="launch" then .lanes[0].launched_at="launch-b"
+      elif $changed=="session" then .lanes[0].model_check.session_id="s2"
+      else .lanes[0].model_check.recovery_started=true end' --arg changed "$changed" >/dev/null
+  before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+  status=0
+  env "MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" \
+    "$BASH" "$S/lib/lane-relaunch.sh" model-recovery "$record" "$LANE/tmp" s1 >"$TMP_ROOT/recovery.out" 2>"$ERR_FILE" || status=$?
+  assert_eq "$status" 0 "$changed stale recovery passes without action"
+  assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "$changed stale recovery leaves replacement state"
+  assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$changed stale recovery keeps replacement running"
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+done
+
+echo '=== missing companion judge ==='
+model_world missing-judge claude-fable-5-1
+rm -- "${CASE_HOOK%/*}/lane-mail-check.sh"
+event claude-opus-4-8
+assert_eq "$RC" 0 'an unavailable companion judge keeps the event advisory'
+assert_eq "$(first_line)" - 'an unavailable judge emits no stderr refusal'
+assert_eq "$(sed -n 's/^lane-mail-model-switch: judge=//p' "$TMP_ROOT/stdout")" \
+  "${CASE_HOOK%/*}/lane-mail-check.sh" 'the companion reports its missing judge'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+
+if [[ -z "${MODEL_CONTROL:-}" ]]; then
+  echo '=== must-fail controls ==='
+  for rule in baseline comparison duplicate history callback claim roster unavailable; do
+    control="$TMP_ROOT/control-$rule.sh"
+    if [[ "$rule" == baseline ]]; then
+      git -C "$REPO_ROOT" show b510440e4273d1cd168f381eb3d5b8d8a6aa693e:hooks/lane-mail-check.sh > "$control"
+    else
+      python3 - "$HOOK" "$control" "$rule" <<'CONTROL'
+from pathlib import Path
+import sys
+source, target, rule = sys.argv[1:]
+text = Path(source).read_text()
+old, new = {
+    "comparison": ('elif [ "$launch_id" = "$observed_id" ]; then return 0', 'elif false; then return 0'),
+    "duplicate": ('elif $current.model_check.session_id == $session', 'elif false and $current.model_check.session_id == $session'),
+    "history": ('and $current.model_check.launch_identity == $identity', 'and true'),
+    "callback": ('.launch.pane == $pane and .launch.server == $server', 'true'),
+    "claim": ('or $current.launch != $record.launch or $current.launched_at != $record.launched_at', 'or $current.launch != $record.launch or false'),
+    "roster": ('(.child_sessions // {}) as $children', '{} as $children'),
+    "unavailable": ('if .model_checks[$session] != null then', 'if false then'),
+}[rule]
+assert text.count(old) == 1
+changed = text.replace(old, new)
+assert changed != text
+Path(target).write_text(changed)
+CONTROL
+    fi
+    status=0
+    MODEL_CONTROL=1 HOOK_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/control-$rule.log" 2>&1 || status=$?
+    if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/control-$rule.log"; then
+      assert_eq red red "$rule production control rejects the defect"
+    else
+      assert_eq "$status" red "$rule production control must fail"
+    fi
+  done
+  for rule in stop pin binding; do
+    control="$TMP_ROOT/relaunch-$rule.sh"
+    python3 - "$REPO_ROOT/skills/orch/scripts/lib/lane-relaunch.sh" "$control" "$rule" <<'CONTROL'
+from pathlib import Path
+import sys
+source, target, rule = sys.argv[1:]
+text = Path(source).read_text()
+old, new = {
+    "stop": ('lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {', 'true || {'),
+    "pin": ('if [[ "${5:-}" == model-switched ]]; then', 'if false; then'),
+    "binding": ('[[ "$claim" == true ]] || return 0', ':'),
+}[rule]
+assert text.count(old) == 1
+changed = text.replace(old, new)
+assert changed != text
+Path(target).write_text(changed)
+CONTROL
+    status=0
+    MODEL_CONTROL=1 MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
+    if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/relaunch-$rule.log"; then
+      assert_eq red red "$rule recovery control rejects the defect"
+    else
+      assert_eq "$status" red "$rule recovery control must fail"
+    fi
+  done
+  control="$TMP_ROOT/companion-control.sh"
+  python3 - "$COMPANION" "$control" <<'CONTROL'
+from pathlib import Path
+import sys
+source,target=sys.argv[1:]
+text=Path(source).read_text()
+old='if [[ ! -x "$JUDGE" ]]; then'
+assert text.count(old)==1
+changed=text.replace(old,'if false; then')
+assert changed != text
+Path(target).write_text(changed)
+CONTROL
+  status=0
+  MODEL_CONTROL=1 COMPANION_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" > "$TMP_ROOT/companion-control.log" 2>&1 || status=$?
+  if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/companion-control.log"; then
+    assert_eq red red 'missing judge production control rejects the defect'
+  else
+    assert_eq "$status" red 'missing judge production control must fail'
+  fi
+fi
+printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

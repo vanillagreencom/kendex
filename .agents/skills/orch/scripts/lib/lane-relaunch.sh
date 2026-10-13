@@ -15,8 +15,9 @@
 # and custom commands cannot recover their original permissions, so the watch
 # must refuse before stopping a lane. The host and tracker retain their existing
 # lane-record meanings, including null host meaning local.
-lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
-  local fields item harness flags refresh tracker repo pane rc=0
+lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
+  local fields item harness flags refresh tracker repo pane rc=0 model effort choice
+  local -a words=()
   LANE_RECOVERY_CAUSE=permission-choice-unrecorded
   LANE_RECOVERY_ARGS=() LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
   fields="$(jq -er 'select((.recovery | type) == "object"
@@ -31,6 +32,16 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
     local|claude-cloud|/*) ;;
     *) LANE_RECOVERY_CAUSE=relative-provider-deferred:KEN-3996; return 1 ;;
   esac
+  if [[ "${5:-}" == model-switched ]]; then
+    LANE_RECOVERY_CAUSE=model-unrecorded
+    model="$(jq -er '.model | strings | select(length > 0)' <<<"$1")" || return 1
+    effort="$(jq -r '.effort // ""' <<<"$1")" || return 1
+    [[ -n "$effort" ]] || effort="$(launch_choice_effort "$harness" "$flags")" || return 1
+    read -r -a words <<<"$flags"
+    launch_choice_strip "$harness" ${words[@]+"${words[@]}"} || return 1
+    choice="$(launch_choice_write "$harness" "$model" "$effort")" || return 1
+    flags="${LAUNCH_CHOICE_KEPT[*]+${LAUNCH_CHOICE_KEPT[*]}}${LAUNCH_CHOICE_KEPT[*]:+ }$choice"
+  fi
   LANE_RECOVERY_CAUSE=checkout-unavailable
   LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1
   lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_RECOVERY_HOST" "$LANE_RECOVERY_CWD" || rc=$?
@@ -50,6 +61,53 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
   if [[ "$tracker" == github ]]; then LANE_RECOVERY_ARGS+=("${item#issue-}")
   else LANE_RECOVERY_ARGS+=("$item"); fi
   LANE_RECOVERY_CAUSE=""
+}
+
+# The hook acquires one session's recovery under workflow-state's lock before
+# starting this outside the predecessor's process group. Stop first: checkout,
+# account or launch preparation failure must never keep fallback work alive.
+lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
+  local record="$1" state_dir="$2" scripts="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
+  fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),
+    (.launch.pid // ""), (.launch.start // ""), (.wake.pid // ""),
+    (.wake.start // ""), (.account // "")] | join("\u001f")' <<<"$record")" || return 1
+  IFS=$'\x1f' read -r item host harness pane pid start wake_pid wake_start account <<<"$fields"
+  claim="$("$scripts/workflow-state" --state-dir "$state_dir" update-report oversee '
+    first(.lanes[]? | select(.item == $item)) as $current
+    | if $current.launch != $record.launch or $current.launched_at != $record.launched_at
+        or $current.session_id != $record.session_id or $current.model_check.session_id != $session
+        or $current.model_check.recovery_started == true
+      then {state:.,report:false}
+      else (.lanes[] | select(.item == $item)).model_check.recovery_started = true
+        | {state:.,report:true} end' --arg item "$item" --arg session "$session" --argjson record "$record")" || return 1
+  [[ "$claim" == true ]] || return 0
+  if [[ "$host" == local ]]; then
+    # Older launches recorded the pane but no process identity. Read that
+    # identity once; a stale positive recorded identity never takes this path.
+    if [[ -z "$pid$start" ]]; then
+      pane_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || return 1
+      identity="$(lane_harness_identity "$pane_pid" "$harness")" || return 1
+      pid=${identity%% *} start=${identity#* }
+    fi
+    # Never substitute a pane's new process for this predecessor's identity.
+    lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {
+      printf 'lane-relaunch: model-recovery=stop-failed item=%s cause=%s\n' "$item" "$LANE_STOP_CAUSE" >&2
+      return 1
+    }
+  else
+    out="$(ORCH_LANE_HOST="$host" "$scripts/lane-host" stop --item "$item" --harness "$harness")" || return 1
+    [[ "$out" =~ ^stopped\ item=([^\ ]+)\ processes=([0-9]+)$ && "${BASH_REMATCH[1]}" == "$item" ]] || return 1
+  fi
+  "$scripts/workflow-state" --state-dir "$state_dir" update oversee \
+    '(.lanes[] | select(.item == $item and .launched_at == $launch)) |= (.status = "stopped")' \
+    --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
+  lane_recovery_args "$record" "$account" "$state_dir" "$scripts/open-terminal" model-switched || {
+    printf 'lane-relaunch: model-recovery=prepare-failed item=%s cause=%s\n' "$item" "$LANE_RECOVERY_CAUSE" >&2
+    return 1
+  }
+  export ORCH_TMUX_SESSION="$LANE_RECOVERY_SESSION"
+  cd -- "$LANE_RECOVERY_CWD" || return 1
+  "${LANE_RECOVERY_ARGS[@]}"
 }
 
 # Pi resolves a relative session directory from the process working directory,
@@ -215,6 +273,13 @@ recorded_session_file() { # HARNESS ACCOUNT NATIVE_ID SESSION_FILE
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
+  if [[ "${1:-}" == model-recovery ]]; then
+    scripts="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)" || exit 1
+    . "$scripts/lib/lane-state.sh"
+    . "$scripts/lib/lane-launch.sh"
+    lane_model_recovery "$2" "$3" "$scripts" "$4"
+    exit
+  fi
   LAUNCH_FLAGS="$3" LANE_ENV=""
   LANES_CLI="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)/lanes" || exit 2
   session_file="" lookup_rc=0

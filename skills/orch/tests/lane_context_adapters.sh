@@ -28,6 +28,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # A known managed launch for the ordinary transcript rows. Each configuration
 # row below replaces its own evidence, independent of the developer machine.
 export DISABLE_AUTO_COMPACT=1 DISABLE_COMPACT=0
+unset ANTHROPIC_BASE_URL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_MANTLE CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
 export ORCH_COMPACTION_OVERRIDES='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 export PI_CODING_AGENT_DIR="$TMP_ROOT/pi-reading-agent"
 PI_READ_PROJECT="$TMP_ROOT/pi-reading-project"
@@ -115,6 +117,44 @@ claude-last|opencode||rc=3
 ROWS
 
 echo "=== the claude window table names a model only where its window is established ==="
+echo "=== resolved Claude launch identity ==="
+while IFS='|' read -r model pin want mode; do
+  got="$(env -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_FABLE_MODEL \
+    ANTHROPIC_DEFAULT_SONNET_MODEL="$pin" "$BASH" -euo pipefail -c \
+    '. "$1"; lane_adapter_claude_model_id "$2" "$3"' _ "$LIB" "$model" "${mode:-resolved}")"
+  assert_eq "$got" "$want" "${mode:-resolved} identity $model pin=$pin"
+done <<'ROWS'
+fable-5-1||claude-fable-5-1
+claude-fable-5-1||claude-fable-5-1
+claude-fable-5-1[1m]||claude-fable-5-1
+claude-opus-4-8-20261001||claude-opus-4-8-20261001
+sonnet||claude-sonnet-5-5
+sonnet|claude-sonnet-4-6|claude-sonnet-4-6
+sonnet[1m]|claude-sonnet-4-6|claude-sonnet-4-6
+fable||claude-fable-5-1
+best||
+default||
+opus||claude-opus-5-5
+sonnet|claude-sonnet-4-6||recorded
+fable|||recorded
+fable-5-1||claude-fable-5-1|recorded
+claude-opus-4-8-20261001||claude-opus-4-8-20261001|recorded
+ROWS
+while IFS='|' read -r selector value model pin want; do
+  got="$(env "$selector=$value" ANTHROPIC_DEFAULT_FABLE_MODEL="$pin" "$BASH" -euo pipefail -c \
+    '. "$1"; lane_adapter_claude_model_id "$2" resolved' _ "$LIB" "$model")"
+  assert_eq "$got" "$want" "provider identity $selector=$value model=$model"
+done <<'ROWS'
+CLAUDE_CODE_USE_BEDROCK|1|fable||
+CLAUDE_CODE_USE_VERTEX|true|fable||
+CLAUDE_CODE_USE_FOUNDRY|on|fable||
+CLAUDE_CODE_USE_MANTLE|yes|fable||
+CLAUDE_CODE_USE_ANTHROPIC_AWS|1|fable||
+CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|1|fable||
+ANTHROPIC_BASE_URL|https://gateway.example|fable||
+CLAUDE_CODE_USE_BEDROCK|false|fable||claude-fable-5-1
+CLAUDE_CODE_USE_BEDROCK|1|fable|claude-fable-5|claude-fable-5
+ROWS
 # `model|window|id`: a model, its window, and the id a launch writes for it.
 # claude-sonnet-4-6 runs 200K or, as its [1m] variant, 1M under one id,
 # claude-sonnet-5-1 is a model no row has evidence for, and a bare sonnet or
@@ -123,7 +163,7 @@ while IFS='|' read -r model want id; do
   assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"; lane_adapter_claude_model_id "$2"' _ "$LIB" "$model" | tr '\n' '|')" \
     "${want:+$want|}${id:-$model}|" "claude window of $model: ${want:-none}, written as ${id:-$model}"
 done <<'ROWS'
-fable|1000000
+fable|1000000|claude-fable-5-1
 opus[1m]|1000000
 claude-opus-5-5|1000000
 sonnet||claude-sonnet-5-5
@@ -472,6 +512,20 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   }
   control copilot-share lane-context.sh 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=80' 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=100' \
     'copilot {"session_id":"s1","cwd":"/w","current_tokens":150000'
+  control model-override adapters/claude.sh 'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-}; fallback=claude-sonnet-5-5' 'model=""; fallback=claude-sonnet-5-5' \
+    'resolved identity sonnet pin=claude-sonnet-4-6'
+  control version-identity adapters/claude.sh 'printf '\''%s\n'\'' "$model"' 'printf '\''%s\n'\'' "${model%-20261001}"' \
+    'resolved identity claude-opus-4-8-20261001 pin='
+  control unresolved-model adapters/claude.sh 'case "$model" in claude-*[0-9]*) ;; *) return 0 ;; esac' ':' \
+    'resolved identity best pin='
+  control version-spelling adapters/claude.sh 'model="claude-$model"' ':' \
+    'resolved identity fable-5-1 pin='
+  control capacity-spelling adapters/claude.sh 'case "${2:-}" in resolved | recorded) model=${model%\[1m\]} ;; esac' ':' \
+    'resolved identity claude-fable-5-1[1m] pin='
+  control recorded-alias adapters/claude.sh 'if [[ "${2:-}" == recorded ]]; then' 'if false; then' \
+    'recorded identity sonnet pin=claude-sonnet-4-6'
+  control provider-alias adapters/claude.sh '"$provider_unknown" == false' 'true' \
+    'provider identity CLAUDE_CODE_USE_VERTEX=true model=fable'
   control copilot-floor lane-context.sh '(.token_limit * $pct / 100 | floor | tostring)' '(.token_limit * $pct / 100 | ceil | tostring)' \
     'copilot {"session_id":"s1","cwd":"/w","current_tokens":0'
   control copilot-zero-limit lane-context.sh ' or .token_limit == 0 then' ' then' \
@@ -498,7 +552,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex reads codex-last as'
   control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
     'codex configuration  gives point unresolved'
-  control claude-model-id adapters/claude.sh '    sonnet) printf' '    sonnetx) printf' \
+  control claude-model-id adapters/claude.sh '    sonnet) model=' '    sonnetx) model=' \
     'claude window of sonnet: none, written as claude-sonnet-5-5'
   control claude-window-substring adapters/claude.sh '      ${pair%=*}) printf' '      *${pair%=*}*) printf' \
     'claude window of claude-sonnet-5-1: none'

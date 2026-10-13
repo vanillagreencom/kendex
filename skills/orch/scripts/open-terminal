@@ -1444,7 +1444,8 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
   local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" status="${7:-running}" rec host="" account="" surface=gui report record_repo
-  local running_at=""
+  local running_at="" record_model
+  record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" resolved)" || return 1
   [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
@@ -1462,7 +1463,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   [[ -n "$record_repo" ]] || record_repo="$CONNECTED_REPO"
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
-    --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
+    --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$record_model" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \

@@ -899,6 +899,7 @@
   ".claude/hooks/lane-mail-check.sh",
   ".claude/hooks/lane-mail-deliver.sh",
   ".claude/hooks/lane-mail-halt.sh",
+  ".claude/hooks/lane-mail-model-switch.sh",
   ".claude/hooks/pre-commit-check.sh",
   ".claude/hooks/reviewer-read-only.sh",
   ".claude/hooks/reviewer-stop-check.sh",

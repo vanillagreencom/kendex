@@ -8,7 +8,7 @@
 # safety: Reads the payload, the repository's branch, the lane's launch marker, read with the shell's own `read`, and the lane mailbox directory, and for a session that is no lane the checkout's overseer mailbox and, where a file stands there and the fleet record names this session's pane, the fleet state's path from the identity read, with `workflow-state path oversee` as its fallback and the watch record beside it, read by the orch watch record library `lib/watch-pid.sh` sourced in a child shell from the same install as the mailbox reader, which checks the record's pid with `kill -0` and `ps`; the writes are the mailbox cursor the orch reader advances, the session's context reading, `context.json`, and a Copilot session's compaction flag, `compaction.json`, each renamed into its mailbox directory, and on a Pi lane its turn rows, `session-rows.jsonl`, appended there under that file's own lock at a turn end and at the first tool call of each turn, and for the overseer one row appended to its rows file, `session-<server>-<pane>.jsonl` in the overseer mailbox directory, under that file's own lock, a compact Stop at every overseer turn end, the overseer's directory made where the fleet has not made it yet, the fleet record's `.overseer` server start, harness, launch home and native session id where a record naming this session's pane lacks one, through `workflow-state update oversee`, and after each overseer tool call its `context.json` and, where a gap is told, `tmp/lane-mail/overseer/context-told`, and on Copilot a lead session's empty record under `~/.cache/lane-mail/copilot-leads`, touched at its session start and at each turn end its transcript proves the lead's, with records untouched for 30 days removed by one `find` at each start, as are the extension's pending markers under `~/.cache/lane-mail/copilot-usage`, which a Copilot turn end reads and polls for 5 seconds. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused on every turn, the continued one included, because the flag that marks a continued turn is in the payload none of those refusals reached. A mailbox whose reader is missing or fails is refused on the turns the mailbox check runs, which is every turn end but a continued one; on a continued turn that check is skipped whole, and the same missing reader is reported under `handoff-skipped` or `handoff-outside` and the turn is passed. An item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory are refused on a fresh turn and reported on a continued one and before a tool call, by the one rule the description states; none of them is ever passed in silence. For a lane's handoff marks it also reads the transcript the payload names and runs `orch-env`, `lanes` and `workflow-state` and sources the orch context library from the same install as the mailbox reader, never the open repository's, and on Pi one child shell sourcing that install's `lib/lane-launch.sh` to name the account the session's provider bills; the context reading is the one thing it writes for them. A session that names no lane costs two file tests of the checkout's overseer mailbox; where a file stands there it adds that install's resolution and, inside tmux, the overseer test below, and for the session the record names the identity read's fleet path, one child shell sourcing the watch record library, and the reader's peek where no live watch stands. Outside tmux it costs nothing more, where the overseer test stops at its first condition. After a tool call a lead session with no lane of its own, in tmux, in a checkout with no `tmp/lane-mail/overseer` directory costs one stat more; where that directory stands it pays the overseer test below, and for the overseer one transcript read, one `workflow-state handoff-standing`, one `orch-env` read and one record write, the reads the turn end makes but for the account judgement; the overseer test runs once per call, and the mailbox check takes its answer. Inside tmux the overseer test resolves that install and reads the caller's pane key, the fleet record and the server start in a child shell loading the orch context and overseer launch libraries and their dependencies. A required heal loads `lib/overseer-launch.sh` and its dependencies in a child shell and rechecks the recorded native identity before the state update; a session whose native identity matches a nonempty recorded binding but whose pane the state does not name adds one child shell loading the orch context library, one `git-context` call and one read of the overseer's `context.json`; where that record names this session's pane, it reports `pane-unrecorded` and rewrites that record. Any other unbound caller stops before those context reads and writes. The overseer's own marks are then judged by `oversee-succeed --check-marks` from that same install, under the same 20 second ceiling the lane's account read runs under. That judgement measures the one account the overseer session runs on, through the same `lanes pick --lane` this hook asks about a lane, renewing an expired token in that account's credential file and refreshing that account's usage cache, the writes `lanes` states in its own contract; it opens no window and launches nothing. The context-usage reader first parses the last 1 MiB, and reads the whole file only when that window carries no usage line. When native Claude Stop background_tasks is absent, the Agent-id/status fallback reads complete ordered history; its work grows with transcript size. It runs only under the remaining hook deadline, with three seconds reserved for refusal emission and a one-second kill grace. An unavailable bound, exhausted budget, timeout or failed parse reports agents=unknown and discards partial rows. `lanes pick --lane` judges a Claude lane on its own model, measures one account and renews that account's expired token, the write its own contract states; it can wait on a credentials lock and two network calls, and on a cache miss on the host-wide usage refresh lock for up to 10 seconds and, after a 429 with nothing cached, one sleep of up to 5 seconds and one more usage request, so it runs under a 20 second ceiling that leaves the rest of the run inside this hook's 30 second budget, and a read that reaches the ceiling is reported as a gap rather than refused. Where `timeout` is not installed that read runs unbounded, and a hook the harness then kills at its budget leaves the account unjudged, the same outcome the reported gap gives without the line. Before a tool call it reads `tool_name` or Copilot `toolName`; the question-tool rule and attached-launch check consume that normalized name. For the idle judge at a lane lead's turn end it runs the reader's `events` listing, which moves no cursor, and reads the kind, the box and the halt flag of each envelope, never its text and never the transcript; it reads stat metadata for the fixed regular `tmp/lane-status-<item>.md` file under the lane's launch root, with no symbolic link at the status file itself, and writes that update state beside the count in the lane's `sent-count` record, renamed into its mailbox directory, and the one idle notice the description names, through the reader's `notice`. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
-# requires: [lane-mail-deliver, lane-mail-halt, session-start-row, session-end-row, stop-failure-row, critical-path-deny]
+# requires: [lane-mail-deliver, lane-mail-halt, session-start-row, session-end-row, stop-failure-row, critical-path-deny, lane-mail-model-switch]
 # requires-skills: [orch, mailbox]
 # ---
 
@@ -699,6 +699,10 @@ TRIGGER=${READ%%"$TAB"*}
 READ=${READ#*"$TAB"}
 ACK_BY=${READ%%"$TAB"*}
 PAYLOAD_CWD=${READ#*"$TAB"}
+if [ "$ARM" = stop ] && jq -e '.hook_event_name == "PostModelSwitch"' <<<"$INPUT" >/dev/null; then
+  ARM=model-switch
+  CONTEXT_EVENT=PostModelSwitch
+fi
 # A Copilot call reaches an install that is not Copilot's only through a
 # registration made in `.claude/settings.json` by hand or one kendex wrote
 # before the Copilot skip that no refresh has rewritten; kendex's own current
@@ -1896,7 +1900,7 @@ handoff_instruction() {
 # Stop's task registry is the documented input. Older Claude versions, and
 # an unreachable registry, omit it; only then use the measured Agent-return
 # id and task-notification status lines. No child result body is interpreted.
-claude_attached_agents() {
+claude_attached_agents() { # [emergency STATE_FILE]
   local agents row id status output scan_seconds scan_rc=0
   local scan_bound=()
   AGENT_ROWS=""
@@ -1909,6 +1913,21 @@ claude_attached_agents() {
           and (.status | type) == "string" and (.status | test("^[a-z_]+$")))
         then [.id, .status] | @tsv else error("subagent id or status is invalid") end
     ' <<<"$INPUT" 2>"$WORK_DIR/agents.err") || {
+      AGENT_ROWS="lane-mail-check: agents=unknown$NL$(cat -- "$WORK_DIR/agents.err")"
+      return 0
+    }
+  elif [ "${1:-}" = emergency ]; then
+    # PostModelSwitch does not promise Stop's task registry. A full transcript
+    # scan can delay the emergency stop. Preserve the durable child roster;
+    # output paths still use the same measured layout below.
+    if [ ! -f "${2:-}" ]; then AGENT_ROWS='lane-mail-check: agents=unknown'; return 0; fi
+    agents=$(jq -r '
+      (.child_sessions // {}) as $children
+      | (($children | to_entries | map(select((.value.status // "active") != "closed")
+          | .value.agent_id)) + [(.review_agent_ids // {} | to_entries[]
+          | select(($children[.key].status // "active") != "closed") | .value)])
+      | unique[] | select(type == "string" and length > 0) | [., "running"] | @tsv
+    ' "$2" 2>"$WORK_DIR/agents.err") || {
       AGENT_ROWS="lane-mail-check: agents=unknown$NL$(cat -- "$WORK_DIR/agents.err")"
       return 0
     }
@@ -2881,8 +2900,38 @@ pi_account() {
 # Called plainly, so errexit is live throughout this body: a status left to it
 # would exit the hook with neither 0 nor 2 and end the turn with no mark
 # judged. Every status is therefore tested where it is taken.
+model_unavailable_notice() { # CAUSE OBSERVED
+  local cause="$1" observed="$2" file sd report
+  file=$(cd -- "$ROOT" && "$SCRIPTS/workflow-state" path "$ITEM" 2>"$WORK_DIR/model.err") || {
+    hand_over "lane-mail-check: model-unavailable=$cause"; return 0;
+  }
+  sd=${file%/*}
+  # Reuse the state writer's lock when a launch predates its item state.
+  # Initialize only under that lock so concurrent callbacks cannot erase work.
+  if ! "$BASH" -euo pipefail -c '
+      . "$1/lib/file-lock.sh"
+      mkdir -p -- "$2"
+      (orch_take_lock 200 "$3.lock" 10 || exit 1
+       [[ -f "$3" ]] || "$1/workflow-state" --state-dir "$2" init "$4" --worktree "$5" >/dev/null
+      ) 200>"$3.lock"
+    ' _ "$SCRIPTS" "$sd" "$file" "$ITEM" "$ROOT" 2>"$WORK_DIR/model.err"; then
+    hand_over "lane-mail-check: model-unavailable=$cause$NL$(cat -- "$WORK_DIR/model.err")"
+    return 0
+  fi
+  report=$("$SCRIPTS/workflow-state" --state-dir "$sd" update-report "$ITEM" '
+    if .model_checks[$session] != null then {state:.,report:false}
+    else .model_checks[$session] = {outcome:"unavailable",session_id:$session,
+      launched:null,observed:$observed,cause:$cause,at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}
+      | {state:.,report:true} end' --arg session "$SESSION" --arg observed "$observed" --arg cause "$cause" \
+      2>"$WORK_DIR/model.err") || {
+    hand_over "lane-mail-check: model-unavailable=$cause$NL$(cat -- "$WORK_DIR/model.err")"; return 0;
+  }
+  [ "$report" = true ] || return 0
+  hand_over "lane-mail-check: model-unavailable=$cause"
+}
+
 handoff_check() {
-  [ "$ARM" = stop ] && [ "$CALLER" = lead ] || return 0
+  { [ "$ARM" = stop ] || [ "$ARM" = model-switch ]; } && [ "$CALLER" = lead ] || return 0
   # An install this hook could not find is also what would have established
   # that a session naming no lane item is the overseer, so session_gate passes
   # that session over in silence: a keyed line there would stand on every turn
@@ -2905,6 +2954,113 @@ handoff_check() {
       exit 0
       ;;
   esac
+
+  if [ "$ARM" = model-switch ]; then
+    [ "$HARNESS" = claude ] || return 0
+    local fleet record launched observed launch_id observed_id outcome cause="" report result handoff sd handoff_sd server="" identity
+    observed=$(jq -er '.to_model | strings | select(length > 0)' <<<"$INPUT" 2>/dev/null) || observed=""
+    fleet=$(cd -- "$ROOT" && "$SCRIPTS/workflow-state" path oversee 2>"$WORK_DIR/model.err") || {
+      model_unavailable_notice state-unread "$observed"; return 0;
+    }
+    sd=${fleet%/*}
+    record=$("$SCRIPTS/workflow-state" --state-dir "$sd" get oversee 2>"$WORK_DIR/model.err") || {
+      model_unavailable_notice launch-unread "$observed"; return 0;
+    }
+    record=$(jq -c --arg role "$ROLE" --arg item "$ITEM" \
+      'if $role == "overseer" then .overseer else first(.lanes[]? | select(.item == $item)) end' <<<"$record") || return 0
+    if [ "$record" = null ] || [ -z "$record" ]; then
+      model_unavailable_notice launch-missing "$observed"
+      return 0
+    fi
+    # A delayed event from a replaced session never acts on the replacement.
+    if [ "$ROLE" = lane ] && [ -n "${TMUX_PANE:-}" ]; then
+      server=$(tmux display-message -p '#{pid}' 2>"$WORK_DIR/model.err") || return 0
+    fi
+    if ! jq -e --arg session "$SESSION" --arg role "$ROLE" --arg pane "${TMUX_PANE:-}" --arg server "$server" \
+      --arg key "${CALLER_KEY:-}" --arg start "${CALLER_START:-}" '
+      . != null and $session != "" and
+      ((.session_id // "") == "" or .session_id == $session) and
+      (if $role == "overseer" then
+         ((.server // "") + " " + (.pane // .session // "")) == $key
+         and (.server_start | tostring) == $start
+       else ((.session_id // "") == $session or
+           ((.session_id // "") == "" and $pane != ""))
+         and (if (.launch.pane // "") != "" then
+           .launch.pane == $pane and .launch.server == $server
+           else (.session_id // "") == $session end)
+       end)' <<<"$record" >/dev/null; then
+      return 0
+    fi
+    identity=$(jq -c '{launch,launched_at,server,server_start,pane,generation}' <<<"$record") || return 0
+    launched=$(jq -r '.model // ""' <<<"$record") || return 0
+    if ! "$BASH" -euo pipefail -c '. "$1/lib/lane-launch.sh"' _ "$SCRIPTS" 2>"$WORK_DIR/model.err"; then
+      message model-unavailable adapter-unread "$(cat -- "$WORK_DIR/model.err")"; return 0
+    fi
+    . "$SCRIPTS/lib/lane-launch.sh" 2>"$WORK_DIR/model.err"
+    launch_id=$(launch_choice_model_id claude "$launched" recorded) || launch_id=""
+    observed_id=$(launch_choice_model_id claude "$observed" resolved) || observed_id=""
+    if [ -z "$launched" ]; then cause=launch-missing
+    elif [ -z "$launch_id" ]; then cause=launch-unresolved
+    elif [ -z "$observed_id" ]; then cause=observed-unread
+    elif [ "$launch_id" = "$observed_id" ]; then return 0
+    fi
+    outcome=switched
+    [ -z "$cause" ] || outcome=unavailable
+    report=$("$SCRIPTS/workflow-state" --state-dir "$sd" update-report oversee '
+      (if $role == "overseer" then .overseer else first(.lanes[]? | select(.item == $item)) end) as $current
+      | if $current.session_id != $record.session_id or $current.model != $record.model
+          or $current.launch != $record.launch or $current.launched_at != $record.launched_at
+          or $current.server != $record.server or $current.server_start != $record.server_start
+          or $current.pane != $record.pane or $current.generation != $record.generation
+        then {state: ., report: {result:"stale"}}
+        elif $current.model_check.session_id == $session and $current.model_check.launch_identity == $identity
+          and ($current.model_check.outcome == "switched"
+            or ($outcome == "unavailable" and $current.model_check.outcome == "unavailable"))
+        then {state: ., report: {result:"duplicate"}}
+        else (now | strftime("%Y-%m-%dT%H:%M:%SZ")) as $at
+          | {outcome:$outcome, session_id:$session, launch_identity:$identity,
+             launched:$launched, observed:$observed, at:$at, cause:$cause} as $check
+          | .fleet_log = ((.fleet_log // []) + [$check + {kind:("model-" + $outcome), item:$item, text:("launched=" + $launched + " observed=" + $observed)}])
+          | (if $role == "overseer" then .overseer.model_check = $check
+             else (.lanes[] | select(.item == $item)).model_check = $check end)
+          | {state: ., report: {result:"acquired"}}
+        end' --arg role "$ROLE" --arg item "$ITEM" --arg session "$SESSION" --argjson record "$record" \
+        --arg outcome "$outcome" --arg launched "$launched" --arg observed "$observed" --arg cause "$cause" --argjson identity "$identity" \
+        2>"$WORK_DIR/model.err") || {
+      message model-unavailable record-unwritten "$(cat -- "$WORK_DIR/model.err")"; return 0;
+    }
+    result=$(jq -r '.result' <<<"$report") || return 0
+    [ "$result" = acquired ] || return 0
+    if [ "$outcome" = unavailable ]; then
+      hand_over "lane-mail-check: model-unavailable=$cause"
+      return 0
+    fi
+    handoff_sd=$sd
+    if [ "$ROLE" = lane ]; then
+      handoff_recorded
+      [ -z "$HANDOFF_FILE" ] || handoff_sd=${HANDOFF_FILE%/*}
+    fi
+    claude_attached_agents emergency "$handoff_sd/workflow-state-$ITEM.json"
+    handoff=$(jq -nc --arg branch "$BRANCH" --arg worktree "$ROOT" --arg agents "$AGENT_ROWS" \
+      --arg session "$SESSION" --arg pane "${CALLER_KEY:-}" \
+      '{merged:[],remaining:["Resume durable workflow state after model recovery."],branch:$branch,
+        worktree:$worktree,open_pr:null,traps:[$agents],session_id:$session,pane_key:$pane,cause:"model-switched"}') || return 0
+    # Preserve existing workflow state, including unpushed round work.
+    { [ -f "$handoff_sd/workflow-state-$ITEM.json" ] ||
+      "$SCRIPTS/workflow-state" --state-dir "$handoff_sd" init "$ITEM" --worktree "$ROOT" >/dev/null 2>"$WORK_DIR/model.err"; } &&
+      "$SCRIPTS/workflow-state" --state-dir "$handoff_sd" set "$ITEM" handoff "$handoff" >/dev/null 2>>"$WORK_DIR/model.err" ||
+      message model-handoff unwritten "$(cat -- "$WORK_DIR/model.err")"
+    # Recovery owns the stop and runs outside this hook's process group.
+    if [ "$ROLE" = overseer ]; then
+      lane_run_detached "$sd/model-recovery.log" "$sd/model-recovery.log" \
+        "$SCRIPTS/oversee-succeed" --model-recovery-pane "${CALLER_KEY#* }" --expected-session "$SESSION"
+    else
+      lane_run_detached "$sd/model-recovery-$ITEM.log" "$sd/model-recovery-$ITEM.log" \
+        "$BASH" "$SCRIPTS/lib/lane-relaunch.sh" model-recovery "$record" "$sd" "$SESSION"
+    fi
+    message model-switched "$launched observed=$observed"
+    return 0
+  fi
 
   # A record already standing is the lane handing itself off: it reached its
   # safe point and is exiting, so nothing below may hold it here. Judged
@@ -3245,6 +3401,10 @@ fi
 # The mailbox check decides which mailbox, if any, this session reads; the
 # marks are judged for a lane and for the overseer alike, and decide which of
 # the two this session is themselves.
+if [ "$ARM" = model-switch ]; then
+  handoff_check
+  exit 0
+fi
 if [ "$CONTINUED" = false ]; then
   mail_check
 fi

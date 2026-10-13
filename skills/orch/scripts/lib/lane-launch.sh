@@ -567,8 +567,8 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
 # The model a launch of HARNESS writes for MODEL: a claude alias the adapter
 # maps is written as its id, so no ANTHROPIC_DEFAULT_*_MODEL pin moves the
 # model its window was judged on; every other model as named.
-launch_choice_model_id() { # HARNESS MODEL
-  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}"; else printf '%s\n' "${2:-}"; fi
+launch_choice_model_id() { # HARNESS MODEL [resolved|recorded]
+  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}" "${3:-}"; else printf '%s\n' "${2:-}"; fi
 }
 
 launch_choice_write() { # HARNESS MODEL EFFORT
@@ -1790,22 +1790,28 @@ lane_account_equivalent() { # OBSERVED PICKED
      == "$(lane_claims_canon "$(lane_launch_home_account "$2")")" ]]
 }
 
-# lane_run_detached OUT ERR COMMAND... — COMMAND started so it outlives this
-# script and its terminal, stdin from /dev/null, stdout appended to OUT and
-# stderr to ERR (one path may be both). setsid puts the child in a session of
-# its own, clear of this script's terminal and of a kill of its process group.
-# macOS ships none — it is util-linux — and with stderr redirected the shell's
-# `setsid: command not found` would be swallowed, the launch never made and the
-# caller still saying it had; nohup is what every platform has, and it clears
-# the child of the hangup this script's exit would deliver, though not of a
-# process-group kill. The environment is the caller's own: what a child must
-# not inherit, the caller strips at the head of COMMAND.
+# Recovery must survive a stop of its predecessor's process group. On macOS,
+# the shared GitHub prefix makes a separate group without Bash job control's
+# parent-side setpgid race. It execs COMMAND, preserving the PID in $! for
+# open-terminal's wake record. The caller selects COMMAND's environment.
 lane_run_detached() { # OUT ERR COMMAND...
-  local out="$1" err="$2"
+  local out="$1" err="$2" self="${BASH_SOURCE[0]}" lib
   shift 2
   if command -v setsid >/dev/null 2>&1; then
     setsid "$@" </dev/null >>"$out" 2>>"$err" &
   else
-    nohup "$@" </dev/null >>"$out" 2>>"$err" &
+    case "$self" in */*) ;; *) self="./$self" ;; esac
+    lib="${self%/*}/../../../github/scripts/lib/group-leader.sh"
+    # Bash 3.2 can exit on a missing source even in a checked branch.
+    # shellcheck source=../../../github/scripts/lib/group-leader.sh
+    { [[ -f "$lib" && -r "$lib" ]] && source "$lib"; } || {
+      printf 'lane-launch: detached=group-leader-missing path=%s\n' "$lib" >&2
+      return 2
+    }
+    command -v perl >/dev/null 2>&1 || {
+      printf 'lane-launch: detached=missing-command commands=perl\n' >&2
+      return 2
+    }
+    nohup "${KENDEX_GROUP_LEADER[@]}" "$@" </dev/null >>"$out" 2>>"$err" &
   fi
 }

@@ -652,6 +652,11 @@ enabled = true
 source = "."
 enabled = true
 
+[hooks.lane-mail-model-switch]
+source = "."
+enabled = true
+harnesses = ["claude"]
+
 [hooks.lane-mail-deliver]
 source = "."
 enabled = true

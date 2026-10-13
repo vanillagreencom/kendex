@@ -36,6 +36,7 @@ BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude 
 # the table names, then the question-tool words, ORCH_QUESTION_TOOL being off by
 # default, quoted as the line spells them.
 launch_choice_lead_settings --question-off --model fable claude
+PLAIN_LEAD="${LAUNCH_CHOICE_KEPT[*]}"
 LEAD="$(printf '%q ' "${LAUNCH_CHOICE_KEPT[@]}")"
 LEAD="${LEAD% }"
 # The context reading a turn-end hook records in the overseer mailbox.
@@ -65,7 +66,16 @@ mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
 # A harness stub draws the hint a running turn shows, so a relaunched session
 # reads as working.
 for harness in claude codex pi; do
-  printf '#!/bin/sh\necho "esc to interrupt"\nexec sleep 100000\n' > "$BIN/$harness"
+  cat > "$BIN/$harness" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*|\${CLAUDE_CONFIG_DIR:-}" > "$TMP_ROOT/harness-args"
+if [ -f "$TMP_ROOT/verify-dialog" ]; then
+  echo 'Do you trust the files in this folder?'
+else
+  echo 'esc to interrupt'
+fi
+exec sleep 100000
+STUB
 done
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi"
 # A caller whose foreground process names claude: a copy of sleep, since a
@@ -162,7 +172,7 @@ run_succeed() {
   local lane="$1"
   shift
   case " $* " in
-    *' --check-marks '*|*' --print-launch-line '*|*' --dead-pane '*|*' --walled-pane '*) ;;
+    *' --check-marks '*|*' --print-launch-line '*|*' --dead-pane '*|*' --walled-pane '*|*' --model-recovery-pane '*) ;;
     *) fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" ;;
   esac
   RC=0
@@ -171,6 +181,7 @@ run_succeed() {
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" \
     ORCH_LANES_USAGE_TTL=0 ORCH_OVERSEER_HEADROOM_PCT=5 ORCH_OVERSEER_WALL_MINUTES=0 \
     ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE="${PREFERENCE:-}" "$lane" \
+    ORCH_OVERSEER_SUCCESSION="${SUCCESSION_SETTING:-on}" \
     "${SUCCEED_BIN:-$SUCCEED}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(cat -- "$TMP_ROOT/err")"
 }
@@ -190,6 +201,48 @@ judged() {
 }
 
 echo "=== oversee-succeed: the caller's launch record ==="
+
+# The launch identity constructor uses the same resolver as the command
+# builder. Replay identities remain the evidence stored with the old line.
+identity_row() { # SCRIPTS_DIR HARNESS MODEL FAMILY_OVERRIDE PROVIDER
+  IDENTITY_OUT="$(env -i PATH="$PATH" ANTHROPIC_DEFAULT_FABLE_MODEL="$4" CLAUDE_CODE_USE_BEDROCK="$5" \
+    "$BASH" -c '
+      set -euo pipefail
+      SCRIPT_DIR="$1" DEP_ERR="$2"
+      source "$SCRIPT_DIR/lib/lane-launch.sh"
+      source "$SCRIPT_DIR/lib/overseer-launch.sh"
+      ol_identity "$3" account launch-home "$4" high workdir
+      jq -c "[.model, .effort, .account, .home, .cwd]" <<<"$OL_IDENTITY"
+    ' identity-row "$1" "$TMP_ROOT/identity.err" "$2" "$3")"
+}
+for row in \
+  'claude|fable|||"claude-fable-5-1"' \
+  'claude|opus|||"claude-opus-5-5"' \
+  'claude|fable-5-1|||"claude-fable-5-1"' \
+  'claude|claude-opus-5|||"claude-opus-5"' \
+  'claude|fable|claude-opus-5-5||"claude-opus-5-5"' \
+  'claude|fable||1|null' \
+  'claude|fable|claude-opus-5-5|1|"claude-opus-5-5"' \
+  'codex|gpt-5|||"gpt-5"' \
+  ; do
+  IFS='|' read -r identity_harness identity_model identity_override identity_provider identity_expected <<<"$row"
+  identity_row "$SRC_DIR" "$identity_harness" "$identity_model" "$identity_override" "$identity_provider"
+  assert_eq "$IDENTITY_OUT" "[$identity_expected,\"high\",\"account\",\"launch-home\",\"workdir\"]" \
+    "launch identity records resolved $identity_harness model=$identity_model override=$identity_override provider=$identity_provider"
+done
+IDENTITY_CTL="$(mutant_scripts identityctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$IDENTITY_CTL/lib/overseer-launch.sh" \
+  '  model="$(launch_choice_model_id "$1" "$4" resolved)" || return 1' \
+  '  model="$4"'
+identity_row "$IDENTITY_CTL" claude fable "" ""
+identity_control_rc=0
+(
+  FAIL=0
+  assert_eq "$IDENTITY_OUT" '["claude-fable-5-1","high","account","launch-home","workdir"]' \
+    "launch identity stores the launch-time canonical model"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/identity-control.out" 2>&1 || identity_control_rc=$?
+assert_eq "$identity_control_rc" 1 "control: raw launch-model storage fails the canonical-identity assertion" "$TMP_ROOT/identity-control.out"
 
 # --- the judgement --------------------------------------------------------
 # Each row names every source that disagrees: the context reading in the
@@ -453,7 +506,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=
 # The same pane with a record: the harness, account, model and effort are the
 # record's, the permission word the caller's own flags, and the pending
 # successor changes none of it.
-RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
+RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $LEAD $BYPASS '$BRIEF'"
 for pending in '{}' "$PENDING"; do
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$pending")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
@@ -468,7 +521,7 @@ PAIRCTL="$(mutant_scripts pairctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PAIRCTL/lib/overseer-launch.sh" '  if [[ -z "$model" && -z "$effort" ]]; then' '  if true; then'
 state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
-assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
 
 # A pi overseer's line: its model and level words, its question-tool words and
@@ -665,7 +718,9 @@ for row in \
     "0|claude $row_account $row_model $row_effort none" \
     "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
   print_on_successor
-  assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $row_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
+  print_model="$row_model"
+  [[ "$print_model" != fable ]] || print_model=claude-fable-5-1
+  assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $print_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
     "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
 done
 # The control: a relaunch that records no identity leaves its session's print
@@ -715,14 +770,14 @@ STUB
 reading "Fable 5.1"
   CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
-  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:claude-fable-5-2:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
   SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
   SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
 }
-SUCC_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
+SUCC_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-2 --effort low $LEAD $BYPASS '$BRIEF'"
 pending_run "$(mutant_scripts pendingrun)"
 assert_eq "$RC|$(jq -r '.pending | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' <<<"$SNAP")" \
-  "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
+  "0|$SUCC_LINE|claude|$H/.claude|claude-fable-5-2|low|$RECORDED_CWD" \
   "a succession writes its successor's line and identity as pending before the window opens" "$TMP_ROOT/err"
 assert_eq "$(jq -r '[.account, .model, .launch_line] | join("|")' <<<"$SNAP")" "$H/.eclaude|fable|recorded" \
   "and leaves the caller's own account, model and line as they were"
@@ -757,7 +812,7 @@ STUB
   new_caller claude
   reading "Fable 5.1"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
-  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:claude-fable-5-2:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
   CALLER_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$CALLER_PANE" || true)"
 }
 recordfail_run "$(mutant_scripts recordfail)"
@@ -769,6 +824,154 @@ mutate_file "$RECNOTICECTL/oversee-succeed" '      message record-unwritten fiel
 recordfail_run "$RECNOTICECTL"
 assert_eq "$RC|$CALLER_LISTED" "1|1" \
   "control: a hook that refuses on the failed record write keeps the caller running"
+
+# --- fixed original-model recovery ---------------------------------------
+# The hook writes model_check before detached dispatch. The production
+# launcher owns claiming, termination, replay, verification and rollback.
+recovery_row() { # SCRIPTS_DIR success|dialog|missing-model
+  local dir="$1" outcome="$2" original extra
+  rm -f -- "$TMP_ROOT/verify-dialog" "$TMP_ROOT/harness-args"
+  new_caller claude
+  state "$(record "$CALLER_PANE" "$H/.eclaude" claude-fable-5-1 "$PENDING")"
+  run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
+  [[ "$RC" == 0 ]] || { cat -- "$TMP_ROOT/err" >&2; return 1; }
+  original="$OUT"
+  original="${original/ --model claude-fable-5-1 / --model fable-5-1 }"
+  [[ "$outcome" != missing-model ]] || original='claude -n overseer --effort high'
+  extra="$(jq -cn --arg line "$original" --argjson pending "$PENDING" '$pending + {
+    launch_line: $line,
+    model_check: {outcome: "switched", session_id: "switched-session", launched: "claude-fable-5-1", observed: "claude-opus-5"}}')"
+  state "$(record "$CALLER_PANE" "$H/.eclaude" claude-fable-5-1 "$extra")"
+  ORIGINAL_LINE="$original" ORIGINAL_PANE="$CALLER_PANE"
+  [[ "$outcome" != dialog ]] || touch "$TMP_ROOT/verify-dialog"
+  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:claude-fable-5-2:low SUCCESSION_SETTING=off \
+    run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --model-recovery-pane "$ORIGINAL_PANE" \
+      --expected-session switched-session --wait-secs 2 --harness codex -- --model opus --effort low
+  RECOVERY_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
+  ORIGINAL_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$ORIGINAL_PANE" || true)"
+}
+RECOVERY_DIR="$(mutant_scripts recoveryrow)" || exit 1
+recovery_row "$RECOVERY_DIR" success
+assert_eq "$RC|$ORIGINAL_LISTED|$(jq -r '.overseer | [.harness, .account, .model, .effort, .launch_line] | join("|")' "$FLEET_STATE")" \
+  "0|0|claude|$H/.eclaude|claude-fable-5-1|high|$ORIGINAL_LINE" \
+  "model recovery stops the predecessor and replays its recorded account, model, effort and permission words with succession off" "$TMP_ROOT/err"
+assert_eq "$(cat -- "$TMP_ROOT/harness-args")" \
+  "-n overseer --model fable-5-1 --effort high $PLAIN_LEAD $BYPASS $BRIEF|$H/.eclaude" \
+  "the actual successor receives the original launch arguments despite conflicting preferences, pending identity and caller flags"
+BEFORE_DUPLICATE="$(jq -c .overseer "$FLEET_STATE")"
+run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --model-recovery-pane "$ORIGINAL_PANE" --expected-session switched-session
+assert_eq "$RC|$(jq -c .overseer "$FLEET_STATE")|$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$RECOVERY_PANE" || true)" \
+  "0|$BEFORE_DUPLICATE|1" "a stale predecessor dispatch leaves its successor alive and its launch record unchanged" "$TMP_ROOT/err"
+
+stale_recovery_row() { # SCRIPTS_DIR [SESSION] [RECOVERY]
+  local dir="$1" extra
+  new_caller claude
+  extra="$(jq -cn --arg line "$ORIGINAL_LINE" --arg session "${2:-replacement-session}" --arg recovery "${3:-}" '{launch_line: $line,
+    model_check: ({outcome: "switched", session_id: $session, launched: "claude-fable-5-1", observed: "claude-opus-5"}
+      + (if $recovery == "" then {} else {recovery: $recovery} end))}')"
+  state "$(record "$CALLER_PANE" "$H/.eclaude" claude-fable-5-1 "$extra")"
+  BEFORE_STALE="$(jq -c .overseer "$FLEET_STATE")"
+  SUCCEED_BIN="$dir/oversee-succeed" SUCCESSION_SETTING=off run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" \
+    --model-recovery-pane "$CALLER_PANE" --expected-session switched-session --wait-secs 2
+  AFTER_STALE="$(jq -c .overseer "$FLEET_STATE")"
+  STALE_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$CALLER_PANE" || true)"
+}
+stale_recovery_row "$RECOVERY_DIR"
+assert_eq "$RC|$AFTER_STALE|$STALE_LISTED" "0|$BEFORE_STALE|1" \
+  "a stale session id cannot stop a replacement in the same pane" "$TMP_ROOT/err"
+RECOVERY_SESSION_CTL="$(mutant_scripts recoverysessionctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$RECOVERY_SESSION_CTL/lib/overseer-launch.sh" \
+  '         and .overseer.model_check.session_id == $session' \
+  '         and ($session != "")'
+stale_recovery_row "$RECOVERY_SESSION_CTL"
+control_rc=0
+(
+  FAIL=0
+  assert_eq "$RC|$AFTER_STALE|$STALE_LISTED" "0|$BEFORE_STALE|1" "session-bound dispatch keeps a replacement alive"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/recovery-session-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control: omitted expected-session binding fails the replacement-session assertion" "$TMP_ROOT/recovery-session-control.out"
+stale_recovery_row "$RECOVERY_DIR" switched-session claimed
+assert_eq "$RC|$AFTER_STALE|$STALE_LISTED" "0|$BEFORE_STALE|1" \
+  "a duplicate dispatcher cannot acquire an already claimed recovery" "$TMP_ROOT/err"
+RECOVERY_CLAIM_CTL="$(mutant_scripts recoveryclaimctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$RECOVERY_CLAIM_CTL/lib/overseer-launch.sh" \
+  '         and .overseer.model_check.recovery == null' \
+  '         and (.overseer.model_check.recovery | type == "string" or . == null)'
+stale_recovery_row "$RECOVERY_CLAIM_CTL" switched-session claimed
+control_rc=0
+(
+  FAIL=0
+  assert_eq "$RC|$AFTER_STALE|$STALE_LISTED" "0|$BEFORE_STALE|1" "recovery is acquired once per switched session"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/recovery-claim-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control: omitted recovery claim fails the duplicate-dispatch assertion" "$TMP_ROOT/recovery-claim-control.out"
+
+for outcome in dialog missing-model; do
+  recovery_row "$RECOVERY_DIR" "$outcome"
+  assert_eq "$RC|$ORIGINAL_LISTED|$(jq -r '.overseer | [.model, .effort, .launch_line] | join("|")' "$FLEET_STATE")" \
+    "1|0|claude-fable-5-1|high|$ORIGINAL_LINE" \
+    "failed $outcome recovery leaves the fallback stopped and retains the original-model record" "$TMP_ROOT/err"
+  assert_eq "$(tm display-message -p -t "$RECOVERY_PANE" '#{pane_current_command}')" sh \
+    "failed $outcome recovery retains an empty shell for dead-session retry"
+done
+rm -f -- "$TMP_ROOT/verify-dialog"
+
+# Each rule's control drives the production entry point in a private tree.
+RECOVERY_OFF_CTL="$(mutant_scripts recoveryoffctl oversee-succeed)" || exit 1
+mutate_file "$RECOVERY_OFF_CTL/oversee-succeed" \
+  'if [[ "$MODE" != print && "$MODE" != model-recovery ]]; then' \
+  'if [[ "$MODE" != print ]]; then'
+recovery_row "$RECOVERY_OFF_CTL" success
+control_rc=0
+(
+  FAIL=0
+  assert_eq "$RC|$ORIGINAL_LISTED" "0|0" "model recovery runs with ordinary succession off"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/recovery-off-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control: ordinary succession-off routing fails the predecessor-stop assertion" "$TMP_ROOT/recovery-off-control.out"
+
+RECOVERY_MODEL_CTL="$(mutant_scripts recoverymodelctl oversee-succeed)" || exit 1
+mutate_file "$RECOVERY_MODEL_CTL/oversee-succeed" \
+  '  [[ "$recovery_harness" == claude && -n "$recovery_model" && -n "$line_model" && "$line_model" == "$recovery_model" ]] \' \
+  '  [[ "$recovery_harness" == claude && -n "$recovery_model" && -n "$line_model" && "$line_model" == "$recovery_model" ]] || true \'
+recovery_row "$RECOVERY_MODEL_CTL" missing-model
+control_rc=0
+(
+  FAIL=0
+  assert_eq "$RC|$ORIGINAL_LISTED" "1|0" "recovery requires an explicit original model after stopping fallback"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/recovery-model-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control: omitted original-model validation fails the missing-model assertion" "$TMP_ROOT/recovery-model-control.out"
+
+# Restoring ordinary preference selection chooses a different model/account.
+RECOVERY_PREF_CTL="$(mutant_scripts recoveryprefctl oversee-succeed)" || exit 1
+mutate_file "$RECOVERY_PREF_CTL/oversee-succeed" \
+  '  DEAD_PANE="$OL_RECOVERY_PANE" MODE=dead HARNESS_ARG="" HARNESS_FLAGS=()' \
+  '  WALLED_PANE="$OL_RECOVERY_PANE" MODE=walled LINE_FILE="" HARNESS_ARG="" HARNESS_FLAGS=()'
+recovery_row "$RECOVERY_PREF_CTL" success
+control_rc=0
+(
+  FAIL=0
+  assert_eq "$RC|$(jq -r '.overseer | [.account, .model, .effort, .launch_line] | join("|")' "$FLEET_STATE")" \
+    "0|$H/.eclaude|claude-fable-5-1|high|$ORIGINAL_LINE" "fixed recovery bypasses preference walking"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/recovery-preference-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control: ordinary preference walking fails the recorded-launch assertion" "$TMP_ROOT/recovery-preference-control.out"
+
+RECOVERY_STOP_CTL="$(mutant_scripts recoverystopctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$RECOVERY_STOP_CTL/lib/overseer-launch.sh" \
+  '  if ! ol_session_stop "$2" "$anchor"; then OL_REASON=stop-failed; return 1; fi' \
+  '  if false; then ol_session_stop "$2" "$anchor"; OL_REASON=stop-failed; return 1; fi'
+recovery_row "$RECOVERY_STOP_CTL" dialog
+control_rc=0
+(
+  FAIL=0
+  assert_eq "$RC|$ORIGINAL_LISTED" "1|0" "failed verification keeps fallback stopped"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/recovery-stop-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control: omitted predecessor stop fails the failed-verification assertion" "$TMP_ROOT/recovery-stop-control.out"
+rm -f -- "$TMP_ROOT/verify-dialog"
 
 # --- the succession -------------------------------------------------------
 # A live succession judges the account and model its record names: .eclaude at

@@ -42,14 +42,47 @@ lane_adapter_claude_window() { # MODEL
 }
 
 # lane_adapter_claude_model_id MODEL — the model id a launch writes for MODEL:
-# the one the `sonnet` or `haiku` alias resolves to on the first-party API, and
-# MODEL itself for any other spelling.
-lane_adapter_claude_model_id() { # MODEL
-  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    sonnet) printf '%s\n' claude-sonnet-5-5 ;;
-    haiku) printf '%s\n' claude-haiku-4-5 ;;
-    *) printf '%s\n' "${1:-}" ;;
+# Aliases use their launch-time family override. Explicit versions retain all
+# their version fields. The recorded form never resolves a historical family
+# alias through the current environment.
+lane_adapter_claude_model_id() { # MODEL [resolved|recorded]
+  local model fallback="" provider_unknown=false provider_flag
+  model="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" || return 1
+  case "${2:-}" in resolved | recorded) model=${model%\[1m\]} ;; esac
+  # Historical records cannot recover the environment that resolved an alias.
+  # Only launch writers may consult family overrides.
+  if [[ "${2:-}" == recorded ]]; then
+    case "$model" in sonnet | haiku | opus | fable) return 0 ;; esac
+  fi
+  case "$model" in
+    sonnet) model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-}; fallback=claude-sonnet-5-5 ;;
+    haiku) model=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}; fallback=claude-haiku-4-5 ;;
+    opus) model=${ANTHROPIC_DEFAULT_OPUS_MODEL:-}; fallback=claude-opus-5-5 ;;
+    fable) model=${ANTHROPIC_DEFAULT_FABLE_MODEL:-}; fallback=claude-fable-5-1 ;;
+    fable-[0-9]* | opus-[0-9]* | sonnet-[0-9]* | haiku-[0-9]*) model="claude-$model" ;;
   esac
+  if [[ -z "$model" && -n "$fallback" ]]; then
+    # Pin first-party launches before native fallback can change the session.
+    # Provider and gateway aliases have different defaults and need an
+    # explicit family override: https://code.claude.com/docs/en/model-config.
+    for provider_flag in "${CLAUDE_CODE_USE_BEDROCK:-}" "${CLAUDE_CODE_USE_VERTEX:-}" \
+      "${CLAUDE_CODE_USE_FOUNDRY:-}" "${CLAUDE_CODE_USE_MANTLE:-}" "${CLAUDE_CODE_USE_ANTHROPIC_AWS:-}"; do
+      provider_flag="$(printf '%s' "$provider_flag" | tr '[:upper:]' '[:lower:]')" || return 1
+      case "$provider_flag" in '' | 0 | false | no | off) ;; *) provider_unknown=true ;; esac
+    done
+    if [[ "$provider_unknown" == false && -z "${CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST:-}" && -z "${ANTHROPIC_BASE_URL:-}" ]]; then
+      model=$fallback
+    fi
+  fi
+  # PostModelSwitch supplies a canonical id. Unresolved launch aliases and
+  # provider-selected defaults cannot establish equality with that id.
+  if [[ "${2:-}" == resolved || "${2:-}" == recorded ]]; then
+    case "$model" in claude-*[0-9]*) ;; *) return 0 ;; esac
+    [[ "$model" != *[[:space:]]* ]] || return 0
+  elif [[ -z "$model" ]]; then
+    model=${1:-}
+  fi
+  printf '%s\n' "$model"
 }
 
 # One reading from a Claude Code transcript on stdin: `<tokens>\t<window>\t<model>`

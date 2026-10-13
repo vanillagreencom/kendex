@@ -17,6 +17,8 @@
 # stub harnesses, which show that the start brief runs in the same call.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+unset ANTHROPIC_BASE_URL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_MANTLE CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
 export ORCH_LANE_HOST=local ORCH_OVERSEER_LANES=1000
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_COPILOT_POOL ORCH_LANES_USAGE_TTL CODEX_HOME
 unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_URL
@@ -91,7 +93,7 @@ RUN_SEQ=0
 # OUT, RC and RUN.
 RUN_ENV=() RUN_ARGS=() SEED_LANES='[]' SELECT_KIND=- HANDOFF_CASE=neutral RUN_CMD="" REQUIRE_PREPARED=false
 run_ot() {
-  local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}" lane=work pool=""
+  local recorded="$1" screen="$2" harness="$3" flags="${4:---model opus --effort high}" prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
   if [[ "$harness" == pi ]]; then
     flags='--model github-copilot/claude-sonnet-5 --thinking high'
@@ -310,6 +312,12 @@ assert_eq "rc=$RC unrecorded=$(said '^open-terminal: record-write-failed item=KE
   "a relaunch that took and could not be recorded keeps its window and its record"
 
 echo "=== a relaunch across a harness switch renders the start brief alone ==="
+run_ot claude "$HARNESS_SCREEN" claude '--model fable --effort high'
+assert_eq "$(replay 1)" 'continue,fresh' 'a recorded-model resume retains its fresh fallback'
+assert_eq "$(grep -c -- '--model claude-fable-5-1' "$RUN/claude.log")" 2 \
+  'native resume and fresh fallback both receive the explicit launched model'
+assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].model')" \
+  claude-fable-5-1 'the lane launch records canonical identity before a family override can change'
 run_ot codex "$HARNESS_SCREEN" claude
 assert_eq "rc=$RC switched=$(said '^open-terminal: harness-switched item=KEN-1 harness=claude recorded=codex') continue=$(remote | grep -c -- '--continue') fresh=$(remote | grep -c "exec claude -n KEN-1 .*/orch start KEN-1")" \
   "rc=0 switched=1 continue=0 fresh=1" \
@@ -517,6 +525,15 @@ control switch '"$LANE_RECORD_VALUE" != "$HARNESS" ]]' '"$LANE_RECORD_VALUE" == 
 run_ot codex "$HARNESS_SCREEN" claude
 assert_eq "continue=$(remote | grep -c -- '--continue') launched=$(launched)" "continue=1 launched=1" \
   "control: without the switch check a codex record's claude relaunch renders --continue"
+control model-pin 'claude %s--continue' 'claude %0.s--continue'
+run_ot claude "$HARNESS_SCREEN" claude '--model claude-fable-5-1 --effort high'
+replay 1 >/dev/null
+assert_eq "$(grep -c -- '--model claude-fable-5-1' "$RUN/claude.log")" 1 \
+  'control: removing resume flags rejects the required two launched-model invocations'
+control record-model '--arg model "$record_model"' '--arg model "$LAUNCH_MODEL"'
+run_ot claude "$HARNESS_SCREEN" claude '--model fable --effort high'
+assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].model')" fable \
+  'control: retaining an alias rejects the canonical launch identity requirement'
 control fallback "|| [ \$? -ne 1 ] || exec %s\\n' \"\$flags\" \"\$line\" \"\$fresh\"" "\\n' \"\$flags\" \"\$line\""
 run_ot claude "$HARNESS_SCREEN" claude
 assert_eq "$(replay 1)" "continue" "control: without the fallback a --continue that finds no session runs nothing after it"
