@@ -128,8 +128,7 @@ jobs:
               git fetch --no-tags origin "refs/pull/$REQUESTED_PR/head"
               git rev-parse --verify --end-of-options "${collation_commit}^{commit}" > /dev/null
               skills/commit-guards/scripts/changelog-entries --collated "$collation_commit"
-              previous_tag=$(tools/release-previous-tag)
-              skills/commit-guards/scripts/changelog-entries --release "$source_commit" --against "$previous_tag"
+              skills/commit-guards/scripts/changelog-entries --release "$source_commit"
               release_tag="$REQUESTED_TAG"
               ;;
             *) echo "::error::release-source: event=$EVENT_NAME"; echo "This event cannot select a release source."; exit 1 ;;

@@ -457,8 +457,8 @@ for row in \
   "package-pending-breaking|packages/a/package.json|1.9.0|1.9.1||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n\n### 1.9.1\n\n- Fix a typo.\n||patch-breaking||packages/a/CHANGELOG.md:major" \
   "package-historical-pending-breaking|packages/a/package.json|1.9.0|1.9.1||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n\n### 1.9.1\n\n- Fix a typo.\n|--against base|0" \
   "package-pending-fixed|packages/a/package.json|1.9.0|1.9.1||packages/a/CHANGELOG.md|### Unreleased\n\n- Fix another typo.\n\n### 1.9.1\n\n- Fix a typo.\n||0" \
-  "release-pending-added|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--release HEAD --against base|patch-added|added|changelog.d/added/entry.md:minor" \
-  "release-pending-fixed|app.json|1.9.0|1.9.1|- Fix another typo.|CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--release HEAD --against base|0|fixed" \
+  "release-pending-added|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--release HEAD|patch-added|added|changelog.d/added/entry.md:minor" \
+  "release-pending-fixed|app.json|1.9.0|1.9.1|- Fix another typo.|CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--release HEAD|0|fixed" \
   "major-past-release|app.json|1.9.0|2.0.0|$BREAK|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|major-breaking" \
   "major-own-release|app.json|1.9.0|2.0.0|$ADD|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Changed\n\n$BREAK\n|--base base|0|added" \
   "released-patch-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Added\n\n$ADD\n||patch-added"; do
@@ -478,10 +478,12 @@ for row in \
   report="$NOMATCH"
   count=0
   if [ -n "$fragment" ]; then report="$(within 1)"; count=1; fi
+  version_pair="$manifest:$prior:$next"
+  case "$args" in --release*) version_pair="$manifest:$next" ;; esac
   case "$expected" in
-    major-breaking) expected=1; report="${ERR}major-breaking=$manifest:$prior:$next;$(summary 1 "$count")" ;;
-    *-breaking) report="${ERR}$expected=$manifest:$prior:$next;${ERR}entry-preview=$BREAK;$(summary 1 "$count")"; expected=1 ;;
-    patch-added) expected=1; report="${ERR}patch-added=$manifest:$prior:$next;${ERR}entry-preview=$ADD;$(summary 1 "$count")" ;;
+    major-breaking) expected=1; report="${ERR}major-breaking=$version_pair;$(summary 1 "$count")" ;;
+    *-breaking) report="${ERR}$expected=$version_pair;${ERR}entry-preview=$BREAK;$(summary 1 "$count")"; expected=1 ;;
+    patch-added) expected=1; report="${ERR}patch-added=$version_pair;${ERR}entry-preview=$ADD;$(summary 1 "$count")" ;;
     2) report="${ERR}version-read=$manifest" ;;
     fence) expected=2; report="${ERR}version-record-fence=$record_path" ;;
   esac
@@ -513,20 +515,11 @@ assert_eq 'control: ignoring pending package entries permits the incompatible pa
 R="$TMP/version-release-pending-fixed"
 put caller-only.txt 'Caller staging.\n'; stage
 before="$(git -C "$R" status --porcelain)"
-run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD --against base' >/dev/null
+run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD' >/dev/null
 assert_eq 'the release snapshot check leaves caller staging unchanged' "$before" "$(git -C "$R" status --porcelain)"
 gg_mutant shared_index changelog-entries '  export GIT_INDEX_FILE="$GG_TMP/release.index"' '  : export GIT_INDEX_FILE="$GG_TMP/release.index"'
-CE="$shared_index" run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD --against base' >/dev/null
+CE="$shared_index" run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD' >/dev/null
 assert_eq 'control: using the caller index loses its staged file' '' "$(git -C "$R" status --porcelain --untracked-files=no)"
-
-R="$TMP/version-release-pending-added"
-assert_eq 'publishing requires the previous published comparison scope' \
-  "rc=2 ${ERR}release-baseline=HEAD" \
-  "$(run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD')"
-gg_mutant no_baseline changelog-entries '[ -z "$RELEASE_REF" ] || { [ "$MODE" = against ]' 'true || { [ -z "$RELEASE_REF" ]; [ "$MODE" = against ]'
-assert_eq 'control: an omitted baseline misses the installed version increase' \
-  "rc=0 $(within 1)" \
-  "$(CE="$no_baseline" run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD')"
 
 gg_mutant borrow_major changelog-entries '      if [ -n "$RECORD" ]; then' '      if [ -n "$RECORD" ] && { [ "$BUMP" != major ] || ! first_entry breaking >/dev/null; }; then'
 R="$TMP/version-major-past-release"

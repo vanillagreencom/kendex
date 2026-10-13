@@ -1,7 +1,6 @@
 //! Inputs: .github/workflows/release.yml, .github/workflows/publish-aur.yml,
 //! .github/workflows/skill-tests.yml,
-//! skills/commit-guards/scripts/changelog-entries with its libraries,
-//! and tools/release-previous-tag.
+//! and skills/commit-guards/scripts/changelog-entries with its libraries.
 //! Shell fixtures prove source admission, create-only tags and main dispatch.
 //! They do not prove GitHub environment policy or live token permissions.
 
@@ -57,7 +56,6 @@ impl Fixture {
         )
         .unwrap();
         fixture.source = fixture.commit("initial");
-        fixture.git(&["tag", "v1.9.0"]);
         fixture.git(&["checkout", "-b", "release-change"]);
         fs::write(fixture.root.join("release-change"), "release\n").unwrap();
         fixture.commit("release change");
@@ -87,7 +85,6 @@ impl Fixture {
         ]);
         fixture.git(&["remote", "add", "origin", "remote.git"]);
         fixture.git(&["push", "origin", "main"]);
-        fixture.git(&["push", "origin", "refs/tags/v1.9.0"]);
         fixture.git(&[
             "push",
             "origin",
@@ -104,25 +101,18 @@ impl Fixture {
     fn source_dependencies(&self) {
         fs::create_dir_all(self.root.join("bin")).unwrap();
         fs::create_dir_all(self.root.join("skills/commit-guards")).unwrap();
-        fs::create_dir_all(self.root.join("tools")).unwrap();
         std::os::unix::fs::symlink(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/commit-guards/scripts"),
             self.root.join("skills/commit-guards/scripts"),
         )
         .unwrap();
-        std::os::unix::fs::symlink(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/release-previous-tag"),
-            self.root.join("tools/release-previous-tag"),
-        )
-        .unwrap();
+        self.source_api();
+    }
+
+    fn source_api(&self) {
         self.shim(
             "gh",
-            r#"if [ "$*" = 'api --paginate --slurp repos/{owner}/{repo}/releases' ]; then
-  [ "${BASELINE_STATUS:-0}" = 0 ] || exit 1
-  printf '%s\n' '[[{"tag_name":"v1.9.0","draft":false,"prerelease":false,"published_at":"2026-10-01T00:00:00Z"}]]'
-  exit 0
-fi
-[ "$1:$2:$3" = "api:repos/vanillagreencom/kendex/pulls/$REQUESTED_PR:--jq" ]
+            r#"[ "$1:$2:$3" = "api:repos/vanillagreencom/kendex/pulls/$REQUESTED_PR:--jq" ]
 jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT}" \
   --arg base "${PR_BASE:-main}" --arg merged "${PR_MERGED:-true}" --arg merge "${PR_MERGE:-$REQUESTED_COMMIT}" \
   '{merged: ($merged == "true"), base: {ref: $base}, merge_commit_sha: $merge, head: {sha: $head}} | '"$4""#,
@@ -159,12 +149,11 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
         .unwrap();
         fs::write(
             self.root.join("kendex.settings.toml"),
-            "[env]\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = \"crates/app/tauri.conf.json\"\n",
+            "[env]\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = \"crates/app/tauri.conf.json pi-extensions/*/package.json\"\n",
         )
         .unwrap();
         self.commit("release input");
-        self.git(&["tag", "--force", "v1.9.0"]);
-        self.git(&["push", "--force", "origin", "refs/tags/v1.9.0"]);
+        self.package_releases();
         if recollate {
             fs::write(
                 self.root.join("crates/app/tauri.conf.json"),
@@ -211,6 +200,30 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
 
     #[allow(
         clippy::unwrap_used,
+        reason = "independent package release history is a fixture input"
+    )]
+    fn package_releases(&self) {
+        let dir = self.root.join("pi-extensions/pi-session-bridge");
+        fs::create_dir_all(&dir).unwrap();
+        let mut record = String::new();
+        for (version, entry) in [
+            ("2.3.0", "- Add a session tool."),
+            ("3.0.0", "- **Breaking**: Rename the session tool."),
+            ("3.0.1", "- Fix the session tool."),
+        ] {
+            fs::write(
+                dir.join("package.json"),
+                format!("{{\"version\":\"{version}\"}}\n"),
+            )
+            .unwrap();
+            record = format!("### {version}\n\n{entry}\n\n{record}");
+            fs::write(dir.join("CHANGELOG.md"), &record).unwrap();
+            self.commit("independent package release");
+        }
+    }
+
+    #[allow(
+        clippy::unwrap_used,
         reason = "queue fixture writes are test preconditions"
     )]
     fn queued_release(
@@ -225,7 +238,7 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
         let mut fixture = Self::new();
         fs::write(
             fixture.root.join(".git/info/exclude"),
-            "bin/\nskills/\ntools/\nremote.git/\ngithub.output\ngh.log\n",
+            "bin/\nskills/\nremote.git/\ngithub.output\ngh.log\n",
         )
         .unwrap();
         let collation_head = fixture.prepare_collation(version, section, entry, recollate);
@@ -319,7 +332,7 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
         clippy::unwrap_used,
         reason = "the control owns this fixture's script directory"
     )]
-    fn ignore_pending_level_guard(&self) {
+    fn mutate_changelog_command(&self, guard: &str, replacement: &str) {
         let scripts = self.root.join("skills/commit-guards/scripts");
         assert!(
             fs::symlink_metadata(&scripts)
@@ -341,9 +354,8 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
         );
         let command = scripts.join("changelog-entries");
         let original = fs::read_to_string(&command).unwrap();
-        let guard = "    entry=\"$(first_entry \"pending-$1\")\" || return 0";
         assert_eq!(original.matches(guard).count(), 1);
-        let changed = original.replacen(guard, &format!("    return 0; : {}", guard.trim()), 1);
+        let changed = original.replacen(guard, replacement, 1);
         assert_ne!(changed, original);
         fs::write(command, changed).unwrap();
     }
@@ -720,27 +732,36 @@ fn the_first_collation_merge_tags_with_later_fragments_reserved() {
 
 #[test]
 fn ignoring_pending_release_levels_reddens_the_release_route_contract() {
-    for version in ["1.9.1", "1.10.0"] {
-        let (section, entry) = if version == "1.9.1" {
-            ("fixed", "- Fix a typo.")
-        } else {
-            ("added", "- Add a profile.")
-        };
+    for &(version, section, entry, pending_section, pending_entry, required) in QUEUE_RELEASES {
+        let Some(level) = required else { continue };
         let (fixture, head, _) = Fixture::queued_release(
             "squash",
             version,
             section,
             entry,
-            "changed",
-            "- **Breaking:** Rename the profile.",
+            pending_section,
+            pending_entry,
             false,
         );
         let script = selection_script();
         let selected = fixture.attempt_release(&head, version, &script);
         assert!(refused_release(
-            &fixture, &selected, version, "changed", "major"
+            &fixture,
+            &selected,
+            version,
+            pending_section,
+            level
         ));
-        fixture.ignore_pending_level_guard();
+        let kind = if pending_section == "added" {
+            "added"
+        } else {
+            "breaking"
+        };
+        let guard = "  if ! entry=\"$(first_entry \"$1\")\"; then";
+        fixture.mutate_changelog_command(
+            guard,
+            &format!("  [ \"$1\" != {kind} ] || return 0\n{guard}"),
+        );
         let admitted = fixture.attempt_release(&head, version, &script);
         assert!(
             admitted.status.success(),
@@ -748,9 +769,92 @@ fn ignoring_pending_release_levels_reddens_the_release_route_contract() {
             String::from_utf8_lossy(&admitted.stderr)
         );
         assert!(!refused_release(
-            &fixture, &admitted, version, "changed", "major"
+            &fixture,
+            &admitted,
+            version,
+            pending_section,
+            level
         ));
     }
+}
+
+#[test]
+#[allow(
+    clippy::unwrap_used,
+    reason = "later dispatch policy is a fixture input"
+)]
+fn later_main_policy_cannot_change_the_selected_release_verdict() {
+    let (mut fixture, head, _) = Fixture::queued_release(
+        "squash",
+        "1.9.1",
+        "fixed",
+        "- Fix a typo.",
+        "added",
+        "- Add a profile.",
+        false,
+    );
+    let script = selection_script();
+    let selected = fixture.attempt_release(&head, "1.9.1", &script);
+    assert!(refused_release(
+        &fixture, &selected, "1.9.1", "added", "minor"
+    ));
+    fs::write(
+        fixture.root.join("kendex.settings.toml"),
+        "[env]\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = \"pi-extensions/*/package.json\"\n",
+    )
+    .unwrap();
+    fixture.main = fixture.commit("later main changes version policy");
+    fs::write(fixture.root.join("caller-staging"), "Caller staging.\n").unwrap();
+    fixture.git(&["add", "caller-staging"]);
+    let before = fixture.git(&["status", "--porcelain"]);
+    let selected = fixture.attempt_release(&head, "1.9.1", &script);
+    assert!(refused_release(
+        &fixture, &selected, "1.9.1", "added", "minor"
+    ));
+    assert_eq!(fixture.git(&["status", "--porcelain"]), before);
+    fixture.mutate_changelog_command("  gg_settings_index_mode", "  : gg_settings_index_mode");
+    let admitted = fixture.attempt_release(&head, "1.9.1", &script);
+    assert!(
+        admitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&admitted.stderr)
+    );
+    assert!(!refused_release(
+        &fixture, &admitted, "1.9.1", "added", "minor"
+    ));
+}
+
+#[test]
+fn independent_package_versions_do_not_set_the_app_release_level() {
+    let (fixture, head, _) = Fixture::queued_release(
+        "squash",
+        "1.10.0",
+        "added",
+        "- Add a profile.",
+        "added",
+        "- Add another profile.",
+        false,
+    );
+    let script = selection_script();
+    let selected = fixture.attempt_release(&head, "1.10.0", &script);
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    let tag = "refs/tags/v1.10.0";
+    fixture.git(&["--git-dir=remote.git", "update-ref", "-d", tag]);
+    fixture.source_api();
+    fixture.mutate_changelog_command(
+        "    package_record_of \"$f\" >/dev/null && continue",
+        "    : package_record_of \"$f\" >/dev/null",
+    );
+    let refused = fixture.attempt_release(&head, "1.10.0", &script);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stdout).lines().any(|line|
+        line == "changelog-entries: patch-added=pi-extensions/pi-session-bridge/package.json:3.0.1"
+    ));
+    assert!(fixture.git(&["ls-remote", "origin", tag]).is_empty());
 }
 
 #[test]
@@ -783,7 +887,6 @@ fn the_release_pr_must_bind_the_collation_head_to_the_selected_main_merge() {
         ("PR_BASE", "other", None),
         ("PR_MERGE", fixture.main.as_str(), None),
         ("PR_HEAD", "ffffffffffffffffffffffffffffffffffffffff", None),
-        ("BASELINE_STATUS", "1", None),
     ] {
         let environment = [
             ("EVENT_NAME", "workflow_dispatch"),
@@ -1240,7 +1343,7 @@ fn an_unreadable_fragment_tree_refuses_the_release_source() {
     fixture.shim(
         "git",
         &format!(
-            "[ \"$1\" != ls-tree ] || exit 1\nexec '{}' \"$@\"",
+            "[ \"$1:${{2:-}}\" != ls-tree:-rz ] || exit 1\nexec '{}' \"$@\"",
             real_git.trim()
         ),
     );

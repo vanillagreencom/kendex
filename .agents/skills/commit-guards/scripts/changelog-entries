@@ -74,7 +74,7 @@ usage() {
   gg_message usage changelog-entries 'Available options follow.'
   cat <<'EOF'
 usage: changelog-entries [--collate | --staged | --base REF | --against REF]
-       changelog-entries --release REF --against REF
+       changelog-entries --release REF
        changelog-entries --collated REF
        changelog-entries --classify PATH...
        changelog-entries --unversion < FILE
@@ -129,8 +129,9 @@ nothing. The release workflow checks its release pull request's head with
 this mode. --release checks whether later fragments fit the installed version.
 
 --release REF validates the selected merged release tree in a private index.
-It requires --against REF to name the previous published version's commit.
-It checks that pending entries fit the increase from that published version.
+It reads tracked policy from that selected tree before discovering fragments.
+It checks only pending program fragments against the selected release level.
+It does not revalidate version history or independent package releases.
 A refusal names the entry path and required level.
 The caller's index and working tree are unchanged.
 
@@ -179,7 +180,6 @@ EOF
 
 COLLATE=0
 COLLATED_REF=""
-RELEASE_REF=""
 CLASSIFY=0
 CLASSIFY_PATHS=()
 UNVERSION=0
@@ -206,13 +206,8 @@ while [ $# -gt 0 ]; do
       break
       ;;
     --unversion) UNVERSION=1 ;;
-    --release)
-      [ $# -ge 2 ] && [ -n "$2" ] || gg_fail argument-missing --release "--release requires a commit ref"
-      shift
-      RELEASE_REF="$1"
-      ;;
     --staged) MODE=staged; SCOPE_FLAGS=$((SCOPE_FLAGS + 1)) ;;
-    --base | --against)
+    --base | --against | --release)
       [ $# -ge 2 ] || gg_fail argument-missing "$1" "$1 requires a ref"
       MODE="${1#--}"
       shift
@@ -228,8 +223,6 @@ done
   && { [ "$UNVERSION" -eq 0 ] || [ $((SCOPE_FLAGS + COLLATE + CLASSIFY)) -eq 0 ]; } \
   && { [ -z "$COLLATED_REF" ] || [ $((SCOPE_FLAGS + COLLATE + CLASSIFY + UNVERSION)) -eq 0 ]; } \
   || gg_fail scope-conflict "$SCOPE_FLAGS:$COLLATE:$CLASSIFY:$UNVERSION" "Use one scope, --collate, --classify or --unversion, not two."
-[ -z "$RELEASE_REF" ] || { [ "$MODE" = against ] && [ "$SCOPE_FLAGS" -eq 1 ]; } \
-  || gg_fail release-baseline "$RELEASE_REF" "--release requires --against to name the previous published version."
 
 if [ "$UNVERSION" -eq 1 ]; then
   jq -e "del($VERSION_FIELD)" \
@@ -238,6 +231,15 @@ if [ "$UNVERSION" -eq 1 ]; then
 fi
 
 gg_repo_root_cd
+if [ "$MODE" = release ]; then
+  gg_tmpdir
+  release_commit="$(git rev-parse --verify --end-of-options "${BASE_REF}^{commit}" 2>"$GG_TMP/dependency.err")" \
+    || gg_fail_cause release-ref "$BASE_REF" "$GG_TMP/dependency.err" "Could not resolve the selected release commit."
+  export GIT_INDEX_FILE="$GG_TMP/release.index"
+  git read-tree "$release_commit" 2>"$GG_TMP/dependency.err" \
+    || gg_fail_cause release-tree "$BASE_REF" "$GG_TMP/dependency.err" "Could not read the selected release tree."
+  gg_settings_index_mode
+fi
 
 # Both scopes, resolved by the library the commit-msg lane reads too — which
 # loads the fragment globs through lib/configured-paths.sh, the same way
@@ -288,14 +290,7 @@ if [ "$CLASSIFY" -eq 1 ]; then
   exit 0
 fi
 
-gg_tmpdir
-if [ -n "$RELEASE_REF" ]; then
-  release_commit="$(git rev-parse --verify --end-of-options "${RELEASE_REF}^{commit}" 2>"$GG_TMP/dependency.err")" \
-    || gg_fail_cause release-ref "$RELEASE_REF" "$GG_TMP/dependency.err" "Could not resolve the selected release commit."
-  export GIT_INDEX_FILE="$GG_TMP/release.index"
-  git read-tree "$release_commit" 2>"$GG_TMP/dependency.err" \
-    || gg_fail_cause release-tree "$RELEASE_REF" "$GG_TMP/dependency.err" "Could not read the selected release tree."
-fi
+[ -n "$GG_TMP" ] || gg_tmpdir
 # Every accepted fragment in index order, four NUL-terminated fields a row:
 # its section, its package (empty for a program entry), its blob and its
 # path. What --collate folds in and what it guards against an unstaged edit.
@@ -495,7 +490,7 @@ refuse_entry() { # KIND KEY VALUE EXPLANATION REMEDY — refuses when the eviden
   local entry path level pending=0
   if ! entry="$(first_entry "$1")"; then
     # --against judges an inherited release bump after a restack, not a publish.
-    [ "$MODE" != against ] || [ -n "$RELEASE_REF" ] || return 0
+    [ "$MODE" != against ] || return 0
     entry="$(first_entry "pending-$1")" || return 0
     pending=1
   fi
@@ -503,7 +498,7 @@ refuse_entry() { # KIND KEY VALUE EXPLANATION REMEDY — refuses when the eviden
   entry="${entry#*"$GG_TAB"}"
   gg_message "$2" "$3" "$4"
   gg_message entry-preview "$entry" "The first such entry in this release."
-  if [ "$pending" -eq 1 ] || [ -n "$RELEASE_REF" ]; then
+  if [ "$pending" -eq 1 ] || [ "$MODE" = release ]; then
     case "$1" in added) level=minor ;; breaking) level=major ;; esac
     gg_message required-level "$path:$level" "Re-collate the release at this level before tagging it."
   fi
@@ -511,22 +506,27 @@ refuse_entry() { # KIND KEY VALUE EXPLANATION REMEDY — refuses when the eviden
   violations=$((violations + 1))
 }
 
-# Sets BUMP to the increase from OLD to NEW, major, minor, patch or none;
-# 0 when the release standard judges it, whose compatibility rules start at
-# 1.0.
+# Sets BUMP to the increase from OLD to NEW. Publishing supplies an empty OLD:
+# the selected version's nonzero patch, else nonzero minor, else major level.
+# Ordinary increases keep the compatibility rules that start at 1.0.
 release_bump() { # OLD NEW PATH
   # Decimal strings avoid shell integer overflow and jq number rounding;
   # the suffixes come off first, so a suffix change alone is no increase.
   if ! BUMP="$(jq -nr --arg old "$1" --arg new "$2" '
     def nums: sub("[-+].*$"; "") | split(".") | map([length, .]);
-    ($old | nums) as $o | ($new | nums) as $n
-    | first(range(3) | select($n[.] != $o[.]) | if $n[.] > $o[.] then ["major", "minor", "patch"][.] else "none" end) // "none"
+    ($new | nums) as $n
+    | if $old == "" then
+        if $n[2] != [1, "0"] then "patch" elif $n[1] != [1, "0"] then "minor" else "major" end
+      else
+        ($old | nums) as $o
+        | first(range(3) | select($n[.] != $o[.]) | if $n[.] > $o[.] then ["major", "minor", "patch"][.] else "none" end) // "none"
+      end
   ' 2>"$GG_TMP/dependency.err")"; then
     gg_fail_cause version-compare "$(gg_shown "$3")" "$GG_TMP/dependency.err" "Could not compare the versions."
   fi
   case "$BUMP" in
     major) ;;
-    minor | patch) [ "${1%%.*}" != 0 ] ;;
+    minor | patch) [ -z "$1" ] || [ "${1%%.*}" != 0 ] ;;
     none) return 1 ;;
     *) gg_fail version-compare "$(gg_shown "$3"):$BUMP" "The version comparison returned an unknown increase." ;;
   esac
@@ -569,88 +569,107 @@ package_entries() { # NAME — fills $GG_TMP/evidence
 }
 
 breaking_remedy="Release the break as a major, or keep the old form working and hold the Breaking entry for a later major."
-if [ -n "$version_paths" ] || [ -n "$GG_CHANGELOG_PACKAGES" ]; then
-  diff_args=(--cached)
-  case "$MODE" in
-    staged)
-      gg_commit_base
-      [ -z "$GG_COMMIT_BASE" ] || diff_args+=("$GG_COMMIT_BASE")
-      ;;
-    base)
-      base="$(git merge-base -- "$BASE_REF" HEAD 2>"$GG_TMP/dependency.err")" \
-        || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "Could not find the version comparison's merge base."
-      diff_args+=("$base")
-      ;;
-    against)
-      base="$(git rev-parse --verify --end-of-options "$BASE_REF^{commit}" 2>"$GG_TMP/dependency.err")" \
-        || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "The version comparison ref must name a commit."
-      diff_args+=("$base")
-      ;;
-  esac
-  git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames -- >"$GG_TMP/changes.z" 2>"$GG_TMP/dependency.err" \
-    || gg_fail_cause version-diff "$?" "$GG_TMP/dependency.err" "Could not collect version changes."
-fi
-
-if [ -n "$version_paths" ]; then
-  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+if [ "$MODE" = release ]; then
+  # A dispatch builds this selected tree. Its pending program fragments must fit
+  # its own level; package histories and earlier release notes are not this gate.
+  cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
+    || gg_fail evidence-copy "$BASE_REF" "Could not collect the pending program fragments."
+  while IFS= read -r -d '' rec; do
+    f="${rec#*"$GG_TAB"}"
     # shellcheck disable=SC2086 # the configured globs are the patterns
     gg_path_matches "$f" $version_paths || continue
-    # --raw emits srcmode dstmode srcsha dstsha status, followed by the path.
-    read -r srcmode dstmode srcsha dstsha status <<<"${meta#:}"
-    [ "$status" != D ] || continue
-    gg_mode_is_regular "$dstmode" || gg_fail version-mode "$(gg_shown "$f"):$dstmode" "A configured version file must be a regular JSON file."
-    new="$(read_version "$dstsha" "$f")" || exit 2
-    [ "$srcmode" != 000000 ] || continue
-    gg_mode_is_regular "$srcmode" || gg_fail version-mode "$(gg_shown "$f"):$srcmode" "The prior version file must be regular JSON."
-    old="$(read_version "$srcsha" "$f")" || exit 2
-    release_bump "$old" "$new" "$f" || continue
-    if package_record="$(package_record_of "$f")"; then
-      : >"$GG_TMP/evidence"
-      record_entries "$package_record" 3 "$new"
-    else
-      cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
-        || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
-      if [ -n "$RECORD" ]; then
-        record_entries "$RECORD" 2 "$new"
-      fi
-    fi
-    judge_release "$(gg_shown "$f"):$old:$new"
-  done <"$GG_TMP/changes.z"
-fi
+    package_record_of "$f" >/dev/null && continue
+    mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
+    gg_mode_is_regular "$mode" || gg_fail version-mode "$(gg_shown "$f"):$mode" "A configured version file must be a regular JSON file."
+    new="$(read_version "$sha" "$f")" || exit 2
+    release_bump "" "$new" "$f"
+    [ "$BUMP" != major ] || continue
+    judge_release "$(gg_shown "$f"):$new"
+  done <"$GG_TMP/files.z"
+else
+  if [ -n "$version_paths" ] || [ -n "$GG_CHANGELOG_PACKAGES" ]; then
+    diff_args=(--cached)
+    case "$MODE" in
+      staged)
+        gg_commit_base
+        [ -z "$GG_COMMIT_BASE" ] || diff_args+=("$GG_COMMIT_BASE")
+        ;;
+      base)
+        base="$(git merge-base -- "$BASE_REF" HEAD 2>"$GG_TMP/dependency.err")" \
+          || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "Could not find the version comparison's merge base."
+        diff_args+=("$base")
+        ;;
+      against)
+        base="$(git rev-parse --verify --end-of-options "$BASE_REF^{commit}" 2>"$GG_TMP/dependency.err")" \
+          || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "The version comparison ref must name a commit."
+        diff_args+=("$base")
+        ;;
+    esac
+    git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames -- >"$GG_TMP/changes.z" 2>"$GG_TMP/dependency.err" \
+      || gg_fail_cause version-diff "$?" "$GG_TMP/dependency.err" "Could not collect version changes."
+  fi
 
-# Each change to a versioned package's directory raises the version its
-# package file states, by the same rule against the package's own entries.
-if [ -n "$GG_CHANGELOG_PACKAGES" ]; then
-  while IFS= read -r -d '' name && IFS= read -r -d '' dir && IFS= read -r -d '' mode \
-    && IFS= read -r -d '' sha && IFS= read -r -d '' pf; do
-    [ -n "$dir" ] || continue
-    changed=0
-    pf_meta=""
+  if [ -n "$version_paths" ]; then
     while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
-      case "$f" in "$dir"*) changed=1 ;; *) continue ;; esac
-      [ "$f" != "$pf" ] || pf_meta="$meta"
-    done <"$GG_TMP/changes.z"
-    [ "$changed" -eq 1 ] || continue
-    new="$(gg_package_version "$mode" "$sha" "$pf")" || exit 2
-    # A package that states no version has none to raise.
-    [ -n "$new" ] || continue
-    old="$new"
-    if [ -n "$pf_meta" ]; then
-      read -r srcmode _ srcsha _ <<<"${pf_meta#:}"
-      # A new package, or one that states its first version, has no prior
-      # version to raise.
+      # shellcheck disable=SC2086 # the configured globs are the patterns
+      gg_path_matches "$f" $version_paths || continue
+      # --raw emits srcmode dstmode srcsha dstsha status, followed by the path.
+      read -r srcmode dstmode srcsha dstsha status <<<"${meta#:}"
+      [ "$status" != D ] || continue
+      gg_mode_is_regular "$dstmode" || gg_fail version-mode "$(gg_shown "$f"):$dstmode" "A configured version file must be a regular JSON file."
+      new="$(read_version "$dstsha" "$f")" || exit 2
       [ "$srcmode" != 000000 ] || continue
-      old="$(gg_package_version "$srcmode" "$srcsha" "$pf")" || exit 2
-      [ -n "$old" ] || continue
-    fi
-    if ! release_bump "$old" "$new" "$pf"; then
-      [ "$BUMP" != none ] || refuse package-unbumped "$(gg_shown "$pf"):$old" "A change to this package must raise its version." \
-        "Raise metadata.version by the release-version rule: a Breaking entry is a major, a new capability or setting a minor, anything else a patch."
-      continue
-    fi
-    package_entries "$name"
-    judge_release "$(gg_shown "$pf"):$old:$new"
-  done <"$GG_TMP/packages.z"
+      gg_mode_is_regular "$srcmode" || gg_fail version-mode "$(gg_shown "$f"):$srcmode" "The prior version file must be regular JSON."
+      old="$(read_version "$srcsha" "$f")" || exit 2
+      release_bump "$old" "$new" "$f" || continue
+      if package_record="$(package_record_of "$f")"; then
+        : >"$GG_TMP/evidence"
+        record_entries "$package_record" 3 "$new"
+      else
+        cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
+          || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
+        if [ -n "$RECORD" ]; then
+          record_entries "$RECORD" 2 "$new"
+        fi
+      fi
+      judge_release "$(gg_shown "$f"):$old:$new"
+    done <"$GG_TMP/changes.z"
+  fi
+
+  # Each change to a versioned package's directory raises the version its
+  # package file states, by the same rule against the package's own entries.
+  if [ -n "$GG_CHANGELOG_PACKAGES" ]; then
+    while IFS= read -r -d '' name && IFS= read -r -d '' dir && IFS= read -r -d '' mode \
+      && IFS= read -r -d '' sha && IFS= read -r -d '' pf; do
+      [ -n "$dir" ] || continue
+      changed=0
+      pf_meta=""
+      while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+        case "$f" in "$dir"*) changed=1 ;; *) continue ;; esac
+        [ "$f" != "$pf" ] || pf_meta="$meta"
+      done <"$GG_TMP/changes.z"
+      [ "$changed" -eq 1 ] || continue
+      new="$(gg_package_version "$mode" "$sha" "$pf")" || exit 2
+      # A package that states no version has none to raise.
+      [ -n "$new" ] || continue
+      old="$new"
+      if [ -n "$pf_meta" ]; then
+        read -r srcmode _ srcsha _ <<<"${pf_meta#:}"
+        # A new package, or one that states its first version, has no prior
+        # version to raise.
+        [ "$srcmode" != 000000 ] || continue
+        old="$(gg_package_version "$srcmode" "$srcsha" "$pf")" || exit 2
+        [ -n "$old" ] || continue
+      fi
+      if ! release_bump "$old" "$new" "$pf"; then
+        [ "$BUMP" != none ] || refuse package-unbumped "$(gg_shown "$pf"):$old" "A change to this package must raise its version." \
+          "Raise metadata.version by the release-version rule: a Breaking entry is a major, a new capability or setting a minor, anything else a patch."
+        continue
+      fi
+      package_entries "$name"
+      judge_release "$(gg_shown "$pf"):$old:$new"
+    done <"$GG_TMP/packages.z"
+  fi
 fi
 
 # The release operation reads the destination only when it has entries to fold.
