@@ -12,6 +12,7 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/lanes-fixture.sh"
 source "$TEST_DIR/lib/growth-state.sh"
+source "$TEST_DIR/lib/virtual-clock.sh"
 FETCHER="$TMP_ROOT/fetch"; make_fetcher "$FETCHER"
 mkdir -p "$TMP_ROOT/repo" "$TMP_ROOT/bin"
 git -C "$TMP_ROOT/repo" init -q -b main
@@ -19,9 +20,11 @@ git -C "$TMP_ROOT/repo" config gc.auto 0
 git -C "$TMP_ROOT/repo" config maintenance.auto false
 # Fixed noon UTC; the same-day row ends one hour later.
 REAL_DATE="$(command -v date)"
+printf '%s\n' 1791460800 > "$TMP_ROOT/clock"
+virtual_clock_bash_env "$TMP_ROOT/elapsed-clock.env"
 cat > "$TMP_ROOT/bin/date" <<'CLOCK'
 #!/usr/bin/env bash
-if [[ "${1:-}" == +%s ]]; then printf '%s\n' 1791460800; else exec "$REAL_DATE" "$@"; fi
+if [[ "${1:-}" == +%s ]]; then cat "$STUB_CLOCK"; else exec "$REAL_DATE" "$@"; fi
 CLOCK
 chmod +x "$TMP_ROOT/bin/date"
 CONTROL="$(mutant_scripts auth-pick lanes)"
@@ -41,6 +44,7 @@ for row in 'expired|1791460799000|5|expired' 'at-end|1791460800000|5|expired' 'n
     [[ "$verb" != named ]] || args+=(--lane "$H/.claude")
     rc=0
     (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
+      BASH_ENV="$TMP_ROOT/elapsed-clock.env" STUB_CLOCK="$TMP_ROOT/clock" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
       OVERSEE_WATCH_STATE_DIR="$H/store" "$LANES" "${args[@]}") > "$H/out" 2> "$H/err" || rc=$?
     want_rc="$expected_rc"; [[ "$verb" != chooser || "$expected_rc" == 0 ]] || want_rc=3
@@ -55,6 +59,7 @@ for row in 'expired|1791460799000|5|expired' 'at-end|1791460800000|5|expired' 'n
   if [[ "$name" == expired ]]; then
     rc=0
     (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
+      BASH_ENV="$TMP_ROOT/elapsed-clock.env" STUB_CLOCK="$TMP_ROOT/clock" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
       OVERSEE_WATCH_STATE_DIR="$H/control-store" "$CONTROL/lanes" pick --harness claude --json) > "$H/control-out" 2> "$H/control-err" || rc=$?
     assert_eq "$rc" 0 "must-fail: removing the refresh expiry check seats the expired account" "$H/control-err"
@@ -62,6 +67,7 @@ for row in 'expired|1791460799000|5|expired' 'at-end|1791460800000|5|expired' 'n
   elif [[ "$name" == not-yet-ended ]]; then
     rc=0
     (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" LANES_HOME="$H" REAL_DATE="$REAL_DATE" \
+      BASH_ENV="$TMP_ROOT/elapsed-clock.env" STUB_CLOCK="$TMP_ROOT/clock" \
       FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
       OVERSEE_WATCH_STATE_DIR="$H/rounding-store" "$ROUNDING/lanes" pick --harness claude --json) > "$H/control-out" 2> "$H/control-err" || rc=$?
     assert_eq "$rc" 3 "must-fail: rounding expiry down rejects a login that has not ended" "$H/control-err"

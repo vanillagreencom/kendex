@@ -307,7 +307,7 @@ capability_pick() { # LANES
   : > "$TMP_ROOT/counter"
   RC=0
   (cd "$TMP_ROOT/home" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
-    COST_COUNTER="$TMP_ROOT/counter" COST_REAL_DATE="$REAL_DATE" COST_PROVIDER="$TMP_ROOT/provider" \
+    COST_COUNTER="$TMP_ROOT/counter" COST_TOOL_LOG="$TMP_ROOT/tools" COST_REAL_DATE="$REAL_DATE" COST_PROVIDER="$TMP_ROOT/provider" \
     LANES_HOME="$TMP_ROOT/home" ORCH_LANE_HOST="$CAPABILITY_PROVIDER" \
     ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0 ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/capability-state" \
     "$1" pick --harness claude --model sonnet --json > "$TMP_ROOT/capability.out" 2> "$TMP_ROOT/capability.err") || RC=$?
