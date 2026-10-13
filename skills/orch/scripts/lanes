@@ -640,9 +640,13 @@
 # ORCH_LANES_USAGE_TTL, or than --max-age where that is longer, unless a
 # consumed bucket reset arrives first. Every overseer sharing that directory
 # polls an account at most once per age window, except for reset refreshes.
-# `usage_age_s` (the AGE column) is how old the figure is. Credentials are
-# read unless --cache-only is set: an expired token is renewed or reports its refusal,
-# whatever the cache holds. A fresh write keeps the displaced figure as
+# `usage_age_s` (the AGE column) is how old the figure is. Fresh normalized
+# records reuse parsed readings. Normal reads check stored token and login
+# expiry and the credentials file's modification time. A stale, changed or
+# legacy record uses the credential and raw-usage parsers; an expired token
+# is renewed or reports its refusal. Parser changes reach an existing record
+# when it is refreshed or normalized from a legacy raw record. --cache-only
+# skips credentials and renewal. A fresh write keeps the displaced figure as
 # `prior`; lane records expose the binding bucket's rate and projected wall
 # after samples at least a minute apart, and none on credits
 # (usage_rate_state `credits`).
@@ -694,11 +698,11 @@
 # and ORCH_LANE_ALIASES) and the UTC day, and is a miss under any other, so a
 # lifted or tightened setting, an alias that moves and a retirement date that
 # arrives all reach the provider on the next read. A lane's own record is a
-# miss while its directory is excluded or retired. At startup, with either
-# setting in force, every record the policy refuses is deleted; the scan is
-# skipped while a `.pruned` marker shows the directory unchanged since the
-# last scan under this policy. Nothing in that judgment reads a credential
-# directory.
+# miss while its directory is excluded or retired. Fresh normalized reads
+# skip the cache inventory scan, so a refused record can remain on disk.
+# Cold reads and `check` consult `.pruned` and scan when its policy stamp
+# differs or the cache directory is newer. A scan deletes policy-refused
+# records. Nothing in that judgment reads a credential directory.
 # `--no-cache` refreshes it, and `host-accounts` passes that flag from
 # `open-terminal`, whose read decides whether the host holds an account for a
 # launch gate rather than reporting a figure. `pick` reads the answer through
@@ -849,6 +853,10 @@ message() {
     missing-jq)
       printf 'lanes: missing-jq exit=%s\n' "1"
       printf '%s\n' "jq is required"
+      ;;
+    account-read-failed)
+      printf 'lanes: account-read-failed step=%s exit=%s\n' "$1" "$2"
+      printf '%s\n' 'The account batch could not be read. No account is selected from partial readings.'
       ;;
     pick-claims)
       printf 'lanes: pick-claims exit=%s\n' "1"
@@ -1527,6 +1535,7 @@ measure_lane() {
 	local refreshed=false refresh_out refusal
 	lane_alias_for "$dir" silent; alias="$LANE_ALIAS"
 	local normalized_i
+	load_normalized "$NORMALIZED_TARGET" || return 1
 	for ((normalized_i=0; normalized_i<${#NORMALIZED_DIRS[@]}; normalized_i++)); do
 		[[ "${NORMALIZED_DIRS[normalized_i]}" == "$dir" && "${NORMALIZED_HARNESSES[normalized_i]}" == "$harness" && "${NORMALIZED_THROUGHS[normalized_i]}" == local ]] || continue
 		printf '%s\n' "${NORMALIZED_ROWS[normalized_i]}"
@@ -1926,14 +1935,15 @@ usage_cache_permitted() { # FILE [HARNESS]
 # The scan is also spared while `.pruned` holds this process's policy stamp
 # and the directory is no newer than it: every record written, replaced or
 # deleted renames or unlinks an entry, which makes the directory newer, so a
-# writer under any policy, this one included, sends the next process back
-# through the scan. The marker is written BEFORE the scan, so a record that
-# lands while the scan runs is dated after it and judged by the next process;
+# writer under any policy can require another cold scan. Fresh normalized
+# reads skip the inventory scan and only seed an absent marker. The marker
+# is written BEFORE a cold scan, so a record that
+# lands while the scan runs is dated after it and judged by a later cold scan;
 # where the clock behind the comparison counts whole seconds, a record that
 # lands in the marker's own second after the scan passed it stays on disk,
 # refused on read, until the directory next changes. A marker that cannot be
 # written is removed, and one a failed scan leaves behind is emptied, so
-# every process after either scans.
+# later cold pruning calls scan.
 prune_usage_cache() {
 	local file marker="$USAGE_CACHE_DIR/.pruned" stamp=""
 	[[ -n "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" && -d "$USAGE_CACHE_DIR" ]] || return 0
@@ -2610,9 +2620,9 @@ load_lane_claims() {
 	# knows: every harness's, Pi roots and excluded dirs included, since an
 	# exclusion added while a lane runs leaves its claim live.
 	for h in claude codex copilot pi; do
-		lane_dirs "$h" all silent || return 1
+		lane_dirs "$h" all silent || { message account-read-failed discovery "$?" >&2; return 1; }
 		for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
-			lane_canon "$d" || return 1
+			lane_canon "$d" || { message account-read-failed canonical "$?" >&2; return 1; }
 			own+="$LANE_CANON"$'\n'
 		done
 	done
@@ -2628,7 +2638,7 @@ load_lane_claims() {
 		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *) lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME" ;; esac
 		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$key"$'\t'"$pool"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
-	load_normalized "${1:-}"
+	load_normalized "${1:-}" || return 1
 }
 
 # The name a store several homes share knows DIR's account by: the alias `list`
@@ -2727,13 +2737,13 @@ collect_lanes() {
 								[[ "${held_ids[i]}" != "$id" ]] || { row="${held_rows[i]}"; break; }
 							done
 							host_row_or_local "$h" "$d" "$row" "$model" \
-								|| { message pick-lane-failed "$d" local-reading >&2;
+								|| { [[ "$NORMALIZED_FAILED" != true ]] || return 1; message pick-lane-failed "$d" local-reading >&2;
 									jq -c '. + {status: "error", headroom_pct: null, detail: "local-reading failed"}' <<<"$row" || return 1; }
 							continue
 							;;
 					esac
 				fi
-				measure_lane "$h" "$d"
+				measure_lane "$h" "$d" || return 1
 			done < <(lane_dirs "$h")
 		done
 		jq -c --arg x "$excluded" --arg r "$reached" '
@@ -2766,6 +2776,7 @@ host_lane_rows() { # HARNESS [READINGS [MODEL]]
 	local rows answer format="" hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0 i
 	HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS="" HOSTED_API_DISCOVERED=false
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || return 0
+	load_normalized "$NORMALIZED_TARGET" || return 1
 	if [[ "$NORMALIZED_HOST_READY" == true ]]; then
 		if [[ "$NORMALIZED_HOST_STATUS" == 2 ]]; then HOSTED_READ=absent; return 0; fi
 		HOSTED_READ=answered HOSTED_API_DISCOVERED="$NORMALIZED_HOST_API"
@@ -3135,7 +3146,7 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 			message host-accounts-unreadable "$host" "$rc" >&2
 		fi
 		rm -f -- "$err"
-		trap - INT TERM
+		orch_arm_lock_signals
 		# The absent verb is cached; a FAILED one is not. A provider that does not
 		# implement it will answer the same way all window, while a failure is the
 		# transient one of the two and must not be replayed for the rest of it.
@@ -3148,7 +3159,7 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 		return 1
 	fi
 	rm -f -- "$err"
-	trap - INT TERM
+	orch_arm_lock_signals
 	# The same parser names valid API rows before policy removes candidates.
 	# Its emitting cache pass below owns malformed-row notices.
 	discovered="$(host_account_rows "$rows" pi discovery 2>/dev/null)" || { usage_lock_release; return 1; }
@@ -3367,7 +3378,7 @@ render_table() {
 # harness=pi rows for the selected model's pool. Copilot rows can use the
 # stated override; API grants use only the provider's reading.
 pick_host_rows() { # HARNESS [MODEL]
-	host_lane_rows "$1" readings "${2:-}"
+	host_lane_rows "$1" readings "${2:-}" || return 1
 	if [[ "$1" == pi ]]; then
 		local pool
 		pool="$(lane_pick_pool "$1" "${2:-}")" || return 1
@@ -3410,7 +3421,7 @@ cmd_pick_lane() {
 	# store read it would carry 0 for an account with sessions in flight — the
 	# one value emit_lane says that field must never invent. emit_lane leaves it
 	# null when the store could not be read.
-	load_lane_claims "$dir"
+	load_lane_claims "$dir" || return 1
 	# Under --projected, a REFUSAL, exit 6, before anything is measured: the
 	# verdict charges the claims, and an unread store judged as none is the
 	# launch the chooser dies rather than make. Otherwise a NOTICE: the verdict
@@ -3430,9 +3441,10 @@ cmd_pick_lane() {
 		if [[ "$projected_verdict" == true ]]; then
 			seat_harness="$harness"
 		else
-			pick_host_rows "$harness"
+			pick_host_rows "$harness" || return 1
 		fi
 		if ! overseer_seats "$seat_harness"; then
+			[[ "$NORMALIZED_FAILED" != true ]] || return 1
 			if [[ "$projected_verdict" == true ]]; then
 				message pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE" >&2
 				return 8
@@ -3613,7 +3625,7 @@ overseer_seats() { # [HARNESS]
 		lane_canon "$account" || return 1
 		SEATS+="$LANE_CANON"$'\n'
 	done < <(printf '%s\n%s\n' "$fleets" "$claimed" | sort -u)
-	if [[ -n "${1:-}" ]]; then pick_host_rows "$1"; fi
+	if [[ -n "${1:-}" ]]; then pick_host_rows "$1" || return 1; fi
 	# host_lane_rows already read host_accounts_answer; failures leave no rows.
 	provider_seats="$(host_account_rows "$HOST_ACCOUNTS_ROWS" all seats)" || return 1
 	SEATS+="${provider_seats:+$provider_seats$'\n'}"
@@ -3633,7 +3645,7 @@ cmd_pick() {
 		copilot_pool_entries >/dev/null || return 1
 		pool_roots="$(lane_dirs pi all)"
 	fi
-	load_lane_claims
+	load_lane_claims || return 1
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
@@ -3661,7 +3673,7 @@ cmd_pick() {
 		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
-	lanes="$(collect_lanes "$harness" "$exclude" "$hosted" "$model")"
+	lanes="$(collect_lanes "$harness" "$exclude" "$hosted" "$model")" || return 1
 	lane_tier_inputs "$lanes" "$harness" "$model" || return 1
 	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" "$TIER_POOL" "$CLOUD_CREDIT_FLOOR" "$TIER_RETIRE" "$TIER_CLOUD_REPO" "$SEATS" "$SEAT_RESERVE" <<<"$lanes")" || return 1
 	while read -r dir; do message cloud-credit-unread "$dir" >&2; done < <(jq -r '.cloud_credit_unread[]' <<<"$judged")
@@ -4027,9 +4039,18 @@ USAGE_POLICY_ARGS=(--arg policy "$USAGE_POLICY")
 # caller's model are supplied again when this batch is rendered.
 NORMALIZED_DIRS=() NORMALIZED_HARNESSES=() NORMALIZED_ROWS=() NORMALIZED_THROUGHS=() NORMALIZED_READINGS=()
 NORMALIZED_HOST_READY=false NORMALIZED_HOST_USAGE="" NORMALIZED_HOST_STATUS=0 NORMALIZED_HOST_API=false
+NORMALIZED_AT=-1 NORMALIZED_TARGET="" NORMALIZED_FAILED=false
+# Reuse a complete batch within one epoch. A later consumer rechecks expiry.
 load_normalized() { # [NAMED_DIR]
+	local now="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" target="${1:-}" rc
+	[[ "$NORMALIZED_AT" != "$now" || "$NORMALIZED_TARGET" != "$target" ]] || return 0
+	decode_normalized "$target" || { rc=$?; NORMALIZED_FAILED=true; message account-read-failed normalized "$rc" >&2; return 1; }
+	NORMALIZED_AT="$now" NORMALIZED_TARGET="$target"
+}
+decode_normalized() { # [NAMED_DIR]
 	local h d file creds target="${1:-}" at row kind id alias retire wall json err
-	local files=() fields=() rows=() index=0 decoded
+	local files=() fields=() rows=() index=0 decoded decode_rc
+	local host_ready=false host_usage="" host_status=0 host_api=false
 	NORMALIZED_DIRS=() NORMALIZED_HARNESSES=() NORMALIZED_ROWS=() NORMALIZED_THROUGHS=() NORMALIZED_READINGS=()
 	NORMALIZED_HOST_READY=false NORMALIZED_HOST_USAGE=""
 	[[ "$USE_CACHE" == true && "$CACHE_ONLY" != true && "$USAGE_TTL" != 0 ]] || return 0
@@ -4058,8 +4079,9 @@ load_normalized() { # [NAMED_DIR]
 	usage_serve_max_age silent
 	# The files this batch names are atomically replaced by the cache writer.
 	# Older files have no normalized member and use the existing cold reader.
+	# The claims read can wait across an expiry, so this batch uses elapsed time.
 	decoded="$(jq -sr --arg policy "$USAGE_POLICY" --arg host "${ORCH_LANE_HOST:-local}" \
-		--argjson now "$RUN_NOW" --argjson max "$USAGE_SERVE_MAX_AGE" "$LANE_MODEL_JQ$USAGE_POLICY_JQ$USAGE_RESET_JQ"'
+		--argjson now "$now" --argjson max "$USAGE_SERVE_MAX_AGE" "$LANE_MODEL_JQ$USAGE_POLICY_JQ$USAGE_RESET_JQ"'
 		.[] | . as $cache
 		| select((.normalized | usage_policy_current($policy)) and .normalized.host == $host)
 		| (.usage_fetched_at // .fetched_at) as $at
@@ -4081,10 +4103,15 @@ load_normalized() { # [NAMED_DIR]
 		        prior_buckets: (.prior_buckets // {}),
 		        elapsed: (if .through != "host" and ($cache.prior.fetched_at | type) == "number" then $at - $cache.prior.fetched_at else null end),
 		        sample_claims: (if .through == "host" then 1 else $cache.sample_claims // 1 end)}
-		| .config_dir, .harness, .through, tojson)' "${files[@]}" 2>/dev/null)" || return 0
+		| .config_dir, .harness, .through, tojson)' "${files[@]}" 2>/dev/null)" || {
+		decode_rc=$?
+		# Missing or malformed cache files use the cold reader. A failed decoder does not.
+		[[ "$decode_rc" == 2 || "$decode_rc" == 4 ]] && return 0
+		return "$decode_rc"
+	}
 	while IFS= read -r d && IFS= read -r h && IFS= read -r kind && IFS= read -r json; do
 		if [[ "$kind" == host-cache ]]; then
-			NORMALIZED_HOST_READY=true NORMALIZED_HOST_USAGE="$json" NORMALIZED_HOST_STATUS="$d" NORMALIZED_HOST_API="$h"
+			host_ready=true host_usage="$json" host_status="$d" host_api="$h"
 			continue
 		fi
 		[[ -n "$d" ]] || continue
@@ -4101,12 +4128,8 @@ load_normalized() { # [NAMED_DIR]
 		fi
 		fields+=("$json" "$id" "$alias" "$retire" "${ACCOUNT_CLAIMS:-null}" "$wall" "${ACCOUNT_WALL_FILE:-}")
 	done <<<"$decoded"
-	if (( ${#fields[@]} == 0 )); then
-		if [[ "$NORMALIZED_HOST_READY" == true ]]; then prune_usage_cache warm;
-		else prune_usage_cache; USAGE_CACHE_PRUNED=true; fi
-		return 0
-	fi
-	decoded="$(jq -nr --args "$LANE_MODEL_JQ$LANE_EMIT_JQ$ACCOUNT_WALL_JQ"'
+	if (( ${#fields[@]} )); then
+		decoded="$(jq -nr --args "$LANE_MODEL_JQ$LANE_EMIT_JQ$ACCOUNT_WALL_JQ"'
 		$ARGS.positional as $args | range(0; $args | length; 7) as $i
 		| ($args[$i] | fromjson) as $r
 		| (if $args[$i+5] == "" then null else account_wall_read($args[$i+5]) end) as $w
@@ -4120,14 +4143,21 @@ load_normalized() { # [NAMED_DIR]
 		    (if $r.harness == "pi" and $b.credits.unit == "usd" then 0 else $args[$i+4] | fromjson end);
 		    $r.age; false; $r.through; $b; $r.prior_buckets; $r.elapsed; $r.sample_claims)
 		| $r.config_dir, $r.harness, $r.through, ($r.has_reading != false), tojson,
-		  (if $w == "unreadable" then $args[$i+6] else "" end)' "${fields[@]}")" || return 1
-	# Command substitution removes a final empty diagnostic line.
-	while IFS= read -r d && IFS= read -r h && IFS= read -r kind && IFS= read -r at && IFS= read -r row && { IFS= read -r err || err=""; }; do
-		[[ -z "$err" ]] || account_wall_unreadable "$err" >&2
-		NORMALIZED_DIRS+=("$d"); NORMALIZED_HARNESSES+=("$h"); NORMALIZED_ROWS+=("$row")
-		NORMALIZED_THROUGHS+=("$kind"); NORMALIZED_READINGS+=("$at")
-	done <<<"$decoded"
-	prune_usage_cache warm
+		  (if $w == "unreadable" then $args[$i+6] else "" end)' "${fields[@]}")" || return $?
+		# Command substitution removes a final empty diagnostic line.
+		while IFS= read -r d && IFS= read -r h && IFS= read -r kind && IFS= read -r at && IFS= read -r row && { IFS= read -r err || err=""; }; do
+			[[ -z "$err" ]] || account_wall_unreadable "$err" >&2
+			NORMALIZED_DIRS+=("$d"); NORMALIZED_HARNESSES+=("$h"); NORMALIZED_ROWS+=("$row")
+			NORMALIZED_THROUGHS+=("$kind"); NORMALIZED_READINGS+=("$at")
+		done <<<"$decoded"
+	fi
+	NORMALIZED_HOST_READY="$host_ready" NORMALIZED_HOST_USAGE="$host_usage"
+	NORMALIZED_HOST_STATUS="$host_status" NORMALIZED_HOST_API="$host_api"
+	if (( ${#NORMALIZED_ROWS[@]} )) || [[ "$NORMALIZED_HOST_READY" == true ]]; then
+		prune_usage_cache warm
+	else
+		prune_usage_cache; USAGE_CACHE_PRUNED=true
+	fi
 }
 
 # A lane key is a directory name or an alias. A `/` or `~` makes it a path,
@@ -4195,17 +4225,17 @@ case "$SUB" in
 		HARNESS="${HARNESS:-all}"
 		[[ "$HARNESS" =~ ^(claude|codex|copilot|all)$ ]] || die invalid-harness "$@"
 		validate_lane_settings
-		load_lane_claims
+		load_lane_claims || exit 1
 		# Every row says which credential measured it, local rows included: a
 		# listing that labelled only the hosted ones would leave the reader to
 		# infer the rest, and the whole point of the merge is that one account
 		# can carry two readings that disagree. emit_lane writes that field, so
 		# neither this listing nor the reader below stamps rows afterwards.
-		out="$(collect_lanes "$HARNESS")"
+		out="$(collect_lanes "$HARNESS")" || exit 1
 		# Asked only where a provider is configured. A fleet with no provider
 		# reads the local config dirs and nothing else, exactly as before.
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
-			host_lane_rows "$HARNESS"
+			host_lane_rows "$HARNESS" || exit 1
 			out="$(jq -c --argjson hosted "$HOSTED_ROWS" '. + $hosted' <<<"$out")"
 		fi
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
@@ -4228,7 +4258,7 @@ case "$SUB" in
 		[[ "${ORCH_LANE_HOST:-local}" != local ]] || die host-accounts-local
 		# emit_lane reads the claim store for every record it writes, host rows
 		# included, so the store is loaded before any row is emitted.
-		load_lane_claims
+		load_lane_claims || exit 1
 		accounts_rc=0
 		rows="$(host_account_records "${ORCH_LANE_HOST}" "$HARNESS")" || accounts_rc=$?
 		# The provider's answer, absent verb and failed verb are passed straight
@@ -4359,7 +4389,7 @@ case "$SUB" in
 		lane_context_handoff_due 0 1 "$HANDOFF_CONTEXT_PCT" >/dev/null || context_rc=$?
 		[[ "$context_rc" -ne 2 ]] || die invalid-handoff-context "$HANDOFF_CONTEXT_PCT"
 		validate_lane_settings
-		load_lane_claims
+		load_lane_claims || exit 1
 		# An unreadable claim store is not an empty fleet: reporting no lanes
 		# would read as "every lane has room", which is the answer that sends
 		# a lane into its wall.
@@ -4412,8 +4442,8 @@ case "$SUB" in
 		# below counts that global's rows against each account.
 		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
-		pick_host_rows all
-		usage="$(collect_lanes all)"
+		pick_host_rows all || exit 1
+		usage="$(collect_lanes all)" || exit 1
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
 		while (( usage_i < usage_count )); do
 			usage_dir="$(jq -r --argjson i "$usage_i" '.[$i].config_dir' <<<"$usage")"

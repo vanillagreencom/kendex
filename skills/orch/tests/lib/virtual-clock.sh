@@ -117,10 +117,9 @@ _virtual_clock_seed() {
   "${STUB_REAL_DATE:?virtual clock not installed}" +%s > "${STUB_CLOCK:?virtual clock not installed}"
 }
 
-# Inject the same clock into a watch's Bash SECONDS reading. This is a test
-# boundary; the shipped watch has no clock setting or fixture command.
-# Process-budget mutants pass this expression as an argument too. Only the
-# watch's idle and mail deadline assignments consume the injected clock.
+# Inject the same clock into the watch and lanes elapsed-epoch expressions.
+# This is a test boundary; the shipped commands have no fixture clock setting.
+# Process-budget mutants pass the watch expression as an argument too.
 virtual_clock_bash_env() { # FILE
   cat >"$1" <<'EOF'
 set -T
@@ -129,10 +128,17 @@ trap 'if [[ "$BASH_COMMAND" == tick_wait && "${NOTE_AT:-}" == 2 && -n "${LONG_PI
   # Faster mailbox reads must not turn it into the separate overrun row.
   until [[ -e "$LONG_DONE" ]]; do "$STUB_REAL_SLEEP" 0.1; done
 fi
-if [[ ( "$BASH_COMMAND" == "now="* || "$BASH_COMMAND" == "MAIL_DUE="* ) &&
-      "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* && -n "${STUB_CLOCK:-}" ]]; then
+if [[ -n "${STUB_CLOCK:-}" &&
+      ( ( ( "$BASH_COMMAND" == "now="* || "$BASH_COMMAND" == "MAIL_DUE="* ) &&
+          "$BASH_COMMAND" == *"WATCH_EPOCH + SECONDS - WATCH_SECONDS"* ) ||
+        ( "$BASH_COMMAND" == *"RUN_NOW + SECONDS - RUN_STARTED_SECONDS"* &&
+          -n "${RUN_NOW:-}" && -n "${RUN_STARTED_SECONDS:-}" ) ) ]]; then
   IFS= read -r _virtual_now <"$STUB_CLOCK" || [[ "$_virtual_now" =~ ^[0-9]+$ ]]
-  SECONDS=$((_virtual_now - WATCH_EPOCH + WATCH_SECONDS))
+  if [[ "$BASH_COMMAND" == *"RUN_NOW + SECONDS - RUN_STARTED_SECONDS"* ]]; then
+    SECONDS=$((_virtual_now - RUN_NOW + RUN_STARTED_SECONDS))
+  else
+    SECONDS=$((_virtual_now - WATCH_EPOCH + WATCH_SECONDS))
+  fi
 fi' DEBUG
 EOF
 }
