@@ -1,1 +1,0 @@
-- Dev round instructions cover pending merge-group validation for queue-only work before a push-first pull request opens.

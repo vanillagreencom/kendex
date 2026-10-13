@@ -76,6 +76,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### dev
 
+- Dev round instructions cover pending merge-group validation for queue-only work before a push-first pull request opens.
 - Apply the shared must-fail control rule when writing a check, before its first commit.
 - A dev round starts its full validation run only after every alone run of a test file it added or changed has passed, so a pending alone run holds the run as a red one does.
 
@@ -99,6 +100,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### jarvis
 
+- Wait for attached agent returns before succession and read existing child output before repeating work after an emergency handoff.
 - Jarvis reaches the agent in each of your kendex projects through that repository's mailbox: its setup check lists the reachable and unreachable repositories, it offers the mailbox install where one is missing, and until then it answers from the agent's session transcript, labelled as such.
 - Keep send results separate from output filters, read totals and ages from their source records, and remove sign-in query strings before logging browser tabs.
 - Jarvis builds a report's waiting-on-you list from live sources and lists as landed only merges it read in the session. It reports a fix sent to another owner as sent until it checks the fix where the problem was seen, and repairs the step behind each of its errors. It sweeps unanswered messages at each wake.
@@ -120,9 +122,14 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### lane-mail-check
 
+- Refuse late attached agent launches before the context handoff mark, and name unfinished Claude agents so succession can wait for their returns.
 - Session mail checks use the mailbox skill beside orchestration.
 - A Jarvis session with its wake armed gets each overseer-mailbox message once, in full, from the hook, and the turn end does not hand it again. On Pi, mail the idle-session wake hands over is marked read only once its message is sent, so a send that fails no longer loses it.
 - A lane can end a continuing wait after it updates its status file, including a rewrite of the same text. The hook sends no idle notice for that update. A turn with no mail sent and no status update still meets the idle check.
+
+#### lane-mail-halt
+
+- Apply the existing context handoff reserve before attached agent launches while keeping wait and result tools available.
 
 #### linear
 
@@ -144,6 +151,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### orch
 
+- Reserve context for attached agent returns and preserve unfinished child identities and known output paths during emergency succession.
+- Sessions read the Slack relay's delivered thread in full and fetch Slack history only when required history is missing.
+- Lane preferences can select hosted Pi with Anthropic API credit and fall through to Claude when the credit is below the floor.
+- Push-first queue-only work can record pending merge-group validation before its pull request opens when the base requires the merge queue and validation context.
 - Fleet log takeover skips `token` rows written by fleet's `reap`, so token events cannot displace rulings from a successor's takeover window.
 - Claude cloud sessions create ready pull requests through REST after their tests and internal review pass, then request Copilot review without a draft-to-ready step.
 - Item tier selection now uses `HARNESS_CI_STANDARD_PATHS` from the base checkout, so declared standard paths receive standard review depth.
