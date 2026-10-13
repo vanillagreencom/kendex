@@ -291,7 +291,7 @@ environment_rows() {
 [2, "eval 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "eval-inherited-pipeline-heredoc-retains-main-refusal"]
 [0, "cat <<'EOF' | bash\nprintf done\nEOF", "pipeline-heredoc-without-known-read"]
 [0, "cat <<'EOF' \u007c& bash\nprintf done\nEOF", "merged-pipeline-heredoc-without-known-read"]
-[0, "cat <<'EOF' '\u007c&' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF", "quoted-operator-with-heredoc-remains-data"]
+[2, "cat <<'EOF' '\u007c&' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF", "quoted-operator-with-heredoc-remains-data"]
 [2,"cat <<'EOF' | cat | sh -s\nprintenv\nEOF","indirect-piped-heredoc-program"]
 [2,"{ cat <<'EOF' | command env NAME=value bash; }\nenv\nEOF","grouped-piped-heredoc-program"]
 [2,"source /dev/stdin <<'EOF'\nenv\nEOF","sourced-heredoc-program"]
@@ -343,10 +343,10 @@ environment_rows() {
 [2,"cat <<FIRST <<'SECOND'\n$(env >&2)\nFIRST\ndata\nSECOND","mixed-heredoc-expansion"]
 [2,"cat <<'FIRST' <<SECOND\ndata\nFIRST\n$(printenv >&2)\nSECOND","reversed-mixed-heredoc-expansion"]
 [2,"cat <<FIRST <<'SECOND'\n'$(env >&2)'\nFIRST\ndata\nSECOND","unquoted-heredoc-single-quotes-expand"]
-[0,"cat <<FIRST <<'SECOND'\n\\$(env)\nFIRST\n$(env)\nSECOND","mixed-heredoc-literal-data"]
-[0,"cat <<EOF\nenv\nEOF","unquoted-heredoc-literal-word-data"]
+[2,"cat <<FIRST <<'SECOND'\n\\$(env)\nFIRST\n$(env)\nSECOND","mixed-heredoc-literal-data"]
+[2,"cat <<EOF\nenv\nEOF","unquoted-heredoc-literal-word-data"]
 [2,"cat <<$EOF\n$(env >&2)\n$EOF","unquoted-dollar-delimiter-expansion"]
-[0,"cat <<\\$EOF\n$(env)\n$EOF","escaped-dollar-delimiter-data"]
+[2,"cat <<\\$EOF\n$(env)\n$EOF","escaped-dollar-delimiter-data"]
 [2,"{ bash -c 'env'; }","grouped-shell-command-string"]
 [2,"{ sh -c 'env'; }","grouped-sh-command-string"]
 [2,"exec bash -c 'env'","exec-shell-command-string"]
@@ -373,16 +373,16 @@ environment_rows() {
 [2,"bash -c -O extglob 'env'","shell-command-string-shopt-operand-after-c"]
 [2,"{ command bash -c -o pipefail -- 'env'; }","forwarded-command-string-option-operand"]
 [2,"bash -c -o pipefail \"sh -c -e 'env'\"","nested-command-string-option-operand"]
-[0,"bash -c -e \"printf '%s' 'env'\"","shell-option-quoted-argument-data"]
-[0,"bash -c -o pipefail -- 'printenv NAME'","shell-option-named-read"]
-[0,"bash -co pipefail \"printf '%s' 'env'\"","shell-grouped-option-argument-data"]
+[2,"bash -c -e \"printf '%s' 'env'\"","shell-option-quoted-argument-data"]
+[2,"bash -c -o pipefail -- 'printenv NAME'","shell-option-named-read"]
+[2,"bash -co pipefail \"printf '%s' 'env'\"","shell-grouped-option-argument-data"]
 [2,"command bash -c -- 'env'","forwarded-command-string-options-end"]
 [2,"env NAME=value bash -c -- 'env'","env-command-string-options-end"]
 [2,"{ sudo -u NAME command bash -c -- 'env'; }","nested-forwarded-command-string"]
 [2,"{ bash -o pipefail -c -- 'env'; }","nested-shell-option-operand"]
 [2,"{ eval 'command env NAME=value printenv'; }","nested-eval-launcher"]
-[0,"{ eval 'printenv' 'NAME'; }","eval-joined-named-read"]
-[0,"{ eval \"printf '%s' 'env'\"; }","eval-quoted-argument-data"]
+[2,"{ eval 'printenv' 'NAME'; }","eval-joined-named-read"]
+[2,"{ eval \"printf '%s' 'env'\"; }","eval-quoted-argument-data"]
 [2,"{ NAME=value 'env'; }","assignment-quoted-command-head"]
 [2,"if NAME=value \"env\"; then :; fi","conditional-assignment-quoted-head"]
 [2,"time 'env'","time-quoted-command-head"]
@@ -500,10 +500,10 @@ environment_rows() {
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args > out","wrapper-launcher-redirect"]
 [0,"env -u NAME -u OTHER command-name args","unset-launcher"]
 [0,"bash wrapper.sh env -u NAME -u OTHER command-name args","wrapper-unset-launcher"]
-[0,"bash wrapper.sh env -u env -u set command-name args > out","wrapper-unset-producer-operands"]
-[0,"bash wrapper.sh env -i NAME=value command-name","wrapper-empty-launcher"]
-[0,"bash wrapper.sh env --unset=NAME NAME=value command-name","wrapper-inline-unset-launcher"]
-[0,"bash wrapper.sh env -- NAME=value command-name","wrapper-options-end-launcher"]
+[2,"bash wrapper.sh env -u env -u set command-name args > out","wrapper-unset-producer-operands"]
+[2,"bash wrapper.sh env -i NAME=value command-name","wrapper-empty-launcher"]
+[2,"bash wrapper.sh env --unset=NAME NAME=value command-name","wrapper-inline-unset-launcher"]
+[2,"bash wrapper.sh env -- NAME=value command-name","wrapper-options-end-launcher"]
 [2,"bash wrapper.sh env","wrapper-bare-env"]
 [2,"bash wrapper.sh env > out","wrapper-bare-env-redirect"]
 [2,"bash wrapper.sh env NAME=value","wrapper-assignment-only"]
@@ -517,13 +517,13 @@ environment_rows() {
 [0,"bash wrapper.sh 'env NAME=value command-name args'","wrapper-quoted-launcher-data"]
 [0,"bash wrapper.sh \"env -u NAME -u OTHER command-name args\"","wrapper-quoted-unset-data"]
 [0,"bash wrapper.sh 'env'","wrapper-quoted-bare-env-data"]
-[0,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
-[0,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
-[0,"bash wrapper.sh set -euo pipefail","wrapper-set-strict"]
-[0,"bash wrapper.sh set +x","wrapper-set-option-off"]
-[0,"bash wrapper.sh set -- args","wrapper-set-operands"]
-[0,"bash wrapper.sh set -- env printenv set","wrapper-set-producer-operands"]
-[0,"bash wrapper.sh printenv env set","wrapper-named-producer-operands"]
+[2,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
+[2,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
+[2,"bash wrapper.sh set -euo pipefail","wrapper-set-strict"]
+[2,"bash wrapper.sh set +x","wrapper-set-option-off"]
+[2,"bash wrapper.sh set -- args","wrapper-set-operands"]
+[2,"bash wrapper.sh set -- env printenv set","wrapper-set-producer-operands"]
+[2,"bash wrapper.sh printenv env set","wrapper-named-producer-operands"]
 [0,"bash wrapper.sh 'set -euo pipefail'","wrapper-quoted-set-data"]
 [0,"{ printf '%s\\n' start > receipt; set -o pipefail; command-name args | tee -a receipt; printf 'exit=%s\\n' \"$?\" >> receipt; }","strict-set-receipt"]
 [2,"set > out","bare-set-redirect"]
@@ -531,10 +531,10 @@ environment_rows() {
 [2,"bash wrapper.sh set > out","wrapper-bare-set-redirect"]
 [0,"cat <<'EOF' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF","quoted-heredoc-script"]
 [0,"cat <<\"EOF\" > script.py\nset -euo pipefail\nenv -u NAME -u OTHER command-name\n$(env)\nEOF","double-quoted-heredoc-data"]
-[0,"cat <<\\EOF\nenv\nEOF","escaped-heredoc-delimiter"]
-[0,"cat <<E'OF'\nenv\nEOF","split-quoted-heredoc-delimiter"]
-[0,"cat <<-'EOF'\n\tenv\n\tEOF","tab-stripped-quoted-heredoc"]
-[0,"cat <<'FIRST' <<'SECOND'\nenv\nFIRST\nset\nSECOND","multiple-quoted-heredocs"]
+[2,"cat <<\\EOF\nenv\nEOF","escaped-heredoc-delimiter"]
+[2,"cat <<E'OF'\nenv\nEOF","split-quoted-heredoc-delimiter"]
+[2,"cat <<-'EOF'\n\tenv\n\tEOF","tab-stripped-quoted-heredoc"]
+[2,"cat <<'FIRST' <<'SECOND'\nenv\nFIRST\nset\nSECOND","multiple-quoted-heredocs"]
 [2,"cat <<'EOF' > out\nenv NAME=value command-name\nEOF\nenv","dump-after-quoted-heredoc"]
 [2,"cat <<'EOF'\nset -euo pipefail\nEOF\nset > out","set-after-quoted-heredoc"]
 [2,"cat <<'EOF'\nEOF-not-the-delimiter\nenv\nEOF\nprintenv","heredoc-delimiter-exact-match"]
@@ -801,6 +801,37 @@ environment_rows() {
 [0,["time","-p","--","env"],"array-time-is-an-executable"]
 [0,["exec","-a","NAME","env"],"array-exec-is-an-executable"]
 [0,["env","NAME=value","git","status"],"array-launcher"]
+[2,"if env --help; then :; fi","conservative-env-help"]
+[2,"if env --version; then :; fi","conservative-env-version"]
+[2,"if printenv --help; then :; fi","conservative-printenv-help"]
+[2,"if sudo -g env true; then :; fi","conservative-sudo-group-operand"]
+[2,"if TOKEN=env true; then :; fi","syntax-assignment-data"]
+[2,"function env { :; }","syntax-function-name"]
+[2,"coproc env { :; }","syntax-coproc-name"]
+[2,"time --env true","time-option-data"]
+[2,"if printf ok >env; then :; fi","redirect-target-data"]
+[2,"if printf ok >/proc/self/environ; then :; fi","redirect-proc-output-data"]
+[2,"if printf %s key=env; then :; fi","punctuated-argument-data"]
+[2,"if cat ./env.txt; then :; fi","punctuated-path-data"]
+[2,"if sudo -u env true; then :; fi","conservative-sudo-operand"]
+[2,"env -S \"printenv PATH\"","split-string-named-read"]
+[2,"env -S \"printf env\"","split-string-quoted-data"]
+[2,"if export PATH; then :; fi","conservative-export-named"]
+[2,"if declare PATH; then :; fi","conservative-declare-named"]
+[2,"if typeset PATH; then :; fi","conservative-typeset-named"]
+[2,"if printenv PATH; then :; fi","conservative-printenv-named"]
+[2,"unknown > receipt <<'EOF'\nenv\nEOF","quoted-file-body-unknown-reader"]
+[2,"cat <<'EOF'\nenv\nEOF","quoted-body-stdout-only"]
+[2,"cat > receipt <<EOF\nenv\nEOF","unquoted-file-body-literal"]
+[2,"bash <<'OUTER'\nbash wrapper.sh 'env NAME=value command-name args'\nOUTER","interpreted-quoted-data-retains-main-refusal"]
+[2,"bash <<'OUTER'\ncat <<'EOF' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF\nOUTER","interpreted-file-body-retains-main-refusal"]
+[2,"bash <<'OUTER'\n{ printf '%s\\n' start > receipt; set -o pipefail; command-name args \u007c tee -a receipt; printf 'exit=%s\\n' \"$?\" >> receipt; }\nOUTER","interpreted-receipt-retains-main-refusal"]
+[2,"bash $MODE 'env NAME=value command-name args'","wrapper-quoted-unproved-operand-main-refusal"]
+[2,"bash wrapper.sh 'env NAME=value command-name args","wrapper-unterminated-quote-main-refusal"]
+[2,"{ printf '%s\\n' start > receipt; set -o pipefail; command-name args \u007c tee -a receipt; printf 'exit=%s\\n' \"$?\" ; }","receipt-without-status-write-main-refusal"]
+[0,"env bash --version","main-forwarded-shell-prefix"]
+[0,"NAME=env time printf ok","main-assignment-before-reserved-head"]
+[0,"cat <<'DATA'\nprintf env\nDATA","main-nonreader-body-argument"]
 ENVIRONMENT_ROWS
   ) || exit 1
   while IFS=$'\t' read -r expected command_json label world; do
@@ -887,6 +918,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ }
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
+      defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
+      defect == "main-body-cut" && $0 == "      if environment_dump shell conservative; then return 0; fi" { swap("if environment_dump shell conservative; then return 0; fi", "if false; then return 0; fi") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
         block = $0; getline; block = block "\n" $0; getline; block = block "\n" $0; changed++; next
       }
@@ -908,8 +941,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         swap("candidate<${#stage_args[@]}", "candidate<1 && candidate<${#stage_args[@]}")
       }
       defect == "suffix-stage-only" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=1; fi") }
-      defect == "suffix-launcher" { swap("environment_producer shell conservative", "environment_producer shell conservative; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
-      defect == "suffix-set" { swap("environment_producer shell conservative", "environment_producer shell conservative; [ \"${stage_args[$candidate]}\" != set ] || mode=dump-unknown") }
+      defect == "suffix-launcher" { swap("environment_producer shell \"$scan\"", "environment_producer shell \"$scan\"; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
+      defect == "suffix-set" { swap("environment_producer \"$1\" \"$unsupported${2:-}\"", "environment_producer \"$1\" \"$unsupported${2:-}\"; [ \"$program\" != set ] || mode=dump-unknown") }
       defect == "suffix-quotes" { swap("[ \"${stage_roles[$candidate]}\" = argument ] &&", "false &&") }
       defect == "quoted-heredoc" && /^              for \(\(doc=0;/ { swap("doc<${#heredocs[@]}", "doc<0") }
       defect == "heredoc-resume" { swap("heredoc_bodies[doc]=$body", "heredoc_bodies[doc]=$body; i=$text_length") }
@@ -925,25 +958,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
       defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
       defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
-      defect == "heredoc-pipeline-cut" { swap("environment_main_evidence \"$text\" \"${@:3}\"", "false") }
-      defect == "heredoc-original-input" { swap("environment_main_evidence \"$text\" \"${@:3}\"", "environment_main_evidence \"$command_text\" \"${@:3}\"") }
-      defect == "inherited-input-cut" { swap("if [ -n \"$incoming_sources\" ] &&", "if false &&") }
-      defect == "persistent-input-cut" { swap("[ -z \"$data_source\" ] || { mode=dump-unknown; return; }", "[ -z \"$data_source\" ] || :") }
-      defect == "grouped-operands-cut" { swap("if environment_main_evidence \"${args[@]:pos}\"; then", "if false; then") }
       defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
       defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
-      defect == "heredoc-expansion" { swap("[ -n \"$quoted\" ] || heredoc_expand[doc]=1", "[ -n \"$quoted\" ] || :") }
-      defect == "heredoc-expansion-quotes" && /environment_dump expansions conservative;/ { swap("environment_dump expansions conservative", "environment_dump shell conservative") }
-      defect == "executable-text" { swap("if [ -n \"$source_pos\" ]; then", "if false; then") }
-      defect == "shell-terminator" { swap("--) options_ended=1; cursor=$((cursor + 1)); continue ;;", "--) break ;;") }
-      defect == "invocation-options" && $0 == "        if [ -z \"$options_ended\" ]; then" { swap("if [ -z \"$options_ended\" ]; then", "if [ -z \"$options_ended\" ] && [ -z \"$wants_string\" ]; then") }
-      defect == "invocation-operand" { swap("*o* | *O*) cursor=$((cursor + 2))", "*o* | *O*) cursor=$((cursor + 1))") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
-      defect == "nested-stdin" { swap("[ -z \"$stdin_program\" ] || stage_stdin[stage]=1", "[ -z \"$stdin_program\" ] || :") }
       defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
       defect == "set-literal-proof" && /^        for \(\(j=pos;/ { swap("[ \"${arg_kinds[$j]}\" != literal ] || named=1", "named=1") }
-      defect == "evaluator-input-proof" { swap("if [ -n \"$unproved\" ] && environment_main_evidence \"$source\"; then", "if false; then") }
-      defect == "env-option-proof" { swap("[ -z \"${2:-}\" ] || [ \"${arg_kinds[$((pos + 1))]:-}\" = literal ] || { mode=dump-unknown; return; }", ":") }
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
       defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
@@ -975,6 +994,36 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     fi
   done <<'ENVIRONMENT_CONTROLS'
 no-check|FAIL environment: incident: exit=0 expected=2
+main-evidence-cut|FAIL environment: wrapper-quoted-unproved-operand-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: wrapper-unterminated-quote-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: receipt-without-status-write-main-refusal: exit=0 expected=2
+no-check|FAIL environment: interpreted-quoted-data-retains-main-refusal: exit=0 expected=2
+no-check|FAIL environment: interpreted-file-body-retains-main-refusal: exit=0 expected=2
+no-check|FAIL environment: interpreted-receipt-retains-main-refusal: exit=0 expected=2
+no-check|FAIL environment: conservative-declare-named: exit=0 expected=2
+no-check|FAIL environment: conservative-typeset-named: exit=0 expected=2
+no-check|FAIL environment: conservative-export-named: exit=0 expected=2
+no-check|FAIL environment: conservative-printenv-named: exit=0 expected=2
+no-check|FAIL environment: piped-here-string-program: exit=0 expected=2
+no-check|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
+no-check|FAIL environment: unregistered-heredoc-final-word: exit=0 expected=2
+no-check|FAIL environment: unquoted-heredoc-single-quotes-expand: exit=0 expected=2
+main-evidence-cut|FAIL environment: eval-quoted-argument-data: exit=0 expected=2
+main-body-cut|FAIL environment: escaped-heredoc-delimiter: exit=0 expected=2
+main-evidence-cut|FAIL environment: syntax-assignment-data: exit=0 expected=2
+main-evidence-cut|FAIL environment: syntax-function-name: exit=0 expected=2
+main-evidence-cut|FAIL environment: syntax-coproc-name: exit=0 expected=2
+main-evidence-cut|FAIL environment: time-option-data: exit=0 expected=2
+main-evidence-cut|FAIL environment: redirect-target-data: exit=0 expected=2
+main-evidence-cut|FAIL environment: redirect-proc-output-data: exit=0 expected=2
+main-evidence-cut|FAIL environment: punctuated-argument-data: exit=0 expected=2
+main-evidence-cut|FAIL environment: punctuated-path-data: exit=0 expected=2
+main-evidence-cut|FAIL environment: conservative-sudo-operand: exit=0 expected=2
+main-evidence-cut|FAIL environment: conservative-sudo-group-operand: exit=0 expected=2
+main-evidence-cut|FAIL environment: split-string-named-read: exit=0 expected=2
+main-evidence-cut|FAIL environment: split-string-quoted-data: exit=0 expected=2
+main-body-cut|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
+main-evidence-cut|FAIL environment: wrapper-empty-launcher: exit=0 expected=2
 late-check|FAIL environment: explicit-policy-off: exit=0 expected=2
 unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
 launcher-pass|FAIL environment: launcher-dump: exit=0 expected=2
@@ -995,44 +1044,23 @@ heredoc-program|FAIL environment: bash-quoted-heredoc-program: exit=0 expected=2
 body-evidence|FAIL environment: unread-shell-heredoc-body: exit=0 expected=2
 descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
 heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
-inherited-input-cut|FAIL environment: inherited-merged-here-string-main-refusal: exit=0 expected=2
-heredoc-pipeline-cut|FAIL environment: copilot-merged-pipe-heredoc-program: exit=0 expected=2
-heredoc-pipeline-cut|FAIL environment: pipeline-heredoc-data-retains-main-refusal: exit=0 expected=2
-heredoc-original-input|FAIL environment: mixed-body-merged-pipeline: exit=0 expected=2
-heredoc-original-input|FAIL environment: reversed-mixed-body-merged-pipeline: exit=0 expected=2
-heredoc-original-input|FAIL environment: mixed-body-merged-pipeline-group: exit=0 expected=2
-heredoc-original-input|FAIL environment: merged-heredoc-cut-overwritten-by-later-unquoted-body: exit=0 expected=2
-heredoc-original-input|FAIL environment: merged-heredoc-cut-overwritten-by-earlier-unquoted-body: exit=0 expected=2
-heredoc-pipeline-cut|FAIL environment: mixed-body-merged-pipeline: exit=0 expected=2
-persistent-input-cut|FAIL environment: carried-shell-descriptor-program: exit=0 expected=2
-persistent-input-cut|FAIL environment: carried-source-descriptor-program: exit=0 expected=2
-grouped-operands-cut|FAIL environment: shell-command-string-multiple-option-operands: exit=0 expected=2
-grouped-operands-cut|FAIL environment: shell-command-string-mixed-option-operands: exit=0 expected=2
 missing-identifier-cut|FAIL environment: dump-before-unregistered-heredoc-redirect: exit=0 expected=2
 body-separation|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
-heredoc-expansion|FAIL environment: mixed-heredoc-expansion: exit=0 expected=2
-heredoc-expansion-quotes|FAIL environment: unquoted-heredoc-single-quotes-expand: exit=0 expected=2
-executable-text|FAIL environment: grouped-shell-command-string: exit=0 expected=2
-executable-text|FAIL environment: grouped-eval-command-string: exit=0 expected=2
-shell-terminator|FAIL environment: shell-command-string-options-end: exit=0 expected=2
-invocation-options|FAIL environment: shell-command-string-option-after-c: exit=0 expected=2
-invocation-options|FAIL environment: shell-command-string-option-operand-after-c: exit=0 expected=2
-invocation-operand|FAIL environment: shell-command-string-grouped-option-operand: exit=0 expected=2
-invocation-operand|FAIL environment: shell-command-string-positive-option-operand: exit=0 expected=2
 empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
-nested-stdin|FAIL environment: conditional-wrapper-stdin-program: exit=0 expected=2
 set-unknown|FAIL environment: set-unquoted-variable-can-disappear: exit=0 expected=2
 set-literal-proof|FAIL environment: copilot-set-indirect-name-spread-empty: exit=0 expected=2
-evaluator-input-proof|FAIL environment: copilot-eval-empty-earlier-operand: exit=0 expected=2
-env-option-proof|FAIL environment: nested-unset-unproved-option-operand: exit=0 expected=2
-env-option-proof|FAIL environment: nested-chdir-unproved-option-operand: exit=0 expected=2
 suffix-launcher|FAIL environment: wrapper-launcher: exit=2 expected=0
 suffix-launcher|FAIL environment: wrapper-launcher-redirect: exit=2 expected=0
-suffix-set|FAIL environment: wrapper-set-strict: exit=2 expected=0
+suffix-launcher|FAIL environment: wrapper-unset-launcher: exit=2 expected=0
+suffix-set|FAIL environment: strict-set-receipt: exit=2 expected=0
+suffix-quotes|FAIL environment: wrapper-quoted-launcher-data: exit=2 expected=0
+suffix-quotes|FAIL environment: wrapper-quoted-unset-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
+suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
+quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
 quoted-heredoc|FAIL environment: double-quoted-heredoc-data: exit=2 expected=0
 heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
-unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
+unset-operand|FAIL environment: wrapper-unset-launcher: exit=2 expected=0
 suffix-first-word|FAIL environment: unsupported-list-evidence: exit=0 expected=2
 suffix-stage-only|FAIL environment: unsupported-list-evidence: exit=0 expected=2
 suffix-stage-only|FAIL environment: unsupported-pipe-evidence: exit=0 expected=2
