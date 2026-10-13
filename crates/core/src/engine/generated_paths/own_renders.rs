@@ -22,8 +22,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::engine::{EngineReport, PlanOptions, plan_scope};
-use crate::env::Env;
+use crate::engine::{DriftState, EngineReport, PlanOptions, plan_apply, plan_scope};
+use crate::env::{Env, FakeOs};
 use crate::lock::{LOCK_FILE, Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest, ManifestFile};
 use crate::model::Scope;
@@ -35,7 +35,10 @@ const NAME: &str = "render-bytes";
 #[derive(Debug, PartialEq, Eq)]
 enum Finding {
     /// The checkout could not be planned, so what it renders is unknown.
-    Unplanned { root: String, cause: String },
+    Unplanned {
+        root: String,
+        cause: String,
+    },
     /// Inventory paths the plan would not leave as they are committed:
     /// those it writes, and those it holds back as a conflict or a file
     /// kendex did not write, which a refresh with edits discarded leaves as
@@ -43,6 +46,9 @@ enum Finding {
     Differs {
         written: Vec<String>,
         held: Vec<String>,
+    },
+    Unsettled {
+        entries: BTreeSet<String>,
     },
 }
 
@@ -102,6 +108,13 @@ fn refusal(finding: &Finding) -> String {
                     "run `kendex refresh` at a checkout that may run it and settle the row \
                      it reports for each, then commit the bytes it writes there\n",
                 );
+            }
+        }
+        Finding::Unsettled { entries } => {
+            text.push_str(&line("unsettled", &entries.len().to_string()));
+            text.push_str("these install records still fail verification after refresh:\n");
+            for entry in entries {
+                text.push_str(&format!("  {entry}\n"));
             }
         }
     }
@@ -310,6 +323,108 @@ fn the_committed_renders_are_the_bytes_this_checkout_renders() {
     if let Standing::Refused(finding) = check(&root) {
         panic!("{}", refusal(&finding));
     }
+}
+
+/// A refresh may hold an edited copy that its source no longer installs,
+/// so comparing desired render bytes alone cannot prove record agreement.
+fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
+    let scope = Scope::Project {
+        root: root.to_path_buf(),
+    };
+    let refresh = plan_apply(
+        env,
+        &scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::current()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?;
+    let lock = record(env, root)?;
+    let verified = plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
+        .map_err(|error| error.to_string())?;
+    let mut entries: BTreeSet<String> = lock
+        .entries
+        .keys()
+        .chain(verified.record.entries.keys())
+        .filter(|key| lock.entries.get(*key) != verified.record.entries.get(*key))
+        .cloned()
+        .collect();
+    entries.extend(verified.drift.iter().filter_map(|row| match row.state {
+        DriftState::Missing | DriftState::Stale | DriftState::Orphaned | DriftState::Conflict => {
+            let key = crate::lock::entry_key(row.kind, &row.name, row.harness);
+            lock.entries.contains_key(&key).then_some(key)
+        }
+        DriftState::Unmanaged => None,
+    }));
+    if !entries.is_empty() {
+        return Ok(Standing::Refused(Finding::Unsettled { entries }));
+    }
+    Ok(Standing::Current)
+}
+
+#[test]
+fn refresh_then_verify_agrees_on_every_committed_install_record() {
+    let (tmp, copy) =
+        committed_copy(&crate::test_util::checkout_root()).expect("the committed checkout copies");
+    let env = Env::fake(&crate::test_util::rooted(&tmp).join("home"), FakeOs::Linux);
+    assert!(
+        !record(&env, &copy)
+            .expect("the committed record reads")
+            .entries
+            .is_empty()
+    );
+    match refresh_and_verify(&env, &copy) {
+        Ok(Standing::Current) => {}
+        Ok(Standing::Refused(finding)) => panic!("{}", refusal(&finding)),
+        Err(error) => panic!(
+            "{}",
+            refusal(&Finding::Unplanned {
+                root: crate::paths::slashed(&copy),
+                cause: error,
+            })
+        ),
+    }
+}
+
+/// A catalog change can exclude a tool while a repository sync updates its
+/// old copy without updating the install record. Those bytes remain an
+/// edit; the repository check must reject them before the merge.
+#[test]
+fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
+    let tmp = tempfile::tempdir().expect("the fixture directory creates");
+    let home = crate::test_util::rooted(&tmp);
+    let project = home.join("project");
+    let catalog = home.join("catalog");
+    std::fs::create_dir_all(catalog.join("hooks")).expect("the catalog directory creates");
+    std::fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n")
+        .expect("the executable catalog declares its layout");
+    std::fs::create_dir_all(&project).expect("the project directory creates");
+    let before = "#!/bin/sh\n# ---\n# name: probe\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude, codex]\n# ---\nexit 0\n";
+    std::fs::write(catalog.join("hooks/probe.sh"), before).expect("the source writes");
+    std::fs::write(project.join("kendex.toml"), format!(
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
+        crate::test_util::source_path(&catalog),
+    )).expect("the declaration writes");
+    let env = Env::fake(&home, FakeOs::Linux);
+    assert_eq!(refresh_and_verify(&env, &project), Ok(Standing::Current));
+    let after = before.replace("[claude, codex]", "[claude]");
+    std::fs::write(catalog.join("hooks/probe.sh"), &after).expect("the source changes");
+    let excluded = project.join(".codex/hooks/probe.sh");
+    std::fs::write(&excluded, &after).expect("the committed copy changes");
+    assert_eq!(
+        refresh_and_verify(&env, &project),
+        Ok(Standing::Refused(Finding::Unsettled {
+            entries: BTreeSet::from(["hook:probe:codex".to_owned()]),
+        }))
+    );
+    assert_eq!(
+        std::fs::read_to_string(&excluded).expect("the held copy reads"),
+        after
+    );
+    std::fs::remove_file(excluded).expect("the excluded committed copy removes");
+    assert_eq!(refresh_and_verify(&env, &project), Ok(Standing::Current));
 }
 
 /// One skill this checkout's declaration configures instructions for,
