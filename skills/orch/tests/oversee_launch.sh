@@ -127,8 +127,8 @@ fixture_worker() { # ROLE BARRIERS
   # Compare before acquisition too: base reuse must fail on ownership,
   # even while kill-server's asynchronous shutdown is still in progress.
   printf '%s\n' "$first" "$FIXTURE_SOCKET" > "$barriers/$role.sockets.tmp"
-  fixture_distinct_sockets "$barriers/$role.sockets.tmp" || return 1
   mv "$barriers/$role.sockets.tmp" "$barriers/$role.sockets"
+  fixture_distinct_sockets "$barriers/$role.sockets" || return 1
   fixture_server_start || return 1
   assert_eq "${FIXTURE_ADDR%%,*}" "$FIXTURE_SOCKET" "restarted fixture answers on its allocated fresh socket"
   printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.restarted.tmp"
