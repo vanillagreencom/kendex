@@ -374,20 +374,69 @@ assert_eq "$(pasted 1)" "$LAUNCH_LINE" \
 assert_eq "$(described) pasted=$(typed 2)" "cloud=brief ref=0 pasted=none" \
   "claude takes the brief file's text closed by the session words as its --cloud= description, never the mailbox words, with no --ref and nothing pasted after its line"
 # branch_named ITEM BRANCH — the prompt file the launch of ITEM wrote: whether
-# it names BRANCH, which the brief does not, and how many {branch} words it
-# left unfilled.
+# it names BRANCH, which the brief does not, and leaves any {branch} unfilled.
 branch_named() {
   local text
   text="$(cat -- "$TMP_ROOT/wt/$1/.git/cloud-prompt")" || { echo "prompt=unread"; return; }
-  printf 'named=%s unfilled=%s' "$([[ "$text" == *"$2"* ]] && echo yes || echo no)" "$({ grep -oF '{branch}' <<<"$text" || true; } | wc -l | tr -d ' ')"
+  printf 'named=%s unfilled=%s' "$([[ "$text" == *"$2"* ]] && echo yes || echo no)" "$([[ "$text" == *'{branch}'* ]] && echo yes || echo no)"
 }
-assert_eq "$(branch_named CC-1 cc-1)" "named=yes unfilled=0" \
+assert_eq "$(branch_named CC-1 cc-1)" "named=yes unfilled=no" \
   "the prompt the launch wrote names the item branch and leaves no {branch} word"
 assert_eq "$(record CC-1)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD fleet:CC-1 $TMP_ROOT/wt/CC-1 running null" \
   "the record names the host and kind, the account, the session id the pane's URL carries, the window, and no tier, the brief carrying no item-tier line"
 OWED='open-terminal: cloud-card-owed item=CC-1'
 assert_eq "owed=$(grep -c "^$OWED" <<<"$ERR" || true)" "owed=0" \
   "a session that shows no card prints no cloud-card-owed line"
+
+echo "=== cloud publication creates a ready pull request through REST ==="
+# Claude cloud consumes these command words as its publication instructions.
+# Read the prompt open-terminal actually rendered, not SESSION_TEXT itself.
+REST_CREATE='gh api --method POST repos/[OWNER]/[REPO]/pulls --input tmp/cloud-pull-request.json --jq .number'
+ready_route() { # RENDERED PROMPT
+  local create=no draft=no read=no request=no startup=no transition=no
+  [[ "$1" != *"$REST_CREATE"* ]] || create=yes
+  [[ "$1" != *'"draft": false'* ]] || draft=yes
+  [[ "$1" != *'gh api repos/[OWNER]/[REPO]/pulls/[PR_NUMBER] --jq .base.ref'* ]] || read=yes
+  [[ "$1" != *'--request-review --base-checkout tmp/review-base'* ]] || request=yes
+  [[ "$1" != *'git commit --allow-empty and push it to '* ]] || startup=yes
+  [[ "$1" != *'--mark-ready'* && "$1" != *'gh pr ready'* && "$1" != *'open a draft pull request'* ]] || transition=yes
+  printf 'create=%s draft-false=%s base-rest=%s request=%s startup=%s draft-route=%s' "$create" "$draft" "$read" "$request" "$startup" "$transition"
+}
+READY_WANT='create=yes draft-false=yes base-rest=yes request=yes startup=yes draft-route=no'
+assert_eq "$(ready_route "$(cat "$TMP_ROOT/wt/CC-1/.git/cloud-prompt")")" "$READY_WANT" \
+  "the rendered cloud prompt creates ready through REST and requests review without a ready transition"
+READY_CONTROL="$(mutant_scripts cloud-ready-control lib/lane-launch.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-ready-control"
+mutate_file "$READY_CONTROL/lib/lane-launch.sh" "$REST_CREATE" \
+  'git commit --allow-empty, push it to {branch}, and open a draft pull request from {branch}'
+run_ot SCRIPT="$READY_CONTROL/open-terminal" -- "${CLOUD[@]}" CC-49
+READY_RED="$(FAIL=0; assert_eq "$(ready_route "$(cat "$TMP_ROOT/wt/CC-49/.git/cloud-prompt")")" "$READY_WANT" 'cloud ready publication' > "$TMP_ROOT/cloud-ready-control.out"; printf '%s' "$FAIL")"
+assert_eq "rc=$RC red=$READY_RED" 'rc=0 red=1' \
+  "control: the previous draft-opening words turn the rendered cloud publication row red"
+STARTUP_CONTROL="$(mutant_scripts cloud-startup-control lib/lane-launch.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-startup-control"
+mutate_file "$STARTUP_CONTROL/lib/lane-launch.sh" 'git commit --allow-empty' 'git commit'
+run_ot SCRIPT="$STARTUP_CONTROL/open-terminal" -- "${CLOUD[@]}" CC-47
+STARTUP_RED="$(FAIL=0; assert_eq "$(ready_route "$(cat "$TMP_ROOT/wt/CC-47/.git/cloud-prompt")")" "$READY_WANT" 'cloud startup commit' > "$TMP_ROOT/cloud-startup-control.out"; printf '%s' "$FAIL")"
+assert_eq "rc=$RC red=$STARTUP_RED" 'rc=0 red=1' \
+  "control: omitting the empty startup commit turns the rendered cloud contract row red"
+# The same hosted launch must deliver identical commands with either cloud
+# source. The provider and tmux are fixtures; no remote host is contacted.
+mkdir -p "$TMP_ROOT/hosted/srv/lane"
+printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$TMP_ROOT/hosted/srv/lane/.git"
+printf 'dev@lane:~$\n' > "$TMP_ROOT/hosted-shell"
+printf '> /orch start CC-48\n\xe2\x9d\xaf\xc2\xa0\n' > "$TMP_ROOT/hosted-harness"
+HOSTED_WORDS=''
+for script in "$OT" "$READY_CONTROL/open-terminal"; do
+  run_ot SCRIPT="$script" "LANE_HOST_STUB_DIR=$TMP_ROOT/hosted" "LANE_HOST_STUB_LOG=$TMP_ROOT/hosted.log" \
+    "OT_SSH_SCREEN=$TMP_ROOT/hosted-shell" "OT_HARNESS_SCREEN=$TMP_ROOT/hosted-harness" -- \
+    --host "$TEST_DIR/fixtures/lane-host" --harness claude --lane "$LANE_DIR" --launch-flags '--model sonnet --effort high' CC-48
+  assert_eq "rc=$RC" 'rc=0' "the hosted launch succeeds with either cloud source" "$TMP_ROOT/err"
+  if [[ -z "$HOSTED_WORDS" ]]; then HOSTED_WORDS="$(pasted 2)"
+  else assert_eq "$(pasted 2)" "$HOSTED_WORDS" "changing the cloud publication words preserves the hosted launch commands"; fi
+done
+assert_contains "$HOSTED_WORDS" 'exec bash -lc ' "the hosted comparison reads the delivered remote command"
+assert_not_contains "$HOSTED_WORDS" "$REST_CREATE" "the hosted launch keeps its publication route"
 
 echo "=== a brief's item-tier line is the cloud lane's tier ==="
 # The item-tier line, and a different result an issue's text can quote.
@@ -1026,7 +1075,7 @@ assert_eq "owed=$(grep -c "^$OWED" <<<"$ERR" || true)" "owed=1" \
 # shellcheck disable=SC2016
 mutant branch-fill '    prompt+="${words%%\{branch\}*}$branch"' '    prompt+="${words%%\{branch\}*}{branch}"'
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-1
-assert_eq "$(described) $(branch_named CC-1 cc-1)" "cloud=other ref=0 named=no unfilled=4" \
+assert_eq "$(described) $(branch_named CC-1 cc-1)" "cloud=other ref=0 named=no unfilled=yes" \
   "control: session words with {branch} unfilled fail the description and prompt rows"
 # Every {branch} gone from the words, in a copy of the lib: the description
 # row, which builds its want from the same words, still passes, and the
@@ -1034,7 +1083,7 @@ assert_eq "$(described) $(branch_named CC-1 cc-1)" "cloud=other ref=0 named=no u
 mutant_root branch-words lib/lane-launch.sh
 perl -0777 -pi -e 's/\{branch\}//g or die "branch-words: matches=0\n"' -- "$MUTANT_ROOT/scripts/lib/lane-launch.sh"
 run_ot SCRIPT="$MUTANT_ROOT/scripts/open-terminal" -- "${CLOUD[@]}" CC-1
-assert_eq "$(branch_named CC-1 cc-1)" "named=no unfilled=0" \
+assert_eq "$(branch_named CC-1 cc-1)" "named=no unfilled=no" \
   "control: session words naming no {branch} fail the prompt row"
 
 echo "=== a cloud claim has no source checkout and accepts a session directive ==="

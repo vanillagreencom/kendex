@@ -384,6 +384,7 @@ git clone -q "$CLOUD_ORIGIN" "$ACTION_CWD"
 git -C "$ACTION_CWD" config gc.auto 0
 git -C "$ACTION_CWD" config maintenance.auto false
 git -C "$ACTION_CWD" checkout -q -b item
+git -C "$ACTION_CWD" remote set-url origin https://github.com/consumer/repo.git
 write_settings "$ACTION_CWD/kendex.settings.toml" '"off"' ''
 mkdir -p "$ACTION_CWD/tmp"
 cloud_script() { # LIB [ERREXIT]
@@ -394,23 +395,25 @@ cloud_script() { # LIB [ERREXIT]
   block="${block//\[PR_NUMBER\]/42}"
   block="${block//\[BASE\]/main}"
   printf 'set -uo pipefail\n%s\n%s\n' "${2:+set -e}" "${block:-:}" > "$TMP_ROOT/cloud-complete.sh"
+  # Fetch the local fixture while the resolver reads a real GitHub origin.
+  mutate_file "$TMP_ROOT/cloud-complete.sh" 'git fetch origin main' "git fetch $(printf '%q' "$CLOUD_ORIGIN") main"
+  # Another process can dirty the temporary checkout before cleanup.
+  mutate_file "$TMP_ROOT/cloud-complete.sh" 'git worktree add --detach tmp/review-base origin/main || exit "$?"' \
+    'git worktree add --detach tmp/review-base origin/main || exit "$?"'$'\n''if [[ "${CLOUD_DIRTY_BASE:-false}" == true ]]; then touch tmp/review-base/cloud-cleanup-blocker; fi'
 }
 for row in \
-  'cloud marks ready|strict|true|0|0|false|0|1|ready,request head=current-head draft=false|0' \
-  'person already marked ready|strict|false|0|0|false|0|1|request head=current-head draft=false|0' \
-  'authentication failure with errexit|strict|true|1|0|false|3|0||0' \
-  'authentication failure without errexit||true|1|0|false|3|0||0' \
-  'ready failure with errexit|strict|true|0|8|false|2|0|ready|0' \
-  'ready failure without errexit||true|0|8|false|2|0|ready|0' \
-  'cleanup failure with errexit|strict|true|0|0|true|128|1|ready,request head=current-head draft=false|128' \
-  'cleanup failure without errexit||true|0|0|true|128|1|ready,request head=current-head draft=false|128' \
-  'request and cleanup failure with errexit|strict|true|0|8|true|2|0|ready|128' \
-  'request and cleanup failure without errexit||true|0|8|true|2|0|ready|128'; do
-  IFS='|' read -r label errexit draft auth_exit ready_exit dirty want_rc requests transitions cleanup_exit <<<"$row"
+  'ready cloud pull request|strict|0|false|0|1|request head=current-head draft=false|0' \
+  'authentication failure with errexit|strict|1|false|3|0||0' \
+  'authentication failure without errexit||1|false|3|0||0' \
+  'cleanup failure with errexit|strict|0|true|128|1|request head=current-head draft=false|128' \
+  'cleanup failure without errexit||0|true|128|1|request head=current-head draft=false|128' \
+  'request and cleanup failure with errexit|strict|1|true|3|0||128' \
+  'request and cleanup failure without errexit||1|true|3|0||128'; do
+  IFS='|' read -r label errexit auth_exit dirty want_rc requests transitions cleanup_exit <<<"$row"
   cloud_script "$REPO_ROOT/skills/orch/scripts/lib/lane-launch.sh" "$errexit"
-  printf '%s\n' "$draft" > "$DRAFT_FILE"
+  printf 'false\n' > "$DRAFT_FILE"
   printf 'current-head\n' > "$HEAD_FILE"
-  RUN_ENV=("AUTH_EXIT=$auth_exit" "READY_EXIT=$ready_exit" "CLOUD_DIRTY_BASE=$dirty")
+  RUN_ENV=("AUTH_EXIT=$auth_exit" "CLOUD_DIRTY_BASE=$dirty" "DENY_GRAPHQL=true")
   run_action "$TMP_ROOT/cloud-complete.sh" 0
   assert_eq "$RC|$REQUESTS|$(paste -sd, "$TRANSITION_LOG")|$(cat "$EXECUTION_LOG")" "$want_rc|$requests|$transitions|" "$label preserves the request result" "$ERR"
   if [[ "$cleanup_exit" == 0 ]]; then
@@ -432,7 +435,7 @@ for row in \
   scripts="$(mutant_scripts "$label" lib/lane-launch.sh)" || exit 1
   mutate_file "$scripts/lib/lane-launch.sh" "$old" "$new"
   cloud_script "$scripts/lib/lane-launch.sh" "$errexit"
-  printf 'true\n' > "$DRAFT_FILE"
+  printf 'false\n' > "$DRAFT_FILE"
   printf 'current-head\n' > "$HEAD_FILE"
   RUN_ENV=("AUTH_EXIT=$auth_exit" "CLOUD_DIRTY_BASE=$dirty")
   run_action "$TMP_ROOT/cloud-complete.sh" 0
@@ -445,13 +448,12 @@ for row in \
 done
 RUN_ENV=()
 for row in \
-  'cloud-ready|--request-review --mark-ready|--request-review|true' \
   'cloud-policy|--base-checkout tmp/review-base|--base-checkout .|false'; do
   IFS='|' read -r label old new draft <<<"$row"
   scripts="$(mutant_scripts "$label" lib/lane-launch.sh)" || exit 1
   mutate_file "$scripts/lib/lane-launch.sh" "$old" "$new"
   cloud_script "$scripts/lib/lane-launch.sh"
-  printf 'true\n' > "$DRAFT_FILE"
+  printf 'false\n' > "$DRAFT_FILE"
   run_action "$TMP_ROOT/cloud-complete.sh" 0
   assert_eq "$RC|$REQUESTS|$(cat "$DRAFT_FILE")" "0|0|$draft" "$label control breaks the completion request" "$ERR"
 done

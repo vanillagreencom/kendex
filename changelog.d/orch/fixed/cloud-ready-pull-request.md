@@ -1,0 +1,1 @@
+- Claude cloud sessions create ready pull requests through REST after their tests and internal review pass, then request Copilot review without a draft-to-ready step.
