@@ -260,6 +260,18 @@ environment_rows() {
 [2,"sudo env -- NAME=value printenv","sudo-env-options-end-dump"]
 [0,"env -- NAME=value git status","env-options-end-launcher"]
 [0,"env -- NAME=value printenv NAME","env-options-end-named"]
+[0,"env PATH=\"$PATH\" git status","env-variable-assignment-launcher"]
+[0,"env NAME=$VALUE printf hello","env-unquoted-variable-assignment-launcher"]
+[0,"env -- NAME=$VALUE git status","env-variable-assignment-after-options"]
+[0,"env --chdir=\"$PWD\" git status","env-variable-chdir-launcher"]
+[0,"env --unset=$NAME git status","env-variable-unset-launcher"]
+[0,"command env PATH=\"$PATH\" git status","command-env-variable-assignment-launcher"]
+[0,"sudo env PATH=\"$PATH\" git status","sudo-env-variable-assignment-launcher"]
+[2,"env PATH=\"$PATH\" printenv","env-variable-assignment-dump-target"]
+[2,"env --chdir=\"$PWD\" printenv","env-variable-chdir-dump-target"]
+[2,"env --unset=$NAME printenv","env-variable-unset-dump-target"]
+[2,"env $'NAME=value' git status","env-dollar-assignment-stays-unproved"]
+[2,"env $'--chdir=somewhere' git status","env-dollar-option-stays-unproved"]
 [2,"printenv --","printenv-options-end"]
 [2,"printenv -0","printenv-null"]
 [2,"printenv $NAME","unresolved-name"]
@@ -463,10 +475,21 @@ environment_rows() {
 [2,"$'g\\x69t' status","ansi-ordinary-escaped-head"]
 [2,"$'e\\'nv'","ansi-escaped-quote-head"]
 [2,"command $'\\x65nv'","ansi-forwarded-escaped-head"]
+[2,"{ $'\\x65nv'; }","ansi-brace-escaped-head"]
+[2,"! $'\\x65nv'","ansi-negated-escaped-head"]
+[2,"time $'\\x65nv'","ansi-timed-escaped-head"]
+[2,"if true; then $'\\x65nv'; fi","ansi-conditional-escaped-head"]
+[2,"while true; do $'\\x65nv'; done","ansi-loop-escaped-head"]
+[2,"exec $'\\x65nv'","ansi-exec-escaped-head"]
+[2,"builtin $'\\x65nv'","ansi-builtin-escaped-head"]
+[2,"$'exec' $'\\x65nv'","ansi-dollar-exec-escaped-head"]
+[2,"command exec $'\\x65nv'","ansi-command-exec-escaped-head"]
+[2,"{ printf '%s' $'\\x65nv'; }","ansi-escaped-data-in-opaque-suffix"]
 [0,"$'printenv' NAME","ansi-named-read"]
 [0,"$\"printenv\" NAME","locale-named-read"]
 [2,"printenv $'NAME'","ansi-named-argument-stays-unproved"]
-[0,"systemctl $'show-environment'","ansi-systemctl-argument-stays-data"]
+[2,"systemctl $'show-environment'","ansi-systemctl-producer-argument"]
+[2,"systemctl $\"show-environment\"","locale-systemctl-producer-argument"]
 [0,"printf '%s' $'\\x65nv'","ansi-escaped-argument-data"]
 [0,"printf '%s' $'$(env)'","ansi-substitution-text-is-data"]
 [0,"\"en\\v\"","double-backslash-is-literal"]
@@ -640,6 +663,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
       defect == "no-dollar-opener" { swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)") }
       defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || return 0", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
+      defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
+      defect == "opaque-escaped-pass" { swap("[ \"${kinds[$j]}\" != ansi-escaped ] || mode=dump-unknown", "[ \"${kinds[$j]}\" != ansi-escaped ] || :") }
+      defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -700,6 +726,19 @@ array-decoding|FAIL environment: array-backslash-name-is-not-literal: exit=0 exp
 no-dollar-opener|FAIL environment: ansi-dollar-producer: exit=0 expected=2
 no-dollar-opener|FAIL environment: locale-dollar-producer: exit=0 expected=2
 escaped-head-pass|FAIL environment: ansi-escaped-head: exit=0 expected=2
+env-literal-operands|FAIL environment: env-variable-assignment-launcher: exit=2 expected=0
+env-literal-operands|FAIL environment: env-variable-chdir-launcher: exit=2 expected=0
+env-literal-operands|FAIL environment: env-variable-unset-launcher: exit=2 expected=0
+opaque-escaped-pass|FAIL environment: ansi-brace-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-negated-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-timed-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-conditional-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-loop-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-exec-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-builtin-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-dollar-exec-escaped-head: exit=0 expected=2
+opaque-escaped-pass|FAIL environment: ansi-command-exec-escaped-head: exit=0 expected=2
+systemctl-literal-argument|FAIL environment: ansi-systemctl-producer-argument: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in

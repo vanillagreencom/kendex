@@ -1,1 +1,1 @@
-- Refuse dollar-quoted environment command heads and command heads that contain ANSI-C escapes. Named-variable reads keep working.
+- Refuse dollar-quoted environment producers and command heads that contain ANSI-C escapes. Unsupported shell contexts also refuse ANSI-C escaped data. Named-variable reads and ordinary env launchers keep working.

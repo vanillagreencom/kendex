@@ -222,7 +222,7 @@ environment_dump() { # command kind; arguments are already decoded data
           options_ended=""; null_output=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
-            [ "${arg_kinds[$pos]}" = literal ] || break
+            case "${arg_kinds[$pos]}" in dollar-literal | ansi-escaped) break ;; esac
             # -- ends options, not the following assignment operands.
             if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then pos=$((pos + 1)); continue; fi
             [ -z "$options_ended" ] || break
@@ -290,9 +290,7 @@ environment_dump() { # command kind; arguments are already decoded data
           if [ "$pos" -lt "${#args[@]}" ]; then mode=dump-unknown; else mode=dump-lines; fi
         fi ;;
       systemctl)
-        for ((j=pos; j<${#args[@]}; j++)); do
-          [ "${arg_kinds[$j]}" != literal ] || [ "${args[$j]}" != show-environment ] || mode=dump-lines
-        done
+        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump-lines; done
         if [ "$mode" = dump-lines ]; then
           for ((j=pos; j<${#args[@]}; j++)); do
             case "${args[$j]}" in --user | --system | -- | show-environment) ;; *) mode=dump-unknown ;; esac
@@ -345,7 +343,10 @@ environment_dump() { # command kind; arguments are already decoded data
           mode=opaque-clean; compound=1
           # Keep the suffix across list, pipe and brace boundaries. The
           # selector cannot prove where an unsupported construct ends.
-          for ((j=opaque_from; j<${#tokens[@]}; j++)); do evidence[${#evidence[@]}]=${tokens[$j]}; done
+          for ((j=opaque_from; j<${#tokens[@]}; j++)); do
+            [ "${kinds[$j]}" != ansi-escaped ] || mode=dump-unknown
+            evidence[${#evidence[@]}]=${tokens[$j]}
+          done
         else
           for ((j=pos; j<${#args[@]}; j++)); do evidence[${#evidence[@]}]=${args[$j]}; done
         fi
