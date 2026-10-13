@@ -4,10 +4,10 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSdkMcpServer, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
 import { PROVIDER_ID, messageContentToText } from "./convert.js";
-import { buildModels, modelDisplayName } from "./models.js";
+import { buildModels } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, drainStrandedToolCalls, popContext, stackDepth, pushContext, failedTurnOutput, summarizeDroppedUserMessages, takeQueuedOrParkedResult, toolCallDrainCause, type DeferredUserMessage, type QueryRestartRequest } from "./query-state.js";
+import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, drainStrandedToolCalls, popContext, stackDepth, pushContext, failedTurnOutput, summarizeDroppedUserMessages, takeQueuedOrParkedResult, takeUnknownModelNotice, toolCallDrainCause, type DeferredUserMessage, type QueryRestartRequest } from "./query-state.js";
 import { abortSdkQuery, closeSdkQuery, teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
 import { installSettingsCacheRefresh } from "./package-config.js";
@@ -178,8 +178,11 @@ type BridgeStreamOptions = SimpleStreamOptions & {
 	[HISTORY_RESTART_KEY]?: HistoryRestartState;
 };
 
-// MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
 const MODELS = buildModels(getModels("anthropic"));
+
+function modelDisplayName(modelId: string): string {
+	return MODELS.find((model) => model.id === modelId)?.name ?? modelId;
+}
 
 
 
@@ -1032,6 +1035,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	const queryModel = account?.modelId && account.modelId !== model.id
 		? { ...model, id: account.modelId, name: modelDisplayName(account.modelId) }
 		: model;
+	if (!MODELS.some((entry) => entry.id === queryModel.id) && takeUnknownModelNotice()) {
+		safeNotify(`model-resolution: unknown=${queryModel.id}\nPi Claude uses this model as requested. Claude Code chooses its fallback.`, "warning");
+	}
 	if (queryModel.id !== model.id) {
 		// Stamp the output model on EVERY attempt (each retry resets turn state),
 		// but toast each distinct model at most once per request: with up to 16
@@ -1146,7 +1152,6 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// connector, prompt-append, setting-source, effort, and env rationale.
 	const built = buildClaudeQueryOptions({
 		cwd,
-		requestedModel: model,
 		queryModel,
 		account,
 		bridgeConfig,
@@ -1164,7 +1169,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	debug("provider: fresh query",
 		`model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
 		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${built.effort ?? "default"} account=${account?.label ?? "legacy"}`,
-		`fallback=${built.fallbackModel ?? "none"}`,
+		"fallback=harness-default",
 		() => `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
 		`claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
 		`prompt ${describePrompt(promptText, promptBlocks)}`);

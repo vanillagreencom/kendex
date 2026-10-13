@@ -738,6 +738,7 @@ export class QueryContext {
 interface QueryLaneState {
 	current: QueryContext;
 	stack: QueryContext[];
+	reportedUnknownModel?: boolean;
 }
 
 interface QueryLaneStoreV1 {
@@ -773,6 +774,13 @@ function lane(): QueryLaneState {
 }
 
 export function ctx(): QueryContext { return lane().current; }
+
+export function takeUnknownModelNotice(): boolean {
+	const state = lane();
+	if (state.reportedUnknownModel) return false;
+	state.reportedUnknownModel = true;
+	return true;
+}
 
 export function stackDepth(): number { return lane().stack.length; }
 
@@ -824,16 +832,14 @@ export function resetStack(): void {
 export function deleteQueryLane(sessionId: string | undefined): void {
 	const store = queryLaneStore();
 	if (sessionId === undefined) {
-		store.defaultLane.current = new QueryContext();
-		store.defaultLane.stack.length = 0;
+		store.defaultLane = { current: new QueryContext(), stack: [] };
 	} else store.sessionLanes.delete(sessionId);
 }
 
 export function clearQueryLanes(): void {
 	const store = queryLaneStore();
 	store.sessionLanes.clear();
-	store.defaultLane.current = new QueryContext();
-	store.defaultLane.stack.length = 0;
+	store.defaultLane = { current: new QueryContext(), stack: [] };
 }
 
 export function __testQueryLaneCount(): number {

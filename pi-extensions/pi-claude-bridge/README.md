@@ -28,7 +28,7 @@ Fable 5.1 requires [Claude Code 2.1.255 or later](https://code.claude.com/docs/e
 
 ## How it works
 
-- You pick one of the `pi-claude` models in Pi's model menu; **Claude Fable 5.1** is `pi-claude/claude-fable-5-1`.
+- You pick a `pi-claude` model from Pi's Anthropic model list. Claude Code chooses its safety fallback. An unknown model request keeps its ID and shows one notice per session.
 - The bridge starts Claude Code, or resumes it, through the Claude Agent SDK, Anthropic's library for driving Claude Code from another program.
 - It sends your prompt to Claude Code and offers it Pi's tools.
 - When Claude Code calls a tool, Pi runs the tool and sends the result back to Claude Code.

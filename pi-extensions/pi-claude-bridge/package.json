@@ -114,7 +114,7 @@
         {
           "key": "modelEffortOverrides",
           "label": "Model effort overrides",
-          "description": "Optional JSON object mapping Pi Claude model ids to Claude Code effort levels, e.g. {\"claude-opus-4-8\":\"max\"}. Keys may also use pi-claude/<id> or *.",
+          "description": "Optional JSON object mapping Pi Claude model ids to Claude Code effort levels. Keys may also use pi-claude/<id> or *.",
           "type": "string",
           "default": "{}",
           "category": "Claude Code",

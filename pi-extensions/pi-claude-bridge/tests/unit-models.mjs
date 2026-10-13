@@ -1,128 +1,71 @@
-/**
- * Tests for MODELS construction + fallback pairing.
- * Pins: opus shortcut resolves to whichever opus is first in MODEL_IDS_IN_ORDER,
- * projection strips pi-ai's baseUrl/api/provider/headers, and ordering is preserved.
- */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, MODEL_IDS_IN_ORDER, OPUS_5_5_MODEL_ID, OPUS_5_MODEL_ID, SONNET_5_5_MODEL_ID, SONNET_5_MODEL_ID, buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "../src/models.js";
+import { readFileSync, readdirSync } from "node:fs";
+import ts from "typescript";
+import { buildModels } from "../src/models.js";
+import { buildClaudeQueryOptions } from "../src/query-options.js";
+import { assertSourceControl } from "./lib/source-control.mjs";
 
-// Simulated pi-ai registry entry — extra fields mimic the ones pi-ai exposes
-// that must not leak into the provider-registered MODELS array.
-const mockPiAiModel = (id) => ({
-	id, name: id, reasoning: true, input: ["text"], cost: { input: 1, output: 1 },
-	contextWindow: 200000, maxTokens: 8000,
-	thinkingLevelMap: { xhigh: id === "claude-opus-4-8" ? "xhigh" : "max" },
-	// Leaky fields that should be stripped by the projection:
-	baseUrl: "https://api.anthropic.com", api: "anthropic", provider: "anthropic",
-	headers: { "x-api-key": "LEAK" },
+const fixtureModel = (id) => ({
+	id, name: id, reasoning: true, input: ["text", "image"],
+	contextWindow: 123, maxTokens: 456, thinkingLevelMap: { xhigh: "xhigh" },
+	cost: { input: 1, output: 1 }, baseUrl: "https://api.anthropic.com",
+	api: "anthropic", provider: "anthropic", headers: { "x-api-key": "fixture" },
 });
 
-describe("MODELS projection", () => {
-	it("strips baseUrl/api/provider/headers", () => {
-		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-		for (const m of models) {
-			assert.equal(m.baseUrl, undefined);
-			assert.equal(m.api, undefined);
-			assert.equal(m.provider, undefined);
-			assert.equal(m.headers, undefined);
+describe("runtime models", () => {
+	it("offers the fixture source model and leaves its fallback with Claude Code", () => {
+		const models = buildModels([fixtureModel("claude-fable-99-1"), fixtureModel("claude-opus-98")]);
+		assert.deepEqual(models.map((model) => model.id), ["claude-fable-99-1", "claude-opus-98"]);
+		for (const model of models) {
+			assert.equal(model.contextWindow, 123);
+			assert.equal(model.maxTokens, 456);
+			assert.deepEqual(model.thinkingLevelMap, { xhigh: "xhigh" });
+			assert.deepEqual(model.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+			for (const key of ["baseUrl", "api", "provider", "headers"]) assert.equal(Object.hasOwn(model, key), false);
+			const { queryOptions } = buildClaudeQueryOptions({
+				cwd: process.cwd(), queryModel: model,
+				bridgeConfig: {}, resumeSessionId: null,
+			});
+			assert.equal(queryOptions.model, model.id);
+			assert.equal(Object.hasOwn(queryOptions, "fallbackModel"), false);
 		}
+		assert.deepEqual(buildModels([]), []);
 	});
 
-	it("preserves MODEL_IDS_IN_ORDER ordering", () => {
-		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-		assert.deepEqual(models.map((m) => m.id), MODEL_IDS_IN_ORDER);
-	});
-
-	it("lists Fable 5.1 first, then Opus 5.5 and Opus 5 ahead of older Opus models", () => {
-		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-		assert.equal(models[0]?.id, FABLE_MODEL_ID);
-		assert.equal(models[1]?.id, OPUS_5_5_MODEL_ID);
-		assert.equal(models[2]?.id, OPUS_5_MODEL_ID);
-		assert.equal(models[3]?.id, FABLE_FALLBACK_MODEL_ID);
-	});
-
-	it("fills supported model metadata missing from pi-ai and drops unknown missing IDs", () => {
-		const models = buildModels([mockPiAiModel("claude-haiku-4-5")]);
-		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5", "claude-haiku-4-5"]);
-		assert.equal(models.find((m) => m.id === "claude-opus-5-5")?.name, "Claude Opus 5.5");
-		assert.equal(models.find((m) => m.id === "claude-opus-5-5")?.contextWindow, 1000000);
-		assert.equal(models.find((m) => m.id === "claude-opus-5-5")?.maxTokens, 128000);
-		assert.deepEqual(models.find((m) => m.id === "claude-opus-5-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
-		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.name, "Claude Fable 5.1");
-		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.contextWindow, 1000000);
-		assert.equal(models.find((m) => m.id === "claude-opus-4-8")?.maxTokens, 128000);
-		assert.equal(models.find((m) => m.id === "claude-haiku-5-5")?.name, "Claude Haiku 5.5");
-		assert.equal(models.find((m) => m.id === "claude-haiku-5-5")?.contextWindow, 1000000);
-		assert.equal(models.find((m) => m.id === "claude-haiku-5-5")?.maxTokens, 128000);
-		assert.equal(models.find((m) => m.id === "claude-sonnet-5-5")?.name, "Claude Sonnet 5.5");
-		assert.equal(models.find((m) => m.id === "claude-sonnet-5-5")?.contextWindow, 1000000);
-		assert.equal(models.find((m) => m.id === "claude-sonnet-5-5")?.maxTokens, 128000);
-		assert.deepEqual(models.find((m) => m.id === "claude-sonnet-5-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
-		assert.equal(models.find((m) => m.id === "claude-sonnet-5")?.name, "Claude Sonnet 5");
-		assert.equal(models.find((m) => m.id === "claude-sonnet-5")?.contextWindow, 1000000);
-		assert.equal(models.find((m) => m.id === "claude-opus-5")?.name, "Claude Opus 5");
-		assert.equal(models.find((m) => m.id === "claude-opus-5")?.contextWindow, 1000000);
-		assert.equal(models.find((m) => m.id === "claude-opus-5")?.maxTokens, 128000);
-		assert.deepEqual(models.find((m) => m.id === "claude-opus-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
-		assert.deepEqual(models.find((m) => m.id === "claude-fable-5-1")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
-		assert.deepEqual(models.find((m) => m.id === "claude-sonnet-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
-	});
-
-	it("prefers pi-ai metadata over bridge fallback metadata", () => {
-		const models = buildModels([{
-			...mockPiAiModel("claude-fable-5-1"),
-			name: "Registry Fable",
-			contextWindow: 123,
-			maxTokens: 456,
-			thinkingLevelMap: { xhigh: "max" },
-		}]);
-		const fable = models.find((m) => m.id === "claude-fable-5-1");
-		assert.equal(fable?.name, "Registry Fable");
-		assert.equal(fable?.contextWindow, 123);
-		assert.equal(fable?.maxTokens, 456);
-		assert.deepEqual(fable?.thinkingLevelMap, { xhigh: "max" });
-	});
-
-	it("zeros out cost regardless of pi-ai pricing", () => {
-		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-		for (const m of models) {
-			assert.deepEqual(m.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+	it("has no versioned model IDs in bridge source or package configuration", () => {
+		const root = new URL("../src/", import.meta.url);
+		const files = readdirSync(root, { recursive: true }).filter((path) => path.endsWith(".ts"));
+		assert.ok(files.includes("models.ts"));
+		const found = [];
+		for (const path of [...files.map((file) => new URL(file, root)), new URL("../package.json", import.meta.url)]) {
+			const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, readFileSync(path, "utf8"));
+			for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+				if (/claude-(?:[a-z]+-)*[0-9]/.test(scanner.getTokenText())) found.push(path.pathname);
+			}
 		}
+		assert.deepEqual(found, []);
 	});
 
-	it("preserves pi-ai thinkingLevelMap for per-model effort mapping", () => {
-		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-		assert.deepEqual(models.find((m) => m.id === "claude-opus-4-8")?.thinkingLevelMap, { xhigh: "xhigh" });
-	});
-});
-
-describe("model fallback pairing", () => {
-	it("configures the documented safety fallback for the Claude 5 models whose classifiers decline", () => {
-		for (const [id, expected] of [
-			[FABLE_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
-			[OPUS_5_5_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
-			[OPUS_5_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
-			[SONNET_5_5_MODEL_ID, SONNET_5_MODEL_ID],
-			[FABLE_FALLBACK_MODEL_ID, undefined],
-			[SONNET_5_MODEL_ID, undefined],
-			["claude-sonnet-4-6", undefined],
-		]) {
-			assert.equal(fallbackModelForPrimaryModel(id), expected, id);
-		}
+	it("rejects a restored constant list in the picker and source scan", () => {
+		assertSourceControl({
+			source: "src/models.ts",
+			before: "return piAiModels.map(",
+			after: 'return piAiModels.filter((model) => ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5"].includes(model.id)).map(',
+			suite: "unit-models.mjs",
+			pattern: "fixture source model|no versioned model IDs",
+			failure: /(?:not ok|✖) .*fixture source model[\s\S]*(?:not ok|✖) .*no versioned model IDs/,
+		});
 	});
 
-	it("labels every model in a configured fallback pairing", () => {
-		for (const [id, expected] of [
-			[FABLE_MODEL_ID, "Claude Fable 5.1"],
-			[OPUS_5_5_MODEL_ID, "Claude Opus 5.5"],
-			[OPUS_5_MODEL_ID, "Claude Opus 5"],
-			[FABLE_FALLBACK_MODEL_ID, "Claude Opus 4.8"],
-			[SONNET_5_5_MODEL_ID, "Claude Sonnet 5.5"],
-			[SONNET_5_MODEL_ID, "Claude Sonnet 5"],
-			["gpt-9", "gpt-9"],
-		]) {
-			assert.equal(modelDisplayName(id), expected, id);
-		}
+	it("rejects a bridge fallback override", () => {
+		assertSourceControl({
+			source: "src/query-options.ts",
+			before: "model: queryModel.id,",
+			after: 'model: queryModel.id, fallbackModel: "opus",',
+			suite: "unit-models.mjs",
+			pattern: "fixture source model",
+			failure: /(?:not ok|✖) .*fixture source model/,
+		});
 	});
 });

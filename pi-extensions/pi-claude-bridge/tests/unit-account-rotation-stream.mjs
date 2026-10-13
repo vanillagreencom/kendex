@@ -18,14 +18,14 @@ import {
 } from "../src/index.ts";
 import * as piAi from "@earendil-works/pi-ai";
 import { buildModels } from "../src/models.ts";
-import { resolveGetModels } from "../src/pi-ai-compat.ts";
 import { buildNativeProvider } from "../src/native-provider.ts";
 import { RATE_LIMIT_TOKEN } from "../src/rate-limit.ts";
 import { setExtensionApi } from "../src/bridge-state.ts";
 import { CLAUDE_ACCOUNT_ROUTER_SYMBOL } from "../src/account-router.ts";
 import { setConnectorCallAuditSink } from "../src/connector-audit.ts";
-import { ctx, resetStack } from "../src/query-state.ts";
+import { ctx, deleteQueryLane, resetStack } from "../src/query-state.ts";
 import { runInRequestLane } from "../src/request-lane.ts";
+import { assertSourceControl } from "./lib/source-control.mjs";
 
 const model = {
 	id: "claude-haiku-4-5",
@@ -640,15 +640,14 @@ describe("managed account stream rotation", () => {
 
 		const events = await collect(streamClaudeAgentSdk(fableModel, context, { sessionId: "fable-spent" }));
 		assert.equal(queryOptions.model, "claude-opus-5");
-		assert.equal(queryOptions.fallbackModel, "claude-opus-4-8");
+		assert.equal(Object.hasOwn(queryOptions, "fallbackModel"), false);
 		assert.equal(queryOptions.env.CLAUDE_CONFIG_DIR, "/profiles/b");
 		assert.ok(textEvents(events).includes("opus-after-fable"));
 	});
 
 	it("selects registered Fable 5.1 without skipping another managed account", async () => {
 		const observed = observedState();
-		const getModels = await resolveGetModels(piAi);
-		const provider = buildNativeProvider(piAi, buildModels(getModels("anthropic")), streamClaudeAgentSdk);
+		const provider = buildNativeProvider(piAi, buildModels([{ ...model, id: "claude-fable-5-1", name: "Claude Fable 5.1" }]), streamClaudeAgentSdk);
 		const fableModel = provider.getModels()[0];
 		assert.equal(fableModel.name, "Claude Fable 5.1");
 		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
@@ -664,6 +663,60 @@ describe("managed account stream rotation", () => {
 		await collect(provider.streamSimple(fableModel, context, { sessionId: "fable-ready" }));
 		assert.equal(queryOptions.model, "claude-fable-5-1");
 		assert.equal(queryOptions.fallbackModel, undefined);
+	});
+
+	it("passes an unknown model unchanged with one warning per session", async () => {
+		const unknownModel = { ...model, id: "claude-fixture-99" };
+		const options = [];
+		__testSetSdkQueryFactory((input) => {
+			options.push(input.options);
+			return fakeSdkQuery([
+				{ type: "system", subtype: "init", session_id: "unknown-session" },
+				{ type: "result", subtype: "success", result: "unknown-model-answer" },
+			], "a", observedState());
+		});
+		for (const sessionId of ["unknown-a", "unknown-a", "unknown-b"]) {
+			await collect(streamClaudeAgentSdk(unknownModel, context, { sessionId }));
+		}
+		assert.deepEqual(options.map((option) => option.model), ["claude-fixture-99", "claude-fixture-99", "claude-fixture-99"]);
+		assert.equal(options.every((option) => !Object.hasOwn(option, "fallbackModel")), true);
+		assert.deepEqual(notifications.map((notice) => notice.level), ["warning", "warning"]);
+		deleteQueryLane("unknown-a");
+		await collect(streamClaudeAgentSdk(unknownModel, context, { sessionId: "unknown-a" }));
+		assert.deepEqual(notifications.map((notice) => notice.level), ["warning", "warning", "warning"]);
+	});
+
+	it("rejects repeated unknown-model warnings", () => {
+		assertSourceControl({
+			source: "src/query-state.ts",
+			before: "if (state.reportedUnknownModel) return false;",
+			after: "if (state.reportedUnknownModel) return true;",
+			suite: "unit-account-rotation-stream.mjs",
+			pattern: "passes an unknown model unchanged",
+			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
+		});
+	});
+
+	it("announces a safety fallback reported by Claude Code", async () => {
+		__testSetSdkQueryFactory(() => fakeSdkQuery([
+			{ type: "system", subtype: "init", session_id: "native-fallback-session" },
+			{ type: "system", subtype: "model_refusal_fallback", original_model: model.id, fallback_model: "claude-fixture-98" },
+			{ type: "result", subtype: "success", result: "native-fallback-answer" },
+		], "a", observedState()));
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "native-fallback" }));
+		assert.equal(events.find((event) => event.type === "done")?.message.model, "claude-fixture-98");
+		assert.deepEqual(notifications.map((notice) => notice.level), ["info"]);
+	});
+
+	it("rejects a suppressed native safety-fallback notice", () => {
+		assertSourceControl({
+			source: "src/consume-query.ts",
+			before: 'if (typeof fallbackModel === "string" && typeof originalModel === "string") {',
+			after: 'if (typeof fallbackModel === "number" && typeof originalModel === "string") {',
+			suite: "unit-account-rotation-stream.mjs",
+			pattern: "announces a safety fallback reported",
+			failure: /(?:not ok|✖) .*announces a safety fallback reported/,
+		});
 	});
 
 	it("surfaces an unavailable pool without starting Claude Code", async () => {

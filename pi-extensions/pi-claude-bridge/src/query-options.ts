@@ -12,7 +12,6 @@ import { connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, set
 import { connectorServersSnapshot } from "./connector-runtime.js";
 import { PROVIDER_ID } from "./convert.js";
 import { makeCliDebugOptions } from "./debug.js";
-import { FABLE_MODEL_ID, fallbackModelForPrimaryModel } from "./models.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
 import { extractSkillsBlock, MCP_SERVER_NAME } from "./skills.js";
 
@@ -45,8 +44,6 @@ export function resolveConfiguredEffort(
 
 export interface BuildClaudeQueryOptionsInput {
 	cwd: string;
-	/** The model Pi requested. */
-	requestedModel: Model<any>;
 	/** The model this attempt actually runs (router may substitute). */
 	queryModel: Model<any>;
 	account?: ClaudeAccountRoute;
@@ -77,11 +74,10 @@ export interface BuiltClaudeQueryOptions {
 	promptContextLabels: string[];
 	strictMcpConfigEnabled: boolean;
 	effort?: EffortLevel;
-	fallbackModel?: string;
 }
 
 export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): BuiltClaudeQueryOptions {
-	const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input;
+	const { cwd, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input;
 	const providerSettings = bridgeConfig.provider ?? {};
 	const accountScope = accountSessionScope(account);
 	// Whether to expose the Claude account's claude.ai cloud MCP connectors
@@ -137,15 +133,6 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// (verified in sdk.mjs flag mapping), so the typed form cannot set display
 	// without overriding the model's thinking mode alongside our `--effort`.
 	if (effort) extraArgs["thinking-display"] = "summarized";
-	// With a managed Fable pool, let every account's model-scoped allowance run
-	// out (rotation) before changing models — the CLI's own Opus fallback would
-	// silently skip accounts whose Fable quota is still available. Once the
-	// router explicitly selects Opus, its normal Opus→4.8 safety fallback is
-	// back on.
-	const fallbackModel = account && requestedModel.id === FABLE_MODEL_ID && queryModel.id === requestedModel.id
-		? undefined
-		: fallbackModelForPrimaryModel(queryModel.id);
-
 	// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
 	// when the user is logged into Anthropic). Keep the environment gate as well
 	// as strict MCP; selecting filesystem settings sources alone does not block them.
@@ -170,7 +157,6 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 		...connectorQueryOptions(enableCloudMcp, connectorWriteMode, builtinIsolationApplied),
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
-		...(fallbackModel ? { fallbackModel } : {}),
 		// Filesystem settings.env overrides the inherited child environment.
 		// SDK settings maps to --settings, above user/project/local settings, so
 		// pin the connector switch there as well without dropping fastMode.
@@ -204,6 +190,5 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 		promptContextLabels: promptContextAppend.labels,
 		strictMcpConfigEnabled,
 		...(effort ? { effort } : {}),
-		...(fallbackModel ? { fallbackModel } : {}),
 	};
 }

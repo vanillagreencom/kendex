@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- The model menu reads Pi's Anthropic registry at run time. Claude Code chooses the safety fallback. New model entries need no bridge release. An unknown model request keeps its ID and shows one notice per session.
+
 ### 4.2.0
 
 - A managed Claude profile keeps `CLAUDE_CODE_OAUTH_TOKEN` when its config directory matches the launch account, including the default account. Other profiles discard the inherited token. Without a token, the child uses the profile folder login.

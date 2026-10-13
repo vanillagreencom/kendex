@@ -36815,99 +36815,8 @@ function convertPiMessages(messages, customToolNameToSdk) {
 }
 
 // src/models.ts
-var FABLE_MODEL_ID = "claude-fable-5-1";
-var FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
-var OPUS_5_5_MODEL_ID = "claude-opus-5-5";
-var OPUS_5_MODEL_ID = "claude-opus-5";
-var SONNET_5_5_MODEL_ID = "claude-sonnet-5-5";
-var SONNET_5_MODEL_ID = "claude-sonnet-5";
-var HAIKU_5_5_MODEL_ID = "claude-haiku-5-5";
-function fallbackModelForPrimaryModel(modelId) {
-  if (modelId === SONNET_5_5_MODEL_ID) return SONNET_5_MODEL_ID;
-  return modelId === FABLE_MODEL_ID || modelId === OPUS_5_5_MODEL_ID || modelId === OPUS_5_MODEL_ID ? FABLE_FALLBACK_MODEL_ID : void 0;
-}
-var MODEL_IDS_IN_ORDER = [
-  FABLE_MODEL_ID,
-  OPUS_5_5_MODEL_ID,
-  OPUS_5_MODEL_ID,
-  FABLE_FALLBACK_MODEL_ID,
-  "claude-opus-4-7",
-  "claude-opus-4-6",
-  SONNET_5_5_MODEL_ID,
-  SONNET_5_MODEL_ID,
-  "claude-sonnet-4-6",
-  HAIKU_5_5_MODEL_ID,
-  "claude-haiku-4-5"
-];
-var FALLBACK_MODELS = {
-  [FABLE_MODEL_ID]: {
-    id: FABLE_MODEL_ID,
-    name: "Claude Fable 5.1",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  },
-  [OPUS_5_5_MODEL_ID]: {
-    id: OPUS_5_5_MODEL_ID,
-    name: "Claude Opus 5.5",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  },
-  [OPUS_5_MODEL_ID]: {
-    id: OPUS_5_MODEL_ID,
-    name: "Claude Opus 5",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  },
-  [FABLE_FALLBACK_MODEL_ID]: {
-    id: FABLE_FALLBACK_MODEL_ID,
-    name: "Claude Opus 4.8",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh" },
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  },
-  [SONNET_5_5_MODEL_ID]: {
-    id: SONNET_5_5_MODEL_ID,
-    name: "Claude Sonnet 5.5",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  },
-  [SONNET_5_MODEL_ID]: {
-    id: SONNET_5_MODEL_ID,
-    name: "Claude Sonnet 5",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  },
-  [HAIKU_5_5_MODEL_ID]: {
-    id: HAIKU_5_5_MODEL_ID,
-    name: "Claude Haiku 5.5",
-    reasoning: true,
-    input: ["text", "image"],
-    contextWindow: 1e6,
-    maxTokens: 128e3
-  }
-};
-function modelDisplayName(modelId) {
-  return FALLBACK_MODELS[modelId]?.name ?? modelId;
-}
 function buildModels(piAiModels) {
-  return MODEL_IDS_IN_ORDER.map((id2) => piAiModels.find((m) => m.id === id2) ?? FALLBACK_MODELS[id2]).filter((m) => m != null).map(({ id: id2, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
+  return piAiModels.map(({ id: id2, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
     id: id2,
     name,
     reasoning,
@@ -37505,6 +37414,12 @@ function lane() {
 function ctx() {
   return lane().current;
 }
+function takeUnknownModelNotice() {
+  const state = lane();
+  if (state.reportedUnknownModel) return false;
+  state.reportedUnknownModel = true;
+  return true;
+}
 function stackDepth() {
   return lane().stack.length;
 }
@@ -37537,8 +37452,7 @@ function popContextFor(target) {
 function deleteQueryLane(sessionId) {
   const store = queryLaneStore();
   if (sessionId === void 0) {
-    store.defaultLane.current = new QueryContext();
-    store.defaultLane.stack.length = 0;
+    store.defaultLane = { current: new QueryContext(), stack: [] };
   } else store.sessionLanes.delete(sessionId);
 }
 
@@ -55029,9 +54943,9 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
           const fallbackModel = message.fallback_model;
           updateTurnOutputModel(fallbackModel, queryCtx);
           debug("consumeQuery: model_refusal_fallback", () => JSON.stringify({ originalModel, fallbackModel }));
-          if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
+          if (typeof fallbackModel === "string" && typeof originalModel === "string") {
             safeNotify(
-              `Pi Claude switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
+              `Pi Claude switched ${originalModel} to ${fallbackModel} after Claude Code safety fallback.`,
               "info"
             );
           }
@@ -55305,7 +55219,7 @@ function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
   return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
 function buildClaudeQueryOptions(input) {
-  const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input;
+  const { cwd, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input;
   const providerSettings = bridgeConfig.provider ?? {};
   const accountScope = accountSessionScope(account);
   const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
@@ -55329,7 +55243,6 @@ function buildClaudeQueryOptions(input) {
   const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
   const extraArgs = {};
   if (effort) extraArgs["thinking-display"] = "summarized";
-  const fallbackModel = account && requestedModel.id === FABLE_MODEL_ID && queryModel.id === requestedModel.id ? void 0 : fallbackModelForPrimaryModel(queryModel.id);
   const childEnv = {
     ...account ? subscriberProfileEnv(account) : process.env,
     ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
@@ -55342,7 +55255,6 @@ function buildClaudeQueryOptions(input) {
     ...connectorQueryOptions(enableCloudMcp, connectorWriteMode, builtinIsolationApplied),
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
-    ...fallbackModel ? { fallbackModel } : {},
     // Filesystem settings.env overrides the inherited child environment.
     // SDK settings maps to --settings, above user/project/local settings, so
     // pin the connector switch there as well without dropping fastMode.
@@ -55373,8 +55285,7 @@ function buildClaudeQueryOptions(input) {
     appendSystemPrompt,
     promptContextLabels: promptContextAppend.labels,
     strictMcpConfigEnabled,
-    ...effort ? { effort } : {},
-    ...fallbackModel ? { fallbackModel } : {}
+    ...effort ? { effort } : {}
   };
 }
 
@@ -55390,6 +55301,9 @@ var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
 var HISTORY_RESTART_KEY = /* @__PURE__ */ Symbol("claude-bridge:historyRestart");
 var MAX_ROTATION_ATTEMPTS = 16;
 var MODELS = buildModels(getModels("anthropic"));
+function modelDisplayName(modelId) {
+  return MODELS.find((model) => model.id === modelId)?.name ?? modelId;
+}
 function extractAllToolResults2(context) {
   const { results, stopIdx } = extractAllToolResults(context.messages);
   debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
@@ -55886,6 +55800,10 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     }
   }
   const queryModel = account?.modelId && account.modelId !== model.id ? { ...model, id: account.modelId, name: modelDisplayName(account.modelId) } : model;
+  if (!MODELS.some((entry) => entry.id === queryModel.id) && takeUnknownModelNotice()) {
+    safeNotify(`model-resolution: unknown=${queryModel.id}
+Pi Claude uses this model as requested. Claude Code chooses its fallback.`, "warning");
+  }
   if (queryModel.id !== model.id) {
     updateTurnOutputModel(queryModel.id);
     if (rotationState.announcedModelId !== queryModel.id) {
@@ -55940,7 +55858,6 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   const mcpServers = buildMcpServers(mcpTools, ctx());
   const built = buildClaudeQueryOptions({
     cwd,
-    requestedModel: model,
     queryModel,
     account,
     bridgeConfig,
@@ -55957,7 +55874,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     "provider: fresh query",
     `model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
     `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${built.effort ?? "default"} account=${account?.label ?? "legacy"}`,
-    `fallback=${built.fallbackModel ?? "none"}`,
+    "fallback=harness-default",
     () => `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
     `prompt ${describePrompt(promptText, promptBlocks)}`
