@@ -35,8 +35,10 @@ def native_launcher():
     with tempfile.TemporaryDirectory() as allocation:
         path = Path(allocation).resolve() / "harness-launcher"
         result = subprocess.run([compiler, "--edition=2021", "-D", "warnings",
-                                 str(Path(__file__).with_name("harness_launcher.rs")), "-o", str(path)],
-                                capture_output=True, text=True, timeout=60)
+                                 str(Path(__file__).resolve().with_name("harness_launcher.rs")), "-o", str(path)],
+                                # This fixture uses the installed compiler;
+                                # repository toolchain installation belongs to CI setup.
+                                cwd=path.parent, capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise RuntimeError("native-fixture: compile-failed\n" + result.stderr)
         yield path

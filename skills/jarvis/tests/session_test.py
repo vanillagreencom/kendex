@@ -765,6 +765,47 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(len(result.stderr.splitlines()), 1)
                 self.assertRegex(result.stderr, r"^jarvis-session: [a-z-]+=[a-z-]+\n$")
 
+    def test_native_fixture_uses_installed_toolchain(self):
+        rustup = shutil.which("rustup")
+        self.assertIsNotNone(rustup, "native-fixture: dependency=rustup")
+        with tempfile.TemporaryDirectory() as allocation:
+            scratch = Path(allocation).resolve()
+            environment = dict(os.environ)
+            environment.pop("RUSTUP_TOOLCHAIN", None)
+            environment.pop("JARVIS_TEST_NATIVE", None)
+            installed = subprocess.run([rustup, "which", "rustc"], cwd=scratch,
+                                       env=environment, capture_output=True, text=True, timeout=60)
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            environment.update(HOME=str(scratch / "home"), RUSTUP_HOME=str(scratch / "rustup"),
+                               CARGO_HOME=str(scratch / "cargo"), RUSTUP_AUTO_INSTALL="0")
+            Path(environment["HOME"]).mkdir()
+            binary = scratch / "bin"
+            binary.mkdir()
+            (binary / "rustc").symlink_to(rustup)
+            environment["PATH"] = str(binary) + os.pathsep + environment["PATH"]
+            for arguments in (("toolchain", "link", "fixture-installed", str(Path(installed.stdout.strip()).parent.parent)),
+                              ("default", "fixture-installed")):
+                configured = subprocess.run([rustup, *arguments], cwd=scratch, env=environment,
+                                            capture_output=True, text=True, timeout=60)
+                self.assertEqual(configured.returncode, 0, configured.stderr)
+            missing = subprocess.run([rustup, "which", "rustc"], cwd=ROOT, env=environment,
+                                     capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertEqual(missing.stdout, "")
+            # The real Rustup proxy must compile from this caller's repository
+            # while the fixture owner selects a directory outside it.
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(ROOT)
+                with patch.dict(os.environ, environment, clear=True):
+                    try:
+                        with native_launcher() as native:
+                            self.assertTrue(native.is_file() and os.access(native, os.X_OK))
+                    except RuntimeError as failure:
+                        self.fail(str(failure))
+            finally:
+                os.chdir(previous_cwd)
+
     def test_cancelled_replacement_keeps_the_live_owner(self):
         for phase in ("pending", "running"):
             with self.subTest(predecessor_state=phase):

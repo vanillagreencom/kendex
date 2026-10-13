@@ -10,6 +10,7 @@ from fixtures.harness import native_launcher
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTROLS = [
+    ("fixture installed toolchain", "jarvis/tests/fixtures/harness.py", 'cwd=path.parent,', 'cwd=None if True else path.parent,', "test_native_fixture_uses_installed_toolchain"),
     ("exact resume", "orch/scripts/lib/lane-relaunch.sh", '  [[ "$actual" == "$id" ]] || return 2', '  return 1', "test_claude_contract"),
     ("ensure", "jarvis/scripts/lib/session.py", 'if matching and record["state"] in ("starting", "running")', 'if False and record["state"] in ("starting", "running")', "test_claude_contract"),
     ("app Off", "jarvis/scripts/lib/session.py", 'if record and record.get("app_off") and args.origin != "app-on":', 'if False:', "test_off_and_boot_receipt"),
@@ -66,6 +67,7 @@ def main():
         # Test-owned applicability is mutated beside the existing contract case.
         shutil.copytree(ROOT / "skills/jarvis/tests", skills / "jarvis/tests",
                         ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copyfile(ROOT / "rust-toolchain.toml", scratch / "rust-toolchain.toml")
         clean = {}
         for name, relative, old, new, test in controls:
             env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
