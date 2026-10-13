@@ -24,11 +24,12 @@ printf -- '- Pending entry.\n' >"$R/changelog.d/fixed/pending.md"
 git -C "$R" add -A
 git -C "$R" commit -qm pending
 PENDING="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" rm -q changelog.d/fixed/pending.md
 printf 'Stray entry.\n' >"$R/changelog.d/stray.txt"
 git -C "$R" add -A
 git -C "$R" commit -qm stray
 STRAY="$(git -C "$R" rev-parse HEAD)"
-git -C "$R" rm -q changelog.d/fixed/pending.md changelog.d/stray.txt
+git -C "$R" rm -q changelog.d/stray.txt
 
 run() { # SCRIPT REF: RC and OUT contain the command result.
   RC=0
@@ -55,6 +56,10 @@ assert_eq "$(git -C "$R" status --porcelain)" "$BEFORE" 'snapshot checks leave t
 gg_mutant CONTROL changelog-entries '[ "$violations" -eq 0 ] || exit 1' ': '\''[ "$violations" -eq 0 ] || exit 1'\'''
 run "$CONTROL" "$PENDING"
 assert_eq "$RC" 0 'control: ignoring pending fragments permits the release'
+
+gg_mutant STRAY_CONTROL changelog-entries '    refuse fragment-stray ' '    : refuse fragment-stray '
+run "$STRAY_CONTROL" "$STRAY"
+assert_eq "$RC" 0 'control: ignoring the stray file permits the release'
 
 # A failed Git tree read cannot become an empty snapshot.
 REAL_GIT="$(command -v git)"

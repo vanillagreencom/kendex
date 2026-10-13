@@ -441,7 +441,7 @@ record_entries() { # PATH LEVEL VERSION — adds the release's entry rows to $GG
     mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
     gg_mode_is_regular "$mode" || gg_fail version-record-mode "$(gg_shown "$path"):$mode" "Release evidence must be a regular text file."
     gg_changelog_blob "$sha" "$path" || gg_fail version-record-binary "$(gg_shown "$path")" "Release evidence must be text."
-    LC_ALL=C awk -v entry_query=1 -v release_level="$level" -v release_version="$version" -v release_alone="$RELEASE_ALONE" \
+    LC_ALL=C awk -v entry_query=1 -v release_level="$level" -v release_version="$version" \
       -v packages_part="$GG_PACKAGES_PART" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >"$GG_TMP/record-entries" || status=$?
     [ "$status" -ne 3 ] || gg_fail version-record-fence "$(gg_shown "$path")" "An unclosed code fence prevents reading the release section."
     [ "$status" -eq 0 ] || gg_fail breaking-read "$(gg_shown "$path"):$status" "The changelog grammar failed (awk exit $status)."
@@ -537,10 +537,6 @@ package_entries() { # NAME — fills $GG_TMP/evidence
 breaking_remedy="Release the break as a major, or keep the old form working and hold the Breaking entry for a later major."
 if [ -n "$version_paths" ] || [ -n "$GG_CHANGELOG_PACKAGES" ]; then
   diff_args=(--cached)
-  # --against REF can name a branch's tip from before a restack past a
-  # release, so that release's bump reaches the comparison beside the
-  # branch's pending fragments. Its own record section alone judges it there.
-  RELEASE_ALONE=0
   case "$MODE" in
     staged)
       gg_commit_base
@@ -555,7 +551,6 @@ if [ -n "$version_paths" ] || [ -n "$GG_CHANGELOG_PACKAGES" ]; then
       base="$(git rev-parse --verify --end-of-options "$BASE_REF^{commit}" 2>"$GG_TMP/dependency.err")" \
         || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "The version comparison ref must name a commit."
       diff_args+=("$base")
-      RELEASE_ALONE=1
       ;;
   esac
   git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames -- >"$GG_TMP/changes.z" 2>"$GG_TMP/dependency.err" \
@@ -581,7 +576,7 @@ if [ -n "$version_paths" ]; then
     else
       cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
         || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
-      if [ -n "$RECORD" ] && { [ "$BUMP" != major ] || ! first_entry breaking >/dev/null; }; then
+      if [ -n "$RECORD" ]; then
         record_entries "$RECORD" 2 "$new"
       fi
     fi

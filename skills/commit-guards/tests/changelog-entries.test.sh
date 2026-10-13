@@ -451,9 +451,11 @@ for row in \
   "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0" \
   "committed-against-patch-added|app.json|1.9.0|1.9.1|$ADD|||--against base|patch-added|added" \
   "against-past-release|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|0|added" \
-  "patch-added-own-release|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n||patch-added|added" \
-  "base-own-release-pending-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--base base|patch-added" \
-  "major-past-release|app.json|1.9.0|2.0.0|$BREAK|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|0" \
+  "patch-added-own-release|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n||0|added" \
+  "base-own-release-pending-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--base base|0" \
+  "base-own-release-pending-breaking|app.json|1.9.0|1.10.0|$BREAK|CHANGELOG.md|## [Unreleased]\n\n## [1.10.0] - 2026-10-02\n\n### Added\n\n$ADD\n|--base base|0" \
+  "major-past-release|app.json|1.9.0|2.0.0|$BREAK|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|major-breaking" \
+  "major-own-release|app.json|1.9.0|2.0.0|$ADD|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Changed\n\n$BREAK\n|--base base|0|added" \
   "released-patch-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Added\n\n$ADD\n||patch-added"; do
   IFS='|' read -r label manifest prior next fragment record_path record args expected section <<<"$row"
   repo "version-$label"
@@ -487,6 +489,17 @@ R="$TMP/version-package-colon-after"
 assert_eq 'control: reading only **Breaking:** refuses the **Breaking**: major' \
   "rc=1 ${ERR}major-breaking=packages/a/package.json:1.9.0:2.0.0;$(summary 1 0)" \
   "$(CE="${colon_inside%/lib/*}/changelog-entries" run 'COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json packages/*/package.json package.json' '')"
+
+gg_mutant combined lib/changelog-grammar.sh 'alone = (release_heading != "")' 'alone = (0 && release_heading != "")'
+R="$TMP/version-base-own-release-pending-added"
+assert_eq 'control: combining pending entries refuses the frozen patch' \
+  "rc=1 ${ERR}patch-added=app.json:1.9.0:1.9.1;${ERR}entry-preview=$ADD;$(summary 1 0)" \
+  "$(CE="${combined%/lib/*}/changelog-entries" run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--base base')"
+gg_mutant borrow_major changelog-entries '      if [ -n "$RECORD" ]; then' '      if [ -n "$RECORD" ] && { [ "$BUMP" != major ] || ! first_entry breaking >/dev/null; }; then'
+R="$TMP/version-major-past-release"
+assert_eq 'control: borrowing a pending break permits an unnamed major' \
+  "rc=0 $(within 1)" \
+  "$(CE="$borrow_major" run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--against base')"
 
 # The released record's Breaking entries, copied from CHANGELOG.md with one
 # unmarked Added entry each: the entry query reports every marked item of the

@@ -1,4 +1,5 @@
 //! Inputs: .github/workflows/release.yml, .github/workflows/publish-aur.yml,
+//! .github/workflows/skill-tests.yml,
 //! and skills/commit-guards/scripts/changelog-entries with its libraries.
 //! Shell fixtures prove source admission, create-only tags and main dispatch.
 //! They do not prove GitHub environment policy or live token permissions.
@@ -108,29 +109,34 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
 
     #[allow(
         clippy::unwrap_used,
-        reason = "queue fixture writes are test preconditions"
+        reason = "release file edits are fixture preconditions"
     )]
-    fn queued_release(method: &str) -> (Self, String) {
-        let mut fixture = Self::new();
+    fn prepare_collation(&self, version: &str, section: &str, entry: &str) -> String {
         fs::write(
-            fixture.root.join(".git/info/exclude"),
-            "bin/\nskills/\nremote.git/\ngithub.output\ngh.log\n",
-        )
-        .unwrap();
-        fs::write(
-            fixture.root.join("CHANGELOG.md"),
+            self.root.join("CHANGELOG.md"),
             "# Changelog\n\n## [Unreleased]\n",
         )
         .unwrap();
-        fs::create_dir_all(fixture.root.join("changelog.d/fixed")).unwrap();
+        fs::create_dir_all(self.root.join(format!("changelog.d/{section}"))).unwrap();
         fs::write(
-            fixture.root.join("changelog.d/fixed/cut.md"),
-            "- The release entry.\n",
+            self.root.join(format!("changelog.d/{section}/cut.md")),
+            format!("{entry}\n"),
         )
         .unwrap();
-        fixture.commit("release input");
-        fixture.git(&["checkout", "-b", "collation-pr"]);
-        let collate = fixture
+        fs::create_dir_all(self.root.join("crates/app")).unwrap();
+        fs::write(
+            self.root.join("crates/app/tauri.conf.json"),
+            "{\"version\":\"1.9.0\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            self.root.join("kendex.settings.toml"),
+            "[env]\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = \"crates/app/tauri.conf.json\"\n",
+        )
+        .unwrap();
+        self.commit("release input");
+        self.git(&["checkout", "-b", "collation-pr"]);
+        let collate = self
             .command("/bin/bash")
             .args([
                 "skills/commit-guards/scripts/changelog-entries",
@@ -144,20 +150,62 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
             "{}",
             String::from_utf8_lossy(&collate.stdout)
         );
-        let collation_head = fixture.commit("collate release");
+        fs::write(
+            self.root.join("crates/app/tauri.conf.json"),
+            format!("{{\"version\":\"{version}\"}}\n"),
+        )
+        .unwrap();
+        let path = self.root.join("CHANGELOG.md");
+        let record = fs::read_to_string(&path).unwrap();
+        let heading = "## [Unreleased]\n";
+        assert_eq!(record.matches(heading).count(), 1);
+        fs::write(
+            path,
+            record.replacen(
+                heading,
+                &format!("## [Unreleased]\n\n## [{version}] - 2026-10-13\n"),
+                1,
+            ),
+        )
+        .unwrap();
+        self.commit("collate release")
+    }
+
+    #[allow(
+        clippy::unwrap_used,
+        reason = "queue fixture writes are test preconditions"
+    )]
+    fn queued_release(
+        method: &str,
+        version: &str,
+        section: &str,
+        entry: &str,
+        pending_section: &str,
+        pending_entry: &str,
+    ) -> (Self, String, String) {
+        let mut fixture = Self::new();
+        fs::write(
+            fixture.root.join(".git/info/exclude"),
+            "bin/\nskills/\nremote.git/\ngithub.output\ngh.log\n",
+        )
+        .unwrap();
+        let collation_head = fixture.prepare_collation(version, section, entry);
 
         fixture.git(&["checkout", "main"]);
         fixture.git(&["checkout", "-b", "fragment-pr"]);
-        fs::create_dir_all(fixture.root.join("changelog.d/added")).unwrap();
+        fs::create_dir_all(fixture.root.join(format!("changelog.d/{pending_section}"))).unwrap();
         fs::write(
-            fixture.root.join("changelog.d/added/next.md"),
-            "- The next release entry.\n",
+            fixture
+                .root
+                .join(format!("changelog.d/{pending_section}/next.md")),
+            format!("{pending_entry}\n"),
         )
         .unwrap();
         fixture.commit("later fragment");
         fixture.git(&["checkout", "main"]);
         fixture.git(&["merge", "--squash", "fragment-pr"]);
         fixture.commit("fragment PR merges ahead in queue");
+        let queue_base = fixture.git(&["rev-parse", "HEAD"]);
         if method == "squash" {
             fixture.git(&["merge", "--squash", "collation-pr"]);
             fixture.source = fixture.commit("first release collation merge");
@@ -180,7 +228,7 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
             "origin",
             &format!("{collation_head}:refs/pull/1/head"),
         ]);
-        (fixture, collation_head)
+        (fixture, collation_head, queue_base)
     }
 
     fn command(&self, program: &str) -> Command {
@@ -292,6 +340,23 @@ fn selection_script() -> String {
 
 #[allow(
     clippy::unwrap_used,
+    reason = "the required CI command is a tracked test input"
+)]
+fn queue_validation_script() -> String {
+    let workflow = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/skill-tests.yml"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    step(&workflow, "id: changelog-entries")
+        .iter()
+        .find_map(|line| line.trim().strip_prefix("run: "))
+        .unwrap()
+        .to_owned()
+}
+
+#[allow(
+    clippy::unwrap_used,
     reason = "clearing the owned fixture output is a test precondition"
 )]
 fn select(
@@ -387,56 +452,121 @@ fn release_fragments_are_read_from_the_selected_commit() {
     );
 }
 
+const QUEUE_RELEASES: &[(&str, &str, &str, &str, &str)] = &[
+    (
+        "1.9.1",
+        "fixed",
+        "- Fix a typo.",
+        "added",
+        "- Add a profile.",
+    ),
+    (
+        "1.9.1",
+        "fixed",
+        "- Fix a typo.",
+        "changed",
+        "- **Breaking:** Rename the profile.",
+    ),
+    (
+        "1.10.0",
+        "added",
+        "- Add a profile.",
+        "changed",
+        "- **Breaking:** Rename the profile.",
+    ),
+    (
+        "2.0.0",
+        "changed",
+        "- **Breaking:** Rename the profile.",
+        "added",
+        "- Add a profile.",
+    ),
+];
+
 #[test]
 fn the_first_collation_merge_tags_with_later_fragments_reserved() {
     for method in ["squash", "merge"] {
-        let (fixture, collation_head) = Fixture::queued_release(method);
-        let environment = [
-            ("EVENT_NAME", "workflow_dispatch"),
-            ("RUN_REF", "refs/heads/main"),
-            ("REQUESTED_TAG", "v5.1.0"),
-            ("REQUESTED_COMMIT", fixture.source.as_str()),
-            ("PR_HEAD", collation_head.as_str()),
-        ];
-        let script = selection_script();
-        let selected = fixture.shell(&script, &environment);
-        assert!(
-            selected.status.success(),
-            "{method}: {}",
-            String::from_utf8_lossy(&selected.stderr)
-        );
-        assert_eq!(
-            fixture.outputs().get("source-commit"),
-            Some(&fixture.source)
-        );
-        assert!(fixture.root.join("changelog.d/added/next.md").is_file());
-        assert!(!fixture.root.join("changelog.d/fixed/cut.md").exists());
+        for &(version, section, entry, pending_section, pending_entry) in QUEUE_RELEASES {
+            let (fixture, collation_head, queue_base) = Fixture::queued_release(
+                method,
+                version,
+                section,
+                entry,
+                pending_section,
+                pending_entry,
+            );
+            let queue_check = fixture.shell(&queue_validation_script(), &[("BASE", &queue_base)]);
+            assert!(
+                queue_check.status.success(),
+                "{method}/{version}/{pending_section}: {}",
+                String::from_utf8_lossy(&queue_check.stdout)
+            );
+            let tag = format!("v{version}");
+            let environment = [
+                ("EVENT_NAME", "workflow_dispatch"),
+                ("RUN_REF", "refs/heads/main"),
+                ("REQUESTED_TAG", tag.as_str()),
+                ("REQUESTED_COMMIT", fixture.source.as_str()),
+                ("PR_HEAD", collation_head.as_str()),
+            ];
+            let script = selection_script();
+            let selected = fixture.shell(&script, &environment);
+            assert!(
+                selected.status.success(),
+                "{method}: {}",
+                String::from_utf8_lossy(&selected.stderr)
+            );
+            assert_eq!(
+                fixture.outputs().get("source-commit"),
+                Some(&fixture.source)
+            );
+            assert!(
+                fixture
+                    .root
+                    .join(format!("changelog.d/{pending_section}/next.md"))
+                    .is_file()
+            );
+            assert!(
+                !fixture
+                    .root
+                    .join(format!("changelog.d/{section}/cut.md"))
+                    .exists()
+            );
 
-        let old_flow = mutant(
-            &script,
-            "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
-            "fragments=$(git ls-tree -r --name-only \"$source_commit\" -- changelog.d)\n[ \"$fragments\" = changelog.d/README.md ]",
-        );
-        assert!(
-            !fixture.shell(&old_flow, &environment).status.success(),
-            "{method}: prior flow accepted the queue fragment"
-        );
+            let old_flow = mutant(
+                &script,
+                "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
+                "fragments=$(git ls-tree -r --name-only \"$source_commit\" -- changelog.d)\n[ \"$fragments\" = changelog.d/README.md ]",
+            );
+            assert!(
+                !fixture.shell(&old_flow, &environment).status.success(),
+                "{method}: prior flow accepted the queue fragment"
+            );
 
-        api_shim(
-            &fixture,
-            "git --git-dir=remote.git update-ref \"$ref\" \"$sha\" ''",
-        );
-        assert!(run_tag(&fixture, &tag_script()).status.success());
-        assert_eq!(
-            fixture.git(&[
-                "--git-dir=remote.git",
-                "rev-parse",
-                "refs/tags/v5.1.0^{commit}"
-            ]),
-            fixture.source
-        );
-        assert_ne!(fixture.source, collation_head);
-        assert_ne!(fixture.source, fixture.main);
+            api_shim(
+                &fixture,
+                "git --git-dir=remote.git update-ref \"$ref\" \"$sha\" ''",
+            );
+            assert!(
+                fixture
+                    .shell(
+                        &tag_script(),
+                        &[("RELEASE_TAG", &tag), ("SOURCE_COMMIT", &fixture.source)]
+                    )
+                    .status
+                    .success()
+            );
+            assert_eq!(
+                fixture.git(&[
+                    "--git-dir=remote.git",
+                    "rev-parse",
+                    &format!("refs/tags/{tag}^{{commit}}")
+                ]),
+                fixture.source
+            );
+            assert_ne!(fixture.source, collation_head);
+            assert_ne!(fixture.source, fixture.main);
+        }
     }
 }
 

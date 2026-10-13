@@ -250,7 +250,7 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # opening with a named call-out, `**Breaking:**` or `**Breaking**:`, the
 # spelling the Pi package records write, and added for an item under the
 # release's `### Added` heading, a heading only a level-2 record carries.
-# With release_alone=1, a record holding the new version's own section
+# A record holding the new version's own section
 # answers with that section alone, after a "released<TAB>heading" row:
 # those are the entries the release publishes, and pending ones wait for
 # the next release.
@@ -334,7 +334,7 @@ function heading_text(l,   i, n, t) {
 END {
   if (entry_query) {
     if (fence != "") exit 3
-    alone = (release_alone && release_heading != "")
+    alone = (release_heading != "")
     if (alone) printf "released\t%s\n", release_heading
     for (k = 1; k <= count; k++) if (!alone || row_scope[k] == "released") print rows[k]
     exit
