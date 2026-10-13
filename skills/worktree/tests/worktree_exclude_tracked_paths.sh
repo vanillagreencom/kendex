@@ -441,7 +441,6 @@ outcome_case() {
   if [[ "$route" == create ]]; then args=(create new-outcome); fi
   (cd "$MAIN" &&
     if [[ "$outcome" == missing || "$fault" == initial-content ]]; then umask 027; fi
-    if [[ "$outcome" == missing ]]; then export POSIXLY_CORRECT=1; fi
     PATH="$TMP_ROOT/outcome-bin:$PATH" BASH_ENV="$TMP_ROOT/outcome-bash-env" \
     WT_EXCLUDE_FAULT="$fault" WT_EXCLUDE_TREE="$WT" WT_EXCLUDE_PATH="$failed_path" \
     WT_EXCLUDE_FILE="$MAIN/.git/info/exclude" WT_EXCLUDE_TRACE="$ROOT/dependency-trace" \
