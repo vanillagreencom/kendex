@@ -483,36 +483,51 @@ command_source_cells! {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn selected_command_source_read_failure_stays_unknown_once() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let (project, bin) = command_source_fixture(&home);
-    // Claude sorts first. Its unreadable live declaration must not be replaced
-    // by the valid Codex copy's answer for the same skill.
-    fs::remove_file(project.join(".claude/skills/external/SKILL.md")).unwrap();
-    let checked = run(
-        &home,
-        &project,
-        &["check", "--scope", "project", "--json", "--report-only"],
-        Some(&bin),
-    );
-    assert!(command_lines(&checked).is_empty());
-    let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
-    assert_eq!(report["status"], "unknown");
-    assert_eq!(
-        report["sections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|section| section["lines"].as_array().unwrap())
-            .filter(|line| line["class"] == "unknown")
-            .count(),
-        1
-    );
-    assert!(
-        fs::read_to_string(bin.join("kendex-fixture-source-version.probes"))
-            .unwrap()
-            .is_empty()
-    );
+    for (body, unreadable) in [
+        (Some("By hand.\n"), false),
+        (Some("---\nname: external\n"), true),
+        (Some("---\ndependencies:\n  commands: [\n---\n"), true),
+        (
+            Some("---\ndependencies:\n  commands:\n    - purpose: Render pages\n---\n"),
+            true,
+        ),
+        (None, true),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let (project, bin) = command_source_fixture(&home);
+        // Claude sorts first. Its declaration has one result, even when
+        // the valid Codex copy could supply a different answer.
+        let path = project.join(".claude/skills/external/SKILL.md");
+        match body {
+            Some(text) => fs::write(path, text).unwrap(),
+            None => fs::remove_file(path).unwrap(),
+        }
+        let checked = run(
+            &home,
+            &project,
+            &["check", "--scope", "project", "--json", "--report-only"],
+            Some(&bin),
+        );
+        assert!(command_lines(&checked).is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
+        assert_eq!(report["status"] == "unknown", unreadable);
+        assert_eq!(
+            report["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|section| section["lines"].as_array().unwrap())
+                .filter(|line| line["class"] == "unknown")
+                .count(),
+            usize::from(unreadable)
+        );
+        assert!(
+            fs::read_to_string(bin.join("kendex-fixture-source-version.probes"))
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
 
 #[test]

@@ -40,6 +40,108 @@ use kendex_core::engine::{DriftState, PlanOptions, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
+/// Collection follows the accepted delivery tree, including a native tree
+/// or a repaired copy beside a refused native group.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn command_collection_uses_accepted_native_and_copy_trees() {
+    for (harnesses, method, repaired, long_description, delivered) in [
+        ("\"codex\"", "symlink", false, false, false),
+        ("\"claude\", \"codex\"", "symlink", false, false, false),
+        ("\"claude\"", "copy", true, false, true),
+        ("\"codex\", \"claude\"", "symlink", true, true, true),
+    ] {
+        let world = world();
+        world.declare_as("deploy", harnesses, method, None);
+        // Codex refuses the long description. Claude accepts the delivered
+        // tree, so a refused first group must not hide its command list.
+        let description = if long_description {
+            "x".repeat(1025)
+        } else {
+            "ship it".to_owned()
+        };
+        let text = format!(
+            "---\nname: deploy\ndescription: {description}\ndependencies:\n  commands:\n    - command: kendex-fixture-cut-required\n      purpose: Render pages\n      floor: '1.2.0'\n      packages: {{brew: cut-tool, npm: cut-tool}}\n    - command: kendex-fixture-cut-optional\n      purpose: Read credentials\n      optional: true\n---\nOwned source.\n"
+        );
+        let mut authored = text.into_bytes();
+        if repaired {
+            authored.extend_from_slice(b"Caf\xe9.\n");
+        }
+        fs::write(world.skill_file(), &authored).unwrap();
+        let report = world.apply();
+        let required = report
+            .warnings
+            .iter()
+            .filter(|warning| warning.message.starts_with("kendex-command-missing:"))
+            .collect::<Vec<_>>();
+        assert_eq!(required.len(), 1, "harnesses={harnesses} method={method}");
+        assert_eq!(required[0].kind, kendex_core::model::ItemKind::Skill);
+        assert_eq!(required[0].name, "deploy");
+        for field in [
+            "command=kendex-fixture-cut-required",
+            "purpose=Render pages",
+            "optional=false",
+            "floor=1.2.0",
+            "brew=cut-tool",
+            "npm=cut-tool",
+        ] {
+            assert!(required[0].message.contains(field));
+        }
+        let optional = report
+            .notes
+            .iter()
+            .filter(|note| note.starts_with("kendex-command-missing:"))
+            .collect::<Vec<_>>();
+        assert_eq!(optional.len(), 1);
+        for field in [
+            "command=kendex-fixture-cut-optional",
+            "purpose=Read credentials",
+            "optional=true",
+        ] {
+            assert!(optional[0].contains(field));
+        }
+        assert_eq!(fs::read(world.skill_file()).unwrap(), authored);
+        let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
+        assert!(lock.entries.values().all(|entry| {
+            entry
+                .emitted
+                .as_ref()
+                .is_none_or(|artifact| !artifact.paths.contains(&world.source()))
+        }));
+        if delivered {
+            let copy = world.project.join(".claude/skills/deploy");
+            assert!(copy.is_dir() && !copy.is_symlink());
+            assert!(
+                world
+                    .read(&copy.join("SKILL.md"))
+                    .ends_with("Caf\u{FFFD}.\n")
+            );
+        }
+        if long_description {
+            assert!(
+                report
+                    .drift
+                    .iter()
+                    .any(|row| row.kind == kendex_core::model::ItemKind::Skill
+                        && row.name == "deploy"
+                        && row.harness == kendex_core::model::HarnessId::Codex
+                        && row.state == DriftState::Conflict)
+            );
+            assert!(
+                lock.entries
+                    .values()
+                    .any(|entry| entry.harness == kendex_core::model::HarnessId::Claude)
+            );
+            assert!(
+                !lock
+                    .entries
+                    .values()
+                    .any(|entry| entry.harness == kendex_core::model::HarnessId::Codex)
+            );
+        }
+    }
+}
+
 const AUTHORED: &str = "---\nname: deploy\ndescription: ship it\n---\nOwned source.\n";
 const REFERENCE: &str = "step one\n";
 

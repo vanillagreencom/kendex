@@ -357,6 +357,9 @@ impl ScopeCheck<'_> {
             let text = sealed
                 .read_to_string(&sealed.root().join("SKILL.md"))
                 .map_err(|error| error.to_string())?;
+            if !crate::frontmatter::opens(&text) {
+                return Ok(Vec::new());
+            }
             let (yaml, _) = crate::frontmatter::split(&text)?;
             let parsed = crate::frontmatter::parse_tolerant(yaml)?;
             crate::engine::deps::commands::declared(&parsed.map)
